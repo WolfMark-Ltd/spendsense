@@ -1552,13 +1552,15 @@ function snapshotLive(live) {
 }
 
 /**
- * Stable pane reading. The current live value wins whenever it has a bucket;
- * while the stream is briefly empty (refresh, gateway restart) the last
- * reading for the SAME session is shown and marked stale. A session change
- * resets: one conversation's numbers must never render under another's name.
+ * Stable pane reading. The current live value wins whenever it carries live
+ * usage; while the stream is briefly empty (refresh, gateway restart) the
+ * last reading for the SAME session is shown and marked stale. A session
+ * change resets: one conversation's numbers must never render under another's
+ * name. A bucket without usage is the recorded fallback, not a fresh
+ * reading, so it never refreshes the retained snapshot.
  */
 function mergeStableLive(prev, live, key) {
-  const cur = live && live.bucket ? snapshotLive(live) : null
+  const cur = live && live.bucket && live.usage ? snapshotLive(live) : null
   if (!key || !prev || prev.key !== key) {
     return { view: live, stale: false, cache: cur ? { key, snapshot: cur } : null }
   }
@@ -1986,7 +1988,17 @@ function Meter() {
 
   // Named wm-pane, not wm-meter: .wm-meter is the analytics cache bar,
   // and the pane stylesheet is global while the pane is mounted.
-  return jsxs('div', { className: 'wm-pane', children: [
+  // A hover-opened tip has no focused button to catch Escape; dismiss it
+  // here on the way down and keep the window-level ledger closer out of it.
+  // Plain Escape (no tip open) still propagates to the ledger as before.
+  return jsxs('div', { className: 'wm-pane',
+    onKeyDownCapture: event => {
+      if (event.key === 'Escape' && $infoOpen.get()) {
+        event.stopPropagation()
+        $infoOpen.set(null)
+      }
+    },
+    children: [
     jsx('style', { children: METER_CSS }, 'css'),
     !view.bucket
       ? jsx(MeterEmpty, { t }, 'body')

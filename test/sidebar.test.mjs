@@ -64,9 +64,15 @@ const { plugin, T, React, ReactDOMClient, QueryClientProvider, queryClient, host
 
 const storageSets = []
 const intervals = new Set()
-plugin.register({
+// Pre-seeded storage values, read when plugin.register() runs.
+const storageSeed = {}
+const makeCtx = () => ({
   rest: async () => ({ ok: true }),
-  storage: { get: (_k, d) => d, set: (k, v) => { storageSets.push([k, v]) }, delete() {} },
+  storage: {
+    get: (k, d) => (k in storageSeed ? storageSeed[k] : d),
+    set: (k, v) => { storageSets.push([k, v]) },
+    delete() {},
+  },
   register() {}, registerMany() {}, onDispose() {}, onEvent: () => () => {},
   setTimeout: (fn) => { const t = setTimeout(fn, 0); return () => clearTimeout(t) },
   setInterval: (fn, ms) => {
@@ -78,6 +84,7 @@ plugin.register({
   addEventListener: () => () => {},
   os: {}, pet: null, i18n: { register() {}, t: key => key },
 })
+plugin.register(makeCtx())
 
 // --- fixtures ---------------------------------------------------------------
 const liveUsage = (over = {}) => ({
@@ -199,6 +206,46 @@ test('a transient gap keeps every section mounted and marks the reading stale', 
   const afterGap = sectionsOf(container)
   assert.equal(afterGap.head, before.head, 'header node survives the round trip')
   assert.deepEqual(afterGap.cards, before.cards, 'cards survive the round trip')
+  assert.doesNotMatch(container.textContent, /meterUpdating/)
+  assert.match(container.textContent, /meterLive/)
+})
+
+test('a gap with recorded history retains the live snapshot, marked stale', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedStoredSessionId.set('stored-1')
+  // Recorded history behind the live counters, so the live run leads.
+  const ledger = T.emptyLedger()
+  ledger.sessions['stored-1'] = histBucket({
+    input: 200, output: 100, cacheRead: 0, cacheWrite: 0, calls: 1,
+    pricedTokens: 300, unpricedTokens: 0, cost: 0.001,
+    sources: { bundled: 300 }, netSavingsPrompt: 200, netSavings: 0.0001,
+  })
+  T.$ledger.set(ledger)
+  host.state.focusedUsage.set(liveUsage())
+  const container = await renderMeter()
+  await flush()
+  const before = sectionsOf(container)
+  const figureBefore = container.querySelector('.wm-kpi-figure').textContent
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun')
+
+  // The stream drops: the recorded fallback must not clobber the live reading.
+  host.state.focusedUsage.set(null)
+  await flush()
+  const during = sectionsOf(container)
+  assert.equal(during.head, before.head, 'header node is retained')
+  assert.deepEqual(during.cards, before.cards, 'all four cards keep their DOM nodes')
+  assert.equal(container.querySelector('.wm-kpi-figure').textContent, figureBefore,
+    'the live figure is retained, not swapped for behind history')
+  assert.match(container.textContent, /meterUpdating/, 'the retained reading is stale')
+  assert.ok(container.querySelector('.wm-meter-sections.wm-stale'), 'stale readings are dimmed')
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun',
+    'session identity survives the gap')
+
+  // The stream returns: back to live, same nodes.
+  host.state.focusedUsage.set(liveUsage({ input: 2400, calls: 3 }))
+  await flush()
+  assert.deepEqual(sectionsOf(container).cards, before.cards)
   assert.doesNotMatch(container.textContent, /meterUpdating/)
   assert.match(container.textContent, /meterLive/)
 })
@@ -418,6 +465,23 @@ test('rates stay collapsed by default and survive refreshes once open', async ()
     `expansion persists: ${JSON.stringify(storageSets)}`)
 })
 
+test('rates restore open from stored state', async () => {
+  resetHost()
+  storageSeed['rates-open'] = true
+  try {
+    plugin.register(makeCtx())
+    host.state.focusedSessionId.set('s1')
+    host.state.focusedUsage.set(liveUsage())
+    const container = await renderMeter()
+    await flush()
+    const toggle = container.querySelector('.wm-rates-toggle')
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true')
+    assert.ok(container.querySelector('#wm-rates-body'), 'the stored expansion restores the body')
+  } finally {
+    delete storageSeed['rates-open']
+  }
+})
+
 // --- info popovers ---------------------------------------------------------------
 test('info popovers open on click and close on Escape', async () => {
   resetHost()
@@ -531,6 +595,45 @@ test('Escape closes a mouse-opened popover from the focused button', async () =>
   assert.equal(container.querySelector('.wm-info-pop'), null, 'Escape closes it')
   assert.equal(first.getAttribute('aria-expanded'), 'false')
   assert.equal(document.activeElement, first, 'focus stays on the button')
+})
+
+test('Escape dismisses a hover-opened tip without reaching the window closer', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage())
+  const container = await renderMeter()
+  await flush()
+  const first = container.querySelector('.wm-info-btn')
+  await React.act(async () => {
+    first.dispatchEvent(new dom.window.MouseEvent('mouseover', { bubbles: true }))
+  })
+  await flush(2)
+  assert.ok(container.querySelector('.wm-info-pop'), 'hover opens the popover')
+  assert.notEqual(document.activeElement, first, 'hover alone moves no focus')
+  // Escape targets the focused element, not the mouse position: with focus
+  // elsewhere in the pane, the button handler cannot fire.
+  const figure = container.querySelector('.wm-kpi-figure')
+  // A window bubble listener stands in for the ledger page closer.
+  let windowCloses = 0
+  const spy = () => { windowCloses += 1 }
+  window.addEventListener('keydown', spy)
+  try {
+    await React.act(async () => {
+      figure.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    await flush(2)
+    assert.equal(container.querySelector('.wm-info-pop'), null, 'the pane dismisses the tip')
+    assert.equal(T.$infoOpen.get(), null)
+    assert.equal(windowCloses, 0, 'the ledger closer never fires')
+    // Plain Escape with no tip open still propagates as before.
+    await React.act(async () => {
+      figure.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    await flush(2)
+    assert.equal(windowCloses, 1, 'navigation is preserved when no tip is open')
+  } finally {
+    window.removeEventListener('keydown', spy)
+  }
 })
 
 test('the cache popover carries the coverage breakdown', async () => {
