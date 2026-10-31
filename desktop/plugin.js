@@ -2321,6 +2321,128 @@ function billingSummaryQuery(identity = membershipIdentityNow()) {
   }
 }
 
+function economicsQuery(identity = membershipIdentityNow()) {
+  return {
+    queryKey: [ID, 'economics-summary', identity],
+    queryFn: async () => {
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      if (typeof rest !== 'function') throw new Error('This desktop build has no plugin backend bridge.')
+      const result = await rest('/economics/summary?days=30&trend_months=6')
+      if (!result || result.ok === false) throw new Error(result?.error || 'Subscription economics is unavailable.')
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      return { ...result, identity }
+    },
+    retry: false, staleTime: 30_000
+  }
+}
+
+function fxQuery(identity = membershipIdentityNow()) {
+  return {
+    queryKey: [ID, 'fx-rates', identity],
+    queryFn: async () => {
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      if (typeof rest !== 'function') throw new Error('This desktop build has no plugin backend bridge.')
+      const result = await rest('/membership/fx')
+      if (!result || result.ok === false) throw new Error(result?.detail || result?.error || 'FX rates are unavailable.')
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      return { ...result, identity }
+    },
+    retry: false, staleTime: 30_000
+  }
+}
+
+async function fxWrite(rates, transport = rest) {
+  if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
+  const result = await transport('/membership/fx', { method: 'PUT', body: { rates } })
+  if (!result || result.ok === false) throw new Error(result?.detail || result?.error || 'The rates were not saved.')
+  return result
+}
+
+/**
+ * Membership data changed, so the economics comparison built on it is stale.
+ * Best-effort: freshness must never break the save flow that triggered it.
+ */
+async function invalidateEconomicsFor(identity) {
+  try {
+    await queryClient.invalidateQueries({ queryKey: [ID, 'economics-summary', identity] })
+  } catch {
+    /* the cached comparison simply stays until its stale time elapses */
+  }
+}
+
+/** Transport markers that must never reach the user verbatim. The numeric arm matches HTTP statuses (400-599) only, so validation details mentioning ordinary values such as 255 characters still pass through. */
+const FX_TRANSPORT = /\b[45]\d{2}\b|timeout|timed out|network|failed to fetch|fetch failed|connection|econn|socket|abort/i
+
+/** FX failures carry the server's validation sentence; anything else is generic. */
+function fxErrorMessage(error) {
+  const raw = typeof error?.message === 'string' ? error.message : ''
+  if (/conflict|409/i.test(raw)) return 'The rates changed since you loaded them. Reload, then save again.'
+  if (/401|unauthori/i.test(raw)) return 'Your Desktop session has expired. Sign in again, then retry.'
+  if (/404/i.test(raw)) return 'FX rates are not available in the running backend. Reload the plugin and check its health.'
+  if (/422|validation/i.test(raw)) {
+    // Only the server's plain validation sentence passes through: a raw
+    // transport message with no colon, or detail still carrying a status,
+    // fails closed to the generic rejection sentence.
+    const detail = raw.replace(/^.*?:\s*/, '')
+    if (detail && detail !== raw && !FX_TRANSPORT.test(detail)) return detail
+    return 'The rates were rejected. Check each rate and retry.'
+  }
+  if (!raw) return 'The rates could not be saved. Please retry; if it persists, check the backend log.'
+  // Transport failures (status codes, timeouts, network errors) never reach
+  // the user verbatim; only the server's plain validation detail passes.
+  if (FX_TRANSPORT.test(raw)) {
+    return 'The rates could not be saved. Please retry; if it persists, check the backend log.'
+  }
+  return raw
+}
+
+/** UTC calendar day for renewal dates, which are UTC midnights. */
+function fmtDay(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  const when = new Date(value)
+  if (Number.isNaN(when.getTime())) return '—'
+  return when.toISOString().slice(0, 10)
+}
+
+/** Short human status for an economics comparison. */
+function econStatusLabel(status) {
+  return status === 'ok' ? 'Complete' : status === 'partial' ? 'Partial' : 'Unavailable'
+}
+
+/** One line for a usage value and its pricing coverage. */
+function econCoverageLabel(usage) {
+  if (!usage || !num(usage.tokens)) return 'No usage observed'
+  if (usage.list_usd == null) return 'No published price'
+  if (usage.coverage == null) return 'Coverage unknown'
+  const pct = Math.round(usage.coverage * 100)
+  return pct >= 100 ? 'Fully priced' : `${pct}% priced`
+}
+
+/** Window-allocated expenditure lines, one per currency — never summed here. */
+function econWindowLines(fees) {
+  const rows = Array.isArray(fees) ? fees : []
+  if (!rows.length) return ['—']
+  return rows.map(({ amount, currency }) => fmtMoney(amount, currency) || '—')
+}
+
+/** Display span of the reporting window for "in the last N days" labels. */
+function windowSpanLabel(windowDays) {
+  const days = finiteValue(windowDays)
+  if (days == null || days <= 0) return 'in the reporting window'
+  const rounded = Math.max(1, Math.round(days))
+  return `in the last ${rounded} day${rounded === 1 ? '' : 's'}`
+}
+
+/** Monthly-equivalent fee lines, one per currency — never summed here. */
+function econFeeLines(fees) {
+  const rows = Array.isArray(fees) ? fees : []
+  if (!rows.length) return ['—']
+  return rows.map(({ amount, currency }) => {
+    const money = fmtMoney(amount, currency)
+    return money ? `${money}/mo` : '—'
+  })
+}
+
 const LEDGER_TABS = [['overview', 'Overview'], ['usage', 'Usage'], ['costs', 'Costs'],
   ['memberships', 'Memberships'], ['settings', 'Settings & About']]
 function LedgerTabs() {
@@ -2576,7 +2698,7 @@ function CostsPage() {
       (status.stale ? ' · stale' : '') + ' · sources and privacy'
     : 'Pricing sources and privacy'
   return jsxs('div', { className: 'wm-analytics wm-product', children: [
-    jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS }),
+    jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + ECONOMICS_CSS }),
     jsx(LedgerTabs, {}),
     jsxs('main', { className: 'wm-shell', children: [
       jsxs('header', { className: 'wm-product-heading', children: [
@@ -2591,6 +2713,7 @@ function CostsPage() {
       accounts.error
         ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read') })
         : null,
+      jsx(EconomicsPanel, { identity }),
       jsxs('section', { className: 'wm-product-section', children: [
         jsx('h2', { children: 'Membership costs' }),
         jsx('p', { children: 'Each account appears once. Totals keep currencies and billing periods separate.' }),
@@ -2648,6 +2771,395 @@ function CostsPage() {
   ] })
 }
 
+/** Paired fee-vs-usage bars for one comparable currency group. */
+function EconomicsBars({ group }) {
+  // Windowed fees pair with windowed usage; fall back to monthly figures
+  // only against an older backend that predates window allocation.
+  const base = finiteValue(group.window_fees) ?? finiteValue(group.monthly_fees) ?? 0
+  const fee = group.converted && group.fx ? base * group.fx.usd_per_unit : base
+  const usage = finiteValue(group.usage_usd) ?? 0
+  const max = Math.max(fee, usage, 0.000001)
+  const bar = (value, cls, label) => jsxs('div', { className: 'wm-econ-bar-row', children: [
+    jsx('span', { className: 'wm-econ-bar-label', children: label }),
+    jsx('div', { className: 'wm-econ-bar-track', role: 'img',
+      'aria-label': `${label}: ${analyticMoney(value)}`,
+      children: jsx('div', { className: `wm-econ-bar-fill ${cls}`,
+        style: { width: `${Math.max(2, Math.round((value / max) * 100))}%` } }) }),
+    jsx('span', { className: 'wm-econ-bar-value', children: analyticMoney(value) })
+  ] })
+  return jsxs('div', { className: 'wm-econ-bars', children: [
+    bar(fee, 'wm-econ-fee', `Fees in window (${group.currency}${group.converted ? ', in USD' : ''})`),
+    bar(usage, 'wm-econ-usage', 'API-equivalent usage'),
+    group.converted && group.fx
+      ? jsx('p', { className: 'wm-subtle', children:
+          `Converted at ${group.fx.usd_per_unit} USD per ${group.currency}, dated ${group.fx.as_of} (${group.fx.source}).` })
+      : null
+  ].filter(Boolean) })
+}
+
+/** One account row of the economics breakdown table. */
+function EconomicsAccountRow({ row }) {
+  const fee = row.fee || {}
+  const monthly = row.monthly_equivalent || {}
+  const windowFee = row.window_expenditure || {}
+  const usage = row.usage || {}
+  const renewal = row.renewal || {}
+  const feeText = fee.amount == null ? 'No fee set'
+    : `${fmtMoney(fee.amount, fee.currency)}/${fee.period === 'month' ? 'mo' : fee.period === 'year' ? 'yr' : fee.period}`
+  const basisText = fee.basis === 'declared' ? 'Your price' : fee.basis === 'custom' ? 'User-defined plan'
+    : fee.basis === 'catalogue' ? 'Catalogue price' : null
+  const renewalText = renewal.amount == null ? null
+    : renewal.date_known && renewal.date
+      ? `${fmtMoney(renewal.amount, renewal.currency)} due ${fmtDay(renewal.date)}`
+      : `${fmtMoney(renewal.amount, renewal.currency)} · renewal date unknown`
+  const usageText = usage.list_usd == null ? '—' : analyticMoney(usage.list_usd)
+  const usageDetail = usage.tokens ? `${fmtTokens(usage.tokens)} · ${usage.calls} calls` : null
+  const routes = (row.attribution?.routes || []).map(r => r.route).join(', ')
+  const difference = finiteValue(row.difference_usd)
+  return jsxs('tr', { children: [
+    jsxs('td', { children: [
+      jsx('div', { className: 'wm-econ-account', children: row.label || row.family }),
+      jsx('div', { className: 'wm-econ-dim', children: [row.plan_name || 'No plan', row.family].filter(Boolean).join(' · ') || null })
+    ] }),
+    jsxs('td', { children: [
+      jsx('div', { children: feeText }),
+      basisText ? jsx('div', { className: 'wm-econ-dim', children: basisText }) : null,
+      renewalText ? jsx('div', { className: 'wm-econ-dim', children: renewalText }) : null
+    ].filter(Boolean) }),
+    jsxs('td', { className: 'wm-econ-num', children: [
+      jsx('div', { children: monthly.amount == null ? '—'
+        : `${fmtMoney(monthly.amount, monthly.currency)}/mo` }),
+      windowFee.amount == null ? null
+        : jsx('div', { className: 'wm-econ-dim',
+            children: `${fmtMoney(windowFee.amount, windowFee.currency)} in window` })
+    ].filter(Boolean) }),
+    jsxs('td', { className: 'wm-econ-num', children: [
+      jsx('div', { children: usageText }),
+      usageDetail ? jsx('div', { className: 'wm-econ-dim', children: usageDetail }) : null,
+      routes ? jsx('div', { className: 'wm-econ-dim', children: routes }) : null
+    ].filter(Boolean) }),
+    jsx('td', { className: cn('wm-econ-num', difference != null && (difference < 0 ? 'wm-econ-negative' : 'wm-econ-positive')),
+      children: difference == null ? econStatusLabel(row.status) : analyticMoney(difference) }),
+    jsxs('td', { children: [
+      jsx('div', { children: econCoverageLabel(usage) }),
+      jsx('div', { className: 'wm-econ-dim', children: econStatusLabel(row.status) })
+    ] })
+  ] })
+}
+
+/** Monthly trend: paired bars where comparable, honest text rows elsewhere. */
+function EconomicsTrend({ trend }) {
+  const months = trend?.months || []
+  if (!months.length) {
+    return jsx('p', { className: 'wm-subtle', children:
+      'No monthly history yet. The trend appears once recording and fees cover a calendar month.' })
+  }
+  return jsx('div', { className: 'wm-econ-trend', children: months.map(entry => {
+    const difference = finiteValue(entry.difference_usd)
+    const feeUsd = finiteValue(entry.fees_usd)
+    const flags = [entry.in_progress ? 'in progress' : null,
+      entry.recording_partial ? 'partial recording' : null,
+      entry.partial ? 'partial pricing' : null].filter(Boolean).join(' · ')
+    const feesText = (entry.fees_by_currency || []).map(({ amount, currency }) =>
+      `${fmtMoney(amount, currency)}/mo`).join(' + ') || 'No fees'
+    // Bars need the backend's converted fee total; without it (or without a
+    // difference) the month renders as an honest text row instead of a
+    // client-side currency sum.
+    if (difference == null || feeUsd == null) {
+      return jsxs('div', { className: 'wm-econ-trend-row', children: [
+        jsx('span', { className: 'wm-econ-trend-month', children: entry.month }, 'month'),
+        jsxs('span', { className: 'wm-econ-dim', children: [
+          `${feesText} · ${analyticMoney(entry.usage_usd)} usage`,
+          flags ? ` · ${flags}` : '',
+          entry.difference_note ? ` · ${entry.difference_note}` : ''
+        ].join('') }, 'detail')
+      ] }, entry.month)
+    }
+    const usage = finiteValue(entry.usage_usd) ?? 0
+    const max = Math.max(feeUsd, usage, 0.000001)
+    return jsxs('div', { className: 'wm-econ-trend-month-block', children: [
+      jsxs('div', { className: 'wm-econ-trend-row', children: [
+        jsx('span', { className: 'wm-econ-trend-month', children: entry.month }, 'month'),
+        jsxs('div', { className: 'wm-econ-trend-bars', role: 'img',
+          'aria-label': `${entry.month}: fees ${analyticMoney(feeUsd)}, usage ${analyticMoney(usage)}, difference ${analyticMoney(difference)}`,
+          children: [
+            jsx('div', { className: 'wm-econ-bar-fill wm-econ-fee', title: `Fees ${analyticMoney(feeUsd)}`,
+              style: { width: `${Math.max(2, Math.round((feeUsd / max) * 100))}%` } }, 'fee'),
+            jsx('div', { className: 'wm-econ-bar-fill wm-econ-usage', title: `Usage ${analyticMoney(usage)}`,
+              style: { width: `${Math.max(2, Math.round((usage / max) * 100))}%` } }, 'usage')
+          ] }, 'bars'),
+        jsxs('span', { className: cn('wm-econ-num', difference < 0 ? 'wm-econ-negative' : 'wm-econ-positive'),
+          children: [analyticMoney(difference), flags ? jsx('span', { className: 'wm-econ-dim', children: ` · ${flags}` }) : null].filter(Boolean) }, 'diff')
+      ] }, 'row'),
+      entry.partial && entry.difference_note
+        ? jsx('div', { className: 'wm-econ-dim wm-econ-trend-note', children: entry.difference_note }, 'note')
+        : null
+    ].filter(Boolean) }, entry.month)
+  }) })
+}
+
+const $fxDraft = atom(null)
+const $fxSaving = atom(null)
+const $fxNotice = atom(null)
+
+/**
+ * User-managed FX rates: list, add and remove. Saved as one document.
+ * Staged edits live in $fxDraft, gated by connection identity like the
+ * billing draft, so a gateway switch mid-edit cannot save stale rates.
+ * The editor stays disabled until the saved document has loaded for this
+ * connection: replacing rates that were never read would silently drop them.
+ */
+function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave }) {
+  const rawDraft = useValue($fxDraft)
+  const saving = useValue($fxSaving)?.origin === identity
+  const notice = useValue($fxNotice)
+  const saved = rates || []
+  const draft = rawDraft?.origin === identity ? rawDraft.rates : saved
+  const stage = next => $fxDraft.set({ origin: identity, rates: next })
+  const add = event => {
+    event.preventDefault()
+    const read = name => (new FormData(event.target).get(name) || '').toString().trim()
+    const currency = read('currency').toUpperCase()
+    const usd = Number(read('usd_per_unit'))
+    const asOf = read('as_of')
+    const source = read('source')
+    if (!currency || !Number.isFinite(usd) || usd <= 0 || !asOf || !source) return
+    if (draft.some(r => r.currency === currency)) {
+      $fxNotice.set({ tone: 'warn', origin: identity, text: `A rate for ${currency} is already staged.` })
+      return
+    }
+    $fxNotice.set(null)
+    stage([...draft, { currency, usd_per_unit: usd, as_of: asOf, source }])
+    event.target.reset()
+  }
+  const remove = currency => stage(draft.filter(r => r.currency !== currency))
+  const dirty = JSON.stringify(draft) !== JSON.stringify(saved)
+  return jsxs('div', { className: 'wm-econ-fx', children: [
+    !fxReady
+      ? jsxs('div', { className: 'wm-econ-fx-blocked', children: [
+          jsx('p', { className: 'wm-warn-note', role: 'alert',
+            children: fxError || 'Reading saved FX rates for this connection…' }),
+          fxError && typeof onRetry === 'function'
+            ? jsx(ProductButton, { type: 'button', className: 'wm-button', size: 'sm',
+                onClick: onRetry, children: 'Retry' })
+            : null
+        ].filter(Boolean) })
+      : null,
+    fxReady && draft.length
+      ? jsx('ul', { className: 'wm-econ-fx-list', children: draft.map(rate =>
+          jsxs('li', { children: [
+            jsx('span', { children: `${rate.currency} at ${rate.usd_per_unit} USD per unit, dated ${rate.as_of} (${rate.source})` }),
+            jsx(ProductButton, { type: 'button', className: 'wm-button', size: 'sm',
+              disabled: !fxReady, onClick: () => remove(rate.currency), children: 'Remove' })
+          ] }, rate.currency)) })
+      : null,
+    fxReady && !draft.length
+      ? jsx('p', { className: 'wm-subtle', children: 'No FX rates saved. Fees stay in their own currencies until you add one.' })
+      : null,
+    jsxs('form', { className: 'wm-econ-fx-form', onSubmit: fxReady ? add : event => event.preventDefault(), children: [
+      jsx('input', { name: 'currency', placeholder: 'GBP', 'aria-label': 'Currency', maxLength: 3, disabled: !fxReady }),
+      jsx('input', { name: 'usd_per_unit', placeholder: 'USD per unit, e.g. 1.27', 'aria-label': 'USD per unit',
+        type: 'number', step: 'any', min: '0', disabled: !fxReady }),
+      jsx('input', { name: 'as_of', 'aria-label': 'Rate date', type: 'date', disabled: !fxReady }),
+      jsx('input', { name: 'source', placeholder: 'Source, e.g. Bank of England spot', 'aria-label': 'Rate source', disabled: !fxReady }),
+      jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !fxReady, children: 'Add rate' })
+    ] }),
+    notice?.origin === identity ? jsx('p', { className: notice.tone === 'good' ? 'wm-subtle' : 'wm-warn-note',
+      role: notice.tone === 'good' ? 'status' : 'alert', children: notice.text }) : null,
+    jsx('div', { className: 'wm-setting-action', children:
+      jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !fxReady || !dirty || saving,
+        onClick: () => onSave(draft), children: saving ? 'Saving…' : 'Save rates' }) })
+  ].filter(Boolean) })
+}
+
+/**
+ * Subscription economics, rendered from one report payload. Pure presentation:
+ * the container owns the queries, so the harness can drive this with fixtures.
+ */
+function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx, onSaveFx }) {
+  const headline = data?.headline || {}
+  const groups = data?.groups || []
+  const accounts = data?.accounts || []
+  const others = data?.non_subscription_accounts || []
+  const difference = finiteValue(headline.difference_usd)
+  const feeLines = econFeeLines(headline.fees_monthly_by_currency)
+  const span = windowSpanLabel(data?.window_days)
+  const windowLines = econWindowLines(headline.fees_window_by_currency)
+  return jsxs('section', { className: 'wm-product-section', 'aria-label': 'Subscription economics', children: [
+    jsx('h2', { children: 'Subscription economics' }),
+    jsx('p', { children: 'Subscription spending against the API-equivalent value of the usage recorded against it, over the same window. The difference is an estimated value comparison, not cash saved.' }),
+    jsxs('div', { className: 'wm-product-summary', children: [
+      jsxs('div', { className: 'wm-product-stat', children: [
+        jsx('label', { children: 'Monthly subscriptions' }),
+        jsx('strong', { children: feeLines.join(' + ') }),
+        jsx('small', { children: `${windowLines.join(' + ')} ${span} · ${accounts.length} subscription(s) · ${econStatusLabel(headline.status)}` })
+      ] }),
+      jsxs('div', { className: 'wm-product-stat', children: [
+        jsx('label', { children: 'API-equivalent usage · 30 days' }),
+        jsx('strong', { children: headline.usage_usd == null ? '—' : analyticMoney(headline.usage_usd) }),
+        jsx('small', { children: headline.usage_usd == null
+          ? 'No priced usage is attributed to subscriptions.'
+          : 'Theoretical public price of attributed usage.' })
+      ] }),
+      jsxs('div', { className: cn('wm-product-stat', difference != null && (difference < 0 ? 'wm-econ-negative' : 'wm-econ-positive')), children: [
+        jsx('label', { children: 'Estimated value comparison' }),
+        jsx('strong', { children: difference == null ? econStatusLabel(headline.status) : analyticMoney(difference) }),
+        jsx('small', { children: 'API value minus fees in the same window. Not cash saved.' })
+      ] })
+    ] }),
+    (headline.notes || []).length
+      ? jsx('ul', { className: 'wm-econ-notes', children: headline.notes.map((note, i) =>
+          jsx('li', { children: note }, i)) })
+      : null,
+    groups.length ? jsxs('div', { className: 'wm-econ-groups', children: [
+      jsx('h3', { children: 'Fees vs usage by currency' }),
+      ...groups.map(group => group.difference_usd == null && !group.usage_usd && group.status === 'unavailable'
+        ? jsxs('div', { className: 'wm-econ-group', children: [
+            jsx('strong', { children: group.currency }),
+            jsx('span', { className: 'wm-econ-dim', children: ` ${fmtMoney(group.monthly_fees, group.currency)}/mo · ${(group.notes || []).join(' ') || 'No comparison available.'}` })
+          ] }, group.currency)
+        : jsxs('div', { className: 'wm-econ-group', children: [
+            jsxs('div', { className: 'wm-econ-group-head', children: [
+              jsx('strong', { children: group.currency }),
+              jsx('span', { className: 'wm-econ-dim', children:
+                `${fmtMoney(group.monthly_fees, group.currency)}/mo fees · ${group.window_fees == null ? '—' : fmtMoney(group.window_fees, group.currency)} in window · ${analyticMoney(group.usage_usd)} usage · ${econStatusLabel(group.status)}` })
+            ] }),
+            group.difference_usd == null
+              ? jsx('p', { className: 'wm-subtle', children: (group.notes || []).join(' ') || 'No comparison available.' })
+              : jsx(EconomicsBars, { group })
+          ] }, group.currency))
+    ] }) : null,
+    accounts.length ? jsxs('div', { className: 'wm-econ-accounts', children: [
+      jsx('h3', { children: 'Provider and account breakdown' }),
+      jsx('div', { className: 'wm-econ-scroll', children:
+        jsxs('table', { className: 'wm-econ-table', children: [
+          jsx('thead', { children: jsx('tr', { children:
+            ['Account', 'Membership', 'Monthly equiv.', 'API-equivalent usage', 'Est. value difference', 'Pricing coverage']
+              .map(name => jsx('th', { children: name }, name)) }) }),
+          jsx('tbody', { children: accounts.map(row =>
+            jsx(EconomicsAccountRow, { row }, row.account_id)) })
+        ] }) })
+    ] }) : null,
+    (data?.trend?.months || []).length ? jsxs('div', { className: 'wm-econ-accounts', children: [
+      jsx('h3', { children: 'Monthly trend' }),
+      jsx(EconomicsTrend, { trend: data.trend })
+    ] }) : null,
+    others.length ? jsxs('div', { className: 'wm-econ-accounts', children: [
+      jsx('h3', { children: 'Not in the comparison' }),
+      jsx('ul', { className: 'wm-econ-notes', children: others.map(row =>
+        jsx('li', { children:
+          `${row.label || row.family}: ${row.usage?.list_usd == null ? 'no priced usage' : `${analyticMoney(row.usage.list_usd)} API-equivalent usage`} · ${row.explanation}` },
+        row.account_id)) })
+    ] }) : null,
+    (data?.unattributed?.usage?.tokens || data?.ambiguous?.usage?.tokens) ? jsxs('div', { className: 'wm-econ-accounts', children: [
+      jsx('h3', { children: 'Usage outside any subscription' }),
+      jsx('ul', { className: 'wm-econ-notes', children: [
+        data?.unattributed?.usage?.tokens ? jsx('li', { children:
+          `Unattributed: ${analyticMoney(data.unattributed.usage.list_usd)} on ${(data.unattributed.routes || []).join(', ') || 'unknown routes'}. ${data.unattributed.note}` }, 'unattributed') : null,
+        data?.ambiguous?.usage?.tokens ? jsx('li', { children:
+          `Ambiguous: ${analyticMoney(data.ambiguous.usage.list_usd)} claimed by more than one account; counted once, attributed to nobody.` }, 'ambiguous') : null
+      ].filter(Boolean) })
+    ] }) : null,
+    jsxs('div', { className: 'wm-econ-accounts', children: [
+      jsx('h3', { children: 'Currency conversion' }),
+      jsx('p', { className: 'wm-subtle', children: 'Converted totals appear only with a dated rate you supply. No rates are fetched automatically.' }),
+      jsx(EconomicsFx, { fxError, fxReady, identity, rates: fxRates || [], onRetry: onRetryFx, onSave: onSaveFx })
+    ] })
+  ].filter(Boolean) })
+}
+
+/** Subscription economics wired to the backend. */
+function EconomicsPanel({ identity }) {
+  const economics = useQuery(economicsQuery(identity))
+  const fx = useQuery(fxQuery(identity))
+  const current = economics.data?.identity === identity && membershipIdentityCurrent(identity)
+  const fxCurrent = fx.data?.identity === identity && membershipIdentityCurrent(identity)
+  const saveFx = async rates => {
+    const captured = identity
+    if (!membershipIdentityCurrent(captured)) return
+    $fxSaving.set({ origin: captured })
+    $fxNotice.set(null)
+    try {
+      await fxWrite(rates)
+      if (!membershipIdentityCurrent(captured) || $fxDraft.get()?.origin !== captured) return
+      $fxDraft.set(null)
+      $fxNotice.set({ tone: 'good', origin: captured, text: 'Rates saved.' })
+      await Promise.all([economics.refetch?.(), fx.refetch?.()])
+    } catch (error) {
+      if (membershipIdentityCurrent(captured)) {
+        $fxNotice.set({ tone: 'warn', origin: captured, text: fxErrorMessage(error) })
+      }
+    } finally {
+      // Release this save's flag even after a connection switch, so the new
+      // connection's button never sticks on "Saving…".
+      if ($fxSaving.get()?.origin === captured) $fxSaving.set(null)
+    }
+  }
+  if (economics.error) {
+    return jsx('section', { className: 'wm-product-section', children: keyedElementChildren([
+      jsx('h2', { children: 'Subscription economics' }),
+      jsx('div', { className: 'wm-alert', role: 'alert',
+        children: String(economics.error.message || economics.error) })
+    ], 'econ-error') })
+  }
+  if (!current) {
+    return jsx('section', { className: 'wm-product-section', children: keyedElementChildren([
+      jsx('h2', { children: 'Subscription economics' }),
+      jsx('p', { className: 'wm-subtle', children: 'Reading subscription economics for this connection…' })
+    ], 'econ-loading') })
+  }
+  const fxReady = fxCurrent && !fx.error
+  const fxError = fx.error && membershipIdentityCurrent(identity)
+    ? 'Saved FX rates could not be read for this connection.'
+    : ''
+  return jsx(EconomicsSection, { data: economics.data, identity,
+    fxRates: fxReady ? fx.data?.rates || [] : [], fxReady, fxError,
+    onRetryFx: () => fx.refetch?.(), onSaveFx: saveFx })
+}
+
+const ECONOMICS_CSS = [
+  '.wm-product .wm-econ-notes{margin:6px 0 4px;padding-left:18px;display:grid;gap:4px;font-size:12px;line-height:1.5;color:var(--ui-text-secondary)}',
+  '.wm-product .wm-econ-groups,.wm-product .wm-econ-accounts{display:grid;gap:10px;margin-top:16px}',
+  '.wm-product .wm-econ-groups h3,.wm-product .wm-econ-accounts h3{margin:0;font-size:13px;font-weight:600}',
+  '.wm-product .wm-econ-group{border-top:1px solid var(--ui-stroke-secondary);padding-top:10px;display:grid;gap:8px}',
+  '.wm-product .wm-econ-group-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}',
+  '.wm-product .wm-econ-group-head strong{font-size:13px}',
+  '.wm-product .wm-econ-dim{color:var(--ui-text-tertiary);font-size:11px}',
+  '.wm-product .wm-econ-bars{display:grid;gap:6px}',
+  '.wm-product .wm-econ-bar-row{display:grid;grid-template-columns:minmax(130px,180px) minmax(0,1fr) auto;gap:10px;align-items:center}',
+  '.wm-product .wm-econ-bar-label{font-size:12px;color:var(--ui-text-tertiary)}',
+  '.wm-product .wm-econ-bar-track{height:10px;border-radius:5px;background:var(--ui-fill-tertiary);overflow:hidden}',
+  '.wm-product .wm-econ-bar-fill{height:100%;border-radius:5px}',
+  '.wm-product .wm-econ-fee{background:var(--ui-accent)}',
+  '.wm-product .wm-econ-usage{background:var(--ui-success)}',
+  '.wm-product .wm-econ-bar-value{font-variant-numeric:tabular-nums;font-size:12px;min-width:64px;text-align:right}',
+  '.wm-product .wm-econ-scroll{overflow-x:auto}',
+  '.wm-product .wm-econ-table{width:100%;border-collapse:collapse;font-size:12px;min-width:640px}',
+  '.wm-product .wm-econ-table th{text-align:left;color:var(--ui-text-tertiary);font-weight:500;padding:6px 10px 6px 0;border-bottom:1px solid var(--ui-stroke-secondary);white-space:nowrap}',
+  '.wm-product .wm-econ-table td{padding:9px 10px 9px 0;border-bottom:1px solid var(--ui-stroke-secondary);vertical-align:top}',
+  '.wm-product .wm-econ-table tr:last-child td{border-bottom:0}',
+  '.wm-product .wm-econ-table .wm-econ-num{font-variant-numeric:tabular-nums;white-space:nowrap}',
+  '.wm-product .wm-econ-table th:nth-child(n+3):nth-child(-n+5),.wm-product .wm-econ-table td:nth-child(n+3):nth-child(-n+5){text-align:right}',
+  '.wm-product .wm-econ-account{font-weight:550;font-size:13px}',
+  '.wm-product .wm-econ-negative strong,.wm-product td.wm-econ-negative,.wm-product span.wm-econ-negative{color:var(--ui-text-primary)}',
+  '.wm-product .wm-econ-positive strong,.wm-product td.wm-econ-positive,.wm-product span.wm-econ-positive{color:var(--ui-success)}',
+  '.wm-product .wm-econ-trend{display:grid;gap:8px}',
+  '.wm-product .wm-econ-trend-row{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:10px;align-items:center}',
+  '.wm-product .wm-econ-trend-month-block{display:grid;gap:2px}',
+  '.wm-product .wm-econ-trend-note{padding-left:74px}',
+  '.wm-product .wm-econ-trend-month{font-variant-numeric:tabular-nums;font-size:12px;color:var(--ui-text-tertiary)}',
+  '.wm-product .wm-econ-trend-bars{display:grid;gap:3px}',
+  '.wm-product .wm-econ-trend-bars .wm-econ-bar-fill{height:8px}',
+  '.wm-product .wm-econ-fx{display:grid;gap:10px}',
+  '.wm-product .wm-econ-fx-blocked{display:flex;flex-direction:column;gap:8px;align-items:flex-start}',
+  '.wm-product .wm-econ-fx-blocked .wm-warn-note{margin:0}',
+  '.wm-product .wm-econ-fx-list{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:12px}',
+  '.wm-product .wm-econ-fx-list li{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--ui-stroke-secondary);padding-top:6px}',
+  '.wm-product .wm-econ-fx-form{display:grid;grid-template-columns:80px minmax(0,1fr) minmax(0,1fr) minmax(0,2fr) auto;gap:8px}',
+  '.wm-product .wm-econ-fx-form input{min-height:34px;border:1px solid var(--ui-stroke-secondary);border-radius:6px;padding:7px 9px;background:var(--ui-fill-primary);color:var(--ui-text-primary);font:inherit;font-size:12px;min-width:0}',
+  '@container(max-width:620px){.wm-product .wm-econ-bar-row{grid-template-columns:minmax(0,1fr) auto}.wm-product .wm-econ-bar-label{grid-column:1/-1}.wm-product .wm-econ-fx-form{grid-template-columns:1fr 1fr}}'
+].join('');
+
 
 const $settingsConfirmation = atom(null)
 const $modelRefreshState = atom(null)
@@ -2689,6 +3201,7 @@ function OverviewPage() {
   const identity = useValue($membershipIdentity)
   const analytics = useQuery(overviewAnalyticsQuery(identity))
   const accounts = useQuery(membershipQuery(false, identity))
+  const economics = useQuery(economicsQuery(identity))
   const ledger = useValue($ledger)
   const accountsReady = accounts.data?.identity === identity && membershipIdentityCurrent(identity)
   const currentAccounts = accountsReady
@@ -2696,8 +3209,11 @@ function OverviewPage() {
   const fees = membershipSummary(currentAccounts)
   const local = settledDesktopMonth(ledger)
   const result = analytics.data?.totals || {}
+  const econReady = economics.data?.identity === identity && membershipIdentityCurrent(identity)
+  const econHeadline = econReady ? economics.data?.headline || {} : {}
+  const econDifference = finiteValue(econHeadline.difference_usd)
   return jsxs('div', { className: 'wm-analytics wm-product', children: [
-    jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS }),
+    jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + ECONOMICS_CSS }),
     jsx(LedgerTabs, {}),
     jsxs('main', { className: 'wm-shell', children: [
       jsxs('header', { className: 'wm-product-heading', children: [
@@ -2734,6 +3250,19 @@ function OverviewPage() {
             ? fees.withPlan + ' saved plan(s) across ' + fees.total + ' account(s).'
             : accounts.error ? 'Memberships could not be read for this connection.'
               : 'Reading memberships for this connection…' })
+        ] }),
+        jsx('div', { className: cn('wm-product-stat', econDifference != null && econDifference >= 0 && 'wm-econ-positive'), children: [
+          jsx('label', { children: 'Subscription value · 30 days' }),
+          jsx('strong', { children: !econReady ? '—'
+            : econDifference == null ? econStatusLabel(econHeadline.status) : analyticMoney(econDifference) }),
+          jsx('small', { children: !econReady
+            ? economics.error ? 'Subscription economics could not be read for this connection.'
+              : 'Reading subscription economics…'
+            : econDifference == null
+              ? (econHeadline.notes || [])[0] || 'No comparison is available. See Costs.'
+              : `${econFeeLines(econHeadline.fees_monthly_by_currency).join(' + ')} · ` +
+                `${econWindowLines(econHeadline.fees_window_by_currency).join(' + ')} ${windowSpanLabel(economics.data?.window_days)} · ` +
+                `${analyticMoney(econHeadline.usage_usd)} usage. See Costs.` })
         ] })
       ] }),
       (() => {
@@ -2849,6 +3378,7 @@ function SettingsPage() {
       $membershipSnapshot.set({ identity: captured, accounts: [], store: { loaded: true, error: '' }, notes: [] })
       await queryClient.invalidateQueries({ queryKey: [ID, 'membership-accounts', captured] })
       await queryClient.invalidateQueries({ queryKey: [ID, 'billing-profiles', captured] })
+      await invalidateEconomicsFor(captured)
       $modelRefreshState.set({ origin: captured, tone: 'good',
         text: 'Memberships and advanced billing rules were cleared for this profile. Captured usage records were retained.' })
     } catch (error) {
@@ -4384,6 +4914,7 @@ function MembershipsPage() {
         setMembershipNotice(captured, 'warn',
           `Saved, but the list could not be re-read. ${membershipErrorText(readError, 'read')}`, operation)
       }
+      await invalidateEconomicsFor(captured)
       return { ok: membershipOperationCurrent(captured, operation), identity: captured }
     } catch (error) {
       setMembershipNotice(captured, 'warn', membershipErrorText(error, 'write'), operation, key)
@@ -4500,6 +5031,7 @@ function MembershipsPage() {
         setMembershipNotice(captured, 'warn',
           `${summary} The refreshed list could not be read. ${membershipErrorText(readError, 'read')}`, operation)
       }
+      await invalidateEconomicsFor(captured)
     } catch (error) {
       setMembershipNotice(captured, 'warn', membershipErrorText(error, 'discover'), operation)
     } finally {
@@ -5122,6 +5654,7 @@ export const __test = {
   // Memberships: page, scope, error classification and diagnostics are exported
   // so the real-React harness can drive them without a live Desktop.
   membershipScopeOf, membershipScopeNow, membershipScopeCurrent,
+  membershipIdentityNow, membershipIdentityCurrent,
   membershipErrorKind, membershipErrorText, membershipErrorMessage, membershipAccounts,
   membershipWrite, membershipDiagnostics,
   $membershipScope, $membershipSnapshot, $membershipNotice,
@@ -5132,8 +5665,12 @@ export const __test = {
   OVERRIDE_REASON_FALLBACK, REASON_LABELS, restoreCatalogueFee, MembershipsPage, MembershipCard, MEMBERSHIP_CSS,
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
   billingNumberStep,
+  economicsQuery, fxQuery, fxWrite, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
+  econWindowLines, windowSpanLabel, invalidateEconomicsFor,
+  EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
+  $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
-  CostsPage, OverviewPage, SettingsPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark,
+  CostsPage, OverviewPage, SettingsPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark, PRODUCT_CSS,
   settledDesktopMonth, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
   setRest: value => { rest = value },

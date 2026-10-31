@@ -81,6 +81,7 @@ Spend Sense is local-first: each Hermes records only the usage it sees, and memb
 | **Recorded ledger** | Eligible backend calls are timestamped and stored locally as they happen, so usage history does not depend on reopening an old session. |
 | **Usage analytics** | Distribution by model and provider, usage over time, parent versus delegated (subagent) work, cache performance, token composition, and a sortable Model Explorer covering every model × route pair — including how much usage could not be priced. |
 | **Costs in one place** | Declared membership fees sit alongside current cost estimates, with optional advanced rules for prepaid wallets, per-route allowances, and custom token rates. |
+| **Subscription economics** | Monthly-equivalent fees compared with the API-equivalent value of usage attributed to each subscription, per currency, with renewal dates, a monthly trend and partial/unavailable states instead of misleading totals. Non-USD fees convert only with a dated rate you supply. |
 | **Memberships** | Discover the provider accounts Hermes is configured for, confirm which plan each account is on, add fee overrides, and mark allowances as exhausted. On request, Spend Sense can read account usage through Hermes itself to prefill plan hints and quota windows. |
 | **Offline-capable pricing** | No direct pricing calls of its own: Hermes' local models.dev pricing cache when available, with a bundled offline rate snapshot as fallback. |
 
