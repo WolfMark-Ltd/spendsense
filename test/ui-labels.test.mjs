@@ -181,3 +181,104 @@ test('savings are labelled as theoretical, not cash', () => {
   // The wording must not imply a provider credit or recorded billing.
   assert.doesNotMatch(en.savedTotal, /refund|credit|billed|cash/i)
 })
+
+test('composition shares split the prompt into fresh, read and write', () => {
+  const shares = T.compositionShares({ input: 100, cacheRead: 300, cacheWrite: 100, output: 50 })
+  assert.equal(shares.prompt, 500)
+  assert.equal(shares.output, 50)
+  assert.ok(Math.abs(shares.freshFrac - 0.2) < 1e-9)
+  assert.ok(Math.abs(shares.readFrac - 0.6) < 1e-9)
+  assert.ok(Math.abs(shares.writeFrac - 0.2) < 1e-9)
+  assert.ok(Math.abs(shares.freshFrac + shares.readFrac + shares.writeFrac - 1) < 1e-9)
+})
+
+test('composition shares stay zero without prompt tokens', () => {
+  for (const bucket of [null, undefined, {}, { input: 0, output: 9 }]) {
+    const shares = T.compositionShares(bucket)
+    assert.equal(shares.prompt, 0)
+    assert.equal(shares.freshFrac, 0)
+    assert.equal(shares.readFrac, 0)
+    assert.equal(shares.writeFrac, 0)
+  }
+})
+
+const stableLive = over => ({
+  bucket: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, calls: 1 },
+  cacheHitPct: 0, cost: 0.001, costSource: 'bundled', model: 'm', provider: 'p',
+  rates: { input: 1, output: 2, cache: 0.5 }, usage: { input: 100 }, ...over
+})
+
+test('a live reading wins and is cached for its session', () => {
+  const live = stableLive()
+  const merged = T.mergeStableLive(null, live, 's1')
+  assert.equal(merged.stale, false)
+  assert.equal(merged.view, live)
+  assert.equal(merged.cache.key, 's1')
+  assert.equal(merged.cache.snapshot.cost, 0.001)
+})
+
+test('a transient gap shows the same-session reading as stale', () => {
+  const first = T.mergeStableLive(null, stableLive(), 's1')
+  const gap = T.mergeStableLive(first.cache, { ...stableLive(), bucket: null, usage: null }, 's1')
+  assert.equal(gap.stale, true)
+  assert.equal(gap.view.cost, 0.001)
+  assert.equal(gap.view.model, 'm')
+  assert.equal(gap.cache, first.cache)
+})
+
+test('a returning stream replaces the stale reading', () => {
+  const first = T.mergeStableLive(null, stableLive(), 's1')
+  const gap = T.mergeStableLive(first.cache, { ...stableLive(), bucket: null }, 's1')
+  const back = T.mergeStableLive(gap.cache, stableLive({ cost: 0.002 }), 's1')
+  assert.equal(back.stale, false)
+  assert.equal(back.view.cost, 0.002)
+  assert.equal(back.cache.snapshot.cost, 0.002)
+})
+
+test('a session switch never shows the previous reading', () => {
+  const first = T.mergeStableLive(null, stableLive(), 's1')
+  const switched = T.mergeStableLive(first.cache, { ...stableLive(), bucket: null, usage: null }, 's2')
+  assert.equal(switched.stale, false)
+  assert.equal(switched.view.bucket, null)
+  assert.equal(switched.cache, null)
+})
+
+test('an empty session with no history stays empty', () => {
+  const merged = T.mergeStableLive(null, { ...stableLive(), bucket: null, usage: null }, 's9')
+  assert.equal(merged.stale, false)
+  assert.equal(merged.view.bucket, null)
+  assert.equal(merged.cache, null)
+})
+
+test('meter presence distinguishes live, recorded, updating and empty', () => {
+  assert.equal(T.meterPresence(stableLive(), true), 'updating')
+  assert.equal(T.meterPresence(stableLive(), false), 'live')
+  assert.equal(T.meterPresence({ ...stableLive(), usage: null }, false), 'recorded')
+  assert.equal(T.meterPresence({ ...stableLive(), usage: null, bucket: null }, false), 'empty')
+  assert.equal(T.meterPresence(null, false), 'empty')
+})
+
+test('every sidebar string exists in English and Chinese', () => {
+  const keys = ['meterLive', 'meterRecorded', 'meterUpdating', 'apiEquivalent', 'costSourceInfo',
+    'totalTokens', 'promptMix', 'cacheFresh', 'cacheMethodInfo', 'exactLabel', 'estimatedLabel',
+    'infoLabel']
+  for (const key of keys) {
+    assert.ok(en[key] && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] && zh[key] !== key, `zh has ${key}`)
+  }
+  assert.equal(typeof en.sinceDate, 'function')
+  assert.equal(typeof zh.sinceDate, 'function')
+  assert.equal(typeof en.partialShort, 'function')
+  assert.equal(typeof zh.partialShort, 'function')
+  assert.match(en.sinceDate('2026-10-31'), /2026-10-31/)
+  assert.doesNotMatch(en.costSourceInfo, /invoice(?! may differ)/)
+  assert.match(en.costSourceInfo, /may differ/)
+})
+
+test('the meter stylesheet keeps popovers, ring and reduced-motion support', () => {
+  assert.match(T.METER_CSS, /wm-info-pop/)
+  assert.match(T.METER_CSS, /wm-ring-value/)
+  assert.match(T.METER_CSS, /wm-mix-fill/)
+  assert.match(T.METER_CSS, /prefers-reduced-motion/)
+  assert.match(T.METER_CSS, /wm-stale/)
+})
