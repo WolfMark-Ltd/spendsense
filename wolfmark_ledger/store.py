@@ -11,17 +11,21 @@ outcome and timestamps. No prompts, responses, credentials or request bodies.
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import os
 import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 try:
     from .db import default_db_path
 except ImportError:  # isolated capability probe loads store as top-level
     from db import default_db_path  # type: ignore
+
+log = logging.getLogger(__name__)
 
 PLUGIN_NAME = "spend-sense"
 DB_FILENAME = "usage.db"
@@ -72,6 +76,27 @@ _WRITE_LOCK = threading.Lock()
 _WRITER: Optional[sqlite3.Connection] = None
 _WRITER_PATH: Optional[str] = None
 _INSERTS_SINCE_PRUNE = 0
+
+
+class WriteContended(Exception):
+    """Another thread holds the store lock; the write was dropped, not queued."""
+
+
+@contextlib.contextmanager
+def _exclusive() -> Iterator[None]:
+    """Non-blocking write lock for the hook path.
+
+    Hook callbacks run on API dispatch: waiting for another thread's write
+    would stall the request, so contention drops this call instead. The
+    collector already treats a failed write as fail-open.
+    """
+    if not _WRITE_LOCK.acquire(blocking=False):
+        log.debug("spend-sense: usage write dropped: store lock contended")
+        raise WriteContended("store lock contended")
+    try:
+        yield
+    finally:
+        _WRITE_LOCK.release()
 
 
 def event_db_path() -> Path:
@@ -203,9 +228,13 @@ def prune(conn: sqlite3.Connection, *, now: Optional[float] = None) -> int:
 
 def record(record: dict[str, Any], path: Optional[Path | str] = None,
            state_db_path: Optional[Path | str] = None) -> bool:
-    """Insert one call. Duplicate event ids are ignored; a later good row upgrades a gap."""
+    """Insert one call. Duplicate event ids are ignored; a later good row upgrades a gap.
+
+    Raises :class:`WriteContended` instead of waiting when another thread
+    holds the lock, so hook callbacks never stall API dispatch.
+    """
     global _INSERTS_SINCE_PRUNE
-    with _WRITE_LOCK:
+    with _exclusive():
         conn = connect_writer(path)
         if conn.execute("SELECT 1 FROM baseline WHERE id=1").fetchone() is None:
             capture_baseline(conn, state_db_path)

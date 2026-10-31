@@ -131,6 +131,19 @@ class TestBuildIdentity(unittest.TestCase):
         self.assertGreaterEqual(self.source.count("LEDGER_ROUTE"), 4)
         self.assertNotIn("'/spend-sense'", self.source)
 
+    def test_a_custom_test_id_gets_its_own_route(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "custom-test-build"
+            result = subprocess.run([sys.executable, str(BUILD), "--out", str(out),
+                                     "--test-id", "spend-sense-phase-b"],
+                                    capture_output=True, text=True, timeout=180)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            source = (out / "desktop" / "plugin.js").read_text(encoding="utf-8")
+            self.assertEqual(declared_route(source), "/spend-sense-phase-b")
+            manifest = json.loads((out / "dashboard" / "manifest.json").read_text())
+            self.assertEqual(manifest["tab"]["path"], "/spend-sense-phase-b")
+            self.assertEqual(manifest["name"], "spend-sense-phase-b")
+
     # -- the backend namespace follows the id ------------------------------
     def test_the_manifest_name_matches_the_plugin_id(self):
         manifest = json.loads((self.out / "dashboard" / "manifest.json").read_text())

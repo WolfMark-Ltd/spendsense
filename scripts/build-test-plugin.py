@@ -39,7 +39,6 @@ CONTRIBUTIONS = ("pane", "chip", "page", "nav")
 #: calls its own namespace against the test backend and gets 404. Name, route,
 #: page title, nav label and pane title must all differ.
 IDENTITY = (
-    ("const LEDGER_ROUTE = '/spend-sense'", "const LEDGER_ROUTE = '/spend-sense-test'"),
     ("name: 'Spend Sense',", "name: 'Spend Sense (test)',"),
     ("title: 'Spend Sense',", "title: 'Spend Sense (test)',"),
     ("label: 'Spend Sense',", "label: 'Spend Sense (test)',"),
@@ -108,10 +107,21 @@ def main() -> int:
         raise SystemExit("Desktop version declaration is missing or ambiguous")
     source = source.replace(version_declaration, f"const PLUGIN_VERSION = '{TEST_VERSION}'", 1)
 
-    # 2b. the identity the app routes and the user reads
+    # 2b. the route the app resolves follows --test-id, so two builds with
+    # different ids never claim the same path (first match wins in
+    # contributedRoutes(), stranding the other page).
+    test_route = f"/{args.test_id}"
+    route_before = "const LEDGER_ROUTE = '/spend-sense'"
+    if source.count(route_before) != 1:
+        raise SystemExit(f"expected 1 occurrence of {route_before!r} in plugin.js")
+    source = source.replace(route_before, f"const LEDGER_ROUTE = '{test_route}'", 1)
+    report.append({"file": "desktop/plugin.js",
+                   "change": f"{route_before} → const LEDGER_ROUTE = '{test_route}'", "count": 1})
+
+    # 2c. the identity the user reads
     for index, (before, after) in enumerate(IDENTITY):
         count = source.count(before)
-        expected = 2 if index == 2 else 1
+        expected = 2 if index == 1 else 1
         if count != expected:
             raise SystemExit(f"expected {expected} occurrence(s) of {before!r} in plugin.js, found {count}")
         source = source.replace(before, after, 1)
@@ -130,7 +140,7 @@ def main() -> int:
     tab = manifest.get("tab")
     if not isinstance(tab, dict) or tab.get("path") != "/spend-sense":
         raise SystemExit("dashboard manifest does not declare the expected production tab route")
-    tab["path"] = "/spend-sense-test"
+    tab["path"] = test_route
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     report.append({"file": "dashboard/manifest.json", "change": f"name → {args.test_id}, version → {TEST_VERSION}, tab path → {tab['path']}", "count": 1})
 
@@ -150,7 +160,7 @@ def main() -> int:
 
     # Namespace every copied backend store as well as the Desktop and routes.
     # Refuse to produce a misleading build if the source layout has changed.
-    for relative, expected in (("wolfmark_ledger/store.py", 2),
+    for relative, expected in (("wolfmark_ledger/store.py", 3),
                                ("wolfmark_ledger/membership_store.py", 2),
                                ("wolfmark_ledger/billing.py", 2)):
         target = out / relative

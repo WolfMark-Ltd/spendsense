@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -204,6 +205,27 @@ class DuplicateAndGapTests(EventLedgerCase):
         report = self.report(1)
         self.assertEqual(report["events"]["calls"], 1)
         self.assertEqual(report["totals"]["tokens"], 1600)
+
+    def test_record_drops_rather_than_blocks_on_lock_contention(self):
+        store._WRITE_LOCK.acquire()
+        try:
+            outcome: dict[str, bool] = {}
+
+            def attempt() -> None:
+                try:
+                    self.put(_record("drop-1", NOW))
+                except store.WriteContended:
+                    outcome["dropped"] = True
+
+            worker = threading.Thread(target=attempt)
+            worker.start()
+            worker.join(timeout=10)
+            alive = worker.is_alive()
+        finally:
+            store._WRITE_LOCK.release()
+        worker.join(timeout=10)
+        self.assertFalse(alive, "record() blocked on a contended lock")
+        self.assertTrue(outcome.get("dropped"), "contention must raise WriteContended")
 
     def test_streaming_call_is_recorded_with_usage(self):
         self._collector_call({
