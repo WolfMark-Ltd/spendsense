@@ -282,19 +282,23 @@
       "adapter": "manual",
       "alias_of": "nous-portal",
       "cited_by": [
-        "nous.portal"
+        "nous.portal",
+        "nous.free",
+        "nous.plus",
+        "nous.super",
+        "nous.ultra"
       ],
       "complete": false,
-      "evidence_kind": "cannot_price",
+      "evidence_kind": "price_page",
       "family": "nous",
-      "fetched_url": "https://portal.nousresearch.com",
+      "fetched_url": "https://portal.nousresearch.com/",
       "http_status": null,
       "id": "nous-portal-pricing",
-      "notes": "Account-scoped; no public plan table. Alias of nous-portal: same login-gated portal.",
+      "notes": "Public Portal lists current individual subscription prices; API-key usage is separately metered. Legacy plans may differ.",
       "parsed": false,
-      "retrieved_at": null,
-      "status": "not_fetched",
-      "url": "https://portal.nousresearch.com"
+      "retrieved_at": "2026-10-31T16:53:51Z",
+      "status": "fetched",
+      "url": "https://portal.nousresearch.com/"
     },
     {
       "adapter": "manual",

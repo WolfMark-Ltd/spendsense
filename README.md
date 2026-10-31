@@ -111,6 +111,10 @@ Spend Sense answers those from the usage Hermes already sees, on your own machin
 
 ### Membership discovery
 
+Memberships can mark an account **API Only**, or identify it as a subscription, prepaid credits, or not yet confirmed. API Only hides recurring membership fees from totals while retaining the saved plan and fee revisions for a later switch back. Prepaid top-ups are not recurring membership fees; configure any advanced cost rules separately in Costs. These choices do not change recorded usage or model pricing.
+
+Back up the profile's Spend Sense plugin data before upgrading. Older releases do not recognise the new account fields; restoring a pre-upgrade backup is the supported rollback, and edits made after that backup will not be present in it.
+
 Discovery reads Hermes' authentication storage in memory and counts the configured credential slots per provider. Credential values are never returned, logged or stored. A slot proves an account is configured — not which plan it is on — so Spend Sense suggests a plan where it can and asks you to confirm it. That human confirmation is deliberate: a wrong plan silently reprices every past month.
 
 A user-triggered native usage read runs `hermes usage` for a provider. Hermes may then contact that provider using credentials Hermes manages.

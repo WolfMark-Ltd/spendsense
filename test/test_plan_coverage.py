@@ -32,7 +32,7 @@ EXPECTED_FAMILIES = {
 #: when the vendor's own page was read and cited. The credits arrangements stay:
 #: they publish a balance model, not a monthly price.
 PLACEHOLDER_ONLY = {
-    "xai-oauth", "nous", "opencode-zen",
+    "xai-oauth", "opencode-zen",
     "minimax-coding-plan", "kimi-code-plan-global", "alibaba-coding-plan",
     "tencent-coding-plan", "volcengine-coding-plan", "cline-pass",
     "umans-ai-coding-plan",
@@ -57,8 +57,8 @@ class CoverageAuditTests(unittest.TestCase):
         placeholders = [p for p in self.plans if p["price"]["amount"] is None]
         # Pinned deliberately: a newly verified price must move these numbers and
         # scripts/plan-coverage.py's table together.
-        self.assertEqual(len(self.plans), 43)
-        self.assertEqual(len(verified), 28)
+        self.assertEqual(len(self.plans), 47)
+        self.assertEqual(len(verified), 32)
         self.assertEqual(len(provisional), 3)
         self.assertEqual(len(placeholders), 12)
 

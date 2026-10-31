@@ -403,9 +403,31 @@ def plan_index(catalogue: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]
     return {p["id"]: p for p in (catalogue or {}).get("plans", [])}
 
 
+# Catalogue matching does not merge accounts or imply a subscription. Hermes
+# can name a route differently from the vendor account whose plans it offers.
+PLAN_FAMILY_ALIASES = {"copilot": "github-copilot", "copilot-acp": "github-copilot",
+                       "xai": "xai-oauth", "grok": "xai-oauth"}
+
+
 def plans_for_family(catalogue: Mapping[str, Any] | None, family: str) -> list[dict[str, Any]]:
     slug = str(family or "").strip().lower()
-    return [p for p in (catalogue or {}).get("plans", []) if p["provider_family"] == slug]
+    family_key = PLAN_FAMILY_ALIASES.get(slug, slug)
+    return [p for p in (catalogue or {}).get("plans", []) if p["provider_family"] == family_key]
+
+
+def billing_arrangement(account: Mapping[str, Any]) -> str:
+    """Infer old records without mutating or discarding their saved details."""
+    if account.get("api_only") is True:
+        return "api_only"
+    selected = account.get("billing_arrangement")
+    if selected in {"subscription", "prepaid", "unconfirmed"}:
+        return selected
+    migrated = account.get("migrated_from")
+    if isinstance(migrated, Mapping) and migrated.get("kind") == "prepaid":
+        return "prepaid"
+    if account.get("plan_id") or account.get("fee_overrides"):
+        return "subscription"
+    return "unconfirmed"
 
 
 # ---------------------------------------------------------------------------
@@ -576,6 +598,16 @@ def resolve_fee(membership: Mapping[str, Any], catalogue: Mapping[str, Any] | No
         effective = {"amount": None, "currency": None, "period": None,
                      "billing_cycle": None, "source": "none"}
         notes.append("No plan selected for this account.")
+
+    arrangement = billing_arrangement(membership)
+    if arrangement in {"api_only", "prepaid"} or (
+        arrangement == "unconfirmed" and membership.get("billing_arrangement") == "unconfirmed"
+    ):
+        # Retain the stored plan and overrides for a later switch back, but do
+        # not report them as a currently recurring subscription charge.
+        basis = arrangement
+        effective = {"amount": None, "currency": None, "period": None,
+                     "billing_cycle": None, "source": "none"}
 
     comparable = True
     if (override_view and override_view.get("amount") is not None
@@ -1420,6 +1452,7 @@ MEMBERSHIP_FIELDS = {
     "id", "family", "label", "route_slugs", "credential_present", "identity",
     "identity_source", "discovered_at", "plan_id", "plan_hint", "fee_overrides",
     "billing_cycle", "manual_exhaustions", "advanced", "migrated_from", "custom_plan",
+    "api_only", "billing_arrangement",
     # Written by discovery, so they must survive validation on the next save.
     "catalogue_plans", "usage_source",
 }
@@ -1437,6 +1470,10 @@ def validation_errors(membership: Mapping[str, Any]) -> list[str]:
         errors.append("family is required")
     if not str(membership.get("id") or "").strip():
         errors.append("id is required")
+    if "api_only" in membership and not isinstance(membership["api_only"], bool):
+        errors.append("api_only must be a boolean")
+    if "billing_arrangement" in membership and membership["billing_arrangement"] not in ("subscription", "prepaid", "unconfirmed"):
+        errors.append("billing arrangement must be subscription, prepaid or unconfirmed")
     custom_plan = membership.get("custom_plan")
     if custom_plan is not None:
         if not isinstance(custom_plan, dict):

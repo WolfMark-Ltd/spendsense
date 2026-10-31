@@ -116,7 +116,7 @@ plugin.register({
 
 const account = (id, extra = {}) => ({
   id, family: 'openai-codex', label: id, route_slugs: ['openai-codex'],
-  plan_id: null, plan: null, fee: { basis: 'no_plan', effective: { amount: null } },
+  billing_arrangement: 'subscription', plan_id: null, plan: null, fee: { basis: 'no_plan', effective: { amount: null } },
   quota: { windows: [] }, manual_exhaustions: [], fee_overrides: [],
   plan_choices: [], excluded_plans: [], rev: 'r1', ...extra,
 })
@@ -448,6 +448,106 @@ test('a write that is followed by a failed read says exactly that', async () => 
   assert.match(container.textContent, /A account/, 'the last known rows stay on screen')
 })
 
+test('API Only persists, disables subscription controls and restores the saved subscription', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  let saved = account('api', { label: 'Account A', plan_id: 'example.pro',
+    plan_choices: [{ id: 'example.pro', name: 'Pro', price: { amount: 20, currency: 'USD', period: 'month' } }],
+    fee: { basis: 'declared', effective: { amount: 17, currency: 'GBP', period: 'year' } } })
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'PUT') {
+      saved = { ...call.body, effective_arrangement: call.body.api_only ? 'api_only' : 'subscription',
+        fee: call.body.api_only ? { basis: 'api_only', effective: { amount: null } }
+          : { basis: 'declared', effective: { amount: 17, currency: 'GBP', period: 'year' } } }
+      return { ok: true, account: saved }
+    }
+    return { ok: true, accounts: [saved] }
+  })
+  const { container } = await boot(); await flush(3)
+  const checkbox = container.querySelector('input[type="checkbox"]')
+  await React.act(async () => checkbox.click()); await flush(4)
+  assert.equal(saved.api_only, true)
+  assert.equal(saved.plan_id, 'example.pro')
+  assert.match(container.textContent, /API Only · no recurring membership fee/)
+  const planSelect = [...container.querySelectorAll('label')].find(l => l.textContent.includes('Plan for this provider account')).querySelector('select')
+  assert.equal(planSelect.disabled, true)
+  assert.equal([...container.querySelectorAll('button')].find(b => b.textContent === 'Edit fee').disabled, true)
+  await React.act(async () => checkbox.click()); await flush(4)
+  assert.equal(saved.api_only, false)
+  assert.equal(planSelect.disabled, false)
+  assert.match(container.textContent, /£17.00\/yr/)
+})
+
+test('unconfirmed and prepaid accounts show their arrangements without subscription controls', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  let saved = account('wallet', { billing_arrangement: 'unconfirmed', effective_arrangement: 'unconfirmed' })
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'PUT') {
+      saved = { ...call.body, effective_arrangement: call.body.billing_arrangement }
+      return { ok: true }
+    }
+    return { ok: true, accounts: [saved] }
+  })
+  const { container } = await boot(); await flush(3)
+  const card = container.querySelector('[data-account="wallet"]')
+  assert.match(card.textContent, /No confirmed billing arrangement/)
+  assert.doesNotMatch(card.textContent, /Plan for this provider account/)
+  const select = [...card.querySelectorAll('label')].find(l => l.textContent.includes('Billing arrangement')).querySelector('select')
+  await React.act(async () => {
+    select.value = 'prepaid'; select.dispatchEvent(new window.Event('change', { bubbles: true }))
+  }); await flush(4)
+  assert.equal(saved.billing_arrangement, 'prepaid')
+  assert.match(card.textContent, /Prepaid credit account/)
+  assert.doesNotMatch(card.textContent, /Plan for this provider account/)
+  assert.doesNotMatch(card.textContent, /Edit fee/)
+})
+
+test('cancelling an inline fee edit does not save the draft', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : { ok: true, accounts: [account('cancel')] })
+  const { container } = await boot(); await flush(3)
+  await clickByText(container, 'Edit fee'); await typeAmount(container, '33')
+  await clickByText(container.querySelector('.wm-fee-form'), 'Cancel'); await flush(2)
+  assert.equal(container.querySelector('.wm-fee-form'), null)
+  assert.equal(transportCtl.calls.filter(c => c.method !== 'GET').length, 0)
+})
+
+test('fee save updates the selected card, closes the editor and announces success', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  let saved = account('fee', { label: 'Fee account' })
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'PUT') {
+      saved = { ...call.body, fee: { basis: 'declared', effective: { amount: 23, currency: 'USD', period: 'month' } } }
+      return { ok: true, account: saved }
+    }
+    return { ok: true, accounts: [saved] }
+  })
+  const { container } = await boot(); await flush(3)
+  await clickByText(container, 'Edit fee'); await typeAmount(container, '23')
+  await clickByText(container, 'Save fee'); await flush(5)
+  assert.equal(container.querySelector('.wm-fee-form'), null)
+  assert.match(container.querySelector('[data-account="fee"]').textContent, /Your price: \$23.00\/mo/)
+  assert.match(container.querySelector('[role="status"]').textContent, /Saved/)
+})
+
+test('fee editor opens in the selected account card', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' }), account('b:acct', { label: 'B account' })] })
+  const { container } = await boot()
+  await flush(3)
+  const cards = [...container.querySelectorAll('article[data-account]')]
+  const button = [...cards[1].querySelectorAll('button')].find(b => b.textContent === 'Edit fee')
+  await React.act(async () => { button.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await flush(2)
+  assert.equal(cards[0].querySelector('form'), null)
+  assert.ok(cards[1].querySelector('form'))
+  assert.match(cards[1].querySelector('form').textContent, /Membership fee · B account/)
+})
+
 test('a rejected fee save keeps what the owner typed', async () => {
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
   transportCtl.reset()
@@ -481,6 +581,7 @@ test('a rejected fee save keeps what the owner typed', async () => {
 
   assert.match(container.textContent, /changed since you loaded it/, 'the conflict is explained')
   assert.ok(container.querySelector('form'), 'the form stays open')
+  assert.match(container.querySelector('form [role=alert]').textContent, /changed since you loaded it/)
   assert.equal(container.querySelector('input[type="number"]').value, '19.5',
     'the typed amount survives the failure')
 })
@@ -550,6 +651,54 @@ test('a fee save submitted in the same tick as a switch emits no mutation', asyn
   assert.equal(writes.length, 0,
     `no mutation may be emitted after the switch (saw ${JSON.stringify(writes.map(c => c.method + ' ' + c.path))})`)
   assert.match(T.$membershipNotice.get()?.text || '', /belongs to a different connection/)
+})
+
+test('a late post-save read cannot overwrite a newer successful read', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  const postSave = deferred()
+  let written = false, readCount = 0
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'PUT') { written = true; return { ok: true } }
+    if (!written) return { ok: true, accounts: [account('race', { label: 'Initial' })] }
+    readCount++
+    return readCount === 1 ? postSave.promise : { ok: true, accounts: [account('race', { label: 'Newest' })] }
+  })
+  const { container } = await boot(); await flush(3)
+  await clickByText(container, 'Edit fee'); await typeAmount(container, '17')
+  await clickByText(container, 'Save fee'); await flush(2)
+  await React.act(async () => { await queryClient.refetchQueries({ queryKey: ['spend-sense', 'membership-accounts'], type: 'active' }) })
+  await flush(3)
+  assert.match(container.textContent, /Newest/)
+  await React.act(async () => postSave.resolve({ ok: true, accounts: [account('race', { label: 'Older' })] }))
+  await flush(4)
+  assert.match(container.textContent, /Newest/)
+  assert.doesNotMatch(container.textContent, /Older/)
+  assert.match(container.textContent, /Saved\./)
+  assert.equal(container.querySelector('.wm-fee-form'), null)
+})
+
+test('a newer failed read does not suppress a successful post-save read', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  const postSave = deferred()
+  let written = false, readCount = 0
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'PUT') { written = true; return { ok: true } }
+    if (!written) return { ok: true, accounts: [account('race', { label: 'Initial' })] }
+    readCount++
+    if (readCount === 1) return postSave.promise
+    throw new Error('503 unavailable')
+  })
+  const { container } = await boot(); await flush(3)
+  await clickByText(container, 'Edit fee'); await typeAmount(container, '17')
+  await clickByText(container, 'Save fee'); await flush(2)
+  await React.act(async () => { await queryClient.refetchQueries({ queryKey: ['spend-sense', 'membership-accounts'], type: 'active' }) })
+  await React.act(async () => postSave.resolve({ ok: true, accounts: [account('race', { label: 'Saved account' })] }))
+  await flush(4)
+  assert.match(container.textContent, /Saved account/)
+  assert.match(container.textContent, /Saved\./)
+  assert.equal(container.querySelector('.wm-fee-form'), null)
 })
 
 test('a late reread from the previous scope cannot close a draft opened since', async () => {
@@ -668,40 +817,73 @@ test('a re-activation while a request is pending cannot be populated by it', asy
     'a result from the previous activation must not populate the new one')
 })
 
-test('an older save cannot clear a newer draft for the same account', async () => {
-  $testConnectionId.set('gateway-a'); $testProfile.set('default')
-  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : { ok: true, accounts: [account('same', { label: 'Same account' })] })
-  const { container } = await boot(); await flush(3); await clickByText(container, 'Edit fee'); await typeAmount(container, '17')
-  const pending = deferred(); let written = false
-  transportCtl.respond(call => {
-    if (call.path.startsWith('/membership/plans')) return plansOk()
-    if (call.method !== 'GET') { written = true; return { ok: true } }
-    return written ? pending.promise : { ok: true, accounts: [account('same')] }
-  })
-  await clickByText(container, 'Save fee'); await flush(2)
-  await clickByText(container, 'Cancel'); await clickByText(container, 'Edit fee'); await typeAmount(container, '99')
-  await React.act(async () => { pending.resolve({ ok: true, accounts: [account('same')] }); await new Promise(r => setTimeout(r, 0)) }); await flush(3)
-  assert.equal(container.querySelector('input[type="number"]')?.value, '99')
-})
-
-test('an older same-scope operation cannot release a newer busy flag', async () => {
-  $testConnectionId.set('gateway-a'); $testProfile.set('default')
-  const first = deferred(), second = deferred()
-  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : call.method === 'GET'
-    ? { ok: true, accounts: [account('first'), account('second')] }
-    : call.path.includes('first') ? first.promise : second.promise)
+test('a pending membership save disables mutation controls on other accounts and restores them afterwards', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  const pending = deferred()
+  const a = account('busy-a', { label: 'Account A' })
+  const b = account('busy-b', { label: 'Account B',
+    fee: { basis: 'declared', effective: { amount: 10, currency: 'USD', period: 'month' },
+      published: { source: 'catalogue' }, override: { revision_id: 'fee-1' } },
+    quota: { windows: [{ id: 'weekly', label: 'Weekly', manual: { id: 'manual-1', status: 'active' } }] } })
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.method === 'PUT' ? pending.promise : { ok: true, accounts: [a, b] })
   const { container } = await boot(); await flush(3)
-  const button = id => container.querySelector(`[data-account="${id}"] button[data-action="exhaust-account"]`)
-  await React.act(async () => button('first').click())
-  await saveManualStatus(container)
-  await React.act(async () => button('second').click())
-  await saveManualStatus(container)
-  assert.equal(T.$membershipBusy.get()?.key, 'second')
-  await React.act(async () => { first.resolve({ ok: true }); await new Promise(r => setTimeout(r, 0)) }); await flush(2)
-  assert.equal(T.$membershipBusy.get()?.key, 'second')
-  await React.act(async () => { second.resolve({ ok: true }); await new Promise(r => setTimeout(r, 0)) }); await flush(2)
+  const card = id => container.querySelector(`[data-account="${id}"]`)
+  await clickByText(card('busy-b'), 'Create user-defined plan')
+  await setField(container, 'Plan name', 'Test plan', card('busy-b').querySelector('.wm-custom-form'))
+  await clickByText(card('busy-b'), 'Mark exhausted')
+  await clickByText(card('busy-a'), 'Edit fee'); await typeAmount(card('busy-a'), '17')
+  await clickByText(card('busy-a'), 'Save fee'); await flush(2)
+  const button = name => [...card('busy-b').querySelectorAll('button')].find(el => el.textContent === name)
+  for (const name of ['Mark exhausted', 'Clear mark', 'Mark account exhausted', 'Save manual status',
+    'Save user-defined plan', 'Restore catalogue price']) {
+    assert.ok(button(name), `expected ${name}`)
+    assert.equal(button(name).disabled, true, `${name} disabled while another account is saving`)
+  }
+  assert.match(card('busy-a').textContent, /Saving changes/)
+  await React.act(async () => pending.resolve({ ok: true }))
+  await flush(4)
+  for (const name of ['Mark exhausted', 'Clear mark', 'Mark account exhausted', 'Save manual status',
+    'Save user-defined plan', 'Restore catalogue price']) {
+    assert.equal(button(name).disabled, false, `${name} available after save`)
+  }
+  assert.equal(transportCtl.calls.filter(c => c.method === 'PUT').length, 1)
 })
 
+test('an action in the same tick as a save receives a busy explanation', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  const pending = deferred()
+  const a = account('race-a'), b = account('race-b')
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.method === 'PUT' ? pending.promise : { ok: true, accounts: [a, b] })
+  const { container } = await boot(); await flush(3)
+  const first = container.querySelector('[data-account="race-a"]')
+  const second = container.querySelector('[data-account="race-b"]')
+  await clickByText(first, 'Edit fee'); await typeAmount(first, '17')
+  const save = [...first.querySelectorAll('button')].find(el => el.textContent === 'Save fee')
+  const mark = second.querySelector('[data-action="exhaust-account"]')
+  await React.act(async () => { save.click(); mark.click() })
+  assert.match(container.textContent, /Another membership action is still processing/)
+  assert.equal(transportCtl.calls.filter(c => c.method !== 'GET').length, 1)
+  assert.equal(second.querySelector('.wm-exhaustion-form'), null)
+  await React.act(async () => pending.resolve({ ok: true })); await flush(4)
+})
+
+test('a pending save disables duplicate submission and editing', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  const pending = deferred()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.method === 'PUT' ? pending.promise : { ok: true, accounts: [account('same')] })
+  const { container } = await boot(); await flush(3)
+  await clickByText(container, 'Edit fee'); await typeAmount(container, '17')
+  await clickByText(container, 'Save fee'); await flush(2)
+  assert.ok([...container.querySelectorAll('button')].find(b => b.textContent === 'Saving…')?.disabled)
+  assert.ok(container.querySelector('fieldset').disabled)
+  assert.equal(transportCtl.calls.filter(c => c.method === 'PUT').length, 1)
+  await React.act(async () => pending.resolve({ ok: true }))
+  await flush(4)
+})
 
 test('profile A to B to A rejects original A when socket remains open', async () => {
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
