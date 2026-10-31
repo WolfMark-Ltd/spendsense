@@ -653,6 +653,54 @@ test('a fee save submitted in the same tick as a switch emits no mutation', asyn
   assert.match(T.$membershipNotice.get()?.text || '', /belongs to a different connection/)
 })
 
+test('a late post-save read cannot overwrite a newer successful read', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  const postSave = deferred()
+  let written = false, readCount = 0
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'PUT') { written = true; return { ok: true } }
+    if (!written) return { ok: true, accounts: [account('race', { label: 'Initial' })] }
+    readCount++
+    return readCount === 1 ? postSave.promise : { ok: true, accounts: [account('race', { label: 'Newest' })] }
+  })
+  const { container } = await boot(); await flush(3)
+  await clickByText(container, 'Edit fee'); await typeAmount(container, '17')
+  await clickByText(container, 'Save fee'); await flush(2)
+  await React.act(async () => { await queryClient.refetchQueries({ queryKey: ['spend-sense', 'membership-accounts'], type: 'active' }) })
+  await flush(3)
+  assert.match(container.textContent, /Newest/)
+  await React.act(async () => postSave.resolve({ ok: true, accounts: [account('race', { label: 'Older' })] }))
+  await flush(4)
+  assert.match(container.textContent, /Newest/)
+  assert.doesNotMatch(container.textContent, /Older/)
+  assert.match(container.textContent, /Saved\./)
+  assert.equal(container.querySelector('.wm-fee-form'), null)
+})
+
+test('a newer failed read does not suppress a successful post-save read', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  const postSave = deferred()
+  let written = false, readCount = 0
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'PUT') { written = true; return { ok: true } }
+    if (!written) return { ok: true, accounts: [account('race', { label: 'Initial' })] }
+    readCount++
+    if (readCount === 1) return postSave.promise
+    throw new Error('503 unavailable')
+  })
+  const { container } = await boot(); await flush(3)
+  await clickByText(container, 'Edit fee'); await typeAmount(container, '17')
+  await clickByText(container, 'Save fee'); await flush(2)
+  await React.act(async () => { await queryClient.refetchQueries({ queryKey: ['spend-sense', 'membership-accounts'], type: 'active' }) })
+  await React.act(async () => postSave.resolve({ ok: true, accounts: [account('race', { label: 'Saved account' })] }))
+  await flush(4)
+  assert.match(container.textContent, /Saved account/)
+  assert.match(container.textContent, /Saved\./)
+  assert.equal(container.querySelector('.wm-fee-form'), null)
+})
+
 test('a late reread from the previous scope cannot close a draft opened since', async () => {
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
   transportCtl.reset()

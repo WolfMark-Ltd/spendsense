@@ -3354,8 +3354,6 @@ function membershipQuery(native = false, identity = membershipIdentityNow(),
     queryFn: async () => {
       if (!membershipIdentityCurrent(identity)) throw new Error('Membership connection changed.')
       const read = ++membershipReadSerial
-      latestMembershipRead.set(identity, read)
-      if (latestMembershipRead.size > 128) latestMembershipRead.delete(latestMembershipRead.keys().next().value)
       if (typeof rest !== 'function') throw new Error('This desktop build has no plugin backend bridge.')
       membershipTrace({ method: 'GET', path: `/membership/accounts${native ? '?native=true' : ''}`,
                         identity, generation, outcome: 'start' })
@@ -3363,6 +3361,12 @@ function membershipQuery(native = false, identity = membershipIdentityNow(),
       if (!membershipIdentityCurrent(identity)) throw new Error('Membership connection changed.')
       if (!result || result.ok === false) throw new Error(result?.error || 'Memberships are unavailable.')
       const accounts = membershipAccounts(result)   // throws on a malformed envelope
+      // Only successful reads advance the watermark, and an older response
+      // must never move it backwards after a newer request has succeeded.
+      if (read > (latestMembershipRead.get(identity) || 0)) {
+        latestMembershipRead.set(identity, read)
+        if (latestMembershipRead.size > 128) latestMembershipRead.delete(latestMembershipRead.keys().next().value)
+      }
       return { identity, generation, read, accounts, store: result.store || null,
                notes: Array.isArray(result.notes) ? result.notes : [] }
     },
@@ -4179,8 +4183,10 @@ function MembershipsPage() {
         const payload = await queryClient.fetchQuery({
           ...membershipQuery($membershipNative.get(), captured, generation, operation), staleTime: 0 })
         if (membershipOperationCurrent(captured, operation)) {
-          $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
-                                    store: payload.store, notes: payload.notes })
+          if (payload.read === latestMembershipRead.get(captured)) {
+            $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
+                                      store: payload.store, notes: payload.notes })
+          }
           setMembershipNotice(captured, 'good', 'Saved.', operation, key)
         }
       } catch (readError) {
