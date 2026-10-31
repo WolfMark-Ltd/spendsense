@@ -287,11 +287,8 @@ def build_candidate(catalogue: Mapping[str, Any], observations: Iterable[Mapping
             row = plans[pid]
             if action == "price_changed":
                 after = change.get("after") or {}
-                observed = families.get(str(change.get("family")))
-                observed_row = next((item for item in (observed or {}).get("plans") or []
-                                     if item.get("id") == pid), None)
                 price = {**(row.get("price") or {}), "amount": after.get("amount")}
-                if observed_row is None:
+                if _money(after.get("amount")) is not None:
                     separate_actions = {item.get("action") for item in changes_by_plan.get(pid, [])}
                     for field, field_action in (("currency", "currency_changed"), ("period", "period_changed")):
                         if field_action not in separate_actions and field in after:

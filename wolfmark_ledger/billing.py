@@ -47,6 +47,21 @@ def _nonnegative_number(value: Any) -> bool:
         return False
 
 
+def _normalise_legacy_allowances(profile: dict[str, Any]) -> None:
+    allowances = profile.get("allowances")
+    if not isinstance(allowances, dict):
+        return
+    for model, value in list(allowances.items()):
+        if not isinstance(value, str):
+            continue
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if _nonnegative_number(parsed):
+            allowances[model] = parsed
+
+
 def _allowance_errors(value: Any) -> list[str]:
     if value is None:
         return []
@@ -97,6 +112,19 @@ def _load_profiles(path: Optional[Path | str] = None, *, strict: bool) -> dict[s
         if strict:
             raise ProfileStoreUnreadable(reason) from exc
         return {**empty, "error": reason}
+
+    # Older releases accepted string values inside the allowance mapping.
+    # Normalise compatible values in memory before strict validation, without
+    # rewriting the user's file during a read. New writes remain numeric-only.
+    if isinstance(raw, dict):
+        stored_profiles = raw.get("profiles")
+        if isinstance(stored_profiles, list):
+            for profile in stored_profiles:
+                if isinstance(profile, dict):
+                    _normalise_legacy_allowances(profile)
+        defaults = raw.get("defaults")
+        if isinstance(defaults, dict):
+            _normalise_legacy_allowances(defaults)
 
     reason = ""
     if not isinstance(raw, dict):
@@ -216,17 +244,23 @@ def _rate_override(profile: dict[str, Any], row: dict[str, Any]) -> Optional[flo
     ) / 1_000_000 if tokens else None
 
 
-def _cumulative_overage(usage_by_model, profiles):
+def _cumulative_overage(usage_by_rule, profiles):
     total = 0.0
-    for profile in profiles.get("profiles") or []:
+    rules = [("profiles", profile) for profile in profiles.get("profiles") or []]
+    defaults = profiles.get("defaults")
+    if isinstance(defaults, dict) and defaults.get("kind") in KINDS:
+        rules.append(("defaults", {**defaults, "id": defaults.get("id") or "defaults"}))
+
+    for scope, profile in rules:
         if not profile.get("overage_paid"):
             continue
+        rule_id = str(profile.get("id") or ("defaults" if scope == "defaults" else ""))
         model_limits = profile.get("allowances") or {}
         shared_limit = profile.get("allowance_usd")
         has_shared_limit = shared_limit is not None
         shared = 0.0
-        for (pid, model), used in usage_by_model.items():
-            if pid != str(profile.get("id")):
+        for (usage_scope, pid, model), used in usage_by_rule.items():
+            if usage_scope != scope or pid != rule_id:
                 continue
             if model in model_limits:
                 total += max(0.0, used - float(model_limits[model]))
@@ -291,6 +325,7 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
     profile_configured = bool(profiles.get('profiles'))
     excluded_out_of_cycle = 0
     usage_by_model: dict[tuple[str, str], float] = {}
+    usage_by_rule: dict[tuple[str, str, str], float] = {}
     allowance_meta: dict[str, dict] = {}
 
     for row in rows:
@@ -374,6 +409,11 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
             incremental_row = 0.0  # cumulative over the cycle, applied after the loop
         key = (str(profile.get("id") if profile else "none"), str(row.get("model")))
         usage_by_model[key] = usage_by_model.get(key, 0.0) + (metered_row or 0.0)
+        if profile:
+            rule_scope = "defaults" if source == "defaults" else "profiles"
+            rule_id = str(profile.get("id") or ("defaults" if rule_scope == "defaults" else ""))
+            rule_key = (rule_scope, rule_id, str(row.get("model")))
+            usage_by_rule[rule_key] = usage_by_rule.get(rule_key, 0.0) + (metered_row or 0.0)
         if profile and isinstance(profile.get("allowances"), dict):
             allowance_meta[str(profile.get("id"))] = profile["allowances"]
         total_api += api_arith
@@ -393,7 +433,7 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
         applied[label] = applied.get(label, 0) + 1
 
 
-    final_incremental = round(incremental + _cumulative_overage(usage_by_model, profiles), 6)
+    final_incremental = round(incremental + _cumulative_overage(usage_by_rule, profiles), 6)
     final_api = round(total_api, 6) if api_priced else None
 
     for bucket in by_kind.values():

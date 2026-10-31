@@ -17,7 +17,8 @@ class StoreSafety(unittest.TestCase):
             saved = membership_store.save_account(item, path)['account']
             before = path.read_bytes()
             for patch_value in ({'fee_overrides':[{}]}, {'manual_exhaustions':[{}]},
-                                {'fee_overrides':{}}, {'billing_cycle':'bad'}):
+                                {'fee_overrides':{}}, {'manual_exhaustions':{}},
+                                {'billing_cycle':'bad'}):
                 with self.subTest(patch_value=patch_value), self.assertRaises(ValueError):
                     membership_store.save_account({**saved, **patch_value}, path, if_rev=saved['rev'])
                 self.assertEqual(path.read_bytes(), before)
@@ -52,6 +53,22 @@ class StoreSafety(unittest.TestCase):
             self.assertIn('invalid allowance values', loaded['error'])
             report = billing.classify([{'provider':'x','model':'m','list_usd':1,'_tokens':1}], loaded)
             self.assertEqual(report['api_equivalent_usd'], 1)
+
+    def test_legacy_numeric_string_allowances_load_without_rewriting_the_store(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'billing.json'
+            original = json.dumps({'profiles':[{'id':'legacy','provider':'x','kind':'prepaid',
+                                                'allowances':{'m':'0.10'},'overage_paid':True}]})
+            path.write_text(original)
+            loaded = billing.load_profiles(path)
+            self.assertEqual(loaded['error'], '')
+            self.assertEqual(loaded['profiles'][0]['allowances']['m'], 0.1)
+            self.assertEqual(path.read_text(), original)
+            result = billing.classify([{'provider':'x','model':'m','list_usd':1,'_tokens':1}], loaded)
+            self.assertEqual(result['incremental_usd'], 0.9)
+            with self.assertRaises(ValueError):
+                billing.save_profile({'id':'new','provider':'x','kind':'prepaid',
+                                      'allowances':{'m':'0.10'}}, path)
 
     def test_native_source_is_normalised_before_storing(self):
         slots = {'anthropic':{'slots':1,'route_slugs':['anthropic']}}
@@ -89,6 +106,32 @@ class PricingSafety(unittest.TestCase):
         profiles={'profiles':[{'id':'p','provider':'example','kind':'api',
                                'allowances':{'m':0},'overage_paid':True}]}
         self.assertEqual(billing.classify(rows,profiles)['incremental_usd'],2)
+
+    def test_default_api_allowance_is_included_in_cumulative_overage(self):
+        rows=[{'provider':'unmatched','model':'m','list_usd':2,'_tokens':1}]
+        profiles={'profiles':[], 'defaults':{'id':'fallback','kind':'api',
+                                             'allowance_usd':0,'overage_paid':True}}
+        result=billing.classify(rows,profiles)
+        self.assertEqual(result['api_equivalent_usd'],2)
+        self.assertEqual(result['incremental_usd'],2)
+
+    def test_default_prepaid_usage_is_included_in_cumulative_overage(self):
+        rows=[{'provider':'unmatched','model':'m','list_usd':None,
+               '_provider_cost_usd':2,'_tokens':1}]
+        profiles={'profiles':[], 'defaults':{'id':'fallback','kind':'prepaid',
+                                             'overage_paid':True}}
+        result=billing.classify(rows,profiles)
+        self.assertEqual(result['metered_usd'],2)
+        self.assertEqual(result['incremental_usd'],2)
+
+    def test_default_overage_stays_separate_from_profile_with_same_id(self):
+        rows=[{'provider':'matched','model':'m','list_usd':2,'_tokens':1},
+              {'provider':'unmatched','model':'m','list_usd':3,'_tokens':1}]
+        profiles={'profiles':[{'id':'fallback','provider':'matched','kind':'api',
+                               'allowance_usd':0,'overage_paid':True}],
+                  'defaults':{'id':'fallback','kind':'api',
+                              'allowance_usd':0,'overage_paid':True}}
+        self.assertEqual(billing.classify(rows,profiles)['incremental_usd'],5)
 
     def test_custom_rates_do_not_price_failed_or_missing_usage_calls(self):
         profiles={'profiles':[{'id':'p','provider':'example','kind':'custom',
@@ -129,6 +172,22 @@ class PricingSafety(unittest.TestCase):
             'value':{'amount':12,'currency':'GBP','period':'year'},'why':'correct the catalogue',
             'evidence':{'source_id':'pricing-page'}}])
         candidate=revisions.build_candidate(base,[],report,{'price_changed:p':'accept'},version='test')
+        self.assertEqual(candidate['plans'][0]['price'],{'amount':12,'currency':'GBP','period':'year'})
+        self.assertEqual(candidate['plans'][0]['verification']['status'],'unverified')
+
+    def test_authored_price_correction_keeps_terms_when_observation_is_unchanged(self):
+        base={'plans':[{'id':'p','provider_family':'x','name':'Plan',
+                        'price':{'amount':10,'currency':'USD','period':'month'},
+                        'verification':{'status':'verified','source_id':'old'}}]}
+        observation={'family':'x','source_id':'source','retrieved_at':'2026-10-31T00:00:00Z',
+                     'complete':True,'provisional':False,
+                     'plans':[{'id':'p','name':'Plan',
+                               'price':{'amount':10,'currency':'USD','period':'month'}}]}
+        report=revisions.correction_report(base,[{'plan_id':'p','field':'price',
+            'value':{'amount':12,'currency':'GBP','period':'year'},'why':'correct the catalogue',
+            'evidence':{'source_id':'owner-evidence'}}])
+        candidate=revisions.build_candidate(base,[observation],report,
+                                            {'price_changed:p':'accept'},version='test')
         self.assertEqual(candidate['plans'][0]['price'],{'amount':12,'currency':'GBP','period':'year'})
         self.assertEqual(candidate['plans'][0]['verification']['status'],'unverified')
 
