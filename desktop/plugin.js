@@ -91,10 +91,14 @@ function fmtUsd(v) {
   return `$${v.toFixed(2)}`
 }
 
-/** Per-MTok catalogue rates: up to 4dp, float-artefact-proof, never rounded away. */
+/** Per-MTok catalogue rates: 4dp grid, float-artefact-proof, never rounded away. */
 function fmtRate(v) {
   if (v == null || !Number.isFinite(v)) return '—'
-  return `$${String(Math.round(v * 1e4) / 1e4)}`
+  const rounded = Math.round(v * 1e4) / 1e4
+  // A positive rate must never render as free: below the 4dp grid, fall
+  // back to 3 significant digits instead of showing $0.
+  if (rounded === 0 && v > 0) return `$${String(Number(v.toPrecision(3)))}`
+  return `$${String(rounded)}`
 }
 
 /** Local calendar day, not UTC — "today" must mean the user's today. */

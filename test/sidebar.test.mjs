@@ -520,6 +520,13 @@ test('per-MTok rates never show float artefacts', () => {
   assert.equal(T.fmtRate(Number.NaN), '—')
 })
 
+test('sub-grid positive rates never render as free', () => {
+  assert.equal(T.fmtRate(0.00001), '$0.00001')
+  assert.equal(T.fmtRate(0.00004), '$0.00004')
+  assert.equal(T.fmtRate(0.00005), '$0.0001')
+  assert.equal(T.fmtRate(0), '$0')
+})
+
 test('the pane root cannot collide with the analytics cache bar', async () => {
   resetHost()
   host.state.focusedSessionId.set('s1')
