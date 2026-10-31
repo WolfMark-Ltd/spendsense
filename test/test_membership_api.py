@@ -159,6 +159,64 @@ class StoreContract(TempStore):
         self.assertIn("unreadable", data["error"])
 
 
+class BillingArrangementContract(TempStore):
+    def test_legacy_subscription_api_only_round_trip_preserves_details(self):
+        account = {**M.member_from_native(native_payload()),
+                   "plan_id": "openai-codex.chatgpt-plus",
+                   "fee_overrides": [{"id": "legacy", "amount": 17, "currency": "GBP",
+                                      "period": "year", "reason": "legacy_pricing"}]}
+        saved = store.save_account(account, self.store)["account"]
+        before = api.accounts_payload(path=self.store, catalogue=self.catalogue)["accounts"][0]
+        self.assertEqual(before["effective_arrangement"], "subscription")
+        self.assertEqual(before["fee"]["effective"]["amount"], 17)
+        changed = api.save_payload(saved["id"], {**before, "api_only": True}, path=self.store)
+        card = api.accounts_payload(path=self.store, catalogue=self.catalogue)["accounts"][0]
+        self.assertEqual(card["effective_arrangement"], "api_only")
+        self.assertEqual(card["fee"]["basis"], "api_only")
+        self.assertIsNone(card["fee"]["effective"]["amount"])
+        self.assertEqual(api.fee_summary_payload(path=self.store, catalogue=self.catalogue)["fees"], [])
+        self.assertEqual(card["plan_id"], account["plan_id"])
+        self.assertEqual(card["fee_overrides"], account["fee_overrides"])
+        rediscovered = {**account, "plan_id": None, "fee_overrides": []}
+        store.upsert_discovered([rediscovered], self.store)
+        card = api.accounts_payload(path=self.store, catalogue=self.catalogue)["accounts"][0]
+        self.assertTrue(card["api_only"])
+        self.assertEqual(card["fee_overrides"], account["fee_overrides"])
+        api.save_payload(saved["id"], {**card, "api_only": False}, path=self.store)
+        restored = api.accounts_payload(path=self.store, catalogue=self.catalogue)["accounts"][0]
+        self.assertEqual(restored["effective_arrangement"], "subscription")
+        self.assertEqual(restored["fee"]["effective"]["amount"], 17)
+        self.assertEqual(restored["fee"]["effective"]["period"], "year")
+        self.assertEqual(restored["fee"]["effective"]["currency"], "GBP")
+
+    def test_prepaid_unconfirmed_and_invalid_values(self):
+        account = M.member_from_native(native_payload())
+        self.assertEqual(M.billing_arrangement(account), "unconfirmed")
+        self.assertEqual(M.billing_arrangement({**account, "migrated_from": {"kind": "prepaid"}}), "prepaid")
+        saved = store.save_account({**account, "billing_arrangement": "prepaid"}, self.store)["account"]
+        self.assertEqual(api.accounts_payload(path=self.store, catalogue=self.catalogue)["accounts"][0]["effective_arrangement"], "prepaid")
+        card = api.accounts_payload(path=self.store, catalogue=self.catalogue)["accounts"][0]
+        api.save_payload(saved["id"], {**card, "billing_arrangement": "unconfirmed", "plan_id": "openai-codex.chatgpt-plus"}, path=self.store)
+        card = api.accounts_payload(path=self.store, catalogue=self.catalogue)["accounts"][0]
+        self.assertIsNone(card["fee"]["effective"]["amount"])
+        saved = store.load_store(self.store)["accounts"][0]
+        for field, value in (("api_only", "yes"), ("billing_arrangement", "invalid")):
+            with self.assertRaises(ValueError):
+                store.save_account({**saved, field: value}, self.store, if_rev=saved["rev"])
+
+    def test_alias_routes_offer_existing_copilot_and_xai_plans_without_merging_accounts(self):
+        (self.home / "auth.json").write_text(json.dumps({"credential_pool": {
+            "copilot": [{}], "copilot-acp": [{}], "xai": [{}], "xai-oauth": [{}]}}))
+        result = discovery.discover(self.catalogue, include_native=False, home=self.home)
+        self.assertEqual({a["family"] for a in result["accounts"]}, {"copilot", "copilot-acp", "xai", "xai-oauth"})
+        for account in result["accounts"]:
+            card = api.account_card(account, self.catalogue)
+            choices = {p["id"] for p in card["plan_choices"]}
+            expected = "github-copilot.pro" if account["family"].startswith("copilot") else "xai-oauth.supergrok"
+            self.assertIn(expected, choices)
+            self.assertGreater(account["catalogue_plans"], 0)
+
+
 class DiscoveryContract(TempStore):
     def test_aliases_collapse_and_connectors_are_not_providers(self):
         slots = discovery.credential_slots(self.home)

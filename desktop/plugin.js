@@ -3269,9 +3269,9 @@ function membershipTrace(entry) {
 /* ---- state that always belongs to exactly one identity ------------------- */
 
 /** A notice is only ever shown in the identity that produced it. */
-function setMembershipNotice(identity, tone, text, operation = null) {
+function setMembershipNotice(identity, tone, text, operation = null, accountId = null) {
   if (!membershipIdentityCurrent(identity) || (operation && !membershipOperationCurrent(identity, operation))) return false
-  $membershipNotice.set({ tone, text, origin: identity })
+  $membershipNotice.set({ tone, text, origin: identity, accountId })
   return true
 }
 
@@ -3283,9 +3283,12 @@ function membershipOperationCurrent(identity, operation) {
 
 function claimMembershipBusy(identity, key) {
   if (!membershipIdentityCurrent(identity)) return null
+  const held = $membershipBusy.get()
+  if (held && held.origin === identity) return null
   const operation = ++membershipOperationSerial
   latestMembershipOperation = operation
   $membershipBusy.set({ key, origin: identity, operation })
+  if ($membershipNotice.get()?.origin === identity) $membershipNotice.set(null)
   return operation
 }
 
@@ -3335,6 +3338,8 @@ const MEMBERSHIP_CSS = `
 .wm-attention li[data-tone="warn"]{color:var(--ui-warning)}
 .wm-fee-form{max-width:640px}
 .wm-fee-form h3{margin:0;font-size:13px}
+.wm-fee-fields{border:0;margin:0;padding:0;min-width:0}
+.wm-memberships select:disabled,.wm-memberships input:disabled{opacity:.55}
 `
 
 let membershipReadSerial = 0
@@ -3458,6 +3463,9 @@ function feeLabel(fee) {
   const effective = fee.effective || {}
   const amount = fmtMoney(effective.amount, effective.currency)
   const period = effective.period ? `/${String(effective.period).replace('month', 'mo').replace('year', 'yr')}` : ''
+  if (fee.basis === 'api_only') return 'API Only · no recurring membership fee'
+  if (fee.basis === 'prepaid') return 'Prepaid credits · no recurring membership fee'
+  if (fee.basis === 'unconfirmed') return 'No confirmed billing arrangement'
   if (fee.basis === 'declared') {
     const published = fee.published ? fmtMoney(fee.published.amount, fee.published.currency) : null
     const comparable = fee.currency_comparable !== false
@@ -3538,6 +3546,11 @@ function needsAttention(accounts) {
         out.push({ account, tone: 'info', text: `${row.label}: no reliable reset time — please confirm or clear.` })
       }
     }
+    if (account.effective_arrangement === 'api_only' || account.effective_arrangement === 'prepaid') continue
+    if (account.effective_arrangement === 'unconfirmed') {
+      out.push({ account, tone: 'info', text: 'Billing arrangement not confirmed.' })
+      continue
+    }
     if (account.plan_reconfirmation?.required) {
       out.push({ account, tone: 'info', text: `Hermes now reports "${account.plan_reconfirmation.reported_label}" — reconfirm the saved plan.` })
     }
@@ -3553,7 +3566,7 @@ function needsAttention(accounts) {
 
 function membershipSummary(accounts) {
   const total = accounts.length
-  const withPlan = accounts.filter(a => a.plan_id).length
+  const withPlan = accounts.filter(a => a.plan_id && !['api_only', 'prepaid', 'unconfirmed'].includes(a.effective_arrangement)).length
   const exhausted = accounts.filter(a => a.quota?.account_exhausted).length
   const byCurrency = {}
   const byCurrencyPeriod = {}
@@ -3787,7 +3800,7 @@ function accountHolderMarked(account) {
     entry && entry.scope && entry.scope.kind === 'account' && entry.state !== 'cleared')
 }
 
-function MembershipCard({ account, plans, busy, onAction }) {
+function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalogue, notice }) {
   const identity = useValue($membershipIdentity)
   const now = useValue($membershipClock)
   const rawPlanDraft = useValue($customPlanDraft)
@@ -3798,6 +3811,9 @@ function MembershipCard({ account, plans, busy, onAction }) {
   const reconfirmation = reconfirmationText(account)
   const excluded = excludedPlansNote(account)
   const planSaved = !!account.plan_id
+  const arrangement = account.effective_arrangement || (account.api_only ? 'api_only' : account.billing_arrangement || (planSaved ? 'subscription' : 'unconfirmed'))
+  const apiOnly = arrangement === 'api_only'
+  const subscription = arrangement === 'subscription'
   const customDraft = rawPlanDraft?.origin === identity && rawPlanDraft.account_id === account.id
     ? rawPlanDraft : null
   const customErrors = customPlanDraftErrors(customDraft)
@@ -3836,39 +3852,105 @@ function MembershipCard({ account, plans, busy, onAction }) {
     ] }),
     jsx('p', { className: 'wm-note', children:
       account.identity_source === 'native' ? 'Account identified by Hermes.' : 'Provider account slot; credential values are never shown.' }),
-    proposal ? jsx('p', { className: 'wm-note wm-accent-note', children: proposal }) : null,
-    reconfirmation ? jsx('p', { className: 'wm-note wm-accent-note', 'data-plan-reconfirmation': 'true', children: reconfirmation }) : null,
-    excluded ? jsx('p', { className: 'wm-note', 'data-excluded': 'true', children: excluded }) : null,
-    account.plan?.notes ? jsx('p', { className: 'wm-note', children: account.plan.notes }) : null,
     jsxs('label', { className: 'wm-filter', children: [
+      jsx('input', { type: 'checkbox', checked: apiOnly, disabled: !!busy,
+        onChange: event => onAction('api-only', account, event.target.checked) }),
+      jsx('span', { children: 'API Only' })
+    ] }),
+    jsx('p', { className: 'wm-note', children: apiOnly
+      ? 'API Only: no recurring membership fee. Usage and API cost estimates remain available.'
+      : arrangement === 'prepaid' ? 'Prepaid credit account. Top-ups are not recurring membership fees; configure cost rules separately in Costs.'
+      : arrangement === 'subscription' ? 'Subscription account.' : 'No confirmed billing arrangement.' }),
+    !apiOnly ? jsxs('label', { className: 'wm-filter', children: [
+      jsx('span', { children: 'Billing arrangement' }),
+      jsxs('select', { value: arrangement, disabled: !!busy,
+        onChange: event => onAction('arrangement', account, event.target.value), children: [
+          jsx('option', { value: 'unconfirmed', children: 'Not confirmed' }),
+          jsx('option', { value: 'subscription', children: 'Subscription' }),
+          jsx('option', { value: 'prepaid', children: 'Prepaid credits' })
+        ] })
+    ] }) : null,
+    busy === account.id ? jsx('p', { role: 'status', className: 'wm-note', children: 'Saving changes…' }) : null,
+    notice?.accountId === account.id && notice.tone === 'good'
+      ? jsx('p', { role: 'status', className: 'wm-note', children: notice.text }) : null,
+    subscription && ['xai', 'grok'].includes(account.family)
+      ? jsx('p', { className: 'wm-note', children: 'Grok consumer subscriptions and xAI API billing are separate. Select a subscription only if it applies to this account.' }) : null,
+    subscription && proposal ? jsx('p', { className: 'wm-note wm-accent-note', children: proposal }) : null,
+    subscription && reconfirmation ? jsx('p', { className: 'wm-note wm-accent-note', 'data-plan-reconfirmation': 'true', children: reconfirmation }) : null,
+    subscription && excluded ? jsx('p', { className: 'wm-note', 'data-excluded': 'true', children: excluded }) : null,
+    subscription && account.plan?.notes ? jsx('p', { className: 'wm-note', children: account.plan.notes }) : null,
+    subscription || apiOnly ? jsxs('label', { className: 'wm-filter', children: [
       jsx('span', { children: 'Plan for this provider account' }),
       jsxs('select', {
-        value: account.plan_id || '',
+        value: account.plan_id || '', disabled: !subscription || !!busy,
         onChange: event => onAction('plan', account, event.target.value),
         children: [
           jsx('option', { value: '', children: planSaved ? '— clear selection —' : '— confirm a plan —' }, 'unselected'),
           ...plans.map(plan => jsx('option', { value: plan.id, children: planOptionLabel(plan) }, plan.id))
         ]
       })
-    ] }),
-    jsxs('div', { className: 'wm-fee-row', children: [
+    ] }) : null,
+    subscription || apiOnly ? jsxs('div', { className: 'wm-fee-row', children: [
       jsx('span', { className: 'wm-fee', children: feeLabel(fee) }),
-      jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => onAction('fee', account), children: 'Edit fee' })
-    ] }),
-    fee.basis === 'declared' && fee.published?.source === 'catalogue'
+      jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !subscription || !!busy, onClick: () => onAction('fee', account), children: 'Edit fee' })
+    ] }) : null,
+    subscription && draft && draft.account_id === account.id
+        ? jsxs('form', { className: 'wm-fee-form', onSubmit: event => { event.preventDefault(); saveFee() }, children: [
+            jsx('h3', { children: `Membership fee · ${account.label || account.family}` }),
+            notice?.tone === 'warn' && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
+            jsx('p', { className: 'wm-note', children: 'The published catalogue price is kept separately; this becomes your own revision.' }),
+            jsxs('fieldset', { disabled: !!busy, className: 'wm-controls wm-fee-fields', children: [
+              jsxs('label', { className: 'wm-filter', children: [
+                jsx('span', { children: 'Amount' }),
+                jsx('input', { type: 'number', step: '0.01', min: '0', value: draft.amount, autoFocus: true,
+                  onChange: event => $membershipDraft.set({ ...draft, amount: event.target.value }) })
+              ] }),
+              jsxs('label', { className: 'wm-filter', children: [
+                jsx('span', { children: 'Currency' }),
+                jsx('select', { value: draft.currency, onChange: event => $membershipDraft.set({ ...draft, currency: event.target.value }),
+                  children: feeCurrencies(catalogue).map(code => jsx('option', { value: code, children: code }, code)) })
+              ] }),
+              jsxs('label', { className: 'wm-filter', children: [
+                jsx('span', { children: 'Period' }),
+                jsx('select', { value: draft.period, onChange: event => $membershipDraft.set({ ...draft, period: event.target.value }),
+                  children: ['month', 'year', 'quarter', 'week'].map(code => jsx('option', { value: code, children: code }, code)) })
+              ] }),
+              jsxs('label', { className: 'wm-filter', children: [
+                jsx('span', { children: 'Renews on day' }),
+                jsx('input', { type: 'number', min: '1', max: '31', value: draft.anchor_day,
+                  onChange: event => $membershipDraft.set({ ...draft, anchor_day: event.target.value }) })
+              ] }),
+              jsxs('label', { className: 'wm-filter', children: [
+                jsx('span', { children: 'Effective from' }),
+                jsx('input', { type: 'date', value: draft.effective_from,
+                  onChange: event => $membershipDraft.set({ ...draft, effective_from: event.target.value }) })
+              ] }),
+              jsxs('label', { className: 'wm-filter', children: [
+                jsx('span', { children: 'Reason' }),
+                jsx('select', { value: draft.reason, onChange: event => $membershipDraft.set({ ...draft, reason: event.target.value }),
+                  children: feeReasons(catalogue).map(([value, text]) => jsx('option', { value, children: text }, value)) })
+              ] })
+            ] }),
+            jsxs('div', { className: 'wm-controls', children: [
+              jsx(ProductButton, { type: 'submit', className: cn('wm-button', 'wm-accent'), disabled: !!busy, children: busy === account.id ? 'Saving…' : 'Save fee' }),
+              jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy, onClick: () => $membershipDraft.set(null), children: 'Cancel' })
+            ] })
+          ] })
+        : null,
+    subscription && fee.basis === 'declared' && fee.published?.source === 'catalogue'
       ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'restore-catalogue-price',
           disabled: busy === account.id, onClick: () => onAction('restore-fee', account),
           children: 'Restore catalogue price' })
       : null,
-    fee.basis === 'declared' && fee.published?.source === 'user_defined'
+    subscription && fee.basis === 'declared' && fee.published?.source === 'user_defined'
       ? jsx('p', { className: 'wm-note', children: 'Your fee override is shown separately from the user-defined plan price.' })
       : null,
-    jsx('div', { className: 'wm-setting-action', children: [
-      jsx(ProductButton, { type: 'button', className: 'wm-button',
+    subscription ? jsx('div', { className: 'wm-setting-action', children: [
+      jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
         onClick: () => onAction('edit-custom-plan', account),
         children: account.custom_plan ? 'Edit user-defined plan' : 'Create user-defined plan' })
-    ] }),
-    customDraft ? jsxs('form', { className: 'wm-custom-form', onSubmit: event => {
+    ] }) : null,
+    subscription && customDraft ? jsxs('form', { className: 'wm-custom-form', onSubmit: event => {
       event.preventDefault()
       onAction('save-custom-plan', account, customDraft)
     }, children: [
@@ -4080,7 +4162,7 @@ function MembershipsPage() {
     if (captured !== identity) return refuse()
     const generation = gatewayActivationEpoch()
     const operation = claimMembershipBusy(captured, key)
-    if (!operation) return refuse()
+    if (!operation) return { ok: false, busy: true }
     try {
       membershipTrace({ method, path, identity: captured, generation, outcome: 'write' })
       await membershipWrite(method, path, body)
@@ -4091,10 +4173,10 @@ function MembershipsPage() {
       try {
         const payload = await queryClient.fetchQuery({
           ...membershipQuery($membershipNative.get(), captured, generation, operation), staleTime: 0 })
-        if (membershipOperationCurrent(captured, operation) && payload.read === latestMembershipRead.get(captured)) {
+        if (membershipOperationCurrent(captured, operation)) {
           $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
                                     store: payload.store, notes: payload.notes })
-          setMembershipNotice(captured, 'good', 'Saved.', operation)
+          setMembershipNotice(captured, 'good', 'Saved.', operation, key)
         }
       } catch (readError) {
         setMembershipNotice(captured, 'warn',
@@ -4102,7 +4184,7 @@ function MembershipsPage() {
       }
       return { ok: membershipOperationCurrent(captured, operation), identity: captured }
     } catch (error) {
-      setMembershipNotice(captured, 'warn', membershipErrorText(error, 'write'), operation)
+      setMembershipNotice(captured, 'warn', membershipErrorText(error, 'write'), operation, key)
       return { ok: false, error }
     } finally {
       // Only the identity that holds the flag may clear it.
@@ -4114,6 +4196,11 @@ function MembershipsPage() {
     // Defence in depth: the list is already gated by identity, but a click can
     // land between a switch and the re-render.
     if (!current || current.identity !== membershipIdentityNow()) return refuse()
+    if (kind === 'api-only' || kind === 'arrangement') {
+      const update = kind === 'api-only' ? { api_only: !!value } : { billing_arrangement: value }
+      return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
+                 { ...account, ...update }, 'PUT')
+    }
     if (kind === 'plan') {
       return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
                  { ...account, plan_id: value || null }, 'PUT')
@@ -4121,6 +4208,7 @@ function MembershipsPage() {
     if (kind === 'fee') {
       // The draft carries the identity it was opened in, so a save can tell
       // whether the form it is submitting still belongs to this connection.
+      $membershipNotice.set(null)
       $membershipDraft.set({ ...feeDraft(account), origin: membershipIdentityNow() })
       return { ok: true }
     }
@@ -4251,7 +4339,7 @@ function MembershipsPage() {
     if (!draft || !origin || !membershipIdentityCurrent(origin)) return refuse()
     const errors = feeDraftErrors(draft)
     if (errors.length) {
-      setMembershipNotice(origin, 'warn', errors.join(' '))
+      setMembershipNotice(origin, 'warn', errors.join(' '), null, draft.account_id)
       return { ok: false, invalid: true }
     }
     const account = list.find(a => a.id === draft.account_id)
@@ -4274,9 +4362,9 @@ function MembershipsPage() {
     jsxs('div', { className: 'wm-shell wm-memberships', children: [
       jsx(LedgerTabs, {}),
       jsxs('div', { className: 'wm-controls', children: [
-        jsx(ProductButton, { type: 'button', className: cn('wm-button', 'wm-accent'), disabled: busy === 'discover',
+        jsx(ProductButton, { type: 'button', className: cn('wm-button', 'wm-accent'), disabled: !!busy,
           onClick: discover, children: busy === 'discover' ? 'Discovering…' : 'Discover accounts' }),
-        jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: busy === 'refresh',
+        jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
           onClick: refreshReadings, children: busy === 'refresh' ? 'Refreshing…' : 'Refresh readings' })
       ] }),
       notice ? jsx('div', { className: 'wm-alert', 'data-tone': notice.tone === 'warn' ? 'warn' : 'good',
@@ -4314,48 +4402,6 @@ function MembershipsPage() {
             jsxs('ul', { children: storeNotes.slice(0, 6).map((note, index) => jsx('li', { children: note }, index)) })
           ] })
         : null,
-      draft
-        ? jsxs('form', { className: 'wm-card wm-fee-form', onSubmit: event => { event.preventDefault(); saveFee() }, children: [
-            jsx('h3', { children: 'Membership fee' }),
-            jsx('p', { className: 'wm-note', children: 'The published catalogue price is kept separately; this becomes your own revision.' }),
-            jsxs('div', { className: 'wm-controls', children: [
-              jsxs('label', { className: 'wm-filter', children: [
-                jsx('span', { children: 'Amount' }),
-                jsx('input', { type: 'number', step: '0.01', min: '0', value: draft.amount,
-                  onChange: event => $membershipDraft.set({ ...draft, amount: event.target.value }) })
-              ] }),
-              jsxs('label', { className: 'wm-filter', children: [
-                jsx('span', { children: 'Currency' }),
-                jsx('select', { value: draft.currency, onChange: event => $membershipDraft.set({ ...draft, currency: event.target.value }),
-                  children: feeCurrencies(catalogue).map(code => jsx('option', { value: code, children: code }, code)) })
-              ] }),
-              jsxs('label', { className: 'wm-filter', children: [
-                jsx('span', { children: 'Period' }),
-                jsx('select', { value: draft.period, onChange: event => $membershipDraft.set({ ...draft, period: event.target.value }),
-                  children: ['month', 'year', 'quarter', 'week'].map(code => jsx('option', { value: code, children: code }, code)) })
-              ] }),
-              jsxs('label', { className: 'wm-filter', children: [
-                jsx('span', { children: 'Renews on day' }),
-                jsx('input', { type: 'number', min: '1', max: '31', value: draft.anchor_day,
-                  onChange: event => $membershipDraft.set({ ...draft, anchor_day: event.target.value }) })
-              ] }),
-              jsxs('label', { className: 'wm-filter', children: [
-                jsx('span', { children: 'Effective from' }),
-                jsx('input', { type: 'date', value: draft.effective_from,
-                  onChange: event => $membershipDraft.set({ ...draft, effective_from: event.target.value }) })
-              ] }),
-              jsxs('label', { className: 'wm-filter', children: [
-                jsx('span', { children: 'Reason' }),
-                jsx('select', { value: draft.reason, onChange: event => $membershipDraft.set({ ...draft, reason: event.target.value }),
-                  children: feeReasons(catalogue).map(([value, text]) => jsx('option', { value, children: text }, value)) })
-              ] })
-            ] }),
-            jsxs('div', { className: 'wm-controls', children: [
-              jsx(ProductButton, { type: 'submit', className: cn('wm-button', 'wm-accent'), children: 'Save fee' }),
-              jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $membershipDraft.set(null), children: 'Cancel' })
-            ] })
-          ] })
-        : null,
       accounts.error
         ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read') })
         : null,
@@ -4377,7 +4423,7 @@ function MembershipsPage() {
             ? displayed.map(account => jsx(MembershipCard, {
                 account,
                 plans: accountPlanChoices(account),
-                busy, onAction
+                busy, onAction, draft, saveFee, catalogue, notice
               }, account.id))
             : [jsx('p', { className: 'wm-empty', children: accounts.error
                 ? 'Memberships could not be read for this connection.'

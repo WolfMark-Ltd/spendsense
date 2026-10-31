@@ -43,7 +43,8 @@ def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
     plan = custom if custom and custom.get("id") == selected_id else _plan_for(account, catalogue)
     native = mem.native_usage(snapshot, account, at=at)
     fee = mem.resolve_fee(account, catalogue, at=at)
-    quota = mem.quota_view(account, native, plan, at=at)
+    arrangement = mem.billing_arrangement(account)
+    quota = mem.quota_view(account, native, plan if arrangement == "subscription" else None, at=at)
     eligible, excluded = mem.selectable_plans(catalogue, str(account.get("family") or ""), requires_api=True)
     if custom:
         eligible = [*eligible, custom]
@@ -60,7 +61,8 @@ def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
                     "reason": "the suggested plan does not cover this route"}
     return {
         **dict(account),
-        "plan": plan,
+        "plan": plan if arrangement == "subscription" else None,
+        "effective_arrangement": arrangement,
         "fee": fee,
         "quota": quota,
         "plan_proposal": proposal,
@@ -227,7 +229,7 @@ def discover_payload(*, include_native: bool = False, path: Optional[Path | str]
 #: persist a computed value — so these are stripped, and anything else unknown is
 #: still rejected.
 DERIVED_FIELDS = frozenset({
-    "plan", "fee", "quota", "cycle", "plan_proposal", "plan_reconfirmation", "native_state", "rev",
+    "plan", "fee", "quota", "cycle", "effective_arrangement", "plan_proposal", "plan_reconfirmation", "native_state", "rev",
     # Route-eligibility lists are computed from the catalogue per request, so a
     # card posted back unchanged must not try to persist them.
     "plan_choices", "excluded_plans",

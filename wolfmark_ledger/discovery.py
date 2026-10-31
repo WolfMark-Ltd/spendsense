@@ -235,7 +235,8 @@ def discover(catalogue: Mapping[str, Any] | None, *, include_native: bool = True
         accounts.append(account)
 
     catalogued = {str(p.get("provider_family")) for p in (catalogue or {}).get("plans") or []}
-    absent = sorted(catalogued - set(slots))
+    matched = {mem.PLAN_FAMILY_ALIASES.get(family, family) for family in slots}
+    absent = sorted(catalogued - matched)
     return {
         "accounts": accounts,
         "slots": {f: {"slots": v["slots"], "route_slugs": v["route_slugs"]} for f, v in slots.items()},
