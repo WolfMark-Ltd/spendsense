@@ -647,6 +647,73 @@ function pruneSnapshots(snaps, now) {
   return Object.fromEntries(fresh)
 }
 
+function cumulativeCounter(value) {
+  if (value == null || value === '' || typeof value === 'boolean') return null
+  const n = Number(value)
+  return Number.isFinite(n) && n >= 0 ? n : null
+}
+
+function promptCounterOf(usage) {
+  const prompt = cumulativeCounter(usage.prompt)
+  const input = cumulativeCounter(usage.input)
+  if (prompt != null && (prompt > 0 || input == null || input === 0)) return { value: prompt, source: 'prompt' }
+  return input == null ? { value: null, source: null } : { value: input, source: 'input' }
+}
+
+function previousPromptCounter(prev, source) {
+  if (cumulativeCounter(prev.counterPrompt) != null && prev.counterPromptSource === source) return prev.counterPrompt
+  if (source === 'prompt') {
+    if (prev.counterPromptSource === 'input' && cumulativeCounter(prev.counterInput) != null) {
+      return prev.counterInput + num(prev.counterCacheRead) + num(prev.counterCacheWrite)
+    }
+    if (cumulativeCounter(prev.counterPrompt) != null) return null
+    return num(prev.input) + num(prev.cacheRead) + num(prev.cacheWrite)
+  }
+  if (source === 'input' && cumulativeCounter(prev.counterInput) != null) return prev.counterInput
+  if (cumulativeCounter(prev.counterPrompt) != null) return null
+  if (source === 'input' && !prev.cacheEstimated && !num(prev.cacheRead) && !num(prev.cacheWrite)) return num(prev.input)
+  return null
+}
+
+function fitBucketDelta(delta, keys, total) {
+  const bucketDelta = keys.reduce((sum, key) => sum + delta[key], 0)
+  if (bucketDelta > total && bucketDelta > 0) {
+    if (Number.isInteger(total) && Number.isInteger(bucketDelta)) {
+      const parts = keys.map(key => {
+        const exact = delta[key] * total / bucketDelta
+        return { key, value: Math.floor(exact), remainder: exact - Math.floor(exact) }
+      })
+      let remaining = total - parts.reduce((sum, part) => sum + part.value, 0)
+      parts.sort((a, b) => b.remainder - a.remainder)
+      for (const part of parts) {
+        if (!remaining) break
+        if (part.value < delta[part.key]) { part.value += 1; remaining -= 1 }
+      }
+      for (const part of parts) delta[part.key] = part.value
+    } else {
+      const scale = total / bucketDelta
+      for (const key of keys) delta[key] *= scale
+    }
+  }
+  return bucketDelta < total ? total - bucketDelta : 0
+}
+
+function promptDeltaBuckets(cur, prev, promptDelta = null, freshDelta = null) {
+  const delta = {
+    input: Math.max(0, cur.input - num(prev.input)),
+    cacheRead: Math.max(0, cur.cacheRead - num(prev.cacheRead)),
+    cacheWrite: Math.max(0, cur.cacheWrite - num(prev.cacheWrite))
+  }
+  if (promptDelta == null) return delta
+  if (freshDelta == null) {
+    delta.input += fitBucketDelta(delta, ['input', 'cacheRead', 'cacheWrite'], promptDelta)
+  } else {
+    delta.input = Math.min(promptDelta, Math.max(0, freshDelta))
+    delta.cacheWrite += fitBucketDelta(delta, ['cacheRead', 'cacheWrite'], promptDelta - delta.input)
+  }
+  return delta
+}
+
 /**
  * Fold one session's cumulative counters into the ledger (pure).
  *
@@ -678,29 +745,57 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
   // (e.g. 92% of 11k → 91% of 11.1k). Treating such a dip as a new run adopts
   // the whole cumulative total again and permanently inflates the conversation:
   // on 30 Oct 2026, 75 real requests folded to 494 calls / 60.25M tokens.
-  const prevCalls = prev ? num(prev.calls) : 0
-  const callsKnown = cur.calls > 0 && prevCalls > 0
-  const restarted =
-    !prev ||
-    cur.input < num(prev.input) ||
-    cur.output < num(prev.output) ||
-    (callsKnown && cur.calls < prevCalls)
+  const rawPrompt = promptCounterOf(usage)
+  const rawInput = cumulativeCounter(usage.input)
+  const rawFreshInput = rawPrompt.source === 'prompt' && rawInput != null && rawPrompt.value > rawInput ? rawInput : null
+  const rawOutput = cumulativeCounter(usage.output)
+  const rawCalls = cumulativeCounter(usage.calls)
+  const hasCallCounter = rawCalls != null && rawCalls > 0
+  const prevPrompt = prev && rawPrompt.source ? previousPromptCounter(prev, rawPrompt.source) : null
+  const prevFreshInput = prev ? cumulativeCounter(prev.counterFreshInput) : null
+  const prevInput = prev
+    ? cumulativeCounter(prev.counterInput) ?? (prev.counterPromptSource === 'input' ? cumulativeCounter(prev.counterPrompt) : null)
+    : null
+  const prevOutput = prev
+    ? cumulativeCounter(prev.counterOutput) ?? num(prev.output)
+    : null
+  const prevCalls = prev
+    ? cumulativeCounter(prev.counterCalls) ?? num(prev.calls)
+    : 0
+  const restarted = !prev ||
+    (rawPrompt.value != null && prevPrompt != null && rawPrompt.value < prevPrompt) ||
+    (rawPrompt.source === 'input' && rawInput != null && prevInput != null && rawInput < prevInput) ||
+    (rawOutput != null && prevOutput != null && rawOutput < prevOutput) ||
+    (hasCallCounter && prevCalls != null && rawCalls < prevCalls)
+
+  if (!restarted && prev) {
+    if (rawPrompt.value == null) {
+      cur.input = num(prev.input)
+      cur.cacheRead = num(prev.cacheRead)
+      cur.cacheWrite = num(prev.cacheWrite)
+      cur.cacheEstimated = Boolean(prev.cacheEstimated)
+      cur.cacheSource = prev.cacheSource || 'unknown'
+    }
+    if (rawOutput == null) cur.output = num(prev.output)
+  }
+
   // A payload without `calls` reads as 0. Carry the last known count through a
   // non-restart frame, so neither the delta nor the stored snapshot loses it and
   // a later real reading cannot subtract calls already counted. A genuine restart
   // still adopts the frame as-is: its own counter starts again at 1.
-  if (!restarted && cur.calls === 0 && prevCalls > 0) cur.calls = prevCalls
+  if (!restarted && !hasCallCounter && prevCalls > 0) cur.calls = prevCalls
 
   const delta = restarted
     ? cur
     : {
-        // Clamp the derived cache: a lost downward correction under-counts by at
-        // most the rounding error, whereas re-adding the whole run multiplies it.
-        cacheRead: Math.max(0, cur.cacheRead - num(prev.cacheRead)),
-        cacheWrite: Math.max(0, cur.cacheWrite - num(prev.cacheWrite)),
-        calls: cur.calls - prevCalls,
-        input: cur.input - num(prev.input),
-        output: cur.output - num(prev.output)
+        ...promptDeltaBuckets(
+          cur,
+          prev,
+          rawPrompt.source === 'prompt' && prevPrompt != null ? Math.max(0, rawPrompt.value - prevPrompt) : null,
+          rawFreshInput != null && prevFreshInput != null ? Math.max(0, rawFreshInput - prevFreshInput) : null
+        ),
+        calls: hasCallCounter ? Math.max(0, cur.calls - prevCalls) : 0,
+        output: rawOutput != null && prevOutput != null ? Math.max(0, rawOutput - prevOutput) : 0
       }
   const deltaTokens = tokensOf(delta)
   // Nothing new — don't churn storage on every mid-turn tick.
@@ -730,7 +825,17 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
 
   const rates =
     resolved.origin === 'live' && provider ? { ...led.rates, [rateKey(provider, model)]: resolved.rates } : led.rates
-  const snapshots = pruneSnapshots({ ...led.snapshots, [snapKey]: { ...cur, at: now, costUsd: gatewayCost } }, now)
+  const snapshots = pruneSnapshots({ ...led.snapshots, [snapKey]: {
+    ...cur,
+    at: now,
+    costUsd: gatewayCost,
+    counterPrompt: restarted || rawPrompt.value != null ? rawPrompt.value : prev?.counterPrompt ?? null,
+    counterPromptSource: restarted || rawPrompt.value != null ? rawPrompt.source : prev?.counterPromptSource ?? null,
+    counterInput: restarted || rawInput != null ? rawInput : prev?.counterInput ?? null,
+    counterFreshInput: restarted || rawPrompt.value != null ? rawFreshInput : prev?.counterFreshInput ?? null,
+    counterOutput: restarted || rawOutput != null ? rawOutput : prev?.counterOutput ?? null,
+    counterCalls: restarted ? hasCallCounter ? rawCalls : null : hasCallCounter ? rawCalls : prev?.counterCalls ?? null
+  } }, now)
   const pruned = pruneDays(days, now)
   const since = led.since && led.since <= day ? led.since : Object.keys(pruned).sort()[0] || day
 

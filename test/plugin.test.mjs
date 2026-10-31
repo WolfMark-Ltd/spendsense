@@ -240,6 +240,60 @@ test('applyUsage: counter reset adopts the new run whole', () => {
   assert.equal(r.calls, 4)
 })
 
+test('applyUsage: rounded cache percentage changes cannot replay cumulative prompt usage', () => {
+  const args = { now: NOW, sessionId: 'rounded', storedId: 'conversation' }
+  let led = T.applyUsage(T.emptyLedger(), { ...args, usage: {
+    model: 'm', input: 1000, prompt: 1000, output: 0, calls: 1, cache_hit_pct: 50
+  } })
+  led = T.applyUsage(led, { ...args, now: NOW + 1, usage: {
+    model: 'm', input: 1003, prompt: 1003, output: 0, calls: 1, cache_hit_pct: 51
+  } })
+  const session = led.sessions.conversation
+  assert.equal(session.input + session.cacheRead + session.cacheWrite, 1003)
+  assert.equal(session.cacheRead, 503)
+  assert.equal(session.calls, 1)
+  assert.equal(led.snapshots.rounded.counterPrompt, 1003)
+})
+
+test('applyUsage: missing gateway counters carry forward without losing later deltas', () => {
+  const args = { now: NOW, sessionId: 'missing', storedId: 'conversation' }
+  let led = T.applyUsage(T.emptyLedger(), { ...args, usage: {
+    model: 'm', input: 100, prompt: 100, output: 10, calls: 4
+  } })
+  led = T.applyUsage(led, { ...args, now: NOW + 1, usage: { model: 'm', output: 15 } })
+  assert.deepEqual(
+    [led.sessions.conversation.input, led.sessions.conversation.output, led.sessions.conversation.calls],
+    [100, 15, 4]
+  )
+  led = T.applyUsage(led, { ...args, now: NOW + 2, usage: {
+    model: 'm', input: 130, prompt: 130, output: 15
+  } })
+  assert.deepEqual(
+    [led.sessions.conversation.input, led.sessions.conversation.output, led.sessions.conversation.calls],
+    [130, 15, 4]
+  )
+})
+
+test('applyUsage: existing v2 snapshots continue from stored totals without replaying history', () => {
+  const args = { now: NOW, sessionId: 'legacy-snapshot', storedId: 'conversation' }
+  const original = T.applyUsage(T.emptyLedger(), { ...args, usage: {
+    model: 'm', input: 1000, prompt: 1000, output: 10, calls: 2, cache_hit_pct: 50
+  } })
+  const oldSnapshot = { ...original.snapshots['legacy-snapshot'] }
+  for (const field of ['counterPrompt', 'counterPromptSource', 'counterInput', 'counterOutput', 'counterCalls']) delete oldSnapshot[field]
+  const stored = { ...original, snapshots: { 'legacy-snapshot': oldSnapshot } }
+  const { ledger, migrated } = T.readStoredLedger({ get: key => key === 'ledger.v2' ? stored : null }, NOW)
+  assert.equal(migrated, false)
+  const before = { ...ledger.sessions.conversation }
+  const updated = T.applyUsage(ledger, { ...args, now: NOW + 1, usage: {
+    model: 'm', input: 1003, prompt: 1003, output: 12, calls: 3, cache_hit_pct: 51
+  } })
+  assert.equal(updated.sessions.conversation.input + updated.sessions.conversation.cacheRead + updated.sessions.conversation.cacheWrite, 1003)
+  assert.equal(updated.sessions.conversation.output, before.output + 2)
+  assert.equal(updated.sessions.conversation.calls, before.calls + 1)
+  assert.equal(ledger.sessions.conversation.input + ledger.sessions.conversation.cacheRead + ledger.sessions.conversation.cacheWrite, 1000)
+})
+
 test('applyUsage: same model on two providers stays in separate buckets', () => {
   let led = T.emptyLedger()
   led = T.applyUsage(led, { now: NOW, provider: 'github-copilot', sessionId: 'a', usage: { model: 'claude-opus-5', input: 10 } })
