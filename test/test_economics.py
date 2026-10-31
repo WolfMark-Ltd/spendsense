@@ -457,6 +457,30 @@ class ComparisonTests(EconomicsCase):
         self.assertTrue(any("currency changed" in note for note in row["notes"]),
                         f"gap explained: {row['notes']}")
 
+    def test_split_conversion_cites_shared_fx_rate_once(self):
+        self.anchor_coverage()
+        change = NOW - 15 * 86400
+        self.write_store([account("gbp", "test", fee_overrides=[
+            override(3, "GBP", "month", effective_from=NOW - 60 * 86400,
+                     effective_to=change),
+            override(4, "GBP", "month", effective_from=change),
+        ])])
+        E.save_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                    "as_of": "2026-10-31", "source": "Bank of England spot"}],
+                  self.fx)
+        self.create_events([{"ts": NOW - 100, "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=0)
+        row = result["accounts"][0]
+        self.assertEqual(row["status"], "ok")
+        cites = [n for n in row["notes"] if "Bank of England" in n]
+        self.assertEqual(len(cites), 1, f"citation cited once: {row['notes']}")
+        since = datetime.fromisoformat(result["window"]["since"]).timestamp()
+        until = datetime.fromisoformat(result["window"]["until"]).timestamp()
+        wd = result["window_days"]
+        expected = round(E.allocate_to_window(3.75, wd * (change - since) / (until - since))
+                         + E.allocate_to_window(5.0, wd * (until - change) / (until - since)), 6)
+        self.assertAlmostEqual(row["window_expenditure_usd"], expected)
+
     def test_unattributed_usage_is_reported_separately(self):
         self.anchor_coverage()
         self.write_store([account("a", "test", plan_id="test.plus")])

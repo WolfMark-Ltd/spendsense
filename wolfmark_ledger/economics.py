@@ -631,7 +631,9 @@ def build_economics_report(
             window_usd = round(window_usd, 6) if window_usd is not None else None
         else:
             window_fee, window_usd, split_notes, window_gap = split
-            notes.extend(split_notes)
+            # The current-fee conversion above may cite the same rate the
+            # split segments used; identical citations appear only once.
+            notes.extend(n for n in split_notes if n not in notes)
 
         usage_value = usage["list_usd"]
         difference = None
