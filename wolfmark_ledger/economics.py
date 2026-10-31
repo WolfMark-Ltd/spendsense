@@ -87,6 +87,89 @@ def allocate_to_window(monthly: Any, window_days: Any) -> Optional[float]:
         return None
     return float(monthly) * float(window_days) / MEAN_MONTH_DAYS
 
+
+def _split_window_expenditure(account: Mapping[str, Any], plans: Mapping[str, Any],
+                              fx_by_currency: Mapping[str, Mapping[str, Any]],
+                              window_since: float, window_until: float,
+                              window_days: float) -> tuple | None:
+    """Allocate spending across a window that spans a fee revision.
+
+    Splits the window at override/custom-plan effective dates and allocates
+    each part at the fee in force then, instead of applying today's fee
+    throughout. Returns ``None`` when no revision boundary falls inside the
+    window (the caller keeps its single-fee computation untouched);
+    otherwise ``(native_amount, usd_amount, notes, gap)`` where ``gap`` is
+    true when allocation is impossible — an unpriced part or a mid-window
+    currency change — as distinct from an unknown window length.
+    """
+    if not window_days:
+        return None
+    revisions = [o for o in (account.get("fee_overrides") or []) if isinstance(o, dict)]
+    custom = account.get("custom_plan")
+    candidates = revisions + ([custom] if isinstance(custom, dict) else [])
+    splits = set()
+    for rev in candidates:
+        for key in ("effective_from", "effective_to"):
+            ts = mem._epoch(rev.get(key))
+            if ts is not None and window_since < ts < window_until:
+                splits.add(ts)
+    if not splits:
+        return None
+    points = [window_since] + sorted(splits) + [window_until]
+    total = window_until - window_since
+    native_total = 0.0
+    usd_total: float | None = 0.0
+    native_currency = None
+    first_key = None
+    changed = False
+    used_rates: dict[str, Mapping[str, Any]] = {}
+    for start, end in zip(points, points[1:]):
+        fee = mem.resolve_fee(account, plans, (start + end) / 2)
+        effective = fee.get("effective") or {}
+        monthly = monthly_equivalent(effective.get("amount"), effective.get("period"))
+        currency = str(effective.get("currency") or "").upper() or None
+        if monthly is None or currency is None:
+            return None, None, ["The fee changed within the window and one part has "
+                                "no known fee, so spending cannot be allocated."], True
+        if native_currency is None:
+            native_currency = currency
+            first_key = (monthly, currency, effective.get("period"))
+        elif currency != native_currency:
+            return None, None, ["The fee currency changed within the window, so "
+                                "spending cannot be allocated to it."], True
+        if (monthly, currency, effective.get("period")) != first_key:
+            changed = True
+        share = window_days * (end - start) / total
+        part = allocate_to_window(monthly, share)
+        if part is None:
+            return None, None, ["The fee changed within the window and one part has "
+                                "no known fee, so spending cannot be allocated."], True
+        native_total += part
+        if currency == "USD":
+            seg_usd: float | None = monthly
+        else:
+            rate = fx_by_currency.get(currency)
+            if rate is None:
+                seg_usd = None
+            else:
+                used_rates[currency] = rate
+                seg_usd = round(monthly * rate["usd_per_unit"], 6)
+        if seg_usd is None or usd_total is None:
+            usd_total = None
+        else:
+            usd_part = allocate_to_window(seg_usd, share)
+            usd_total = usd_total + usd_part if usd_part is not None else None
+    notes = []
+    if changed:
+        days = ", ".join(datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
+                         for ts in sorted(splits))
+        notes.append(f"Fee changed within the window (revisions effective {days}); "
+                     "each part is allocated at the fee in force then.")
+    for rate in used_rates.values():
+        notes.append(f"Fee converted to USD using {fx_citation(rate)}.")
+    return (round(native_total, 6),
+            round(usd_total, 6) if usd_total is not None else None, notes, False)
+
 #: Arrangements that count as subscriptions in the headline comparison. A
 #: free-tier plan is a subscription with a real $0 fee; api_only, prepaid and
 #: unconfirmed accounts are shown separately and never enter the difference.
@@ -535,10 +618,20 @@ def build_economics_report(
         elif monthly is not None and rate is not None:
             fee_usd = round(monthly * rate["usd_per_unit"], 6)
             notes.append(f"Fee converted to USD using {fx_citation(rate)}.")
-        window_fee = allocate_to_window(monthly, window_days)
-        window_fee = round(window_fee, 6) if window_fee is not None else None
-        window_usd = allocate_to_window(fee_usd, window_days)
-        window_usd = round(window_usd, 6) if window_usd is not None else None
+        window_gap = False
+        if window_since is not None and window_until is not None and window_days is not None:
+            split = _split_window_expenditure(account, plans, fx_by_currency,
+                                              window_since, window_until, window_days)
+        else:
+            split = None
+        if split is None:
+            window_fee = allocate_to_window(monthly, window_days)
+            window_fee = round(window_fee, 6) if window_fee is not None else None
+            window_usd = allocate_to_window(fee_usd, window_days)
+            window_usd = round(window_usd, 6) if window_usd is not None else None
+        else:
+            window_fee, window_usd, split_notes, window_gap = split
+            notes.extend(split_notes)
 
         usage_value = usage["list_usd"]
         difference = None
@@ -548,6 +641,9 @@ def build_economics_report(
         if monthly is None:
             status = "unavailable"
             notes.append("No fee is set for this subscription, so no comparison is possible.")
+        elif window_gap:
+            # The split allocator already explained itself in notes.
+            status = "unavailable"
         elif window_fee is None:
             status = "unavailable"
             notes.append("The reporting window length is unknown, so spending cannot be "

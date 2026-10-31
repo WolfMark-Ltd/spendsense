@@ -394,6 +394,69 @@ class ComparisonTests(EconomicsCase):
         self.assertHeadlineDifference(result, 0.0, 40.0)
         self.assertEqual(result["coverage"]["attribution"]["ambiguous_tokens"], 1_000_000)
 
+    def test_mid_window_price_change_is_split_at_the_effective_date(self):
+        self.anchor_coverage()
+        change = NOW - 15 * 86400
+        self.write_store([account("a", "test", fee_overrides=[
+            override(20, "USD", "month", effective_from=NOW - 60 * 86400,
+                     effective_to=change),
+            override(40, "USD", "month", effective_from=change),
+        ])])
+        self.create_events([{"ts": NOW - 100, "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=0)
+        row = result["accounts"][0]
+        self.assertEqual(row["status"], "ok")
+        # The monthly figure stays the current run-rate; the window figure
+        # blends each fee in force for its part.
+        self.assertEqual(row["monthly_equivalent"], {"amount": 40.0, "currency": "USD"})
+        since = datetime.fromisoformat(result["window"]["since"]).timestamp()
+        until = datetime.fromisoformat(result["window"]["until"]).timestamp()
+        wd = result["window_days"]
+        expected = round(E.allocate_to_window(20.0, wd * (change - since) / (until - since))
+                         + E.allocate_to_window(40.0, wd * (until - change) / (until - since)), 6)
+        self.assertAlmostEqual(row["window_expenditure"]["amount"], expected)
+        self.assertLess(self.windowed(20.0, result), row["window_expenditure"]["amount"])
+        self.assertLess(row["window_expenditure"]["amount"], self.windowed(40.0, result))
+        self.assertAlmostEqual(row["difference_usd"],
+                               round(2.0 - row["window_expenditure_usd"], 6))
+        self.assertTrue(any("in force then" in note for note in row["notes"]),
+                        f"split explained: {row['notes']}")
+
+    def test_mid_window_change_with_an_unpriced_part_is_unavailable(self):
+        self.anchor_coverage()
+        change = NOW - 15 * 86400
+        self.write_store([account("a", "test", fee_overrides=[
+            override(40, "USD", "month", effective_from=change),
+        ])])
+        self.create_events([{"ts": NOW - 100, "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=0)
+        row = result["accounts"][0]
+        self.assertEqual(row["monthly_equivalent"]["amount"], 40.0)
+        self.assertEqual(row["status"], "unavailable")
+        self.assertIsNone(row["window_expenditure"]["amount"])
+        self.assertIsNone(row["difference_usd"])
+        self.assertTrue(any("no known fee" in note for note in row["notes"]),
+                        f"gap explained: {row['notes']}")
+        self.assertEqual(result["headline"]["status"], "unavailable")
+        self.assertIsNone(result["headline"]["difference_usd"])
+
+    def test_mid_window_currency_change_is_unavailable(self):
+        self.anchor_coverage()
+        change = NOW - 15 * 86400
+        self.write_store([account("a", "test", fee_overrides=[
+            override(20, "USD", "month", effective_from=NOW - 60 * 86400,
+                     effective_to=change),
+            override(40, "EUR", "month", effective_from=change),
+        ])])
+        self.create_events([{"ts": NOW - 100, "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=0)
+        row = result["accounts"][0]
+        self.assertEqual(row["status"], "unavailable")
+        self.assertIsNone(row["window_expenditure"]["amount"])
+        self.assertIsNone(row["difference_usd"])
+        self.assertTrue(any("currency changed" in note for note in row["notes"]),
+                        f"gap explained: {row['notes']}")
+
     def test_unattributed_usage_is_reported_separately(self):
         self.anchor_coverage()
         self.write_store([account("a", "test", plan_id="test.plus")])
