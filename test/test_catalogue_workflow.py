@@ -239,6 +239,32 @@ class Activation(CatalogueCase):
         with self.assertRaises(KeyError):
             R.rollback(self.catalogue_dir, "1999-01-01.1", by="reviewer")
 
+    def test_rollback_refuses_to_overwrite_a_conflicting_archive(self):
+        revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
+                                                 "price_changed:opencode-go.go-plus": "accept"})
+        R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer", catalogue=self.active)
+        planted = dict(M.load_plan_catalogue(self.catalogue_dir / "plans.json"))
+        planted["plans"] = [{**p, "price": {**p["price"], "amount": 999.0}}
+                            if p["id"] == "opencode-go.go" else p for p in planted["plans"]]
+        archive = self.catalogue_dir / "history" / "plans-2026-10-30.6.json"
+        archive.write_text(json.dumps(planted, indent=2, sort_keys=True))
+        before_active = (self.catalogue_dir / "plans.json").read_bytes()
+        before_archive = archive.read_bytes()
+        with self.assertRaises(ValueError):
+            R.rollback(self.catalogue_dir, "2026-10-30.5", by="reviewer")
+        self.assertEqual((self.catalogue_dir / "plans.json").read_bytes(), before_active)
+        self.assertEqual(archive.read_bytes(), before_archive)
+
+    def test_rollback_reuses_an_identical_archive(self):
+        revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
+                                                 "price_changed:opencode-go.go-plus": "accept"})
+        R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer", catalogue=self.active)
+        current = dict(M.load_plan_catalogue(self.catalogue_dir / "plans.json"))
+        (self.catalogue_dir / "history" / "plans-2026-10-30.6.json").write_text(
+            json.dumps(current, indent=2, sort_keys=True))
+        result = R.rollback(self.catalogue_dir, "2026-10-30.5", by="reviewer")
+        self.assertTrue(result["rolled_back"])
+
     def test_personal_fee_overrides_survive_activation_and_rollback(self):
         memberships = self.dir / "memberships.json"
         account = {

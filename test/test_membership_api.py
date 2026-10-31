@@ -286,6 +286,17 @@ class PrefillContract(TempStore):
         self.assertIsNone(flag["suggested_plan_id"], "tiered Pro label names no single plan")
         self.assertEqual(flag["reported_label"], "Pro")
 
+    def test_plan_guidance_ignores_a_snapshot_belonging_to_another_account(self):
+        account = {"id": "openai-codex:second", "family": "openai-codex",
+                   "identity": "codex:acct_2:user_9",
+                   "plan_id": "openai-codex.chatgpt-plus"}
+        foreign = {**native_payload(plan="Pro"), "identity": "codex:acct_1:user_9"}
+        card = api.account_card(account, self.catalogue, foreign)
+        self.assertEqual(card["native_state"], "identity_mismatch")
+        self.assertIsNone(card["plan_reconfirmation"],
+                          "one family snapshot must not reflag the other account's plan")
+        self.assertIsNone(card["plan_proposal"])
+
     def test_prefill_does_not_change_the_fee_until_the_plan_is_confirmed(self):
         payload = self._discover_with_native()
         codex = next(a for a in payload["accounts"] if a["family"] == "openai-codex")

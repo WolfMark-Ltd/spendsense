@@ -726,6 +726,14 @@ def rollback(catalogue_dir: Path | str, version: str, *, by: str, dry_run: bool 
         return result
     target = Path(catalogue_dir) / "plans.json"
     archive = history_dir(catalogue_dir) / f"plans-{current.get('catalogue_version') or 'unknown'}.json"
+    if archive.exists():
+        try:
+            existing_archive = json.loads(archive.read_text())
+        except (OSError, ValueError):
+            existing_archive = None
+        if existing_archive != dict(current):
+            raise ValueError(
+                f"history archive already exists with different content: {archive.name}")
     _write_json(archive, current)
     _write_json(target, restored)
     record["applied_version"] = restored.get("catalogue_version")

@@ -1850,11 +1850,24 @@ function AnalyticsComposition({data,state,dispatch}) {
 }
 const ANALYTICS_COLUMNS = [['model','Model'],['provider','Provider'],['calls','Calls'],['tokens','Tokens'],['input_tokens','Input'],['output_tokens','Output'],['reasoning_tokens','Reasoning'],['cache_read_tokens','Read'],['cache_write_tokens','Write'],['cache_hit_rate','Cache %'],['savings','Net savings'],['list_usd','API cost'],['per_call','$/call'],['per_million','$/1M tokens'],['pricing','Pricing'],['billing','Billing']]
 const ANALYTICS_CORE_COLUMNS = ['model','provider','calls','tokens','input_tokens','output_tokens','list_usd','per_call','per_million','pricing','billing']
+/**
+ * API-equivalent unit costs for one explorer row. list_usd is a priced
+ * subtotal, so the averages stay unknown while any tokens are unpriced:
+ * dividing a partial subtotal by all calls would understate the true rate.
+ */
+function explorerUnitCosts(row) {
+  if (!row || num(row.unpriced_tokens)) return { per_call: null, per_million: null }
+  return {
+    per_call: finiteValue(row.list_usd) != null && num(row.calls) ? num(row.list_usd) / num(row.calls) : null,
+    per_million: finiteValue(row.list_usd) != null && num(row.tokens) ? num(row.list_usd) / num(row.tokens) * 1_000_000 : null
+  }
+}
 function analyticsExplorerCsv(rows) {
-  const head = ['model','provider','calls','tokens','api_usd','usd_per_call','usd_per_1m_tokens','cache_hit_rate']
+  const head = ['model','provider','calls','tokens','api_usd','usd_per_call','usd_per_1m_tokens','cache_hit_rate','priced_tokens','unpriced_tokens']
   const line = row => [row.model || '',row.provider || '',row.calls ?? '',row.tokens ?? '',row.list_usd ?? '',
     row.per_call == null ? '' : row.per_call.toFixed(6),row.per_million == null ? '' : row.per_million.toFixed(4),
-    row.cache_hit_rate == null ? '' : row.cache_hit_rate.toFixed(4)].map(v => csvCell(v)).join(',')
+    row.cache_hit_rate == null ? '' : row.cache_hit_rate.toFixed(4),
+    row.priced_tokens ?? '',row.unpriced_tokens ?? ''].map(v => csvCell(v)).join(',')
   return [head.join(','), ...rows.map(line)].join('\n') + '\n'
 }
 function downloadAnalyticsCsv(rows) {
@@ -1865,9 +1878,7 @@ function downloadAnalyticsCsv(rows) {
   } catch { /* host without download: table remains visible */ }
 }
 function AnalyticsExplorer({data,state,dispatch}) {
-  const enriched=(data.by_model || []).map(r=>({...r,
-    per_call: finiteValue(r.list_usd)!=null && num(r.calls) ? num(r.list_usd)/num(r.calls) : null,
-    per_million: finiteValue(r.list_usd)!=null && num(r.tokens) ? num(r.list_usd)/num(r.tokens)*1_000_000 : null}))
+  const enriched=(data.by_model || []).map(r=>({...r, ...explorerUnitCosts(r)}))
   const rows=analyticsSort(enriched,state.sortKey,state.sortDirection)
   const columns=state.columnMode==='all'?ANALYTICS_COLUMNS:ANALYTICS_COLUMNS.filter(([key])=>ANALYTICS_CORE_COLUMNS.includes(key))
   const visible=state.showAllModels?rows:rows.slice(0,25)
@@ -1886,12 +1897,12 @@ function AnalyticsExplorer({data,state,dispatch}) {
         else if(key==='cache_hit_rate') content=jsxs('div',{title:`${row.cache_known_calls || 0} known-cache calls; ${row.cache_unknown_calls || 0} unknown`,children:[percent(row.cache_hit_rate),row.cache_hit_rate!=null?jsx('div',{className:'wm-meter',children:jsx('span',{style:{width:`${Math.max(0,Math.min(1,row.cache_hit_rate))*100}%`}})}):null]})
         else if(key==='savings') content=jsx('span',{className:row.economics?.savings_usd<0?'wm-warn':row.economics?.savings_usd>0?'wm-good':'wm-dim',children:analyticMoney(row.economics?.savings_usd)})
         else if(key==='list_usd') content=jsxs('span',{className:num(row.unpriced_tokens)?'wm-warn':'',children:[analyticMoney(row.list_usd),num(row.unpriced_tokens)&&row.list_usd!=null?jsx('small',{children:' partial'}):null]})
-        else if(key==='per_call'||key==='per_million') content=jsx('span',{children:row[key]==null?'—':`$${num(row[key]).toFixed(num(row[key])<1?4:2)}`})
+        else if(key==='per_call'||key==='per_million') content=jsx('span',{title:num(row.unpriced_tokens)?'Unknown: pricing coverage is partial':undefined,children:row[key]==null?'—':`$${num(row[key]).toFixed(num(row[key])<1?4:2)}`})
         else if(key==='pricing') content=jsx('span',{className:cn('wm-badge',num(row.unpriced_tokens)&&'wm-warn'),title:`${exactTokens(row.priced_tokens)} priced / ${exactTokens(row.tokens)} total tokens`,children:analyticsPricing(row)})
         else content=jsx('span',{title:exactTokens(row[key]),children:key==='calls'?exactTokens(row[key]):fmtTokens(row[key])})
         return jsx('td',{className:['model','provider','pricing'].includes(key)?'':'wm-mono',children:content},key)
       })},analyticsId(row)))})]})}),rows.length>25?jsx('p',{className:'wm-subtle',style:{marginTop:10},children:state.showAllModels?`Showing all ${rows.length} pairs.`:`Showing top 25 of ${rows.length} pairs by the current sort. Use Show all for the full table.`}):null]}),
-    footer:'$/call and $/1M tokens are API-equivalent averages, not recorded billing. Reasoning is included in output, never added again to the four-stream total. Billing is the latest route classification, not an allocated per-call invoice. API cost is the priced subtotal when coverage is partial. Cache % is a weighted rate on calls with known cache activity; it is not an average of model percentages. Click a model to apply its exact model + provider pair.'})
+    footer:'$/call and $/1M tokens are API-equivalent averages, not recorded billing. They stay unknown while any tokens are unpriced. Reasoning is included in output, never added again to the four-stream total. Billing is the latest route classification, not an allocated per-call invoice. API cost is the priced subtotal when coverage is partial. Cache % is a weighted rate on calls with known cache activity; it is not an average of model percentages. Click a model to apply its exact model + provider pair.'})
 }
 function AnalyticsEconomics({data}) {
   const e=data.economics || data.totals?.economics || {}
@@ -4841,7 +4852,7 @@ export default {
 
 /** Pure internals, exported for the node test-suite (the host only reads `default`). */
 export const __test = {
-  analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, deltaText,
+  analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText,
   AnalyticsPage, AnalyticsDashboard, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
   AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS,
   backendQuery, catalogQuery, liveProvider, sameModel, getCatalog, ensureBackendRate, $view, $automaticModelOptions,

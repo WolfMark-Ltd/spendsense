@@ -547,3 +547,20 @@ test('clearing a model allowance removes that entry and keeps unrelated allowanc
  const result=T.profilePayload({...draft,allowance_usd:''})
  assert.deepEqual(result.allowances,{'model-b':12})
 })
+
+test('explorer unit costs stay unknown while any tokens are unpriced', () => {
+ assert.equal(typeof T.explorerUnitCosts,'function','unit-cost helper is exported')
+ assert.deepEqual(T.explorerUnitCosts({calls:10,tokens:100,list_usd:1,unpriced_tokens:90}),{per_call:null,per_million:null},
+   'a partial subtotal divided by all calls would understate the rate')
+ assert.deepEqual(T.explorerUnitCosts({calls:10,tokens:100,list_usd:1,unpriced_tokens:0}),{per_call:0.1,per_million:10000})
+ assert.deepEqual(T.explorerUnitCosts({calls:10,tokens:100,list_usd:1}),{per_call:0.1,per_million:10000})
+ assert.deepEqual(T.explorerUnitCosts({calls:10,tokens:100,list_usd:null,unpriced_tokens:0}),{per_call:null,per_million:null})
+})
+
+test('explorer CSV keeps price coverage beside the unit costs', () => {
+ const csv=T.analyticsExplorerCsv([{model:'m',provider:'p',calls:10,tokens:100,list_usd:1,per_call:null,per_million:null,
+   priced_tokens:10,unpriced_tokens:90,cache_hit_rate:.5}])
+ const [head,line]=csv.trim().split('\n')
+ assert.ok(head.includes('priced_tokens') && head.includes('unpriced_tokens'),head)
+ assert.deepEqual(line.split(',').slice(-2),['10','90'])
+})

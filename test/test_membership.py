@@ -388,6 +388,12 @@ class NativePrefillTests(unittest.TestCase):
         go = M.plan_reconfirmation(membership(), catalogue(), codex_snapshot(plan="Go"))
         self.assertEqual(go["suggested_plan_id"], "openai-codex.chatgpt-go")
 
+    def test_vaguer_provider_label_matching_the_saved_tier_is_not_flagged(self):
+        for plan_id in ("openai-codex.chatgpt-pro", "openai-codex.chatgpt-pro-20x"):
+            saved = membership(plan_id=plan_id)
+            self.assertIsNone(M.plan_reconfirmation(saved, catalogue(), codex_snapshot(plan="Pro")),
+                              f"{plan_id} is one of the tiers 'Pro' names")
+
     def test_matching_unknown_and_custom_plans_are_not_flagged(self):
         self.assertIsNone(M.plan_reconfirmation(membership(), catalogue(), codex_snapshot(plan="Plus")))
         self.assertIsNone(M.plan_reconfirmation(membership(), catalogue(), codex_snapshot(plan="Enterprise Ultra")))

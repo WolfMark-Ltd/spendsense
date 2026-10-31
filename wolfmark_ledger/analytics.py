@@ -310,12 +310,19 @@ def build_analytics_report(
             return None
         return round((now_value - before) / before, 6)
 
+    # A comparison is only fair when the whole previous window was observed:
+    # it must start inside retention and after recording began (baseline_at
+    # marks observation start; an old store without one is judged on
+    # retention alone rather than hiding the comparison).
+    observed_since = max(now - store.RETENTION_DAYS * 86_400, recording.get("baseline_at") or 0)
+    comparable = bool(prev_totals.get("calls")) and prev_since >= observed_since
+    deltas = {"list_usd": _delta("list_usd"), "tokens": _delta("tokens"),
+              "calls": _delta("calls")} if comparable else {"list_usd": None, "tokens": None, "calls": None}
     previous = {
         "window": {"since": _iso(prev_since), "until": _iso(since), "days": days},
         "totals": prev_totals,
-        "deltas": {"list_usd": _delta("list_usd"), "tokens": _delta("tokens"),
-                   "calls": _delta("calls")},
-        "comparable": bool(prev_totals.get("calls")),
+        "deltas": deltas,
+        "comparable": comparable,
     }
     coverage: dict[str, int] = {}
     for row in results_kept:

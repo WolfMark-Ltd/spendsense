@@ -47,8 +47,11 @@ def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
     eligible, excluded = mem.selectable_plans(catalogue, str(account.get("family") or ""), requires_api=True)
     if custom:
         eligible = [*eligible, custom]
-    reconfirmation = mem.plan_reconfirmation(account, catalogue, snapshot)
-    proposal = mem.propose_plan(snapshot, catalogue, str(account.get("family") or ""))
+    # One snapshot serves a whole family: plan guidance must not read another
+    # account's label. native_usage already made the identity call above.
+    plan_snapshot = None if native.get("state") == "identity_mismatch" else snapshot
+    reconfirmation = mem.plan_reconfirmation(account, catalogue, plan_snapshot)
+    proposal = mem.propose_plan(plan_snapshot, catalogue, str(account.get("family") or ""))
     blocked = {p["id"] for p in excluded}
     if proposal and proposal.get("plan_id") in blocked:
         # Never propose a plan the route cannot use: Go is a real plan, but it

@@ -122,20 +122,49 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(sum(row["calls"] for row in scope.values()), report["totals"]["calls"])
 
     def test_previous_window_totals_use_the_same_filters_for_deltas(self):
-        self.create_events([
-            {"ts": NOW - 3600, "input_tokens": 100},
-            {"ts": NOW - 13 * 3600, "input_tokens": 300},
-        ])
-        report = self.report(days=1)
-        self.assertEqual(report["totals"]["calls"], 1)
+        # Pinned to UTC: the NOW-relative fixtures assume a known midnight.
+        with local_zone("UTC"):
+            self.create_events([
+                {"ts": NOW - 3600, "input_tokens": 100},
+                {"ts": NOW - 13 * 3600, "input_tokens": 300},
+            ])
+            report = self.report(days=1)
+            self.assertEqual(report["totals"]["calls"], 1)
+            previous = report["previous"]
+            self.assertTrue(previous["comparable"])
+            self.assertEqual(previous["totals"]["calls"], 1)
+            self.assertEqual(previous["totals"]["input_tokens"], 300)
+            self.assertAlmostEqual(previous["deltas"]["tokens"], (100 - 300) / 300, places=5)
+            filtered = self.report(days=1, model="absent")
+            self.assertFalse(filtered["previous"]["comparable"])
+            self.assertIsNone(filtered["previous"]["deltas"]["tokens"])
+
+    def test_previous_window_starting_before_recording_is_not_comparable(self):
+        with local_zone("UTC"):
+            self.create_events([
+                {"ts": NOW - 3600, "input_tokens": 100},
+                {"ts": NOW - 13 * 3600, "input_tokens": 300},
+            ])
+            with closing(sqlite3.connect(self.events)) as conn, conn:
+                conn.execute("INSERT INTO baseline(id, captured_at, total_tokens, main_tokens, aux_tokens)"
+                             " VALUES (1, ?, 0, 0, 0)", (NOW - 12 * 3600,))
+            report = self.report(days=1)
         previous = report["previous"]
-        self.assertTrue(previous["comparable"])
-        self.assertEqual(previous["totals"]["calls"], 1)
-        self.assertEqual(previous["totals"]["input_tokens"], 300)
-        self.assertAlmostEqual(previous["deltas"]["tokens"], (100 - 300) / 300, places=5)
-        filtered = self.report(days=1, model="absent")
-        self.assertFalse(filtered["previous"]["comparable"])
-        self.assertIsNone(filtered["previous"]["deltas"]["tokens"])
+        self.assertEqual(previous["totals"]["calls"], 1, "history is kept")
+        self.assertFalse(previous["comparable"], "a day of calls is not a full previous day")
+        self.assertIsNone(previous["deltas"]["tokens"])
+
+    def test_previous_window_reaching_past_retention_is_not_comparable(self):
+        with local_zone("UTC"):
+            self.create_events([
+                {"ts": NOW - 3600, "input_tokens": 100},
+                {"ts": NOW - 370 * 86400, "input_tokens": 300},
+            ])
+            report = self.report(days=365)
+        previous = report["previous"]
+        self.assertEqual(previous["totals"]["calls"], 1, "history is kept")
+        self.assertFalse(previous["comparable"], "pruned days cannot anchor a comparison")
+        self.assertIsNone(previous["deltas"]["tokens"])
 
     def test_failed_call_with_catalogue_rate_is_unpriced_in_all_coverage(self):
         self.create_events([{"input_tokens": 100, "outcome": "error"}])

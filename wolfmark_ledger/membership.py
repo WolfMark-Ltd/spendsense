@@ -891,6 +891,14 @@ def plan_reconfirmation(membership: Mapping[str, Any], catalogue: Mapping[str, A
     if suggested_id == saved_id:
         return None
     if not suggested_id:
+        # An ambiguous label that is a vaguer form of the saved plan (the
+        # provider reports "Pro" for a saved ChatGPT Pro tier) is not a
+        # change: re-selecting a tier would not clear the flag either. Only
+        # the vaguer direction counts — a more specific label than the saved
+        # plan may still name a different tier.
+        saved_texts = [saved.get("name"), saved_id.split(".")[-1]] if saved else []
+        if label and any(label in _slug(text) for text in saved_texts):
+            return None
         # No single candidate (tiered names share a label, e.g. Pro): flag
         # only when the label still recognisably names a plan in this family.
         recognised = any(
