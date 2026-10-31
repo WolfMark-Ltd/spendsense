@@ -191,10 +191,12 @@ assert membership_store.store_path().parent.name == 'wolfmark-cost-ledger-test'
 assert billing.profiles_path().parent.name == 'wolfmark-cost-ledger-test'
 test = store.event_db_path().parent; test.mkdir(parents=True, exist_ok=True)
 (test / 'usage.db').write_text('test sentinel')
-(test / 'memberships.json').write_text(json.dumps({'version':1,'accounts':[]}))
-(test / 'billing-profiles.json').write_text(json.dumps({'version':1,'profiles':[]}))
+membership_store.save_account({'id':'test-sentinel','family':'example','route_slugs':['example']}, test / 'memberships.json')
+billing.save_profile({'id':'test-sentinel','provider':'example','kind':'api'}, test / 'billing-profiles.json')
 user_data.reset_user_data()
 assert (test / 'usage.db').read_text() == 'test sentinel'
+assert json.loads((test / 'memberships.json').read_text())['accounts'] == []
+assert json.loads((test / 'billing-profiles.json').read_text())['profiles'] == []
 assert all((prod / name).read_text() == 'production sentinel' for name in ('usage.db','memberships.json','billing-profiles.json'))
 """
         with tempfile.TemporaryDirectory() as home:
