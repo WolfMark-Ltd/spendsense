@@ -112,6 +112,18 @@ test('fxErrorMessage hides transport failures behind the generic sentence', () =
   assert.equal(S.fxErrorMessage(new Error('validation error: failed with status 422')), rejected)
 })
 
+test('fxErrorMessage only treats 400-599 as statuses', () => {
+  // Ordinary numbers in validation detail stay visible.
+  assert.match(S.fxErrorMessage(new Error('422: name must be under 255 characters')),
+    /name must be under 255 characters/)
+  assert.match(S.fxErrorMessage(new Error('422: rate has 100 days of history')), /100 days/)
+  // But genuine 4xx/5xx statuses still fail closed.
+  const rejected = 'The rates were rejected. Check each rate and retry.'
+  const generic = 'The rates could not be saved. Please retry; if it persists, check the backend log.'
+  assert.equal(S.fxErrorMessage(new Error('request failed with status 503')), generic)
+  assert.equal(S.fxErrorMessage(new Error('validation error: upstream returned 500')), rejected)
+})
+
 test('econWindowLines keeps one expenditure line per currency', () => {
   assert.deepEqual(S.econWindowLines([]), ['—'])
   assert.deepEqual(S.econWindowLines(null), ['—'])

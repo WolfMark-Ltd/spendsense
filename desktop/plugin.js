@@ -2370,8 +2370,8 @@ async function invalidateEconomicsFor(identity) {
   }
 }
 
-/** Transport markers that must never reach the user verbatim. */
-const FX_TRANSPORT = /\b\d{3}\b|timeout|timed out|network|failed to fetch|fetch failed|connection|econn|socket|abort/i
+/** Transport markers that must never reach the user verbatim. The numeric arm matches HTTP statuses (400-599) only, so validation details mentioning ordinary values such as 255 characters still pass through. */
+const FX_TRANSPORT = /\b[45]\d{2}\b|timeout|timed out|network|failed to fetch|fetch failed|connection|econn|socket|abort/i
 
 /** FX failures carry the server's validation sentence; anything else is generic. */
 function fxErrorMessage(error) {
