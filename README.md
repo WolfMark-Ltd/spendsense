@@ -17,7 +17,7 @@
 
 <p align="center"><strong>What you pay. What you use. What it's worth.</strong></p>
 
-> **Project status: early access.** Spend Sense is not yet a supported public release. There is no validated one-click install yet. Evaluate it from source on an isolated Hermes profile, with a backup of your plugin data. See [RELEASING.md](RELEASING.md) for what still has to be verified before a release.
+> **Project status: early access.** Spend Sense is not yet a supported public release: there is no catalogue listing yet, so install from the repository URL below and check it matches. Evaluate on an isolated Hermes profile, with a backup of your plugin data. See [RELEASING.md](RELEASING.md) for what still has to be verified before a release.
 
 ## Overview
 
@@ -39,16 +39,39 @@ Spend Sense is a Hermes plugin that shows what your AI usage is actually costing
 
 Desktop and backend components should be tested together. Backend analytics require the agent component to be active on the relevant Hermes profile.
 
-### From source
+### From Hermes Desktop (recommended)
+
+Install from inside Hermes Desktop using the repository URL below. This places both halves in one step: the agent backend (hooks, ledger, API) into the connected backend, and the Spend Sense UI into the app's local `desktop-plugins` folder — the UI half is what makes the sidebar entry appear.
+
+- Repository: `https://github.com/WolfMark-Ltd/spendsense`
+- Leave the commit pin empty for the latest code, or pin a validated SHA for a known-good install.
+- Choose the profile to install for, then Install. Until catalogue admission the dialog warns the source is unverified — check the repository URL matches before proceeding.
+
+Keep the existing `spend-sense` plugin ID and `/spend-sense` route — changing them would orphan existing namespaces and storage. Do not install it over an existing plugin without a verified backup.
+
+### From the command line
+
+For servers and headless setups:
+
+```bash
+hermes plugins install WolfMark-Ltd/spendsense
+hermes plugins enable spend-sense
+```
+
+To validate a source tree before installing (recommended for exact-commit installs):
 
 ```bash
 git clone https://github.com/WolfMark-Ltd/spendsense.git
 hermes plugins validate ./spendsense --install-deps
 ```
 
-Review every validation warning, then install the validated directory as a local Hermes plugin following your Hermes documentation. Keep the existing `spend-sense` plugin ID and `/spend-sense` route — changing them would orphan existing namespaces and storage. Do not install it over an existing plugin without a verified backup.
+Review every validation warning. Note the Desktop app loads its UI from its own local folder, so if your Desktop app runs on another machine, complete the install from inside the app instead.
 
 A Hermes catalogue listing is planned; releases will be pinned by commit SHA with screenshots and disclosures. See [RELEASING.md](RELEASING.md) for the release and catalogue-admission checklist.
+
+### More than one machine?
+
+Spend Sense is local-first: each Hermes records only the usage it sees, and memberships and billing rules live with that install. If you run Hermes on several machines — a laptop and a server, for example — install Spend Sense on each one you want accounted. There is no sync between installs; each holds its own ledger.
 
 ## Features
 
