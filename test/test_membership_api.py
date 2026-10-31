@@ -204,6 +204,27 @@ class BillingArrangementContract(TempStore):
             with self.assertRaises(ValueError):
                 store.save_account({**saved, field: value}, self.store, if_rev=saved["rev"])
 
+    def test_nous_oauth_account_offers_current_tiers_and_preserves_old_selection(self):
+        account = M.member_from_native(native_payload("nous"))
+        card = api.account_card(account, self.catalogue)
+        choices = {p["id"]: p for p in card["plan_choices"]}
+        self.assertEqual({key: choices[key]["price"]["amount"] for key in
+                          ("nous.free", "nous.plus", "nous.super", "nous.ultra")},
+                         {"nous.free": 0, "nous.plus": 20, "nous.super": 100, "nous.ultra": 200})
+        self.assertIn("nous.portal", choices)
+        self.assertFalse(choices["nous.plus"]["access"]["provider_api"])
+        self.assertIn("API-key", choices["nous.plus"]["notes"])
+        old = {**account, "plan_id": "nous.portal", "fee_overrides": [
+            {"id": "old-price", "amount": 15, "currency": "GBP", "period": "month", "reason": "legacy_pricing"}]}
+        saved = store.save_account(old, self.store)["account"]
+        selected = api.accounts_payload(path=self.store, catalogue=self.catalogue)["accounts"][0]
+        self.assertEqual(selected["plan_id"], "nous.portal")
+        self.assertEqual(selected["fee"]["effective"]["amount"], 15)
+        api.save_payload(saved["id"], {**selected, "plan_id": "nous.plus"}, path=self.store)
+        changed = api.accounts_payload(path=self.store, catalogue=self.catalogue)["accounts"][0]
+        self.assertEqual(changed["fee"]["effective"]["amount"], 15)
+        self.assertEqual(changed["fee"]["effective"]["currency"], "GBP")
+
     def test_alias_routes_offer_existing_copilot_and_xai_plans_without_merging_accounts(self):
         (self.home / "auth.json").write_text(json.dumps({"credential_pool": {
             "copilot": [{}], "copilot-acp": [{}], "xai": [{}], "xai-oauth": [{}]}}))

@@ -77,7 +77,7 @@ SLICE = {
     "openai-codex": "discovery, plan, fee, native quota, manual quota",
     "anthropic": "discovery, plan, fee, native quota¹, manual quota",
     "openrouter": "discovery, fee, manual quota (credits, not a plan)",
-    "nous": "discovery, fee, manual quota (credits, not a plan)",
+    "nous": "Portal subscription tiers and manual quota; API keys use separate credits",
     "opencode-zen": "discovery, plan, fee, manual quota (hook unexercised)",
     "opencode-go": "discovery, plan, fee, manual quota (catalogue-only here)",
 }

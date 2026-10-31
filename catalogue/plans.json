@@ -1,5 +1,5 @@
 {
-  "catalogue_version": "2026-10-30.5",
+  "catalogue_version": "2026-10-31.1",
   "generated_at": "2026-10-30T21:02:11Z",
   "notes": [
     "Seed catalogue for the account-first membership redesign. Structure is final; most prices are not.",
@@ -10,7 +10,8 @@
     "commandcode.chat removed: the seed placeholder named a plan CommandCode does not sell; the pricing page lists Go, GOAT, Pro, Provider, Max 10x/20x, Team Pro and Enterprise.",
     "2026-10-30.3: OpenCode Go added as its own family (Go/Go Plus/Go Teams) so the Zen relay can no longer be mistaken for Go coverage; CommandCode plans carry route access, and the $1 Go plan is marked ineligible for the Provider API route; Ollama Cloud, Hugging Face and Kilo prices verified; Cline retired (no subscription product); MiniMax renamed to M Plan with the price still unpublished.",
     "2026-10-30.4: CommandCode plans now include monthly credit allowance rows; GOAT and the other individual/team tiers are API-eligible per the dedicated GOAT documentation (Go remains CLI-only).",
-    "2026-10-30.5: CommandCode Go is classified as a recurring credit allowance. The pricing table lists $2/$5 rolling limits, while its FAQ says $3/$6; the Go page describes per-model monthly allocations alongside one shared $10 pool. Values remain catalogue references, never actual remaining use."
+    "2026-10-30.5: CommandCode Go is classified as a recurring credit allowance. The pricing table lists $2/$5 rolling limits, while its FAQ says $3/$6; the Go page describes per-model monthly allocations alongside one shared $10 pool. Values remain catalogue references, never actual remaining use.",
+    "2026-10-31.1: Nous current Free, Plus, Super and Ultra plans added from the Portal; API-key usage is separately metered. The previous unpriced Portal entry remains for existing selections."
   ],
   "plans": [
     {
@@ -1272,6 +1273,178 @@
       }
     },
     {
+      "access": {
+        "cli": true,
+        "provider_api": false
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "unknown",
+          "notes": "Paid plans have daily, weekly and monthly limits; amounts and reset times depend on provider readings."
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "source_id": "nous-portal-pricing",
+          "status": "partial"
+        },
+        "windows": []
+      },
+      "id": "nous.free",
+      "kind": "subscription",
+      "name": "Nous Free",
+      "notes": "Hermes Agent subscription. API-key calls use pay-as-you-go credits, not the included subscription usage. Existing legacy plans may have different terms.",
+      "price": {
+        "amount": 0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "nous",
+      "route_slugs": [
+        "nous"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "Current published individual tier; user-declared fees and legacy terms may differ.",
+        "source_id": "nous-portal-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": false
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "unknown",
+          "notes": "Paid plans have daily, weekly and monthly limits; amounts and reset times depend on provider readings."
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "source_id": "nous-portal-pricing",
+          "status": "partial"
+        },
+        "windows": []
+      },
+      "id": "nous.plus",
+      "kind": "subscription",
+      "name": "Nous Plus",
+      "notes": "Hermes Agent subscription. API-key calls use pay-as-you-go credits, not the included subscription usage. Existing legacy plans may have different terms.",
+      "price": {
+        "amount": 20,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "nous",
+      "route_slugs": [
+        "nous"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "Current published individual tier; user-declared fees and legacy terms may differ.",
+        "source_id": "nous-portal-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": false
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "unknown",
+          "notes": "Paid plans have daily, weekly and monthly limits; amounts and reset times depend on provider readings."
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "source_id": "nous-portal-pricing",
+          "status": "partial"
+        },
+        "windows": []
+      },
+      "id": "nous.super",
+      "kind": "subscription",
+      "name": "Nous Super",
+      "notes": "Hermes Agent subscription. API-key calls use pay-as-you-go credits, not the included subscription usage. Existing legacy plans may have different terms.",
+      "price": {
+        "amount": 100,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "nous",
+      "route_slugs": [
+        "nous"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "Current published individual tier; user-declared fees and legacy terms may differ.",
+        "source_id": "nous-portal-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": false
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "unknown",
+          "notes": "Paid plans have daily, weekly and monthly limits; amounts and reset times depend on provider readings."
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "source_id": "nous-portal-pricing",
+          "status": "partial"
+        },
+        "windows": []
+      },
+      "id": "nous.ultra",
+      "kind": "subscription",
+      "name": "Nous Ultra",
+      "notes": "Hermes Agent subscription. API-key calls use pay-as-you-go credits, not the included subscription usage. Existing legacy plans may have different terms.",
+      "price": {
+        "amount": 200,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "nous",
+      "route_slugs": [
+        "nous"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "Current published individual tier; user-declared fees and legacy terms may differ.",
+        "source_id": "nous-portal-pricing",
+        "status": "verified"
+      }
+    },
+    {
       "billing_arrangement": "recurring_credit_allowance",
       "billing_cycle": {
         "anchor_day": null,
@@ -1294,7 +1467,7 @@
       "id": "nous.portal",
       "kind": "credits",
       "name": "Nous Portal",
-      "notes": "Credits family: evidence is a balance, never a percentage of a plan window.",
+      "notes": "Original unpriced Portal placeholder retained for existing selections; no historical tier or fee is inferred.",
       "price": {
         "amount": null,
         "currency": null,
@@ -1306,7 +1479,7 @@
       ],
       "verification": {
         "checked_at": null,
-        "notes": "Account-scoped; no public price is listed.",
+        "notes": "Original account-scoped placeholder retained for existing selections; its historical price was not captured.",
         "source_id": "nous-portal-pricing",
         "status": "unverified"
       }
@@ -2476,10 +2649,10 @@
       "complete": false,
       "http_status": null,
       "id": "nous-portal-pricing",
-      "notes": "Account-scoped; no public plan table.",
-      "retrieved_at": null,
-      "status": "not_fetched",
-      "url": "https://portal.nousresearch.com"
+      "notes": "Public Portal lists current Free, Plus, Super and Ultra subscription prices. API-key usage is paid separately. Legacy subscriptions may differ.",
+      "retrieved_at": "2026-10-31T16:53:51Z",
+      "status": "fetched",
+      "url": "https://portal.nousresearch.com/"
     },
     {
       "id": "ollama-cloud-pricing",

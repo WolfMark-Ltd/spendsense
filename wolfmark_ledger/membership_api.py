@@ -45,7 +45,10 @@ def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
     fee = mem.resolve_fee(account, catalogue, at=at)
     arrangement = mem.billing_arrangement(account)
     quota = mem.quota_view(account, native, plan if arrangement == "subscription" else None, at=at)
-    eligible, excluded = mem.selectable_plans(catalogue, str(account.get("family") or ""), requires_api=True)
+    family = str(account.get("family") or "")
+    # Nous Portal OAuth uses its Hermes subscription; separate API keys use
+    # metered credits. An account slot does not establish which credential it has.
+    eligible, excluded = mem.selectable_plans(catalogue, family, requires_api=family != "nous")
     if custom:
         eligible = [*eligible, custom]
     # One snapshot serves a whole family: plan guidance must not read another
