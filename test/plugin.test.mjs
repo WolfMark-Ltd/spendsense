@@ -88,7 +88,7 @@ test('cache provenance separates explicit evidence, estimates and ambiguous zero
   assert.equal(estimated.cacheSource, 'estimated')
   assert.equal(T.hitPctOf(estimated), 40)
   assert.equal(T.cacheCoverage(estimated), 1)
-  assert.match(T.cacheCoverageDetail(estimated), /0% exact · 100% estimated/)
+  assert.match(T.cacheCoverageDetail(estimated, (key, ...args) => T.I18N.en[key](...args)), /0% exact · 100% estimated/)
   assert.equal(T.hitPctOf({ input: 100, cacheRead: 0, cacheWrite: 0 }), null, 'legacy is ambiguous')
 })
 
@@ -111,7 +111,7 @@ test('conversation and filtered ledger use the same weighted covered prompt rate
   assert.equal(T.hitPctOf(conversation), 50)
   assert.equal(selected.totals.hitPct, 50)
   assert.equal(T.cacheCoverage(conversation), 1)
-  assert.match(T.cacheCoverageDetail(conversation), /100% exact · 0% estimated/)
+  assert.match(T.cacheCoverageDetail(conversation, (key, ...args) => T.I18N.en[key](...args)), /100% exact · 0% estimated/)
   assert.equal(selected.totals.cacheCoverage, 1)
   assert.equal(selected.totals.netSavings, null, 'unknown write rate cannot invent savings')
   assert.equal(T.summarize(led, () => false, null).totals.hitPct, null)
@@ -316,6 +316,24 @@ test('CSV export: header, settled cost, formula injection neutralised', () => {
   assert.ok(csv[1].includes(`"'=HYPERLINK(""x"")"`))
   assert.ok(csv[1].includes(',5,live,'))
   assert.equal(T.csvCell(-3), '-3')
+})
+
+test('CSV keeps gross cache-read savings and adds a separate signed net column', () => {
+  const payload = { model: 'm', provider: 'p', providers: [{ slug: 'p', pricing: {
+    m: { input: '2', output: '4', cache: '.5', cache_write: '3', tiers: [] }
+  } }] }
+  const led = T.applyUsage(T.emptyLedger(), { now: NOW, sessionId: 's', storedId: 'conv', provider: 'p', payload,
+    usage: { model: 'm', input: 100, prompt: 1300, output: 10, cache_read: 200, cache_write: 1000, calls: 1 } })
+  const [header, row] = T.ledgerCsv(led).trim().split('\r\n').map(line => line.split(','))
+  assert.equal(header[13], 'cache_saved_usd')
+  assert.equal(header[14], 'cache_estimated')
+  assert.equal(header[15], 'net_cache_savings_usd')
+  assert.equal(Number(row[13]), .0003)
+  assert.equal(Number(row[15]), -.0007)
+  const unknown = T.applyUsage(T.emptyLedger(), { now: NOW, sessionId: 's', provider: 'p', payload,
+    usage: { model: 'm', input: 100, prompt: 100, calls: 1 } })
+  const unknownRow = T.ledgerCsv(unknown).trim().split('\r\n')[1].split(',')
+  assert.equal(unknownRow[15], '', 'unknown coverage has no net value')
 })
 
 test('daysAgoKey is DST-safe local calendar math', () => {

@@ -53,6 +53,25 @@ const bucket = (over = {}) => ({
   calls: 57, pricedTokens: 6_255_600, unpricedTokens: 0, cacheEstimated: true, ...over
 })
 
+test('cache coverage lines follow the chosen language', () => {
+  const translator = language => (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const data = { input: 100, cacheRead: 100, cacheWrite: 0,
+    cacheExactPrompt: 100, cacheEstimatedPrompt: 50 }
+  assert.equal(T.cacheCoverageLine(translator('en'), .75, data),
+    '75% of prompt tokens covered · 50% exact · 25% estimated')
+  assert.equal(T.cacheCoverageLine(translator('zh'), .75, data),
+    '提示词令牌覆盖率 75% · 精确 50% · 估算 25%')
+  assert.equal(translator('zh')('cacheCoverageRange', 75), '缓存数据覆盖提示词令牌的 75%')
+  for (const language of ['en', 'zh']) {
+    for (const key of ['cacheCoverageUnavailable', 'cacheCoverageBasis', 'weightedCacheHit']) {
+      assert.notEqual(translator(language)(key), key, `${language} has ${key}`)
+    }
+  }
+})
+
 test('every pricing-source fallback has a human label, never the raw key', () => {
   for (const origin of Object.keys(T.SOURCE_FALLBACKS)) {
     const label = T.sourceLabel(rawT, origin, null, false)

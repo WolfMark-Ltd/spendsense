@@ -365,6 +365,11 @@ function costOf(bucket, rates) {
 }
 
 /** What cache reads saved versus paying the full input rate for them. */
+// Kept for the original CSV column and historical ledger compatibility.
+function grossCacheReadSavings(cacheRead, rates) {
+  return rates ? num(cacheRead) * Math.max(0, rates.input - rates.cache) / M : null
+}
+
 function cacheSavings(cacheRead, rates, cacheWrite = 0) {
   if (!rates || rates.inputKnown !== true || rates.outputKnown !== true ||
       !Number.isFinite(rates.input) || !Number.isFinite(rates.output) ||
@@ -452,13 +457,18 @@ function cacheCoverage(b) {
   return Math.min(1, num(b.cacheCoveredPrompt) / prompt)
 }
 
-function cacheCoverageDetail(b) {
+function cacheCoverageDetail(b, t) {
   if (!b) return ''
   const prompt = num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
   if (!prompt) return ''
   const exact = b.cacheSource === 'exact' ? prompt : num(b.cacheExactPrompt)
   const estimated = b.cacheSource === 'estimated' ? prompt : num(b.cacheEstimatedPrompt)
-  return `${Math.round(Math.min(1, exact / prompt) * 100)}% exact · ${Math.round(Math.min(1, estimated / prompt) * 100)}% estimated`
+  return t('cacheCoverageDetail', Math.round(Math.min(1, exact / prompt) * 100),
+    Math.round(Math.min(1, estimated / prompt) * 100))
+}
+
+function cacheCoverageLine(t, coverage, bucket) {
+  return t('cacheCoverageLine', Math.round((coverage || 0) * 100), cacheCoverageDetail(bucket, t))
 }
 
 /* ----------------------------------------------------------------- ledger */
@@ -627,7 +637,7 @@ function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolv
   } else {
     b.unpricedTokens += deltaTokens
   }
-  if (resolved.rates) b.saved += cacheSavings(delta.cacheRead, resolved.rates)
+  if (resolved.rates) b.saved += grossCacheReadSavings(delta.cacheRead, resolved.rates)
   return b
 }
 
@@ -798,7 +808,7 @@ function summarize(led, filter, priceLegacy) {
       r.legacyOrigin = priced ? priced.origin : 'none'
       if (priced && priced.rates) {
         r.cost = costOf(r, priced.rates).total
-        r.saved = cacheSavings(r.cacheRead, priced.rates)
+        r.saved = grossCacheReadSavings(r.cacheRead, priced.rates)
         r.foreignSlug = priced.foreignSlug || null
       } else {
         r.unpricedTokens = tokensOf(r)
@@ -860,7 +870,7 @@ function csvCell(v) {
 
 const CSV_COLUMNS = [
   'date', 'profile', 'provider', 'model', 'input', 'output', 'cache_read', 'cache_write', 'calls',
-  'cost_usd', 'cost_basis', 'priced_tokens', 'unpriced_tokens', 'cache_saved_usd', 'cache_estimated'
+  'cost_usd', 'cost_basis', 'priced_tokens', 'unpriced_tokens', 'cache_saved_usd', 'cache_estimated', 'net_cache_savings_usd'
 ]
 
 function costBasis(b) {
@@ -879,9 +889,9 @@ function ledgerCsv(led) {
           date, b.profile || '', b.provider || '', b.model, num(b.input), num(b.output), num(b.cacheRead),
           num(b.cacheWrite), num(b.calls), b.legacy || !num(b.pricedTokens) ? '' : Number(num(b.cost).toFixed(6)),
           costBasis(b), num(b.pricedTokens), num(b.unpricedTokens),
+          b.legacy ? '' : Number(num(b.saved).toFixed(6)), b.cacheEstimated ? 'yes' : 'no',
           num(b.netSavingsPrompt) && num(b.netSavingsPrompt) === num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
-            ? Number(b.netSavings.toFixed(6)) : '',
-          b.cacheEstimated ? 'yes' : 'no'
+            ? Number(b.netSavings.toFixed(6)) : ''
         ]
           .map(csvCell)
           .join(',')
@@ -1421,7 +1431,7 @@ function rangeNotes(t, totals, storageError) {
   if (totals.unpricedTokens) notes.push(jsx(Note, { warn: true, children: t('unpricedNote', fmtTokens(totals.unpricedTokens)) }, 'up'))
   if (totals.foreignTokens) notes.push(jsx(Note, { warn: true, children: t('foreignNote', fmtTokens(totals.foreignTokens)) }, 'fo'))
   if (totals.legacyTokens) notes.push(jsx(Note, { children: t('legacyNote', fmtTokens(totals.legacyTokens)) }, 'lg'))
-  if (totals.cacheCoverage != null) notes.push(jsx(Note, { children: `${Math.round(totals.cacheCoverage * 100)}% of prompt tokens covered by cache data` }, 'cc'))
+  if (totals.cacheCoverage != null) notes.push(jsx(Note, { children: t('cacheCoverageRange', Math.round(totals.cacheCoverage * 100)) }, 'cc'))
   if (totals.cacheEstimated) notes.push(jsx(Note, { children: t('cacheEstNote') }, 'ce'))
   return notes
 }
@@ -1510,7 +1520,7 @@ function Meter() {
                   children: [
                     jsx(Row, { label: t('hitRate'), value: live.cacheHitPct == null ? '—' : `${approx}${Math.round(live.cacheHitPct)}%` }, 'hr'),
                     live.cacheHitPct != null ? jsx('div', { className: 'py-1', children: jsx(CacheBar, { pct: live.cacheHitPct }) }, 'bar') : null,
-                    jsx(Note, { children: `${Math.round((live.cacheCoverage || 0) * 100)}% of prompt tokens covered · ${cacheCoverageDetail(b)}` }, 'coverage'),
+                    jsx(Note, { children: cacheCoverageLine(t, live.cacheCoverage, b) }, 'coverage'),
                     live.saved != null ? jsx(Row, { label: t('savedTotal'), value: `${approx}${fmtUsd(live.saved)}` }, 'sv') : null,
                     b.cacheEstimated ? jsx(Note, { children: t('cacheEstNote') }, 'est') : null
                   ].filter(Boolean)
@@ -2018,6 +2028,7 @@ function AnalyticsBaseline({days,scope}) {
     baseline?.note?jsx('p',{children:baseline.note}):null,jsx('p',{children:reconciliationText(t,data?.reconciliation)})]})
 }
 function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',productPage=false}) {
+  const t = usePluginI18n(ID)
   const totals=data?.totals
   const economics=data?.economics || totals?.economics || {}
   const refresh=()=>query.refetch?.()
@@ -2029,7 +2040,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:'Reading timestamped calls…'}):null,
     totals?jsxs('div',{className:'wm-stats',children:[
       jsx(AnalyticsStat,{label:'API-equivalent',value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',num(totals.unpriced_tokens)&&'wm-warn'),children:analyticsPricing(totals)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd)) || 'Priced per-call estimate · not an invoice'}),
-      jsx(AnalyticsStat,{label:'Weighted cache hit',value:percent(totals.cache_hit_rate),tone:'wm-good',hint: totals.cache_prompt_coverage == null ? 'Prompt coverage unavailable' : `${percent(totals.cache_prompt_coverage)} of prompt tokens covered`,extra:'Based on recorded cache activity · see details'}),
+      jsx(AnalyticsStat,{label:t('weightedCacheHit'),value:percent(totals.cache_hit_rate),tone:'wm-good',hint: totals.cache_prompt_coverage == null ? t('cacheCoverageUnavailable') : t('cacheCoveragePrompt', percent(totals.cache_prompt_coverage)),extra:t('cacheCoverageBasis')}),
       jsx(AnalyticsStat,{label:'Theoretical net savings',value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:'Read discounts − write premiums',extra:`${percent(economics.coverage)} economics coverage · detail below`}),
       jsx(AnalyticsStat,{label:'Tokens / calls',value:fmtTokens(totals.tokens),hint:`${exactTokens(totals.calls)} recorded calls`,extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens)) || `${fmtTokens(totals.input_tokens)} in · ${fmtTokens(totals.output_tokens)} out`}),
       jsx(AnalyticsStat,{label:'Pricing coverage',value:percent(data.pricing_coverage?.coverage),hint:`${exactTokens(totals.unpriced_tokens)} unpriced tokens`,extra:analyticsPricing(totals)})]}):null,
@@ -4688,6 +4699,13 @@ const I18N = {
     basisLegacy: 'pre-1.0 data · at current rates',
     basisMixed: 'mixed rate sources',
     cacheEstNote: '≈ The gateway cache split is reconstructed or incomplete; cache figures and savings are estimates.',
+    cacheCoverageDetail: (exact, estimated) => `${exact}% exact · ${estimated}% estimated`,
+    cacheCoverageLine: (coverage, detail) => `${coverage}% of prompt tokens covered · ${detail}`,
+    cacheCoverageRange: coverage => `${coverage}% of prompt tokens covered by cache data`,
+    cacheCoveragePrompt: coverage => `${coverage} of prompt tokens covered`,
+    cacheCoverageUnavailable: 'Prompt coverage unavailable',
+    cacheCoverageBasis: 'Based on recorded cache activity · see details',
+    weightedCacheHit: 'Weighted cache hit',
     cacheRead: 'Cache read',
     cacheTitle: 'Prompt cache',
     cacheWrite: 'Cache write',
@@ -4822,6 +4840,13 @@ const I18N = {
     basisLegacy: '1.0 前旧数据 · 按现价估算',
     basisMixed: '多种价格来源',
     cacheEstNote: '≈ 网关缓存拆分是推算值或不完整；缓存数据及节省额均为估算。',
+    cacheCoverageDetail: (exact, estimated) => `精确 ${exact}% · 估算 ${estimated}%`,
+    cacheCoverageLine: (coverage, detail) => `提示词令牌覆盖率 ${coverage}% · ${detail}`,
+    cacheCoverageRange: coverage => `缓存数据覆盖提示词令牌的 ${coverage}%`,
+    cacheCoveragePrompt: coverage => `提示词令牌覆盖率 ${coverage}`,
+    cacheCoverageUnavailable: '提示词覆盖率不可用',
+    cacheCoverageBasis: '基于已记录的缓存活动 · 查看详情',
+    weightedCacheHit: '加权缓存命中率',
     cacheRead: '缓存读取',
     cacheTitle: '提示词缓存',
     cacheWrite: '缓存写入',
@@ -5026,7 +5051,7 @@ export const __test = {
   legacyPricer,
   migrateV1,
   readStoredLedger,
-  readUsage, cacheCoverage, cacheCoverageDetail,
+  readUsage, cacheCoverage, cacheCoverageDetail, cacheCoverageLine,
   resolveRates,
   summarize,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
