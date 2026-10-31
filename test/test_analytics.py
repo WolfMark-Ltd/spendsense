@@ -295,12 +295,31 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(totals["cache_known_calls"], 2)
         self.assertEqual(totals["cache_unknown_calls"], 2)
         self.assertEqual(totals["cache_coverage"], .5)
+        self.assertEqual(totals["cache_covered_prompt_tokens"], 1100)
+        self.assertEqual(totals["cache_total_prompt_tokens"], 6100)
+        self.assertAlmostEqual(totals["cache_prompt_coverage"], 1100 / 6100, places=6)
         for grouped in [report["by_model"][0], report["by_route"][0],
                         next(b for b in report["trend"]["buckets"] if b["calls"])]:
             self.assertEqual(grouped["cache_hit_rate"], totals["cache_hit_rate"])
             self.assertEqual(grouped["cache_known_calls"], 2)
         self.assertTrue(any("all-zero" in note.lower() and "unknown" in note.lower()
                             for note in report["notes"]))
+
+    def test_cache_scope_uses_weighted_prompt_totals_and_keeps_ambiguous_calls(self):
+        self.create_events([
+            {"provider": "test", "input_tokens": 100, "cache_read_tokens": 200, "cache_write_tokens": 100, "output_tokens": 50},
+            {"provider": "other", "input_tokens": 600, "output_tokens": 5},
+            {"provider": "test", "input_tokens": 100, "cache_read_tokens": 20, "outcome": "error"},
+        ])
+        all_rows = self.report(days=1)
+        self.assertEqual(all_rows["totals"]["calls"], 3)
+        self.assertEqual(all_rows["totals"]["input_tokens"], 800)
+        self.assertEqual(all_rows["totals"]["cache_hit_rate"], 0.5)
+        self.assertAlmostEqual(all_rows["totals"]["cache_prompt_coverage"], 400 / 1120, places=6)
+        filtered = self.report(days=1, provider="test")
+        self.assertEqual(filtered["totals"]["calls"], 2)
+        self.assertEqual(filtered["totals"]["cache_hit_rate"], 0.5)
+        self.assertAlmostEqual(filtered["totals"]["cache_prompt_coverage"], 400 / 520, places=6)
 
     def test_economics_uses_whole_known_calls_and_preserves_negative_savings(self):
         self.create_events([

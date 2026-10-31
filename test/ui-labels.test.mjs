@@ -134,7 +134,7 @@ test('the rates note explains the differing estimate without claiming a charge',
   assert.ok(zh.ratesNote && !zh.ratesNote.startsWith('ratesNote'))
 })
 
-const RATES = { input: 0.15, output: 0.6, cache: 0.003 }
+const RATES = { input: 0.15, output: 0.6, cache: 0.003, inputKnown: true, outputKnown: true, cacheKnown: true }
 
 test('cache savings reconcile with the displayed rate card', () => {
   // Synthetic token counts keep the savings calculation reproducible.
@@ -158,7 +158,7 @@ test('savings ignore a stored value accumulated at other rates', () => {
 
 test('savings are labelled as theoretical, not cash', () => {
   assert.match(en.cacheTitle, /cache/i)
-  assert.equal(en.savedTotal, 'Saved by cache')
+  assert.equal(en.savedTotal, 'Theoretical net cache savings')
   // The wording must not imply a provider credit or recorded billing.
   assert.doesNotMatch(en.savedTotal, /refund|credit|billed|cash/i)
 })

@@ -61,6 +61,7 @@ class _AnalyticsAcc:
         self.cache_known_calls = 0
         self.fallback_calls = 0
         self.known_prompt_tokens = 0
+        self.total_prompt_tokens = 0
         self.known_read_tokens = 0
         self.uncached_usd = 0.0
         self.cached_usd = 0.0
@@ -80,7 +81,8 @@ class _AnalyticsAcc:
             self.cached_usd += economics[1]
             self.covered_tokens += row["_tokens"]
             self.covered_calls += 1
-        if row["_cache_read"] > 0 or row["_cache_write"] > 0:
+        self.total_prompt_tokens += row["_input"] + row["_cache_read"] + row["_cache_write"]
+        if not row["_failure"] and not row["_missing"] and (row["_cache_read"] > 0 or row["_cache_write"] > 0):
             self.cache_known_calls += 1
             self.known_prompt_tokens += row["_input"] + row["_cache_read"] + row["_cache_write"]
             self.known_read_tokens += row["_cache_read"]
@@ -99,6 +101,10 @@ class _AnalyticsAcc:
                 "cache_known_calls": self.cache_known_calls,
                 "cache_unknown_calls": base["calls"] - self.cache_known_calls,
                 "cache_coverage": round(self.cache_known_calls / base["calls"], 6) if base["calls"] else 0.0,
+                "cache_prompt_coverage": (round(self.known_prompt_tokens / self.total_prompt_tokens, 6)
+                                          if self.total_prompt_tokens else None),
+                "cache_covered_prompt_tokens": self.known_prompt_tokens,
+                "cache_total_prompt_tokens": self.total_prompt_tokens,
                 "economics": {
                     "uncached_usd": round(self.uncached_usd, 6) if self.covered_calls else None,
                     "cached_usd": round(self.cached_usd, 6) if self.covered_calls else None,
@@ -410,7 +416,7 @@ def build_analytics_report(
             "Options describe the unfiltered selected window; recording describes all retained calls, independent of filters. The collector retains calls for 180 days, so longer windows may be incomplete.",
             "Prices use the current catalogue, not historical invoices. Economics applies whole-context tiers per call, including tiers that decrease rates; list_usd preserves existing accounting tier/fallback semantics.",
             "Calls with provider errors or missing usage keep their tokens but are unpriced.",
-            "Cache provenance is unknown for all-zero read/write buckets: old rows cannot distinguish missing fields from true zero. Only positive read/write calls enter the prompt-only cache-hit denominator; cache_coverage is known calls / all calls, not token coverage.",
+            "Cache provenance is unknown for all-zero read/write buckets: old rows cannot distinguish missing fields from true zero. Only positive read/write calls enter the prompt-only cache-hit denominator; cache_coverage is known calls / all calls; cache_prompt_coverage uses prompt tokens.",
             "List USD preserves the existing accounting fallback for absent cache rates; strict economics excludes calls requiring those missing prices instead of treating the fallback as savings.",
             "Economics compares hypothetical uncached and cached list costs for the same covered calls, including output and cache-write premiums; savings may be negative. Coverage is covered tokens / all selected tokens.",
             "Billing mix is the latest route/model classification, not a per-call invoice. Only included routes have known $0 marginal billing.",

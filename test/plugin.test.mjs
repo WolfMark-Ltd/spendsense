@@ -57,9 +57,9 @@ test('readUsage: hit% present — gap split into reads + writes, input not reduc
   assert.equal(u.cacheEstimated, true)
 })
 
-test('readUsage: no hit% — gap is all cache writes, exact', () => {
+test('readUsage: no hit% — gap remains an uncertain split', () => {
   const u = T.readUsage({ input: 100, prompt: 150, output: 1 })
-  assert.deepEqual([u.input, u.cacheRead, u.cacheWrite, u.cacheEstimated], [100, 0, 50, false])
+  assert.deepEqual([u.input, u.cacheRead, u.cacheWrite, u.cacheEstimated], [100, 0, 50, true])
 })
 
 test('readUsage: raw cache fields win and are exact', () => {
@@ -78,10 +78,94 @@ test('readUsage: plain usage, junk hit%', () => {
   assert.deepEqual([u.input, u.output, u.cacheRead, u.cacheWrite], [10, 5, 0, 0])
 })
 
+test('cache provenance separates explicit evidence, estimates and ambiguous zeroes', () => {
+  const ambiguous = T.readUsage({ input: 100, prompt: 100, cache_read: 0, cache_write: 0 })
+  assert.equal(ambiguous.cacheSource, 'unknown')
+  assert.equal(T.hitPctOf(ambiguous), null)
+  const confirmed = T.readUsage({ input: 100, prompt: 100, cache_read: 0, cache_write: 0, cache_provenance: 'exact' })
+  assert.equal(T.hitPctOf(confirmed), 0)
+  const estimated = T.readUsage({ input: 50, prompt: 100, cache_hit_pct: 40 })
+  assert.equal(estimated.cacheSource, 'estimated')
+  assert.equal(T.hitPctOf(estimated), 40)
+  assert.equal(T.cacheCoverage(estimated), 1)
+  assert.match(T.cacheCoverageDetail(estimated), /0% exact · 100% estimated/)
+  assert.equal(T.hitPctOf({ input: 100, cacheRead: 0, cacheWrite: 0 }), null, 'legacy is ambiguous')
+})
+
+test('net savings include write premiums and require prices for used buckets', () => {
+  const rates = { input: 2, output: 4, cache: .5, write: 3, inputKnown: true, outputKnown: true, cacheKnown: true }
+  assert.equal(T.cacheSavings(200, rates, 1000), -.0007)
+  assert.equal(T.cacheSavings(200, { ...rates, write: null }, 1000), null)
+  assert.equal(T.cacheSavings(200, { ...rates, cacheKnown: false }, 0), null)
+  assert.equal(T.cacheSavings(200, { ...rates, outputKnown: false }, 0), null)
+  assert.equal(T.cacheSavings(200, { ...rates, inputKnown: false }, 0), null)
+})
+
+test('conversation and filtered ledger use the same weighted covered prompt rate', () => {
+  let led = T.emptyLedger()
+  const usage = { model: 'm', input: 100, prompt: 400, output: 50,
+    cache_read: 200, cache_write: 100, calls: 1 }
+  led = T.applyUsage(led, { now: NOW, sessionId: 's', storedId: 'conv', provider: 'p', usage })
+  const conversation = led.sessions.conv
+  const selected = T.summarize(led, () => true, null)
+  assert.equal(T.hitPctOf(conversation), 50)
+  assert.equal(selected.totals.hitPct, 50)
+  assert.equal(T.cacheCoverage(conversation), 1)
+  assert.match(T.cacheCoverageDetail(conversation), /100% exact · 0% estimated/)
+  assert.equal(selected.totals.cacheCoverage, 1)
+  assert.equal(selected.totals.netSavings, null, 'unknown write rate cannot invent savings')
+  assert.equal(T.summarize(led, () => false, null).totals.hitPct, null)
+})
+
+test('an ambiguous cold start stays in totals without becoming a confirmed miss', () => {
+  let led = T.emptyLedger()
+  const opts = { now: NOW, sessionId: 'cold-start', storedId: 'conv', provider: 'p' }
+  led = T.applyUsage(led, { ...opts, usage: { model: 'm', input: 100, prompt: 100, output: 10, calls: 1 } })
+  assert.equal(T.hitPctOf(led.sessions.conv), null)
+  assert.equal(T.cacheCoverage(led.sessions.conv), 0)
+  led = T.applyUsage(led, { ...opts, now: NOW + 1, usage: { model: 'm', input: 200, prompt: 300, output: 20, cache_hit_pct: 33, calls: 2 } })
+  led = T.applyUsage(led, { ...opts, now: NOW + 2, usage: { model: 'm', input: 250, prompt: 400, output: 30, cache_hit_pct: 38, calls: 3 } })
+  assert.equal(led.sessions.conv.calls, 3)
+  assert.ok(T.cacheCoverage(led.sessions.conv) > 0 && T.cacheCoverage(led.sessions.conv) < 1)
+  assert.equal(led.sessions.conv.cacheEstimated, true)
+})
+
+test('settled conversation net savings include the cache-write premium', () => {
+  const payload = { model: 'm', provider: 'p', providers: [{ slug: 'p', pricing: {
+    m: { input: '2', output: '4', cache: '.5', cache_write: '3', tiers: [] }
+  } }] }
+  const led = T.applyUsage(T.emptyLedger(), { now: NOW, sessionId: 's', storedId: 'conv', provider: 'p', payload,
+    usage: { model: 'm', input: 100, prompt: 1300, output: 10, cache_read: 200, cache_write: 1000, calls: 1 } })
+  const conversation = led.sessions.conv
+  assert.equal(conversation.netSavings, -.0007)
+  assert.equal(conversation.netSavingsPrompt, 1300)
+  assert.equal(T.summarize(led, () => true, null).totals.netSavings, -.0007)
+  assert.equal(T.hitPctOf(conversation), 200 / 1300 * 100)
+})
+
+test('a call with unavailable token counts remains in the conversation', () => {
+  const led = T.applyUsage(T.emptyLedger(), { now: NOW, sessionId: 'empty', storedId: 'conv',
+    usage: { model: 'm', input: 0, output: 0, calls: 1 } })
+  assert.equal(led.sessions.conv.calls, 1)
+  assert.equal(T.hitPctOf(led.sessions.conv), null)
+})
+
+test('unknown-model first frame remains separate and keeps its tokens', () => {
+  let led = T.emptyLedger()
+  led = T.applyUsage(led, { now: NOW, sessionId: 'cold', storedId: 'conv', provider: '',
+    usage: { input: 100, prompt: 100, output: 10, calls: 1 } })
+  led = T.applyUsage(led, { now: NOW + 1, sessionId: 'cold', storedId: 'conv', provider: 'p',
+    usage: { model: 'model-a', input: 150, prompt: 250, output: 20, calls: 2, cache_read: 100, cache_write: 0 } })
+  const rows = T.summarize(led, () => true, null).rows
+  assert.equal(rows.find(r => r.model === '(unknown)').input, 100)
+  assert.equal(rows.find(r => r.model === 'model-a').input, 50)
+  assert.equal(led.sessions.conv.calls, 2)
+})
+
 test('resolveRates: own provider wins over a foreign row with the same model', () => {
   const r = T.resolveRates({ model: 'claude-opus-5', provider: 'github-copilot', payload: copilotPayload({ input: '$5', output: '$25', cache: '$0.5' }) })
   assert.equal(r.origin, 'live')
-  assert.deepEqual(r.rates, { input: 5, output: 25, cache: 0.5 })
+  assert.deepEqual(r.rates, { input: 5, output: 25, cache: 0.5, write: null, inputKnown: false, outputKnown: true, cacheKnown: true })
 })
 
 test('resolveRates: empty own catalog -> bundled table of the same provider, not nous', () => {
@@ -322,7 +406,7 @@ test('registers the All Hermes page on /spend-sense and keeps the live chip', ()
 test('CommandCode prices exactly from its own table, not a reseller', () => {
   const r = T.resolveRates({ model: 'deepseek/deepseek-v4.1-flash', provider: 'commandcode', payload: null })
   assert.equal(r.origin, 'bundled')
-  assert.deepEqual(r.rates, { input: 0.15, output: 0.6, cache: 0.003 },
+  assert.deepEqual(r.rates, { input: 0.15, output: 0.6, cache: 0.003, inputKnown: false, outputKnown: false, cacheKnown: false },
     'the verified CommandCode rates')
   assert.equal(r.foreignSlug, null)
   const noProvider = T.resolveRates({ model: 'deepseek/deepseek-v4.1-flash', provider: '', payload: null })
@@ -334,7 +418,7 @@ test('vendor-prefixed and bare model slugs resolve to the same route rates', () 
   assert.equal(prefixed.origin, 'bundled')
   assert.equal(bare.origin, 'bundled')
   assert.deepEqual(prefixed.rates, bare.rates, 'prefix is a vendor namespace, not a different model')
-  assert.deepEqual(prefixed.rates, { input: 0.15, output: 0.6, cache: 0.003 })
+  assert.deepEqual(prefixed.rates, { input: 0.15, output: 0.6, cache: 0.003, inputKnown: false, outputKnown: false, cacheKnown: false })
 
   // The vendor prefix must not be mistaken for the serving provider.
   assert.equal(T.providerMatches({ slug: 'commandcode' }, 'commandcode'), true)
@@ -346,7 +430,7 @@ test('vendor-prefixed and bare model slugs resolve to the same route rates', () 
   ] }
   const live = T.resolveRates({ model: 'deepseek-v4.1-flash', provider: 'commandcode', payload })
   assert.equal(live.origin, 'live')
-  assert.deepEqual(live.rates, { input: 0.15, output: 0.6, cache: 0.003 })
+  assert.deepEqual(live.rates, { input: 0.15, output: 0.6, cache: 0.003, write: null, inputKnown: false, outputKnown: true, cacheKnown: true })
   assert.equal(T.liveProvider(payload, 'deepseek-v4.1-flash'), 'commandcode')
 })
 test('a corrected provider uses its own exact rates, not a live foreign row', () => {
@@ -361,7 +445,7 @@ test('a corrected provider uses its own exact rates, not a live foreign row', ()
   }
   const r = T.resolveRates({ model: 'deepseek/deepseek-v4.1-flash', provider: 'commandcode', payload })
   assert.equal(r.origin, 'bundled', 'own exact table wins over a foreign live row')
-  assert.deepEqual(r.rates, { input: 0.15, output: 0.6, cache: 0.003 })
+  assert.deepEqual(r.rates, { input: 0.15, output: 0.6, cache: 0.003, inputKnown: false, outputKnown: false, cacheKnown: false })
   assert.equal(r.foreignSlug, null, 'no borrowing warning when the exact rate exists')
 })
 

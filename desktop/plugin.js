@@ -85,6 +85,7 @@ function fmtTokens(n) {
 function fmtUsd(v) {
   if (v == null || !Number.isFinite(v)) return '—'
   if (v === 0) return '$0.00'
+  if (v < 0) return `−${fmtUsd(-v)}`
   if (v < 0.01) return `$${v.toFixed(4)}`
   if (v < 1) return `$${v.toFixed(3)}`
   return `$${v.toFixed(2)}`
@@ -175,7 +176,7 @@ function modelAliases(model) {
 
 function tableRates(table, names) {
   if (!table) return null
-  const row = r => ({ cache: r[2] ?? r[0], input: r[0], output: r[1] ?? 0 })
+  const row = r => ({ cache: r[2] ?? r[0], input: r[0], output: r[1] ?? 0, inputKnown: false, outputKnown: false, cacheKnown: false })
   for (const n of names) {
     const r = table[n]
     if (Array.isArray(r)) return row(r)
@@ -258,7 +259,7 @@ function toRates(entry) {
   const input = rIn ?? 0
   const output = rOut ?? 0
   const cache = parseRate(entry.cache) ?? input
-  return { input, output, cache }
+  return { input, output, cache, write: parseRate(entry.cache_write ?? entry.cacheWrite), inputKnown: rIn != null && Array.isArray(entry.tiers) && entry.tiers.length === 0, outputKnown: rOut != null, cacheKnown: parseRate(entry.cache) != null }
 }
 
 function rateKey(provider, model) {
@@ -290,7 +291,8 @@ async function ensureBackendRate(provider, model) {
     const result = await rest(`/rates?provider=${encodeURIComponent(p)}&model=${encodeURIComponent(m)}`)
     if (!membershipIdentityCurrent(identity)) { delete backendRateBook[key]; return }
     if (!result?.rate) throw new Error('unpriced')
-    const entry = { at: Date.now(), rates: { input: result.rate.input, output: result.rate.output, cache: result.rate.cache_read },
+    const entry = { at: Date.now(), rates: { input: result.rate.input, output: result.rate.output, cache: result.rate.cache_read, write: result.rate.cache_write,
+      inputKnown: result.rate.input != null && result.rate.has_tiers === false, outputKnown: result.rate.output != null, cacheKnown: result.rate.cache_read != null },
       provenance: result.rate.provenance, provisional: result.rate.provisional || [],
       stale: Boolean(result.catalogue?.stale), asOf: result.catalogue?.as_of || '', age: result.catalogue?.age_seconds ?? null }
     backendRateBook[key] = entry
@@ -348,32 +350,35 @@ function fallbackLookup(model, provider) {
 
 /**
  * Hermes' CanonicalUsage splits prompt = input + cache_read + cache_write, so
- * bill each stream at its own rate (cache writes have no separate catalog
- * rate; they go at the input rate).
+ * bill each stream at its own rate; absent cache-write rates use the input
+ * rate only for the existing general cost estimate, not strict net savings.
  */
 function costOf(bucket, rates) {
   if (!bucket || !rates) return null
   const parts = {
     input: (num(bucket.input) * rates.input) / M,
     cacheRead: (num(bucket.cacheRead) * rates.cache) / M,
-    cacheWrite: (num(bucket.cacheWrite) * rates.input) / M,
+    cacheWrite: (num(bucket.cacheWrite) * (rates.write ?? rates.input)) / M,
     output: (num(bucket.output) * rates.output) / M
   }
   return { parts, total: parts.input + parts.cacheRead + parts.cacheWrite + parts.output }
 }
 
 /** What cache reads saved versus paying the full input rate for them. */
-function cacheSavings(cacheRead, rates) {
-  if (!rates) return null
-  return (num(cacheRead) * Math.max(0, rates.input - rates.cache)) / M
+function cacheSavings(cacheRead, rates, cacheWrite = 0) {
+  if (!rates || rates.inputKnown !== true || rates.outputKnown !== true ||
+      !Number.isFinite(rates.input) || !Number.isFinite(rates.output) ||
+      (num(cacheRead) && (rates.cacheKnown !== true || !Number.isFinite(rates.cache))) ||
+      (num(cacheWrite) && !Number.isFinite(rates.write))) return null
+  const readSavings = num(cacheRead) ? num(cacheRead) * (rates.input - rates.cache) : 0
+  const writeSavings = num(cacheWrite) ? num(cacheWrite) * (rates.input - rates.write) : 0
+  return (readSavings + writeSavings) / M
 }
 
-/** Savings for the pane, always at the card the pane is about to display.
- *  `hist.saved` accumulates at record-time rates, so replaying it beside a
- *  different current card would contradict the rates shown underneath. */
+/** Strict single-bucket net value; unknown read/write prices stay unknown. */
 function liveSavings(bucket, rates) {
   if (!bucket || !rates) return null
-  return cacheSavings(bucket.cacheRead, rates)
+  return cacheSavings(bucket.cacheRead, rates, bucket.cacheWrite)
 }
 
 /**
@@ -384,9 +389,10 @@ function liveSavings(bucket, rates) {
  * a ROUNDED `cache_hit_pct` that is present only when cache_read > 0. Raw
  * cache_read / cache_write are honoured when a producer sends them.
  *
- *   - raw cache fields present        -> exact.
- *   - prompt > input, no hit%         -> the gap is all cache WRITES (exact:
- *                                        hit% is omitted only when reads = 0).
+ *   - both raw counters and positive cache activity -> recorded counters.
+ *   - all-zero counters without explicit provenance -> unknown.
+ *   - prompt > input, no hit%         -> split is unknown; the gap is retained
+ *                                        for total accounting but not hit rate.
  *   - prompt > input, hit% present    -> reads ≈ prompt × hit%, capped at the
  *                                        gap; the rest are writes. ESTIMATED.
  *   - prompt == input, hit% present   -> input fell back to prompt; split it by
@@ -399,6 +405,9 @@ function readUsage(u) {
   const rawHit = Number(u.cache_hit_pct)
   const hitPct = u.cache_hit_pct != null && Number.isFinite(rawHit) ? Math.max(0, Math.min(100, rawHit)) : null
   const base = { calls: num(u.calls), output: num(u.output) }
+  const positiveRaw = num(u.cache_read) > 0 || num(u.cache_write) > 0
+  const exactRaw = u.cache_read != null && u.cache_write != null &&
+    (positiveRaw || u.cache_provenance === 'exact')
 
   const hasRaw = u.cache_read != null || u.cache_write != null
   if (hasRaw) {
@@ -407,28 +416,49 @@ function readUsage(u) {
     const cached = cacheRead + cacheWrite
     // `input` carries the whole prompt when the provider had no split.
     const fresh = prompt && input === prompt && input >= cached ? input - cached : input
-    return { ...base, cacheEstimated: false, cacheRead, cacheWrite, input: fresh }
+    return { ...base, cacheSource: exactRaw ? 'exact' : 'unknown', cacheEstimated: false, cacheRead, cacheWrite, input: fresh }
   }
 
   if (prompt > input) {
     const gap = prompt - input
-    if (hitPct == null) return { ...base, cacheEstimated: false, cacheRead: 0, cacheWrite: gap, input }
+    if (hitPct == null) return { ...base, cacheSource: 'unknown', cacheEstimated: true, cacheRead: 0, cacheWrite: gap, input }
     const cacheRead = Math.min(gap, Math.round((prompt * hitPct) / 100))
-    return { ...base, cacheEstimated: true, cacheRead, cacheWrite: gap - cacheRead, input }
+    return { ...base, cacheSource: 'estimated', cacheEstimated: true, cacheRead, cacheWrite: gap - cacheRead, input }
   }
 
   if (prompt && hitPct != null && hitPct > 0) {
     const cacheRead = Math.min(prompt, Math.round((prompt * hitPct) / 100))
-    return { ...base, cacheEstimated: true, cacheRead, cacheWrite: 0, input: prompt - cacheRead }
+    return { ...base, cacheSource: 'estimated', cacheEstimated: true, cacheRead, cacheWrite: 0, input: prompt - cacheRead }
   }
 
-  return { ...base, cacheEstimated: false, cacheRead: 0, cacheWrite: 0, input }
+  return { ...base, cacheSource: 'unknown', cacheEstimated: hitPct != null && !prompt, cacheRead: 0, cacheWrite: 0, input }
 }
 
 /** Prompt-cache hit rate of a bucket, in percent (null without prompt tokens). */
 function hitPctOf(b) {
+  if (!b) return null
+  if (b.cacheSource) {
+    const prompt = num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
+    return b.cacheSource !== 'unknown' && prompt ? num(b.cacheRead) / prompt * 100 : null
+  }
+  return num(b.cacheCoveredPrompt) ? num(b.cacheCoveredRead) / num(b.cacheCoveredPrompt) * 100 : null
+}
+
+function cacheCoverage(b) {
+  if (!b) return null
   const prompt = num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
-  return prompt ? (num(b.cacheRead) / prompt) * 100 : null
+  if (!prompt) return null
+  if (b.cacheSource) return b.cacheSource === 'unknown' ? 0 : 1
+  return Math.min(1, num(b.cacheCoveredPrompt) / prompt)
+}
+
+function cacheCoverageDetail(b) {
+  if (!b) return ''
+  const prompt = num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
+  if (!prompt) return ''
+  const exact = b.cacheSource === 'exact' ? prompt : num(b.cacheExactPrompt)
+  const estimated = b.cacheSource === 'estimated' ? prompt : num(b.cacheEstimatedPrompt)
+  return `${Math.round(Math.min(1, exact / prompt) * 100)}% exact · ${Math.round(Math.min(1, estimated / prompt) * 100)}% estimated`
 }
 
 /* ----------------------------------------------------------------- ledger */
@@ -454,6 +484,12 @@ function bucketKey(profile, provider, model, legacy) {
 function newBucket({ legacy = false, model, profile = '', provider = '' }) {
   return {
     cacheEstimated: false,
+    cacheCoveredPrompt: 0,
+    cacheCoveredRead: 0,
+    cacheExactPrompt: 0,
+    cacheEstimatedPrompt: 0,
+    netSavings: 0,
+    netSavingsPrompt: 0,
     cacheRead: 0,
     cacheWrite: 0,
     calls: 0,
@@ -557,6 +593,11 @@ function pruneSessions(sessions, now) {
   return Object.fromEntries(fresh)
 }
 
+function changeCacheKnown(cur, init, delta) {
+  return cur.cacheSource !== 'unknown' && init.cacheDeltaKnown === true &&
+    num(delta.input) + num(delta.cacheRead) + num(delta.cacheWrite) > 0
+}
+
 /** Add one priced delta to a bucket (copy-on-write). */
 function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolved, source }) {
   const b = prevBucket ? { ...prevBucket, sources: { ...prevBucket.sources } } : newBucket(init)
@@ -565,7 +606,19 @@ function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolv
   b.cacheRead += delta.cacheRead
   b.cacheWrite += delta.cacheWrite
   b.calls += delta.calls
-  if (cur.cacheEstimated && (delta.cacheRead || delta.cacheWrite)) b.cacheEstimated = true
+  const prompt = num(delta.input) + num(delta.cacheRead) + num(delta.cacheWrite)
+  if (changeCacheKnown(cur, init, delta)) {
+    b.cacheCoveredPrompt = num(b.cacheCoveredPrompt) + prompt
+    b.cacheCoveredRead = num(b.cacheCoveredRead) + num(delta.cacheRead)
+    if (cur.cacheSource === 'exact') b.cacheExactPrompt = num(b.cacheExactPrompt) + prompt
+    if (cur.cacheSource === 'estimated') b.cacheEstimatedPrompt = num(b.cacheEstimatedPrompt) + prompt
+    const net = cacheSavings(delta.cacheRead, resolved.rates, delta.cacheWrite)
+    if (net != null) {
+      b.netSavings = (Number.isFinite(b.netSavings) ? b.netSavings : 0) + net
+      b.netSavingsPrompt = num(b.netSavingsPrompt) + prompt
+    }
+  }
+  if (cur.cacheEstimated && (num(delta.cacheRead) || num(delta.cacheWrite) || changeCacheKnown(cur, init, delta))) b.cacheEstimated = true
   if (costDelta != null) {
     b.cost += costDelta
     b.pricedTokens += deltaTokens
@@ -597,11 +650,10 @@ function pruneSnapshots(snaps, now) {
  */
 function applyUsage(led, { now = Date.now(), payload = null, profile = '', provider = '', sessionId, storedId = '', usage }) {
   if (!sessionId || !usage) return led
-  const model = String(usage.model || '').trim()
-  if (!model) return led
+  const model = String(usage.model || '').trim() || '(unknown)'
 
   const cur = readUsage(usage)
-  if (!tokensOf(cur)) return led
+  if (!tokensOf(cur) && !cur.calls) return led
 
   const gatewayCost =
     typeof usage.cost_usd === 'number' && Number.isFinite(usage.cost_usd) && usage.cost_usd > 0 ? usage.cost_usd : null
@@ -660,8 +712,9 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
   const key = bucketKey(profile, provider, model, false)
   const days = { ...led.days }
   const forDay = { ...(days[day] || {}) }
+  const cacheDeltaKnown = cur.cacheSource !== 'unknown' && (restarted || prev?.cacheSource === cur.cacheSource)
   const change = { costDelta, cur, delta, deltaTokens, resolved, source }
-  const b = addDelta(forDay[key], { model, profile, provider }, change)
+  const b = addDelta(forDay[key], { model, profile, provider, cacheDeltaKnown }, change)
   forDay[key] = b
   days[day] = forDay
 
@@ -674,7 +727,7 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
   let sessions = led.sessions || {}
   if (storedId) {
     const prevS = sessions[storedId]
-    const s = addDelta(prevS, { model, profile, provider }, change)
+    const s = addDelta(prevS, { model, profile, provider, cacheDeltaKnown }, change)
     // The pane shows the conversation's latest route.
     s.model = model
     s.profile = profile
@@ -711,9 +764,10 @@ function summarize(led, filter, priceLegacy) {
     for (const [key, b] of Object.entries(buckets)) {
       if (!isObj(b)) continue
       const r = rows[key] || (rows[key] = { ...newBucket(b), cost: b.legacy ? null : 0 })
-      for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'calls', 'pricedTokens', 'unpricedTokens', 'saved']) {
+      for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'calls', 'pricedTokens', 'unpricedTokens', 'saved', 'cacheCoveredPrompt', 'cacheCoveredRead', 'cacheExactPrompt', 'cacheEstimatedPrompt', 'netSavingsPrompt']) {
         r[f] += num(b[f])
       }
+      if (Number.isFinite(b.netSavings)) r.netSavings += b.netSavings
       if (!b.legacy) r.cost += num(b.cost)
       if (b.cacheEstimated) r.cacheEstimated = true
       if (b.foreignSlug) r.foreignSlug = b.foreignSlug
@@ -730,6 +784,12 @@ function summarize(led, filter, priceLegacy) {
     prompt: 0,
     read: 0,
     saved: 0,
+    cacheCoveredPrompt: 0,
+    cacheCoveredRead: 0,
+    cacheExactPrompt: 0,
+    cacheEstimatedPrompt: 0,
+    netSavings: 0,
+    netSavingsPrompt: 0,
     unpricedTokens: 0
   }
   const list = Object.values(rows).map(r => {
@@ -752,6 +812,12 @@ function summarize(led, filter, priceLegacy) {
       totals.known = true
     }
     totals.saved += num(r.saved)
+    totals.cacheCoveredPrompt += num(r.cacheCoveredPrompt)
+    totals.cacheCoveredRead += num(r.cacheCoveredRead)
+    totals.cacheExactPrompt += num(r.cacheExactPrompt)
+    totals.cacheEstimatedPrompt += num(r.cacheEstimatedPrompt)
+    totals.netSavings += r.netSavings
+    totals.netSavingsPrompt += num(r.netSavingsPrompt)
     totals.read += num(r.cacheRead)
     totals.prompt += num(r.input) + num(r.cacheRead) + num(r.cacheWrite)
     totals.unpricedTokens += num(r.unpricedTokens)
@@ -760,7 +826,9 @@ function summarize(led, filter, priceLegacy) {
     return r
   })
   list.sort((a, b) => num(b.cost) - num(a.cost) || tokensOf(b) - tokensOf(a))
-  totals.hitPct = totals.prompt ? (totals.read / totals.prompt) * 100 : null
+  totals.hitPct = hitPctOf(totals)
+  totals.cacheCoverage = cacheCoverage({ input: totals.prompt, cacheCoveredPrompt: totals.cacheCoveredPrompt })
+  totals.netSavings = totals.prompt && totals.netSavingsPrompt === totals.prompt ? totals.netSavings : null
   return { rows: list, totals }
 }
 
@@ -810,7 +878,9 @@ function ledgerCsv(led) {
         [
           date, b.profile || '', b.provider || '', b.model, num(b.input), num(b.output), num(b.cacheRead),
           num(b.cacheWrite), num(b.calls), b.legacy || !num(b.pricedTokens) ? '' : Number(num(b.cost).toFixed(6)),
-          costBasis(b), num(b.pricedTokens), num(b.unpricedTokens), b.legacy ? '' : Number(num(b.saved).toFixed(6)),
+          costBasis(b), num(b.pricedTokens), num(b.unpricedTokens),
+          num(b.netSavingsPrompt) && num(b.netSavingsPrompt) === num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
+            ? Number(b.netSavings.toFixed(6)) : '',
           b.cacheEstimated ? 'yes' : 'no'
         ]
           .map(csvCell)
@@ -870,7 +940,7 @@ function sameModel(a, b) {
 
 /** Provider is authoritative only when the payload describes the active model. */
 function liveProvider(payload, activeModel) {
-  if (!payload || typeof payload.provider !== 'string') return ''
+  if (!activeModel || !payload || typeof payload.provider !== 'string') return ''
   if (payload.model && activeModel && !sameModel(payload.model, activeModel)) return ''
   return payload.provider
 }
@@ -1116,8 +1186,6 @@ function useLive() {
   const backendCost =
     usage && typeof usage.cost_usd === 'number' && usage.cost_usd > 0 ? usage.cost_usd : null
 
-  const gatewayHit = usage && typeof usage.cache_hit_pct === 'number' ? usage.cache_hit_pct : null
-
   // The conversation's recorded total (all runs, survives restarts). It is
   // written on every usage tick, so while a run is live it already includes
   // it; prefer it whenever it exists and isn't behind the live counters.
@@ -1146,7 +1214,9 @@ function useLive() {
       provider: provider || (!usage ? (hist.provider || null) : null),
       providerUnknown: !(provider || (!usage && hist.provider)),
       rates: histRates.rates,
-      saved: liveSavings(hist, histRates.rates),
+      saved: num(hist.netSavingsPrompt) === num(hist.input) + num(hist.cacheRead) + num(hist.cacheWrite) && num(hist.netSavingsPrompt)
+        ? hist.netSavings : null,
+      cacheCoverage: cacheCoverage(hist),
       sinceAt: hist.firstAt,
       usage
     }
@@ -1154,7 +1224,7 @@ function useLive() {
 
   return {
     bucket,
-    cacheHitPct: gatewayHit != null ? gatewayHit : bucket ? hitPctOf(bucket) : null,
+    cacheHitPct: bucket ? hitPctOf(bucket) : null,
     cost: backendCost != null ? backendCost : computed ? computed.total : null,
     costSource: backendCost != null ? 'gateway' : computed ? resolved.origin : 'none',
     foreignSlug: resolved.foreignSlug,
@@ -1164,7 +1234,10 @@ function useLive() {
     provider: provider || null,
     providerUnknown: !provider,
     rates: resolved.rates,
-    saved: liveSavings(bucket, resolved.rates),
+    // A cumulative run can span models; one current price cannot value it.
+    saved: bucket?.cacheSource !== 'unknown' && num(bucket?.calls) === 1
+      ? liveSavings(bucket, resolved.rates) : null,
+    cacheCoverage: cacheCoverage(bucket),
     usage
   }
 }
@@ -1276,7 +1349,7 @@ function Chip() {
       live.model || '—',
       sourceLabel(t, live.costSource, live.foreignSlug, live.providerUnknown),
       fmtUsd(today.cost),
-      live.cacheHitPct != null ? `${Math.round(live.cacheHitPct)}%` : '—',
+      live.cacheHitPct != null ? `${live.bucket?.cacheEstimated ? '≈' : ''}${Math.round(live.cacheHitPct)}%` : '—',
       live.saved != null ? `${live.bucket && live.bucket.cacheEstimated ? '≈' : ''}${fmtUsd(live.saved)}` : '—'
     ),
     children: jsxs('button', {
@@ -1294,7 +1367,7 @@ function Chip() {
           children: live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${fmtUsd(live.cost)}`
         }),
         live.cacheHitPct != null
-          ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ⚡${Math.round(live.cacheHitPct)}%` })
+          ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ⚡${live.bucket?.cacheEstimated ? '≈' : ''}${Math.round(live.cacheHitPct)}%` })
           : null,
         todayText ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ${todayText}` }) : null
       ].filter(Boolean)
@@ -1348,6 +1421,7 @@ function rangeNotes(t, totals, storageError) {
   if (totals.unpricedTokens) notes.push(jsx(Note, { warn: true, children: t('unpricedNote', fmtTokens(totals.unpricedTokens)) }, 'up'))
   if (totals.foreignTokens) notes.push(jsx(Note, { warn: true, children: t('foreignNote', fmtTokens(totals.foreignTokens)) }, 'fo'))
   if (totals.legacyTokens) notes.push(jsx(Note, { children: t('legacyNote', fmtTokens(totals.legacyTokens)) }, 'lg'))
+  if (totals.cacheCoverage != null) notes.push(jsx(Note, { children: `${Math.round(totals.cacheCoverage * 100)}% of prompt tokens covered by cache data` }, 'cc'))
   if (totals.cacheEstimated) notes.push(jsx(Note, { children: t('cacheEstNote') }, 'ce'))
   return notes
 }
@@ -1430,12 +1504,13 @@ function Meter() {
               ? jsx(Note, { children: t(live.fromHistory ? 'historyNote' : 'cumulativeNote', fmtDate(live.sinceAt)) }, 'hist')
               : null,
             live.partial ? jsx(Note, { warn: true, children: t('unpricedNote', fmtTokens(b.unpricedTokens)) }, 'up') : null,
-            live.cacheHitPct != null
+            num(b.input) + num(b.cacheRead) + num(b.cacheWrite) > 0
               ? jsx(Section, {
                   title: t('cacheTitle'),
                   children: [
-                    jsx(Row, { label: t('hitRate'), value: `${Math.round(live.cacheHitPct)}%` }, 'hr'),
-                    jsx('div', { className: 'py-1', children: jsx(CacheBar, { pct: live.cacheHitPct }) }, 'bar'),
+                    jsx(Row, { label: t('hitRate'), value: live.cacheHitPct == null ? '—' : `${approx}${Math.round(live.cacheHitPct)}%` }, 'hr'),
+                    live.cacheHitPct != null ? jsx('div', { className: 'py-1', children: jsx(CacheBar, { pct: live.cacheHitPct }) }, 'bar') : null,
+                    jsx(Note, { children: `${Math.round((live.cacheCoverage || 0) * 100)}% of prompt tokens covered · ${cacheCoverageDetail(b)}` }, 'coverage'),
                     live.saved != null ? jsx(Row, { label: t('savedTotal'), value: `${approx}${fmtUsd(live.saved)}` }, 'sv') : null,
                     b.cacheEstimated ? jsx(Note, { children: t('cacheEstNote') }, 'est') : null
                   ].filter(Boolean)
@@ -1954,7 +2029,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:'Reading timestamped calls…'}):null,
     totals?jsxs('div',{className:'wm-stats',children:[
       jsx(AnalyticsStat,{label:'API-equivalent',value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',num(totals.unpriced_tokens)&&'wm-warn'),children:analyticsPricing(totals)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd)) || 'Priced per-call estimate · not an invoice'}),
-      jsx(AnalyticsStat,{label:'Weighted cache hit',value:percent(totals.cache_hit_rate),tone:'wm-good',hint:`${exactTokens(totals.cache_known_calls)} known-cache / ${exactTokens(totals.calls)} calls`,extra:`${percent(totals.cache_coverage)} cache coverage · ${exactTokens(totals.cache_unknown_calls)} unknown`}),
+      jsx(AnalyticsStat,{label:'Weighted cache hit',value:percent(totals.cache_hit_rate),tone:'wm-good',hint: totals.cache_prompt_coverage == null ? 'Prompt coverage unavailable' : `${percent(totals.cache_prompt_coverage)} of prompt tokens covered`,extra:'Based on recorded cache activity · see details'}),
       jsx(AnalyticsStat,{label:'Theoretical net savings',value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:'Read discounts − write premiums',extra:`${percent(economics.coverage)} economics coverage · detail below`}),
       jsx(AnalyticsStat,{label:'Tokens / calls',value:fmtTokens(totals.tokens),hint:`${exactTokens(totals.calls)} recorded calls`,extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens)) || `${fmtTokens(totals.input_tokens)} in · ${fmtTokens(totals.output_tokens)} out`}),
       jsx(AnalyticsStat,{label:'Pricing coverage',value:percent(data.pricing_coverage?.coverage),hint:`${exactTokens(totals.unpriced_tokens)} unpriced tokens`,extra:analyticsPricing(totals)})]}):null,
@@ -4506,7 +4581,7 @@ function LedgerPage() {
       jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums text-(--ui-text-tertiary)', children: `${approx}${fmtTokens(r.cacheRead)}` }),
       jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums text-(--ui-text-tertiary)', children: String(r.calls) }),
       jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums', children: pct == null ? '—' : `${approx}${Math.round(pct)}%` }),
-      jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums text-(--ui-accent)', children: r.saved ? `${approx}${fmtUsd(r.saved)}` : '—' }),
+      jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums text-(--ui-accent)', children: num(r.netSavingsPrompt) && num(r.netSavingsPrompt) === num(r.input) + num(r.cacheRead) + num(r.cacheWrite) ? `${approx}${fmtUsd(r.netSavings)}` : '—' }),
       jsxs('td', {
         className: 'py-1.5 text-right tabular-nums',
         children: [
@@ -4570,7 +4645,7 @@ function LedgerPage() {
                 className: 'flex items-baseline justify-between text-xs text-(--ui-text-tertiary)',
                 children: [
                   jsx('span', { children: `${t('hitRate')} ${totals.cacheEstimated ? '≈' : ''}${Math.round(totals.hitPct)}%` }),
-                  jsx('span', { children: `${t('savedTotal')} ${totals.cacheEstimated ? '≈' : ''}${fmtUsd(totals.saved)}` })
+                  jsx('span', { children: `${t('savedTotal')} ${totals.cacheEstimated ? '≈' : ''}${fmtUsd(totals.netSavings)}` })
                 ]
               }),
               jsx(CacheBar, { pct: totals.hitPct })
@@ -4612,7 +4687,7 @@ const I18N = {
   en: {
     basisLegacy: 'pre-1.0 data · at current rates',
     basisMixed: 'mixed rate sources',
-    cacheEstNote: '≈ Cached volume is derived from the gateway’s rounded hit rate; the cache split and savings are estimates.',
+    cacheEstNote: '≈ The gateway cache split is reconstructed or incomplete; cache figures and savings are estimates.',
     cacheRead: 'Cache read',
     cacheTitle: 'Prompt cache',
     cacheWrite: 'Cache write',
@@ -4620,7 +4695,7 @@ const I18N = {
     closeTip: 'Close (Esc)',
     calls: 'Calls',
     chipTip: (model, source, today, hit, saved) =>
-      `${model} — cost ${source}. Today ${today}. Cache hit ${hit}, saved ${saved} by cache. Click for details.`,
+      `${model} — cost ${source}. Today ${today}. Cache hit ${hit}; theoretical net cache savings ${saved}. Click for details.`,
   chipTipIdle: 'Spend Sense — click for details',
     context: 'Context',
     copied: 'Ledger JSON copied to the clipboard.',
@@ -4725,8 +4800,8 @@ const I18N = {
     range_today: 'Today',
     range_week: '7 days',
     rates: 'Rates ($/Mtok)',
-    saved: 'Saved',
-    savedTotal: 'Saved by cache',
+    saved: 'Net savings',
+    savedTotal: 'Theoretical net cache savings',
     sessionTokens: 'This session',
     src_backend: 'Hermes backend estimate',
     src_bundled: 'estimated from models.dev rates',
@@ -4746,7 +4821,7 @@ const I18N = {
   zh: {
     basisLegacy: '1.0 前旧数据 · 按现价估算',
     basisMixed: '多种价格来源',
-    cacheEstNote: '≈ 缓存量由网关取整后的命中率推算，缓存拆分与节省额均为估算。',
+    cacheEstNote: '≈ 网关缓存拆分是推算值或不完整；缓存数据及节省额均为估算。',
     cacheRead: '缓存读取',
     cacheTitle: '提示词缓存',
     cacheWrite: '缓存写入',
@@ -4754,7 +4829,7 @@ const I18N = {
     closeTip: '关闭（Esc）',
     calls: '调用',
     chipTip: (model, source, today, hit, saved) =>
-      `${model} — 费用${source}。今日 ${today}。缓存命中 ${hit}，缓存节省 ${saved}。点击查看明细。`,
+      `${model} — 费用${source}。今日 ${today}。缓存命中 ${hit}，理论缓存净节省 ${saved}。点击查看明细。`,
   chipTipIdle: 'WolfMark 成本账本 — 点击查看详情',
     context: '上下文',
     copied: '账本 JSON 已复制到剪贴板。',
@@ -4792,8 +4867,8 @@ const I18N = {
     range_today: '今日',
     range_week: '近 7 天',
     rates: '单价（$/百万令牌）',
-    saved: '已节省',
-    savedTotal: '缓存节省',
+    saved: '净节省',
+    savedTotal: '理论缓存净节省',
     scopeRun: '本轮',
     scopeConversation: '对话',
     scopeTotalsConversation: '对话总计',
@@ -4951,7 +5026,7 @@ export const __test = {
   legacyPricer,
   migrateV1,
   readStoredLedger,
-  readUsage,
+  readUsage, cacheCoverage, cacheCoverageDetail,
   resolveRates,
   summarize,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
