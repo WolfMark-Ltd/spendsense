@@ -52,7 +52,7 @@ class RouteSelection(unittest.TestCase):
 
     def test_custom_override_is_editable_and_revisioned(self):
         path = Path(tempfile.mkdtemp()) / "p.json"
-        created = billing.save_profile({"id": "custom", "kind": "custom",
+        created = billing.save_profile({"id": "custom", "provider": "example", "kind": "custom",
                                         "rate_override": {"input": 1.0, "output": 2.0,
                                                           "cache_read": 0.1,
                                                           "effective_from": "2026-10-01"}}, path)

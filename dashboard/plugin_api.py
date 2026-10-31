@@ -100,7 +100,7 @@ def ledger(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - a read-only report must fail closed
         log.error("wolfmark-cost-ledger: report failed")
-        raise HTTPException(status_code=500, detail=f"ledger report failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail="ledger report failed") from exc
 
 
 @router.get("/rates")

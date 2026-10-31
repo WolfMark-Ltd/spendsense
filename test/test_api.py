@@ -35,6 +35,12 @@ class ApiTests(unittest.TestCase):
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
 
+    def test_ledger_unexpected_failure_hides_exception_details(self):
+        with patch.object(plugin_api, "build_ledger_report", side_effect=RuntimeError("private sentinel")):
+            response = self.client.get("/api/plugins/wolfmark-cost-ledger/ledger")
+        self.assertEqual(response.status_code, 500)
+        self.assertNotIn("private sentinel", response.text)
+
     def test_ledger_returns_report_shape(self):
         fixture = {
             "ok": True,

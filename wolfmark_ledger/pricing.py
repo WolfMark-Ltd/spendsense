@@ -297,7 +297,8 @@ def _window_active(windows: tuple, at: Optional[float]) -> bool:
     for days, start, end, *_ in windows:
         if days and moment.weekday() not in days:
             continue
-        if start <= minute < end:
+        inside = start <= minute < end if start <= end else (minute >= start or minute < end)
+        if inside:
             return True
     return False
 

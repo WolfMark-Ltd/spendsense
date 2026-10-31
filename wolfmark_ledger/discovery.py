@@ -171,6 +171,22 @@ def _slot_only(family: str, slots: Mapping[str, Any], catalogue: Mapping[str, An
     }
 
 
+def probe_providers(providers: Iterable[str], *, home: Optional[Path | str] = None,
+                    budget_seconds: float = 10.0) -> dict[str, dict[str, Any]]:
+    """Bound the whole Desktop request and retain per-provider partial results."""
+    deadline = time.monotonic() + budget_seconds
+    results = {}
+    for provider in providers:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            results[provider] = {"state": "unavailable", "snapshot": None,
+                                 "reason": "discovery time budget exhausted"}
+        else:
+            results[provider] = native_snapshot(provider, home=home,
+                                                 timeout=min(PROBE_TIMEOUT, remaining))
+    return results
+
+
 def discover(catalogue: Mapping[str, Any] | None, *, include_native: bool = True,
              home: Optional[Path | str] = None, now: Optional[float] = None,
              providers: Optional[Iterable[str]] = None) -> dict[str, Any]:
@@ -186,16 +202,18 @@ def discover(catalogue: Mapping[str, Any] | None, *, include_native: bool = True
     accounts: list[dict[str, Any]] = []
     notes: list[str] = []
 
-    for family in sorted(slots):
-        if wanted is not None and family not in wanted:
-            continue
+    families = [family for family in sorted(slots) if wanted is None or family in wanted]
+    probes = probe_providers(families, home=home) if include_native else {}
+    for family in families:
         snapshot = None
         usage_source = "none"
         if include_native:
-            probe = native_snapshot(family, home=home)
+            probe = probes[family]
             if probe["state"] == "ok" and probe["snapshot"]:
                 snapshot = probe["snapshot"]
                 usage_source = str(snapshot.get("source") or "usage_api")
+                if usage_source not in mem.USAGE_SOURCES:
+                    usage_source = "usage_api"
             elif probe["state"] == "unavailable":
                 notes.append(f"{family}: Hermes reported no account usage ({probe['reason']}).")
             elif probe["state"] == "error":

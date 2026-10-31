@@ -121,6 +121,13 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(report["attribution"]["operation_root"], "root")
         self.assertEqual(sum(row["calls"] for row in scope.values()), report["totals"]["calls"])
 
+    def test_failed_call_with_catalogue_rate_is_unpriced_in_all_coverage(self):
+        self.create_events([{"input_tokens": 100, "outcome": "error"}])
+        report = self.report(days=1)
+        self.assertEqual(report["totals"]["unpriced_tokens"], 100)
+        self.assertEqual(report["pricing_coverage"]["unpriced_tokens"], 100)
+        self.assertEqual(report["pricing_coverage"]["coverage"], 0)
+
     def test_parent_and_scope_filters_are_exact_and_never_invent_attribution(self):
         self.create_sessions([
             {"id": "root"},

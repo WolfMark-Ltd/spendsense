@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOGUE = ROOT / "catalogue"
@@ -68,7 +69,7 @@ ADAPTER = {
     "opencode-go-plan": ("opencode_go", "opencode-go", True),
     "commandcode-pricing": ("commandcode_pricing", "commandcode", True),
     "ollama-pricing": ("ollama_pricing", "ollama-cloud", True),
-    "huggingface-pricing": ("huggingface_pricing", "huggingface", True),
+    "huggingface-pricing": ("huggingface_pricing", "huggingface", False),
     "kilocode-pricing": ("kilocode_pricing", "kilocode", True),
 }
 
@@ -161,8 +162,8 @@ def build(plans_doc: dict) -> dict:
         live = LIVE.get(sid, {})
         status = source.get("status") or "not_fetched"
         retrieved = live.get("retrieved_at") or source.get("retrieved_at")
-        if retrieved and str(retrieved) > "2026-10-30T12:30:00Z":
-            # Nothing in this pass can have been retrieved later than now.
+        if retrieved and str(retrieved) > datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"):
+            # A future timestamp cannot be evidence of a completed retrieval.
             retrieved = None
         row = {
             "id": sid,

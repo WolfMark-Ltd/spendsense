@@ -131,6 +131,17 @@ class EventLedgerCase(unittest.TestCase):
 
 
 class RollingWindowTests(EventLedgerCase):
+    def test_period_prices_each_call_at_its_window_time(self):
+        from wolfmark_ledger.aggregate import build_event_period
+        from wolfmark_ledger.pricing import Catalogue, Rate
+        peak=(None, 540, 1020, 0.30, 1.20, 0.006, None)
+        book=Catalogue({"cc":{"m":Rate(0.15,0.60,0.003)}}, "f", "t", "", "1",
+                       official={("cc","m"):(Rate(0.15,0.60,0.003),"2026-10-29",(peak,))})
+        at=datetime(2026,10,29,12,tzinfo=timezone.utc).timestamp()
+        self.put(_record("peak",at,provider="cc",model="m",input_tokens=1000000))
+        result=build_event_period(self.event_db, days=2, catalogue=book, now=at+3600)
+        self.assertAlmostEqual(result["totals"]["list_usd"],0.30)
+
     def test_period_uses_only_events_inside_the_window(self):
         self.put(_record("old", NOW - 10 * 86400, input_tokens=1000))
         self.put(_record("week", NOW - 2 * 86400, input_tokens=2000))

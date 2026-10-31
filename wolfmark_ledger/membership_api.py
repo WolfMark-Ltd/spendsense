@@ -82,11 +82,9 @@ def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
     snapshots: dict[str, Any] = {}
     notes: list[str] = []
     if native:
-        for account in data.get("accounts", []):
-            family = str(account.get("family") or "")
-            if not family or family in snapshots:
-                continue
-            probe = discovery.native_snapshot(family, home=home)
+        families = list(dict.fromkeys(str(account.get("family") or "")
+                                      for account in data.get("accounts", []) if account.get("family")))
+        for family, probe in discovery.probe_providers(families, home=home).items():
             snapshots[family] = probe.get("snapshot")
             if probe["state"] == "unavailable":
                 notes.append(f"{family}: Hermes reported no account usage.")

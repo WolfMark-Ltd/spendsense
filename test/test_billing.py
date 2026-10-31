@@ -125,8 +125,6 @@ class BillingTests(unittest.TestCase):
         self.assertEqual(changed["profiles"][0]["label"], "Wallet")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class CommandCodeGoatReconciliation(unittest.TestCase):
@@ -208,3 +206,7 @@ class EvidenceBasisTests(unittest.TestCase):
                "_cache_read": 0, "_cache_write": 0, "last_seen": None}
         report = billing.classify([row], loaded)
         self.assertAlmostEqual(report["incremental_usd"], 0.20, msg="only the overage is extra cash")
+
+
+if __name__ == "__main__":
+    unittest.main()

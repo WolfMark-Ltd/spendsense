@@ -59,16 +59,7 @@
         "period": "month"
       },
       "entitlements": {
-        "models": {
-          "opus": {
-            "scope": "model",
-            "window": "opus-week"
-          },
-          "sonnet": {
-            "scope": "model",
-            "window": "sonnet-week"
-          }
-        },
+        "models": {},
         "reset_policy": {
           "type": "rolling_windows"
         },
@@ -99,7 +90,7 @@
       "id": "anthropic.claude-max-20x",
       "kind": "subscription",
       "name": "Claude Max 20x",
-      "notes": "Deliberate example of a recognised plan with no published amount: ask for the fee, do not assume.",
+      "notes": "The listed fee is provisional; verify it before relying on the amount.",
       "price": {
         "amount": 200.0,
         "currency": "USD",
@@ -1315,7 +1306,7 @@
       ],
       "verification": {
         "checked_at": null,
-        "notes": "Account-scoped; no public price and no confirmed balance reading on this host.",
+        "notes": "Account-scoped; no public price is listed.",
         "source_id": "nous-portal-pricing",
         "status": "unverified"
       }
@@ -2006,7 +1997,7 @@
         },
         "verification": {
           "checked_at": "2026-10-30",
-          "notes": "Hermes reports a credits balance and an API-key quota on this host; neither is a subscription window.",
+          "notes": "Hermes may report a credits balance and an API-key quota; neither is a subscription window.",
           "source_id": "openrouter-credits-api",
           "status": "verified"
         },
@@ -2014,7 +2005,7 @@
           {
             "amount": null,
             "currency": "USD",
-            "detail": "$5.00 of $5.00 remaining, resets daily",
+            "detail": "Account-specific quota may be reported by Hermes.",
             "duration_minutes": null,
             "id": "api-key-quota",
             "kind": "credits",
@@ -2220,13 +2211,13 @@
         "windows": [
           {
             "amount": 10000.0,
-            "currency": "USD",
+            "currency": null,
             "detail": "1x the Lite allowance.",
             "duration_minutes": 10080,
             "id": "weekly-credits",
             "kind": "rolling",
             "label": "Weekly credits",
-            "limit": "credit_value_usd",
+            "limit": "credits",
             "scope": "account"
           }
         ]
@@ -2234,7 +2225,7 @@
       "id": "zai-coding-plan.lite",
       "kind": "subscription",
       "name": "GLM Coding Plan Lite",
-      "notes": "Catalogue-only family here: no credential configured in this profile.",
+      "notes": "Catalogue-listed family; availability depends on the configured profile.",
       "price": {
         "amount": 18.0,
         "currency": "USD",
@@ -2274,13 +2265,13 @@
         "windows": [
           {
             "amount": 140000.0,
-            "currency": "USD",
+            "currency": null,
             "detail": "14x the Lite allowance.",
             "duration_minutes": 10080,
             "id": "weekly-credits",
             "kind": "rolling",
             "label": "Weekly credits",
-            "limit": "credit_value_usd",
+            "limit": "credits",
             "scope": "account"
           }
         ]
@@ -2328,13 +2319,13 @@
         "windows": [
           {
             "amount": 60000.0,
-            "currency": "USD",
+            "currency": null,
             "detail": "6x the Lite allowance.",
             "duration_minutes": 10080,
             "id": "weekly-credits",
             "kind": "rolling",
             "label": "Weekly credits",
-            "limit": "credit_value_usd",
+            "limit": "credits",
             "scope": "account"
           }
         ]
@@ -2380,7 +2371,7 @@
       "complete": true,
       "http_status": 200,
       "id": "cline-pricing",
-      "notes": "'No subscriptions, no vendor lock-in' \u2014 Enterprise is custom only. Retrieval timestamp not captured; recorded from the 30 October research pass.",
+      "notes": "'No subscriptions, no vendor lock-in' — Enterprise is custom only. Retrieval timestamp not captured; recorded from the 30 October research pass.",
       "retrieved_at": null,
       "status": "fetched",
       "url": "https://cline.bot/pricing"

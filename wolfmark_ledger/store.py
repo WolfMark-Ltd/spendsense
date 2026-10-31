@@ -347,7 +347,7 @@ def reconciliation(conn: Optional[sqlite3.Connection],
     delta = int(current or 0) - int(base["total_tokens"] or 0)
     captured = int(captured_row["tokens"] or 0)
     gap = delta - captured
-    status = "ok" if gap == 0 else "gap" if gap > 0 else "overcount" if captured > delta else "store_pruned"
+    status = "ok" if gap == 0 else "gap" if gap > 0 else "overcount"
     return {
         "status": status,
         "baseline_at": base["captured_at"],

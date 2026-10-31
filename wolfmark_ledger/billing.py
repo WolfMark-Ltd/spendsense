@@ -193,11 +193,20 @@ def _rate_override(profile: dict[str, Any], row: dict[str, Any]) -> Optional[flo
 
 def _cumulative_overage(usage_by_model, profiles):
     total = 0.0
-    for (pid, model), used in usage_by_model.items():
-        prof = next((p for p in (profiles.get("profiles") or []) if str(p.get("id")) == pid), None) or {}
-        allowed = float((prof.get("allowances") or {}).get(model) or prof.get("allowance_usd") or 0.0)
-        if prof.get("overage_paid"):
-            total += max(0.0, used - allowed)
+    for profile in profiles.get("profiles") or []:
+        if not profile.get("overage_paid"):
+            continue
+        model_limits = profile.get("allowances") or {}
+        shared = 0.0
+        for (pid, model), used in usage_by_model.items():
+            if pid != str(profile.get("id")):
+                continue
+            if model in model_limits and float(model_limits[model]) > 0:
+                total += max(0.0, used - float(model_limits[model]))
+            elif model not in model_limits and float(profile.get("allowance_usd") or 0) > 0:
+                shared += used
+        if float(profile.get("allowance_usd") or 0) > 0:
+            total += max(0.0, shared - float(profile["allowance_usd"]))
     return total
 
 
@@ -263,10 +272,6 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
             seen_calls.add(cid)
         value = row.get("list_usd")
         provider_cost = row.get("_provider_cost_usd")
-        if value is None and provider_cost is None:
-            unclassified_tokens += row.get("_tokens") or 0
-            unclassified_calls += 1
-            continue
         when = _epoch(row.get("last_seen"))
         profile, source = select(profiles, row.get("provider", ""), row.get("model", ""), when)
         if profile and profile.get("billing_cycle") and when is not None:
@@ -276,6 +281,10 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                 excluded_out_of_cycle += 1
                 continue
         override = _rate_override(profile, row) if profile and profile.get("kind") == "custom" else None
+        if value is None and provider_cost is None and override is None:
+            unclassified_tokens += row.get("_tokens") or 0
+            unclassified_calls += 1
+            continue
         # Provider-reported use value is evidence in its own right, even when the
         # published catalogue cannot price the row.
         metered_evidence = float(provider_cost) if isinstance(provider_cost, (int, float)) else None
@@ -346,8 +355,7 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
         applied[label] = applied.get(label, 0) + 1
 
 
-    final_incremental = round(incremental + (_cumulative_overage(usage_by_model, profiles)
-                                              if allowance_meta else 0.0), 6)
+    final_incremental = round(incremental + _cumulative_overage(usage_by_model, profiles), 6)
     final_api = round(total_api, 6) if api_priced else None
 
     for bucket in by_kind.values():
@@ -393,8 +401,7 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                                  "basis": "profile" if fees else "none",
                                  "source": "user-declared membership"},
         },
-        "provider_reported_usd": round(sum(float(r.get("_provider_cost_usd")) for r in rows
-                                           if isinstance(r.get("_provider_cost_usd"), (int, float))), 6),
+        "provider_reported_usd": round(confirmed_total, 6),
         "notes": [
             "API-equivalent is a theoretical public price, not an invoice.",
             "Metered value is allowance consumed; incremental is extra cash beyond it.",
@@ -443,6 +450,11 @@ def validation_errors(profile: dict) -> list[str]:
         errors.append(f"unknown fields: {', '.join(sorted(unknown))}")
     if not str(profile.get("id") or "").strip():
         errors.append("id is required")
+    if not str(profile.get("provider") or "").strip():
+        errors.append("provider is required")
+    for key in ("billing_cycle", "rate_override"):
+        if key in profile and profile[key] is not None and not isinstance(profile[key], dict):
+            errors.append(f"{key} must be an object")
     if str(profile.get("kind") or "") not in KINDS:
         errors.append(f"kind must be one of: {', '.join(KINDS)}")
     if str(profile.get("kind") or "") in {"subscription_included", "subscription_credits", "free"}:
@@ -514,7 +526,7 @@ def _save_locked(profile: dict, target: Path, if_rev: str | None) -> dict:
         profiles = [p for p in profiles if str(p.get("id")) != str(profile["id"])]
     profile = {**profile, "rev": profile_revision(profile)}
     profiles.append(profile)
-    payload = {"version": data.get("version", 1), "profiles": profiles}
+    payload = {"version": data.get("version", 1), "profiles": profiles, "defaults": data.get("defaults") or {}}
     target.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile("w", dir=target.parent, delete=False, suffix=".tmp")
     try:
@@ -538,7 +550,7 @@ def _delete_locked(profile_id: str, target: Path) -> dict:
     import json, os, tempfile
     data = _load_profiles(target, strict=True)
     profiles = [p for p in data.get("profiles", []) if str(p.get("id")) != str(profile_id)]
-    payload = {"version": data.get("version", 1), "profiles": profiles}
+    payload = {"version": data.get("version", 1), "profiles": profiles, "defaults": data.get("defaults") or {}}
     handle = tempfile.NamedTemporaryFile("w", dir=target.parent, delete=False, suffix=".tmp")
     try:
         json.dump(payload, handle, indent=2, sort_keys=True)

@@ -54,7 +54,7 @@
       "fetched_url": "https://cline.bot/pricing",
       "http_status": 200,
       "id": "cline-pricing",
-      "notes": "'No subscriptions, no vendor lock-in' \u2014 Enterprise is custom only. Retrieval timestamp not captured; recorded from the 30 October research pass.",
+      "notes": "'No subscriptions, no vendor lock-in' — Enterprise is custom only. Retrieval timestamp not captured; recorded from the 30 October research pass.",
       "parsed": false,
       "retrieved_at": null,
       "status": "fetched",
@@ -143,7 +143,7 @@
       "cited_by": [
         "huggingface.pro"
       ],
-      "complete": true,
+      "complete": false,
       "evidence_kind": "price_page",
       "family": "huggingface",
       "fetched_url": "https://huggingface.co/pricing",

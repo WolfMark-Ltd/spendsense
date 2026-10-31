@@ -468,10 +468,10 @@ def build_report(
 
 def _local_window(days: int, now: float) -> tuple[float, float, str]:
     """Local-calendar window ending at ``now``; Today means local midnight."""
-    local = datetime.fromtimestamp(now).astimezone()
+    local = datetime.fromtimestamp(now)
     midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
     since = midnight - timedelta(days=max(0, int(days) - 1))
-    return since.timestamp(), now, local.tzname() or "local"
+    return since.timestamp(), now, datetime.fromtimestamp(now).astimezone().tzname() or "local"
 
 
 def _status_from_row(status: Any, actual: Any, estimated: Any) -> str:
@@ -661,7 +661,7 @@ def build_event_period(
         conn.close()
 
     statuses = statuses or {}
-    results = [_event_result(row, book, mode, statuses) for row in rows]
+    results = [_event_result(row, book, mode, statuses, at=row.get("ts")) for row in rows]
 
     totals = Acc()
     for row in results:

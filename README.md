@@ -43,7 +43,8 @@ telemetry. Membership discovery parses Hermes authentication storage in memory t
 count configured provider slots; it does not return or log credential values. Desktop model-options refresh is off by default. When enabled, Hermes
 may contact configured providers or refresh its own pricing metadata using
 credentials it manages. The backend also reads Hermes' local pricing cache when
-available. Review the code and Hermes settings for your environment before use.
+available. A user-triggered membership usage read invokes `hermes usage`, which
+may contact the relevant provider using Hermes-managed credentials. Review the code and Hermes settings for your environment before use.
 
 Connection and profile switching, asynchronous event ownership, upgrades and
 native Desktop operation remain acceptance checks. In particular, the SDK must
@@ -54,8 +55,8 @@ be assured. Treat figures as indicative until those checks are complete.
 
 Run Python tests with `python -m unittest discover -s test -p 'test_*.py'` and
 JavaScript tests with `node --test --test-force-exit test/*.test.mjs`. Some tests
-need FastAPI and HTTPX; UI scope tests use the development-only dependencies in
-`test/harness`. Hermes catalogue admission additionally requires
+need FastAPI and HTTPX (`python -m pip install fastapi httpx`); install the
+development-only UI test dependencies with `npm ci --prefix test/harness`. Hermes catalogue admission additionally requires
 `hermes plugins validate /path/to/plugin --install-deps` on the exact commit.
 Do not run integration tests against production data.
 

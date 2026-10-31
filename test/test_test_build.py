@@ -136,6 +136,51 @@ class TestBuildIdentity(unittest.TestCase):
                          f"manifest={manifest['version']} yaml={yaml_version} api={api_version}")
         self.assertRegex(manifest["version"], r"-test\.\d+$", "the build must announce itself as a test")
 
+    def test_dashboard_entry_uses_test_identity(self):
+        manifest = json.loads((self.out / "dashboard" / "manifest.json").read_text())
+        source = (self.out / "dashboard" / manifest["entry"]).read_text()
+        self.assertIn("registry.register('wolfmark-cost-ledger-test'", source)
+        self.assertNotIn("registry.register('wolfmark-cost-ledger'", source)
+
+    def test_test_backend_storage_and_reset_are_separate(self):
+        # All paths and sentinels are inside a new TemporaryDirectory.
+        program = r"""
+import json, os, sys, types, sqlite3
+from pathlib import Path
+root, home = map(Path, sys.argv[1:])
+os.environ['HERMES_HOME'] = str(home)
+sys.path.insert(0, str(root))
+plugins = types.ModuleType('plugins'); plugins.__path__ = []
+ps = types.ModuleType('plugins.plugin_storage')
+ps.plugin_data_dir = lambda name: home / 'plugin-data' / name
+seen = []
+def plugin_db(name, filename):
+    seen.append((name, filename))
+    return sqlite3.connect(':memory:', check_same_thread=False)
+ps.plugin_db = plugin_db
+sys.modules['plugins'] = plugins; sys.modules['plugins.plugin_storage'] = ps
+from wolfmark_ledger import store, membership_store, billing, user_data
+prod = home / 'plugin-data' / 'wolfmark-cost-ledger'; prod.mkdir(parents=True)
+for name in ('usage.db','memberships.json','billing-profiles.json'):
+    (prod / name).write_text('production sentinel')
+assert store.event_db_path() == home / 'plugin-data' / 'wolfmark-cost-ledger-test' / 'usage.db'
+store.connect_writer()
+assert seen == [('wolfmark-cost-ledger-test','usage.db')]
+assert membership_store.store_path().parent.name == 'wolfmark-cost-ledger-test'
+assert billing.profiles_path().parent.name == 'wolfmark-cost-ledger-test'
+test = store.event_db_path().parent; test.mkdir(parents=True, exist_ok=True)
+(test / 'usage.db').write_text('test sentinel')
+(test / 'memberships.json').write_text(json.dumps({'version':1,'accounts':[]}))
+(test / 'billing-profiles.json').write_text(json.dumps({'version':1,'profiles':[]}))
+user_data.reset_user_data()
+assert (test / 'usage.db').read_text() == 'test sentinel'
+assert all((prod / name).read_text() == 'production sentinel' for name in ('usage.db','memberships.json','billing-profiles.json'))
+"""
+        with tempfile.TemporaryDirectory() as home:
+            result = subprocess.run([sys.executable, '-c', program, str(self.out), home],
+                                    cwd=home, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     # -- the calls the pane will make are relative -------------------------
     def test_every_backend_call_is_namespace_relative(self):
         paths = re.findall(r"(?<![\w.])rest\(\s*[`'\"]([^`'\"]{1,80})", self.source)

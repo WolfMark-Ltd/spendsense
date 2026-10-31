@@ -33,6 +33,7 @@ banner "0. starting state"
 echo "active version: $(version)"
 price opencode-go.go
 price opencode-go.go-plus
+BASE_VERSION="$(version)"
 ACTIVE_BEFORE="$(sha)"
 echo "plans.json sha256: ${ACTIVE_BEFORE:0:16}…"
 
@@ -56,30 +57,30 @@ echo "plans.json unchanged: $([ "$(sha)" = "$ACTIVE_BEFORE" ] && echo yes || ech
 
 banner "4. validation refuses an undecided financial change"
 "${CLI[@]}" validate "$REV"; echo "exit=$?"
-"${CLI[@]}" activate "$REV" --by mark; echo "exit=$?"
+"${CLI[@]}" activate "$REV" --by reviewer; echo "exit=$?"
 
 banner "5. review"
 "${CLI[@]}" review "$REV"
 
 banner "6. approval — accept one price, reject the other"
-"${CLI[@]}" approve "$REV" --by mark --note "accept the Go rise, reject Go Plus pending a second source" \
+"${CLI[@]}" approve "$REV" --by reviewer --note "accept the Go rise, reject Go Plus pending a second source" \
   --accept price_changed:opencode-go.go \
   --reject price_changed:opencode-go.go-plus; echo "exit=$?"
 "${CLI[@]}" validate "$REV"; echo "exit=$?"
 
 banner "7. dry-run activation"
-"${CLI[@]}" activate "$REV" --by mark --dry-run
+"${CLI[@]}" activate "$REV" --by reviewer --dry-run
 echo "plans.json unchanged: $([ "$(sha)" = "$ACTIVE_BEFORE" ] && echo yes || echo NO)"
 
 banner "8. activation"
-"${CLI[@]}" activate "$REV" --by mark
+"${CLI[@]}" activate "$REV" --by reviewer
 echo "active version: $(version)"
 price opencode-go.go
 price opencode-go.go-plus
 echo "  ^ the accepted change landed; the rejected one kept the approved value"
 
 banner "9. rollback"
-"${CLI[@]}" rollback 2026-10-31.1 --by mark --reason "revert the demonstration"
+"${CLI[@]}" rollback "$BASE_VERSION" --by reviewer --reason "revert the demonstration"
 echo "active version: $(version)"
 price opencode-go.go
 price opencode-go.go-plus

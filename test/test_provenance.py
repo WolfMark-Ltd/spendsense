@@ -107,8 +107,6 @@ class ProvenanceTests(unittest.TestCase):
                          "only an opt-in cross-provider equivalent, never the sibling variant")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class PeakOffPeakTests(unittest.TestCase):
@@ -123,3 +121,7 @@ class PeakOffPeakTests(unittest.TestCase):
         self.assertEqual(book.lookup("cc", "m", at=on).rate.input, 0.30)
         self.assertEqual(book.lookup("cc", "m", at=off).rate.input, 0.15)
         self.assertEqual(book.lookup("cc", "m").rate.input, 0.15, "no timestamp means the base rate")
+
+
+if __name__ == "__main__":
+    unittest.main()

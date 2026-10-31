@@ -62,6 +62,40 @@ def account_revision(account: Mapping[str, Any]) -> str:
     return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
+def _records_errors(raw: list[dict[str, Any]]) -> list[str]:
+    """Enforce the same record contract before reading or replacing a store."""
+    try:
+        ids = [account.get("id") for account in raw]
+        malformed_fields = any(
+            any(key in account and (not isinstance(account[key], list) or
+                any(not isinstance(item, dict) for item in account[key]))
+                for key in ("fee_overrides", "manual_exhaustions"))
+            or ("route_slugs" in account and (not isinstance(account["route_slugs"], list) or
+                any(not isinstance(item, str) for item in account["route_slugs"])))
+            or any(key in account and account[key] is not None and not isinstance(account[key], dict)
+                   for key in ("billing_cycle", "advanced"))
+            or any(not isinstance(item.get("scope"), dict) for item in account.get("manual_exhaustions", [])
+                   if isinstance(item, dict))
+            or any(not isinstance(item.get("id"), str) or not item["id"].strip()
+                   for item in account.get("fee_overrides", []) if isinstance(item, dict))
+            or any(not isinstance(item.get("id"), str) or not item["id"].strip()
+                   or not isinstance((item.get("scope") or {}).get("id"), str)
+                   or not (item.get("scope") or {}).get("id", "").strip()
+                   for item in account.get("manual_exhaustions", []) if isinstance(item, dict))
+            for account in raw
+        )
+        invalid_records = any(
+            mem.validation_errors({k: v for k, v in account.items() if k != "rev"})
+            for account in raw
+        ) or malformed_fields or any(
+            not isinstance(account.get("family"), str) or not account["family"].strip()
+            for account in raw
+        ) or any(not isinstance(value, str) or not value.strip() for value in ids) or len(set(ids)) != len(ids)
+    except (TypeError, ValueError, AttributeError):
+        invalid_records = True
+    return ["incomplete account record"] if invalid_records else []
+
+
 def load_store(path: Optional[Path | str] = None, *, strict: bool = False) -> dict[str, Any]:
     """Read the store.
 
@@ -112,35 +146,7 @@ def load_store(path: Optional[Path | str] = None, *, strict: bool = False) -> di
             raise StoreUnreadable(reason)
         return {"version": STORE_VERSION, "accounts": [], "loaded": False, "error": reason,
                 "path": str(target)}
-    try:
-        ids = [account.get("id") for account in raw]
-        malformed_fields = any(
-            any(key in account and (not isinstance(account[key], list) or
-                any(not isinstance(item, dict) for item in account[key]))
-                for key in ("fee_overrides", "manual_exhaustions"))
-            or ("route_slugs" in account and (not isinstance(account["route_slugs"], list) or
-                any(not isinstance(item, str) for item in account["route_slugs"])))
-            or any(key in account and account[key] is not None and not isinstance(account[key], dict)
-                   for key in ("billing_cycle", "advanced"))
-            or any(not isinstance(item.get("scope"), dict) for item in account.get("manual_exhaustions", [])
-                   if isinstance(item, dict))
-            or any(not isinstance(item.get("id"), str) or not item["id"].strip()
-                   for item in account.get("fee_overrides", []) if isinstance(item, dict))
-            or any(not isinstance(item.get("id"), str) or not item["id"].strip()
-                   or not isinstance((item.get("scope") or {}).get("id"), str)
-                   or not (item.get("scope") or {}).get("id", "").strip()
-                   for item in account.get("manual_exhaustions", []) if isinstance(item, dict))
-            for account in raw
-        )
-        invalid_records = any(
-            mem.validation_errors({k: v for k, v in account.items() if k != "rev"})
-            for account in raw
-        ) or malformed_fields or any(
-            not isinstance(account.get("family"), str) or not account["family"].strip()
-            for account in raw
-        ) or any(not isinstance(value, str) or not value.strip() for value in ids) or len(set(ids)) != len(ids)
-    except (TypeError, ValueError, AttributeError):
-        invalid_records = True
+    invalid_records = bool(_records_errors(raw))
     if version != STORE_VERSION or invalid_records:
         reason = _corrupt("unsupported version or incomplete account record")
         if strict:
@@ -170,7 +176,11 @@ def _locked(target: Path):
 
 
 def _write(accounts: Iterable[Mapping[str, Any]], target: Path) -> None:
-    payload = {"version": STORE_VERSION, "accounts": list(accounts)}
+    records = list(accounts)
+    errors = _records_errors(records)
+    if errors:
+        raise ValueError("; ".join(errors))
+    payload = {"version": STORE_VERSION, "accounts": records}
     target.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile("w", dir=target.parent, delete=False, suffix=".tmp")
     try:
@@ -196,7 +206,11 @@ def save_account(account: Mapping[str, Any], path: Optional[Path | str] = None,
     # the document. Stripping it here lets a stored record round-trip through
     # validation instead of failing as an unknown field.
     document = {k: v for k, v in dict(account).items() if k != "rev"}
-    errors = mem.validation_errors(document)
+    try:
+        errors = mem.validation_errors(document)
+    except (TypeError, ValueError, AttributeError):
+        errors = ["incomplete account record"]
+    errors += _records_errors([document])
     if errors:
         raise ValueError("; ".join(errors))
     account = document

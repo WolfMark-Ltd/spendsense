@@ -206,13 +206,10 @@ def build_analytics_report(
     """Aggregate only recorded calls in the local-calendar, half-open window."""
     now = time.time() if now is None else now
     days = max(1, min(int(days), 365))
-    _, until, zone = _local_window(days, now)
-    # astimezone() without a zone yields a fixed offset in _local_window.
-    # Resolve each naive local midnight separately so historical DST offsets
-    # are not replaced with today's offset. No shared accounting code changes.
+    since, until, zone = _local_window(days, now)
+    # Resolve each local midnight separately so DST offsets remain correct.
     local_start = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0)
     local_start -= timedelta(days=days - 1)
-    since = local_start.timestamp()
     granularity = "hour" if days == 1 else "day"
     starts: list[float] = []
     if days == 1:
@@ -286,7 +283,7 @@ def build_analytics_report(
     totals = total_acc.as_dict()
     coverage: dict[str, int] = {}
     for row in results_kept:
-        key = row.get("pricing_provenance") or "unpriced"
+        key = (row.get("pricing_provenance") or "unpriced") if row.get("list_usd") is not None else "unpriced"
         coverage[key] = coverage.get(key, 0) + (row.get("_tokens") or 0)
     covered = sum(coverage.values()) or 0
     official = coverage.get("official_verified", 0)

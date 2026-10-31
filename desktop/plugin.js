@@ -1920,6 +1920,7 @@ function profileDraftErrors(draft) {
   const errors = []
   if (!draft) return ['no draft']
   if (!String(draft.id || '').trim()) errors.push('A short name is required.')
+  if (!String(draft.provider || '').trim()) errors.push('A provider route is required.')
   if (!String(draft.kind || '')) errors.push('Choose how this route is paid for.')
   if (draft.kind === 'unknown' && draft.monthly_fee_usd) errors.push('An unknown arrangement cannot assert a fee.')
   if (draft.monthly_fee_usd != null && draft.monthly_fee_usd !== '' && !Number.isFinite(Number(draft.monthly_fee_usd))) errors.push('Fee must be a number.')
@@ -1935,23 +1936,28 @@ function profilePayload(draft) {
     model: String(draft.model || '').trim() || undefined,
     kind: draft.kind,
     monthly_fee_usd: number(draft.monthly_fee_usd),
-    allowance_usd: number(draft.allowance_usd),
+    allowance_usd: draft.allowance_model ? draft.original_scalar_allowance : number(draft.allowance_usd),
     overage_paid: Boolean(draft.overage_paid),
     count_credits_as_spend: Boolean(draft.count_credits_as_spend),
     effective_from: draft.effective_from || undefined,
     effective_to: draft.effective_to || undefined,
-    billing_cycle: draft.cycle_day ? { day: Number(draft.cycle_day) } : undefined,
+    billing_cycle: draft.cycle_day ? { ...(draft.billing_cycle || {}), day: Number(draft.cycle_day) } : undefined,
+    currency: draft.currency || undefined,
     label: draft.label || undefined,
     account: draft.account || undefined,
-    rate_override: draft.rate_input || draft.rate_output ? {
-      input: Number(draft.rate_input), output: Number(draft.rate_output),
-      ...(draft.rate_cache ? { cache_read: Number(draft.rate_cache) } : {})
+    rate_override: draft.rate_input !== '' && draft.rate_input != null && draft.rate_output !== '' && draft.rate_output != null ? {
+      ...(draft.rate_override || {}), input: Number(draft.rate_input), output: Number(draft.rate_output),
+      ...(draft.rate_cache !== '' && draft.rate_cache != null ? { cache_read: Number(draft.rate_cache) } : {})
     } : undefined,
     rev: draft.rev || undefined
   }
-  if (draft.allowance_model && draft.allowance_usd !== '' && draft.allowance_usd != null) {
-    payload.allowances = { [String(draft.allowance_model).trim()]: Number(draft.allowance_usd) }
-  }
+  if (payload.rate_override && (draft.rate_cache === '' || draft.rate_cache == null)) delete payload.rate_override.cache_read
+  const allowances = { ...(draft.allowances || {}) }
+  if (draft.original_allowance_model && draft.original_allowance_model !== draft.allowance_model)
+    delete allowances[draft.original_allowance_model]
+  if (draft.allowance_model && draft.allowance_usd !== '' && draft.allowance_usd != null)
+    allowances[String(draft.allowance_model).trim()] = Number(draft.allowance_usd)
+  if (Object.keys(allowances).length) payload.allowances = allowances
   return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined))
 }
 
@@ -2047,6 +2053,16 @@ function goLedgerTab(next) {
   try { if (typeof location !== 'undefined') history.replaceState(null, '', '#' + next) } catch {}
 }
 
+function profileDraft(profile, identity) {
+    const [allowanceModel, modelAllowance] = Object.entries(profile.allowances || {})[0] || ['', '']
+    return { ...profile, origin: identity,
+      cycle_day: profile?.billing_cycle?.day || 1,
+      rate_input: profile.rate_override?.input ?? '', rate_output: profile.rate_override?.output ?? '',
+      rate_cache: profile.rate_override?.cache_read ?? '', allowance_model: allowanceModel,
+      allowance_usd: allowanceModel ? modelAllowance : (profile.allowance_usd ?? ''),
+      original_allowance_model: allowanceModel, original_scalar_allowance: profile.allowance_usd }
+}
+
 function AdvancedBillingRules() {
   const identity = useValue($membershipIdentity)
   const profilesQuery = useQuery(billingQuery(identity))
@@ -2058,8 +2074,7 @@ function AdvancedBillingRules() {
   const advanced = loaded.filter(profile => !['subscription_included', 'subscription_credits', 'free'].includes(profile.kind))
   const legacy = loaded.length - advanced.length
   const errors = profileDraftErrors(draft)
-  const startEdit = profile => $billingDraft.set({ ...profile, origin: identity,
-    cycle_day: profile?.billing_cycle?.day || 1 })
+  const startEdit = profile => $billingDraft.set(profileDraft(profile, identity))
   const update = (key, value) => $billingDraft.set({ ...draft, [key]: value })
   const save = async event => {
     event?.preventDefault?.()
@@ -3343,8 +3358,9 @@ function quotaRows(account, now = Date.now()) {
     if (used !== null) {
       reading = `${Math.round(used)}% used${fromManual ? ' (you reported)' : ''}`
     } else if (window.amount !== null && window.amount !== undefined) {
-      // A declared credit allowance, not a percentage of a plan window.
-      reading = `${fmtMoney(window.amount, window.currency || 'USD')} allowance`
+      // A count of credits is not money; monetary allowances carry currency.
+      reading = window.limit === 'credits' ? `${window.amount} credits` :
+        window.currency ? `${fmtMoney(window.amount, window.currency)} allowance` : `${window.amount} allowance`
     } else {
       reading = 'No reading'
     }
@@ -3612,7 +3628,10 @@ function restoreCatalogueFee(account, at = new Date().toISOString()) {
   if (!revision || !Array.isArray(account.fee_overrides)) return null
   let changed = false
   const overrides = account.fee_overrides.map(entry => {
-    if (entry?.id !== revision) return entry
+    const end = entry?.effective_to ? Date.parse(entry.effective_to) : Infinity
+    const start = entry?.effective_from ? Date.parse(entry.effective_from) : -Infinity
+    const now = Date.parse(at)
+    if (!(start < now && now < end)) return entry
     changed = true
     return { ...entry, effective_to: at }
   })
@@ -4684,7 +4703,7 @@ export const __test = {
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,
   OVERRIDE_REASON_FALLBACK, REASON_LABELS, restoreCatalogueFee, MembershipsPage, MembershipCard, MEMBERSHIP_CSS,
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
-  AdvancedBillingRules, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
+  AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
   CostsPage, OverviewPage, SettingsPage, goLedgerTab, $ledgerTab, $billingPresentation,
   settledDesktopMonth, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,

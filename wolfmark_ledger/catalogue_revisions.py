@@ -256,7 +256,7 @@ def build_candidate(catalogue: Mapping[str, Any], observations: Iterable[Mapping
                     "effective_from": None, "effective_to": None, "model_restrictions": [],
                     "notes": "New plan observed by the catalogue check.",
                 }
-        elif action.endswith("_changed") and pid in plans and action != "price_changed":
+        elif action.endswith("_changed") and pid in plans and action not in ("price_changed", "currency_changed", "period_changed"):
             row = plans[pid]
             field = action[:-len("_changed")]
             if field == "kind":
@@ -280,11 +280,15 @@ def build_candidate(catalogue: Mapping[str, Any], observations: Iterable[Mapping
         elif pid in plans:
             row = plans[pid]
             if action == "price_changed":
-                row["price"] = {**(row.get("price") or {}), **(change.get("after") or {})}
-                row["verification"] = {**row.get("verification", {}), "status": "verified",
-                                       "checked_at": (change.get("evidence") or {}).get("retrieved_at", "")[:10],
+                row["price"] = {**(row.get("price") or {}), "amount": (change.get("after") or {}).get("amount")}
+                observed = change.get("after") or {}
+                corroborated = all(row["price"].get(k) == observed.get(k) for k in ("amount", "currency", "period"))
+                row["verification"] = {**row.get("verification", {}),
+                                       "status": "verified" if corroborated else "unverified",
+                                       "checked_at": str((change.get("evidence") or {}).get("retrieved_at") or "")[:10],
                                        "source_id": evidence_source,
-                                       "notes": f"Re-verified from {evidence_source}."}
+                                       "notes": (f"Re-verified from {evidence_source}." if corroborated else
+                                                 "Accepted amount combined with separately retained terms; verify the resulting price.")}
             elif action in ("currency_changed", "period_changed"):
                 field = "currency" if action == "currency_changed" else "period"
                 row["price"] = {**(row.get("price") or {}), field: change.get("after")}

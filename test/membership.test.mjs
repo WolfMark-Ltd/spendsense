@@ -308,3 +308,19 @@ test('the pane and its CSS are exported for the render harness', () => {
   assert.equal(typeof T.MembershipCard, 'function')
   assert.match(T.MEMBERSHIP_CSS, /\.wm-quota/)
 })
+
+test('restoring the catalogue closes all overlapping fee overrides', () => {
+ const item = account({fee:{override:{revision_id:'new'}},fee_overrides:[
+   {id:'old',effective_from:'2026-01-01'}, {id:'new',effective_from:'2026-02-01'},
+   {id:'future',effective_from:'2027-01-01'}]})
+ const at = '2026-10-30T12:00:00Z'
+ const result = T.restoreCatalogueFee(item, at)
+ assert.equal(result[0].effective_to, at)
+ assert.equal(result[1].effective_to, at)
+ assert.equal(result[2].effective_to, undefined)
+})
+
+test('credit counts are not displayed as dollars', () => {
+ const rows = T.quotaRows({quota:{windows:[{id:'weekly',limit:'credits',amount:10000,currency:null}]}})
+ assert.equal(rows[0].reading, '10000 credits')
+})

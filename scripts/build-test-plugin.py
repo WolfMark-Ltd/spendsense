@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -60,7 +61,11 @@ def main() -> int:
     parser.add_argument("--test-id", default=TEST_ID)
     args = parser.parse_args()
 
+    if args.test_id == args.source_id or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,79}", args.test_id):
+        raise SystemExit("Test identity must be a distinct safe plugin name.")
     out = Path(args.out).resolve()
+    if out == ROOT or ROOT in out.parents:
+        raise SystemExit("Output must be outside the source tree.")
     if out.exists():
         raise SystemExit("Output already exists; choose a new empty destination.")
     out.mkdir(parents=True)
@@ -93,6 +98,11 @@ def main() -> int:
             report.append({"file": "desktop/plugin.js", "change": f"{before} → {after}", "count": count})
 
     report.insert(0, {"file": "desktop/plugin.js", "change": f"ID {args.source_id} → {args.test_id}", "count": 1})
+
+    version_declaration = "const PLUGIN_VERSION = '0.5.0'"
+    if source.count(version_declaration) != 1:
+        raise SystemExit("Desktop version declaration is missing or ambiguous")
+    source = source.replace(version_declaration, f"const PLUGIN_VERSION = '{TEST_VERSION}'", 1)
 
     # 2b. the identity the app routes and the user reads
     for index, (before, after) in enumerate(IDENTITY):
@@ -133,6 +143,26 @@ def main() -> int:
                             'isolated backend, synthetic data, not the installed release."')
     yaml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     report.append({"file": "plugin.yaml", "change": f"name → {args.test_id}, version → {TEST_VERSION}", "count": 1})
+
+    # Namespace every copied backend store as well as the Desktop and routes.
+    # Refuse to produce a misleading build if the source layout has changed.
+    for relative, expected in (("wolfmark_ledger/store.py", 2),
+                               ("wolfmark_ledger/membership_store.py", 2),
+                               ("wolfmark_ledger/billing.py", 2)):
+        target = out / relative
+        content = target.read_text(encoding="utf-8")
+        count = content.count(args.source_id)
+        if count != expected:
+            raise SystemExit(f"unexpected storage identity count in {relative}: {count}")
+        target.write_text(content.replace(args.source_id, args.test_id), encoding="utf-8")
+        report.append({"file": relative, "change": "isolate backend storage", "count": count})
+
+    web_entry = out / "dashboard" / "entry.js"
+    web_source = web_entry.read_text(encoding="utf-8")
+    registration = f"registry.register('{args.source_id}'"
+    if web_source.count(registration) != 1:
+        raise SystemExit("dashboard registration identity missing or ambiguous")
+    web_entry.write_text(web_source.replace(registration, f"registry.register('{args.test_id}'", 1), encoding="utf-8")
 
     # 5. the API announces which build it is
     api = out / "dashboard" / "plugin_api.py"

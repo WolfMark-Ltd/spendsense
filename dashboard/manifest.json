@@ -8,5 +8,6 @@
     "path": "/cost-ledger",
     "position": "end",
     "hidden": true
-  }
+  },
+  "entry": "entry.js"
 }

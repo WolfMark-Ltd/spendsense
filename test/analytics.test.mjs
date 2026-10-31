@@ -198,7 +198,7 @@ test('custom rate overrides and account labels persist in the payload', () => {
  assert.equal(payload.account, 'GOAT')
  assert.deepEqual(payload.rate_override, {input: 1.5, output: 3, cache_read: 0.15})
  assert.deepEqual(payload.billing_cycle, {day: 5})
- assert.equal(T.profileDraftErrors({id: 'goat', kind: 'custom'}).length, 0)
+ assert.equal(T.profileDraftErrors({id: 'goat', provider: 'example', kind: 'custom'}).length, 0)
 })
 
 test('dashboard renders four SVG analytics, honest pricing/billing/cache coverage and a complete sortable explorer', () => {
@@ -513,4 +513,17 @@ test('a backend price cannot cross gateway activations', async () => {
  assert.notEqual(T.resolveRates({provider:'synthetic-provider', model:'synthetic-model'}).origin, 'backend')
  h.state.connectionId.set('local')
  assert.notEqual(T.resolveRates({provider:'synthetic-provider', model:'synthetic-model'}).origin, 'backend')
+})
+
+test('editing a rule preserves nested rates and unrelated model allowances', () => {
+ const original = { id:'route', provider:'example', kind:'custom', label:'old', currency:'USD',
+   rate_override:{input:1,output:2,cache_read:0.1,cache_write:0.3},
+   allowances:{'model-a':8,'model-b':12}, allowance_usd:30, billing_cycle:{day:7,timezone:'UTC'} }
+ const draft = T.profileDraft(original,'scope')
+ const result = T.profilePayload({...draft,label:'new'})
+ assert.deepEqual(result.rate_override,original.rate_override)
+ assert.deepEqual(result.allowances,original.allowances)
+ assert.equal(result.allowance_usd,30)
+ assert.deepEqual(result.billing_cycle,original.billing_cycle)
+ assert.equal(result.currency,'USD')
 })
