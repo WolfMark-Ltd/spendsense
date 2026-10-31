@@ -2098,12 +2098,31 @@ function billingSummaryQuery(identity = membershipIdentityNow()) {
   }
 }
 
+const LEDGER_TABS = [['overview', 'Overview'], ['usage', 'Usage'], ['costs', 'Costs'],
+  ['memberships', 'Memberships'], ['settings', 'Settings & About']]
 function LedgerTabs() {
   const tab = useValue($ledgerTab)
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof location === 'undefined') return undefined
+    const sync = () => {
+      const id = String(location.hash || '').replace('#', '')
+      if (LEDGER_TABS.some(([known]) => known === id) && $ledgerTab.get() !== id) $ledgerTab.set(id)
+    }
+    window.addEventListener('hashchange', sync)
+    return () => window.removeEventListener('hashchange', sync)
+  }, [])
+  const onKeyDown = event => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return
+    const index = LEDGER_TABS.findIndex(([id]) => id === tab)
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? LEDGER_TABS.length - 1
+      : (index + (event.key === 'ArrowRight' ? 1 : -1) + LEDGER_TABS.length) % LEDGER_TABS.length
+    event.preventDefault()
+    goLedgerTab(LEDGER_TABS[next][0])
+    event.currentTarget.querySelectorAll('[role="tab"]')[next]?.focus()
+  }
   return jsx('div', { className: 'wm-shell', style: { paddingBottom: 0 }, children:
-    jsx('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': 'Spend Sense sections', children:
-      [['overview', 'Overview'], ['usage', 'Usage'], ['costs', 'Costs'],
-        ['memberships', 'Memberships'], ['settings', 'Settings & About']].map(([id, label]) =>
+    jsx('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': 'Spend Sense sections', onKeyDown, children:
+      LEDGER_TABS.map(([id, label]) =>
         jsx(ProductButton, { role: 'tab', variant: 'ghost', 'aria-selected': tab === id, 'aria-pressed': tab === id,
           className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
           onClick: () => goLedgerTab(id), children: label }, id)) }) })
@@ -2237,12 +2256,18 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}',
   '.wm-product .wm-product-heading h1{margin:0;font-size:24px;line-height:1.2;font-weight:620;letter-spacing:-.35px}',
   '.wm-product .wm-product-heading p{margin:5px 0 0;color:var(--ui-text-tertiary);font-size:13px;line-height:1.45}',
-  '.wm-product .wm-product-tabs{display:flex;gap:4px;overflow:auto;padding:3px;border-bottom:1px solid var(--ui-stroke-secondary)}',
-  '.wm-product .wm-product-tab{border:0;background:transparent;color:var(--ui-text-tertiary);border-radius:6px;padding:8px 11px;font:inherit;font-size:13px;white-space:nowrap;cursor:pointer}',
+  '.wm-product .wm-product-tabs{display:flex;gap:4px;overflow:auto;padding:3px;border-bottom:1px solid var(--ui-stroke-secondary);position:sticky;top:0;z-index:6;background:var(--ui-fill-primary)}',
+  '.wm-product .wm-product-tab{border:0;background:transparent;color:var(--ui-text-tertiary);border-radius:6px;padding:8px 13px;min-height:38px;display:inline-flex;align-items:center;font:inherit;font-size:13px;white-space:nowrap;cursor:pointer;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}',
   '.wm-product .wm-product-tab:hover{background:var(--ui-fill-secondary);color:var(--ui-text-primary)}',
-  '.wm-product .wm-product-tab-active{background:var(--ui-fill-secondary);color:var(--ui-text-primary);font-weight:570}',
+  '.wm-product .wm-product-tab-active{background:var(--ui-fill-secondary);color:var(--ui-text-primary);font-weight:570;box-shadow:inset 0 -2px 0 var(--ui-accent)}',
+  '.wm-product .wm-button{min-height:34px;transition:background-color .15s ease,color .15s ease,border-color .15s ease}',
+  '.wm-product .wm-account-jump{display:flex;gap:6px;flex-wrap:wrap;align-items:center}',
+  '.wm-product .wm-account-chip{border:1px solid var(--ui-stroke-secondary);background:transparent;color:var(--ui-text-secondary);border-radius:99px;padding:6px 11px;min-height:32px;font:inherit;font-size:12px;cursor:pointer;transition:background-color .15s ease,color .15s ease}',
+  '.wm-product .wm-account-chip:hover{background:var(--ui-fill-secondary);color:var(--ui-text-primary)}',
+  '.wm-product .wm-account-chip[data-attention="true"]{border-color:var(--ui-warning);color:var(--ui-text-primary)}',
+  '.wm-product .wm-overview-attention{margin:6px 0 4px;padding-left:18px;display:grid;gap:5px;font-size:13px;line-height:1.5;color:var(--ui-text-secondary)}',
   '.wm-product .wm-product-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:10px}',
-  '.wm-product .wm-product-stat{border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-primary);padding:14px 15px;min-width:0}',
+  '.wm-product .wm-product-stat{border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-primary);padding:14px 15px;min-width:0;min-height:98px}',
   '.wm-product .wm-product-stat label{display:block;color:var(--ui-text-tertiary);font-size:12px}',
   '.wm-product .wm-product-stat strong{display:block;margin-top:5px;font-size:19px;line-height:1.3;font-weight:580;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
   '.wm-product .wm-product-section{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:17px;background:var(--ui-fill-primary)}',
@@ -2485,15 +2510,26 @@ function OverviewPage() {
               : 'Reading memberships for this connection…' })
         ] })
       ] }),
-      jsxs('div', { className: 'wm-product-section', children: [
-        jsx('h2', { children: 'Continue' }),
-        jsx('p', { children: 'Usage contains the Hermes analytics and accounting views. Costs brings together current estimates and declared memberships. Memberships is where plans, fees and user-reported allowance status live.' }),
-        jsx('div', { className: 'wm-setting-action', children: [
-          jsx(ProductButton, { className: 'wm-button', onClick: () => goLedgerTab('usage'), children: 'Open Usage' }),
-          jsx(ProductButton, { className: 'wm-button', onClick: () => goLedgerTab('costs'), children: 'Open Costs' }),
-          jsx(ProductButton, { className: 'wm-button', onClick: () => goLedgerTab('memberships'), children: 'Manage memberships' })
+      (() => {
+        const items = accountsReady ? needsAttention(currentAccounts) : []
+        const unpriced = Number(result.unpriced_tokens || 0)
+        return jsxs('div', { className: 'wm-product-section', children: [
+          jsx('h2', { children: items.length || unpriced ? 'Needs attention' : 'Continue' }),
+          items.length
+            ? jsx('ul', { className: 'wm-overview-attention', children: items.slice(0, 5).map((item, index) =>
+                jsx('li', { children: `${item.account.label || item.account.family}: ${item.text}` }, index)) })
+            : jsx('p', { children: accountsReady
+                ? 'Nothing needs confirming right now. Usage shows Hermes analytics, Costs brings estimates and declared memberships together, and Memberships is where plans and fees live.'
+                : 'Usage shows Hermes analytics, Costs brings estimates and declared memberships together, and Memberships is where plans and fees live.' }),
+          unpriced ? jsx('p', { className: 'wm-subtle', children: unpriced.toLocaleString('en-GB') + ' tokens in the last 30 days have no published price, so API-equivalent totals are partial. See Usage for coverage.' }) : null,
+          jsx('div', { className: 'wm-setting-action', children: [
+            items.length ? jsx(ProductButton, { className: 'wm-button wm-accent', onClick: () => goLedgerTab('memberships'), children: 'Review memberships' }) : null,
+            jsx(ProductButton, { className: 'wm-button', onClick: () => goLedgerTab('usage'), children: 'Open Usage' }),
+            jsx(ProductButton, { className: 'wm-button', onClick: () => goLedgerTab('costs'), children: 'Open Costs' }),
+            items.length ? null : jsx(ProductButton, { className: 'wm-button', onClick: () => goLedgerTab('memberships'), children: 'Manage memberships' })
+          ].filter(Boolean) })
         ] })
-      ] })
+      })()
     ] })
   ] })
 }
@@ -3121,6 +3157,7 @@ const $membershipNotice = atom(null)
 const $membershipBusy = atom('')
 /** Read account usage through Hermes on the next fetch. */
 const $membershipNative = atom(false)
+const $membershipAttentionOnly = atom(false)
 /**
  * Last good account payload. A refetch with a new query key unmounts the cards
  * for a moment; rendering from this keeps the pane from flashing "no memberships"
@@ -3468,6 +3505,9 @@ function needsAttention(accounts) {
       if (row.manual && row.manual.status === 'reconfirm_due') {
         out.push({ account, tone: 'info', text: `${row.label}: no reliable reset time — please confirm or clear.` })
       }
+    }
+    if (account.plan_reconfirmation?.required) {
+      out.push({ account, tone: 'info', text: `Hermes now reports "${account.plan_reconfirmation.reported_label}" — reconfirm the saved plan.` })
     }
     const basis = account.fee?.basis
     if (!account.plan_id) {
@@ -3924,6 +3964,7 @@ function MembershipsPage() {
   const identity = useValue($membershipIdentity)
   const plans = useQuery(membershipPlansQuery(identity))
   const native = useValue($membershipNative)
+  const attentionOnly = useValue($membershipAttentionOnly)
   const accounts = useQuery(membershipQuery(native, identity))
   const rawDraft = useValue($membershipDraft)
   const rawNotice = useValue($membershipNotice)
@@ -3958,6 +3999,7 @@ function MembershipsPage() {
     const working = $membershipBusy.get()
     if (working && working.origin !== identity) $membershipBusy.set(null)
     $membershipNative.set(false)
+    $membershipAttentionOnly.set(false)
     // The request log is deliberately *not* cleared: it is already bounded, and
     // wiping it would erase the very requests that failed to load.
   }, [identity])
@@ -3974,6 +4016,15 @@ function MembershipsPage() {
   const list = current ? membershipAccounts(current) : []
   const accountsReady = !!current
   const attention = needsAttention(list)
+  const attentionIds = new Set(attention.map(item => item.account.id))
+  const displayed = attentionOnly ? list.filter(account => attentionIds.has(account.id)) : list
+  const jumpToAccount = account => {
+    try {
+      const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+      document.querySelector(`[data-account="${account.id}"]`)
+        ?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+    } catch {}
+  }
   const summary = membershipSummary(list)
   const storeError = current?.store?.error || ''
   const storeNotes = Array.isArray(current?.notes) ? current.notes : []
@@ -4276,17 +4327,29 @@ function MembershipsPage() {
       accounts.error
         ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read') })
         : null,
+      accountsReady && list.length > 1
+        ? jsxs('nav', { className: 'wm-account-jump', 'aria-label': 'Jump to an account', children: [
+            jsx('button', { type: 'button', className: 'wm-account-chip', 'aria-pressed': attentionOnly,
+              onClick: () => $membershipAttentionOnly.set(!attentionOnly),
+              children: attentionOnly ? `Showing needs attention (${attentionIds.size}) — show all` : `Needs attention only (${attentionIds.size})` }),
+            ...list.map(account => jsx('button', { type: 'button', className: 'wm-account-chip',
+              'data-attention': attentionIds.has(account.id) ? 'true' : undefined,
+              onClick: () => jumpToAccount(account),
+              children: (account.label || account.family) + (attentionIds.has(account.id) ? ' · check' : '') }, account.id))
+          ] })
+        : null,
       jsxs('div', { className: 'wm-cards', children:
         !accountsReady && !accounts.error
           ? [jsx('p', { className: 'wm-empty', role: 'status', children: 'Reading memberships for this connection…' })]
-          : accountsReady && list.length
-            ? list.map(account => jsx(MembershipCard, {
+          : accountsReady && displayed.length
+            ? displayed.map(account => jsx(MembershipCard, {
                 account,
                 plans: accountPlanChoices(account),
                 busy, onAction
               }, account.id))
             : [jsx('p', { className: 'wm-empty', children: accounts.error
                 ? 'Memberships could not be read for this connection.'
+                : attentionOnly ? 'Nothing needs attention. Show all accounts to see every membership.'
                 : 'No memberships yet. Use "Discover accounts" to find the providers configured in this Hermes profile.' })] }),
       membershipDiagnostics.length
         ? jsxs('details', { className: 'wm-note', children: [
@@ -4767,7 +4830,7 @@ export const __test = {
   membershipErrorKind, membershipErrorText, membershipErrorMessage, membershipAccounts,
   membershipWrite, membershipDiagnostics,
   $membershipScope, $membershipSnapshot, $membershipNotice,
-  $membershipBusy, $membershipNative, $membershipDraft, $scopeConnection, $scopeProfile,
+  $membershipBusy, $membershipNative, $membershipAttentionOnly, $membershipDraft, $scopeConnection, $scopeProfile,
   fmtMoney, feeLabel, quotaRows, needsAttention, membershipSummary, feesLabel, accountPlanChoices,
   excludedPlansNote, planOptionLabel,
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,
@@ -4775,7 +4838,7 @@ export const __test = {
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
   billingNumberStep,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
-  CostsPage, OverviewPage, SettingsPage, goLedgerTab, $ledgerTab, $billingPresentation,
+  CostsPage, OverviewPage, SettingsPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation,
   settledDesktopMonth, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
   setRest: value => { rest = value },

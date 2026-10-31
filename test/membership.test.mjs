@@ -108,6 +108,10 @@ test('needs attention covers exhaustion, conflict, reconfirm, and missing plan o
   ])
   const text = items.map(i => i.text).join(' | ')
   assert.match(text, /Account marked exhausted/)
+  const stale = T.needsAttention([account({ id: 'c', plan_id: 'x.plus',
+    plan_reconfirmation: { required: true, reported_label: 'Pro' } })])
+  assert.match(stale.map(i => i.text).join(' '), /Hermes now reports "Pro"/)
+  assert.deepEqual(T.LEDGER_TABS.map(([id]) => id), ['overview', 'usage', 'costs', 'memberships', 'settings'])
   assert.match(text, /disagrees with your manual mark on weekly/)
   assert.match(text, /no reliable reset time/)
   assert.match(text, /No fee set for the chosen plan/)
