@@ -27,6 +27,7 @@ from wolfmark_ledger import LedgerUnavailable, build_ledger_report, default_db_p
 from wolfmark_ledger import store  # noqa: E402
 from wolfmark_ledger.analytics import build_analytics_report  # noqa: E402
 from wolfmark_ledger import billing  # noqa: E402
+from wolfmark_ledger import economics  # noqa: E402
 from wolfmark_ledger import user_data  # noqa: E402
 from wolfmark_ledger import membership_api as members  # noqa: E402
 from wolfmark_ledger.membership import CatalogueError  # noqa: E402
@@ -230,6 +231,49 @@ def membership_clear(account_id: str, entry_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="no such mark") from exc
     except MembershipConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/economics/summary")
+def economics_summary(
+    days: int = Query(30, ge=1, le=365, description="Trailing usage window in days"),
+    trend_months: int = Query(6, ge=0, le=6, description="Calendar months of fee-vs-usage trend"),
+) -> dict[str, Any]:
+    """Subscription fees vs attributed API-equivalent usage.
+
+    Read-only: fees resolve from the membership store and plans catalogue,
+    usage from the timestamped call store. Currencies are never combined
+    without an explicit user-supplied FX rate.
+    """
+    try:
+        return economics.build_economics_report(days=days, trend_months=trend_months)
+    except StoreUnreadable as exc:
+        raise _store_unreadable(exc) from exc
+    except CatalogueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LedgerUnavailable as exc:
+        raise HTTPException(status_code=503, detail="economics call store unavailable") from exc
+    except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
+        log.error("spend-sense: economics report failed")
+        raise HTTPException(status_code=500, detail="economics report failed") from exc
+
+
+@router.get("/membership/fx")
+def fx_rates() -> dict[str, Any]:
+    """User-supplied FX rates: the only conversion source economics uses."""
+    doc = economics.load_fx()
+    if doc.get("error"):
+        raise HTTPException(status_code=503, detail=doc["error"])
+    return {"ok": True, **doc}
+
+
+@router.put("/membership/fx")
+def fx_save(body: dict[str, Any]) -> dict[str, Any]:
+    """Replace the whole FX document. Every rate needs a date and a source."""
+    try:
+        result = economics.save_fx(body.get("rates", []))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"ok": True, **result}
 
 
 @router.get("/billing/summary")
