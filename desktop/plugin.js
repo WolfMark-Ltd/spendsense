@@ -2370,17 +2370,27 @@ async function invalidateEconomicsFor(identity) {
   }
 }
 
+/** Transport markers that must never reach the user verbatim. */
+const FX_TRANSPORT = /\b\d{3}\b|timeout|timed out|network|failed to fetch|fetch failed|connection|econn|socket|abort/i
+
 /** FX failures carry the server's validation sentence; anything else is generic. */
 function fxErrorMessage(error) {
   const raw = typeof error?.message === 'string' ? error.message : ''
   if (/conflict|409/i.test(raw)) return 'The rates changed since you loaded them. Reload, then save again.'
   if (/401|unauthori/i.test(raw)) return 'Your Desktop session has expired. Sign in again, then retry.'
   if (/404/i.test(raw)) return 'FX rates are not available in the running backend. Reload the plugin and check its health.'
-  if (/422|validation/i.test(raw)) return raw.replace(/^.*?:\s*/, '') || 'The rates were rejected. Check each rate and retry.'
+  if (/422|validation/i.test(raw)) {
+    // Only the server's plain validation sentence passes through: a raw
+    // transport message with no colon, or detail still carrying a status,
+    // fails closed to the generic rejection sentence.
+    const detail = raw.replace(/^.*?:\s*/, '')
+    if (detail && detail !== raw && !FX_TRANSPORT.test(detail)) return detail
+    return 'The rates were rejected. Check each rate and retry.'
+  }
   if (!raw) return 'The rates could not be saved. Please retry; if it persists, check the backend log.'
   // Transport failures (status codes, timeouts, network errors) never reach
   // the user verbatim; only the server's plain validation detail passes.
-  if (/\b\d{3}\b|timeout|timed out|network|failed to fetch|fetch failed|connection|econn|socket|abort/i.test(raw)) {
+  if (FX_TRANSPORT.test(raw)) {
     return 'The rates could not be saved. Please retry; if it persists, check the backend log.'
   }
   return raw

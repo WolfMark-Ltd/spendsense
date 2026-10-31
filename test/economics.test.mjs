@@ -105,6 +105,11 @@ test('fxErrorMessage hides transport failures behind the generic sentence', () =
   assert.match(S.fxErrorMessage(new Error('422: usd_per_unit must be a positive number')),
     /usd_per_unit must be a positive number/)
   assert.doesNotMatch(S.fxErrorMessage(new Error('422: usd_per_unit must be a positive number')), /422/)
+  // A 422 transport message with no colon fails closed instead of leaking.
+  const rejected = 'The rates were rejected. Check each rate and retry.'
+  assert.equal(S.fxErrorMessage(new Error('request failed with status 422')), rejected)
+  assert.equal(S.fxErrorMessage(new Error('422')), rejected)
+  assert.equal(S.fxErrorMessage(new Error('validation error: failed with status 422')), rejected)
 })
 
 test('econWindowLines keeps one expenditure line per currency', () => {
