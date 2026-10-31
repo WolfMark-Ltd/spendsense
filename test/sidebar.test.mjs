@@ -297,6 +297,69 @@ test('a cache coverage change redraws the gauge in place', async () => {
     'no exact/estimated label sits under the unavailable savings value')
 })
 
+test('a cache-only frame renders as valid live usage', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage({ input: 0, output: 0, calls: 0 }))
+  const container = await renderMeter()
+  await flush()
+  // Display: the sections render with the cache tokens counted.
+  assert.equal(sectionsOf(container).cards.length, 4)
+  const metrics = [...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
+    .map(el => el.textContent)
+  assert.equal(metrics[0], '4.9k', `cache-only total: ${metrics}`)
+  const legendValues = [...container.querySelectorAll('.wm-legend-value')].map(el => el.textContent)
+  assert.ok(legendValues.includes('4.8k'), `cache read labelled: ${legendValues}`)
+  const ring = container.querySelector('.wm-ring')
+  assert.match(ring.getAttribute('aria-label'), /98%/)
+  // Session identity: this run's scope, not the conversation fallback.
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun')
+  // A refresh keeps every section standing.
+  const before = sectionsOf(container)
+  host.state.focusedUsage.set(liveUsage({ input: 0, output: 0, calls: 0, cache_read: 5000 }))
+  await flush()
+  const after = sectionsOf(container)
+  assert.equal(after.head, before.head)
+  assert.deepEqual(after.cards, before.cards)
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun')
+})
+
+test('a calls-only frame still renders without token data', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage({ input: 0, output: 0, cache_read: 0, cache_write: 0, calls: 3 }))
+  const container = await renderMeter()
+  await flush()
+  assert.equal(sectionsOf(container).cards.length, 4)
+  const metrics = [...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
+    .map(el => el.textContent)
+  assert.equal(metrics[0], '0', `no tokens yet: ${metrics}`)
+  assert.equal(metrics[1], '3', `calls counted: ${metrics}`)
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun')
+  const ring = container.querySelector('.wm-ring')
+  assert.match(ring.getAttribute('aria-label'), /—/, 'no prompt means no hit rate')
+  const before = sectionsOf(container)
+  host.state.focusedUsage.set(liveUsage({ input: 0, output: 0, cache_read: 0, cache_write: 0, calls: 4 }))
+  await flush()
+  const after = sectionsOf(container)
+  assert.equal(after.head, before.head)
+  assert.deepEqual(after.cards, before.cards)
+})
+
+test('an all-zero frame keeps the genuine empty state', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage({ input: 0, output: 0, calls: 0, cache_read: 0, cache_write: 0 }))
+  const container = await renderMeter()
+  await flush()
+  assert.equal(container.querySelector('.wm-meter-sections'), null)
+  assert.match(container.textContent, /empty/)
+  // The first real reading still brings the sections up.
+  host.state.focusedUsage.set(liveUsage())
+  await flush()
+  assert.equal(sectionsOf(container).cards.length, 4)
+})
+
 test('an activation bump and fresh tick leave the sections standing', async () => {
   resetHost()
   host.state.focusedSessionId.set('s1')

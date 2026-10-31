@@ -1286,8 +1286,11 @@ function useLive() {
   const allowRefresh = useValue($automaticModelOptions)
   // After a restart the host seeds the focused session with an all-zero usage
   // object; treat that as "nothing yet" so the UI falls back to the ledger.
+  // Cache-only frames are valid usage too: normalisation splits them into
+  // fresh, read and write prompt tokens.
   const usage =
-    rawUsage && (num(rawUsage.input) || num(rawUsage.output) || num(rawUsage.total) || num(rawUsage.calls))
+    rawUsage && (num(rawUsage.input) || num(rawUsage.output) || num(rawUsage.total) || num(rawUsage.calls) ||
+      num(rawUsage.cache_read) || num(rawUsage.cache_write))
       ? rawUsage
       : null
 
