@@ -247,6 +247,45 @@ class PrefillContract(TempStore):
         codex = next(a for a in payload["accounts"] if a["family"] == "openai-codex")
         self.assertTrue(codex["quota"]["windows"], "native quota rows are preserved")
 
+    def test_saved_family_absent_from_credentials_is_not_probed_again(self):
+        ghost = {**M.member_from_native(native_payload()), "family": "ghostfam", "id": "ghostfam:default"}
+        store.save_account(ghost, self.store)
+        calls = []
+
+        def counting_probe(providers, *, home=None, budget_seconds=10.0):
+            providers = list(providers)
+            calls.append(providers)
+            return {p: {"state": "ok", "snapshot": native_payload(), "reason": ""}
+                    for p in providers}
+
+        with mock.patch.object(discovery, "probe_providers", side_effect=counting_probe):
+            payload = api.discover_payload(include_native=True, path=self.store, home=self.home,
+                                           catalogue=self.catalogue)
+        self.assertEqual(len(calls), 1, calls)
+        self.assertNotIn("ghostfam", calls[0])
+        self.assertIn("ghostfam", {a["family"] for a in payload["accounts"]})
+
+    def test_rediscovery_flags_a_changed_provider_plan_without_applying_it(self):
+        payload = self._discover_with_native()
+        codex = next(a for a in payload["accounts"] if a["family"] == "openai-codex")
+        api.save_payload(codex["id"], {**codex, "plan_id": "openai-codex.chatgpt-plus"}, path=self.store)
+        discovery._CACHE.clear()  # the 60s usage cache would replay the Plus snapshot
+        proc = mock.Mock(returncode=0, stdout=json.dumps(native_payload(plan="Pro")), stderr="")
+
+        def fake_run(cmd, **kwargs):
+            return proc if "openai-codex" in cmd else mock.Mock(returncode=1, stdout="", stderr="")
+
+        with mock.patch.object(discovery, "_hermes_binary", return_value="/usr/bin/hermes"), \
+             mock.patch.object(discovery.subprocess, "run", side_effect=fake_run):
+            again = api.discover_payload(include_native=True, path=self.store, home=self.home,
+                                         catalogue=self.catalogue)
+        codex2 = next(a for a in again["accounts"] if a["family"] == "openai-codex")
+        self.assertEqual(codex2["plan_id"], "openai-codex.chatgpt-plus", "never auto-apply a new plan")
+        flag = codex2["plan_reconfirmation"]
+        self.assertTrue(flag["required"])
+        self.assertIsNone(flag["suggested_plan_id"], "tiered Pro label names no single plan")
+        self.assertEqual(flag["reported_label"], "Pro")
+
     def test_prefill_does_not_change_the_fee_until_the_plan_is_confirmed(self):
         payload = self._discover_with_native()
         codex = next(a for a in payload["accounts"] if a["family"] == "openai-codex")

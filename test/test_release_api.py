@@ -12,12 +12,12 @@ TestClient = None  # type: ignore
 try:
     from fastapi import FastAPI  # type: ignore[no-redef]
     from fastapi.testclient import TestClient  # type: ignore[no-redef]
-
-    import dashboard.plugin_api as api  # type: ignore[no-redef]
 except Exception:  # pragma: no cover - depends on the test interpreter
     FastAPI = None  # type: ignore
     TestClient = None  # type: ignore
-    api = None
+
+if FastAPI is not None and TestClient is not None:
+    import dashboard.plugin_api as api  # type: ignore[no-redef]
 
 from wolfmark_ledger import billing
 

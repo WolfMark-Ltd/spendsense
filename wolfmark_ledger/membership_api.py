@@ -47,6 +47,7 @@ def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
     eligible, excluded = mem.selectable_plans(catalogue, str(account.get("family") or ""), requires_api=True)
     if custom:
         eligible = [*eligible, custom]
+    reconfirmation = mem.plan_reconfirmation(account, catalogue, snapshot)
     proposal = mem.propose_plan(snapshot, catalogue, str(account.get("family") or ""))
     blocked = {p["id"] for p in excluded}
     if proposal and proposal.get("plan_id") in blocked:
@@ -60,6 +61,7 @@ def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
         "fee": fee,
         "quota": quota,
         "plan_proposal": proposal,
+        "plan_reconfirmation": reconfirmation,
         # The pane renders these directly, so eligibility is decided once, here.
         "plan_choices": eligible,
         "excluded_plans": [{"id": p["id"], "name": p.get("name"), "reasons": p["eligibility"]["reasons"]}
@@ -85,12 +87,10 @@ def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
         snapshots = {str(family): snapshot
                      for family, snapshot in dict(native_snapshots).items()}
     notes: list[str] = []
-    if native:
+    if native and native_snapshots is None:
         families = list(dict.fromkeys(str(account.get("family") or "")
                                       for account in data.get("accounts", []) if account.get("family")))
-        missing = [family for family in families if family not in snapshots]
-        probes = discovery.probe_providers(missing, home=home) if missing else {}
-        for family, probe in probes.items():
+        for family, probe in discovery.probe_providers(families, home=home).items():
             snapshots[family] = probe.get("snapshot")
             if probe["state"] == "unavailable":
                 notes.append(f"{family}: Hermes reported no account usage.")
@@ -224,7 +224,7 @@ def discover_payload(*, include_native: bool = False, path: Optional[Path | str]
 #: persist a computed value — so these are stripped, and anything else unknown is
 #: still rejected.
 DERIVED_FIELDS = frozenset({
-    "plan", "fee", "quota", "cycle", "plan_proposal", "native_state", "rev",
+    "plan", "fee", "quota", "cycle", "plan_proposal", "plan_reconfirmation", "native_state", "rev",
     # Route-eligibility lists are computed from the catalogue per request, so a
     # card posted back unchanged must not try to persist them.
     "plan_choices", "excluded_plans",

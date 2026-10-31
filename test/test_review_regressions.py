@@ -196,6 +196,22 @@ class PricingSafety(unittest.TestCase):
         self.assertEqual(candidate['plans'][0]['price'],{'amount':None,'currency':'GBP','period':'year'})
         self.assertEqual(candidate['plans'][0]['verification']['status'],'unverified')
 
+    def test_authored_price_applies_in_full_despite_rejected_observed_terms(self):
+        base={'plans':[{'id':'p','provider_family':'x','name':'Plan',
+                        'price':{'amount':10,'currency':'USD','period':'month'},
+                        'verification':{'status':'verified','source_id':'old'}}]}
+        report=revisions.correction_report(base,[{'plan_id':'p','field':'price',
+            'value':{'amount':None,'currency':'GBP','period':'year'},'why':'correct the catalogue',
+            'evidence':{'source_id':'owner-evidence'}}])
+        report['changes'] += [
+            {'key':'currency_changed:p','plan_id':'p','family':'x','action':'currency_changed',
+             'materiality':'material','before':'USD','after':'GBP','evidence':{'source_id':'s'}},
+            {'key':'period_changed:p','plan_id':'p','family':'x','action':'period_changed',
+             'materiality':'material','before':'month','after':'year','evidence':{'source_id':'s'}}]
+        decisions={'price_changed:p':'accept','currency_changed:p':'reject','period_changed:p':'reject'}
+        candidate=revisions.build_candidate(base,[],report,decisions,version='test')
+        self.assertEqual(candidate['plans'][0]['price'],{'amount':None,'currency':'GBP','period':'year'})
+
     def test_authored_price_correction_keeps_terms_when_observation_is_unchanged(self):
         base={'plans':[{'id':'p','provider_family':'x','name':'Plan',
                         'price':{'amount':10,'currency':'USD','period':'month'},

@@ -121,6 +121,22 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(report["attribution"]["operation_root"], "root")
         self.assertEqual(sum(row["calls"] for row in scope.values()), report["totals"]["calls"])
 
+    def test_previous_window_totals_use_the_same_filters_for_deltas(self):
+        self.create_events([
+            {"ts": NOW - 3600, "input_tokens": 100},
+            {"ts": NOW - 13 * 3600, "input_tokens": 300},
+        ])
+        report = self.report(days=1)
+        self.assertEqual(report["totals"]["calls"], 1)
+        previous = report["previous"]
+        self.assertTrue(previous["comparable"])
+        self.assertEqual(previous["totals"]["calls"], 1)
+        self.assertEqual(previous["totals"]["input_tokens"], 300)
+        self.assertAlmostEqual(previous["deltas"]["tokens"], (100 - 300) / 300, places=5)
+        filtered = self.report(days=1, model="absent")
+        self.assertFalse(filtered["previous"]["comparable"])
+        self.assertIsNone(filtered["previous"]["deltas"]["tokens"])
+
     def test_failed_call_with_catalogue_rate_is_unpriced_in_all_coverage(self):
         self.create_events([{"input_tokens": 100, "outcome": "error"}])
         report = self.report(days=1)
@@ -169,7 +185,7 @@ class AnalyticsTests(unittest.TestCase):
 
     def test_empty_missing_store_has_complete_contract_without_creating_files(self):
         report = self.report(days=1)
-        self.assertEqual(set(report), {"ok", "window", "filters", "options", "totals",
+        self.assertEqual(set(report), {"ok", "window", "filters", "options", "totals", "previous",
                                      "by_model", "by_route", "by_scope", "attribution", "pricing_source", "valuation",
                                      "pricing_coverage", "billing",
                                      "trend", "economics", "recording", "notes"})

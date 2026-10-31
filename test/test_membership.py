@@ -378,6 +378,27 @@ class NativePrefillTests(unittest.TestCase):
         self.assertEqual(proposal["plan_id"], "openai-codex.chatgpt-plus")
         self.assertTrue(proposal["requires_confirmation"])
 
+    def test_saved_plan_that_provider_no_longer_reports_needs_reconfirmation(self):
+        flag = M.plan_reconfirmation(membership(), catalogue(), codex_snapshot(plan="Pro"))
+        self.assertTrue(flag["required"])
+        self.assertEqual(flag["saved_plan_id"], "openai-codex.chatgpt-plus")
+        # "Pro" names two tiered plans, so no single plan is suggested.
+        self.assertIsNone(flag["suggested_plan_id"])
+        self.assertEqual(flag["reported_label"], "Pro")
+        go = M.plan_reconfirmation(membership(), catalogue(), codex_snapshot(plan="Go"))
+        self.assertEqual(go["suggested_plan_id"], "openai-codex.chatgpt-go")
+
+    def test_matching_unknown_and_custom_plans_are_not_flagged(self):
+        self.assertIsNone(M.plan_reconfirmation(membership(), catalogue(), codex_snapshot(plan="Plus")))
+        self.assertIsNone(M.plan_reconfirmation(membership(), catalogue(), codex_snapshot(plan="Enterprise Ultra")))
+        stored_hint = membership(plan_hint="Pro")
+        self.assertTrue(M.plan_reconfirmation(stored_hint, catalogue())["required"])
+        account = membership()
+        custom = {"id": f"custom:{account['id']}", "name": "Mine",
+                  "price": {"amount": 9, "currency": "USD", "period": "month"}}
+        account = {**account, "plan_id": custom["id"], "custom_plan": custom}
+        self.assertIsNone(M.plan_reconfirmation(account, catalogue(), codex_snapshot(plan="Pro")))
+
     def test_unknown_plan_label_proposes_nothing(self):
         proposal = M.propose_plan(codex_snapshot(plan="Enterprise Ultra"), catalogue(), "openai-codex")
         self.assertEqual(proposal["confidence"], "none")

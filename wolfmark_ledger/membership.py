@@ -861,6 +861,57 @@ def propose_plan(snapshot: Mapping[str, Any] | None, catalogue: Mapping[str, Any
             "requires_confirmation": True, "candidates": [p["id"] for p in candidates]}
 
 
+def plan_reconfirmation(membership: Mapping[str, Any], catalogue: Mapping[str, Any] | None,
+                        snapshot: Mapping[str, Any] | None = None) -> Optional[dict[str, Any]]:
+    """Flag a saved plan that the provider no longer reports, without changing it.
+
+    The provider's current label (fresh snapshot first, then the stored hint)
+    is mapped to a catalogue plan the same way :func:`propose_plan` maps it.
+    A flag is returned only when that mapping confidently names a different
+    plan; an unrecognised label proves nothing and flags nothing. A
+    user-defined plan is the owner's own record and is never flagged.
+    """
+    saved_id = str(membership.get("plan_id") or "").strip()
+    if not saved_id:
+        return None
+    custom = custom_plan_view(membership)
+    if custom and custom.get("id") == saved_id:
+        return None
+    label_raw = (snapshot or {}).get("plan") or membership.get("plan_hint")
+    if not label_raw:
+        return None
+    family = str(membership.get("family") or "")
+    index = plan_index(catalogue)
+    saved = index.get(saved_id)
+    label = _slug(label_raw)
+    if saved and label in (_slug(saved.get("name")), _slug(saved_id.split(".")[-1])):
+        return None
+    proposal = propose_plan({"plan": label_raw}, catalogue, family)
+    suggested_id = (proposal or {}).get("plan_id")
+    if suggested_id == saved_id:
+        return None
+    if not suggested_id:
+        # No single candidate (tiered names share a label, e.g. Pro): flag
+        # only when the label still recognisably names a plan in this family.
+        recognised = any(
+            label in _slug(p.get("name")) or _slug(p.get("name")) in label
+            or label in _slug(str(p.get("id") or "").split(".")[-1])
+            for p in plans_for_family(catalogue, family))
+        if not recognised:
+            return None
+    suggested = index.get(str(suggested_id)) if suggested_id else {}
+    return {
+        "required": True,
+        "reason": "provider-reported plan differs from the saved plan",
+        "saved_plan_id": saved_id,
+        "saved_plan_name": (saved or {}).get("name") or saved_id,
+        "reported_label": str(label_raw),
+        "suggested_plan_id": str(suggested_id) if suggested_id else None,
+        "suggested_plan_name": (suggested or {}).get("name") or str(label_raw),
+        "confidence": (proposal or {}).get("confidence"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Manual quota exhaustion
 # ---------------------------------------------------------------------------

@@ -296,7 +296,7 @@ def build_candidate(catalogue: Mapping[str, Any], observations: Iterable[Mapping
                 if authored or _money(after.get("amount")) is not None:
                     separate_actions = {item.get("action") for item in changes_by_plan.get(pid, [])}
                     for field, field_action in (("currency", "currency_changed"), ("period", "period_changed")):
-                        if field_action not in separate_actions and field in after:
+                        if (authored or field_action not in separate_actions) and field in after:
                             price[field] = after[field]
                 row["price"] = price
                 price_checks[pid] = change

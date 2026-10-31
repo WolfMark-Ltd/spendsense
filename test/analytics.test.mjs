@@ -203,21 +203,32 @@ test('custom rate overrides and account labels persist in the payload', () => {
  assert.equal(T.billingNumberStep({type:'number',step:'1'}),'1')
 })
 
-test('dashboard renders four SVG analytics, honest pricing/billing/cache coverage and a complete sortable explorer', () => {
+test('insights name the driver, cache verdict and delegated share from existing data', () => {
+ const data={totals:{list_usd:10,tokens:100},by_model:[{model:'m1',provider:'p1',list_usd:6},{model:'m2',provider:'p2',list_usd:4}],
+   economics:{savings_usd:-1,coverage:.5},by_scope:[{scope:'subagent',tokens:40,calls:3}]}
+ const found=T.analyticsInsights(data)
+ assert.deepEqual(found.map(i=>i.label),['Biggest driver','Cache verdict','Delegated work'])
+ assert.match(found[0].text,/m1 via p1 is 60\.0%/)
+ assert.match(found[1].text,/writes cost/)
+ assert.equal(T.deltaText(.125),'▲ 12.5% vs previous period')
+ assert.equal(T.deltaText(null),null)
+ assert.match(T.analyticsExplorerCsv([{model:'=m',provider:'p',calls:2,tokens:100,list_usd:4,per_call:2,per_million:40000,cache_hit_rate:.5}]),/usd_per_call/)
+})
+
+test('dashboard renders three SVG analytics, honest pricing/billing/cache coverage and a sortable explorer', () => {
  assert.equal(typeof T.AnalyticsPage,'function','analytics page is exported')
  T.$analytics.set({})
  const tree=page()
- for(const title of ['Usage analytics','API-equivalent','Weighted cache hit','Theoretical net savings','Model Explorer','Cache economics']) assert.ok(text(tree).includes(title),title)
+ for(const title of ['Usage analytics','API-equivalent','Weighted cache hit','Theoretical net savings','Pricing coverage','Model Explorer','Cache economics']) assert.ok(text(tree).includes(title),title)
  assert.ok(text(tree).includes('Partial'))
  assert.ok(text(tree).includes('Recorded billing'))
- assert.ok(text(tree).includes('not an invoice'))
  assert.ok(text(tree).includes('Unknown is not zero'))
- assert.equal(nodes(tree,n=>n.type==='svg' && !!n.props['data-chart']).length,4,'four SVG charts')
- assert.equal(nodes(tree,n=>n.type==='section').length,7,'four charts, delegation, explorer, economics')
+ assert.equal(nodes(tree,n=>n.type==='svg' && !!n.props['data-chart']).length,3,'distribution is bars; trend, ranking and composition stay SVG')
+ assert.equal(nodes(tree,n=>n.type==='section').length,7,'charts, delegation, explorer, economics')
  assert.ok(text(tree).includes('Delegated operations'))
- assert.equal(nodes(tree,n=>n.type==='th').length,14)
+ assert.equal(nodes(tree,n=>n.type==='th').length,11,'core explorer columns by default')
  const labels=nodes(tree,n=>n.type==='th').map(text)
- for(const label of ['Billing','Reasoning']) assert.ok(labels.some(value=>value.includes(label)),label)
+ for(const label of ['Billing','$/call']) assert.ok(labels.some(value=>value.includes(label)),label)
  assert.ok(text(tree).includes('Reasoning is included in output'))
  assert.ok(nodes(tree,n=>n.type==='details' && nodes(n,x=>x.type==='summary' && text(x)==='Methodology & coverage details').length>0).some(n=>!n.props.open))
  assert.ok(nodes(tree,n=>n.type==='th').every(n=>!!n.props['aria-sort']))

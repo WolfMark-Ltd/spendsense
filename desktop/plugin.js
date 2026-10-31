@@ -1537,15 +1537,39 @@ function analyticsSort(rows, key, direction = 'desc') {
   })
 }
 
+/** Three plain conclusions from data already on the page; no new claims. */
+function analyticsInsights(data) {
+  const totals = data?.totals || {}
+  const insights = []
+  const priced = (data?.by_model || []).filter(r => finiteValue(r.list_usd) != null && num(r.list_usd) > 0)
+    .sort((a, b) => num(b.list_usd) - num(a.list_usd))
+  if (priced.length && num(totals.list_usd)) {
+    const top = priced[0]
+    insights.push({label: 'Biggest driver', text: `${top.model || 'Unknown model'} via ${top.provider || 'unknown'} is ${percent(num(top.list_usd) / num(totals.list_usd))} of priced API-equivalent cost.`})
+  }
+  const e = data?.economics || totals.economics || {}
+  if (finiteValue(e.savings_usd) != null) insights.push({label: 'Cache verdict', text: e.savings_usd < 0
+    ? `Cache writes cost ${analyticMoney(-e.savings_usd)} more than reads save on covered calls. See Cache economics.`
+    : `Caching saves a theoretical ${analyticMoney(e.savings_usd)} on covered calls (${percent(e.coverage)} covered).`})
+  const scopes = Object.fromEntries((data?.by_scope || []).map(r => [r.scope, r]))
+  const sub = scopes.subagent
+  if (sub && num(totals.tokens)) insights.push({label: 'Delegated work', text: `Subagents used ${percent(num(sub.tokens) / num(totals.tokens))} of tokens across ${exactTokens(sub.calls)} calls.`})
+  return insights
+}
+function deltaText(value) {
+  if (finiteValue(value) == null) return null
+  return `${value >= 0 ? '▲' : '▼'} ${Math.abs(value * 100).toFixed(1)}% vs previous period`
+}
+
 /* -------------------------------------------------------- analytics state */
 
 function analyticsInitialState() {
   return {filters:{model:'',provider:'',surface:'',task:'',parent:'',scope:''},days:7,distributionMetric:'cost',grouping:'model',
     trendMetric:'tokens',compositionMode:'stacked',ranking:'cache_hit_rate',sortKey:'list_usd',sortDirection:'desc',
-    otherOpen:false,trendIndex:null,compositionFocus:null,baselineOpen:false}
+    otherOpen:false,trendIndex:null,compositionFocus:null,baselineOpen:false,showAllModels:false,columnMode:'core'}
 }
 function analyticsReduce(state, action) {
-  if (action.type === 'toggle' && ['otherOpen'].includes(action.key)) return {...state,[action.key]:!state[action.key]}
+  if (action.type === 'toggle' && ['otherOpen','showAllModels'].includes(action.key)) return {...state,[action.key]:!state[action.key]}
   if (action.type === 'trend-step') return {...state,trendIndex:Math.max(0,Math.min(action.total-1,(state.trendIndex ?? action.index)+action.direction))}
   if (action.type === 'clear') return {...state,filters:analyticsInitialState().filters,otherOpen:false,trendIndex:null}
   if (action.type === 'filter' && ['model','provider','surface','task','parent','scope'].includes(action.key))
@@ -1608,20 +1632,21 @@ const ANALYTICS_CSS = `
 .wm-analytics select{width:100%;max-width:100%;min-height:33px;border:1px solid var(--ui-stroke-secondary);background:var(--ui-fill-primary);padding:6px 25px 6px 9px;border-radius:6px;font-size:11px}
 .wm-analytics option{background:var(--ui-fill-primary);color:var(--ui-text-primary)}
 .wm-analytics .wm-scopechips{display:flex;gap:6px;flex-wrap:wrap;margin-top:-9px}.wm-analytics .wm-scopechips button{border:1px solid color-mix(in srgb,var(--ui-accent) 35%,var(--ui-stroke-secondary));background:color-mix(in srgb,var(--ui-accent) 7%,transparent);color:var(--ui-accent);border-radius:4px;padding:3px 7px;font-size:10px;max-width:100%;overflow-wrap:anywhere}
-.wm-analytics .wm-stats{display:grid;grid-template-columns:1.3fr 1fr 1fr 1fr;gap:0;border:1px solid var(--ui-stroke-secondary);border-radius:9px;overflow:hidden}
+.wm-analytics .wm-stats{display:grid;grid-template-columns:1.3fr 1fr 1fr 1fr 1fr;gap:0;border:1px solid var(--ui-stroke-secondary);border-radius:9px;overflow:hidden}
+.wm-analytics .wm-insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}.wm-analytics .wm-insight{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:12px 14px;display:grid;gap:5px}.wm-analytics .wm-insight b{font-size:11px}.wm-analytics .wm-insight span{font-size:11.5px;color:var(--ui-text-secondary);line-height:1.5}
 .wm-analytics .wm-stat{padding:19px 21px;min-width:0;border-right:1px solid var(--ui-stroke-secondary)}.wm-analytics .wm-stat:last-child{border:0}.wm-analytics .wm-statlabel{font-size:11px;color:var(--ui-text-tertiary);margin-bottom:10px}.wm-analytics .wm-statvalue{font-size:29px;line-height:1.2;font-weight:550;letter-spacing:-1.2px;overflow-wrap:anywhere;margin-bottom:10px}.wm-analytics .wm-statvalue small{font-size:11px;letter-spacing:0;margin-left:6px;font-weight:400}
-.wm-analytics .wm-badge{display:inline-block;font-size:9px;line-height:1.4;letter-spacing:.15px;border:1px solid var(--ui-stroke-secondary);border-radius:4px;padding:2px 5px;vertical-align:middle;color:var(--ui-text-secondary)}
+.wm-analytics .wm-badge{display:inline-block;font-size:10px;line-height:1.4;letter-spacing:.15px;border:1px solid var(--ui-stroke-secondary);border-radius:4px;padding:2px 5px;vertical-align:middle;color:var(--ui-text-secondary)}
 .wm-analytics .wm-warn{color:var(--ui-warning)}.wm-analytics .wm-good{color:var(--ui-success)}.wm-analytics .wm-accent{color:var(--ui-accent)}
 .wm-analytics .wm-charts{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);gap:16px}.wm-analytics .wm-charts > section:nth-child(5){grid-column:1/-1}.wm-analytics .wm-panel{border:1px solid var(--ui-stroke-secondary);border-radius:9px;padding:20px;min-width:0;background:color-mix(in srgb,var(--ui-fill-secondary) 15%,transparent)}
-.wm-analytics .wm-paneltitle{display:flex;align-items:center;gap:7px;margin-bottom:4px}.wm-analytics .wm-number{font-family:var(--font-mono,ui-monospace,monospace);font-size:9px;color:var(--ui-text-quaternary)}
+.wm-analytics .wm-paneltitle{display:flex;align-items:center;gap:7px;margin-bottom:4px}.wm-analytics .wm-number{font-family:var(--font-mono,ui-monospace,monospace);font-size:10px;color:var(--ui-text-quaternary)}
 .wm-analytics .wm-donutbody{display:grid;grid-template-columns:minmax(135px,.9fr) minmax(0,1.1fr);align-items:center;gap:16px;min-height:230px}
 .wm-analytics svg{display:block;max-width:100%;overflow:visible}.wm-analytics .wm-donut{width:100%;max-width:220px;margin:auto}.wm-analytics .wm-ring{transform:rotate(-90deg);transform-origin:center}
 .wm-analytics .wm-svgtext{fill:var(--ui-text-primary);font-family:var(--font-mono,ui-monospace,monospace);font-size:19px;font-weight:500}.wm-analytics .wm-svghint{fill:var(--ui-text-tertiary);font-size:9px}
-.wm-analytics .wm-legend{display:grid;gap:4px;min-width:0}.wm-analytics .wm-legendrow{display:grid;grid-template-columns:7px minmax(0,1fr) auto;gap:8px;text-align:left;align-items:center;padding:7px 4px;border:0;background:transparent;border-radius:4px;font-size:11px;width:100%;min-width:0}
+.wm-analytics .wm-legend{display:grid;gap:4px;min-width:0}.wm-analytics .wm-legendrow{display:grid;grid-template-columns:7px minmax(0,1.2fr) minmax(60px,1fr) auto;gap:8px;text-align:left;align-items:center;padding:7px 4px;border:0;background:transparent;border-radius:4px;font-size:11px;width:100%;min-width:0}.wm-analytics .wm-bartrack{height:8px;background:var(--ui-stroke-secondary);border-radius:99px;overflow:hidden}.wm-analytics .wm-barfill{display:block;height:100%;border-radius:99px}
 .wm-analytics .wm-dot{width:6px;height:6px;border-radius:2px;display:inline-block;flex-shrink:0}.wm-analytics .wm-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;min-width:0}.wm-analytics .wm-legendrow small{font-size:9px;color:var(--ui-text-quaternary);display:block}.wm-analytics .wm-legendrow .wm-value{text-align:right;font-size:11px;white-space:nowrap}
-.wm-analytics .wm-footnote{border-top:1px solid var(--ui-stroke-secondary);padding-top:12px;margin-top:15px;font-size:10px;color:var(--ui-text-tertiary);line-height:1.6}.wm-analytics .wm-remainder{padding:12px;background:var(--ui-fill-secondary);border-radius:6px;margin-top:12px;max-height:240px;overflow:auto}
-.wm-analytics .wm-trend{width:100%;height:auto;min-height:180px;margin-top:10px}.wm-analytics .wm-gridline{stroke:var(--ui-stroke-secondary);stroke-width:1;stroke-dasharray:3 5}.wm-analytics .wm-axis{fill:var(--ui-text-tertiary);font-family:var(--font-mono,ui-monospace,monospace);font-size:9px}
-.wm-analytics .wm-chartkey{display:flex;gap:13px;flex-wrap:wrap;font-size:10px;color:var(--ui-text-tertiary);margin-top:10px}.wm-analytics .wm-chartkey span{display:inline-flex;align-items:center;gap:5px}.wm-analytics .wm-chartdetail{display:flex;justify-content:space-between;gap:9px;flex-wrap:wrap;min-height:32px;padding-top:10px;font-size:10px;color:var(--ui-text-tertiary)}
+.wm-analytics .wm-footnote{border-top:1px solid var(--ui-stroke-secondary);padding-top:12px;margin-top:15px;font-size:11px;color:var(--ui-text-tertiary);line-height:1.6}.wm-analytics .wm-remainder{padding:12px;background:var(--ui-fill-secondary);border-radius:6px;margin-top:12px;max-height:240px;overflow:auto}
+.wm-analytics .wm-trend{width:100%;height:auto;min-height:180px;margin-top:10px}.wm-analytics .wm-gridline{stroke:var(--ui-stroke-secondary);stroke-width:1;stroke-dasharray:3 5}.wm-analytics .wm-axis{fill:var(--ui-text-tertiary);font-family:var(--font-mono,ui-monospace,monospace);font-size:10px}
+.wm-analytics .wm-chartkey{display:flex;gap:13px;flex-wrap:wrap;font-size:11px;color:var(--ui-text-tertiary);margin-top:10px}.wm-analytics .wm-chartkey span{display:inline-flex;align-items:center;gap:5px}.wm-analytics .wm-chartdetail{display:flex;justify-content:space-between;gap:9px;flex-wrap:wrap;min-height:32px;padding-top:10px;font-size:11px;color:var(--ui-text-tertiary)}
 .wm-analytics .wm-rank{width:100%;min-height:200px}.wm-analytics .wm-composition{min-height:225px;display:grid;align-content:center;gap:20px}.wm-analytics .wm-compositiontotal{font-size:27px;font-weight:500;letter-spacing:-1px}.wm-analytics .wm-compositionkey{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}
 .wm-analytics .wm-tablewrap{overflow:auto;margin:0 -20px}.wm-analytics table{width:100%;border-collapse:collapse;white-space:nowrap;text-align:right;font-size:11px}.wm-analytics caption{text-align:left;position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .wm-analytics th{font-size:10px;color:var(--ui-text-tertiary);font-weight:450;border-bottom:1px solid var(--ui-stroke-secondary);position:sticky;top:0;background:var(--ui-fill-primary);z-index:1}.wm-analytics th button{font:inherit;color:inherit;border:0;background:transparent;padding:10px 10px;text-align:right;width:100%;white-space:nowrap}.wm-analytics td{padding:11px 10px;border-bottom:1px solid var(--ui-stroke-secondary);font-variant-numeric:tabular-nums}.wm-analytics td:first-child,.wm-analytics th:first-child{padding-left:20px;text-align:left}.wm-analytics td:last-child,.wm-analytics th:last-child{padding-right:20px}.wm-analytics tr:last-child td{border-bottom:0}.wm-analytics tbody tr:hover{background:var(--ui-fill-secondary)}
@@ -1690,11 +1715,12 @@ function AnalyticsDistribution({data,state,dispatch}) {
     'aria-expanded':row.other?state.otherOpen:undefined,onClick:()=>select(row),title:row.other?'Inspect the exact remainder without changing filters':`Apply exact ${state.grouping} filter`,children:[
       jsx('span',{className:'wm-dot',style:{background:CHART_COLORS[i%CHART_COLORS.length]}}),
       jsxs('span',{className:'wm-label',children:[row.label,!grouped&&!row.other?jsx('small',{children:row.provider || 'Unknown provider'}):null]}),
+      jsx('span',{className:'wm-bartrack','aria-hidden':'true',children:jsx('span',{className:'wm-barfill',style:{width:`${Math.max(0,Math.min(100,row.share*100))}%`,background:CHART_COLORS[i%CHART_COLORS.length]}})}),
       jsxs('span',{className:'wm-value wm-mono',children:[format(row.value),jsx('small',{children:percent(row.share)})]})]},row.id)
   return jsx(AnalyticsPanel,{number:'01',title:'Usage distribution',subtitle:'Where your usage goes',controls:jsxs('div',{className:'wm-controls',children:[
     jsx(AnalyticsSegments,{label:'Distribution',value:state.distributionMetric,options:[['cost','Cost'],['tokens','Tokens']],onChange:value=>dispatch({type:'set',key:'distributionMetric',value})}),
     jsx(AnalyticsSegments,{label:'Distribution by',value:state.grouping,options:[['model','Model'],['provider','Provider']],onChange:value=>dispatch({type:'set',key:'grouping',value})})]}),
-    children:jsxs('div',{children:[jsxs('div',{className:'wm-donutbody',children:[jsx(AnalyticsDonut,{items:dist.items,total:dist.total,label:state.distributionMetric==='cost'?'priced subtotal':'total tokens',format,onSelect:select}),jsx('div',{className:'wm-legend',children:dist.items.length?dist.items.map(legend):jsx('p',{className:'wm-subtle',children:state.distributionMetric==='cost'?'No priced cost to distribute. Known free usage has zero cost; unpriced usage is not zero.':'No tokens to distribute.'})})]}),
+    children:jsxs('div',{children:[jsx('div',{className:'wm-legend',children:dist.items.length?dist.items.map(legend):jsx('p',{className:'wm-subtle',children:state.distributionMetric==='cost'?'No priced cost to distribute. Known free usage has zero cost; unpriced usage is not zero.':'No tokens to distribute.'})}),
       state.otherOpen?jsxs('div',{className:'wm-remainder',children:[jsx('h2',{children:`Remainder · ${dist.remainder.length} ${grouped?'providers':'models'}`}),...dist.remainder.map((r,i)=>legend(r,i+6))]}):null]}),
     footer:jsxs('span',{children:[state.distributionMetric==='cost'?'Shares of the PRICED subtotal only. ':'Shares of all recorded tokens. ',num(dist.unpricedTokens)?jsx('span',{className:'wm-warn',children:`${fmtTokens(dist.unpricedTokens)} unpriced tokens are excluded from cost shares. `}):null,'Top 6 + Other conserves the total. Click a legend to filter; Other only inspects.']})})
 }
@@ -1758,6 +1784,7 @@ function AnalyticsDelegation({data,state,dispatch}) {
     jsxs('div',{className:'wm-subtle',style:{marginTop:14},children:[
       jsx('p',{children:`${exactTokens(attribution.child_sessions)} child sessions known · ${exactTokens(sub?.calls || 0)} delegated calls captured`}),
       jsx('p',{children:`Cache: parent ${percent(direct?.cache_hit_rate)} · workers ${percent(sub?.cache_hit_rate)} · auxiliary ${percent(aux?.cache_hit_rate)}`}),
+      (data.options?.operations || []).length?jsx('p',{children:`Busiest operations: ${(data.options.operations || []).slice(0,5).map(o=>`${String(o.parent).length>24?`${String(o.parent).slice(0,23)}…`:o.parent} (${exactTokens(o.subagent_calls)} worker calls)`).join(' · ')}`}):null,
       num(attribution.unattributed_calls)?jsx('p',{className:'wm-warn',children:`${exactTokens(attribution.unattributed_calls)} calls could not be attributed to a session; they stay in totals as unattributed.`}):null,
       jsx('p',{children:'Combined totals include parent, delegated and auxiliary calls exactly once. Child sessions are matched read-only through state.db parent_session_id; nested delegations roll up to the operation root.'})].filter(Boolean)})]}),
     footer:'A subagent is a persisted child session, not a separate invoice. Where Hermes cannot establish a parent, usage is reported as unattributed rather than assigned.'})
@@ -1769,7 +1796,7 @@ function AnalyticsRanking({data,state,dispatch}) {
   const format=state.ranking==='savings'?analyticMoney:state.ranking==='cache_read_tokens'?fmtTokens:percent
   const signed=state.ranking==='savings'
   const start=signed?333:225,end=535,range=signed?100:end-start
-  return jsx(AnalyticsPanel,{number:'04',title:'Cache performance',subtitle:'Weighted prompt-cache rate · model × route',controls:jsx(AnalyticsSegments,{label:'Rank by',value:state.ranking,options:[['cache_hit_rate','Hit rate'],['cache_read_tokens','Volume'],['savings','Savings']],onChange:value=>dispatch({type:'set',key:'ranking',value})}),
+  return jsx(AnalyticsPanel,{number:'04',title:'Cache performance',subtitle:'Weighted prompt-cache rate · model × route',controls:jsx(AnalyticsSegments,{label:'Rank by',value:state.ranking,options:[['cache_hit_rate','Hit rate'],['cache_read_tokens','Volume']],onChange:value=>dispatch({type:'set',key:'ranking',value})}),
     children:jsxs('svg',{className:'wm-rank',viewBox:`0 0 620 ${Math.max(170,ranked.length*42+8)}`,'data-chart':'ranking',role:'img','aria-label':'Cache ranking. Exact model filters available on every row.',children:[jsx('title',{children:'Ranked models. Rates are weighted on known-cache calls only. Volume is cache-read tokens. Savings can be negative.'}),
       ...ranked.map((row,i)=>{
         const value=numeric(row),barWidth=Math.abs(value || 0)/(state.ranking==='cache_hit_rate'?1:maximum)*range
@@ -1800,13 +1827,37 @@ function AnalyticsComposition({data,state,dispatch}) {
       jsx('div',{className:'wm-compositionkey',children:parts.map(row=>jsxs('button',{type:'button',className:'wm-legendrow','aria-label':`Select ${row.label} composition`,'aria-pressed':state.compositionFocus===row.id,onClick:()=>select(row),children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsxs('span',{className:'wm-value wm-mono',children:[fmtTokens(row.value),jsx('small',{children:percent(row.share)})]})]},row.id))})]}),
     footer:jsx('div',{'aria-live':'polite',children:focus?`${focus.label}: ${exactTokens(focus.value)} tokens · ${percent(focus.share)} of all tokens. ${focus.id==='cache_read_tokens'?'Reused prompt tokens; billed at the cache-read rate when known.':focus.id==='cache_write_tokens'?'New cache writes; write premiums are included in net savings when rates are known.':focus.id==='input_tokens'?'Fresh, uncached input only.':'Generated output tokens.'}`:'Select a stream for its exact count. This is a composition inspection, not a hidden model filter.'})})
 }
-const ANALYTICS_COLUMNS = [['model','Model'],['provider','Provider'],['calls','Calls'],['tokens','Tokens'],['input_tokens','Input'],['output_tokens','Output'],['reasoning_tokens','Reasoning'],['cache_read_tokens','Read'],['cache_write_tokens','Write'],['cache_hit_rate','Cache %'],['savings','Net savings'],['list_usd','API cost'],['pricing','Pricing'],['billing','Billing']]
+const ANALYTICS_COLUMNS = [['model','Model'],['provider','Provider'],['calls','Calls'],['tokens','Tokens'],['input_tokens','Input'],['output_tokens','Output'],['reasoning_tokens','Reasoning'],['cache_read_tokens','Read'],['cache_write_tokens','Write'],['cache_hit_rate','Cache %'],['savings','Net savings'],['list_usd','API cost'],['per_call','$/call'],['per_million','$/1M tokens'],['pricing','Pricing'],['billing','Billing']]
+const ANALYTICS_CORE_COLUMNS = ['model','provider','calls','tokens','input_tokens','output_tokens','list_usd','per_call','per_million','pricing','billing']
+function analyticsExplorerCsv(rows) {
+  const head = ['model','provider','calls','tokens','api_usd','usd_per_call','usd_per_1m_tokens','cache_hit_rate']
+  const line = row => [row.model || '',row.provider || '',row.calls ?? '',row.tokens ?? '',row.list_usd ?? '',
+    row.per_call == null ? '' : row.per_call.toFixed(6),row.per_million == null ? '' : row.per_million.toFixed(4),
+    row.cache_hit_rate == null ? '' : row.cache_hit_rate.toFixed(4)].map(v => csvCell(v)).join(',')
+  return [head.join(','), ...rows.map(line)].join('\n') + '\n'
+}
+function downloadAnalyticsCsv(rows) {
+  try {
+    const url = URL.createObjectURL(new Blob([analyticsExplorerCsv(rows)], {type:'text/csv;charset=utf-8'}))
+    const a = document.createElement('a'); a.href = url; a.download = `spend-sense-models-${dayKey()}.csv`
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  } catch { /* host without download: table remains visible */ }
+}
 function AnalyticsExplorer({data,state,dispatch}) {
-  const rows=analyticsSort(data.by_model || [],state.sortKey,state.sortDirection)
-  return jsx(AnalyticsPanel,{title:'Model Explorer',subtitle:`${rows.length} model × route pairs · every column sortable`,controls:jsx('span',{className:'wm-badge',children:'EXACT ROUTE FILTERS'}),
-    children:jsx('div',{className:'wm-tablewrap',children:jsxs('table',{children:[jsx('caption',{children:'All models for the selected period and exact AND filters. Unknown prices, cache rates and savings sort last.'}),
-      jsx('thead',{children:jsx('tr',{children:ANALYTICS_COLUMNS.map(([key,label])=>jsx('th',{scope:'col','aria-sort':state.sortKey===key?(state.sortDirection==='asc'?'ascending':'descending'):'none',children:jsx('button',{type:'button','aria-label':`Sort by ${label}`,onClick:()=>dispatch({type:'sort',key}),children:`${label}${state.sortKey===key?(state.sortDirection==='desc'?' ↓':' ↑'):''}`})},key))})}),
-      jsx('tbody',{children:rows.map(row=>jsx('tr',{children:ANALYTICS_COLUMNS.map(([key])=>{
+  const enriched=(data.by_model || []).map(r=>({...r,
+    per_call: finiteValue(r.list_usd)!=null && num(r.calls) ? num(r.list_usd)/num(r.calls) : null,
+    per_million: finiteValue(r.list_usd)!=null && num(r.tokens) ? num(r.list_usd)/num(r.tokens)*1_000_000 : null}))
+  const rows=analyticsSort(enriched,state.sortKey,state.sortDirection)
+  const columns=state.columnMode==='all'?ANALYTICS_COLUMNS:ANALYTICS_COLUMNS.filter(([key])=>ANALYTICS_CORE_COLUMNS.includes(key))
+  const visible=state.showAllModels?rows:rows.slice(0,25)
+  return jsx(AnalyticsPanel,{title:'Model Explorer',subtitle:`${rows.length} model × route pairs · every column sortable`,controls:jsxs('div',{className:'wm-controls',children:[
+    jsx(AnalyticsSegments,{label:'Columns',value:state.columnMode,options:[['core','Core'],['all','All']],onChange:value=>dispatch({type:'set',key:'columnMode',value})}),
+    rows.length>25?jsx(AnalyticsButton,{label:state.showAllModels?'Show top 25 only':'Show all models',onClick:()=>dispatch({type:'toggle',key:'showAllModels'}),children:state.showAllModels?'Top 25':'Show all'}):null,
+    jsx(AnalyticsButton,{label:'Export filtered models as CSV',onClick:()=>downloadAnalyticsCsv(rows),children:'Export CSV'}),
+    jsx('span',{className:'wm-badge',children:'EXACT ROUTE FILTERS'})]}),
+    children:jsxs('div',{children:[jsx('div',{className:'wm-tablewrap',children:jsxs('table',{children:[jsx('caption',{children:'Models for the selected period and exact AND filters. Unknown prices, cache rates and savings sort last.'}),
+      jsx('thead',{children:jsx('tr',{children:columns.map(([key,label])=>jsx('th',{scope:'col','aria-sort':state.sortKey===key?(state.sortDirection==='asc'?'ascending':'descending'):'none',children:jsx('button',{type:'button','aria-label':`Sort by ${label}`,onClick:()=>dispatch({type:'sort',key}),children:`${label}${state.sortKey===key?(state.sortDirection==='desc'?' ↓':' ↑'):''}`})},key))})}),
+      jsx('tbody',{children:visible.map(row=>jsx('tr',{children:columns.map(([key])=>{
         let content
         if(key==='model') content=jsx('button',{type:'button',className:'wm-modelbutton',title:row.model,'aria-label':`Filter ${row.model} via ${row.provider}`,onClick:()=>dispatch({type:'select',group:'model',row}),children:row.model || 'Unknown model'})
         else if(key==='provider') content=jsx('span',{className:'wm-subtle',children:row.provider || 'Unknown'})
@@ -1814,11 +1865,12 @@ function AnalyticsExplorer({data,state,dispatch}) {
         else if(key==='cache_hit_rate') content=jsxs('div',{title:`${row.cache_known_calls || 0} known-cache calls; ${row.cache_unknown_calls || 0} unknown`,children:[percent(row.cache_hit_rate),row.cache_hit_rate!=null?jsx('div',{className:'wm-meter',children:jsx('span',{style:{width:`${Math.max(0,Math.min(1,row.cache_hit_rate))*100}%`}})}):null]})
         else if(key==='savings') content=jsx('span',{className:row.economics?.savings_usd<0?'wm-warn':row.economics?.savings_usd>0?'wm-good':'wm-dim',children:analyticMoney(row.economics?.savings_usd)})
         else if(key==='list_usd') content=jsxs('span',{className:num(row.unpriced_tokens)?'wm-warn':'',children:[analyticMoney(row.list_usd),num(row.unpriced_tokens)&&row.list_usd!=null?jsx('small',{children:' partial'}):null]})
+        else if(key==='per_call'||key==='per_million') content=jsx('span',{children:row[key]==null?'—':`$${num(row[key]).toFixed(num(row[key])<1?4:2)}`})
         else if(key==='pricing') content=jsx('span',{className:cn('wm-badge',num(row.unpriced_tokens)&&'wm-warn'),title:`${exactTokens(row.priced_tokens)} priced / ${exactTokens(row.tokens)} total tokens`,children:analyticsPricing(row)})
         else content=jsx('span',{title:exactTokens(row[key]),children:key==='calls'?exactTokens(row[key]):fmtTokens(row[key])})
         return jsx('td',{className:['model','provider','pricing'].includes(key)?'':'wm-mono',children:content},key)
-      })},analyticsId(row)))})]})}),
-    footer:'Reasoning is included in output, never added again to the four-stream total. Billing is the latest route classification, not an allocated per-call invoice. API cost is the priced subtotal when coverage is partial. Cache % is a weighted rate on calls with known cache activity; it is not an average of model percentages. Click a model to apply its exact model + provider pair.'})
+      })},analyticsId(row)))})]})}),rows.length>25?jsx('p',{className:'wm-subtle',style:{marginTop:10},children:state.showAllModels?`Showing all ${rows.length} pairs.`:`Showing top 25 of ${rows.length} pairs by the current sort. Use Show all for the full table.`}):null]}),
+    footer:'$/call and $/1M tokens are API-equivalent averages, not recorded billing. Reasoning is included in output, never added again to the four-stream total. Billing is the latest route classification, not an allocated per-call invoice. API cost is the priced subtotal when coverage is partial. Cache % is a weighted rate on calls with known cache activity; it is not an average of model percentages. Click a model to apply its exact model + provider pair.'})
 }
 function AnalyticsEconomics({data}) {
   const e=data.economics || data.totals?.economics || {}
@@ -1836,15 +1888,15 @@ function AnalyticsFilters({data,state,dispatch}) {
   const opts=data?.options || {}
   return jsxs('div',{children:[jsxs('div',{className:'wm-filters',children:[
     jsxs('label',{className:'wm-filter',children:[jsx('span',{children:'Period'}),jsx('select',{'aria-label':'Period filter',value:state.days,onChange:event=>dispatch({type:'set',key:'days',value:Number(event.target.value)}),children:[[1,'Today'],[7,'Last 7 days'],[30,'Last 30 days'],[90,'Last 90 days'],[365,'Last 365 days']].map(([days,label])=>jsx('option',{value:days,children:label},days))})]}),
-    ...[['model','Model',opts.models || []],['provider','Provider',opts.providers || []],['surface','Surface',opts.surfaces || []],['task','Task',opts.tasks || []]].map(([key,label,raw])=>{
+    ...[['model','Model (any provider)',opts.models || [],'Model'],['provider','Provider route',opts.providers || [],'Provider'],['surface','Where it ran',opts.surfaces || [],'Surface'],['task','Kind of work',opts.tasks || [],'Task']].map(([key,label,raw,ariaName])=>{
       const options=key==='model'?[...new Set(raw.map(r=>typeof r==='string'?r:r.model))]:[...raw]
       if(state.filters[key]&&!options.includes(state.filters[key]))options.unshift(state.filters[key])
-      return jsxs('label',{className:'wm-filter',children:[jsx('span',{children:label}),jsx('select',{'aria-label':`${label} filter`,value:state.filters[key],onChange:event=>filter(key,event.target.value),children:[jsx('option',{value:'',children:`All ${key==='surface'?'surfaces':key==='task'?'tasks':key==='model'?'models':'providers'}`},'all'),...options.map(value=>jsx('option',{value,children:value || 'Unknown'},value))]})]},key)
+      return jsxs('label',{className:'wm-filter',children:[jsx('span',{children:label}),jsx('select',{'aria-label':`${ariaName} filter`,value:state.filters[key],onChange:event=>filter(key,event.target.value),children:[jsx('option',{value:'',children:`All ${key==='surface'?'surfaces':key==='task'?'tasks':key==='model'?'models':'providers'}`},'all'),...options.map(value=>jsx('option',{value,children:value || 'Unknown'},value))]})]},key)
     }),
-    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:'Operation'}),jsx('select',{'aria-label':'Operation filter',value:state.filters.parent,onChange:event=>filter('parent',event.target.value),children:[jsx('option',{value:'',children:'All operations'},'all'),...(opts.operations || []).map(o=>jsx('option',{value:o.parent,children:`${o.parent} (${o.subagent_calls} worker calls)`},o.parent))]})]}),
-    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:'Delegation'}),jsx('select',{'aria-label':'Delegation filter',value:state.filters.scope,onChange:event=>filter('scope',event.target.value),children:[jsx('option',{value:'',children:'Combined operation'},'all'),jsx('option',{value:'direct',children:'Parent direct only'},'direct'),jsx('option',{value:'subagent',children:'Subagents only'},'subagent'),jsx('option',{value:'auxiliary',children:'Auxiliary only'},'auxiliary'),jsx('option',{value:'unattributed',children:'Unattributed only'},'unattributed')]})]}),
+    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:'Parent operation'}),jsx('select',{'aria-label':'Operation filter',value:state.filters.parent,onChange:event=>filter('parent',event.target.value),children:[jsx('option',{value:'',children:'All operations'},'all'),...(opts.operations || []).map(o=>jsx('option',{value:o.parent,children:`${o.parent} (${o.subagent_calls} worker calls)`},o.parent))]})]}),
+    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:'Who did the work'}),jsx('select',{'aria-label':'Delegation filter',value:state.filters.scope,onChange:event=>filter('scope',event.target.value),children:[jsx('option',{value:'',children:'Everyone combined'},'all'),jsx('option',{value:'direct',children:'Parent direct only'},'direct'),jsx('option',{value:'subagent',children:'Subagents only'},'subagent'),jsx('option',{value:'auxiliary',children:'Auxiliary only'},'auxiliary'),jsx('option',{value:'unattributed',children:'Unattributed only'},'unattributed')]})]}),
     jsx(AnalyticsButton,{label:'Clear filters',onClick:()=>dispatch({type:'clear'})})]}),
-    Object.values(state.filters).some(Boolean)?jsx('div',{className:'wm-scopechips',style:{marginTop:10},children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':`Remove ${key} filter`,onClick:()=>filter(key,''),children:`${key}: ${value} ×`},key))}):null]})
+    Object.values(state.filters).some(Boolean)?jsxs('div',{style:{marginTop:10},children:[jsx('p',{className:'wm-subtle',children:'Filtered view — only calls matching all of these are included. Remove one to widen the scope.'}),jsx('div',{className:'wm-scopechips',children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':`Remove ${key} filter`,onClick:()=>filter(key,''),children:`${key}: ${value} ×`},key))})]}):null]})
 }
 function AnalyticsBaseline({days,scope}) {
   const identity = useValue($membershipIdentity)
@@ -1869,10 +1921,12 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
     query.error?jsxs('div',{className:'wm-alert',role:'alert',children:[jsx('h2',{children:'Analytics unavailable'}),jsx('p',{children:String(query.error.message || query.error)}),jsx('p',{children:data?'The visible snapshot is stale. Retry before using these values.':'The live chip and this desktop’s ledger are still available.'}),jsx(AnalyticsButton,{label:'Retry analytics',onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:'Reading timestamped calls…'}):null,
     totals?jsxs('div',{className:'wm-stats',children:[
-      jsx(AnalyticsStat,{label:'API-equivalent',value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',num(totals.unpriced_tokens)&&'wm-warn'),children:analyticsPricing(totals)}),extra:'Priced per-call estimate · not an invoice'}),
+      jsx(AnalyticsStat,{label:'API-equivalent',value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',num(totals.unpriced_tokens)&&'wm-warn'),children:analyticsPricing(totals)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd)) || 'Priced per-call estimate · not an invoice'}),
       jsx(AnalyticsStat,{label:'Weighted cache hit',value:percent(totals.cache_hit_rate),tone:'wm-good',hint:`${exactTokens(totals.cache_known_calls)} known-cache / ${exactTokens(totals.calls)} calls`,extra:`${percent(totals.cache_coverage)} cache coverage · ${exactTokens(totals.cache_unknown_calls)} unknown`}),
-      jsx(AnalyticsStat,{label:'Theoretical net savings',value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:'Read discounts − write premiums',extra:`${percent(economics.coverage)} economics coverage`}),
-      jsx(AnalyticsStat,{label:'Tokens / calls',value:fmtTokens(totals.tokens),hint:`${exactTokens(totals.calls)} recorded calls`,extra:`${fmtTokens(totals.input_tokens)} in · ${fmtTokens(totals.output_tokens)} out`})]}):null,
+      jsx(AnalyticsStat,{label:'Theoretical net savings',value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:'Read discounts − write premiums',extra:`${percent(economics.coverage)} economics coverage · detail below`}),
+      jsx(AnalyticsStat,{label:'Tokens / calls',value:fmtTokens(totals.tokens),hint:`${exactTokens(totals.calls)} recorded calls`,extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens)) || `${fmtTokens(totals.input_tokens)} in · ${fmtTokens(totals.output_tokens)} out`}),
+      jsx(AnalyticsStat,{label:'Pricing coverage',value:percent(data.pricing_coverage?.coverage),hint:`${exactTokens(totals.unpriced_tokens)} unpriced tokens`,extra:analyticsPricing(totals)})]}):null,
+    totals&&analyticsInsights(data).length?jsx('div',{className:'wm-insights','aria-label':'What matters in this period',children:analyticsInsights(data).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{children:item.text})]},item.label))}):null,
     totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:billingMix || 'Only explicit per-call charges are shown; unknown is not zero.',children:[jsx('strong',{children:'Recorded billing ' }),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),' ',jsx('span',{className:cn('wm-badge',!totals.billed_complete&&'wm-warn'),children:totals.billed_complete?'Complete':totals.billed_usd==null?'Unknown':'Partial'}),' · includes only recorded charges; unknown routes are not $0.']}),jsx('span',{className:'wm-mono',children:data.window?`${String(data.window.since_local || data.window.since || '').slice(0,10)} → ${String(data.window.until_local || data.window.until || '').slice(0,10)} · ${data.window.since_local ? data.window.timezone || 'local' : 'UTC'}`:'Timestamped window'})]}):null,
     totals&&num(totals.unpriced_tokens)?jsx('div',{className:'wm-alert',children:`${exactTokens(totals.unpriced_tokens)} unpriced tokens. API-equivalent cost is a partial priced subtotal; unknown prices are excluded, not counted as zero.`}):null,
     totals&&!num(totals.calls)?jsxs('div',{className:'wm-empty',role:'status',children:[jsx('h2',{children:'No backend calls recorded for this period'}),jsx('p',{children:'This report covers backend analytics. Desktop-recorded usage shown on Overview is separate; open the local ledger to view calls captured by this Desktop. Try a longer period or clear filters to check this report. The historical baseline remains separate below.'}),jsx(AnalyticsButton,{label:'Show Desktop-recorded usage',onClick:()=>$view.set(VIEW_DESKTOP),children:'Show Desktop-recorded usage'}),jsx(AnalyticsButton,{label:'Clear empty scope',onClick:()=>dispatch({type:'clear'})})]}):null,
@@ -3575,6 +3629,13 @@ function feeCurrencies(catalogue) {
   return Array.isArray(served) && served.length ? served : ['USD', 'GBP', 'EUR']
 }
 
+/** Saved plan the provider no longer reports: ask, never auto-change. */
+function reconfirmationText(account) {
+  const flag = account?.plan_reconfirmation
+  if (!flag?.required) return ''
+  return `Hermes reports "${flag.reported_label}" but this account is saved as ${flag.saved_plan_name || flag.saved_plan_id}. Reconfirm the plan below — nothing has been changed.`
+}
+
 /** The plan Hermes itself suggests, as a non-preselected proposal. */
 function proposalText(account) {
   // Once a plan is confirmed the suggestion is stale and must not ask again.
@@ -3662,6 +3723,7 @@ function MembershipCard({ account, plans, busy, onAction }) {
   const rows = quotaRows(account, now)
   const fee = account.fee || {}
   const proposal = proposalText(account)
+  const reconfirmation = reconfirmationText(account)
   const excluded = excludedPlansNote(account)
   const planSaved = !!account.plan_id
   const customDraft = rawPlanDraft?.origin === identity && rawPlanDraft.account_id === account.id
@@ -3703,6 +3765,7 @@ function MembershipCard({ account, plans, busy, onAction }) {
     jsx('p', { className: 'wm-note', children:
       account.identity_source === 'native' ? 'Account identified by Hermes.' : 'Provider account slot; credential values are never shown.' }),
     proposal ? jsx('p', { className: 'wm-note wm-accent-note', children: proposal }) : null,
+    reconfirmation ? jsx('p', { className: 'wm-note wm-accent-note', 'data-plan-reconfirmation': 'true', children: reconfirmation }) : null,
     excluded ? jsx('p', { className: 'wm-note', 'data-excluded': 'true', children: excluded }) : null,
     account.plan?.notes ? jsx('p', { className: 'wm-note', children: account.plan.notes }) : null,
     jsxs('label', { className: 'wm-filter', children: [
@@ -4694,7 +4757,7 @@ export default {
 
 /** Pure internals, exported for the node test-suite (the host only reads `default`). */
 export const __test = {
-  analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing,
+  analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, deltaText,
   AnalyticsPage, AnalyticsDashboard, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
   AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS,
   backendQuery, catalogQuery, liveProvider, sameModel, getCatalog, ensureBackendRate, $view, $automaticModelOptions,

@@ -224,9 +224,11 @@ def build_analytics_report(
             day_cursor += timedelta(days=1)
     bucket_accs = {ts: _AnalyticsAcc() for ts in starts}
 
+    prev_since = since - (until - since)
     conn = store.connect_reader(event_db_path)
     try:
         rows = store.query_calls(conn, since=since, until=until) if conn is not None else []
+        prev_rows = store.query_calls(conn, since=prev_since, until=since) if conn is not None else []
         recording = store.recording_info(conn)
     finally:
         if conn is not None:
@@ -281,6 +283,40 @@ def build_analytics_report(
         bucket_ts = starts[bisect_right(starts, raw["ts"]) - 1]
         bucket_accs[bucket_ts].add(row)
     totals = total_acc.as_dict()
+    # Previous equal-length window, same filters: only totals, for deltas.
+    # It is a comparison baseline, never added to the current window.
+    prev_acc = _AnalyticsAcc()
+    for raw in prev_rows:
+        prow = _event_result(raw, book, "list", statuses,
+                             allow_third_party=allow_third_party,
+                             allow_approximate=allow_approximate, at=raw.get("ts"))
+        prow_scope = _scope_of(prow["_session_id"], prow["_task"], child_of, known)
+        prow["_scope"] = prow_scope
+        prow["_root"] = _root_of(prow["_session_id"], child_of) if prow["_session_id"] else ""
+        if any(value is not None and prow[key] != value for key, value in filters.items()):
+            continue
+        if parent and prow["_root"] != parent:
+            continue
+        if scope and prow_scope != scope:
+            continue
+        prow["_economics"], prow["_economics_gap"] = _call_economics(
+            prow, book, allow_third_party=allow_third_party, allow_approximate=allow_approximate)
+        prev_acc.add(prow)
+    prev_totals = prev_acc.as_dict()
+
+    def _delta(key: str) -> float | None:
+        before, now_value = prev_totals.get(key), totals.get(key)
+        if not isinstance(before, (int, float)) or not before or not isinstance(now_value, (int, float)):
+            return None
+        return round((now_value - before) / before, 6)
+
+    previous = {
+        "window": {"since": _iso(prev_since), "until": _iso(since), "days": days},
+        "totals": prev_totals,
+        "deltas": {"list_usd": _delta("list_usd"), "tokens": _delta("tokens"),
+                   "calls": _delta("calls")},
+        "comparable": bool(prev_totals.get("calls")),
+    }
     coverage: dict[str, int] = {}
     for row in results_kept:
         key = (row.get("pricing_provenance") or "unpriced") if row.get("list_usd") is not None else "unpriced"
@@ -354,6 +390,7 @@ def build_analytics_report(
                            for root, count in operations.most_common(25)],
         },
         "totals": totals,
+        "previous": previous,
         "by_model": [{"model": name, "provider": route, **acc.as_dict()}
                      for (name, route), acc in sorted(models.items())],
         "by_route": [{"provider": route, **acc.as_dict()} for route, acc in sorted(routes.items())],
@@ -370,6 +407,7 @@ def build_analytics_report(
             "List USD preserves the existing accounting fallback for absent cache rates; strict economics excludes calls requiring those missing prices instead of treating the fallback as savings.",
             "Economics compares hypothetical uncached and cached list costs for the same covered calls, including output and cache-write premiums; savings may be negative. Coverage is covered tokens / all selected tokens.",
             "Billing mix is the latest route/model classification, not a per-call invoice. Only included routes have known $0 marginal billing.",
+            "Previous totals cover the equal-length window immediately before this one under the same filters, for comparison only; deltas are omitted when that window has no recorded calls and it may predate recording.",
             *[f"Economics excluded {count} calls: {reason}."
               for reason, count in sorted(total_acc.economics_gaps.items())],
         ],
