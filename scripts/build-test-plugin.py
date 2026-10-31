@@ -48,6 +48,7 @@ IDENTITY = (
 
 COPY = ("plugin.yaml", "__init__.py", "dashboard", "desktop", "wolfmark_ledger", "catalogue",
         "NOTICE", "LICENSE", "licenses", "BRANDING.md", "assets", "README.md")
+LICENSE_FILES = ("LICENSE", "NOTICE", "licenses/Apache-2.0.txt")
 
 
 def sha(path: Path) -> str:
@@ -66,6 +67,9 @@ def main() -> int:
     out = Path(args.out).resolve()
     if out == ROOT or ROOT in out.parents:
         raise SystemExit("Output must be outside the source tree.")
+    missing_licensing = [name for name in LICENSE_FILES if not (ROOT / name).is_file()]
+    if missing_licensing:
+        raise SystemExit("Required licensing material is missing: " + ", ".join(missing_licensing))
     if out.exists():
         raise SystemExit("Output already exists; choose a new empty destination.")
     out.mkdir(parents=True)

@@ -76,6 +76,27 @@ class TestBuildIdentity(unittest.TestCase):
         self.assertEqual(sha(PRODUCTION), self.production_hash,
                          "the build wrote to the production plugin")
 
+    def test_test_distribution_contains_both_licences_and_upstream_attribution(self):
+        for name in ("LICENSE", "NOTICE", "licenses/Apache-2.0.txt", "README.md"):
+            with self.subTest(path=name):
+                source = ROOT / name
+                packaged = self.out / name
+                self.assertTrue(packaged.is_file(), f"test build omitted {name}")
+                self.assertEqual(sha(packaged), sha(source), f"test build changed {name}")
+
+        gpl = (self.out / "LICENSE").read_text(encoding="utf-8")
+        apache = (self.out / "licenses/Apache-2.0.txt").read_text(encoding="utf-8")
+        notice = (self.out / "NOTICE").read_text(encoding="utf-8")
+        readme = (self.out / "README.md").read_text(encoding="utf-8")
+        self.assertIn("GNU GENERAL PUBLIC LICENSE", gpl)
+        self.assertIn("Version 3, 29 June 2007", gpl)
+        self.assertIn("Apache License", apache)
+        self.assertIn("Version 2.0, January 2004", apache)
+        self.assertIn("AFei (IT-dreamer/token-cost-meter)", notice)
+        self.assertIn("Apache-2.0 licence for the", notice)
+        self.assertIn("software distribution is licensed under GPL-3.0", readme)
+        self.assertIn("original Apache-2.0 licence", readme)
+
     # -- identity the app routes and the user reads ------------------------
     def test_the_id_differs(self):
         self.assertEqual(declared_id(self.release), "wolfmark-cost-ledger")

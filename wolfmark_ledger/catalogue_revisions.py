@@ -148,8 +148,10 @@ def compare_family(observed: Mapping[str, Any], catalogue: Mapping[str, Any]) ->
                                                f"{observed_price.get(field)}"))
         # "Max 10×" and "Max 10x" are the same plan; only a real rename is cosmetic news.
         status = str((current.get("verification") or {}).get("status"))
-        corroborated = (observed.get("complete") and _money(observed_price["amount"]) is not None
-                        and _money(observed_price["amount"]) == _money(current_price["amount"]))
+        corroborated = (not observed.get("provisional") and _money(observed_price["amount"]) is not None
+                        and _money(observed_price["amount"]) == _money(current_price["amount"])
+                        and observed_price["currency"] == current_price["currency"]
+                        and observed_price["period"] == current_price["period"])
         if corroborated and status in ("provisional", "unverified"):
             # The page now states the price we already hold, so the record can
             # move from provisional to verified — with today's evidence.
@@ -226,6 +228,10 @@ def build_candidate(catalogue: Mapping[str, Any], observations: Iterable[Mapping
     plans = {p["id"]: json.loads(json.dumps(p)) for p in catalogue.get("plans") or []}
     families = {str(o.get("family")): o for o in observations}
     accepted = {k for k, v in (decisions or {}).items() if str(v).lower() == "accept"}
+    price_checks: dict[str, dict[str, Any]] = {}
+    changes_by_plan: dict[str, list[dict[str, Any]]] = {}
+    for item in report.get("changes") or []:
+        changes_by_plan.setdefault(str(item.get("plan_id")), []).append(item)
 
     for change in report.get("changes") or []:
         pid = change["plan_id"]
@@ -280,20 +286,48 @@ def build_candidate(catalogue: Mapping[str, Any], observations: Iterable[Mapping
         elif pid in plans:
             row = plans[pid]
             if action == "price_changed":
-                row["price"] = {**(row.get("price") or {}), "amount": (change.get("after") or {}).get("amount")}
-                observed = change.get("after") or {}
-                corroborated = all(row["price"].get(k) == observed.get(k) for k in ("amount", "currency", "period"))
-                row["verification"] = {**row.get("verification", {}),
-                                       "status": "verified" if corroborated else "unverified",
-                                       "checked_at": str((change.get("evidence") or {}).get("retrieved_at") or "")[:10],
-                                       "source_id": evidence_source,
-                                       "notes": (f"Re-verified from {evidence_source}." if corroborated else
-                                                 "Accepted amount combined with separately retained terms; verify the resulting price.")}
+                after = change.get("after") or {}
+                observed = families.get(str(change.get("family")))
+                observed_row = next((item for item in (observed or {}).get("plans") or []
+                                     if item.get("id") == pid), None)
+                price = {**(row.get("price") or {}), "amount": after.get("amount")}
+                if observed_row is None:
+                    separate_actions = {item.get("action") for item in changes_by_plan.get(pid, [])}
+                    for field, field_action in (("currency", "currency_changed"), ("period", "period_changed")):
+                        if field_action not in separate_actions and field in after:
+                            price[field] = after[field]
+                row["price"] = price
+                price_checks[pid] = change
             elif action in ("currency_changed", "period_changed"):
                 field = "currency" if action == "currency_changed" else "period"
                 row["price"] = {**(row.get("price") or {}), field: change.get("after")}
+                price_checks.setdefault(pid, change)
             elif action == "name_changed":
                 row["name"] = change.get("after") or row["name"]
+
+    for pid, change in price_checks.items():
+        row = plans.get(pid)
+        if row is None:
+            continue
+        observation = families.get(str(change.get("family")))
+        observed_row = next((item for item in (observation or {}).get("plans") or []
+                             if item.get("id") == pid), None)
+        observed_price = observed_row.get("price") if observed_row else None
+        corroborated = (observed_price is not None and not (observation or {}).get("provisional")
+                        and _money(observed_price.get("amount")) is not None
+                        and all(row["price"].get(field) == observed_price.get(field)
+                                for field in ("amount", "currency", "period")))
+        evidence_source = ((change.get("evidence") or {}).get("source_id")
+                           or (observation or {}).get("source_id"))
+        checked_at = str((observation or {}).get("retrieved_at") or
+                         (change.get("evidence") or {}).get("retrieved_at") or "")[:10]
+        row["verification"] = {**(row.get("verification") or {}),
+                                "status": "verified" if corroborated else "unverified",
+                                "checked_at": checked_at if corroborated else None,
+                                "source_id": evidence_source,
+                                "notes": (f"Price matches the accepted evidence from {evidence_source}."
+                                          if corroborated else
+                                          "Accepted price terms remain unverified; confirm the complete price.")}
 
     candidate = json.loads(json.dumps(catalogue))
     candidate["plans"] = sorted(plans.values(), key=lambda p: p["id"])

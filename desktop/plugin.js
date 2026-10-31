@@ -1928,6 +1928,10 @@ function profileDraftErrors(draft) {
   return errors
 }
 
+function billingNumberStep(options = {}) {
+  return options.step ?? (options.type === 'number' ? 'any' : undefined)
+}
+
 function profilePayload(draft) {
   const number = value => (value === '' || value == null ? undefined : Number(value))
   const payload = {
@@ -1955,8 +1959,11 @@ function profilePayload(draft) {
   const allowances = { ...(draft.allowances || {}) }
   if (draft.original_allowance_model && draft.original_allowance_model !== draft.allowance_model)
     delete allowances[draft.original_allowance_model]
-  if (draft.allowance_model && draft.allowance_usd !== '' && draft.allowance_usd != null)
-    allowances[String(draft.allowance_model).trim()] = Number(draft.allowance_usd)
+  const allowanceModel = String(draft.allowance_model || '').trim()
+  if (allowanceModel) {
+    if (draft.allowance_usd === '' || draft.allowance_usd == null) delete allowances[allowanceModel]
+    else allowances[allowanceModel] = Number(draft.allowance_usd)
+  }
   if (Object.keys(allowances).length) payload.allowances = allowances
   return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined))
 }
@@ -2107,7 +2114,7 @@ function AdvancedBillingRules() {
     options.choices
       ? jsx('select', { value: draft[key] ?? '', onChange: event => update(key, event.target.value),
         children: options.choices.map(([value, text]) => jsx('option', { value, children: text }, value)) })
-      : jsx('input', { value: draft[key] ?? '', type: options.type || 'text', placeholder: options.placeholder || '',
+      : jsx('input', { value: draft[key] ?? '', type: options.type || 'text', step: billingNumberStep(options), placeholder: options.placeholder || '',
         onChange: event => update(key, event.target.value) })
   ] }, key)
   return jsxs('section', { className: 'wm-product-section', children: keyedElementChildren([
@@ -2154,7 +2161,7 @@ function AdvancedBillingRules() {
         field('Rule type', 'kind', { choices: KIND_CHOICES }),
         field('Prepaid balance / allowance (USD)', 'allowance_usd', { type: 'number' }),
         field('Allowance model (optional)', 'allowance_model', { placeholder: 'provider/model' }),
-        field('Cycle day', 'cycle_day', { type: 'number' }),
+        field('Cycle day', 'cycle_day', { type: 'number', step: '1' }),
         field('Effective from', 'effective_from', { type: 'date' }),
         field('Effective to', 'effective_to', { type: 'date' }),
         field('Custom input rate per million (USD)', 'rate_input', { type: 'number' }),
@@ -4703,6 +4710,7 @@ export const __test = {
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,
   OVERRIDE_REASON_FALLBACK, REASON_LABELS, restoreCatalogueFee, MembershipsPage, MembershipCard, MEMBERSHIP_CSS,
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
+  billingNumberStep,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
   CostsPage, OverviewPage, SettingsPage, goLedgerTab, $ledgerTab, $billingPresentation,
   settledDesktopMonth, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,

@@ -199,6 +199,8 @@ test('custom rate overrides and account labels persist in the payload', () => {
  assert.deepEqual(payload.rate_override, {input: 1.5, output: 3, cache_read: 0.15})
  assert.deepEqual(payload.billing_cycle, {day: 5})
  assert.equal(T.profileDraftErrors({id: 'goat', provider: 'example', kind: 'custom'}).length, 0)
+ assert.equal(T.billingNumberStep({type:'number'}),'any')
+ assert.equal(T.billingNumberStep({type:'number',step:'1'}),'1')
 })
 
 test('dashboard renders four SVG analytics, honest pricing/billing/cache coverage and a complete sortable explorer', () => {
@@ -526,4 +528,11 @@ test('editing a rule preserves nested rates and unrelated model allowances', () 
  assert.equal(result.allowance_usd,30)
  assert.deepEqual(result.billing_cycle,original.billing_cycle)
  assert.equal(result.currency,'USD')
+})
+
+test('clearing a model allowance removes that entry and keeps unrelated allowances', () => {
+ const original={id:'route',provider:'example',kind:'prepaid',allowances:{'model-a':8,'model-b':12}}
+ const draft=T.profileDraft(original,'scope')
+ const result=T.profilePayload({...draft,allowance_usd:''})
+ assert.deepEqual(result.allowances,{'model-b':12})
 })

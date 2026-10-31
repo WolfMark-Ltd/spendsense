@@ -63,9 +63,12 @@ Do not run integration tests against production data.
 ## Attribution and licence
 
 Spend Sense is derived from [Token & Cost Meter](https://github.com/IT-dreamer/token-cost-meter)
-by AFei (IT-dreamer), originally licensed under Apache-2.0. The combined software
-is distributed under GPL-3.0; the upstream licence and notices remain applicable.
-See [LICENSE](LICENSE), [NOTICE](NOTICE) and [Apache-2.0](licenses/Apache-2.0.txt).
+by AFei (IT-dreamer), originally licensed under Apache-2.0. The combined Spend
+Sense software distribution is licensed under GPL-3.0. That project licence does
+not replace the original Apache-2.0 licence or attribution for the upstream
+component. Both licence texts and applicable notices are included in the test
+build as well as this source repository. See [LICENSE](LICENSE), [NOTICE](NOTICE)
+and [Apache-2.0](licenses/Apache-2.0.txt).
 The [branding assets](BRANDING.md) have separate terms.
 
 See [RELEASING.md](RELEASING.md) for the validation and update checklist. The

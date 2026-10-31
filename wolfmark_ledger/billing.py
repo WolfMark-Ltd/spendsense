@@ -29,12 +29,34 @@ from __future__ import annotations
 from contextlib import contextmanager
 
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 PRESENTATIONS = ("both", "spend", "api", "accounting")
 _CREDIT_KINDS = {"subscription_credits", "prepaid", "free"}
+
+
+def _nonnegative_number(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value) and value >= 0
+    except OverflowError:
+        return False
+
+
+def _allowance_errors(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return ["allowances must map model ids to finite non-negative numbers"]
+    if any(not isinstance(model, str) or not model.strip() for model in value):
+        return ["allowance model ids must be non-empty strings"]
+    if any(not _nonnegative_number(amount) for amount in value.values()):
+        return ["allowance values must be finite non-negative numbers"]
+    return []
 
 
 def profiles_path(data_dir: Optional[Path | str] = None) -> Path:
@@ -95,6 +117,9 @@ def _load_profiles(path: Optional[Path | str] = None, *, strict: bool) -> dict[s
             if any(key in profile and profile[key] is not None and not isinstance(profile[key], dict)
                    for key in ("allowances", "billing_cycle", "rate_override")):
                 reason = "profiles contains malformed nested settings"
+                break
+            if _allowance_errors(profile.get("allowances")):
+                reason = "profiles contains invalid allowance values"
                 break
     if reason:
         message = f"billing profile store unreadable: {reason}"
@@ -197,16 +222,20 @@ def _cumulative_overage(usage_by_model, profiles):
         if not profile.get("overage_paid"):
             continue
         model_limits = profile.get("allowances") or {}
+        shared_limit = profile.get("allowance_usd")
+        has_shared_limit = shared_limit is not None
         shared = 0.0
         for (pid, model), used in usage_by_model.items():
             if pid != str(profile.get("id")):
                 continue
-            if model in model_limits and float(model_limits[model]) > 0:
+            if model in model_limits:
                 total += max(0.0, used - float(model_limits[model]))
-            elif model not in model_limits and float(profile.get("allowance_usd") or 0) > 0:
+            elif has_shared_limit:
                 shared += used
-        if float(profile.get("allowance_usd") or 0) > 0:
-            total += max(0.0, shared - float(profile["allowance_usd"]))
+            elif profile.get("kind") == "prepaid":
+                total += used
+        if has_shared_limit:
+            total += max(0.0, shared - float(shared_limit))
     return total
 
 
@@ -280,7 +309,11 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
             if start is not None and end is not None and not (start <= when < end):
                 excluded_out_of_cycle += 1
                 continue
-        override = _rate_override(profile, row) if profile and profile.get("kind") == "custom" else None
+        ineligible_call = (row.get("_failure") or row.get("_missing")
+                           or row.get("outcome") in {"failed", "error", "call_failed",
+                                                      "missing_usage", "usage_missing"})
+        override = (_rate_override(profile, row)
+                    if profile and profile.get("kind") == "custom" and not ineligible_call else None)
         if value is None and provider_cost is None and override is None:
             unclassified_tokens += row.get("_tokens") or 0
             unclassified_calls += 1
@@ -332,7 +365,12 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
             else:
                 incremental_row = api_arith
 
-        if allowance and (profile or {}).get("overage_paid"):
+        model_allowances = (profile or {}).get("allowances")
+        model_allowances = model_allowances if isinstance(model_allowances, dict) else {}
+        cumulative_scope = bool(profile and profile.get("overage_paid") and (
+            profile.get("kind") == "prepaid" or row.get("model") in model_allowances
+            or profile.get("allowance_usd") is not None))
+        if cumulative_scope:
             incremental_row = 0.0  # cumulative over the cycle, applied after the loop
         key = (str(profile.get("id") if profile else "none"), str(row.get("model")))
         usage_by_model[key] = usage_by_model.get(key, 0.0) + (metered_row or 0.0)
@@ -460,10 +498,9 @@ def validation_errors(profile: dict) -> list[str]:
     if str(profile.get("kind") or "") in {"subscription_included", "subscription_credits", "free"}:
         errors.append("subscription and free-tier plans are managed in Memberships")
     for key in ("monthly_fee_usd", "allowance_usd"):
-        if profile.get(key) is not None and not isinstance(profile[key], (int, float)):
-            errors.append(f"{key} must be a number")
-    if profile.get("allowances") is not None and not isinstance(profile["allowances"], dict):
-        errors.append("allowances must map model id to a number")
+        if profile.get(key) is not None and not _nonnegative_number(profile[key]):
+            errors.append(f"{key} must be a finite non-negative number")
+    errors.extend(_allowance_errors(profile.get("allowances")))
     for key in ("effective_from", "effective_to"):
         value = profile.get(key)
         if value is not None and not isinstance(value, str):

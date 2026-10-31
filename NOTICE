@@ -5,6 +5,12 @@ This product includes software developed by AFei (IT-dreamer/token-cost-meter),
 licensed under the Apache License, Version 2.0. The original licence text is
 retained in licenses/Apache-2.0.txt.
 
+The combined Spend Sense software distribution is licensed under GPL-3.0; see
+LICENSE. This project licence does not replace the Apache-2.0 licence for the
+upstream component. Retain the applicable upstream attribution and both licence
+texts when redistributing the combined software. The isolated test build includes
+this notice and both licence texts.
+
 Changes made for this fork:
 - Added dashboard/plugin_api.py and the wolfmark_ledger/ package: a read-only backend
   over Hermes' session_model_usage and sessions tables, with provider-aware
