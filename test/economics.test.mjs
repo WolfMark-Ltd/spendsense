@@ -39,6 +39,10 @@ const stubDir = mkdtempSync(join(process.env.TMPDIR || tmpdir(), 'tcm-econ-'))
 const stubFile = join(stubDir, 'plugin.mjs')
 writeFileSync(stubFile, stubBody)
 const S = (await import(pathToFileURL(stubFile).href)).__test
+const en = (key, ...args) => {
+  const entry = S.I18N.en[key]
+  return typeof entry === 'function' ? entry(...args) : entry ?? key
+}
 
 test('fmtDay renders renewal dates as UTC calendar days', () => {
   assert.equal(S.fmtDay('2027-01-15T00:00:00Z'), '2027-01-15')
@@ -47,25 +51,25 @@ test('fmtDay renders renewal dates as UTC calendar days', () => {
 })
 
 test('econStatusLabel covers every backend status', () => {
-  assert.equal(S.econStatusLabel('ok'), 'Complete')
-  assert.equal(S.econStatusLabel('partial'), 'Partial')
-  assert.equal(S.econStatusLabel('unavailable'), 'Unavailable')
-  assert.equal(S.econStatusLabel('bogus'), 'Unavailable')
+  assert.equal(S.econStatusLabel(en, 'ok'), 'Complete')
+  assert.equal(S.econStatusLabel(en, 'partial'), 'Partial')
+  assert.equal(S.econStatusLabel(en, 'unavailable'), 'Unavailable')
+  assert.equal(S.econStatusLabel(en, 'bogus'), 'Unavailable')
 })
 
 test('econCoverageLabel never reports unknown pricing as priced', () => {
-  assert.equal(S.econCoverageLabel(null), 'No usage observed')
-  assert.equal(S.econCoverageLabel({ tokens: 0, list_usd: 0 }), 'No usage observed')
-  assert.equal(S.econCoverageLabel({ tokens: 10, list_usd: null }), 'No published price')
-  assert.equal(S.econCoverageLabel({ tokens: 10, list_usd: 1, coverage: null }), 'Coverage unknown')
-  assert.equal(S.econCoverageLabel({ tokens: 10, list_usd: 1, coverage: 1 }), 'Fully priced')
-  assert.equal(S.econCoverageLabel({ tokens: 10, list_usd: 1, coverage: 0.5 }), '50% priced')
+  assert.equal(S.econCoverageLabel(en, null), 'No usage observed')
+  assert.equal(S.econCoverageLabel(en, { tokens: 0, list_usd: 0 }), 'No usage observed')
+  assert.equal(S.econCoverageLabel(en, { tokens: 10, list_usd: null }), 'No published price')
+  assert.equal(S.econCoverageLabel(en, { tokens: 10, list_usd: 1, coverage: null }), 'Coverage unknown')
+  assert.equal(S.econCoverageLabel(en, { tokens: 10, list_usd: 1, coverage: 1 }), 'Fully priced')
+  assert.equal(S.econCoverageLabel(en, { tokens: 10, list_usd: 1, coverage: 0.5 }), '50% priced')
 })
 
 test('econFeeLines keeps one line per currency', () => {
-  assert.deepEqual(S.econFeeLines([]), ['—'])
-  assert.deepEqual(S.econFeeLines(null), ['—'])
-  assert.deepEqual(S.econFeeLines([
+  assert.deepEqual(S.econFeeLines(en, []), ['—'])
+  assert.deepEqual(S.econFeeLines(en, null), ['—'])
+  assert.deepEqual(S.econFeeLines(en, [
     { amount: 20, currency: 'USD' }, { amount: 4.25, currency: 'GBP' }
   ]), ['$20.00/mo', '£4.25/mo'])
 })
@@ -87,41 +91,41 @@ test('fxWrite posts the whole document and surfaces the server sentence', async 
 })
 
 test('fxErrorMessage keeps validation detail and translates transport states', () => {
-  assert.match(S.fxErrorMessage(new Error('unsupported currency: XX')), /unsupported currency/)
-  assert.match(S.fxErrorMessage(new Error('404 not found')), /not available in the running backend/)
-  assert.match(S.fxErrorMessage(new Error('401 expired')), /expired/)
-  assert.match(S.fxErrorMessage(new Error('conflict 409')), /changed since you loaded/)
+  assert.match(S.fxErrorMessage(en, new Error('unsupported currency: XX')), /unsupported currency/)
+  assert.match(S.fxErrorMessage(en, new Error('404 not found')), /not available in the running backend/)
+  assert.match(S.fxErrorMessage(en, new Error('401 expired')), /expired/)
+  assert.match(S.fxErrorMessage(en, new Error('conflict 409')), /changed since you loaded/)
 })
 
 test('fxErrorMessage hides transport failures behind the generic sentence', () => {
   const generic = 'The rates could not be saved. Please retry; if it persists, check the backend log.'
-  assert.equal(S.fxErrorMessage(new Error('request failed with status 500')), generic)
-  assert.equal(S.fxErrorMessage(new Error('500 Internal Server Error: pool exhausted')), generic)
-  assert.equal(S.fxErrorMessage(new Error('request timed out after 30000ms')), generic)
-  assert.equal(S.fxErrorMessage(new Error('fetch failed: connection refused')), generic)
-  assert.equal(S.fxErrorMessage(new Error('')), generic)
-  assert.equal(S.fxErrorMessage(null), generic)
+  assert.equal(S.fxErrorMessage(en, new Error('request failed with status 500')), generic)
+  assert.equal(S.fxErrorMessage(en, new Error('500 Internal Server Error: pool exhausted')), generic)
+  assert.equal(S.fxErrorMessage(en, new Error('request timed out after 30000ms')), generic)
+  assert.equal(S.fxErrorMessage(en, new Error('fetch failed: connection refused')), generic)
+  assert.equal(S.fxErrorMessage(en, new Error('')), generic)
+  assert.equal(S.fxErrorMessage(en, null), generic)
   // The server's plain validation detail still passes through.
-  assert.match(S.fxErrorMessage(new Error('422: usd_per_unit must be a positive number')),
+  assert.match(S.fxErrorMessage(en, new Error('422: usd_per_unit must be a positive number')),
     /usd_per_unit must be a positive number/)
-  assert.doesNotMatch(S.fxErrorMessage(new Error('422: usd_per_unit must be a positive number')), /422/)
+  assert.doesNotMatch(S.fxErrorMessage(en, new Error('422: usd_per_unit must be a positive number')), /422/)
   // A 422 transport message with no colon fails closed instead of leaking.
   const rejected = 'The rates were rejected. Check each rate and retry.'
-  assert.equal(S.fxErrorMessage(new Error('request failed with status 422')), rejected)
-  assert.equal(S.fxErrorMessage(new Error('422')), rejected)
-  assert.equal(S.fxErrorMessage(new Error('validation error: failed with status 422')), rejected)
+  assert.equal(S.fxErrorMessage(en, new Error('request failed with status 422')), rejected)
+  assert.equal(S.fxErrorMessage(en, new Error('422')), rejected)
+  assert.equal(S.fxErrorMessage(en, new Error('validation error: failed with status 422')), rejected)
 })
 
 test('fxErrorMessage only treats 400-599 as statuses', () => {
   // Ordinary numbers in validation detail stay visible.
-  assert.match(S.fxErrorMessage(new Error('422: name must be under 255 characters')),
+  assert.match(S.fxErrorMessage(en, new Error('422: name must be under 255 characters')),
     /name must be under 255 characters/)
-  assert.match(S.fxErrorMessage(new Error('422: rate has 100 days of history')), /100 days/)
+  assert.match(S.fxErrorMessage(en, new Error('422: rate has 100 days of history')), /100 days/)
   // But genuine 4xx/5xx statuses still fail closed.
   const rejected = 'The rates were rejected. Check each rate and retry.'
   const generic = 'The rates could not be saved. Please retry; if it persists, check the backend log.'
-  assert.equal(S.fxErrorMessage(new Error('request failed with status 503')), generic)
-  assert.equal(S.fxErrorMessage(new Error('validation error: upstream returned 500')), rejected)
+  assert.equal(S.fxErrorMessage(en, new Error('request failed with status 503')), generic)
+  assert.equal(S.fxErrorMessage(en, new Error('validation error: upstream returned 500')), rejected)
 })
 
 test('econWindowLines keeps one expenditure line per currency', () => {
@@ -133,13 +137,13 @@ test('econWindowLines keeps one expenditure line per currency', () => {
 })
 
 test('windowSpanLabel describes the reporting window', () => {
-  assert.equal(S.windowSpanLabel(30), 'in the last 30 days')
-  assert.equal(S.windowSpanLabel(29.5), 'in the last 30 days')
-  assert.equal(S.windowSpanLabel(7), 'in the last 7 days')
-  assert.equal(S.windowSpanLabel(1), 'in the last 1 day')
-  assert.equal(S.windowSpanLabel(null), 'in the reporting window')
-  assert.equal(S.windowSpanLabel(0), 'in the reporting window')
-  assert.equal(S.windowSpanLabel('bogus'), 'in the reporting window')
+  assert.equal(S.windowSpanLabel(en, 30), 'in the last 30 days')
+  assert.equal(S.windowSpanLabel(en, 29.5), 'in the last 30 days')
+  assert.equal(S.windowSpanLabel(en, 7), 'in the last 7 days')
+  assert.equal(S.windowSpanLabel(en, 1), 'in the last 1 day')
+  assert.equal(S.windowSpanLabel(en, null), 'in the reporting window')
+  assert.equal(S.windowSpanLabel(en, 0), 'in the reporting window')
+  assert.equal(S.windowSpanLabel(en, 'bogus'), 'in the reporting window')
 })
 
 test('economics and fx queries are keyed by connection identity', () => {
