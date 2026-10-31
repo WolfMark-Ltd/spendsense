@@ -1,0 +1,9 @@
+# Go
+
+OpenCode Go gives you reliable access to popular open coding models, with three monthly plans:
+
+| Plan | Price | Included usage |
+| --- | --- | --- |
+| **Go** | **$10/month** | Lower-cost access to the models below |
+| **Go Plus** | **$40/month** | Higher usage limits across the models below |
+| **Go Teams** | **$20/member/month** | Every member gets their own limits, $5/month higher than Go on every model |

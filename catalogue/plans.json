@@ -1,0 +1,2581 @@
+{
+  "catalogue_version": "2026-10-30.5",
+  "generated_at": "2026-10-30T21:02:11Z",
+  "notes": [
+    "Seed catalogue for the account-first membership redesign. Structure is final; most prices are not.",
+    "A null amount means unpriced. It is never rendered as 0.00 and never used for arithmetic.",
+    "verification.status is about the price and plan identity. Window durations and reset policies carry their own source in entitlements.verification because a pricing page rarely restates quota mechanics.",
+    "This file is replaced only by a reviewed commit. A scheduled check writes a candidate plus a diff report; it never edits this file.",
+    "2026-10-30.2: CommandCode's eight plans verified from the pricing page; ChatGPT Pro split into 5x/20x; Copilot and Z.ai credit allotments recorded; Claude annual pricing noted; Ollama Cloud, Hugging Face and Kilo Code added as unverified placeholders.",
+    "commandcode.chat removed: the seed placeholder named a plan CommandCode does not sell; the pricing page lists Go, GOAT, Pro, Provider, Max 10x/20x, Team Pro and Enterprise.",
+    "2026-10-30.3: OpenCode Go added as its own family (Go/Go Plus/Go Teams) so the Zen relay can no longer be mistaken for Go coverage; CommandCode plans carry route access, and the $1 Go plan is marked ineligible for the Provider API route; Ollama Cloud, Hugging Face and Kilo prices verified; Cline retired (no subscription product); MiniMax renamed to M Plan with the price still unpublished.",
+    "2026-10-30.4: CommandCode plans now include monthly credit allowance rows; GOAT and the other individual/team tiers are API-eligible per the dedicated GOAT documentation (Go remains CLI-only).",
+    "2026-10-30.5: CommandCode Go is classified as a recurring credit allowance. The pricing table lists $2/$5 rolling limits, while its FAQ says $3/$6; the Go page describes per-model monthly allocations alongside one shared $10 pool. Values remain catalogue references, never actual remaining use."
+  ],
+  "plans": [
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "unknown"
+        },
+        "verification": {
+          "checked_at": null,
+          "source_id": "models-dev-catalogue",
+          "status": "unverified"
+        },
+        "windows": []
+      },
+      "id": "alibaba-coding-plan.standard",
+      "kind": "subscription",
+      "name": "Alibaba Coding Plan",
+      "notes": "",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "alibaba-coding-plan",
+      "route_slugs": [
+        "alibaba-coding-plan",
+        "alibaba-coding-plan-cn"
+      ],
+      "verification": {
+        "checked_at": null,
+        "notes": "Catalogue slug exists; plan price not checked.",
+        "source_id": "alibaba-coding-plan",
+        "status": "unverified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "source_id": "anthropic-claude-pricing",
+          "status": "unverified"
+        },
+        "windows": [
+          {
+            "duration_minutes": 300,
+            "id": "current-session",
+            "kind": "rolling",
+            "label": "Current session",
+            "limit": "percent",
+            "scope": "account"
+          },
+          {
+            "duration_minutes": 10080,
+            "id": "current-week",
+            "kind": "rolling",
+            "label": "Current week",
+            "limit": "percent",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "anthropic.claude-max-20x",
+      "kind": "subscription",
+      "name": "Claude Max 20x",
+      "notes": "The listed fee is provisional; verify it before relying on the amount.",
+      "price": {
+        "amount": 200.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "anthropic",
+      "route_slugs": [
+        "anthropic"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "The page publishes 'From $100' and an annual-equivalent of $200 for the 20x allowance but does not print the monthly 20x figure; treat $200 as inferred.",
+        "source_id": "anthropic-claude-pricing",
+        "status": "provisional"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {
+          "opus": {
+            "scope": "model",
+            "window": "opus-week"
+          },
+          "sonnet": {
+            "scope": "model",
+            "window": "sonnet-week"
+          }
+        },
+        "reset_policy": {
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Same window shape as Pro; higher limits are not published as numbers.",
+          "source_id": "anthropic-claude-pricing",
+          "status": "provisional"
+        },
+        "windows": [
+          {
+            "duration_minutes": 300,
+            "id": "current-session",
+            "kind": "rolling",
+            "label": "Current session",
+            "limit": "percent",
+            "scope": "account"
+          },
+          {
+            "duration_minutes": 10080,
+            "id": "current-week",
+            "kind": "rolling",
+            "label": "Current week",
+            "limit": "percent",
+            "scope": "account"
+          },
+          {
+            "duration_minutes": 10080,
+            "id": "opus-week",
+            "kind": "rolling",
+            "label": "Opus week",
+            "limit": "percent",
+            "scope": "model"
+          },
+          {
+            "duration_minutes": 10080,
+            "id": "sonnet-week",
+            "kind": "rolling",
+            "label": "Sonnet week",
+            "limit": "percent",
+            "scope": "model"
+          }
+        ]
+      },
+      "id": "anthropic.claude-max-5x",
+      "kind": "subscription",
+      "name": "Claude Max 5x",
+      "notes": "",
+      "price": {
+        "amount": 100.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "anthropic",
+      "route_slugs": [
+        "anthropic"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30. The page states 'From $100' and the 5x allowance.",
+        "source_id": "anthropic-claude-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {
+          "opus": {
+            "scope": "model",
+            "window": "opus-week"
+          },
+          "sonnet": {
+            "scope": "model",
+            "window": "sonnet-week"
+          }
+        },
+        "reset_policy": {
+          "notes": "Model-scoped weekly windows can be exhausted while the account is not.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Windows come from Anthropic's OAuth usage endpoint as Hermes reads it: 5-hour, 7-day, plus model-scoped weekly windows.",
+          "source_id": "anthropic-claude-pricing",
+          "status": "provisional"
+        },
+        "windows": [
+          {
+            "duration_minutes": 300,
+            "id": "current-session",
+            "kind": "rolling",
+            "label": "Current session",
+            "limit": "percent",
+            "scope": "account"
+          },
+          {
+            "duration_minutes": 10080,
+            "id": "current-week",
+            "kind": "rolling",
+            "label": "Current week",
+            "limit": "percent",
+            "scope": "account"
+          },
+          {
+            "duration_minutes": 10080,
+            "id": "opus-week",
+            "kind": "rolling",
+            "label": "Opus week",
+            "limit": "percent",
+            "scope": "model"
+          },
+          {
+            "duration_minutes": 10080,
+            "id": "sonnet-week",
+            "kind": "rolling",
+            "label": "Sonnet week",
+            "limit": "percent",
+            "scope": "model"
+          }
+        ]
+      },
+      "id": "anthropic.claude-pro",
+      "kind": "subscription",
+      "name": "Claude Pro",
+      "notes": "Annual billing is $200 up front; the catalogue records the monthly list price, and an annual subscriber should override the effective monthly fee.",
+      "price": {
+        "amount": 20.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "anthropic",
+      "route_slugs": [
+        "anthropic"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30. $20 billed monthly, or $200 billed annually ($17/month equivalent).",
+        "source_id": "anthropic-claude-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "unknown"
+        },
+        "verification": {
+          "checked_at": null,
+          "source_id": "models-dev-catalogue",
+          "status": "unverified"
+        },
+        "windows": []
+      },
+      "id": "cline-pass.standard",
+      "kind": "subscription",
+      "name": "Cline Pass",
+      "notes": "Retired: no subscription product to track. Kept for history so an account that once declared one is not silently orphaned.",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "cline-pass",
+      "route_slugs": [
+        "cline-pass"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "The vendor states 'no subscriptions, no vendor lock-in' and bills inference per use; only Enterprise (custom) exists above the free open-source client.",
+        "source_id": "cline-pricing",
+        "status": "retired"
+      }
+    },
+    {
+      "access": {
+        "cli": null,
+        "provider_api": null
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "notes": "Windows roll from first use; top-up credits are never throttled.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Plan table and rolling window values are published on the pricing page.",
+          "source_id": "commandcode-pricing",
+          "status": "verified"
+        },
+        "windows": []
+      },
+      "id": "commandcode.enterprise",
+      "kind": "subscription",
+      "name": "Enterprise",
+      "notes": "",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "route_slugs": [
+        "commandcode"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Published as custom pricing from $5,000; no fixed figure.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": false
+      },
+      "billing_arrangement": "recurring_credit_allowance",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 10.0
+        },
+        "reset_policy": {
+          "notes": "Windows roll from first use; top-up credits are never throttled.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Plan table and rolling window values are published on the pricing page.",
+          "source_id": "commandcode-pricing",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 2,
+            "currency": "USD",
+            "detail": "Credit value, not a percentage.",
+            "duration_minutes": 300,
+            "id": "five-hour",
+            "kind": "rolling",
+            "label": "5-hour window",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          },
+          {
+            "amount": 5,
+            "currency": "USD",
+            "detail": "Credit value, not a percentage.",
+            "duration_minutes": 10080,
+            "id": "weekly",
+            "kind": "rolling",
+            "label": "Weekly window",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          },
+          {
+            "amount": 10.0,
+            "currency": "USD",
+            "detail": "Published monthly credit allocation; the actual remaining amount is unknown unless Hermes reports it.",
+            "duration_minutes": null,
+            "id": "monthly-credit",
+            "kind": "billing_cycle",
+            "label": "Monthly credit allocation",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "commandcode.go",
+      "kind": "subscription",
+      "name": "Go",
+      "notes": "The Pricing & Limits table lists $2 over 5 hours and $5 weekly; its FAQ says $3 and $6. The Go page says new subscribers from 28 September 2026 receive per-model monthly credits, and later describes the same $10 allocation as a shared pool. These are plan references, not actual remaining usage.",
+      "price": {
+        "amount": 1.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "route_slugs": [
+        "commandcode"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Price is $1/month. The plan page describes per-model monthly allocations for new subscribers within a shared $10 pool. Pricing & Limits lists $2/$5 rolling limits but its FAQ says $3/$6; actual usage remains Unknown unless Hermes reports it.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": true
+      },
+      "billing_arrangement": "recurring_credit_allowance",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 100.0
+        },
+        "reset_policy": {
+          "notes": "Windows roll from first use; top-up credits are never throttled.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Plan table and rolling window values are published on the pricing page.",
+          "source_id": "commandcode-pricing",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 20,
+            "currency": "USD",
+            "detail": "Credit value, not a percentage.",
+            "duration_minutes": 300,
+            "id": "five-hour",
+            "kind": "rolling",
+            "label": "5-hour window",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          },
+          {
+            "amount": 50,
+            "currency": "USD",
+            "detail": "Credit value, not a percentage.",
+            "duration_minutes": 10080,
+            "id": "weekly",
+            "kind": "rolling",
+            "label": "Weekly window",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          },
+          {
+            "amount": 100.0,
+            "currency": "USD",
+            "detail": "Published monthly credit allocation; the actual remaining amount is unknown unless Hermes reports it.",
+            "duration_minutes": null,
+            "id": "monthly-credit",
+            "kind": "billing_cycle",
+            "label": "Monthly credit allocation",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "commandcode.goat",
+      "kind": "subscription",
+      "name": "GOAT",
+      "notes": "The dedicated GOAT plan documentation confirms Provider API access, metered against GOAT credits. The $15 Provider plan is a separate pay-as-you-go arrangement. Usage windows are limits, not current remaining balance. Published recurring credits are an allowance; actual remaining usage is not available unless Hermes reports it.",
+      "price": {
+        "amount": 10.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "route_slugs": [
+        "commandcode"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official pricing page confirms $10/month, up to $100 monthly credits, $20 per five hours, $50 per week, and $100 per month. The dedicated GOAT page confirms API access against GOAT credits.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": true
+      },
+      "billing_arrangement": "recurring_credit_allowance",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 150.0
+        },
+        "reset_policy": {
+          "notes": "Windows roll from first use; top-up credits are never throttled.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Plan table and rolling window values are published on the pricing page.",
+          "source_id": "commandcode-pricing",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 45,
+            "currency": "USD",
+            "detail": "Credit value, not a percentage.",
+            "duration_minutes": 300,
+            "id": "five-hour",
+            "kind": "rolling",
+            "label": "5-hour window",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          },
+          {
+            "amount": 90,
+            "currency": "USD",
+            "detail": "Credit value, not a percentage.",
+            "duration_minutes": 10080,
+            "id": "weekly",
+            "kind": "rolling",
+            "label": "Weekly window",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          },
+          {
+            "amount": 150.0,
+            "currency": "USD",
+            "detail": "Published monthly credit allocation; the actual remaining amount is unknown unless Hermes reports it.",
+            "duration_minutes": null,
+            "id": "monthly-credit",
+            "kind": "billing_cycle",
+            "label": "Monthly credit allocation",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "commandcode.max-10x",
+      "kind": "subscription",
+      "name": "Max 10x",
+      "notes": "Published recurring credits are an allowance; actual remaining usage is not available unless Hermes reports it.",
+      "price": {
+        "amount": 100.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "route_slugs": [
+        "commandcode"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": true
+      },
+      "billing_arrangement": "recurring_credit_allowance",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 300.0
+        },
+        "reset_policy": {
+          "notes": "Windows roll from first use; top-up credits are never throttled.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Plan table and rolling window values are published on the pricing page.",
+          "source_id": "commandcode-pricing",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 90,
+            "currency": "USD",
+            "detail": "Credit value, not a percentage.",
+            "duration_minutes": 300,
+            "id": "five-hour",
+            "kind": "rolling",
+            "label": "5-hour window",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          },
+          {
+            "amount": 180,
+            "currency": "USD",
+            "detail": "Credit value, not a percentage.",
+            "duration_minutes": 10080,
+            "id": "weekly",
+            "kind": "rolling",
+            "label": "Weekly window",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          },
+          {
+            "amount": 300.0,
+            "currency": "USD",
+            "detail": "Published monthly credit allocation; the actual remaining amount is unknown unless Hermes reports it.",
+            "duration_minutes": null,
+            "id": "monthly-credit",
+            "kind": "billing_cycle",
+            "label": "Monthly credit allocation",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "commandcode.max-20x",
+      "kind": "subscription",
+      "name": "Max 20x",
+      "notes": "Published recurring credits are an allowance; actual remaining usage is not available unless Hermes reports it.",
+      "price": {
+        "amount": 200.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "route_slugs": [
+        "commandcode"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": true
+      },
+      "billing_arrangement": "recurring_credit_allowance",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 110.0
+        },
+        "reset_policy": {
+          "notes": "Windows roll from first use; top-up credits are never throttled.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Plan table and rolling window values are published on the pricing page.",
+          "source_id": "commandcode-pricing",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 22,
+            "currency": "USD",
+            "detail": "Credit value, not a percentage.",
+            "duration_minutes": 300,
+            "id": "five-hour",
+            "kind": "rolling",
+            "label": "5-hour window",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          },
+          {
+            "amount": 55,
+            "currency": "USD",
+            "detail": "Credit value, not a percentage.",
+            "duration_minutes": 10080,
+            "id": "weekly",
+            "kind": "rolling",
+            "label": "Weekly window",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          },
+          {
+            "amount": 110.0,
+            "currency": "USD",
+            "detail": "Published monthly credit allocation; the actual remaining amount is unknown unless Hermes reports it.",
+            "duration_minutes": null,
+            "id": "monthly-credit",
+            "kind": "billing_cycle",
+            "label": "Monthly credit allocation",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "commandcode.pro",
+      "kind": "subscription",
+      "name": "Pro",
+      "notes": "Published recurring credits are an allowance; actual remaining usage is not available unless Hermes reports it.",
+      "price": {
+        "amount": 20.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "route_slugs": [
+        "commandcode"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": false,
+        "provider_api": true
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "notes": "Windows roll from first use; top-up credits are never throttled.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Plan table and rolling window values are published on the pricing page.",
+          "source_id": "commandcode-pricing",
+          "status": "verified"
+        },
+        "windows": []
+      },
+      "id": "commandcode.provider",
+      "kind": "subscription",
+      "name": "Provider",
+      "notes": "The plan that matches the configured `commandcode` route (api.commandcode.ai/provider/v1).",
+      "price": {
+        "amount": 15.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "route_slugs": [
+        "commandcode"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official Provider documentation states $15/month plus a $1.01 processing fee, with pay-as-you-go usage at underlying model rates.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": true
+      },
+      "billing_arrangement": "recurring_credit_allowance",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 40.0
+        },
+        "reset_policy": {
+          "notes": "Windows roll from first use; top-up credits are never throttled.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Plan table and rolling window values are published on the pricing page.",
+          "source_id": "commandcode-pricing",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 12,
+            "currency": "USD",
+            "detail": "Credit value, not a percentage.",
+            "duration_minutes": 300,
+            "id": "five-hour",
+            "kind": "rolling",
+            "label": "5-hour window",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          },
+          {
+            "amount": 24,
+            "currency": "USD",
+            "detail": "Credit value, not a percentage.",
+            "duration_minutes": 10080,
+            "id": "weekly",
+            "kind": "rolling",
+            "label": "Weekly window",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          },
+          {
+            "amount": 40.0,
+            "currency": "USD",
+            "detail": "Published monthly credit allocation; the actual remaining amount is unknown unless Hermes reports it.",
+            "duration_minutes": null,
+            "id": "monthly-credit",
+            "kind": "billing_cycle",
+            "label": "Monthly credit allocation",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "commandcode.team-pro",
+      "kind": "subscription",
+      "name": "Team Pro",
+      "notes": "Published recurring credits are an allowance; actual remaining usage is not available unless Hermes reports it.",
+      "price": {
+        "amount": 40.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "route_slugs": [
+        "commandcode"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 0.0
+        },
+        "reset_policy": {},
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "2,000 completions per month; no credit allotment.",
+          "source_id": "github-copilot-plans",
+          "status": "verified"
+        },
+        "windows": []
+      },
+      "id": "github-copilot.free",
+      "kind": "subscription",
+      "name": "Copilot Free",
+      "notes": "",
+      "price": {
+        "amount": 0.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "github-copilot",
+      "route_slugs": [
+        "github-copilot"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30.",
+        "source_id": "github-copilot-plans",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 200.0
+        },
+        "reset_policy": {
+          "notes": "Flex allotments vary over time (GitHub footnote 6).",
+          "type": "calendar_month"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Monthly total credit allotment is printed on the plans page.",
+          "source_id": "github-copilot-plans",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 200.0,
+            "currency": "USD",
+            "detail": "Credit allotment per billing month.",
+            "duration_minutes": null,
+            "id": "monthly-credits",
+            "kind": "rolling",
+            "label": "Monthly credits",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "github-copilot.max",
+      "kind": "subscription",
+      "name": "GitHub Copilot Max",
+      "notes": "Priority access to new models.",
+      "price": {
+        "amount": 100.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "github-copilot",
+      "route_slugs": [
+        "copilot",
+        "github-copilot"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30.",
+        "source_id": "github-copilot-plans",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 15.0
+        },
+        "reset_policy": {
+          "notes": "Flex allotments vary over time (GitHub footnote 6).",
+          "type": "calendar_month"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Monthly total credit allotment is printed on the plans page.",
+          "source_id": "github-copilot-plans",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 15.0,
+            "currency": "USD",
+            "detail": "Credit allotment per billing month.",
+            "duration_minutes": null,
+            "id": "monthly-credits",
+            "kind": "rolling",
+            "label": "Monthly credits",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "github-copilot.pro",
+      "kind": "subscription",
+      "name": "GitHub Copilot Pro",
+      "notes": "Unlimited completions.",
+      "price": {
+        "amount": 10.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "github-copilot",
+      "route_slugs": [
+        "copilot",
+        "github-copilot"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30.",
+        "source_id": "github-copilot-plans",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 70.0
+        },
+        "reset_policy": {
+          "notes": "Flex allotments vary over time (GitHub footnote 6).",
+          "type": "calendar_month"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Monthly total credit allotment is printed on the plans page.",
+          "source_id": "github-copilot-plans",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 70.0,
+            "currency": "USD",
+            "detail": "Credit allotment per billing month.",
+            "duration_minutes": null,
+            "id": "monthly-credits",
+            "kind": "rolling",
+            "label": "Monthly credits",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "github-copilot.pro-plus",
+      "kind": "subscription",
+      "name": "GitHub Copilot Pro+",
+      "notes": "Premium models including Opus.",
+      "price": {
+        "amount": 39.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "github-copilot",
+      "route_slugs": [
+        "copilot",
+        "github-copilot"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30.",
+        "source_id": "github-copilot-plans",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": null,
+        "provider_api": null
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "effective_to": null,
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 2.0
+        },
+        "reset_policy": {
+          "type": "calendar_month"
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "notes": "$2 of included inference credits monthly.",
+          "source_id": "huggingface-pricing",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 2.0,
+            "currency": "USD",
+            "detail": "Included inference credits.",
+            "duration_minutes": null,
+            "id": "monthly-allowance",
+            "kind": "monthly",
+            "label": "Monthly allowance",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "huggingface.pro",
+      "kind": "subscription",
+      "model_restrictions": [],
+      "name": "PRO",
+      "notes": "The membership buys platform features; inference beyond $2 is pay-as-you-go.",
+      "price": {
+        "amount": 9.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "huggingface",
+      "route_slugs": [
+        "huggingface"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "huggingface-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": null,
+        "provider_api": null
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "effective_to": null,
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "none"
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "notes": "Platform plan; no included inference.",
+          "source_id": "kilocode-pricing",
+          "status": "verified"
+        },
+        "windows": []
+      },
+      "id": "kilocode.teams",
+      "kind": "subscription",
+      "model_restrictions": [],
+      "name": "Kilo Teams",
+      "notes": "Replaces the earlier placeholder: the vendor sells team platform access, not a token allowance.",
+      "price": {
+        "amount": 15.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "kilocode",
+      "route_slugs": [
+        "kilocode"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "Per user. Inference is billed separately, so this is a platform plan rather than a model allowance.",
+        "source_id": "kilocode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "unknown"
+        },
+        "verification": {
+          "checked_at": null,
+          "source_id": "models-dev-catalogue",
+          "status": "unverified"
+        },
+        "windows": []
+      },
+      "id": "kimi-code-plan-global.standard",
+      "kind": "subscription",
+      "name": "Kimi Code Plan",
+      "notes": "",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "kimi-code-plan-global",
+      "route_slugs": [
+        "kimi-code-plan-global"
+      ],
+      "verification": {
+        "checked_at": null,
+        "notes": "Catalogue slug exists; plan price not checked.",
+        "source_id": "kimi-coding-plan",
+        "status": "unverified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "unknown"
+        },
+        "verification": {
+          "checked_at": null,
+          "source_id": "models-dev-catalogue",
+          "status": "unverified"
+        },
+        "windows": []
+      },
+      "id": "minimax-coding-plan.standard",
+      "kind": "subscription",
+      "name": "M Plan",
+      "notes": "",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "minimax-coding-plan",
+      "route_slugs": [
+        "minimax-coding-plan",
+        "minimax-cn-coding-plan"
+      ],
+      "verification": {
+        "checked_at": null,
+        "notes": "Product is 'M Plan' (sold per seat and by credits). The docs page confirms the product but states no price, so the amount stays null.",
+        "source_id": "minimax-m-plan",
+        "status": "unverified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_credit_allowance",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "notes": "Credits are consumed, not reset on a schedule.",
+          "type": "credits"
+        },
+        "verification": {
+          "checked_at": null,
+          "notes": "Hermes can read portal credits for a header gauge; that is a balance, not a subscription quota window.",
+          "source_id": "nous-portal",
+          "status": "partial"
+        },
+        "windows": []
+      },
+      "id": "nous.portal",
+      "kind": "credits",
+      "name": "Nous Portal",
+      "notes": "Credits family: evidence is a balance, never a percentage of a plan window.",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "nous",
+      "route_slugs": [
+        "nous"
+      ],
+      "verification": {
+        "checked_at": null,
+        "notes": "Account-scoped; no public price is listed.",
+        "source_id": "nous-portal-pricing",
+        "status": "unverified"
+      }
+    },
+    {
+      "access": {
+        "cli": null,
+        "provider_api": null
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "effective_to": null,
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 300.0
+        },
+        "reset_policy": {
+          "type": "calendar_month"
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "notes": "Monthly usage credits stated on the pricing page.",
+          "source_id": "ollama-pricing",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 300.0,
+            "currency": "USD",
+            "detail": "$300 of usage credits per month.",
+            "duration_minutes": null,
+            "id": "monthly-allowance",
+            "kind": "monthly",
+            "label": "Monthly allowance",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "ollama-cloud.max",
+      "kind": "subscription",
+      "model_restrictions": [],
+      "name": "Max",
+      "notes": "Ten concurrent requests; early access to new models.",
+      "price": {
+        "amount": 100.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "ollama-cloud",
+      "route_slugs": [
+        "ollama-cloud"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "ollama-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": null,
+        "provider_api": null
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "effective_to": null,
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 60.0
+        },
+        "reset_policy": {
+          "type": "calendar_month"
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "notes": "Monthly usage credits stated on the pricing page.",
+          "source_id": "ollama-pricing",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 60.0,
+            "currency": "USD",
+            "detail": "$60 of usage credits per month.",
+            "duration_minutes": null,
+            "id": "monthly-allowance",
+            "kind": "monthly",
+            "label": "Monthly allowance",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "ollama-cloud.pro",
+      "kind": "subscription",
+      "model_restrictions": [],
+      "name": "Pro",
+      "notes": "$200/year billed annually ($16.67/month).",
+      "price": {
+        "amount": 20.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "ollama-cloud",
+      "route_slugs": [
+        "ollama-cloud"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "ollama-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": null,
+        "provider_api": null
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "effective_to": null,
+      "entitlements": {
+        "models": {
+          "monthly_credits_usd": 1000.0
+        },
+        "reset_policy": {
+          "type": "calendar_month"
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "notes": "Page marks Team as early access; shared $1,000 monthly credit pool.",
+          "source_id": "ollama-pricing",
+          "status": "provisional"
+        },
+        "windows": [
+          {
+            "amount": 1000.0,
+            "currency": "USD",
+            "detail": "$1,000 of usage credits per month, shared.",
+            "duration_minutes": null,
+            "id": "monthly-allowance",
+            "kind": "monthly",
+            "label": "Monthly allowance",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "ollama-cloud.team",
+      "kind": "subscription",
+      "model_restrictions": [],
+      "name": "Team",
+      "notes": "Seat-free but team-wide; marked early access on the page.",
+      "price": {
+        "amount": 500.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "ollama-cloud",
+      "route_slugs": [
+        "ollama-cloud"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "ollama-pricing",
+        "status": "provisional"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {},
+        "verification": {
+          "checked_at": null,
+          "notes": "",
+          "source_id": "openai-chatgpt-pricing",
+          "status": "unverified"
+        },
+        "windows": []
+      },
+      "id": "openai-codex.chatgpt-business",
+      "kind": "subscription",
+      "name": "ChatGPT Business",
+      "notes": "Seat-based: the effective fee depends on head-count.",
+      "price": {
+        "amount": 25.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "openai-codex",
+      "route_slugs": [
+        "openai-codex"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30 renders this figure client-side; confirmed from two independent secondary trackers (cloudzero.com, felloai.com). Per seat. $20 per seat if billed annually; two-seat minimum.",
+        "source_id": "openai-chatgpt-pricing",
+        "status": "provisional"
+      }
+    },
+    {
+      "billing_arrangement": "free_tier",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "none"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "source_id": "openai-chatgpt-pricing",
+          "status": "verified"
+        },
+        "windows": []
+      },
+      "id": "openai-codex.chatgpt-free",
+      "kind": "free",
+      "name": "ChatGPT Free",
+      "notes": "A real $0.00, unlike an unpriced plan.",
+      "price": {
+        "amount": 0.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "openai-codex",
+      "route_slugs": [
+        "openai-codex"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30. The Free plan carries a $0 published price, not an unknown one.",
+        "source_id": "openai-chatgpt-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "calendar_period"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Limited Codex access; no published quota windows.",
+          "source_id": "openai-chatgpt-pricing",
+          "status": "unverified"
+        },
+        "windows": []
+      },
+      "id": "openai-codex.chatgpt-go",
+      "kind": "subscription",
+      "name": "ChatGPT Go",
+      "notes": "Included for completeness; Codex usage on Go is limited and may not expose windows.",
+      "price": {
+        "amount": 8.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "openai-codex",
+      "route_slugs": [
+        "openai-codex"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30 renders this figure client-side; confirmed from two independent secondary trackers (cloudzero.com, felloai.com).",
+        "source_id": "openai-chatgpt-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "banked_resets": true,
+          "notes": "Codex reports banked resets, redeemable by the user; they are not a calendar boundary.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Price verified on the pricing page. Window durations come from Hermes' Codex usage fetcher (5-hour session and 7-day weekly), not restated on that page.",
+          "source_id": "openai-chatgpt-pricing",
+          "status": "provisional"
+        },
+        "windows": [
+          {
+            "duration_minutes": 300,
+            "id": "session",
+            "kind": "rolling",
+            "label": "5-hour session",
+            "limit": "percent",
+            "scope": "account"
+          },
+          {
+            "duration_minutes": 10080,
+            "id": "weekly",
+            "kind": "rolling",
+            "label": "Weekly",
+            "limit": "percent",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "openai-codex.chatgpt-plus",
+      "kind": "subscription",
+      "name": "ChatGPT Plus",
+      "notes": "Acceptance case for native prefill: Hermes supplies plan, session/weekly percentages, reset instants and a JWT account identity.",
+      "price": {
+        "amount": 20.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "openai-codex",
+      "route_slugs": [
+        "openai-codex"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30 renders this figure client-side; confirmed from two independent secondary trackers (cloudzero.com, felloai.com).",
+        "source_id": "openai-chatgpt-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "banked_resets": true,
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Page shows 'From $100' and selectable usage tiers; the amount here is the entry tier.",
+          "source_id": "openai-chatgpt-pricing",
+          "status": "provisional"
+        },
+        "windows": [
+          {
+            "duration_minutes": 300,
+            "id": "session",
+            "kind": "rolling",
+            "label": "5-hour session",
+            "limit": "percent",
+            "scope": "account"
+          },
+          {
+            "duration_minutes": 10080,
+            "id": "weekly",
+            "kind": "rolling",
+            "label": "Weekly",
+            "limit": "percent",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "openai-codex.chatgpt-pro",
+      "kind": "subscription",
+      "name": "ChatGPT Pro (5x)",
+      "notes": "An override is expected here: the owner's tier and promotional price are not the entry tier.",
+      "price": {
+        "amount": 100.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "openai-codex",
+      "route_slugs": [
+        "openai-codex"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30 renders this figure client-side; confirmed from two independent secondary trackers (cloudzero.com, felloai.com). This is the $100 tier.",
+        "source_id": "openai-chatgpt-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {},
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Same model suite as the $100 tier with a higher usage allowance.",
+          "source_id": "openai-chatgpt-pricing",
+          "status": "verified"
+        },
+        "windows": []
+      },
+      "id": "openai-codex.chatgpt-pro-20x",
+      "kind": "subscription",
+      "name": "ChatGPT Pro (20x)",
+      "notes": "Second Pro tier; the seed catalogue carried only the $100 plan.",
+      "price": {
+        "amount": 200.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "openai-codex",
+      "route_slugs": [
+        "openai-codex"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30 renders this figure client-side; confirmed from two independent secondary trackers (cloudzero.com, felloai.com).",
+        "source_id": "openai-chatgpt-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": true
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "effective_to": null,
+      "entitlements": {
+        "models": {
+          "limits": "per-model monthly dollars"
+        },
+        "reset_policy": {
+          "notes": "5-hour 20%, weekly 50%, monthly 100% of each model's allowance.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "notes": "Official plan table; per-model monthly dollar limits with 5h=20%, weekly=50%.",
+          "source_id": "opencode-go-plan",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": null,
+            "currency": "USD",
+            "detail": "Each model has its own monthly dollar limit; 5-hour is 20% of it, weekly 50%.",
+            "duration_minutes": null,
+            "id": "monthly-allowance",
+            "kind": "monthly",
+            "label": "Monthly allowance",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "opencode-go.go",
+      "kind": "subscription",
+      "model_restrictions": [],
+      "name": "Go",
+      "notes": "Hermes is a vendor-validated client for Go (v0.21.6+).",
+      "price": {
+        "amount": 10.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "opencode-go",
+      "route_slugs": [
+        "opencode-go"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "opencode-go-plan",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": true
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "effective_to": null,
+      "entitlements": {
+        "models": {
+          "limits": "per-model monthly dollars, raised"
+        },
+        "reset_policy": {
+          "notes": "Same 5h/20%, weekly/50%, monthly/100% shape.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "notes": "Official plan table: Go Plus raises every model's monthly limit; token prices are unchanged.",
+          "source_id": "opencode-go-plan",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": null,
+            "currency": "USD",
+            "detail": "Higher per-model monthly limits across the same roster.",
+            "duration_minutes": null,
+            "id": "monthly-allowance",
+            "kind": "monthly",
+            "label": "Monthly allowance",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "opencode-go.go-plus",
+      "kind": "subscription",
+      "model_restrictions": [],
+      "name": "Go Plus",
+      "notes": "Independent of Go: a separate subscription, not an upgrade key on Zen.",
+      "price": {
+        "amount": 40.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "opencode-go",
+      "route_slugs": [
+        "opencode-go"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "opencode-go-plan",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": true
+      },
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "effective_from": null,
+      "effective_to": null,
+      "entitlements": {
+        "models": {
+          "limits": "per-member, per-model monthly dollars"
+        },
+        "reset_policy": {
+          "notes": "Per member.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "notes": "Per member; '$5/month higher than Go on every model'.",
+          "source_id": "opencode-go-plan",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": null,
+            "currency": "USD",
+            "detail": "Per member, per model.",
+            "duration_minutes": null,
+            "id": "monthly-allowance",
+            "kind": "monthly",
+            "label": "Monthly allowance",
+            "limit": "credit_value_usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "opencode-go.go-teams",
+      "kind": "subscription",
+      "model_restrictions": [],
+      "name": "Go Teams",
+      "notes": "Seat-based: the effective fee depends on head-count.",
+      "price": {
+        "amount": 20.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "opencode-go",
+      "route_slugs": [
+        "opencode-go"
+      ],
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "opencode-go-plan",
+        "status": "verified"
+      }
+    },
+    {
+      "access": {
+        "cli": true,
+        "provider_api": true
+      },
+      "billing_arrangement": "prepaid_metered_wallet",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "notes": "Credits are consumed, not reset on a schedule.",
+          "type": "credits"
+        },
+        "verification": {
+          "checked_at": "2026-10-31",
+          "notes": "The official page describes Console as per-request credits and points to Go for a subscription.",
+          "source_id": "opencode-console-models",
+          "status": "verified"
+        },
+        "windows": []
+      },
+      "id": "opencode-zen.zen",
+      "kind": "prepaid",
+      "name": "OpenCode Console (Zen) credits",
+      "notes": "Metered relay. It is not OpenCode Go coverage: Go is a separate subscription route (opencode-go) with its own plans and per-model allowances.",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "opencode-zen",
+      "route_slugs": [
+        "opencode-zen"
+      ],
+      "verification": {
+        "checked_at": null,
+        "notes": "Pay-as-you-go at cost plus a processing fee: there is no plan price to verify.",
+        "source_id": "opencode-console-models",
+        "status": "unverified"
+      }
+    },
+    {
+      "billing_arrangement": "prepaid_metered_wallet",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "credits"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Hermes may report a credits balance and an API-key quota; neither is a subscription window.",
+          "source_id": "openrouter-credits-api",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": null,
+            "currency": "USD",
+            "detail": "Account-specific quota may be reported by Hermes.",
+            "duration_minutes": null,
+            "id": "api-key-quota",
+            "kind": "credits",
+            "label": "API key quota",
+            "limit": "usd",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "openrouter.credits",
+      "kind": "prepaid",
+      "name": "OpenRouter credits",
+      "notes": "Not a membership with a recurring fee; included because Hermes reports its balance and the pane must show it honestly.",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "openrouter",
+      "route_slugs": [
+        "openrouter"
+      ],
+      "verification": {
+        "checked_at": null,
+        "notes": "Prepaid: no recurring fee exists, so the catalogue amount stays null (never $0.00).",
+        "source_id": "openrouter-credits-api",
+        "status": "unverified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "unknown"
+        },
+        "verification": {
+          "checked_at": null,
+          "source_id": "models-dev-catalogue",
+          "status": "unverified"
+        },
+        "windows": []
+      },
+      "id": "tencent-coding-plan.standard",
+      "kind": "subscription",
+      "name": "Tencent Coding Plan",
+      "notes": "",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "tencent-coding-plan",
+      "route_slugs": [
+        "tencent-coding-plan"
+      ],
+      "verification": {
+        "checked_at": null,
+        "notes": "",
+        "source_id": "tencent-coding-plan",
+        "status": "unverified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "unknown"
+        },
+        "verification": {
+          "checked_at": null,
+          "source_id": "models-dev-catalogue",
+          "status": "unverified"
+        },
+        "windows": []
+      },
+      "id": "umans-ai-coding-plan.standard",
+      "kind": "subscription",
+      "name": "Umans Coding Plan",
+      "notes": "",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "umans-ai-coding-plan",
+      "route_slugs": [
+        "umans-ai-coding-plan"
+      ],
+      "verification": {
+        "checked_at": null,
+        "notes": "",
+        "source_id": "umans-ai",
+        "status": "unverified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "unknown"
+        },
+        "verification": {
+          "checked_at": null,
+          "source_id": "models-dev-catalogue",
+          "status": "unverified"
+        },
+        "windows": []
+      },
+      "id": "volcengine-coding-plan.standard",
+      "kind": "subscription",
+      "name": "Volcengine Coding Plan",
+      "notes": "",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "volcengine-coding-plan",
+      "route_slugs": [
+        "volcengine-coding-plan"
+      ],
+      "verification": {
+        "checked_at": null,
+        "notes": "",
+        "source_id": "volcengine-coding-plan",
+        "status": "unverified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {},
+        "reset_policy": {
+          "type": "unknown"
+        },
+        "verification": {
+          "checked_at": null,
+          "notes": "Hermes has no native usage fetcher for xai-oauth; its billing route resolves to unknown.",
+          "source_id": "xai-grok-pricing",
+          "status": "unverified"
+        },
+        "windows": []
+      },
+      "id": "xai-oauth.supergrok",
+      "kind": "subscription",
+      "name": "SuperGrok",
+      "notes": "Manual-first family: no native quota windows, so the owner declares the fee and can mark exhaustion.",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "xai-oauth",
+      "route_slugs": [
+        "xai-oauth"
+      ],
+      "verification": {
+        "checked_at": null,
+        "notes": "Purchase flow is behind a login; no published amount captured.",
+        "source_id": "xai-supergrok",
+        "status": "unverified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {
+          "weekly_credits": 10000
+        },
+        "reset_policy": {
+          "notes": "Weekly credit pool.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Weekly credit allowance is printed on the subscribe page.",
+          "source_id": "zai-coding-plan",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 10000.0,
+            "currency": null,
+            "detail": "1x the Lite allowance.",
+            "duration_minutes": 10080,
+            "id": "weekly-credits",
+            "kind": "rolling",
+            "label": "Weekly credits",
+            "limit": "credits",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "zai-coding-plan.lite",
+      "kind": "subscription",
+      "name": "GLM Coding Plan Lite",
+      "notes": "Catalogue-listed family; availability depends on the configured profile.",
+      "price": {
+        "amount": 18.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "zai-coding-plan",
+      "route_slugs": [
+        "zai-coding-plan"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30. $12.6/month on the yearly plan (30% off).",
+        "source_id": "zai-coding-plan",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {
+          "weekly_credits": 140000
+        },
+        "reset_policy": {
+          "notes": "Weekly credit pool.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Weekly credit allowance is printed on the subscribe page.",
+          "source_id": "zai-coding-plan",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 140000.0,
+            "currency": null,
+            "detail": "14x the Lite allowance.",
+            "duration_minutes": 10080,
+            "id": "weekly-credits",
+            "kind": "rolling",
+            "label": "Weekly credits",
+            "limit": "credits",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "zai-coding-plan.max",
+      "kind": "subscription",
+      "name": "GLM Coding Plan Max",
+      "notes": "",
+      "price": {
+        "amount": 168.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "zai-coding-plan",
+      "route_slugs": [
+        "zai-coding-plan"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30. $117.6/month on the yearly plan (30% off).",
+        "source_id": "zai-coding-plan",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "billing_cycle": {
+        "anchor_day": null,
+        "period": "month"
+      },
+      "entitlements": {
+        "models": {
+          "weekly_credits": 60000
+        },
+        "reset_policy": {
+          "notes": "Weekly credit pool.",
+          "type": "rolling_windows"
+        },
+        "verification": {
+          "checked_at": "2026-10-30",
+          "notes": "Weekly credit allowance is printed on the subscribe page.",
+          "source_id": "zai-coding-plan",
+          "status": "verified"
+        },
+        "windows": [
+          {
+            "amount": 60000.0,
+            "currency": null,
+            "detail": "6x the Lite allowance.",
+            "duration_minutes": 10080,
+            "id": "weekly-credits",
+            "kind": "rolling",
+            "label": "Weekly credits",
+            "limit": "credits",
+            "scope": "account"
+          }
+        ]
+      },
+      "id": "zai-coding-plan.pro",
+      "kind": "subscription",
+      "name": "GLM Coding Plan Pro",
+      "notes": "",
+      "price": {
+        "amount": 80.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "zai-coding-plan",
+      "route_slugs": [
+        "zai-coding-plan"
+      ],
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30. $56.0/month on the yearly plan (30% off).",
+        "source_id": "zai-coding-plan",
+        "status": "verified"
+      }
+    }
+  ],
+  "sources": [
+    {
+      "complete": false,
+      "http_status": 200,
+      "id": "alibaba-coding-plan",
+      "notes": "Page describes the plan but the price block did not render in an unauthenticated fetch.",
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "partial",
+      "url": "https://www.alibabacloud.com/help/en/model-studio/coding-plan"
+    },
+    {
+      "id": "anthropic-claude-pricing",
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "fetched",
+      "url": "https://claude.com/pricing"
+    },
+    {
+      "complete": true,
+      "http_status": 200,
+      "id": "cline-pricing",
+      "notes": "'No subscriptions, no vendor lock-in' — Enterprise is custom only. Retrieval timestamp not captured; recorded from the 30 October research pass.",
+      "retrieved_at": null,
+      "status": "fetched",
+      "url": "https://cline.bot/pricing"
+    },
+    {
+      "complete": true,
+      "http_status": 200,
+      "id": "commandcode-go",
+      "notes": "Go is $1/month with a $10 shared credit pool (plus per-model boosts); no API access is mentioned. Retrieval timestamp not captured; recorded from the 30 October research pass.",
+      "retrieved_at": null,
+      "status": "fetched",
+      "url": "https://commandcode.ai/docs/plans/go"
+    },
+    {
+      "complete": true,
+      "http_status": 200,
+      "id": "commandcode-pricing",
+      "notes": "Plan table with prices, credit pools and the rolling 5-hour/weekly windows.",
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "fetched",
+      "url": "https://commandcode.ai/docs/resources/pricing-limits"
+    },
+    {
+      "complete": true,
+      "http_status": 200,
+      "id": "commandcode-provider-api",
+      "notes": "Provider API access is sold as its own plan: $15/month plus a $1.01 processing fee. Retrieval timestamp not captured; recorded from the 30 October research pass.",
+      "retrieved_at": null,
+      "status": "fetched",
+      "url": "https://commandcode.ai/docs/provider"
+    },
+    {
+      "id": "github-copilot-plans",
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "fetched",
+      "url": "https://github.com/features/copilot/plans"
+    },
+    {
+      "complete": false,
+      "http_status": 200,
+      "id": "huggingface-pricing",
+      "notes": "PRO $9/month with $2 of included inference credits; seat pricing for orgs not captured. Read live on 30 October 2026.",
+      "retrieved_at": "2026-10-30T12:22:52Z",
+      "status": "fetched",
+      "url": "https://huggingface.co/pricing"
+    },
+    {
+      "complete": true,
+      "http_status": 200,
+      "id": "kilocode-pricing",
+      "notes": "Free for individuals; Teams $15/user/month; inference billed separately. Read live on 30 October 2026.",
+      "retrieved_at": "2026-10-30T12:22:53Z",
+      "status": "fetched",
+      "url": "https://kilo.ai/pricing"
+    },
+    {
+      "complete": false,
+      "http_status": 200,
+      "id": "kimi-coding-plan",
+      "notes": "Token pricing only; the documented coding-plan path redirected to the chat quickstart.",
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "partial",
+      "url": "https://platform.kimi.ai/docs/pricing/chat"
+    },
+    {
+      "id": "minimax-coding-plan",
+      "notes": "Documented URL 404s; MiniMax markets an 'M Plan' instead.",
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://platform.minimax.io/docs/coding-plan"
+    },
+    {
+      "complete": false,
+      "http_status": 200,
+      "id": "minimax-m-plan",
+      "notes": "Confirms the product is called 'M Plan' and is sold per seat/credits; the docs page states no price. Retrieval timestamp not captured; recorded from the 30 October research pass.",
+      "retrieved_at": null,
+      "status": "partial",
+      "url": "https://platform.minimax.io/docs/guides/token-plan-mcp-guide"
+    },
+    {
+      "id": "models-dev-catalogue",
+      "notes": "Model metadata only; it carries no subscription prices.",
+      "retrieved_at": null,
+      "status": "cached_locally",
+      "url": "https://models.dev/api.json"
+    },
+    {
+      "id": "moonshot-coding-plan",
+      "notes": "The chat pricing page was reachable; the coding-plan page was not.",
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://platform.kimi.ai/docs/pricing/chat"
+    },
+    {
+      "id": "nous-portal",
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://portal.nousresearch.com"
+    },
+    {
+      "complete": false,
+      "http_status": null,
+      "id": "nous-portal-pricing",
+      "notes": "Account-scoped; no public plan table.",
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://portal.nousresearch.com"
+    },
+    {
+      "id": "ollama-cloud-pricing",
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://ollama.com/pricing"
+    },
+    {
+      "complete": true,
+      "http_status": 200,
+      "id": "ollama-pricing",
+      "notes": "Pro/Max/Team/Enterprise with monthly usage credits. Read live on 30 October 2026.",
+      "retrieved_at": "2026-10-30T12:22:52Z",
+      "status": "fetched",
+      "url": "https://ollama.com/pricing"
+    },
+    {
+      "id": "openai-chatgpt-pricing",
+      "notes": "Plan list and feature matrix render server-side; the per-plan price is injected client-side, so figures were confirmed from two independent secondary trackers.",
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "partial",
+      "url": "https://chatgpt.com/pricing"
+    },
+    {
+      "complete": true,
+      "http_status": 200,
+      "id": "opencode-console-models",
+      "notes": "Console (Zen) is pay-as-you-go at cost; the page points to Go for a subscription. Retrieval timestamp not captured; recorded from the 30 October research pass.",
+      "retrieved_at": null,
+      "status": "fetched",
+      "url": "https://opencode.ai/v2/docs/console/models/"
+    },
+    {
+      "complete": true,
+      "http_status": 200,
+      "id": "opencode-go-plan",
+      "notes": "Official Go page: three plans, per-model monthly dollar limits, model roster, privacy gates. Retrieval timestamp not captured; recorded from the 30 October research pass.",
+      "retrieved_at": null,
+      "status": "fetched",
+      "url": "https://opencode.ai/v2/docs/console/go/"
+    },
+    {
+      "id": "openrouter-credits-api",
+      "notes": "Read through `hermes usage --provider openrouter --json`: credits balance and API-key quota.",
+      "retrieved_at": "2026-10-30T04:02:00Z",
+      "status": "fetched",
+      "url": "https://openrouter.ai/api/v1/credits"
+    },
+    {
+      "complete": false,
+      "http_status": null,
+      "id": "tencent-coding-plan",
+      "notes": "Not attempted in this pass; Tencent TokenHub is reachable only through a cn-region console.",
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://cloud.tencent.com/document/product/1772"
+    },
+    {
+      "complete": false,
+      "http_status": null,
+      "id": "umans-ai",
+      "notes": "Not attempted; not a Hermes inference route.",
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://umans.ai/pricing"
+    },
+    {
+      "complete": false,
+      "http_status": null,
+      "id": "volcengine-coding-plan",
+      "notes": "Not attempted; no Hermes provider plugin, so it is a custom endpoint.",
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://www.volcengine.com/docs/82379"
+    },
+    {
+      "id": "xai-grok-pricing",
+      "notes": "SuperGrok is sold through an account page; no public price table was reachable without signing in.",
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://x.ai/grok"
+    },
+    {
+      "complete": false,
+      "http_status": null,
+      "id": "xai-supergrok",
+      "notes": "Marketing page; SuperGrok is priced inside the account area. No public figure.",
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://x.ai/grok"
+    },
+    {
+      "id": "zai-coding-plan",
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "fetched",
+      "url": "https://z.ai/subscribe"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "corrections_version": "2026-10-30.2",
+  "note": "Umans AI only. The vendor sells a prepaid wallet with metered token deductions, not a subscription. Approved in principle on 30 October 2026, staged separately from every other correction so it cannot ride along with an unrelated change.",
+  "corrections": [
+    {
+      "plan_id": "umans-ai-coding-plan.standard",
+      "field": "billing_arrangement",
+      "value": "prepaid_metered_wallet",
+      "why": "umans.ai/pricing is a top-up wallet: 'Pay per token ... Top up, create a key, and go.' There is no recurring fee, seat or quota window, so it is neither a subscription nor a recurring credit allowance.",
+      "evidence": {"source_id": "umans-ai", "url": "https://umans.ai/pricing", "retrieved_at": null}
+    },
+    {
+      "plan_id": "umans-ai-coding-plan.standard",
+      "field": "kind",
+      "value": "prepaid",
+      "why": "Keep kind consistent with the arrangement; the loader also derives one from the other.",
+      "evidence": {"source_id": "umans-ai", "url": "https://umans.ai/pricing", "retrieved_at": null}
+    },
+    {
+      "plan_id": "umans-ai-coding-plan.standard",
+      "field": "name",
+      "value": "Umans AI (pay per token)",
+      "why": "The vendor sells tokens, not a coding plan; the name should not imply a plan that does not exist.",
+      "evidence": {"source_id": "umans-ai", "url": "https://umans.ai/pricing", "retrieved_at": null}
+    }
+  ]
+}

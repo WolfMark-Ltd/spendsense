@@ -1,0 +1,193 @@
+{
+  "model": "synthetic-model",
+  "provider": "synthetic-provider",
+  "frames": [
+    {
+      "prompt": 10000,
+      "cache": 9000,
+      "output": 100,
+      "calls": 1
+    },
+    {
+      "prompt": 20000,
+      "cache": 18000,
+      "output": 200,
+      "calls": 2
+    },
+    {
+      "prompt": 30000,
+      "cache": 27000,
+      "output": 300,
+      "calls": 3
+    },
+    {
+      "prompt": 40000,
+      "cache": 36000,
+      "output": 400,
+      "calls": 4
+    },
+    {
+      "prompt": 50000,
+      "cache": 45000,
+      "output": 500,
+      "calls": 5
+    },
+    {
+      "prompt": 60000,
+      "cache": 54000,
+      "output": 600,
+      "calls": 6
+    },
+    {
+      "prompt": 70000,
+      "cache": 63000,
+      "output": 700,
+      "calls": 7
+    },
+    {
+      "prompt": 80000,
+      "cache": 72000,
+      "output": 800,
+      "calls": 8
+    },
+    {
+      "prompt": 90000,
+      "cache": 81000,
+      "output": 900,
+      "calls": 9
+    },
+    {
+      "prompt": 100000,
+      "cache": 90000,
+      "output": 1000,
+      "calls": 10
+    },
+    {
+      "prompt": 110000,
+      "cache": 99000,
+      "output": 1100,
+      "calls": 11
+    },
+    {
+      "prompt": 120000,
+      "cache": 108000,
+      "output": 1200,
+      "calls": 12
+    },
+    {
+      "prompt": 130000,
+      "cache": 117000,
+      "output": 1300,
+      "calls": 13
+    },
+    {
+      "prompt": 140000,
+      "cache": 126000,
+      "output": 1400,
+      "calls": 14
+    },
+    {
+      "prompt": 150000,
+      "cache": 135000,
+      "output": 1500,
+      "calls": 15
+    },
+    {
+      "prompt": 160000,
+      "cache": 144000,
+      "output": 1600,
+      "calls": 16
+    },
+    {
+      "prompt": 170000,
+      "cache": 153000,
+      "output": 1700,
+      "calls": 17
+    },
+    {
+      "prompt": 180000,
+      "cache": 162000,
+      "output": 1800,
+      "calls": 18
+    },
+    {
+      "prompt": 190000,
+      "cache": 171000,
+      "output": 1900,
+      "calls": 19
+    },
+    {
+      "prompt": 200000,
+      "cache": 180000,
+      "output": 2000,
+      "calls": 20
+    },
+    {
+      "prompt": 210000,
+      "cache": 189000,
+      "output": 2100,
+      "calls": 21
+    },
+    {
+      "prompt": 220000,
+      "cache": 198000,
+      "output": 2200,
+      "calls": 22
+    },
+    {
+      "prompt": 230000,
+      "cache": 207000,
+      "output": 2300,
+      "calls": 23
+    },
+    {
+      "prompt": 240000,
+      "cache": 216000,
+      "output": 2400,
+      "calls": 24
+    },
+    {
+      "prompt": 250000,
+      "cache": 225000,
+      "output": 2500,
+      "calls": 25
+    },
+    {
+      "prompt": 260000,
+      "cache": 234000,
+      "output": 2600,
+      "calls": 26
+    },
+    {
+      "prompt": 270000,
+      "cache": 243000,
+      "output": 2700,
+      "calls": 27
+    },
+    {
+      "prompt": 280000,
+      "cache": 252000,
+      "output": 2800,
+      "calls": 28
+    },
+    {
+      "prompt": 290000,
+      "cache": 261000,
+      "output": 2900,
+      "calls": 29
+    },
+    {
+      "prompt": 300000,
+      "cache": 270000,
+      "output": 3000,
+      "calls": 30
+    }
+  ],
+  "canonical": {
+    "requests": 30,
+    "prompt_tokens": 300000,
+    "cache_read_tokens": 270000,
+    "output_tokens": 3000,
+    "total_tokens": 303000
+  }
+}

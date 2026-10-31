@@ -1,0 +1,12 @@
+## Individual plans
+
+| Plan | Price/mo | Credits/mo | Included LLM Usage | Models |
+| --- | --- | --- | --- | --- |
+| Go | $1 | $10 | ~9K requests | Open models + some premium, per-model allowances |
+| GOAT | $10 | Up to $100 | ~75K requests | Open models, some closed |
+| Pro | $20 | Up to $110 | ~100K requests | Open-source + premium models |
+| Provider | $15 | Pay as you go | Provider API access | Open-source + premium models |
+| Max 10× | $100 | $150 | ~230K requests | Open-source + premium models |
+| Max 20× | $200 | $300 | ~370K requests | Open-source + premium models |
+| Team Pro | $40 | $40 | ~35K requests | Open-source + premium models |
+| Enterprise | $5,000+ | Custom | Custom pool |

@@ -1,0 +1,18 @@
+{
+  "verified": [
+    {
+      "provider": "commandcode",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "input": 0.15,
+      "output": 0.6,
+      "cache_read": 0.003,
+      "source_url": "CommandCode pricing documentation (peak/off-peak)",
+      "verified_at": "2026-10-29",
+      "note": "Off-peak base rates. Cache pricing validated separately; peak windows override input/output only.",
+      "windows": [
+        {"days": [0, 1, 2, 3, 4], "start_minute": 60,  "end_minute": 240, "input": 0.30, "output": 1.20},
+        {"days": [0, 1, 2, 3, 4], "start_minute": 360, "end_minute": 600, "input": 0.30, "output": 1.20}
+      ]
+    }
+  ]
+}

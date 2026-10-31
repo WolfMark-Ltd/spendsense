@@ -1,0 +1,996 @@
+/**
+ * Membership scope, refresh and error-handling regressions — real React, real
+ * TanStack Query, synthetic transport.
+ *
+ * The other suites stub React and re-implement useQuery, which cannot show the
+ * behaviour that broke Phase A: a pending request from one gateway resolving
+ * into another gateway's render, a stale card writing through the new transport,
+ * or `refetch()` resolving with an error the handler never looks at.
+ *
+ * This builds `desktop/plugin.js` against `test/harness/real-sdk.mjs` (real atoms, real
+ * query, fake host + transport) and drives the rendered page.
+ *
+ * Setup once: npm install --prefix test/harness
+ * Run with:   ./scripts/node-tests.sh      (adds --test-force-exit)
+ */
+import assert from 'node:assert/strict'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { after, test } from 'node:test'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
+const HARNESS_MODULES = join(ROOT, 'test', 'harness', 'node_modules')
+
+if (!existsSync(join(HARNESS_MODULES, '@tanstack', 'react-query'))) {
+  throw new Error('real-query harness is not installed: run `npm ci --prefix test/harness`')
+}
+
+const work = mkdtempSync(join(tmpdir(), 'wm-scope-'))
+process.on('exit', () => rmSync(work, { recursive: true, force: true }))
+
+// --- one bundle: plugin + real React + real query --------------------------
+const entry = join(work, 'entry.mjs')
+writeFileSync(entry, `
+export { default as plugin, __test as T } from '${join(ROOT, 'desktop', 'plugin.js')}'
+export * as React from 'react'
+export * as ReactDOMClient from 'react-dom/client'
+export { QueryClientProvider, queryClient, host, hostRequests as __hostRequests, $testConnectionId, $testProfile, __bumpActivation, __bumpActivationQuiet, gatewayActivationEpoch } from '@hermes/plugin-sdk'
+`)
+const bundle = join(work, 'bundle.mjs')
+const esbuild = (await import(pathToFileURL(join(HARNESS_MODULES, 'esbuild', 'lib', 'main.js')).href)).default
+await esbuild.build({
+  entryPoints: [entry],
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  outfile: bundle,
+  alias: {
+    '@hermes/plugin-sdk': join(ROOT, 'test', 'harness', 'real-sdk.mjs'),
+    // npm installs a peer React into test/harness; two copies means a null
+    // dispatcher inside the provider. Pin every import to the app's 19.2.7.
+    react: join(HARNESS_MODULES, 'react'),
+    'react-dom': join(HARNESS_MODULES, 'react-dom'),
+  },
+  nodePaths: [HARNESS_MODULES],
+  logLevel: 'warning',
+})
+
+// --- a DOM before react-dom loads -----------------------------------------
+const { JSDOM } = await import(pathToFileURL(join(HARNESS_MODULES, 'jsdom', 'lib', 'api.js')).href)
+const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/' })
+const define = (name, value) => Object.defineProperty(globalThis, name, {
+  value, configurable: true, writable: true,
+})
+define('window', dom.window)
+define('document', dom.window.document)
+define('navigator', dom.window.navigator)   // read-only getter on Node 24
+define('HTMLElement', dom.window.HTMLElement)
+define('Node', dom.window.Node)
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+const lib = await import(pathToFileURL(bundle).href)
+const { plugin, T, React, ReactDOMClient, QueryClientProvider, queryClient, host, __hostRequests,
+  $testConnectionId, $testProfile, __bumpActivation } = lib
+
+// --- the transport the test drives ----------------------------------------
+function controller() {
+  const calls = []
+  let responder = () => ({ ok: true, accounts: [] })
+  const transport = (path, opts = {}) => {
+    const call = { path, method: String(opts.method || 'GET').toUpperCase(), body: opts.body }
+    calls.push(call)
+    return Promise.resolve().then(() => responder(call))
+  }
+  return {
+    calls, transport,
+    respond(fn) { responder = fn },
+    reset() { calls.length = 0 },
+    count(predicate) { return calls.filter(predicate).length },
+  }
+}
+
+function deferred() {
+  let resolve, reject
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
+}
+
+const transportCtl = controller()
+const intervalHandles = []
+
+plugin.register({
+  rest: transportCtl.transport,
+  storage: { get: (_k, d) => d, set() {}, delete() {} },
+  register() {}, registerMany() {}, onDispose() {}, onEvent: () => () => {},
+  setTimeout: (fn) => { const t = setTimeout(fn, 0); return () => clearTimeout(t) },
+  setInterval: (fn, ms) => {
+    if (ms !== 250) return () => {}
+    const handle = setInterval(fn, ms); handle.unref(); intervalHandles.push(handle)
+    return () => clearInterval(handle)
+  },
+  addEventListener: () => () => {},
+  os: {}, pet: null, i18n: { register() {}, t: key => key },
+})
+
+const account = (id, extra = {}) => ({
+  id, family: 'openai-codex', label: id, route_slugs: ['openai-codex'],
+  plan_id: null, plan: null, fee: { basis: 'no_plan', effective: { amount: null } },
+  quota: { windows: [] }, manual_exhaustions: [], fee_overrides: [],
+  plan_choices: [], excluded_plans: [], rev: 'r1', ...extra,
+})
+
+const roots = []
+const boot = async () => {
+  queryClient.clear()
+  T.$membershipSnapshot.set(null)
+  T.$membershipDraft.set(null)
+  T.$membershipNotice.set(null)
+  T.$membershipBusy.set(null)
+  T.$membershipNative.set(false)
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => {
+    root.render(React.createElement(QueryClientProvider, { client: queryClient },
+      React.createElement(T.MembershipsPage)))
+  })
+  return { container, root, text: () => container.textContent }
+}
+
+const flush = async (times = 6) => {
+  await React.act(async () => {
+    for (let i = 0; i < times; i += 1) {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+  })
+}
+
+
+const typeAmount = async (container, value) => {
+  const input = container.querySelector('form input[type="number"]')
+  assert.ok(input, 'the fee form has an amount field')
+  await React.act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(input, value)
+    input.dispatchEvent(new window.Event('input', { bubbles: true }))
+  })
+  await flush(2)
+}
+
+const clickByText = async (container, label) => {
+  const button = [...container.querySelectorAll('button')].find(b => (b.textContent || '').includes(label))
+  assert.ok(button, `no button matching ${label}`)
+  await React.act(async () => { button.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  return button
+}
+
+const saveManualStatus = async container => {
+  await flush(1)
+  await clickByText(container, 'Save manual status')
+  await flush(1)
+}
+
+const setField = async (container, labelText, value, scope = container) => {
+  const label = [...scope.querySelectorAll('label')].find(item =>
+    item.textContent.trim().startsWith(labelText) && item.querySelector('input,select'))
+  assert.ok(label, `no field labelled ${labelText}`)
+  const control = label.querySelector('input,select')
+  await React.act(async () => {
+    const prototype = control.tagName === 'SELECT'
+      ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value').set
+    setter.call(control, value)
+    control.dispatchEvent(new window.Event(control.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }))
+  })
+}
+
+const plansOk = () => ({ ok: true, families: [], vocabulary: { override_reasons: ['discount'], currencies: ['USD', 'GBP'], periods: ['month'], window_scopes: ['account'] }, totals: {} })
+
+// ---------------------------------------------------------------------------
+
+// jsdom keeps its own timers; without this the runner waits forever for a
+// promise that a closed window would have settled.
+after(() => { intervalHandles.forEach(clearInterval); queryClient.clear(); dom.window.close() })
+
+test.afterEach(async () => {
+  while (roots.length) {
+    const root = roots.pop()
+    try { await React.act(async () => { root.unmount() }) } catch { /* already gone */ }
+  }
+  queryClient.clear()
+})
+
+test('a pending read from the previous gateway cannot become the new gateway\'s answer', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const pendingA = deferred()
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : pendingA.promise)
+
+  const { container } = await boot()
+  await flush(2)
+  assert.match(container.textContent, /Reading memberships/, 'the pending read is shown as loading, not as empty')
+  assert.doesNotMatch(container.textContent, /Plans confirmed0 of 0|No memberships yet/,
+    'unconfirmed snapshot state does not expose zeros or the authoritative empty state')
+
+  // switch gateway while A's request is still in flight
+  $testConnectionId.set('gateway-b')
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: true, accounts: [account('b:default', { label: 'B account' })] })
+  await flush(2)
+
+  // A's transport finally rejects with the 404 that used to surface as B's state
+  await React.act(async () => {
+    pendingA.reject(new Error('404 {"detail":"Plugin not found"}'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  await flush(4)
+
+  assert.match(container.textContent, /B account/, 'gateway B\'s accounts are what render')
+  assert.doesNotMatch(container.textContent, /Plugin not found|not available on this connection/,
+    'a late 404 from A must not be reported as B\'s failure')
+})
+
+test('switching profile re-reads instead of reusing the previous profile\'s rows', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: true, accounts: [account('default:acct', { label: 'Default profile account' })] })
+  const { container } = await boot()
+  await flush(3)
+  assert.match(container.textContent, /Default profile account/)
+
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: true, accounts: [account('work:acct', { label: 'Work profile account' })] })
+  $testProfile.set('work')
+  await flush(4)
+
+  assert.match(container.textContent, /Work profile account/)
+  assert.doesNotMatch(container.textContent, /Default profile account/,
+    'the previous profile\'s rows must not survive the switch')
+})
+
+test('after a switch, a card can only write through its own scope', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : call.method === 'GET' ? { ok: true, accounts: [account('a:acct', { label: 'A account' })] }
+      : { ok: true, accounts: [] })
+  const { container } = await boot()
+  await flush(3)
+  assert.match(container.textContent, /A account/)
+
+  // The switch, then a click in the same tick — the card on screen is still A's.
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : call.method === 'GET' ? { ok: true, accounts: [account('b:acct', { label: 'B account' })] }
+      : { ok: true, accounts: [] })
+  $testConnectionId.set('gateway-b')
+  await flush(3)
+  assert.match(container.textContent, /B account/, 'the switched profile card is rendered before using it')
+
+  const writes = transportCtl.calls.filter(c => c.method !== 'GET')
+  assert.equal(writes.filter(c => JSON.stringify(c).includes('a:acct')).length, 0,
+    'no mutation may be aimed at the previous gateway\'s account')
+
+  // In the new scope the action works, and it targets the new account.
+  await clickByText(container, 'Mark account exhausted')
+  await saveManualStatus(container)
+  await flush(3)
+  const after = transportCtl.calls.filter(c => c.method !== 'GET')
+  assert.ok(after.some(c => c.path.includes('b%3Aacct') || c.path.includes('b:acct')),
+    `the write targets the new scope's account (${JSON.stringify(after.map(c => c.path))})`)
+  assert.ok(!after.some(c => JSON.stringify(c).includes('a:acct')))
+})
+
+test('a failed refresh never claims the readings were refreshed', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+  const { container, root } = await boot()
+  await flush(3)
+
+  transportCtl.respond(() => { throw new Error('500 Internal Server Error') })
+  await clickByText(container, 'Refresh readings')
+  await flush(3)
+
+  const text = container.textContent
+  assert.doesNotMatch(text, /Readings refreshed from Hermes/, 'success must not be announced')
+  assert.match(text, /backend answered with an error/i, 'the failure is described')
+  assert.match(text, /A account/, 'the last known reading stays on screen')
+})
+
+test('a malformed envelope is an error, not an empty membership list', async () => {
+  queryClient.clear()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : { ok: true })
+  const { container } = await boot()
+  await flush(3)
+
+  assert.doesNotMatch(container.textContent, /No memberships yet/,
+    'an unreadable answer must not be presented as an empty account list')
+  assert.match(container.textContent, /could not be read|did not load|retry/i)
+})
+
+test('recovery: after a 503 the next read renders accounts and clears the error', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: false, error: 'store_unreadable: membership store unreadable: JSONDecodeError' })
+  const { container, root } = await boot()
+  await flush(3)
+  assert.match(container.textContent, /could not be read, so nothing was changed|store/i)
+
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'Recovered account' })] })
+  await clickByText(container, 'Refresh readings')
+  await flush(4)
+
+  assert.match(container.textContent, /Recovered account/, 'the pane recovers without a reload')
+})
+
+test('diagnostics record the request shape and never a credential', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+  T.membershipDiagnostics.length = 0
+  const { container } = await boot()
+  await flush(3)
+
+  assert.ok(T.membershipDiagnostics.length > 0,
+    `a request was recorded (calls: ${JSON.stringify(transportCtl.calls.map(c => c.method + ' ' + c.path))})`)
+  const entry = T.membershipDiagnostics[0]
+  for (const key of ['at', 'plugin', 'method', 'path', 'status', 'scope', 'generation']) {
+    assert.ok(key in entry, `diagnostics missing ${key}`)
+  }
+  const serialised = JSON.stringify(T.membershipDiagnostics).toLowerCase()
+  for (const forbidden of ['token', 'authorization', 'cookie', 'secret', 'bearer']) {
+    assert.ok(!serialised.includes(forbidden), `diagnostics leaked ${forbidden}`)
+  }
+  assert.match(container.textContent, /Request diagnostics/, 'the pane offers the evidence')
+})
+
+test('reverse completion order: A succeeding late still cannot replace B', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const pendingA = deferred()
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : pendingA.promise)
+  const { container } = await boot()
+  await flush(2)
+
+  $testConnectionId.set('gateway-b')
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: true, accounts: [account('b:acct', { label: 'B account' })] })
+  await flush(3)
+  assert.match(container.textContent, /B account/)
+
+  // A resolves successfully *after* B has rendered.
+  await React.act(async () => {
+    pendingA.resolve({ ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  await flush(4)
+
+  assert.match(container.textContent, /B account/)
+  assert.doesNotMatch(container.textContent, /A account/,
+    'a late success from the previous gateway must not replace the current rows')
+})
+
+test('host invalidation during a switch does not resurrect the old scope', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+  const { container } = await boot()
+  await flush(3)
+
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: true, accounts: [account('b:acct', { label: 'B account' })] })
+  $testConnectionId.set('gateway-b')
+  // The host invalidates profile-scoped queries on activation; do the same.
+  await React.act(async () => { await queryClient.invalidateQueries() })
+  await flush(4)
+
+  assert.match(container.textContent, /B account/)
+  assert.doesNotMatch(container.textContent, /A account/)
+})
+
+test('a plans-only failure leaves healthy accounts visible', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? (() => { throw new Error('404 {"detail":"Plugin not found"}') })()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+  const { container } = await boot()
+  await flush(3)
+
+  assert.match(container.textContent, /A account/, 'accounts still render')
+  assert.match(container.textContent, /Plan catalogue unavailable/, 'the plans failure is stated separately')
+  assert.doesNotMatch(container.textContent, /No memberships yet/)
+})
+
+test('a write that is followed by a failed read says exactly that', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+  const { container } = await boot()
+  await flush(3)
+
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method !== 'GET') return { ok: true, accounts: [] }
+    throw new Error('500 Internal Server Error')
+  })
+  await clickByText(container, 'Mark account exhausted')
+  await saveManualStatus(container)
+  await flush(4)
+
+  assert.doesNotMatch(container.textContent, /^Saved\.$/m, 'a clean success is not announced')
+  assert.match(container.textContent, /Saved, but the list could not be re-read/)
+  assert.match(container.textContent, /A account/, 'the last known rows stay on screen')
+})
+
+test('a rejected fee save keeps what the owner typed', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+  const { container } = await boot()
+  await flush(3)
+
+  await clickByText(container, 'Edit fee')
+  await flush(2)
+  const form = container.querySelector('form')
+  assert.ok(form, 'the fee form opened')
+
+  // type an amount into the first input of the form
+  const input = form.querySelector('input[type="number"]')
+  await React.act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(input, '19.5')
+    input.dispatchEvent(new window.Event('input', { bubbles: true }))
+  })
+  await flush(2)
+
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'PUT') throw new Error('409 conflict: editing an existing membership requires if_rev')
+    return { ok: true, accounts: [account('a:acct', { label: 'A account' })] }
+  })
+  const submit = [...container.querySelectorAll('button')].find(b => (b.textContent || '') === 'Save fee')
+  await React.act(async () => { submit.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await flush(3)
+
+  assert.match(container.textContent, /changed since you loaded it/, 'the conflict is explained')
+  assert.ok(container.querySelector('form'), 'the form stays open')
+  assert.equal(container.querySelector('input[type="number"]').value, '19.5',
+    'the typed amount survives the failure')
+})
+
+test('A → B → A: the return trip shows A again and drops B\'s late reply', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const pendingB = deferred()
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+  const { container } = await boot()
+  await flush(2)
+  assert.match(container.textContent, /A account/)
+
+  // leave for B, whose read never answers
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : pendingB.promise)
+  $testConnectionId.set('gateway-b')
+  await flush(2)
+
+  // come back to A while B is still in flight
+  transportCtl.respond(call => call.path.startsWith('/membership/plans')
+    ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+  $testConnectionId.set('gateway-a')
+  await flush(3)
+  assert.match(container.textContent, /A account/, 'A\'s rows are shown again on return')
+
+  // B answers only now
+  await React.act(async () => {
+    pendingB.resolve({ ok: true, accounts: [account('b:acct', { label: 'B account' })] })
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  await flush(4)
+
+  assert.match(container.textContent, /A account/)
+  assert.doesNotMatch(container.textContent, /B account/,
+    'a reply from the abandoned scope must not surface after the return trip')
+})
+
+test('a fee save submitted in the same tick as a switch emits no mutation', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+  const { container } = await boot()
+  await flush(3)
+  await clickByText(container, 'Edit fee')
+  await flush(2)
+  const form = container.querySelector('form')
+  assert.ok(form, 'the fee form is open on A')
+  const submit = [...form.querySelectorAll('button')].find(b => (b.textContent || '') === 'Save fee')
+
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.method === 'GET' ? { ok: true, accounts: [account('b:acct', { label: 'B account' })] }
+      : { ok: true, accounts: [] })
+
+  // Switch, then submit before React has re-rendered the pane: the form on
+  // screen is still A's, so this is exactly the wrong-destination write.
+  $testConnectionId.set('gateway-b')
+  await React.act(async () => {
+    submit.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  })
+  await flush(4)
+
+  const writes = transportCtl.calls.filter(c => c.method !== 'GET')
+  assert.equal(writes.length, 0,
+    `no mutation may be emitted after the switch (saw ${JSON.stringify(writes.map(c => c.method + ' ' + c.path))})`)
+  assert.match(T.$membershipNotice.get()?.text || '', /belongs to a different connection/)
+})
+
+test('a late reread from the previous scope cannot close a draft opened since', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+  const { container } = await boot()
+  await flush(3)
+  await clickByText(container, 'Edit fee')
+  await flush(2)
+
+  // The write lands *while A is still current*, so the pane starts its canonical
+  // reread; that read is what hangs. This is the window the review found: the
+  // save has been accepted, and the reread outlives the scope that started it.
+  const pendingReread = deferred()
+  let holdReread = true
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method !== 'GET') return { ok: true, accounts: [account('a:acct', { label: 'A account' })] }
+    return holdReread ? pendingReread.promise : { ok: true, accounts: [account('b:acct', { label: 'B account' })] }
+  })
+  await typeAmount(container, '12.5')
+  await clickByText(container, 'Save fee')
+  await flush(2)
+  assert.ok(T.$membershipBusy.get(), 'the save is still settling while its reread hangs')
+
+  // Switch to B and open a fresh draft there.
+  holdReread = false
+  $testConnectionId.set('gateway-b')
+  await flush(3)
+  await clickByText(container, 'Edit fee')
+  await flush(2)
+  assert.ok(container.querySelector('form'), 'B has a draft open')
+
+  // A's reread finally answers.
+  await React.act(async () => {
+    pendingReread.resolve({ ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  await flush(4)
+
+  assert.ok(container.querySelector('form'), 'the new scope\'s draft is still open')
+  assert.match(container.textContent, /B account/)
+  assert.doesNotMatch(container.textContent, /A account/)
+})
+
+test('a completing request cannot clear another scope\'s busy state or post its notice', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const pendingA = deferred()
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' })] })
+  const { container } = await boot()
+  await flush(3)
+
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : pendingA.promise)
+  await clickByText(container, 'Mark account exhausted')
+  await saveManualStatus(container)
+
+  // B starts its own work while A's mark is still in flight
+  $testConnectionId.set('gateway-b')
+  const pendingB = deferred()
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    return call.method === 'GET' ? { ok: true, accounts: [account('b:acct', { label: 'B account' })] } : pendingB.promise
+  })
+  await flush(3)
+  await clickByText(container, 'Mark account exhausted')
+  await saveManualStatus(container)
+  const busyBefore = T.$membershipBusy.get()
+  assert.equal(busyBefore?.origin, 'gateway-b|default#1', 'B holds the busy flag')
+
+  await React.act(async () => {
+    pendingA.resolve({ ok: true, accounts: [] })
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  await flush(3)
+
+  assert.equal(T.$membershipBusy.get()?.origin, 'gateway-b|default#1',
+    'A finishing must not clear B\'s busy state')
+  assert.notEqual(T.$membershipNotice.get()?.origin, 'gateway-a|default#1',
+    'A\'s completion must not post a notice into B')
+
+  await React.act(async () => {
+    pendingB.resolve({ ok: true, accounts: [] })
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  await flush(2)
+})
+
+test('a re-activation while a request is pending cannot be populated by it', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const pendingOriginal = deferred()
+  transportCtl.reset()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : pendingOriginal.promise)
+  const { container } = await boot()
+  await flush(2)
+
+  // the gateway re-activates: same connection, same profile, new generation
+  const epoch = lib.__bumpActivation()
+  assert.equal(lib.gatewayActivationEpoch(), epoch, 'the harness really bumped the epoch')
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [account('a:new', { label: 'Re-activated account' })] })
+  await flush(4)
+
+  // the original (pre-activation) request answers only now
+  await React.act(async () => {
+    pendingOriginal.resolve({ ok: true, accounts: [account('a:old', { label: 'Stale activation account' })] })
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  await flush(4)
+
+  assert.match(container.textContent, /Re-activated account/)
+  assert.doesNotMatch(container.textContent, /Stale activation account/,
+    'a result from the previous activation must not populate the new one')
+})
+
+test('an older save cannot clear a newer draft for the same account', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : { ok: true, accounts: [account('same', { label: 'Same account' })] })
+  const { container } = await boot(); await flush(3); await clickByText(container, 'Edit fee'); await typeAmount(container, '17')
+  const pending = deferred(); let written = false
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method !== 'GET') { written = true; return { ok: true } }
+    return written ? pending.promise : { ok: true, accounts: [account('same')] }
+  })
+  await clickByText(container, 'Save fee'); await flush(2)
+  await clickByText(container, 'Cancel'); await clickByText(container, 'Edit fee'); await typeAmount(container, '99')
+  await React.act(async () => { pending.resolve({ ok: true, accounts: [account('same')] }); await new Promise(r => setTimeout(r, 0)) }); await flush(3)
+  assert.equal(container.querySelector('input[type="number"]')?.value, '99')
+})
+
+test('an older same-scope operation cannot release a newer busy flag', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const first = deferred(), second = deferred()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : call.method === 'GET'
+    ? { ok: true, accounts: [account('first'), account('second')] }
+    : call.path.includes('first') ? first.promise : second.promise)
+  const { container } = await boot(); await flush(3)
+  const button = id => container.querySelector(`[data-account="${id}"] button[data-action="exhaust-account"]`)
+  await React.act(async () => button('first').click())
+  await saveManualStatus(container)
+  await React.act(async () => button('second').click())
+  await saveManualStatus(container)
+  assert.equal(T.$membershipBusy.get()?.key, 'second')
+  await React.act(async () => { first.resolve({ ok: true }); await new Promise(r => setTimeout(r, 0)) }); await flush(2)
+  assert.equal(T.$membershipBusy.get()?.key, 'second')
+  await React.act(async () => { second.resolve({ ok: true }); await new Promise(r => setTimeout(r, 0)) }); await flush(2)
+})
+
+
+test('profile A to B to A rejects original A when socket remains open', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const original = deferred()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : original.promise)
+  const { container } = await boot(); await flush(2)
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : { ok: true, accounts: [account('fresh', { label: 'Fresh account' })] })
+  await React.act(async () => { lib.__bumpActivationQuiet(); $testProfile.set('work') }); await flush(2)
+  await React.act(async () => { lib.__bumpActivationQuiet(); $testProfile.set('default') }); await flush(3)
+  await React.act(async () => { original.resolve({ ok: true, accounts: [account('obsolete', { label: 'Obsolete account' })] }); await new Promise(r => setTimeout(r, 0)) }); await flush(3)
+  assert.match(container.textContent, /Fresh account/)
+  assert.doesNotMatch(container.textContent, /Obsolete account/)
+})
+
+
+test('same-profile reactivation rejects an old reply while socket stays open', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const old = deferred()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : old.promise)
+  const { container } = await boot(); await flush(2)
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : { ok: true, accounts: [account('fresh', { label: 'Fresh reactivation' })] })
+  await React.act(async () => { lib.__bumpActivationQuiet(); await new Promise(r => setTimeout(r, 350)) }); await flush(3)
+  await React.act(async () => { old.resolve({ ok: true, accounts: [account('old', { label: 'Old activation' })] }); await new Promise(r => setTimeout(r, 0)) }); await flush(3)
+  assert.match(container.textContent, /Fresh reactivation/)
+  assert.doesNotMatch(container.textContent, /Old activation/)
+})
+
+test('a late initial read cannot overwrite a newer refresh in the same activation', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const old = deferred()
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : old.promise)
+  const { container } = await boot(); await flush(2)
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [account('new', { label: 'New reading' })] })
+  await clickByText(container, 'Refresh readings'); await flush(3)
+  await React.act(async () => { old.resolve({ ok: true, accounts: [account('old', { label: 'Old reading' })] }); await new Promise(r => setTimeout(r, 0)) }); await flush(3)
+  assert.match(container.textContent, /New reading/)
+  assert.doesNotMatch(container.textContent, /Old reading/)
+})
+
+test('Settings disclose catalogue provenance and Hermes-owned network refreshes without fetching automatically', async () => {
+  queryClient.clear(); transportCtl.reset(); __hostRequests.length = 0
+  transportCtl.respond(call => call.path === '/rates'
+    ? { ok: true, catalogue: { source: 'bundled models.dev snapshot', as_of: '2025-01-01T00:00:00+00:00', age_seconds: 3600, stale: true } }
+    : call.path === '/membership/plans'
+      ? { ok: true, catalogue_version: '2026-10-30.5', generated_at: '2026-10-30T21:02:11Z',
+          sources: [{ id: 'example', evidence_kind: 'price_page', url: 'https://example.test/prices', retrieved_at: null }],
+          totals: { plans: 10, verified: 5, provisional: 1, placeholders: 4 } }
+      : call.path === '/health' ? { ok: true, version: '0.5.0' }
+        : { ok: true, profiles: [], loaded: true, error: '' })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient }, React.createElement(T.SettingsPage))))
+  await flush(3)
+  assert.match(container.textContent, /bundled models.dev snapshot/)
+  assert.match(container.textContent, /stale/)
+  assert.match(container.textContent, /2026-10-30.5/)
+  assert.match(container.textContent, /Refresh Hermes models/)
+  assert.match(container.textContent, /Spend Sense makes no direct HTTP pricing requests/)
+  assert.match(container.textContent, /authenticated requests to configured provider endpoints using credentials it manages/)
+  assert.match(container.textContent, /Automatic Hermes model-options refresh is off by default/)
+  assert.equal(container.querySelector('input[type="checkbox"]')?.checked, false,
+    'automatic model-options refresh defaults off in the rendered Settings page')
+  assert.equal(transportCtl.calls.filter(c => c.path === '/rates').length, 1)
+  assert.equal(transportCtl.calls.filter(c => c.path === '/membership/plans').length, 1)
+  assert.equal(transportCtl.calls.some(c => c.path === '/membership/discover?native=true'), false)
+  assert.equal(transportCtl.calls.some(c => c.path === '/membership/accounts?native=true'), false)
+  assert.equal(__hostRequests.filter(c => c.method === 'model.options').length, 0,
+    'opening Settings does not ask Hermes for model options')
+})
+
+test('model options stay offline unless automatic refresh is enabled or the user confirms a refresh', async () => {
+  __hostRequests.length = 0
+  T.$automaticModelOptions.set(false)
+  const offline = T.catalogQuery('session-a', 'model-a', false)
+  assert.throws(() => offline.queryFn(), /refresh is off/)
+  assert.equal(__hostRequests.length, 0, 'the disabled query cannot call Hermes')
+
+  const automatic = T.catalogQuery('session-a', 'model-a', true)
+  await automatic.queryFn()
+  assert.equal(__hostRequests.at(-1)?.method, 'model.options')
+  T.$automaticModelOptions.set(false)
+
+  queryClient.clear(); transportCtl.reset(); __hostRequests.length = 0
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  transportCtl.respond(call => call.path === '/rates'
+    ? { ok: true, catalogue: { source: 'bundled', as_of: null, age_seconds: null, stale: false } }
+    : call.path === '/membership/plans' ? { ok: true, catalogue_version: '2026-10-30.5', families: [], sources: [], totals: {} }
+      : call.path === '/health' ? { ok: true, version: '0.5.0' }
+        : { ok: true, profiles: [], loaded: true, error: '' })
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient }, React.createElement(T.SettingsPage))))
+  await flush(2)
+  await clickByText(container, 'Refresh Hermes models')
+  assert.equal(__hostRequests.length, 0, 'the first click only opens the provider-contact warning')
+  assert.match(container.textContent, /authenticated requests to configured providers/)
+  await clickByText(container, 'Confirm model refresh')
+  await flush(2)
+  assert.equal(__hostRequests.filter(c => c.method === 'model.options').length, 1,
+    'a confirmed user action is the only explicit model-options request')
+  assert.equal(__hostRequests.at(-1).params.refresh, true)
+})
+
+test('Settings remain usable when cached pricing status is unavailable', async () => {
+  queryClient.clear()
+  transportCtl.respond(call => call.path === '/rates' ? Promise.reject(new Error('offline'))
+    : call.path === '/membership/plans' ? { ok: true, catalogue_version: '2026-10-30.5', families: [], sources: [], totals: {} }
+      : call.path === '/health' ? { ok: true, version: '0.5.0' }
+        : { ok: true, profiles: [], loaded: true, error: '' })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient }, React.createElement(T.SettingsPage))))
+  await flush(3)
+  assert.match(container.textContent, /Pricing status is unavailable/)
+  assert.match(container.textContent, /bundled offline snapshot can still be used/)
+  assert.match(container.textContent, /2026-10-30.5/)
+})
+
+test('Costs renders Memberships as the sole recurring-fee source', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const commandcode = account('commandcode:default', {
+    family: 'commandcode', label: 'CommandCode', plan_id: 'commandcode.goat',
+    plan: { name: 'GOAT', notes: '', entitlements: { windows: [
+      { id: 'monthly-credit', label: 'Monthly credit allocation', amount: 100, currency: 'USD' }
+    ] } },
+    fee: { basis: 'catalogue', effective: { amount: 10, currency: 'USD', period: 'month' } }
+  })
+  const codex = account('openai-codex:default', {
+    family: 'openai-codex', label: 'ChatGPT Plus', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus', entitlements: { windows: [] } },
+    fee: { basis: 'catalogue', effective: { amount: 20, currency: 'USD', period: 'month' } }
+  })
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [commandcode, codex], store: { loaded: true, error: '' }, notes: [] }
+    : call.path === '/billing/summary'
+      ? { ok: true, billing: { evidence: { api_equivalent: { usd: 2, basis: 'estimated', source: 'catalogue' } } } }
+      : call.path === '/rates'
+        ? { ok: true, catalogue: { source: 'bundled snapshot', as_of: '2026-10-30T12:00:00Z', age_seconds: 3600 } }
+        : { ok: true })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient }, React.createElement(T.CostsPage))))
+  await flush(4)
+  assert.match(container.textContent, /GOAT/)
+  assert.match(container.textContent, /ChatGPT Plus/)
+  assert.match(container.textContent, /\$30\.00\/mo/)
+  assert.match(container.textContent, /Monthly credit allocation/)
+  assert.equal(container.querySelectorAll('.wm-analytics').length, 1,
+    'the page has one scroll container; the tab strip does not add a full-height nested container')
+  assert.equal(container.querySelectorAll('.wm-product-tabs').length, 1)
+  assert.equal(transportCtl.calls.some(call => call.path.startsWith('/billing/profiles')), false,
+    'Costs does not create or require a duplicate subscription arrangement')
+})
+
+test('Costs explains pending membership data instead of showing an empty total', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const pendingAccounts = deferred()
+  transportCtl.respond(call => call.path === '/membership/accounts' ? pendingAccounts.promise
+    : call.path === '/billing/summary' ? { ok: true, billing: { evidence: {} } }
+      : call.path === '/rates' ? { ok: true, catalogue: { source: 'bundled', as_of: null, age_seconds: null } }
+        : { ok: true })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient }, React.createElement(T.CostsPage))))
+  await flush(2)
+  const summary = container.querySelector('.wm-product-summary')
+  assert.match(container.textContent, /Reading memberships for this connection/)
+  assert.doesNotMatch(summary.textContent, /0 of 0|\$0\.00\/mo/)
+
+  await React.act(async () => pendingAccounts.resolve({ ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] }))
+  await flush(3)
+  assert.match(container.textContent, /No saved memberships yet/)
+})
+
+test('Overview renders its settled Desktop cost summary without a React render error', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const now = new Date()
+  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  T.$ledger.set({ ...T.emptyLedger(), days: { [`${month}-01`]: {
+    bucket: { cost: 0.42, pricedTokens: 1200, legacy: false }
+  } } })
+  assert.deepEqual(T.settledDesktopMonth(T.emptyLedger()), { known: false, cost: 0, pricedTokens: 0 })
+  T.$ledgerTab.set('overview')
+  const pendingAccounts = deferred()
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 0, calls: 0 } }
+    : call.path === '/membership/accounts'
+      ? pendingAccounts.promise
+      : { ok: true })
+
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(2)
+
+  assert.match(container.textContent, /Overview/)
+  assert.match(container.textContent, /Desktop-recorded this month/)
+  assert.match(container.querySelector('.wm-product-summary').textContent, /\$0\.42/)
+  assert.match(container.textContent, /Backend API-equivalent/)
+  assert.match(container.textContent, /Declared membership fees/)
+  const summary = container.querySelector('.wm-product-summary')
+  assert.match(summary.textContent, /Reading memberships for this connection/)
+  assert.doesNotMatch(summary.textContent, /0 saved plan\(s\) across 0 account\(s\)/)
+  assert.match(summary.textContent, /No backend calls recorded in the last 30 days/)
+
+  const commandcode = account('commandcode:default', {
+    family: 'commandcode', label: 'CommandCode', plan_id: 'commandcode.goat',
+    plan: { name: 'GOAT' },
+    fee: { basis: 'catalogue', effective: { amount: 10, currency: 'USD', period: 'month' } }
+  })
+  const codex = account('openai-codex:default', {
+    family: 'openai-codex', label: 'ChatGPT Plus', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' },
+    fee: { basis: 'catalogue', effective: { amount: 20, currency: 'USD', period: 'month' } }
+  })
+  await React.act(async () => pendingAccounts.resolve({ ok: true, accounts: [commandcode, codex],
+    store: { loaded: true, error: '' }, notes: [] }))
+  await flush(3)
+  assert.match(summary.textContent, /\$30\.00\/mo/)
+  assert.match(summary.textContent, /2 saved plan\(s\) across 2 account\(s\)/)
+  await React.act(async () => T.$ledger.set(T.emptyLedger()))
+})
+
+test('the membership card saves a user-defined plan against its selected credential account', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const id = 'openai-codex:work'
+  let saved = account(id, { label: 'Work account' })
+  transportCtl.respond(call => {
+    if (call.path === '/membership/plans') return plansOk()
+    if (call.method === 'GET') return { ok: true, accounts: [saved], store: { loaded: true, error: '' }, notes: [] }
+    if (call.method === 'PUT') {
+      saved = call.body
+      return { ok: true, account: saved }
+    }
+    return { ok: true }
+  })
+  const { container } = await boot(); await flush(3)
+  await clickByText(container, 'Create user-defined plan')
+  const form = container.querySelector('.wm-custom-form')
+  assert.ok(form)
+  await setField(container, 'Plan name', 'Workday plan', form)
+  await setField(container, 'Fee (optional)', '12.50', form)
+  await setField(container, 'Currency', 'USD', form)
+  await setField(container, 'Billing frequency', 'month', form)
+  await setField(container, 'Model restrictions', 'provider/model-a, provider/model-b', form)
+  await clickByText(form, 'Add allowance')
+  const allowance = form.querySelector('[data-custom-allowance="1"]')
+  assert.ok(allowance, 'the optional allowance editor is attached to this account form')
+  await setField(container, 'Window name', 'Five-hour window', allowance)
+  await setField(container, 'Rolling duration', '300', allowance)
+  await setField(container, 'Credit amount', '50', allowance)
+  await clickByText(form, 'Save user-defined plan')
+  await flush(4)
+  const write = transportCtl.calls.find(call => call.method === 'PUT')
+  assert.ok(write, 'saving the form sends an account update')
+  assert.equal(write.path, `/membership/accounts/${encodeURIComponent(id)}`)
+  assert.equal(write.body.plan_id, `custom:${id}`)
+  assert.equal(write.body.custom_plan.name, 'Workday plan')
+  assert.deepEqual(write.body.custom_plan.price, { amount: 12.5, currency: 'USD', period: 'month' })
+  assert.deepEqual(write.body.custom_plan.model_restrictions, ['provider/model-a', 'provider/model-b'])
+  assert.deepEqual(write.body.custom_plan.allowances, [{ id: 'five-hour-window', label: 'Five-hour window',
+    kind: 'rolling', duration_minutes: 300, amount: 50, currency: 'USD', scope: 'account' }])
+  assert.match(container.textContent, /Edit user-defined plan/)
+})
+
+test('Restore catalogue price closes the fee revision instead of saving zero', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const original = account('openai-codex:default', {
+    label: 'Default account', plan_id: 'openai-codex.chatgpt-plus',
+    fee: { basis: 'declared', published: { source: 'catalogue', amount: 20, currency: 'USD', period: 'month' },
+      override: { revision_id: 'fee-active', amount: 17, currency: 'USD', period: 'month' } },
+    fee_overrides: [{ id: 'fee-active', amount: 17, currency: 'USD', period: 'month', effective_from: '2026-09-01T00:00:00Z' }]
+  })
+  transportCtl.respond(call => call.path === '/membership/plans' ? plansOk()
+    : call.method === 'GET' ? { ok: true, accounts: [original], store: { loaded: true, error: '' }, notes: [] }
+      : { ok: true })
+  const { container } = await boot(); await flush(3)
+  await clickByText(container, 'Restore catalogue price')
+  await flush(3)
+  const write = transportCtl.calls.find(call => call.method === 'PUT')
+  assert.ok(write)
+  const override = write.body.fee_overrides.find(item => item.id === 'fee-active')
+  assert.ok(override.effective_to)
+  assert.ok(Number.isFinite(Date.parse(override.effective_to)))
+  assert.equal(write.body.fee_overrides.some(item => item.amount === 0), false)
+})
