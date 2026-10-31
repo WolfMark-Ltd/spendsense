@@ -77,7 +77,7 @@ Spend Sense is local-first: each Hermes records only the usage it sees, and memb
 
 | Capability | What you get |
 | --- | --- |
-| **Live session view** | A Desktop chip and pane for the focused session: input, output, cache and total tokens, call counts, context use, current provider and model rates, cache hit rate, and estimated cache savings. |
+| **Live session view** | A Desktop chip and pane for the focused session: cost KPI, prompt-token composition, cache gauge with coverage, and a collapsible rate card. Five stable sections keep their positions across live refreshes, with methodology notes tucked into info popovers. |
 | **Recorded ledger** | Eligible backend calls are timestamped and stored locally as they happen, so usage history does not depend on reopening an old session. |
 | **Usage analytics** | Distribution by model and provider, usage over time, parent versus delegated (subagent) work, cache performance, token composition, and a sortable Model Explorer covering every model × route pair — including how much usage could not be priced. |
 | **Costs in one place** | Declared membership fees sit alongside current cost estimates, with optional advanced rules for prepaid wallets, per-route allowances, and custom token rates. |

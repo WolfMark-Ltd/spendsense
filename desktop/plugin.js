@@ -91,6 +91,16 @@ function fmtUsd(v) {
   return `$${v.toFixed(2)}`
 }
 
+/** Per-MTok catalogue rates: 4dp grid, float-artefact-proof, never rounded away. */
+function fmtRate(v) {
+  if (v == null || !Number.isFinite(v)) return '—'
+  const rounded = Math.round(v * 1e4) / 1e4
+  // A positive rate must never render as free: below the 4dp grid, fall
+  // back to 3 significant digits instead of showing $0.
+  if (rounded === 0 && v > 0) return `$${String(Number(v.toPrecision(3)))}`
+  return `$${String(rounded)}`
+}
+
 /** Local calendar day, not UTC — "today" must mean the user's today. */
 function dayKey(ts) {
   const d = ts != null ? new Date(ts) : new Date()
@@ -468,7 +478,9 @@ function cacheCoverageDetail(b, t) {
 }
 
 function cacheCoverageLine(t, coverage, bucket) {
-  return t('cacheCoverageLine', Math.round((coverage || 0) * 100), cacheCoverageDetail(bucket, t))
+  // Unavailable coverage is omitted, never displayed as a measured 0%.
+  if (coverage == null) return ''
+  return t('cacheCoverageLine', Math.round(coverage * 100), cacheCoverageDetail(bucket, t))
 }
 
 /* ----------------------------------------------------------------- ledger */
@@ -1276,8 +1288,11 @@ function useLive() {
   const allowRefresh = useValue($automaticModelOptions)
   // After a restart the host seeds the focused session with an all-zero usage
   // object; treat that as "nothing yet" so the UI falls back to the ledger.
+  // Cache-only frames are valid usage too: normalisation splits them into
+  // fresh, read and write prompt tokens.
   const usage =
-    rawUsage && (num(rawUsage.input) || num(rawUsage.output) || num(rawUsage.total) || num(rawUsage.calls))
+    rawUsage && (num(rawUsage.input) || num(rawUsage.output) || num(rawUsage.total) || num(rawUsage.calls) ||
+      num(rawUsage.cache_read) || num(rawUsage.cache_write))
       ? rawUsage
       : null
 
@@ -1502,24 +1517,350 @@ function CacheBar({ pct }) {
   })
 }
 
-function Row({ dim, label, value }) {
-  return jsxs('div', {
-    className: 'flex items-baseline justify-between gap-3 tabular-nums',
-    children: [
-      jsx('span', { className: 'min-w-0 truncate text-(--ui-text-tertiary)', children: label }),
-      jsx('span', { className: cn('shrink-0', dim && 'text-(--ui-text-quaternary)'), children: value })
-    ]
+const $ratesOpen = atom(false)
+const $infoOpen = atom(null)
+
+/** Fresh/read/write shares of prompt tokens for the composition bar. */
+function compositionShares(bucket) {
+  const fresh = num(bucket?.input)
+  const read = num(bucket?.cacheRead)
+  const write = num(bucket?.cacheWrite)
+  const prompt = fresh + read + write
+  const frac = value => (prompt > 0 ? value / prompt : 0)
+  return {
+    fresh, read, write, prompt, output: num(bucket?.output),
+    freshFrac: frac(fresh), readFrac: frac(read), writeFrac: frac(write)
+  }
+}
+
+/** The display fields retained across a transient refresh gap. */
+function snapshotLive(live) {
+  return {
+    bucket: live.bucket ? { ...live.bucket } : null,
+    cacheCoverage: live.cacheCoverage,
+    cacheHitPct: live.cacheHitPct,
+    cost: live.cost,
+    costSource: live.costSource,
+    foreignSlug: live.foreignSlug,
+    fromHistory: live.fromHistory,
+    model: live.model,
+    partial: live.partial,
+    provider: live.provider,
+    providerUnknown: live.providerUnknown,
+    rates: live.rates,
+    saved: live.saved,
+    sinceAt: live.sinceAt
+  }
+}
+
+/**
+ * Stable pane reading. The current live value wins whenever it carries live
+ * usage; while the stream is briefly empty (refresh, gateway restart) the
+ * last reading for the SAME session is shown and marked stale. A session
+ * change resets: one conversation's numbers must never render under another's
+ * name. A bucket without usage is the recorded fallback, not a fresh
+ * reading, so it never refreshes the retained snapshot.
+ */
+function mergeStableLive(prev, live, key) {
+  const cur = live && live.bucket && live.usage ? snapshotLive(live) : null
+  if (!key || !prev || prev.key !== key) {
+    return { view: live, stale: false, cache: cur ? { key, snapshot: cur } : null }
+  }
+  if (cur) return { view: live, stale: false, cache: { key, snapshot: cur } }
+  if (prev.snapshot) return { view: { ...live, ...prev.snapshot }, stale: true, cache: prev }
+  return { view: live, stale: false, cache: prev }
+}
+
+let stableLiveCache = null
+function stableLive(live, key) {
+  const merged = mergeStableLive(stableLiveCache, live, key)
+  stableLiveCache = merged.cache
+  return merged
+}
+function resetStableLive() { stableLiveCache = null }
+
+/** Header presence: a live tick, recorded history, a stale refresh, or nothing. */
+function meterPresence(view, stale) {
+  if (stale) return 'updating'
+  if (view && view.usage) return 'live'
+  if (view && view.bucket) return 'recorded'
+  return 'empty'
+}
+
+function useStableLive() {
+  const live = useLive()
+  const sessionId = useValue(host.state.focusedSessionId)
+  const storedId = useValue(host.state.focusedStoredSessionId || $none)
+  return stableLive(live, storedId || sessionId || '')
+}
+
+/**
+ * Contextual explanation replacing a paragraph of permanent prose. One popover
+ * is open at a time ($infoOpen), so narrow panes never stack explanations.
+ * Opens on hover, focus and click; closes on leave, blur and Escape. Clicking
+ * always opens (never toggles shut what hover just opened), and the button
+ * keeps natural focus so Escape works after mouse interaction too.
+ */
+function InfoTip({ dir = 'down', id, label, text, wide = false }) {
+  const open = useValue($infoOpen)
+  const isOpen = open === id
+  const show = () => $infoOpen.set(id)
+  const hide = () => { if ($infoOpen.get() === id) $infoOpen.set(null) }
+  return jsxs('span', {
+    className: 'wm-info',
+    onMouseLeave: hide,
+    children: keyedElementChildren([
+      jsx('button', {
+        type: 'button',
+        className: 'wm-info-btn',
+        'aria-label': label,
+        'aria-expanded': isOpen,
+        'aria-controls': `wm-info-${id}`,
+        onMouseEnter: show,
+        onFocus: show,
+        onBlur: hide,
+        onClick: show,
+        onKeyDown: event => {
+          if (event.key === 'Escape') {
+            event.stopPropagation()
+            hide()
+          }
+        },
+        children: 'i'
+      }),
+      isOpen
+        ? jsx('span', { id: `wm-info-${id}`, role: 'tooltip',
+            className: cn('wm-info-pop', dir === 'up' && 'wm-info-up', wide && 'wm-info-pop-wide'), children: text })
+        : null
+    ].filter(Boolean), `info-${id}`)
   })
 }
 
-function Section({ children, title }) {
-  return jsxs('div', {
-    className: 'flex flex-col gap-1',
-    children: [
-      jsx('div', { className: 'text-[0.625rem] tracking-wide text-(--ui-text-quaternary) uppercase', children: title }),
-      jsx('div', { className: 'flex flex-col gap-0.5 text-xs', children })
-    ]
-  })
+/** Section A: brand, live presence, model, provider, scope. Always mounted. */
+function MeterHeader({ presence, t, view }) {
+  const stateLabel = presence === 'live' ? t('meterLive')
+    : presence === 'updating' ? t('meterUpdating') : t('meterRecorded')
+  return jsxs('header', { className: 'wm-meter-head', children: [
+    jsxs('div', { className: 'wm-meter-brandrow', children: [
+      jsx('span', { className: 'wm-meter-mark', children: jsx(BrandMark, { size: 18, id: 'pane' }) }, 'mark'),
+      jsx('span', { className: 'wm-meter-name', children: 'Spend Sense' }, 'name'),
+      jsxs('span', { className: 'wm-meter-presence', children: [
+        jsx('span', { className: 'wm-dot', 'data-state': presence, 'aria-hidden': true }, 'dot'),
+        jsx('span', { children: stateLabel }, 'label')
+      ] }, 'presence'),
+      jsx('span', { className: 'wm-scope-chip',
+        children: view.fromHistory ? t('scopeConversation') : t('scopeRun') }, 'scope')
+    ] }, 'brand'),
+    jsxs('div', { className: 'wm-meter-modelrow', children: [
+      jsx('span', { className: 'wm-model', title: view.model || '', children: view.model || '—' }, 'model'),
+      jsx('span', {
+        className: 'wm-provider-badge',
+        title: view.provider ? t('providerTip', view.provider) : t('providerUnknownTip'),
+        children: view.provider || t('providerUnknown')
+      }, 'provider')
+    ] }, 'modelrow')
+  ] })
+}
+
+/** Section B: the conversation's API-equivalent cost and supporting metrics. */
+function CostKpi({ t, view }) {
+  const warn = view.costSource === 'foreign' || view.costSource === 'none'
+  return jsxs('section', { className: 'wm-card', 'aria-label': t('cost'), children: [
+    jsx('div', {
+      className: cn('wm-kpi-figure', warn && 'wm-warn'),
+      children: view.cost == null ? '—' : fmtUsd(view.cost)
+    }, 'figure'),
+    jsxs('div', { className: 'wm-kpi-source', children: [
+      jsx('span', { children: t('apiEquivalent') }, 'label'),
+      jsx(InfoTip, {
+        id: 'cost-source',
+        label: t('infoLabel'),
+        text: `${sourceLabel(t, view.costSource, view.foreignSlug, view.providerUnknown)} — ${t('costSourceInfo')}`
+      }, 'info')
+    ] }, 'source'),
+    jsxs('div', { className: 'wm-kpi-metrics', children: [
+      jsxs('div', { className: 'wm-metric', children: [
+        jsx('span', { className: 'wm-metric-label', children: t('totalTokens') }, 'l'),
+        jsx('span', { className: 'wm-metric-value',
+          children: `${view.bucket?.cacheEstimated ? '≈' : ''}${fmtTokens(tokensOf(view.bucket))}` }, 'v')
+      ] }, 'tokens'),
+      jsxs('div', { className: 'wm-metric', children: [
+        jsx('span', { className: 'wm-metric-label', children: t('calls') }, 'l'),
+        jsx('span', { className: 'wm-metric-value', children: String(num(view.bucket?.calls)) }, 'v')
+      ] }, 'calls')
+    ] }, 'metrics'),
+    view.sinceAt
+      ? jsx('div', { className: 'wm-kpi-since', children: t('sinceDate', fmtDate(view.sinceAt)) }, 'since')
+      : jsx('div', { className: 'wm-kpi-since wm-kpi-since-empty', children: '—' }, 'since'),
+    view.partial
+      ? jsxs('div', { className: 'wm-partial-chip', children: [
+          jsx('span', { children: `▲ ${t('partialShort', fmtTokens(view.bucket.unpricedTokens))}` }, 'chip'),
+          jsx(InfoTip, { id: 'partial', label: t('infoLabel'),
+            text: t('unpricedNote', fmtTokens(view.bucket.unpricedTokens)) }, 'info')
+        ] }, 'partial')
+      : null
+  ].filter(Boolean) })
+}
+
+/** Section C: prompt-token composition with a labelled stacked bar. */
+function TokenComposition({ t, view }) {
+  const b = view.bucket || {}
+  const shares = compositionShares(b)
+  const hasContext = !!(view.usage && typeof view.usage.context_percent === 'number')
+  const rows = tokenRows(t, b, hasContext, view.usage)
+  const byKey = Object.fromEntries(rows.map(row => [row.key, row]))
+  const pct = frac => `${Math.round(frac * 100)}%`
+  const legend = (key, label, swatch) => jsxs('div', { className: 'wm-legend-item', children: [
+    jsx('span', { className: 'wm-swatch', 'data-part': swatch, 'aria-hidden': true }, 'sw'),
+    jsx('span', { className: 'wm-legend-label', children: label }, 'label'),
+    jsx('span', { className: 'wm-legend-value', children: byKey[key] ? byKey[key].value : '—' }, 'value')
+  ] }, key)
+  const u = view.usage
+  const contextValue = u && typeof u.context_percent === 'number'
+    ? `${Math.round(u.context_percent)}% · ${fmtTokens(u.context_used)}/${fmtTokens(u.context_max)}`
+    : '—'
+  return jsxs('section', { className: 'wm-card', 'aria-label': t('promptMix'), children: [
+    jsx('div', { className: 'wm-card-title', children: t('promptMix') }, 'title'),
+    jsxs('div', {
+      className: 'wm-mix-bar',
+      role: 'img',
+      'aria-label': `${t('promptMix')}: ${t('cacheFresh')} ${pct(shares.freshFrac)}, ${t('cacheRead')} ${pct(shares.readFrac)}, ${t('cacheWrite')} ${pct(shares.writeFrac)}`,
+      children: [
+        jsx('div', { className: 'wm-mix-fill', 'data-part': 'fresh',
+          style: { width: pct(shares.freshFrac) } }, 'fresh'),
+        jsx('div', { className: 'wm-mix-fill', 'data-part': 'read',
+          style: { width: pct(shares.readFrac) } }, 'read'),
+        jsx('div', { className: 'wm-mix-fill', 'data-part': 'write',
+          style: { width: pct(shares.writeFrac) } }, 'write')
+      ]
+    }),
+    jsxs('div', { className: 'wm-legend', children: [
+      legend('i', t('cacheFresh'), 'fresh'),
+      legend('cr', byKey.cr ? byKey.cr.label : t('cacheRead'), 'read'),
+      legend('cw', byKey.cw ? byKey.cw.label : t('cacheWrite'), 'write')
+    ] }, 'legend'),
+    jsxs('div', { className: 'wm-legend wm-legend-separate', children: [
+      jsxs('div', { className: 'wm-legend-item', children: [
+        jsx('span', { className: 'wm-legend-label', children: t('output') }, 'label'),
+        jsx('span', { className: 'wm-legend-value', children: fmtTokens(num(b.output)) }, 'value')
+      ] }, 'o'),
+      jsxs('div', { className: 'wm-legend-item', children: [
+        jsx('span', { className: 'wm-legend-label', children: t('context') }, 'label'),
+        jsx('span', { className: 'wm-legend-value', children: contextValue }, 'value')
+      ] }, 'ctx')
+    ] }, 'separate')
+  ] })
+}
+
+const RING_R = 26
+const RING_C = 2 * Math.PI * RING_R
+
+/** Section D: prompt cache performance as a ring gauge with coverage. */
+function CacheGauge({ t, view }) {
+  const b = view.bucket || {}
+  const pct = view.cacheHitPct == null ? null : Math.max(0, Math.min(100, view.cacheHitPct))
+  const approx = b.cacheEstimated ? '≈' : ''
+  const estimated = !!b.cacheEstimated
+  const arc = pct == null ? 0 : (pct / 100) * RING_C
+  return jsxs('section', { className: 'wm-card', 'aria-label': t('cacheTitle'), children: [
+    jsxs('div', { className: 'wm-card-title', children: [
+      jsx('span', { children: t('cacheTitle') }, 'label'),
+      jsx(InfoTip, { id: 'cache-method', label: t('infoLabel'),
+        text: `${t('cacheMethodInfo')} ${cacheCoverageLine(t, view.cacheCoverage, b)}` }, 'info')
+    ] }, 'title'),
+    jsxs('div', { className: 'wm-gauge-row', children: [
+      jsxs('svg', {
+        className: 'wm-ring',
+        viewBox: '0 0 64 64',
+        role: 'img',
+        'aria-label': `${t('weightedCacheHit')}: ${pct == null ? '—' : `${approx}${Math.round(pct)}%`}${estimated ? ` (${t('estimatedLabel')})` : ''}`,
+        children: [
+          jsx('circle', { cx: 32, cy: 32, r: RING_R, className: 'wm-ring-track' }, 'track'),
+          jsx('circle', {
+            cx: 32, cy: 32, r: RING_R,
+            className: cn('wm-ring-value', estimated && 'wm-ring-estimated'),
+            strokeDasharray: `${arc} ${RING_C}`,
+            transform: 'rotate(-90 32 32)'
+          }, 'value'),
+          jsx('text', {
+            x: 32, y: 32, textAnchor: 'middle', dominantBaseline: 'central',
+            className: 'wm-ring-text',
+            children: pct == null ? '—' : `${approx}${Math.round(pct)}%`
+          }, 'text')
+        ]
+      }, 'ring'),
+      jsxs('div', { className: 'wm-gauge-stats', children: [
+        jsxs('div', { className: 'wm-gauge-stat', children: [
+          jsx('span', { className: 'wm-metric-label', children: t('coverageLabel') }, 'l'),
+          jsx('span', { className: 'wm-metric-value',
+            children: view.cacheCoverage == null ? '—' : `${Math.round(view.cacheCoverage * 100)}%` }, 'v')
+        ] }, 'coverage'),
+        jsxs('div', { className: 'wm-gauge-stat', children: [
+          jsxs('span', { className: 'wm-metric-label', children: [
+            jsx('span', { children: t('savedGauge') }, 't'),
+            jsx(InfoTip, { id: 'savings-method', label: t('infoLabel'), text: t('savingsInfo'), wide: true, dir: 'up' }, 'info')
+          ] }, 'l'),
+          jsx('span', { className: 'wm-metric-value', children: view.saved == null ? '—' : `${approx}${fmtUsd(view.saved)}` }, 'v')
+        ] }, 'saved'),
+        pct == null || view.saved == null ? null : jsx('div', { className: 'wm-gauge-note',
+          children: estimated ? `≈ ${t('estimatedLabel')}` : t('exactLabel') }, 'marker')
+      ].filter(Boolean) }, 'stats')
+    ] }, 'row')
+  ] })
+}
+
+/** Section E: model pricing, collapsed by default and stable across refresh. */
+function RatesPanel({ t, view }) {
+  const open = useValue($ratesOpen)
+  const rates = view.rates
+  const cells = [
+    { key: 'input', label: t('input'), value: fmtRate(rates?.input) },
+    { key: 'output', label: t('output'), value: fmtRate(rates?.output) },
+    { key: 'cache', label: t('cacheRead'), value: fmtRate(rates?.cache) }
+  ]
+  if (rates && rates.write != null) {
+    cells.push({ key: 'write', label: t('cacheWrite'), value: fmtRate(rates.write) })
+  }
+  return jsxs('section', { className: 'wm-card', 'aria-label': t('rates'), children: [
+    jsxs('div', { className: 'wm-rates-head', children: [
+      jsxs('button', {
+        type: 'button',
+        className: 'wm-rates-toggle',
+        'aria-expanded': open,
+        'aria-controls': 'wm-rates-body',
+        onClick: () => $ratesOpen.set(!open),
+        children: [
+          jsx('span', { children: t('rates') }, 'label'),
+          jsx('span', { className: cn('wm-chevron', open && 'wm-chevron-open'), 'aria-hidden': true, children: '›' }, 'chevron')
+        ]
+      }, 'toggle'),
+      jsx(InfoTip, { id: 'rates-source', dir: 'up', label: t('infoLabel'), text: t('ratesNote') }, 'info')
+    ] }, 'head'),
+    open
+      ? jsxs('div', { id: 'wm-rates-body', children: [
+          jsxs('div', { className: 'wm-rates-grid', children: cells.map(cell =>
+            jsxs('div', { className: 'wm-rate-cell', children: [
+              jsx('span', { className: 'wm-metric-label', children: cell.label }, 'l'),
+              jsx('span', { className: 'wm-metric-value', children: cell.value }, 'v')
+            ] }, cell.key)
+          ) }, 'grid'),
+          !rates
+            ? jsx('div', { className: 'wm-gauge-note', children:
+                view.pricingLoading ? t('loadingPrice') : view.pricingError || t('noPriceLong') }, 'note')
+            : null
+        ].filter(Boolean) }, 'body')
+      : null
+  ] })
+}
+
+function MeterEmpty({ t }) {
+  return jsxs('div', { className: 'wm-meter-empty', children: [
+    jsxs('div', { className: 'wm-meter-brandrow', children: [
+      jsx('span', { className: 'wm-meter-mark', children: jsx(BrandMark, { size: 18, id: 'pane' }) }, 'mark'),
+      jsx('span', { className: 'wm-meter-name', children: 'Spend Sense' }, 'name')
+    ] }, 'brand'),
+    jsx(Note, { children: t('empty') }, 'note')
+  ] })
 }
 
 function Note({ children, warn }) {
@@ -1562,113 +1903,118 @@ function BrandMark({ size = 20, id = 'mark' }) {
     ] })
 }
 
-/** Right-hand pane: the focused session only. Range totals live on the ledger page. */
+const METER_CSS = [
+  '.wm-pane{display:flex;height:100%;flex-direction:column;gap:10px;overflow:auto;padding:12px;min-width:0}',
+  '.wm-meter-head{display:flex;flex-direction:column;gap:7px;padding-bottom:10px;border-bottom:1px solid var(--ui-stroke-secondary)}',
+  '.wm-meter-brandrow{display:flex;align-items:center;gap:8px;min-width:0}',
+  '.wm-meter-mark{display:grid;place-items:center;width:22px;height:22px;flex-shrink:0}',
+  '.wm-meter-name{font-size:12px;font-weight:620;letter-spacing:-.15px;color:var(--ui-text-primary);white-space:nowrap}',
+  '.wm-meter-presence{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:10px;color:var(--ui-text-tertiary);white-space:nowrap}',
+  '.wm-dot{width:7px;height:7px;border-radius:50%;background:var(--ui-text-quaternary);flex-shrink:0}',
+  '.wm-dot[data-state="live"]{background:var(--ui-success)}',
+  '.wm-dot[data-state="updating"]{background:var(--ui-warning)}',
+  '.wm-scope-chip{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--ui-text-quaternary);border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:2px 7px;white-space:nowrap}',
+  '.wm-meter-modelrow{display:flex;align-items:center;gap:8px;min-width:0}',
+  '.wm-model{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:560;color:var(--ui-text-primary)}',
+  '.wm-provider-badge{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--ui-text-tertiary);background:var(--ui-fill-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:5px;padding:2px 7px}',
+  '.wm-meter-sections{display:flex;flex-direction:column;gap:10px;min-width:0}',
+  '.wm-card{border:1px solid var(--ui-stroke-secondary);border-radius:9px;padding:11px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}',
+  '.wm-card-title{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ui-text-tertiary)}',
+  '.wm-kpi-figure{font-size:27px;line-height:1.15;font-weight:640;letter-spacing:-.4px;font-variant-numeric:tabular-nums;color:var(--ui-accent);min-height:32px;overflow-wrap:anywhere}',
+  '.wm-kpi-figure.wm-warn{color:var(--ui-warning)}',
+  '.wm-kpi-source{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-text-tertiary)}',
+  '.wm-kpi-metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}',
+  '.wm-metric{display:flex;flex-direction:column;gap:1px;min-width:0}',
+  '.wm-metric-label{font-size:10px;color:var(--ui-text-tertiary);white-space:nowrap}',
+  '.wm-metric-value{font-size:13px;font-weight:560;font-variant-numeric:tabular-nums;color:var(--ui-text-primary);overflow-wrap:anywhere}',
+  '.wm-kpi-since{font-size:10px;color:var(--ui-text-tertiary);min-height:14px}',
+  '.wm-kpi-since-empty{visibility:hidden}',
+  '.wm-mix-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--ui-fill-tertiary);min-width:0}',
+  '.wm-mix-fill{height:100%;min-width:0}',
+  '.wm-mix-fill[data-part="fresh"],.wm-swatch[data-part="fresh"]{background:var(--ui-accent)}',
+  '.wm-mix-fill[data-part="read"],.wm-swatch[data-part="read"]{background:var(--ui-success)}',
+  '.wm-mix-fill[data-part="write"],.wm-swatch[data-part="write"]{background:var(--ui-warning)}',
+  '.wm-legend{display:flex;flex-direction:column;gap:4px}',
+  '.wm-legend-item{display:flex;align-items:baseline;gap:7px;font-size:12px;min-width:0}',
+  '.wm-swatch{width:8px;height:8px;border-radius:2px;flex-shrink:0;align-self:center}',
+  '.wm-legend-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ui-text-secondary)}',
+  '.wm-legend-value{flex-shrink:0;font-variant-numeric:tabular-nums;color:var(--ui-text-primary)}',
+  '.wm-legend-separate{border-top:1px solid var(--ui-stroke-secondary);padding-top:7px}',
+  '.wm-gauge-row{display:flex;gap:12px;align-items:center;min-height:76px}',
+  '.wm-ring{width:76px;height:76px;flex-shrink:0}',
+  '.wm-ring-track{fill:none;stroke:var(--ui-fill-tertiary);stroke-width:8}',
+  '.wm-ring-value{fill:none;stroke:var(--ui-accent);stroke-width:8;stroke-linecap:round}',
+  '.wm-ring-estimated{opacity:.45}',
+  '.wm-ring-text{fill:var(--ui-text-primary);font-size:14px;font-weight:640;font-variant-numeric:tabular-nums}',
+  '.wm-gauge-stats{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}',
+  '.wm-gauge-stat{display:flex;align-items:baseline;justify-content:space-between;gap:8px}',
+  '.wm-gauge-note{font-size:10px;line-height:1.45;color:var(--ui-text-tertiary)}',
+  '.wm-rates-head{display:flex;align-items:center;gap:6px}',
+  '.wm-rates-toggle{flex:1;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:none;padding:0;font:inherit;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ui-text-tertiary);cursor:pointer;text-align:left}',
+  '.wm-chevron{font-size:14px;line-height:1;transition:transform .15s ease}',
+  '.wm-chevron-open{transform:rotate(90deg)}',
+  '.wm-rates-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}',
+  '.wm-rate-cell{display:flex;flex-direction:column;gap:1px;min-width:0}',
+  '.wm-kpi-source,.wm-card-title,.wm-rates-head,.wm-gauge-stat{position:relative}',
+  '.wm-gauge-stat .wm-info{margin-left:5px;vertical-align:1px}',
+  '.wm-partial-chip{position:relative;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-warning)}',
+  '.wm-info{position:static;display:inline-flex;flex-shrink:0}',
+  '.wm-info-btn{width:15px;height:15px;border-radius:50%;border:1px solid var(--ui-text-quaternary);background:none;color:var(--ui-text-quaternary);font-size:9px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;cursor:pointer;display:inline-grid;place-items:center}',
+  '.wm-info-btn:hover,.wm-info-btn:focus-visible{border-color:var(--ui-accent);color:var(--ui-accent)}',
+  '.wm-info-btn:focus-visible{outline:2px solid var(--ui-accent);outline-offset:1px}',
+  '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:20;background:var(--ui-fill-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:7px;padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;white-space:normal;color:var(--ui-text-secondary);box-shadow:0 6px 20px rgba(0,0,0,.35)}',
+  '.wm-info-pop.wm-info-up{top:auto;bottom:calc(100% + 6px)}',
+  '.wm-info-pop-wide{left:auto;right:0;width:max-content;max-width:200px}',
+  '.wm-stale .wm-kpi-figure,.wm-stale .wm-metric-value,.wm-stale .wm-legend-value,.wm-stale .wm-ring-text{opacity:.62}',
+  '.wm-meter-empty{display:flex;flex-direction:column;gap:10px}',
+  '.wm-pane :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}',
+  '@media (prefers-reduced-motion:reduce){.wm-chevron{transition:none}}'
+].join('');
+
+/**
+ * Right-hand pane: the focused session only. Range totals live on the ledger
+ * page. All five sections stay mounted while data (or a retained stale
+ * reading) exists; only genuinely new states — empty, or a session switch —
+ * change the layout.
+ */
 function Meter() {
   const t = usePluginI18n(ID)
-  const live = useLive()
+  const { view, stale } = useStableLive()
   const storageError = useValue($storageError)
-  const backendRates = useValue($backendRates)
+  useValue($backendRates)
   const rateIdentity = useValue($membershipIdentity)
-  useEffect(() => { ensureBackendRate(live.provider, live.model) }, [live.provider, live.model, rateIdentity])
-  const sections = []
+  const provider = view.provider
+  const model = view.model
+  useEffect(() => { ensureBackendRate(provider, model) }, [provider, model, rateIdentity])
+  const presence = meterPresence(view, stale)
 
-  if (live.bucket) {
-    const u = live.usage
-    const b = live.bucket
-    const approx = b.cacheEstimated ? '≈' : ''
-    const warn = live.costSource === 'foreign' || live.costSource === 'none'
-    sections.push(
-      jsxs(
-        'div',
-        {
-          className: 'flex flex-col gap-2',
-          children: [
-            jsxs('div', {
-              className: 'flex items-center justify-between gap-2',
-              children: [
-                jsx('div', { className: 'truncate text-sm font-medium', children: live.model || '—' }),
-                jsxs('div', { className: 'flex items-center gap-1.5', children: [
-                  jsx('span', { className: 'text-[0.5625rem] uppercase tracking-wide text-(--ui-text-quaternary)', children: live.fromHistory ? t('scopeConversation') : t('scopeRun') }),
-                  jsx(Tip, {
-                    label: live.provider ? t('providerTip', live.provider) : t('providerUnknownTip'),
-                    children: jsx(Badge, { variant: 'muted', children: live.provider || t('providerUnknown') })
-                  })
-                ] })
-              ]
-            }),
-            jsxs('div', {
-              className: 'flex flex-wrap items-baseline gap-x-2',
-              children: [
-                jsx('div', {
-                  className: 'text-2xl font-semibold tabular-nums text-(--ui-accent)',
-                  children: live.cost == null ? '—' : fmtUsd(live.cost)
-                }),
-                jsx('span', {
-                  className: cn('text-[0.625rem]', warn ? 'text-(--ui-warning)' : 'text-(--ui-text-quaternary)'),
-                  children: sourceLabel(t, live.costSource, live.foreignSlug, live.providerUnknown)
-                })
-              ]
-            }),
-            jsx(Section, {
-              title: scopeTotalsTitle(t, live.fromHistory),
-              children: tokenRows(t, b, !!(u && typeof u.context_percent === 'number'), u).map(row =>
-                jsx(Row, { dim: row.dim, label: row.label, value: row.value }, row.key)
-              )
-            }),
-            live.sinceAt
-              ? jsx(Note, { children: t(live.fromHistory ? 'historyNote' : 'cumulativeNote', fmtDate(live.sinceAt)) }, 'hist')
-              : null,
-            live.partial ? jsx(Note, { warn: true, children: t('unpricedNote', fmtTokens(b.unpricedTokens)) }, 'up') : null,
-            num(b.input) + num(b.cacheRead) + num(b.cacheWrite) > 0
-              ? jsx(Section, {
-                  title: t('cacheTitle'),
-                  children: [
-                    jsx(Row, { label: t('hitRate'), value: live.cacheHitPct == null ? '—' : `${approx}${Math.round(live.cacheHitPct)}%` }, 'hr'),
-                    live.cacheHitPct != null ? jsx('div', { className: 'py-1', children: jsx(CacheBar, { pct: live.cacheHitPct }) }, 'bar') : null,
-                    jsx(Note, { children: cacheCoverageLine(t, live.cacheCoverage, b) }, 'coverage'),
-                    live.saved != null ? jsx(Row, { label: t('savedTotal'), value: `${approx}${fmtUsd(live.saved)}` }, 'sv') : null,
-                    b.cacheEstimated ? jsx(Note, { children: t('cacheEstNote') }, 'est') : null
-                  ].filter(Boolean)
-                })
-              : null,
-            live.rates
-              ? jsxs('div', { className: 'flex flex-col gap-1', children: [
-                  jsx(Section, {
-                    title: t('rates'),
-                    children: [
-                      jsx(Row, { dim: true, label: t('input'), value: `$${live.rates.input}` }, 'ri'),
-                      jsx(Row, { dim: true, label: t('output'), value: `$${live.rates.output}` }, 'ro'),
-                      jsx(Row, { dim: true, label: t('cacheRead'), value: `$${live.rates.cache}` }, 'rc')
-                    ]
-                  }),
-                  // The native pane prices with its own resolver, which may be on a
-                  // peak card; this pane prices at the WolfMark catalogue card. Both
-                  // are estimates, and neither is a provider invoice.
-                  jsx(Note, { children: t('ratesNote') }, 'rn')
-                ] })
-              : jsx(Note, {
-                  children: live.pricingLoading ? t('loadingPrice') : live.pricingError || t('noPriceLong')
-                })
-          ].filter(Boolean)
-        },
-        'live'
-      )
-    )
-  } else {
-    sections.push(jsx(Note, { children: t('empty') }, 'live'))
-  }
-
-  if (storageError) sections.push(jsx(Note, { warn: true, children: t('storageError', storageError) }, 'st'))
-
-  return jsxs('div', { className: 'wm-meter flex h-full flex-col gap-3 overflow-auto p-3', children: [
-    jsx('style', { children: '.wm-meter-brand{display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--ui-stroke-secondary);padding:2px 0 10px}.wm-meter-mark{display:grid;place-items:center;width:24px;height:24px;flex-shrink:0}.wm-meter-name{font-size:12px;font-weight:620;letter-spacing:-.15px;color:var(--ui-text-primary)}.wm-meter-subtitle{font-size:10px;color:var(--ui-text-tertiary)}' }),
-    jsxs('header', { className: 'wm-meter-brand', children: [
-      jsx('span', { className: 'wm-meter-mark', children: jsx(BrandMark, { size: 20, id: 'pane' }) }),
-      jsxs('div', { children: [jsx('div', { className: 'wm-meter-name', children: 'Spend Sense' }),
-        jsx('div', { className: 'wm-meter-subtitle', children: 'Live usage · focused session' })] })
-    ] }),
-    jsx('div', { className: 'flex min-w-0 flex-col gap-3', children: sections })
-  ] })
+  // Named wm-pane, not wm-meter: .wm-meter is the analytics cache bar,
+  // and the pane stylesheet is global while the pane is mounted.
+  // A hover-opened tip has no focused button to catch Escape; dismiss it
+  // here on the way down and keep the window-level ledger closer out of it.
+  // Plain Escape (no tip open) still propagates to the ledger as before.
+  return jsxs('div', { className: 'wm-pane',
+    onKeyDownCapture: event => {
+      if (event.key === 'Escape' && $infoOpen.get()) {
+        event.stopPropagation()
+        $infoOpen.set(null)
+      }
+    },
+    children: [
+    jsx('style', { children: METER_CSS }, 'css'),
+    !view.bucket
+      ? jsx(MeterEmpty, { t }, 'body')
+      : jsxs('div', { className: cn('wm-meter-sections', stale && 'wm-stale'), children: [
+          jsx(MeterHeader, { presence, t, view }, 'head'),
+          jsx(CostKpi, { t, view }, 'cost'),
+          jsx(TokenComposition, { t, view }, 'mix'),
+          jsx(CacheGauge, { t, view }, 'cache'),
+          jsx(RatesPanel, { t, view }, 'rates')
+        ] }, 'body'),
+    storageError
+      ? jsx(Note, { warn: true, children: t('storageError', storageError) }, 'st')
+      : null
+  ].filter(Boolean) })
 }
 
 /* -------------------------------------------------------------- full page */
@@ -5378,6 +5724,22 @@ const I18N = {
     noLedger: 'Nothing recorded in this range. Usage is folded in as turns complete.',
     noPrice: 'n/a',
     noPriceLong: 'No rate for this model in the provider catalog or the bundled models.dev table. Run scripts/gen-rates.py to refresh it.',
+    meterLive: 'Live',
+    meterRecorded: 'Recorded',
+    meterUpdating: 'Updating…',
+    apiEquivalent: 'API equivalent',
+    costSourceInfo: 'Spend Sense prices this conversation from Hermes backend estimates or catalogue $/Mtok rates, depending on what is available. A provider invoice may differ by route, peak pricing or rounding.',
+    totalTokens: 'Total tokens',
+    sinceDate: d => `since ${d}`,
+    promptMix: 'Prompt mix',
+    cacheFresh: 'Fresh input',
+    cacheMethodInfo: 'Hit rate is cache-read tokens over covered prompt tokens (fresh input, reads and writes), weighted across calls. Gateway percentages reconstructed by Hermes are estimates, marked ≈.',
+    exactLabel: 'exact',
+    estimatedLabel: 'estimated',
+    infoLabel: 'More information',
+    coverageLabel: 'Coverage',
+    savingsInfo: 'Theoretical saving versus pricing the same covered prompt tokens at uncached input rates. Cache writes can cost extra, so this is an estimate, not a credit or refund.',
+    partialShort: n => `${n} unpriced`,
     output: 'Output',
   pageTitle: 'Spend Sense',
     pageTitleDesktop: 'Spend Sense — this desktop',
@@ -5457,6 +5819,7 @@ const I18N = {
     rates: 'Rates ($/Mtok)',
     saved: 'Net savings',
     savedTotal: 'Theoretical net cache savings',
+    savedGauge: 'Net cache savings',
     sessionTokens: 'This session',
     src_backend: 'Hermes backend estimate',
     src_bundled: 'estimated from models.dev rates',
@@ -5519,6 +5882,22 @@ const I18N = {
     noLedger: '该区间没有记录。每轮对话结束后会自动累加。',
     noPrice: '无',
     noPriceLong: '供应商目录与内置 models.dev 价格表中都没有该模型。可运行 scripts/gen-rates.py 刷新价格表。',
+    meterLive: '实时',
+    meterRecorded: '已记录',
+    meterUpdating: '更新中…',
+    apiEquivalent: 'API 等值',
+    costSourceInfo: 'Spend Sense 按 Hermes 后端估算或目录单价（$/百万令牌）为本次对话计价，具体取决于可用数据。实际账单可能因线路、峰谷价或取整而不同。',
+    totalTokens: '总令牌',
+    sinceDate: d => `自 ${d} 起`,
+    promptMix: '提示词构成',
+    cacheFresh: '新增输入',
+    cacheMethodInfo: '命中率 = 缓存读取 ÷ 有缓存数据的提示词（新增输入、读取、写入），按调用加权。Hermes 推算的网关百分比为估算值，以 ≈ 标记。',
+    exactLabel: '精确',
+    estimatedLabel: '估算',
+    infoLabel: '更多信息',
+    coverageLabel: '覆盖率',
+    savingsInfo: '与按未缓存输入价计算的理论差值。缓存写入可能产生额外费用，此为估算，不是退款或抵扣。',
+    partialShort: n => `${n} 未定价`,
     output: '输出',
   pageTitle: 'WolfMark 成本账本',
     providerTip: slug => `实际承载线路：${slug}`,
@@ -5531,6 +5910,7 @@ const I18N = {
     rates: '单价（$/百万令牌）',
     saved: '净节省',
     savedTotal: '理论缓存净节省',
+    savedGauge: '缓存净节省',
     scopeRun: '本轮',
     scopeConversation: '对话',
     scopeTotalsConversation: '对话总计',
@@ -5577,6 +5957,8 @@ export default {
     $group.set(ctx.storage.get('group', 'route'))
     $basis.set(ctx.storage.get('basis', 'hybrid'))
     $automaticModelOptions.set(Boolean(ctx.storage.get('automatic-model-options', false)))
+    $ratesOpen.set(Boolean(ctx.storage.get('rates-open', false)))
+    ctx.onDispose($ratesOpen.listen(v => ctx.storage.set('rates-open', Boolean(v))))
     ctx.onDispose($range.listen(v => ctx.storage.set('range', v)))
     ctx.onDispose($view.listen(v => ctx.storage.set('view', v)))
     ctx.onDispose($group.listen(v => ctx.storage.set('group', v)))
@@ -5696,7 +6078,10 @@ export const __test = {
   readUsage, cacheCoverage, cacheCoverageDetail, cacheCoverageLine,
   resolveRates,
   summarize,
+  Meter, MeterHeader, CostKpi, TokenComposition, CacheGauge, RatesPanel, MeterEmpty, InfoTip,
+  useStableLive, mergeStableLive, stableLive, resetStableLive, meterPresence, compositionShares,
+  $ratesOpen, $infoOpen, METER_CSS, RING_R, RING_C,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
-  fmtUsd, fmtTokens, fmtDate, tokensOf, hitPctOf, cacheSavings, liveSavings,
+  fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, liveSavings,
   $ledger
 }

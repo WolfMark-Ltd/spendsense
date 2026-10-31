@@ -46,6 +46,7 @@ export const host = {
     focusedSessionId: atom(null),
     focusedStoredSessionId: atom(null),
     focusedUsage: atom(null),
+    model: atom(''),
     focusedSessionProfile: profile
   },
   notify() {},
