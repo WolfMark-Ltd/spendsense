@@ -91,6 +91,12 @@ function fmtUsd(v) {
   return `$${v.toFixed(2)}`
 }
 
+/** Per-MTok catalogue rates: up to 4dp, float-artefact-proof, never rounded away. */
+function fmtRate(v) {
+  if (v == null || !Number.isFinite(v)) return '—'
+  return `$${String(Math.round(v * 1e4) / 1e4)}`
+}
+
 /** Local calendar day, not UTC — "today" must mean the user's today. */
 function dayKey(ts) {
   const d = ts != null ? new Date(ts) : new Date()
@@ -1580,14 +1586,15 @@ function useStableLive() {
 /**
  * Contextual explanation replacing a paragraph of permanent prose. One popover
  * is open at a time ($infoOpen), so narrow panes never stack explanations.
- * Opens on hover, focus and click; closes on leave, blur and Escape.
+ * Opens on hover, focus and click; closes on leave, blur and Escape. Clicking
+ * always opens (never toggles shut what hover just opened), and the button
+ * keeps natural focus so Escape works after mouse interaction too.
  */
-function InfoTip({ dir = 'down', id, label, text }) {
+function InfoTip({ dir = 'down', id, label, text, wide = false }) {
   const open = useValue($infoOpen)
   const isOpen = open === id
   const show = () => $infoOpen.set(id)
   const hide = () => { if ($infoOpen.get() === id) $infoOpen.set(null) }
-  const toggle = () => $infoOpen.set(isOpen ? null : id)
   return jsxs('span', {
     className: 'wm-info',
     onMouseLeave: hide,
@@ -1601,8 +1608,7 @@ function InfoTip({ dir = 'down', id, label, text }) {
         onMouseEnter: show,
         onFocus: show,
         onBlur: hide,
-        onMouseDown: event => event.preventDefault(),
-        onClick: toggle,
+        onClick: show,
         onKeyDown: event => {
           if (event.key === 'Escape') {
             event.stopPropagation()
@@ -1613,7 +1619,7 @@ function InfoTip({ dir = 'down', id, label, text }) {
       }),
       isOpen
         ? jsx('span', { id: `wm-info-${id}`, role: 'tooltip',
-            className: cn('wm-info-pop', dir === 'up' && 'wm-info-up'), children: text })
+            className: cn('wm-info-pop', dir === 'up' && 'wm-info-up', wide && 'wm-info-pop-wide'), children: text })
         : null
     ].filter(Boolean), `info-${id}`)
   })
@@ -1664,7 +1670,8 @@ function CostKpi({ t, view }) {
     jsxs('div', { className: 'wm-kpi-metrics', children: [
       jsxs('div', { className: 'wm-metric', children: [
         jsx('span', { className: 'wm-metric-label', children: t('totalTokens') }, 'l'),
-        jsx('span', { className: 'wm-metric-value', children: fmtTokens(tokensOf(view.bucket)) }, 'v')
+        jsx('span', { className: 'wm-metric-value',
+          children: `${view.bucket?.cacheEstimated ? '≈' : ''}${fmtTokens(tokensOf(view.bucket))}` }, 'v')
       ] }, 'tokens'),
       jsxs('div', { className: 'wm-metric', children: [
         jsx('span', { className: 'wm-metric-label', children: t('calls') }, 'l'),
@@ -1747,7 +1754,8 @@ function CacheGauge({ t, view }) {
   return jsxs('section', { className: 'wm-card', 'aria-label': t('cacheTitle'), children: [
     jsxs('div', { className: 'wm-card-title', children: [
       jsx('span', { children: t('cacheTitle') }, 'label'),
-      jsx(InfoTip, { id: 'cache-method', label: t('infoLabel'), text: t('cacheMethodInfo') }, 'info')
+      jsx(InfoTip, { id: 'cache-method', label: t('infoLabel'),
+        text: `${t('cacheMethodInfo')} ${cacheCoverageLine(t, view.cacheCoverage, b)}` }, 'info')
     ] }, 'title'),
     jsxs('div', { className: 'wm-gauge-row', children: [
       jsxs('svg', {
@@ -1772,15 +1780,18 @@ function CacheGauge({ t, view }) {
       }, 'ring'),
       jsxs('div', { className: 'wm-gauge-stats', children: [
         jsxs('div', { className: 'wm-gauge-stat', children: [
-          jsx('span', { className: 'wm-metric-label', children: t('hitRate') }, 'l'),
-          jsx('span', { className: 'wm-metric-value', children: pct == null ? '—' : `${approx}${Math.round(pct)}%` }, 'v')
-        ] }, 'hit'),
-        jsx('div', { className: 'wm-gauge-note', children: cacheCoverageLine(t, view.cacheCoverage, b) }, 'coverage'),
+          jsx('span', { className: 'wm-metric-label', children: t('coverageLabel') }, 'l'),
+          jsx('span', { className: 'wm-metric-value',
+            children: view.cacheCoverage == null ? '—' : `${Math.round(view.cacheCoverage * 100)}%` }, 'v')
+        ] }, 'coverage'),
         jsxs('div', { className: 'wm-gauge-stat', children: [
-          jsx('span', { className: 'wm-metric-label', children: t('savedTotal') }, 'l'),
+          jsxs('span', { className: 'wm-metric-label', children: [
+            jsx('span', { children: t('savedTotal') }, 't'),
+            jsx(InfoTip, { id: 'savings-method', label: t('infoLabel'), text: t('savingsInfo'), wide: true, dir: 'up' }, 'info')
+          ] }, 'l'),
           jsx('span', { className: 'wm-metric-value', children: view.saved == null ? '—' : `${approx}${fmtUsd(view.saved)}` }, 'v')
         ] }, 'saved'),
-        pct == null ? null : jsx('div', { className: 'wm-gauge-note',
+        pct == null || view.saved == null ? null : jsx('div', { className: 'wm-gauge-note',
           children: estimated ? `≈ ${t('estimatedLabel')}` : t('exactLabel') }, 'marker')
       ].filter(Boolean) }, 'stats')
     ] }, 'row')
@@ -1792,12 +1803,12 @@ function RatesPanel({ t, view }) {
   const open = useValue($ratesOpen)
   const rates = view.rates
   const cells = [
-    { key: 'input', label: t('input'), value: rates ? `$${rates.input}` : '—' },
-    { key: 'output', label: t('output'), value: rates ? `$${rates.output}` : '—' },
-    { key: 'cache', label: t('cacheRead'), value: rates ? `$${rates.cache}` : '—' }
+    { key: 'input', label: t('input'), value: fmtRate(rates?.input) },
+    { key: 'output', label: t('output'), value: fmtRate(rates?.output) },
+    { key: 'cache', label: t('cacheRead'), value: fmtRate(rates?.cache) }
   ]
   if (rates && rates.write != null) {
-    cells.push({ key: 'write', label: t('cacheWrite'), value: `$${rates.write}` })
+    cells.push({ key: 'write', label: t('cacheWrite'), value: fmtRate(rates.write) })
   }
   return jsxs('section', { className: 'wm-card', 'aria-label': t('rates'), children: [
     jsxs('div', { className: 'wm-rates-head', children: [
@@ -1882,7 +1893,7 @@ function BrandMark({ size = 20, id = 'mark' }) {
 }
 
 const METER_CSS = [
-  '.wm-meter{display:flex;height:100%;flex-direction:column;gap:10px;overflow:auto;padding:12px;min-width:0}',
+  '.wm-pane{display:flex;height:100%;flex-direction:column;gap:10px;overflow:auto;padding:12px;min-width:0}',
   '.wm-meter-head{display:flex;flex-direction:column;gap:7px;padding-bottom:10px;border-bottom:1px solid var(--ui-stroke-secondary)}',
   '.wm-meter-brandrow{display:flex;align-items:center;gap:8px;min-width:0}',
   '.wm-meter-mark{display:grid;place-items:center;width:22px;height:22px;flex-shrink:0}',
@@ -1897,15 +1908,15 @@ const METER_CSS = [
   '.wm-provider-badge{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--ui-text-tertiary);background:var(--ui-fill-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:5px;padding:2px 7px}',
   '.wm-meter-sections{display:flex;flex-direction:column;gap:10px;min-width:0}',
   '.wm-card{border:1px solid var(--ui-stroke-secondary);border-radius:9px;padding:11px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}',
-  '.wm-card-title{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ui-text-quaternary)}',
+  '.wm-card-title{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ui-text-tertiary)}',
   '.wm-kpi-figure{font-size:27px;line-height:1.15;font-weight:640;letter-spacing:-.4px;font-variant-numeric:tabular-nums;color:var(--ui-accent);min-height:32px;overflow-wrap:anywhere}',
   '.wm-kpi-figure.wm-warn{color:var(--ui-warning)}',
   '.wm-kpi-source{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-text-tertiary)}',
   '.wm-kpi-metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}',
   '.wm-metric{display:flex;flex-direction:column;gap:1px;min-width:0}',
-  '.wm-metric-label{font-size:10px;color:var(--ui-text-quaternary)}',
+  '.wm-metric-label{font-size:10px;color:var(--ui-text-tertiary);white-space:nowrap}',
   '.wm-metric-value{font-size:13px;font-weight:560;font-variant-numeric:tabular-nums;color:var(--ui-text-primary);overflow-wrap:anywhere}',
-  '.wm-kpi-since{font-size:10px;color:var(--ui-text-quaternary);min-height:14px}',
+  '.wm-kpi-since{font-size:10px;color:var(--ui-text-tertiary);min-height:14px}',
   '.wm-kpi-since-empty{visibility:hidden}',
   '.wm-mix-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--ui-fill-tertiary);min-width:0}',
   '.wm-mix-fill{height:100%;min-width:0}',
@@ -1915,7 +1926,7 @@ const METER_CSS = [
   '.wm-legend{display:flex;flex-direction:column;gap:4px}',
   '.wm-legend-item{display:flex;align-items:baseline;gap:7px;font-size:12px;min-width:0}',
   '.wm-swatch{width:8px;height:8px;border-radius:2px;flex-shrink:0;align-self:center}',
-  '.wm-legend-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ui-text-tertiary)}',
+  '.wm-legend-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ui-text-secondary)}',
   '.wm-legend-value{flex-shrink:0;font-variant-numeric:tabular-nums;color:var(--ui-text-primary)}',
   '.wm-legend-separate{border-top:1px solid var(--ui-stroke-secondary);padding-top:7px}',
   '.wm-gauge-row{display:flex;gap:12px;align-items:center;min-height:76px}',
@@ -1926,24 +1937,26 @@ const METER_CSS = [
   '.wm-ring-text{fill:var(--ui-text-primary);font-size:14px;font-weight:640;font-variant-numeric:tabular-nums}',
   '.wm-gauge-stats{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}',
   '.wm-gauge-stat{display:flex;align-items:baseline;justify-content:space-between;gap:8px}',
-  '.wm-gauge-note{font-size:10px;line-height:1.45;color:var(--ui-text-quaternary)}',
+  '.wm-gauge-note{font-size:10px;line-height:1.45;color:var(--ui-text-tertiary)}',
   '.wm-rates-head{display:flex;align-items:center;gap:6px}',
-  '.wm-rates-toggle{flex:1;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:none;padding:0;font:inherit;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ui-text-quaternary);cursor:pointer;text-align:left}',
+  '.wm-rates-toggle{flex:1;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:none;padding:0;font:inherit;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ui-text-tertiary);cursor:pointer;text-align:left}',
   '.wm-chevron{font-size:14px;line-height:1;transition:transform .15s ease}',
   '.wm-chevron-open{transform:rotate(90deg)}',
   '.wm-rates-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}',
   '.wm-rate-cell{display:flex;flex-direction:column;gap:1px;min-width:0}',
-  '.wm-kpi-source,.wm-card-title,.wm-rates-head{position:relative}',
+  '.wm-kpi-source,.wm-card-title,.wm-rates-head,.wm-gauge-stat{position:relative}',
+  '.wm-gauge-stat .wm-info{margin-left:5px;vertical-align:1px}',
   '.wm-partial-chip{position:relative;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-warning)}',
   '.wm-info{position:static;display:inline-flex;flex-shrink:0}',
   '.wm-info-btn{width:15px;height:15px;border-radius:50%;border:1px solid var(--ui-text-quaternary);background:none;color:var(--ui-text-quaternary);font-size:9px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;cursor:pointer;display:inline-grid;place-items:center}',
   '.wm-info-btn:hover,.wm-info-btn:focus-visible{border-color:var(--ui-accent);color:var(--ui-accent)}',
   '.wm-info-btn:focus-visible{outline:2px solid var(--ui-accent);outline-offset:1px}',
-  '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:20;background:var(--ui-fill-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:7px;padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;color:var(--ui-text-secondary);box-shadow:0 6px 20px rgba(0,0,0,.35)}',
+  '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:20;background:var(--ui-fill-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:7px;padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;white-space:normal;color:var(--ui-text-secondary);box-shadow:0 6px 20px rgba(0,0,0,.35)}',
   '.wm-info-pop.wm-info-up{top:auto;bottom:calc(100% + 6px)}',
+  '.wm-info-pop-wide{left:auto;right:0;width:max-content;max-width:200px}',
   '.wm-stale .wm-kpi-figure,.wm-stale .wm-metric-value,.wm-stale .wm-legend-value,.wm-stale .wm-ring-text{opacity:.62}',
   '.wm-meter-empty{display:flex;flex-direction:column;gap:10px}',
-  '.wm-meter :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}',
+  '.wm-pane :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}',
   '@media (prefers-reduced-motion:reduce){.wm-chevron{transition:none}}'
 ].join('');
 
@@ -1964,7 +1977,9 @@ function Meter() {
   useEffect(() => { ensureBackendRate(provider, model) }, [provider, model, rateIdentity])
   const presence = meterPresence(view, stale)
 
-  return jsxs('div', { className: 'wm-meter', children: [
+  // Named wm-pane, not wm-meter: .wm-meter is the analytics cache bar,
+  // and the pane stylesheet is global while the pane is mounted.
+  return jsxs('div', { className: 'wm-pane', children: [
     jsx('style', { children: METER_CSS }, 'css'),
     !view.bucket
       ? jsx(MeterEmpty, { t }, 'body')
@@ -5169,6 +5184,8 @@ const I18N = {
     exactLabel: 'exact',
     estimatedLabel: 'estimated',
     infoLabel: 'More information',
+    coverageLabel: 'Coverage',
+    savingsInfo: 'Theoretical saving versus pricing the same covered prompt tokens at uncached input rates. Cache writes can cost extra, so this is an estimate, not a credit or refund.',
     partialShort: n => `${n} unpriced`,
     output: 'Output',
   pageTitle: 'Spend Sense',
@@ -5248,7 +5265,7 @@ const I18N = {
     range_week: '7 days',
     rates: 'Rates ($/Mtok)',
     saved: 'Net savings',
-    savedTotal: 'Theoretical net cache savings',
+    savedTotal: 'Net cache savings',
     sessionTokens: 'This session',
     src_backend: 'Hermes backend estimate',
     src_bundled: 'estimated from models.dev rates',
@@ -5315,7 +5332,7 @@ const I18N = {
     meterRecorded: '已记录',
     meterUpdating: '更新中…',
     apiEquivalent: 'API 等值',
-    costSourceInfo: 'Spend Sense 按 Hermes 后端估算或目录单价（$/百万令牌）为本次对话计价，具体取决于可用数据。实际账单可能因线路、峰谷价或取数而不同。',
+    costSourceInfo: 'Spend Sense 按 Hermes 后端估算或目录单价（$/百万令牌）为本次对话计价，具体取决于可用数据。实际账单可能因线路、峰谷价或取整而不同。',
     totalTokens: '总令牌',
     sinceDate: d => `自 ${d} 起`,
     promptMix: '提示词构成',
@@ -5324,6 +5341,8 @@ const I18N = {
     exactLabel: '精确',
     estimatedLabel: '估算',
     infoLabel: '更多信息',
+    coverageLabel: '覆盖率',
+    savingsInfo: '与按未缓存输入价计算的理论差值。缓存写入可能产生额外费用，此为估算，不是退款或抵扣。',
     partialShort: n => `${n} 未定价`,
     output: '输出',
   pageTitle: 'WolfMark 成本账本',
@@ -5336,7 +5355,7 @@ const I18N = {
     range_week: '近 7 天',
     rates: '单价（$/百万令牌）',
     saved: '净节省',
-    savedTotal: '理论缓存净节省',
+    savedTotal: '缓存净节省',
     scopeRun: '本轮',
     scopeConversation: '对话',
     scopeTotalsConversation: '对话总计',
@@ -5503,6 +5522,6 @@ export const __test = {
   useStableLive, mergeStableLive, stableLive, resetStableLive, meterPresence, compositionShares,
   $ratesOpen, $infoOpen, METER_CSS, RING_R, RING_C,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
-  fmtUsd, fmtTokens, fmtDate, tokensOf, hitPctOf, cacheSavings, liveSavings,
+  fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, liveSavings,
   $ledger
 }

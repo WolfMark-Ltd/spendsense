@@ -177,9 +177,13 @@ test('savings ignore a stored value accumulated at other rates', () => {
 
 test('savings are labelled as theoretical, not cash', () => {
   assert.match(en.cacheTitle, /cache/i)
-  assert.equal(en.savedTotal, 'Theoretical net cache savings')
+  assert.equal(en.savedTotal, 'Net cache savings')
   // The wording must not imply a provider credit or recorded billing.
   assert.doesNotMatch(en.savedTotal, /refund|credit|billed|cash/i)
+  // The compact label leans on its tooltip for the methodology.
+  assert.match(en.savingsInfo, /theoretical/i)
+  assert.match(en.savingsInfo, /not a credit or refund/i)
+  assert.ok(zh.savingsInfo && !zh.savingsInfo.startsWith('savingsInfo'))
 })
 
 test('composition shares split the prompt into fresh, read and write', () => {
@@ -261,7 +265,7 @@ test('meter presence distinguishes live, recorded, updating and empty', () => {
 test('every sidebar string exists in English and Chinese', () => {
   const keys = ['meterLive', 'meterRecorded', 'meterUpdating', 'apiEquivalent', 'costSourceInfo',
     'totalTokens', 'promptMix', 'cacheFresh', 'cacheMethodInfo', 'exactLabel', 'estimatedLabel',
-    'infoLabel']
+    'infoLabel', 'coverageLabel', 'savingsInfo']
   for (const key of keys) {
     assert.ok(en[key] && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] && zh[key] !== key, `zh has ${key}`)
@@ -277,8 +281,16 @@ test('every sidebar string exists in English and Chinese', () => {
 
 test('the meter stylesheet keeps popovers, ring and reduced-motion support', () => {
   assert.match(T.METER_CSS, /wm-info-pop/)
+  assert.match(T.METER_CSS, /wm-info-pop-wide/)
   assert.match(T.METER_CSS, /wm-ring-value/)
   assert.match(T.METER_CSS, /wm-mix-fill/)
   assert.match(T.METER_CSS, /prefers-reduced-motion/)
   assert.match(T.METER_CSS, /wm-stale/)
+})
+
+test('the pane root class cannot collide with the analytics cache bar', () => {
+  // .wm-meter is the analytics cache bar; the pane stylesheet is global
+  // while the pane is mounted, so it must not style that class.
+  assert.match(T.METER_CSS, /\.wm-pane\{/)
+  assert.doesNotMatch(T.METER_CSS, /\.wm-meter[\s{]/)
 })

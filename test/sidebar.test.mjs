@@ -258,6 +258,13 @@ test('recorded conversation totals render exactly with recorded presence', async
   assert.ok(Math.abs(parseFloat(dash) - expected) < 1e-6, `ring arc ${dash} matches 75.27%`)
   assert.match(container.textContent, /exactLabel/)
   assert.doesNotMatch(container.textContent, /≈/)
+  // Compact gauge metrics: coverage beside the ring, savings beneath it.
+  const stats = container.querySelector('.wm-gauge-stats').textContent
+  assert.match(stats, /coverageLabel/)
+  assert.match(stats, /100%/)
+  assert.match(stats, /savedTotal/)
+  assert.match(stats, /\$0\.50/)
+  assert.doesNotMatch(stats, /hitRate/, 'the ring is the only hit-rate display')
 })
 
 test('a cache coverage change redraws the gauge in place', async () => {
@@ -268,6 +275,9 @@ test('a cache coverage change redraws the gauge in place', async () => {
   await flush()
   const ringBefore = container.querySelector('.wm-ring')
   const dashBefore = ringBefore.querySelector('.wm-ring-value').getAttribute('stroke-dasharray')
+  const exactMetrics = [...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
+    .map(el => el.textContent)
+  assert.equal(exactMetrics[0], '6.4k', 'exact totals carry no marker')
 
   // The gateway now reports a reconstructed percentage instead of counters.
   host.state.focusedUsage.set({ input: 1000, prompt: 2000, cache_hit_pct: 50, output: 100, calls: 1, model: 'gpt-4o' })
@@ -277,9 +287,14 @@ test('a cache coverage change redraws the gauge in place', async () => {
   const dashAfter = ringAfter.querySelector('.wm-ring-value').getAttribute('stroke-dasharray')
   assert.notEqual(dashAfter, dashBefore, 'the arc follows the new hit rate')
   assert.match(ringAfter.getAttribute('aria-label'), /≈50%/)
+  assert.match(ringAfter.getAttribute('aria-label'), /estimatedLabel/)
   assert.ok(ringAfter.querySelector('.wm-ring-value').classList.contains('wm-ring-estimated'),
     'reconstructed coverage dims the ring')
-  assert.match(container.textContent, /estimatedLabel/)
+  const estMetrics = [...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
+    .map(el => el.textContent)
+  assert.ok(estMetrics[0].startsWith('≈'), `reconstructed totals carry ≈: ${estMetrics}`)
+  assert.equal(container.querySelectorAll('.wm-gauge-stats .wm-gauge-note').length, 0,
+    'no exact/estimated label sits under the unavailable savings value')
 })
 
 test('an activation bump and fresh tick leave the sections standing', async () => {
@@ -406,6 +421,113 @@ test('info popovers open on keyboard focus', async () => {
   await React.act(async () => { first.blur() })
   await flush(2)
   assert.equal(container.querySelector('.wm-info-pop'), null, 'blur closes the popover')
+})
+
+test('a click never toggles shut what hover just opened', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage())
+  const container = await renderMeter()
+  await flush()
+  const first = container.querySelector('.wm-info-btn')
+  await React.act(async () => {
+    first.dispatchEvent(new dom.window.MouseEvent('mouseover', { bubbles: true }))
+  })
+  await flush(2)
+  assert.ok(container.querySelector('.wm-info-pop'), 'hover opens the popover')
+  await React.act(async () => {
+    first.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+  })
+  await flush(2)
+  assert.ok(container.querySelector('.wm-info-pop'), 'the following click keeps it open')
+  assert.equal(first.getAttribute('aria-expanded'), 'true')
+})
+
+test('Escape closes a mouse-opened popover from the focused button', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage())
+  const container = await renderMeter()
+  await flush()
+  const first = container.querySelector('.wm-info-btn')
+  // Mirror a real mouse click: hover, press, natural focus, release.
+  await React.act(async () => {
+    first.dispatchEvent(new dom.window.MouseEvent('mouseover', { bubbles: true }))
+    first.dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }))
+    first.focus()
+    first.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+  })
+  await flush(2)
+  assert.ok(container.querySelector('.wm-info-pop'), 'the click opens the popover')
+  assert.equal(document.activeElement, first, 'the clicked button holds focus')
+  await React.act(async () => {
+    document.activeElement.dispatchEvent(
+      new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  })
+  await flush(2)
+  assert.equal(container.querySelector('.wm-info-pop'), null, 'Escape closes it')
+  assert.equal(first.getAttribute('aria-expanded'), 'false')
+  assert.equal(document.activeElement, first, 'focus stays on the button')
+})
+
+test('the cache popover carries the coverage breakdown', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage())
+  const container = await renderMeter()
+  await flush()
+  const method = container.querySelector('[aria-controls="wm-info-cache-method"]')
+  assert.ok(method, 'the cache title keeps its info button')
+  await React.act(async () => {
+    method.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+  })
+  await flush(2)
+  const pop = container.querySelector('#wm-info-cache-method')
+  assert.ok(pop, 'the methodology popover opens')
+  assert.match(pop.textContent, /cacheMethodInfo/)
+  assert.match(pop.textContent, /cacheCoverageLine/, 'the exact/estimated breakdown moved here')
+})
+
+test('the savings label keeps its methodology tooltip', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('runtime-9')
+  host.state.focusedStoredSessionId.set('stored-9')
+  host.state.model.set('gpt-4o')
+  const ledger = T.emptyLedger()
+  ledger.sessions['stored-9'] = histBucket()
+  T.$ledger.set(ledger)
+  const container = await renderMeter()
+  await flush()
+  const savings = container.querySelector('[aria-controls="wm-info-savings-method"]')
+  assert.ok(savings, 'the savings label keeps its info button')
+  await React.act(async () => {
+    savings.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+  })
+  await flush(2)
+  const pop = container.querySelector('#wm-info-savings-method')
+  assert.ok(pop, 'the savings popover opens')
+  assert.match(pop.textContent, /savingsInfo/)
+  assert.ok(pop.classList.contains('wm-info-pop-wide'), 'the narrow column gets the wide popover')
+  assert.ok(pop.classList.contains('wm-info-up'), 'the low-anchored popover opens upward')
+})
+
+test('per-MTok rates never show float artefacts', () => {
+  assert.equal(T.fmtRate(3), '$3')
+  assert.equal(T.fmtRate(0.3), '$0.3')
+  assert.equal(T.fmtRate(0.1 + 0.2), '$0.3')
+  assert.equal(T.fmtRate(0.075), '$0.075')
+  assert.equal(T.fmtRate(null), '—')
+  assert.equal(T.fmtRate(Number.NaN), '—')
+})
+
+test('the pane root cannot collide with the analytics cache bar', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage())
+  const container = await renderMeter()
+  await flush()
+  assert.ok(container.querySelector('.wm-pane'), 'the pane renders under its own class')
+  assert.equal(container.querySelector('.wm-meter'), null)
 })
 
 // --- direct component checks ------------------------------------------------------
