@@ -1352,6 +1352,27 @@ function rangeNotes(t, totals, storageError) {
   return notes
 }
 
+/**
+ * Spend Sense marque (assets/branding/spend-sense-marque-v2.svg), inlined
+ * because the desktop plugin loader forbids relative asset imports. Rendered
+ * small and decorative beside existing titles — never a hero element — with
+ * fixed dimensions so it cannot shift surrounding layout. Each call site passes
+ * a distinct `id` so the inline gradient defs never share a document id.
+ */
+const BRAND_MARK_PATH = 'M 352.000000 84.000000 L 208.000000 84.000000 C 200.573938 84.000000 193.452029 86.949992 188.201010 92.201010 L 92.201010 188.201010 C 86.949992 193.452029 84.000000 200.573938 84.000000 208.000000 L 84.000000 224.000000 C 84.000000 233.958678 89.289516 243.167920 97.891611 248.185809 L 265.891611 346.185809 C 279.249065 353.977657 296.393961 349.465842 304.185809 336.108389 C 311.977657 322.750935 307.465842 305.606039 294.108389 297.814191 L 126.108389 199.814191 L 112.000000 224.000000 L 140.000000 224.000000 L 140.000000 208.000000 L 112.000000 208.000000 L 131.798990 227.798990 L 227.798990 131.798990 L 208.000000 140.000000 L 352.000000 140.000000 C 367.463973 140.000000 380.000000 127.463973 380.000000 112.000000 C 380.000000 96.536027 367.463973 84.000000 352.000000 84.000000 Z M 160.000000 428.000000 L 304.000000 428.000000 C 311.426062 428.000000 318.547971 425.050008 323.798990 419.798990 L 419.798990 323.798990 C 425.050008 318.547971 428.000000 311.426062 428.000000 304.000000 L 428.000000 288.000000 C 428.000000 278.041322 422.710484 268.832080 414.108389 263.814191 L 246.108389 165.814191 C 232.750935 158.022343 215.606039 162.534158 207.814191 175.891611 C 200.022343 189.249065 204.534158 206.393961 217.891611 214.185809 L 385.891611 312.185809 L 400.000000 288.000000 L 372.000000 288.000000 L 372.000000 304.000000 L 400.000000 304.000000 L 380.201010 284.201010 L 284.201010 380.201010 L 304.000000 372.000000 L 160.000000 372.000000 C 144.536027 372.000000 132.000000 384.536027 132.000000 400.000000 C 132.000000 415.463973 144.536027 428.000000 160.000000 428.000000 Z'
+function BrandMark({ size = 20, id = 'mark' }) {
+  const gradientId = `spend-sense-brand-${id}`
+  return jsxs('svg', { viewBox: '0 0 512 512', width: size, height: size, 'aria-hidden': true, focusable: 'false',
+    style: { flexShrink: 0 }, children: [
+      jsx('defs', { children: jsxs('linearGradient', { id: gradientId, x1: 84, y1: 256, x2: 428, y2: 256,
+        gradientUnits: 'userSpaceOnUse', children: [
+          jsx('stop', { offset: '0%', stopColor: '#2563EB' }),
+          jsx('stop', { offset: '100%', stopColor: '#813CF8' })
+        ] }) }),
+      jsx('path', { fill: `url(#${gradientId})`, d: BRAND_MARK_PATH })
+    ] })
+}
+
 /** Right-hand pane: the focused session only. Range totals live on the ledger page. */
 function Meter() {
   const t = usePluginI18n(ID)
@@ -1450,9 +1471,9 @@ function Meter() {
   if (storageError) sections.push(jsx(Note, { warn: true, children: t('storageError', storageError) }, 'st'))
 
   return jsxs('div', { className: 'wm-meter flex h-full flex-col gap-3 overflow-auto p-3', children: [
-    jsx('style', { children: '.wm-meter-brand{display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--ui-stroke-secondary);padding:2px 0 10px}.wm-meter-mark{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;background:color-mix(in srgb,var(--ui-accent) 14%,transparent);color:var(--ui-accent);font-size:12px;font-weight:700}.wm-meter-name{font-size:12px;font-weight:620;letter-spacing:-.15px;color:var(--ui-text-primary)}.wm-meter-subtitle{font-size:10px;color:var(--ui-text-tertiary)}' }),
+    jsx('style', { children: '.wm-meter-brand{display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--ui-stroke-secondary);padding:2px 0 10px}.wm-meter-mark{display:grid;place-items:center;width:24px;height:24px;flex-shrink:0}.wm-meter-name{font-size:12px;font-weight:620;letter-spacing:-.15px;color:var(--ui-text-primary)}.wm-meter-subtitle{font-size:10px;color:var(--ui-text-tertiary)}' }),
     jsxs('header', { className: 'wm-meter-brand', children: [
-      jsx('span', { className: 'wm-meter-mark', children: 'W' }),
+      jsx('span', { className: 'wm-meter-mark', children: jsx(BrandMark, { size: 20, id: 'pane' }) }),
       jsxs('div', { children: [jsx('div', { className: 'wm-meter-name', children: 'Spend Sense' }),
         jsx('div', { className: 'wm-meter-subtitle', children: 'Live usage · focused session' })] })
     ] }),
@@ -2122,10 +2143,12 @@ function LedgerTabs() {
   }
   return jsx('div', { className: 'wm-shell', style: { paddingBottom: 0 }, children:
     jsx('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': 'Spend Sense sections', onKeyDown, children:
-      LEDGER_TABS.map(([id, label]) =>
+      [jsx('span', { className: 'wm-product-brand', 'aria-hidden': true,
+        children: jsx(BrandMark, { size: 16, id: 'tabs' }) }, 'brand'),
+      ...LEDGER_TABS.map(([id, label]) =>
         jsx(ProductButton, { role: 'tab', variant: 'ghost', 'aria-selected': tab === id, 'aria-pressed': tab === id,
           className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
-          onClick: () => goLedgerTab(id), children: label }, id)) }) })
+          onClick: () => goLedgerTab(id), children: label }, id))] }) })
 }
 
 function goLedgerTab(next) {
@@ -2257,6 +2280,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-heading h1{margin:0;font-size:24px;line-height:1.2;font-weight:620;letter-spacing:-.35px}',
   '.wm-product .wm-product-heading p{margin:5px 0 0;color:var(--ui-text-tertiary);font-size:13px;line-height:1.45}',
   '.wm-product .wm-product-tabs{display:flex;gap:4px;overflow:auto;padding:3px;border-bottom:1px solid var(--ui-stroke-secondary);position:sticky;top:0;z-index:6;background:var(--ui-fill-primary)}',
+  '.wm-product .wm-product-brand{display:inline-flex;align-items:center;flex-shrink:0;align-self:center;margin:0 6px 0 2px}',
   '.wm-product .wm-product-tab{border:0;background:transparent;color:var(--ui-text-tertiary);border-radius:6px;padding:8px 13px;min-height:38px;display:inline-flex;align-items:center;font:inherit;font-size:13px;white-space:nowrap;cursor:pointer;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}',
   '.wm-product .wm-product-tab:hover{background:var(--ui-fill-secondary);color:var(--ui-text-primary)}',
   '.wm-product .wm-product-tab-active{background:var(--ui-fill-secondary);color:var(--ui-text-primary);font-weight:570;box-shadow:inset 0 -2px 0 var(--ui-accent)}',
@@ -2768,10 +2792,7 @@ function SettingsPage() {
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
           jsx('h2', { children: 'About and support' }),
-          jsxs('svg', { viewBox: '0 0 512 512', width: 32, height: 32, 'aria-hidden': true, children: [
-            jsx('defs', { children: jsxs('linearGradient', { id: 'spend-sense-brand', x1: 84, y1: 256, x2: 428, y2: 256, gradientUnits: 'userSpaceOnUse', children: [jsx('stop', { offset: '0%', stopColor: '#2563EB' }), jsx('stop', { offset: '100%', stopColor: '#813CF8' })] }) }),
-            jsx('path', { fill: 'url(#spend-sense-brand)', d: 'M 352.000000 84.000000 L 208.000000 84.000000 C 200.573938 84.000000 193.452029 86.949992 188.201010 92.201010 L 92.201010 188.201010 C 86.949992 193.452029 84.000000 200.573938 84.000000 208.000000 L 84.000000 224.000000 C 84.000000 233.958678 89.289516 243.167920 97.891611 248.185809 L 265.891611 346.185809 C 279.249065 353.977657 296.393961 349.465842 304.185809 336.108389 C 311.977657 322.750935 307.465842 305.606039 294.108389 297.814191 L 126.108389 199.814191 L 112.000000 224.000000 L 140.000000 224.000000 L 140.000000 208.000000 L 112.000000 208.000000 L 131.798990 227.798990 L 227.798990 131.798990 L 208.000000 140.000000 L 352.000000 140.000000 C 367.463973 140.000000 380.000000 127.463973 380.000000 112.000000 C 380.000000 96.536027 367.463973 84.000000 352.000000 84.000000 Z M 160.000000 428.000000 L 304.000000 428.000000 C 311.426062 428.000000 318.547971 425.050008 323.798990 419.798990 L 419.798990 323.798990 C 425.050008 318.547971 428.000000 311.426062 428.000000 304.000000 L 428.000000 288.000000 C 428.000000 278.041322 422.710484 268.832080 414.108389 263.814191 L 246.108389 165.814191 C 232.750935 158.022343 215.606039 162.534158 207.814191 175.891611 C 200.022343 189.249065 204.534158 206.393961 217.891611 214.185809 L 385.891611 312.185809 L 400.000000 288.000000 L 372.000000 288.000000 L 372.000000 304.000000 L 400.000000 304.000000 L 380.201010 284.201010 L 284.201010 380.201010 L 304.000000 372.000000 L 160.000000 372.000000 C 144.536027 372.000000 132.000000 384.536027 132.000000 400.000000 C 132.000000 415.463973 144.536027 428.000000 160.000000 428.000000 Z' })
-          ] }),
+          jsx(BrandMark, { size: 32, id: 'about' }),
           jsx('p', { children: 'Spend Sense ' + PLUGIN_VERSION }),
           jsx('p', { children: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.' }),
           jsx('p', { children: 'Support and product information are available from WolfMark.' }),
@@ -4838,7 +4859,7 @@ export const __test = {
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
   billingNumberStep,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
-  CostsPage, OverviewPage, SettingsPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation,
+  CostsPage, OverviewPage, SettingsPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark,
   settledDesktopMonth, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
   setRest: value => { rest = value },
