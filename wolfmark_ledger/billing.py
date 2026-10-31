@@ -149,6 +149,14 @@ def _load_profiles(path: Optional[Path | str] = None, *, strict: bool) -> dict[s
             if _allowance_errors(profile.get("allowances")):
                 reason = "profiles contains invalid allowance values"
                 break
+        if not reason:
+            defaults = raw.get("defaults") or {}
+            if isinstance(defaults, dict):
+                if _allowance_errors(defaults.get("allowances")):
+                    reason = "defaults contains invalid allowance values"
+                elif (defaults.get("allowance_usd") is not None
+                      and not _nonnegative_number(defaults.get("allowance_usd"))):
+                    reason = "defaults contains an invalid allowance_usd value"
     if reason:
         message = f"billing profile store unreadable: {reason}"
         if strict:
@@ -322,7 +330,9 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
     api_priced = 0
     unknown_seen = False
     seen_calls: set[str] = set()
-    profile_configured = bool(profiles.get('profiles'))
+    _defaults = profiles.get("defaults") or {}
+    profile_configured = bool(profiles.get("profiles")) or (
+        isinstance(_defaults, dict) and _defaults.get("kind") in KINDS)
     excluded_out_of_cycle = 0
     usage_by_model: dict[tuple[str, str], float] = {}
     usage_by_rule: dict[tuple[str, str, str], float] = {}

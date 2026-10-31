@@ -39,6 +39,10 @@ def main() -> int:
                                source="live", confidence="aggregator", as_of="", version="live")
     bundled = _parse_catalogue(json.loads(args.bundled.read_text(encoding="utf-8")),
                                source="bundled", confidence="bundled", as_of="", version="bundled")
+    if current is None or bundled is None:
+        print("pricing-drift: current or bundled catalogue is unusable; no report written",
+              file=sys.stderr)
+        return 1
     now, old = table(current), table(bundled)
     added_p = sorted(set(now) - set(old)); removed_p = sorted(set(old) - set(now))
     added_m, removed_m, changed = [], [], []

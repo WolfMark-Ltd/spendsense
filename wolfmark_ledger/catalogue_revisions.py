@@ -288,7 +288,12 @@ def build_candidate(catalogue: Mapping[str, Any], observations: Iterable[Mapping
             if action == "price_changed":
                 after = change.get("after") or {}
                 price = {**(row.get("price") or {}), "amount": after.get("amount")}
-                if _money(after.get("amount")) is not None:
+                before = change.get("before") or {}
+                authored = bool(change.get("authored")) or (
+                    isinstance(before, dict)
+                    and _money(before.get("amount")) is None
+                    and _money(after.get("amount")) is None)
+                if authored or _money(after.get("amount")) is not None:
                     separate_actions = {item.get("action") for item in changes_by_plan.get(pid, [])}
                     for field, field_action in (("currency", "currency_changed"), ("period", "period_changed")):
                         if field_action not in separate_actions and field in after:
@@ -400,11 +405,13 @@ def correction_report(catalogue: Mapping[str, Any], corrections: list[dict[str, 
         evidence = dict(correction.get("evidence") or {})
         if not evidence.get("source_id"):
             evidence["source_id"] = (plan.get("verification") or {}).get("source_id")
-        changes.append(_change(
+        authored_change = _change(
             plan_id, str(plan.get("provider_family")), f"{field}_changed",
             before=before, after=after, evidence=evidence,
             summary=f"{plan.get('name') or plan_id}: {field} {before!r} → {after!r} — {correction['why']}",
-            materiality=CORRECTION_FIELDS[field]))
+            materiality=CORRECTION_FIELDS[field])
+        authored_change["authored"] = True
+        changes.append(authored_change)
     changes.sort(key=lambda c: (c["family"], c["plan_id"], c["action"]))
     counts = {"material": 0, "ambiguous": 0, "review": 0, "cosmetic": 0}
     for change in changes:
@@ -450,7 +457,7 @@ def stage(catalogue_dir: Path | str, catalogue: Mapping[str, Any], observations:
     else:
         report = diff_report(observations, catalogue)
     base_version = str(catalogue.get("catalogue_version") or "")
-    next_version = version or next_catalogue_version(base_version)
+    next_version = version or next_catalogue_version(base_version, catalogue_dir)
     revision_id = f"rev-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{_sha(json.dumps(report['changes'], sort_keys=True, default=str))}"
     revision = {
         "revision_id": revision_id,
@@ -473,15 +480,59 @@ def stage(catalogue_dir: Path | str, catalogue: Mapping[str, Any], observations:
     return revision
 
 
-def next_catalogue_version(version: str) -> str:
-    """Bump the trailing counter: 2026-10-30.3 → 2026-10-30.4, else today.1."""
+def _version_key(version: str) -> tuple[str, int]:
+    head, _, tail = str(version).rpartition(".")
+    if head and tail.isdigit():
+        return (head, int(tail))
+    return (str(version), 0)
+
+
+def _bump_version(version: str) -> str:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if not version:
         return f"{today}.1"
-    head, _, tail = version.rpartition(".")
+    head, _, tail = str(version).rpartition(".")
     if head and tail.isdigit():
         return f"{head}.{int(tail) + 1}"
     return f"{today}.1"
+
+
+def next_catalogue_version(version: str, catalogue_dir: Any = None,
+                           archived_versions: Optional[Iterable[str]] = None) -> str:
+    """Bump the trailing counter: 2026-10-30.3 → 2026-10-30.4, else today.1.
+
+    Archived versions under ``history/`` count too: if the highest archived
+    version exceeds the active one, advance past it instead of reusing a
+    version that already has a history file.
+    """
+    archived: list[str] = []
+    if archived_versions:
+        archived.extend(str(v) for v in archived_versions)
+    if catalogue_dir is not None:
+        if isinstance(catalogue_dir, (list, tuple, set)):
+            archived.extend(str(v) for v in catalogue_dir)
+        else:
+            try:
+                hist = history_dir(catalogue_dir)
+                if hist.is_dir():
+                    for path in hist.glob("plans-*.json"):
+                        archived.append(path.name)
+            except Exception:
+                pass
+    cleaned: list[str] = []
+    for entry in archived:
+        name = str(entry).rsplit("/", 1)[-1]
+        if name.endswith(".json"):
+            name = name[:-len(".json")]
+        if name.startswith("plans-"):
+            name = name[len("plans-"):]
+        if name and name != "unknown":
+            cleaned.append(name)
+    if cleaned:
+        highest = max(cleaned, key=_version_key)
+        if not version or _version_key(highest) > _version_key(version):
+            return _bump_version(highest)
+    return _bump_version(version)
 
 
 # ---------------------------------------------------------------------------
@@ -527,8 +578,8 @@ def validate(revision: Mapping[str, Any], catalogue: Mapping[str, Any],
                     problems.append(f"{pid}: removed by the candidate without an accepted removal")
         for pid in ids - active_ids:
             key = f"plan_added:{pid}"
-            if decisions.get(key) not in ("accept", "reject"):
-                problems.append(f"{pid}: added without a recorded decision")
+            if decisions.get(key) == "reject":
+                problems.append(f"{pid}: added by the candidate despite a rejected addition")
         if loaded["catalogue_version"] == catalogue.get("catalogue_version"):
             problems.append("candidate version equals the active version")
     return problems
@@ -631,6 +682,14 @@ def activate(catalogue_dir: Path | str, revision_id: str, *, by: str, dry_run: b
         return result
     target = Path(catalogue_dir) / "plans.json"
     archive = history_dir(catalogue_dir) / f"plans-{active.get('catalogue_version') or 'unknown'}.json"
+    if archive.exists():
+        try:
+            existing_archive = json.loads(archive.read_text())
+        except (OSError, ValueError):
+            existing_archive = None
+        if existing_archive != dict(active):
+            raise ValueError(
+                f"history archive already exists with different content: {archive.name}")
     _write_json(archive, active)
     _write_json(target, candidate)
     revision = {**revision, "status": "activated", "applied_version": candidate.get("catalogue_version"),

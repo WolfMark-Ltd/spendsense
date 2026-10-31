@@ -33,12 +33,18 @@ def store_path(data_dir: Optional[Path | str] = None) -> Path:
     if data_dir:
         return Path(data_dir) / STORE_NAME
     try:
-        from .store import plugin_data_dir  # local import: optional dependency
-        base = plugin_data_dir("wolfmark-cost-ledger")
+        from plugins.plugin_storage import plugin_data_dir
+
+        return plugin_data_dir("wolfmark-cost-ledger") / STORE_NAME
+    except Exception:
+        pass
+    try:
+        from hermes_constants import get_hermes_home
+
+        base = Path(get_hermes_home())
     except Exception:  # pragma: no cover - fallback for a bare checkout
         base = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
-        base = Path(base) / "plugin-data" / "wolfmark-cost-ledger"
-    return Path(base) / STORE_NAME
+    return Path(base) / "plugin-data" / "wolfmark-cost-ledger" / STORE_NAME
 
 
 class MembershipConflict(ValueError):

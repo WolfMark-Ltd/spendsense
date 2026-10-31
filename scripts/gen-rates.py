@@ -34,10 +34,10 @@ def build(catalog):
         for model_id, model in (entry.get("models") or {}).items():
             cost = model.get("cost") or {}
             inp, outp = cost.get("input"), cost.get("output")
-            if inp is None and outp is None:
+            if inp is None or outp is None:
                 continue
-            inp = float(inp or 0)
-            outp = float(outp or 0)
+            inp = float(inp)
+            outp = float(outp)
             cache = cost.get("cache_read")
             row = [inp, outp, float(cache) if cache is not None else inp]
             while len(row) > 2 and row[-1] == 0:
@@ -56,27 +56,6 @@ def main():
     table = build(catalog)
     literal = json.dumps(table, sort_keys=True, separators=(",", ":"))
 
-    snapshot = os.path.join(os.path.dirname(os.path.dirname(PLUGIN)), "catalogue", "rates.json")
-    shaped = {}
-    for provider, entry in catalog.items():
-        models = {}
-        for model_id, model in (entry.get("models") or {}).items():
-            cost = model.get("cost") or {}
-            if cost.get("input") is None or cost.get("output") is None:
-                continue
-            row = {"input": cost["input"], "output": cost["output"]}
-            if cost.get("cache_read") is not None:
-                row["cache_read"] = cost["cache_read"]
-            if cost.get("cache_write") is not None:
-                row["cache_write"] = cost["cache_write"]
-            if cost.get("tiers"):
-                row["tiers"] = cost["tiers"]
-            models[model_id] = {"cost": row}
-        if models:
-            shaped[provider] = {"models": models}
-    with open(snapshot, "w", encoding="utf-8") as handle:
-        json.dump({"version": "models.dev", "providers": shaped}, handle, sort_keys=True, separators=(",", ":"))
-
     source = open(PLUGIN).read()
     pattern = re.compile(r"(const FALLBACK_RATES = /\* @generated \*/ )(\{.*?\})\n", re.S)
     if not pattern.search(source):
@@ -84,7 +63,7 @@ def main():
     source = pattern.sub(lambda m: m.group(1) + literal + "\n", source, count=1)
     open(PLUGIN, "w").write(source)
 
-    print(f"wrote catalogue/rates.json + {sum(len(v) for v in table.values())} models "
+    print(f"wrote FALLBACK_RATES in desktop/plugin.js: {sum(len(v) for v in table.values())} models "
           f"across {len(table)} providers ({len(literal)} bytes)")
 
 

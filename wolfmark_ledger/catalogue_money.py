@@ -26,11 +26,11 @@ _YEN = "¥"
 
 #: Regex source for one price token, shared by the card parsers so a page that
 #: prices in yuan is read the same way as one that prices in dollars.
-MONEY_TOKEN = r"(?:US\$|CN¥|RMB|A\$|C\$|CHF|USD|GBP|EUR|₹|\$|£|€|¥)\s?[0-9][0-9,]*(?:\.[0-9]+)?"
+MONEY_TOKEN = r"(?<![A-Za-z])(?:US\$|CN¥|RMB|A\$|C\$|CHF|USD|GBP|EUR|₹|\$|£|€|¥)\s?[0-9][0-9,]*(?:\.[0-9]+)?"
 
 #: ``$1,234.56`` / ``US$20`` / ``CN¥ 49`` / ``£9.99`` / ``RMB99``
 _MONEY = re.compile(
-    r"(US\$|CN¥|RMB|A\$|C\$|CHF|USD|GBP|EUR|₹|\$|£|€)\s?"
+    r"(?<![A-Za-z])(US\$|CN¥|RMB|A\$|C\$|CHF|USD|GBP|EUR|₹|\$|£|€)\s?"
     r"([0-9][0-9,]*(?:\.[0-9]+)?)"
 )
 _YEN_RE = re.compile(r"(" + _YEN + r")\s?([0-9][0-9,]*(?:\.[0-9]+)?)")

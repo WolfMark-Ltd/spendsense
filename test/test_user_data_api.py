@@ -6,13 +6,24 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+plugin_api = None
+FastAPI = None  # type: ignore
+TestClient = None  # type: ignore
+try:
+    from fastapi import FastAPI  # type: ignore[no-redef]
+    from fastapi.testclient import TestClient  # type: ignore[no-redef]
 
-from dashboard import plugin_api
+    from dashboard import plugin_api  # type: ignore[no-redef]
+except Exception:  # pragma: no cover - depends on the test interpreter
+    FastAPI = None  # type: ignore
+    TestClient = None  # type: ignore
+    plugin_api = None
+
 from wolfmark_ledger import billing, membership_store
 
 
+@unittest.skipUnless(FastAPI is not None and TestClient is not None,
+                     "FastAPI/httpx not installed in this interpreter")
 class UserDataResetApiTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()

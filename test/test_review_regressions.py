@@ -115,6 +115,16 @@ class PricingSafety(unittest.TestCase):
         self.assertEqual(result['api_equivalent_usd'],2)
         self.assertEqual(result['incremental_usd'],2)
 
+    def test_default_api_rule_counts_as_configured_for_incremental_evidence(self):
+        rows=[{'provider':'unmatched','model':'m','list_usd':2,'_tokens':1}]
+        profiles={'profiles':[], 'defaults':{'id':'fallback','kind':'api',
+                                             'allowance_usd':0,'overage_paid':True}}
+        result=billing.classify(rows,profiles)
+        self.assertEqual(result['incremental_usd'],2)
+        self.assertEqual(result['evidence']['incremental_cash']['usd'],2)
+        empty=billing.classify(rows,{'profiles':[], 'defaults':{}})
+        self.assertIsNone(empty['evidence']['incremental_cash']['usd'])
+
     def test_default_prepaid_usage_is_included_in_cumulative_overage(self):
         rows=[{'provider':'unmatched','model':'m','list_usd':None,
                '_provider_cost_usd':2,'_tokens':1}]
@@ -173,6 +183,17 @@ class PricingSafety(unittest.TestCase):
             'evidence':{'source_id':'pricing-page'}}])
         candidate=revisions.build_candidate(base,[],report,{'price_changed:p':'accept'},version='test')
         self.assertEqual(candidate['plans'][0]['price'],{'amount':12,'currency':'GBP','period':'year'})
+        self.assertEqual(candidate['plans'][0]['verification']['status'],'unverified')
+
+    def test_authored_price_correction_with_null_amount_applies_all_terms(self):
+        base={'plans':[{'id':'p','provider_family':'x','name':'Plan',
+                        'price':{'amount':None,'currency':'USD','period':'month'},
+                        'verification':{'status':'verified','source_id':'old'}}]}
+        report=revisions.correction_report(base,[{'plan_id':'p','field':'price',
+            'value':{'amount':None,'currency':'GBP','period':'year'},'why':'correct the catalogue',
+            'evidence':{'source_id':'owner-evidence'}}])
+        candidate=revisions.build_candidate(base,[],report,{'price_changed:p':'accept'},version='test')
+        self.assertEqual(candidate['plans'][0]['price'],{'amount':None,'currency':'GBP','period':'year'})
         self.assertEqual(candidate['plans'][0]['verification']['status'],'unverified')
 
     def test_authored_price_correction_keeps_terms_when_observation_is_unchanged(self):
@@ -236,6 +257,38 @@ class PricingSafety(unittest.TestCase):
         candidate=revisions.build_candidate(base,[observation],report,decisions,version='test')
         self.assertEqual(candidate['plans'][0]['price'],{'amount':10,'currency':'GBP','period':'year'})
         self.assertEqual(candidate['plans'][0]['verification']['status'],'verified')
+
+    def test_invalid_defaults_allowances_fail_closed_on_load(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'billing.json'
+            for defaults in ({'kind':'prepaid','allowances':{'m':'abc'},'overage_paid':True},
+                             {'kind':'api','allowance_usd':-1,'overage_paid':True}):
+                with self.subTest(defaults=defaults):
+                    path.write_text(json.dumps({'profiles':[], 'defaults':defaults}))
+                    loaded = billing.load_profiles(path)
+                    self.assertFalse(loaded['loaded'])
+                    self.assertIn('unreadable', loaded['error'])
+            path.write_text(json.dumps({'profiles':[], 'defaults':{'kind':'api','allowance_usd':0,'overage_paid':True}}))
+            self.assertTrue(billing.load_profiles(path)['loaded'])
+
+    def test_undecided_plan_addition_validates_like_build_candidate(self):
+        base={'plans':[{'id':'p','provider_family':'x','name':'Plan',
+                        'price':{'amount':10,'currency':'USD','period':'month'},
+                        'verification':{'status':'verified','source_id':'old'}}]}
+        observation={'family':'x','source_id':'source','retrieved_at':'2026-10-31T00:00:00Z',
+                     'complete':True,'provisional':False,'usable':True,
+                     'plans':[{'id':'p','name':'Plan','price':{'amount':10,'currency':'USD','period':'month'}},
+                              {'id':'new1','name':'New','price':{'amount':5,'currency':'USD','period':'month'}}]}
+        report=revisions.diff_report([observation],base)
+        revision={'status':'staged','observations':[observation],'diff':report,'decisions':{}}
+        self.assertNotIn('new1: added without a recorded decision', revisions.validate(revision, base, {}))
+
+    def test_next_version_advances_past_the_highest_archived_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = Path(directory) / 'history'; history.mkdir()
+            (history / 'plans-2026-10-30.7.json').write_text('{}')
+            self.assertEqual(revisions.next_catalogue_version('2026-10-30.5', directory), '2026-10-30.8')
+            self.assertEqual(revisions.next_catalogue_version('2026-10-30.9', directory), '2026-10-30.10')
 
     def test_unlimited_paid_profile_is_not_double_charged(self):
         row={'provider':'x','model':'m','list_usd':15,'_tokens':1}

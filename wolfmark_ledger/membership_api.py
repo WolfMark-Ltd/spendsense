@@ -71,7 +71,8 @@ def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
 
 def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
                      catalogue: Optional[Mapping[str, Any]] = None,
-                     home: Optional[Path | str] = None, at: Any = None) -> dict[str, Any]:
+                     home: Optional[Path | str] = None, at: Any = None,
+                     native_snapshots: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     """Stored accounts with quota. ``native`` uses Hermes' own readings."""
     book = catalogue or load_plans()
     data = store.load_store(path)
@@ -80,11 +81,16 @@ def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
         # surface a read error instead of an empty, confident list.
         raise store.StoreUnreadable(str(data["error"]))
     snapshots: dict[str, Any] = {}
+    if native_snapshots is not None:
+        snapshots = {str(family): snapshot
+                     for family, snapshot in dict(native_snapshots).items()}
     notes: list[str] = []
     if native:
         families = list(dict.fromkeys(str(account.get("family") or "")
                                       for account in data.get("accounts", []) if account.get("family")))
-        for family, probe in discovery.probe_providers(families, home=home).items():
+        missing = [family for family in families if family not in snapshots]
+        probes = discovery.probe_providers(missing, home=home) if missing else {}
+        for family, probe in probes.items():
             snapshots[family] = probe.get("snapshot")
             if probe["state"] == "unavailable":
                 notes.append(f"{family}: Hermes reported no account usage.")
@@ -199,7 +205,9 @@ def discover_payload(*, include_native: bool = False, path: Optional[Path | str]
     book = catalogue or load_plans()
     found = discovery.discover(book, include_native=include_native, home=home)
     merged = store.upsert_discovered(found["accounts"], path)
-    payload = accounts_payload(native=include_native, path=path, catalogue=book, home=home)
+    shared_snapshots = (found or {}).get("snapshots") if include_native else None
+    payload = accounts_payload(native=include_native, path=path, catalogue=book, home=home,
+                               native_snapshots=shared_snapshots)
     payload.update({
         "discovered": len(found["accounts"]),
         "added": merged.get("added", []),

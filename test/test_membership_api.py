@@ -231,6 +231,22 @@ class PrefillContract(TempStore):
         # No plan chosen yet, so there is no fee basis to show — never $0.00.
         self.assertEqual(codex["fee"]["basis"], "no_plan")
 
+    def test_discovery_probes_each_provider_once_per_request(self):
+        calls = []
+
+        def counting_probe(providers, *, home=None, budget_seconds=10.0):
+            providers = list(providers)
+            calls.append(providers)
+            return {p: {"state": "ok", "snapshot": native_payload(), "reason": ""}
+                    for p in providers}
+
+        with mock.patch.object(discovery, "probe_providers", side_effect=counting_probe):
+            payload = api.discover_payload(include_native=True, path=self.store, home=self.home,
+                                           catalogue=self.catalogue)
+        self.assertEqual(len(calls), 1, calls)
+        codex = next(a for a in payload["accounts"] if a["family"] == "openai-codex")
+        self.assertTrue(codex["quota"]["windows"], "native quota rows are preserved")
+
     def test_prefill_does_not_change_the_fee_until_the_plan_is_confirmed(self):
         payload = self._discover_with_native()
         codex = next(a for a in payload["accounts"] if a["family"] == "openai-codex")

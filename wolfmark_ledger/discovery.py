@@ -48,7 +48,12 @@ CACHE_SECONDS = 60.0
 def hermes_home(home: Optional[Path | str] = None) -> Path:
     if home:
         return Path(home)
-    return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+    try:
+        from hermes_constants import get_hermes_home
+
+        return Path(get_hermes_home())
+    except Exception:
+        return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
 
 
 def canonical_provider(name: str) -> str:
@@ -204,6 +209,7 @@ def discover(catalogue: Mapping[str, Any] | None, *, include_native: bool = True
 
     families = [family for family in sorted(slots) if wanted is None or family in wanted]
     probes = probe_providers(families, home=home) if include_native else {}
+    snapshots: dict[str, Any] = {}
     for family in families:
         snapshot = None
         usage_source = "none"
@@ -224,6 +230,7 @@ def discover(catalogue: Mapping[str, Any] | None, *, include_native: bool = True
             account["usage_source"] = usage_source
         else:
             account = _slot_only(family, slots[family], catalogue, now=now)
+        snapshots[family] = snapshot
         account["catalogue_plans"] = len(mem.plans_for_family(catalogue, family))
         accounts.append(account)
 
@@ -235,4 +242,5 @@ def discover(catalogue: Mapping[str, Any] | None, *, include_native: bool = True
         "catalogued_without_credential": absent,
         "notes": notes,
         "native_probe": bool(include_native),
+        "snapshots": snapshots,
     }

@@ -48,6 +48,12 @@ class MoneyTests(unittest.TestCase):
         self.assertEqual({usd["amount"], cny["amount"], gbp["amount"]}, {100.0})
         self.assertEqual({usd["currency"], cny["currency"], gbp["currency"]}, {"USD", "CNY", "GBP"})
 
+    def test_a_currency_inside_a_longer_prefix_is_not_a_price(self):
+        self.assertIsNone(CM.money("XUSD 100"))
+        self.assertIsNone(CM.money("ZGBP 10"))
+        self.assertEqual(CM.money("USD 100")["currency"], "USD")
+        self.assertEqual(CM.money("A$50")["currency"], "AUD")
+
     def test_no_price_means_no_price(self):
         self.assertIsNone(CM.money("Custom"))
         self.assertIsNone(CM.money("Contact us"))
