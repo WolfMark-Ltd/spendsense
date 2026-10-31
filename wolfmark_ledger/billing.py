@@ -80,7 +80,7 @@ def profiles_path(data_dir: Optional[Path | str] = None) -> Path:
     try:
         from plugins.plugin_storage import plugin_data_dir
 
-        return plugin_data_dir("wolfmark-cost-ledger") / "billing-profiles.json"
+        return plugin_data_dir("spend-sense") / "billing-profiles.json"
     except Exception:
         pass
     try:
@@ -91,7 +91,7 @@ def profiles_path(data_dir: Optional[Path | str] = None) -> Path:
         import os
 
         base = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
-    return base / "plugin-data" / "wolfmark-cost-ledger" / "billing-profiles.json"
+    return base / "plugin-data" / "spend-sense" / "billing-profiles.json"
 
 
 def load_profiles(path: Optional[Path | str] = None) -> dict[str, Any]:

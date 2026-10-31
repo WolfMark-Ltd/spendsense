@@ -16,7 +16,7 @@ from wolfmark_ledger.pricing import _parse_catalogue  # noqa: E402
 def load(target: Path | None, url: str | None, timeout: float = 20):
     if target:
         return json.loads(target.read_text(encoding="utf-8-sig"))
-    req = urllib.request.Request(url, headers={"User-Agent": "wolfmark-cost-ledger-drift"})
+    req = urllib.request.Request(url, headers={"User-Agent": "spend-sense-drift"})
     with urllib.request.urlopen(req, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 

@@ -1,4 +1,4 @@
-"""WolfMark Cost Ledger backend.
+"""Spend Sense backend.
 
 Read-only aggregation of Hermes' own usage ledger (``state.db``) with a
 provider-aware price book. No writes, no network, no message content.

@@ -1,7 +1,7 @@
 """API contract tests.
 
 These exercise the FastAPI surface directly; the real mount point is
-``/api/plugins/wolfmark-cost-ledger/`` and the dashboard supplies authentication.
+``/api/plugins/spend-sense/`` and the dashboard supplies authentication.
 Skipped when FastAPI/httpx are not installed (the pure ledger tests still run).
 """
 
@@ -31,13 +31,13 @@ except Exception:  # pragma: no cover - depends on the test interpreter
 class ApiTests(unittest.TestCase):
     def setUp(self) -> None:
         app = FastAPI()
-        app.include_router(plugin_api.router, prefix="/api/plugins/wolfmark-cost-ledger")
+        app.include_router(plugin_api.router, prefix="/api/plugins/spend-sense")
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
 
     def test_ledger_unexpected_failure_hides_exception_details(self):
         with patch.object(plugin_api, "build_ledger_report", side_effect=RuntimeError("private sentinel")):
-            response = self.client.get("/api/plugins/wolfmark-cost-ledger/ledger")
+            response = self.client.get("/api/plugins/spend-sense/ledger")
         self.assertEqual(response.status_code, 500)
         self.assertNotIn("private sentinel", response.text)
 
@@ -50,20 +50,20 @@ class ApiTests(unittest.TestCase):
             "limits": [],
         }
         with patch.object(plugin_api, "build_ledger_report", return_value=fixture):
-            response = self.client.get("/api/plugins/wolfmark-cost-ledger/ledger",
+            response = self.client.get("/api/plugins/spend-sense/ledger",
                                        params={"days": 7, "basis": "list"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["window"]["basis"], "list")
 
     def test_invalid_basis_is_rejected_by_the_contract(self):
-        response = self.client.get("/api/plugins/wolfmark-cost-ledger/ledger",
+        response = self.client.get("/api/plugins/spend-sense/ledger",
                                    params={"days": 7, "basis": "made-up"})
         self.assertEqual(response.status_code, 422)
 
     def test_unreadable_database_is_503_not_a_stack_trace(self):
         with patch.object(plugin_api, "build_ledger_report",
                           side_effect=LedgerUnavailable("no database")):
-            response = self.client.get("/api/plugins/wolfmark-cost-ledger/ledger")
+            response = self.client.get("/api/plugins/spend-sense/ledger")
         self.assertEqual(response.status_code, 503)
         self.assertIn("no database", response.json()["detail"])
 
@@ -91,7 +91,7 @@ class ApiTests(unittest.TestCase):
             with patch.object(store, "event_db_path", return_value=events), \
                  patch("wolfmark_ledger.aggregate.default_db_path", return_value=state), \
                  patch("wolfmark_ledger.analytics.load_catalogue", return_value=book):
-                response = self.client.get("/api/plugins/wolfmark-cost-ledger/analytics", params={
+                response = self.client.get("/api/plugins/spend-sense/analytics", params={
                     "days": 30, "model": "m", "provider": "test", "surface": "desktop", "task": "title",
                 })
             self.assertEqual(response.status_code, 200, response.text)
@@ -112,7 +112,7 @@ class ApiTests(unittest.TestCase):
     def test_analytics_window_bounds_are_validated(self):
         for days in (0, 366, "not-a-number"):
             with self.subTest(days=days):
-                response = self.client.get("/api/plugins/wolfmark-cost-ledger/analytics", params={"days": days})
+                response = self.client.get("/api/plugins/spend-sense/analytics", params={"days": days})
                 self.assertEqual(response.status_code, 422)
 
     def test_analytics_failures_return_safe_error_responses(self):
@@ -122,13 +122,13 @@ class ApiTests(unittest.TestCase):
                 with self.subTest(status=status), \
                      patch.object(plugin_api, "build_analytics_report", side_effect=error), \
                      (self.assertLogs(plugin_api.log, level="ERROR") if status == 500 else nullcontext()):
-                    response = client.get("/api/plugins/wolfmark-cost-ledger/analytics")
+                    response = client.get("/api/plugins/spend-sense/analytics")
                     self.assertEqual(response.status_code, status)
                     self.assertNotIn("private implementation detail", response.text)
                     self.assertNotIn("Traceback", response.text)
 
     def test_health_never_raises(self):
-        response = self.client.get("/api/plugins/wolfmark-cost-ledger/health")
+        response = self.client.get("/api/plugins/spend-sense/health")
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertIn("ok", body)
@@ -183,7 +183,7 @@ class ApiTests(unittest.TestCase):
                 return real_report(event_db_path=event_db, state_db_path=state_db, **kwargs)
 
             with patch.object(plugin_api, "build_ledger_report", side_effect=report):
-                response = self.client.get("/api/plugins/wolfmark-cost-ledger/ledger",
+                response = self.client.get("/api/plugins/spend-sense/ledger",
                                            params={"days": 30, "basis": "hybrid"})
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
@@ -224,11 +224,11 @@ class VersionConsistencyTests(unittest.TestCase):
 class PricingParameterTests(unittest.TestCase):
     def setUp(self) -> None:
         app = FastAPI()
-        app.include_router(plugin_api.router, prefix="/api/plugins/wolfmark-cost-ledger")
+        app.include_router(plugin_api.router, prefix="/api/plugins/spend-sense")
         self.client = TestClient(app)
 
     def test_pricing_mode_and_presentation_are_forwarded(self):
-        response = self.client.get("/api/plugins/wolfmark-cost-ledger/analytics",
+        response = self.client.get("/api/plugins/spend-sense/analytics",
                                    params={"days": 7, "pricing": "approximate", "presentation": "spend"})
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
@@ -236,7 +236,7 @@ class PricingParameterTests(unittest.TestCase):
         self.assertEqual(body["billing"]["presentation"], "spend")
 
     def test_invalid_pricing_mode_is_rejected(self):
-        response = self.client.get("/api/plugins/wolfmark-cost-ledger/analytics",
+        response = self.client.get("/api/plugins/spend-sense/analytics",
                                    params={"pricing": "free-lunch"})
         self.assertEqual(response.status_code, 422)
 

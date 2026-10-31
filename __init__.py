@@ -1,4 +1,4 @@
-"""WolfMark Cost Ledger — Hermes plugin package.
+"""Spend Sense — Hermes plugin package.
 
 The desktop UI lives in ``desktop/plugin.js``; the read-only backend is the
 dashboard router in ``dashboard/plugin_api.py`` with the aggregation package in
@@ -34,4 +34,4 @@ def register(ctx: Any) -> None:
 
         install(ctx)
     except Exception:
-        log.warning("wolfmark-cost-ledger: collector registration failed; continuing", exc_info=True)
+        log.warning("spend-sense: collector registration failed; continuing", exc_info=True)

@@ -32,9 +32,9 @@ class BillingSaveContract(unittest.TestCase):
         self.addCleanup(self.patch.stop)
         importlib.reload(api)
         app = FastAPI()
-        app.include_router(api.router, prefix="/api/plugins/wolfmark-cost-ledger")
+        app.include_router(api.router, prefix="/api/plugins/spend-sense")
         self.client = TestClient(app)
-        self.url = "/api/plugins/wolfmark-cost-ledger/billing/profiles/goat"
+        self.url = "/api/plugins/spend-sense/billing/profiles/goat"
 
     def test_object_body_is_accepted(self):
         response = self.client.put(self.url, json={"provider": "commandcode", "kind": "prepaid"})
@@ -52,7 +52,7 @@ class BillingSaveContract(unittest.TestCase):
         self.assertEqual(first.status_code, 200)
         stale = self.client.put(self.url, json={"provider": "commandcode", "kind": "api"})
         self.assertEqual(stale.status_code, 409, stale.text)
-        invalid = self.client.put("/api/plugins/wolfmark-cost-ledger/billing/profiles/bad",
+        invalid = self.client.put("/api/plugins/spend-sense/billing/profiles/bad",
                                   json={"provider": "commandcode", "kind": "nonsense"})
         self.assertEqual(invalid.status_code, 422)
 
@@ -62,7 +62,7 @@ class BillingSaveContract(unittest.TestCase):
 class MembershipBillingSummaryContract(unittest.TestCase):
     def setUp(self):
         app = FastAPI()
-        app.include_router(api.router, prefix="/api/plugins/wolfmark-cost-ledger")
+        app.include_router(api.router, prefix="/api/plugins/spend-sense")
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
 
@@ -92,7 +92,7 @@ class MembershipBillingSummaryContract(unittest.TestCase):
                                return_value={"profiles": profile_rows, "loaded": True}), \
              mock.patch.object(api, "build_analytics_report", side_effect=report), \
              mock.patch.object(api.members, "fee_summary_payload", return_value=membership_fees):
-            response = self.client.get("/api/plugins/wolfmark-cost-ledger/billing/summary")
+            response = self.client.get("/api/plugins/spend-sense/billing/summary")
 
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()

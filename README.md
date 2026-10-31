@@ -160,7 +160,7 @@ There is no supported public installation yet. A validated install, update
 and rollback procedure will be published with the first supported release.
 
 If you are evaluating the candidate from source, keep the existing
-`wolfmark-cost-ledger` plugin ID and `/cost-ledger` route (changing them
+`spend-sense` plugin ID and `/spend-sense` route (changing them
 would orphan existing namespaces and storage), back up plugin data first,
 and test on an isolated profile. Do not install it over an existing plugin
 without a verified backup.

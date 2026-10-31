@@ -1,7 +1,7 @@
 """Plugin-owned per-call usage store.
 
 The collector writes one row per provider attempt into
-``<hermes home>/plugin-data/wolfmark-cost-ledger/usage.db`` using Hermes'
+``<hermes home>/plugin-data/spend-sense/usage.db`` using Hermes'
 supported ``plugin_db`` helper (WAL, profile-scoped, survives plugin updates).
 The dashboard opens the same file read-only.
 
@@ -23,7 +23,7 @@ try:
 except ImportError:  # isolated capability probe loads store as top-level
     from db import default_db_path  # type: ignore
 
-PLUGIN_NAME = "wolfmark-cost-ledger"
+PLUGIN_NAME = "spend-sense"
 DB_FILENAME = "usage.db"
 RETENTION_DAYS = 180
 PRUNE_EVERY = 500

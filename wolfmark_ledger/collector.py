@@ -29,7 +29,7 @@ def install(ctx: Any) -> None:
     """Register the hooks. Missing support or a storage error never blocks Hermes."""
     register = getattr(ctx, "register_hook", None)
     if not callable(register):
-        log.debug("wolfmark-cost-ledger: ctx.register_hook unavailable; collector disabled")
+        log.debug("spend-sense: ctx.register_hook unavailable; collector disabled")
         return
     # Capture the cumulative baseline before hooks can record events, so
     # reconciliation compares like with like. One small read; failure is
@@ -37,12 +37,12 @@ def install(ctx: Any) -> None:
     try:
         store.bootstrap()
     except Exception:
-        log.debug("wolfmark-cost-ledger: baseline bootstrap failed")
+        log.debug("spend-sense: baseline bootstrap failed")
     for name in _HOOKS:
         try:
             register(name, _HANDLERS[name])
         except Exception:
-            log.warning("wolfmark-cost-ledger: could not register %s; continuing", name)
+            log.warning("spend-sense: could not register %s; continuing", name)
 
 
 def _text(value: Any, limit: int = 160) -> str:
@@ -160,7 +160,7 @@ def _post_api_request(**kwargs: Any) -> None:
         record["outcome"] = "ok" if record["total_tokens"] > 0 else "missing_usage"
         store.record(record)
     except Exception:
-        log.debug("wolfmark-cost-ledger: post_api_request record failed")
+        log.debug("spend-sense: post_api_request record failed")
 
 
 def _post_auxiliary_call(**kwargs: Any) -> None:
@@ -174,7 +174,7 @@ def _post_auxiliary_call(**kwargs: Any) -> None:
             record["outcome"] = "missing_usage"
         store.record(record)
     except Exception:
-        log.debug("wolfmark-cost-ledger: post_auxiliary_call record failed")
+        log.debug("spend-sense: post_auxiliary_call record failed")
 
 
 def _api_request_error(**kwargs: Any) -> None:
@@ -185,7 +185,7 @@ def _api_request_error(**kwargs: Any) -> None:
         # report counts it as unpriced rather than pretending it was free.
         store.record(record)
     except Exception:
-        log.debug("wolfmark-cost-ledger: api_request_error record failed")
+        log.debug("spend-sense: api_request_error record failed")
 
 
 _HANDLERS = {

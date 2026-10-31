@@ -41,7 +41,7 @@ import {
 import { useEffect } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
-const ID = 'wolfmark-cost-ledger'
+const ID = 'spend-sense'
 const PLUGIN_VERSION = '0.5.0'
 const LEDGER_KEY = 'ledger.v2'
 /** Pre-1.0 ledger. Migrated on first load and left untouched as a backup. */
@@ -56,7 +56,7 @@ const MAX_SNAPSHOTS = 2000
 const MAX_SESSIONS = 1000
 const CATALOG_STALE_MS = 10 * 60 * 1000
 const M = 1_000_000
-const LEDGER_ROUTE = '/cost-ledger'
+const LEDGER_ROUTE = '/spend-sense'
 /** "All Hermes" backend windows. The API caps at 365 days. */
 const RANGE_DAYS = { today: 1, week: 7, month: 30, all: 365 }
 const VIEW_ALL = 'all'
@@ -1010,7 +1010,7 @@ async function exportLedger(kind, t) {
     const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }))
     const a = document.createElement('a')
     a.href = url
-    a.download = `wolfmark-cost-ledger-${dayKey()}.csv`
+    a.download = `spend-sense-${dayKey()}.csv`
     document.body.appendChild(a)
     a.click()
     a.remove()

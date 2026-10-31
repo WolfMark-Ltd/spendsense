@@ -39,7 +39,7 @@ class UserDataResetApiTests(unittest.TestCase):
         ]}))
         self.ledger.write_bytes(b"captured ledger is retained")
         app = FastAPI()
-        app.include_router(plugin_api.router, prefix="/api/plugins/wolfmark-cost-ledger")
+        app.include_router(plugin_api.router, prefix="/api/plugins/spend-sense")
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
         self.addCleanup(self.directory.cleanup)
@@ -52,7 +52,7 @@ class UserDataResetApiTests(unittest.TestCase):
         before_memberships = self.memberships.read_bytes()
         before_profiles = self.profiles.read_bytes()
         with self.patches()[0], self.patches()[1]:
-            response = self.client.post("/api/plugins/wolfmark-cost-ledger/settings/reset-user-data",
+            response = self.client.post("/api/plugins/spend-sense/settings/reset-user-data",
                                         json={"confirm": "no"})
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.memberships.read_bytes(), before_memberships)
@@ -60,7 +60,7 @@ class UserDataResetApiTests(unittest.TestCase):
 
     def test_reset_clears_only_memberships_and_advanced_rules(self):
         with self.patches()[0], self.patches()[1]:
-            response = self.client.post("/api/plugins/wolfmark-cost-ledger/settings/reset-user-data",
+            response = self.client.post("/api/plugins/spend-sense/settings/reset-user-data",
                                         json={"confirm": "RESET_USER_ENTERED_DATA"})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(json.loads(self.memberships.read_text())["accounts"], [])
@@ -73,7 +73,7 @@ class UserDataResetApiTests(unittest.TestCase):
         self.memberships.write_bytes(bad)
         before_profiles = self.profiles.read_bytes()
         with self.patches()[0], self.patches()[1]:
-            response = self.client.post("/api/plugins/wolfmark-cost-ledger/settings/reset-user-data",
+            response = self.client.post("/api/plugins/spend-sense/settings/reset-user-data",
                                         json={"confirm": "RESET_USER_ENTERED_DATA"})
         self.assertEqual(response.status_code, 503, response.text)
         self.assertEqual(self.memberships.read_bytes(), bad)

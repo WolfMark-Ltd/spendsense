@@ -1,6 +1,6 @@
-"""WolfMark Cost Ledger backend API.
+"""Spend Sense backend API.
 
-Mounted by Hermes at ``/api/plugins/wolfmark-cost-ledger/`` through the
+Mounted by Hermes at ``/api/plugins/spend-sense/`` through the
 supported dashboard plugin mechanism (``dashboard/manifest.json`` -> ``api``).
 The dashboard's own authentication gate covers these routes; this module adds
 no second credential and no network access.
@@ -78,7 +78,7 @@ def analytics(
     except LedgerUnavailable as exc:
         raise HTTPException(status_code=503, detail="analytics call store unavailable") from exc
     except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
-        log.error("wolfmark-cost-ledger: analytics report failed")
+        log.error("spend-sense: analytics report failed")
         raise HTTPException(status_code=500, detail="analytics report failed") from exc
 
 
@@ -99,7 +99,7 @@ def ledger(
     except LedgerUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - a read-only report must fail closed
-        log.error("wolfmark-cost-ledger: report failed")
+        log.error("spend-sense: report failed")
         raise HTTPException(status_code=500, detail="ledger report failed") from exc
 
 
@@ -175,7 +175,7 @@ def membership_discover(native: bool = Query(False, description="Also read accou
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - discovery must fail closed, never 500 with internals
-        log.error("wolfmark-cost-ledger: discovery failed")
+        log.error("spend-sense: discovery failed")
         raise HTTPException(status_code=500, detail="discovery failed") from exc
 
 

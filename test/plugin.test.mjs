@@ -242,25 +242,25 @@ test('daysAgoKey is DST-safe local calendar math', () => {
 test('close returns to the route the ledger was opened from', () => {
   window.location.hash = '#/session/abc'
   T.openLedger()
-  assert.equal(window.location.hash, '#/cost-ledger')
+  assert.equal(window.location.hash, '#/spend-sense')
   T.closeLedger()
   assert.equal(__nav.at(-1), '/session/abc')
 })
 
 test('close works when the page was reached via sidebar nav (hashchange)', () => {
-  window.location.hash = '#/cost-ledger'
+  window.location.hash = '#/spend-sense'
   T.onHashChange({ oldURL: 'app://x/index.html#/settings?tab=a' })
   T.closeLedger()
   assert.equal(__nav.at(-1), '/settings?tab=a')
 })
 
 test('close never loops back onto the ledger; falls back to new chat', () => {
-  assert.equal(T.isLedgerRoute('/cost-ledger?x=1'), true)
-  assert.equal(T.isLedgerRoute('/cost-ledgers'), false)
-  window.location.hash = '#/cost-ledger'
-  T.onHashChange({ oldURL: 'app://x/#/cost-ledger' })
+  assert.equal(T.isLedgerRoute('/spend-sense?x=1'), true)
+  assert.equal(T.isLedgerRoute('/spend-senses'), false)
+  window.location.hash = '#/spend-sense'
+  T.onHashChange({ oldURL: 'app://x/#/spend-sense' })
   T.closeLedger()
-  assert.notEqual(__nav.at(-1), '/cost-ledger')
+  assert.notEqual(__nav.at(-1), '/spend-sense')
 })
 
 test('per-conversation totals survive a restart (new runtime id, counters reset)', () => {
@@ -299,7 +299,7 @@ test('side pane docks as a tab beside Files (shares the right-sidebar toggle)', 
   assert.equal(T.PANE_DATA.placement, 'right')
 })
 
-test('registers the All Hermes page on /cost-ledger and keeps the live chip', () => {
+test('registers the All Hermes page on /spend-sense and keeps the live chip', () => {
   const registered = []
   const ctx = {
     storage: { get: (k, d) => d, set() {}, remove() {} },
@@ -314,7 +314,7 @@ test('registers the All Hermes page on /cost-ledger and keeps the live chip', ()
   plugin.register(ctx)
   const page = registered.find(c => c.id === 'page')
   const nav = registered.find(c => c.id === 'nav')
-  assert.equal(page.data.path, '/cost-ledger')
+  assert.equal(page.data.path, '/spend-sense')
   assert.equal(nav.data.label, 'Spend Sense')
   assert.ok(registered.some(c => c.id === 'chip'))
   assert.ok(registered.some(c => c.id === 'pane'))

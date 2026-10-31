@@ -9,6 +9,6 @@ test('web dashboard entry registers the Desktop handoff', () => {
   const window = {__HERMES_PLUGINS__: {register: (id, view) => { name = id; component = view }},
     __HERMES_PLUGIN_SDK__: {React: {createElement: (tag, props, text) => ({tag, text})}}}
   runInNewContext(source, {window})
-  assert.equal(name, 'wolfmark-cost-ledger')
+  assert.equal(name, 'spend-sense')
   assert.match(component().text, /Hermes Desktop/)
 })

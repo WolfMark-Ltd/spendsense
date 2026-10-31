@@ -6,7 +6,7 @@ the test build must be a different plugin as far as the app is concerned: its
 own id, its own contribution ids, its own backend namespace. Nothing here edits
 the installed release; it reads the current tree and writes a copy.
 
-    python3 scripts/build-test-plugin.py --out /path/to/wolfmark-cost-ledger-test
+    python3 scripts/build-test-plugin.py --out /path/to/spend-sense-test
 
 The backend namespace follows the plugin id (``ctx.rest`` → `/api/plugins/<id>`),
 so the API is mounted under the test name wherever this copy is installed.
@@ -24,8 +24,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-SOURCE_ID = "wolfmark-cost-ledger"
-TEST_ID = "wolfmark-cost-ledger-test"
+SOURCE_ID = "spend-sense"
+TEST_ID = "spend-sense-test"
 TEST_VERSION = "0.5.0-test.5"
 
 #: Local contribution ids. The host namespaces them as `<pluginId>:<id>` anyway,
@@ -34,12 +34,12 @@ CONTRIBUTIONS = ("pane", "chip", "page", "nav")
 
 #: Identity that the *user* sees and the app routes on. The id alone is not
 #: enough: `contributedRoutes()` resolves a path with `.find()`, first match
-#: wins, so two plugins claiming `/cost-ledger` means the production page keeps
+#: wins, so two plugins claiming `/spend-sense` means the production page keeps
 #: the route and the test page is unreachable — and the production page then
 #: calls its own namespace against the test backend and gets 404. Name, route,
 #: page title, nav label and pane title must all differ.
 IDENTITY = (
-    ("const LEDGER_ROUTE = '/cost-ledger'", "const LEDGER_ROUTE = '/cost-ledger-test'"),
+    ("const LEDGER_ROUTE = '/spend-sense'", "const LEDGER_ROUTE = '/spend-sense-test'"),
     ("name: 'Spend Sense',", "name: 'Spend Sense (test)',"),
     ("title: 'Spend Sense',", "title: 'Spend Sense (test)',"),
     ("label: 'Spend Sense',", "label: 'Spend Sense (test)',"),
@@ -128,9 +128,9 @@ def main() -> int:
     manifest["description"] = ("Phase A test build — isolated backend, synthetic data. "
                                "Not the installed release.")
     tab = manifest.get("tab")
-    if not isinstance(tab, dict) or tab.get("path") != "/cost-ledger":
+    if not isinstance(tab, dict) or tab.get("path") != "/spend-sense":
         raise SystemExit("dashboard manifest does not declare the expected production tab route")
-    tab["path"] = "/cost-ledger-test"
+    tab["path"] = "/spend-sense-test"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     report.append({"file": "dashboard/manifest.json", "change": f"name → {args.test_id}, version → {TEST_VERSION}, tab path → {tab['path']}", "count": 1})
 

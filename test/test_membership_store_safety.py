@@ -273,7 +273,7 @@ class RouteFailureTest(unittest.TestCase):
         self.path = Path(self.dir.name) / "memberships.json"
         self.path.write_text('{"accounts": false}')
         app = FastAPI()
-        app.include_router(plugin_api.router, prefix="/api/plugins/wolfmark-cost-ledger")
+        app.include_router(plugin_api.router, prefix="/api/plugins/spend-sense")
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
         self.addCleanup(self.dir.cleanup)
@@ -283,13 +283,13 @@ class RouteFailureTest(unittest.TestCase):
         self.addCleanup(self.patch.stop)
 
     def test_get_accounts_is_503_not_an_empty_list(self) -> None:
-        response = self.client.get("/api/plugins/wolfmark-cost-ledger/membership/accounts")
+        response = self.client.get("/api/plugins/spend-sense/membership/accounts")
         self.assertEqual(response.status_code, 503, response.text)
         self.assertIn("store_unreadable", response.text)
         self.assertEqual(self.path.read_text(), '{"accounts": false}')
 
     def test_put_is_503_and_does_not_write(self) -> None:
-        response = self.client.put("/api/plugins/wolfmark-cost-ledger/membership/accounts/x",
+        response = self.client.put("/api/plugins/spend-sense/membership/accounts/x",
                                    json={"id": "x", "family": "f", "label": "x"})
         self.assertEqual(response.status_code, 503, response.text)
         self.assertIn("store_unreadable", response.text)

@@ -2,7 +2,7 @@
 
 Phase A found the failure mode this guards: the Desktop resolves a contributed
 route with `.find()` over every `routes` contribution, first match wins. Two
-plugins claiming `/cost-ledger` means the first-loaded page keeps the path, the
+plugins claiming `/spend-sense` means the first-loaded page keeps the path, the
 second page is unreachable, and the winning page then calls its own namespace
 against whichever backend is selected — which is how a `-test` backend answered
 `404 {"detail":"Plugin not found"}` for a pane the user believed was the test one.
@@ -48,7 +48,7 @@ class TestBuildIdentity(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
-        cls.out = Path(cls.tmp.name) / "wolfmark-cost-ledger-test"
+        cls.out = Path(cls.tmp.name) / "spend-sense-test"
         cls.production_hash = sha(PRODUCTION)
         result = subprocess.run([sys.executable, str(BUILD), "--out", str(cls.out)],
                                 capture_output=True, text=True, timeout=180)
@@ -99,13 +99,13 @@ class TestBuildIdentity(unittest.TestCase):
 
     # -- identity the app routes and the user reads ------------------------
     def test_the_id_differs(self):
-        self.assertEqual(declared_id(self.release), "wolfmark-cost-ledger")
-        self.assertEqual(declared_id(self.source), "wolfmark-cost-ledger-test")
+        self.assertEqual(declared_id(self.release), "spend-sense")
+        self.assertEqual(declared_id(self.source), "spend-sense-test")
 
     def test_the_route_path_differs(self):
         # The one that actually caused the Phase A failure.
-        self.assertEqual(declared_route(self.release), "/cost-ledger")
-        self.assertEqual(declared_route(self.source), "/cost-ledger-test")
+        self.assertEqual(declared_route(self.release), "/spend-sense")
+        self.assertEqual(declared_route(self.source), "/spend-sense-test")
         self.assertNotEqual(declared_route(self.source), declared_route(self.release))
 
     def test_every_visible_label_differs(self):
@@ -127,9 +127,9 @@ class TestBuildIdentity(unittest.TestCase):
     def test_the_route_is_used_consistently(self):
         # The route constant drives the matcher, the navigate call, the page data
         # and the nav data; a half-renamed route would strand the page.
-        self.assertEqual(self.source.count("const LEDGER_ROUTE = '/cost-ledger-test'"), 1)
+        self.assertEqual(self.source.count("const LEDGER_ROUTE = '/spend-sense-test'"), 1)
         self.assertGreaterEqual(self.source.count("LEDGER_ROUTE"), 4)
-        self.assertNotIn("'/cost-ledger'", self.source)
+        self.assertNotIn("'/spend-sense'", self.source)
 
     # -- the backend namespace follows the id ------------------------------
     def test_the_manifest_name_matches_the_plugin_id(self):
@@ -160,8 +160,8 @@ class TestBuildIdentity(unittest.TestCase):
     def test_dashboard_entry_uses_test_identity(self):
         manifest = json.loads((self.out / "dashboard" / "manifest.json").read_text())
         source = (self.out / "dashboard" / manifest["entry"]).read_text()
-        self.assertIn("registry.register('wolfmark-cost-ledger-test'", source)
-        self.assertNotIn("registry.register('wolfmark-cost-ledger'", source)
+        self.assertIn("registry.register('spend-sense-test'", source)
+        self.assertNotIn("registry.register('spend-sense'", source)
 
     def test_test_backend_storage_and_reset_are_separate(self):
         # All paths and sentinels are inside a new TemporaryDirectory.
@@ -181,14 +181,14 @@ def plugin_db(name, filename):
 ps.plugin_db = plugin_db
 sys.modules['plugins'] = plugins; sys.modules['plugins.plugin_storage'] = ps
 from wolfmark_ledger import store, membership_store, billing, user_data
-prod = home / 'plugin-data' / 'wolfmark-cost-ledger'; prod.mkdir(parents=True)
+prod = home / 'plugin-data' / 'spend-sense'; prod.mkdir(parents=True)
 for name in ('usage.db','memberships.json','billing-profiles.json'):
     (prod / name).write_text('production sentinel')
-assert store.event_db_path() == home / 'plugin-data' / 'wolfmark-cost-ledger-test' / 'usage.db'
+assert store.event_db_path() == home / 'plugin-data' / 'spend-sense-test' / 'usage.db'
 store.connect_writer()
-assert seen == [('wolfmark-cost-ledger-test','usage.db')]
-assert membership_store.store_path().parent.name == 'wolfmark-cost-ledger-test'
-assert billing.profiles_path().parent.name == 'wolfmark-cost-ledger-test'
+assert seen == [('spend-sense-test','usage.db')]
+assert membership_store.store_path().parent.name == 'spend-sense-test'
+assert billing.profiles_path().parent.name == 'spend-sense-test'
 test = store.event_db_path().parent; test.mkdir(parents=True, exist_ok=True)
 (test / 'usage.db').write_text('test sentinel')
 membership_store.save_account({'id':'test-sentinel','family':'example','route_slugs':['example']}, test / 'memberships.json')
