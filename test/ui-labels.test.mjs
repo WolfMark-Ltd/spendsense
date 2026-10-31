@@ -301,3 +301,56 @@ test('the pane root class cannot collide with the analytics cache bar', () => {
   assert.match(T.METER_CSS, /\.wm-pane\{/)
   assert.doesNotMatch(T.METER_CSS, /\.wm-meter[\s{]/)
 })
+
+test('every English string has a Chinese translation', () => {
+  for (const key of Object.keys(en)) {
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+})
+
+test('every economics string exists in English and Chinese', () => {
+  const keys = ['econTitle', 'econIntro', 'econMonthlySubs', 'econSubsSmall', 'econUsageLabel',
+    'econNoPricedUsage', 'econTheoreticalPrice', 'econDiffLabel', 'econDiffHint', 'econGroupsTitle',
+    'econNoComparison', 'econGroupHead', 'econAccountsTitle', 'econColAccount', 'econColMembership',
+    'econColMonthly', 'econColDifference', 'econColCoverage', 'econTrendTitle', 'econOthersTitle',
+    'econNoPricedUsageShort', 'econApiUsageMoney', 'econOutsideTitle', 'econUnknownRoutes',
+    'econUnattributedLine', 'econAmbiguousLine', 'econFxTitle', 'econFxHint', 'econReading',
+    'econStatusOk', 'econStatusPartial', 'econStatusUnavailable', 'econNoUsage', 'econNoPrice',
+    'econCoverageUnknown', 'econFullyPriced', 'econPricedPct', 'econSpanWindow', 'econSpanDays',
+    'econPerMonth', 'econApiUsage', 'econFeesInWindow', 'econConvertedAt', 'econNoFee',
+    'econPeriodAbbr', 'econFeeDeclared', 'econFeeCustom', 'econFeeCatalogue', 'econDue',
+    'econRenewalUnknown', 'econUsageDetail', 'econNoPlan', 'econInWindow', 'econTrendEmpty',
+    'econFlagProgress', 'econFlagRecording', 'econFlagPricing', 'econNoFees', 'econTrendUsage',
+    'econTrendAria', 'econTrendFeeTitle', 'econTrendUsageTitle', 'econOverviewLabel',
+    'econOverviewError', 'econOverviewReading', 'econOverviewNone', 'econOverviewSmall',
+    'fxReading', 'fxRetry', 'fxRateLine', 'fxRemove', 'fxEmpty', 'fxCurrency', 'fxUsdPlaceholder',
+    'fxUsdUnit', 'fxRateDate', 'fxSourcePlaceholder', 'fxRateSource', 'fxAdd', 'fxSave', 'fxSaving',
+    'fxStaged', 'fxSaved', 'fxReadError', 'fxErrConflict', 'fxErrSession', 'fxErrUnavailable',
+    'fxErrRejected', 'fxErrSave']
+  for (const key of keys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  // The English composites keep their exact pre-localisation wording.
+  assert.equal(en.econSubsSmall('$38.77', 'in the last 30 days', 2, 'Complete'),
+    '$38.77 in the last 30 days · 2 subscription(s) · Complete')
+  assert.equal(en.econGroupHead('$20.00', '$19.37', '$2.00', 'Complete'),
+    '$20.00/mo fees · $19.37 in window · $2.00 usage · Complete')
+  assert.equal(en.econSpanDays(1), 'in the last 1 day')
+  assert.equal(en.econSpanDays(30), 'in the last 30 days')
+  assert.equal(en.econPeriodAbbr('month'), 'mo')
+  assert.equal(en.econPeriodAbbr('year'), 'yr')
+  assert.equal(en.econPeriodAbbr(undefined), undefined)
+  assert.equal(en.econUnattributedLine('—', 'mystery', 'note.'), 'Unattributed: — on mystery. note.')
+  assert.match(en.econIntro, /not cash saved/)
+  assert.match(en.econDiffHint, /Not cash saved/)
+  // The Chinese composites interpolate every argument.
+  assert.match(zh.econSubsSmall('$38.77', '过去 30 天内', 2, '完成'), /2 个订阅/)
+  assert.match(zh.econGroupHead('$20.00', '$19.37', '$2.00', '完成'), /\/月费用/)
+  assert.equal(zh.econSpanDays(30), '过去 30 天内')
+  assert.equal(zh.econPerMonth('$20.00'), '$20.00/月')
+  assert.match(zh.econTrendAria('2026-10', '$20.00', '$2.00', '−$18.00'), /差值/)
+  assert.match(zh.econIntro, /不是实际节省的现金/)
+})

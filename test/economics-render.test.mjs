@@ -173,34 +173,34 @@ test.afterEach(async () => {
 
 test('the economics section leads with the three headline figures', async () => {
   const { text } = await renderSection(econFixture())
-  assert.match(text(), /Monthly subscriptions/)
-  assert.match(text(), /\$20\.00\/mo/)
-  assert.match(text(), /API-equivalent usage/)
+  assert.match(text(), /econMonthlySubs/)
+  assert.match(text(), /econPerMonth/)
+  assert.match(text(), /econApiUsage/)
   assert.match(text(), /\$2\.00/)
-  assert.match(text(), /Estimated value comparison/)
+  assert.match(text(), /econDiffLabel/)
   assert.match(text(), /−\$17\.37/)
-  assert.match(text(), /Not cash saved/)
-  assert.match(text(), /\$19\.37 in the last 30 days/)
-  assert.match(text(), /same window/)
+  assert.match(text(), /econDiffHint/)
+  assert.match(text(), /econSubsSmall/)
+  assert.match(text(), /econTheoreticalPrice/)
 })
 
 test('the breakdown names the membership, renewal and coverage', async () => {
   const { container, text } = await renderSection(econFixture())
   assert.match(text(), /Test account/)
   assert.match(text(), /Test Plus/)
-  assert.match(text(), /\$20\.00 due 2026-11-12/)
-  assert.match(text(), /\$19\.37 in window/)
-  assert.match(text(), /Fully priced/)
+  assert.match(text(), /econDue/)
+  assert.match(text(), /econInWindow/)
+  assert.match(text(), /econFullyPriced/)
   const headers = [...container.querySelectorAll('th')].map(th => th.textContent)
-  assert.deepEqual(headers, ['Account', 'Membership', 'Monthly equiv.', 'API-equivalent usage',
-    'Est. value difference', 'Pricing coverage'])
+  assert.deepEqual(headers, ['econColAccount', 'econColMembership', 'econColMonthly', 'econApiUsage',
+    'econColDifference', 'econColCoverage'])
 })
 
 test('paired bars carry values and labels, never bare graphics', async () => {
   const { container } = await renderSection(econFixture())
   const labels = [...container.querySelectorAll('.wm-econ-bar-label')].map(el => el.textContent)
-  assert.ok(labels.some(label => label.includes('Fees in window (USD)')), `fee bar labelled: ${labels}`)
-  assert.ok(labels.some(label => label.includes('API-equivalent usage')), `usage bar labelled: ${labels}`)
+  assert.ok(labels.some(label => label.includes('econFeesInWindow')), `fee bar labelled: ${labels}`)
+  assert.ok(labels.some(label => label.includes('econApiUsage')), `usage bar labelled: ${labels}`)
   const values = [...container.querySelectorAll('.wm-econ-bar-value')].map(el => el.textContent)
   assert.ok(values.includes('$19.37'), `windowed fee value shown: ${values}`)
   assert.ok(values.includes('$2.00'), `usage value shown: ${values}`)
@@ -214,14 +214,14 @@ test('the trend shows comparable months with an in-progress flag', async () => {
   const { text } = await renderSection(econFixture())
   assert.match(text(), /2026-09/)
   assert.match(text(), /2026-10/)
-  assert.match(text(), /in progress/)
+  assert.match(text(), /econFlagProgress/)
 })
 
 test('api-only, unattributed and ambiguous usage stay outside the comparison', async () => {
   const { text } = await renderSection(econFixture())
-  assert.match(text(), /Not in the comparison/)
+  assert.match(text(), /econOthersTitle/)
   assert.match(text(), /API Only: pay-as-you-go/)
-  assert.match(text(), /Unattributed: — on mystery/)
+  assert.match(text(), /econUnattributedLine/)
 })
 
 test('a missing comparison renders an unavailable state, not a zero', async () => {
@@ -231,7 +231,7 @@ test('a missing comparison renders an unavailable state, not a zero', async () =
   data.groups = []
   data.accounts = []
   const { text } = await renderSection(data)
-  assert.match(text(), /Unavailable/)
+  assert.match(text(), /econStatusUnavailable/)
   assert.match(text(), /No subscription has a known fee/)
   assert.doesNotMatch(text(), /\$0\.00/)
 })
@@ -254,8 +254,8 @@ test('the fx editor stages a rate and saves the whole document', async () => {
     form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }))
   })
   await flush(2)
-  assert.match(container.textContent, /GBP at 1\.25 USD per unit, dated 2026-10-31 \(Example Bank\)/)
-  const save = [...container.querySelectorAll('button')].find(b => b.textContent === 'Save rates')
+  assert.match(container.textContent, /fxRateLine/)
+  const save = [...container.querySelectorAll('button')].find(b => b.textContent === 'fxSave')
   assert.ok(save && !save.disabled, 'save enables once the draft differs')
   await React.act(async () => { save.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
   assert.equal(saved.length, 1)
@@ -273,8 +273,8 @@ test('a converted group cites its rate beside the bars', async () => {
     status: 'ok', notes: [],
   }]
   const { container, text } = await renderSection(data)
-  assert.match(text(), /Fees in window \(GBP, in USD\)/)
-  assert.match(text(), /Converted at 1\.25 USD per GBP, dated 2026-10-31 \(Example Bank\)/)
+  assert.match(text(), /econFeesInWindow/)
+  assert.match(text(), /econConvertedAt/)
   // The converted bar converts the windowed fee: 4.12 × 1.25 = $5.15.
   const values = [...container.querySelectorAll('.wm-econ-bar-value')].map(el => el.textContent)
   assert.ok(values.includes('$5.15'), `converted window fee shown: ${values}`)
@@ -301,7 +301,7 @@ test('the economics panel reads the report and the rates for this connection', a
       React.createElement(T.EconomicsPanel, { identity: T.membershipIdentityNow() })))
   })
   await flush(8)
-  assert.match(container.textContent, /Subscription economics/)
+  assert.match(container.textContent, /econTitle/)
   assert.match(container.textContent, /−\$17\.37/)
   assert.ok(transportCtl.calls.some(call => call.path.startsWith('/economics/summary?days=30')),
     `economics fetched: ${JSON.stringify(transportCtl.calls)}`)
@@ -319,7 +319,7 @@ test('a partially priced trend month keeps its bars and warns it is a lower boun
   }], excluded_before_recording: 0, note: '' }
   const { container, text } = await renderSection(data)
   assert.ok(container.querySelector('.wm-econ-trend-bars'), 'bars still render')
-  assert.match(text(), /partial pricing/)
+  assert.match(text(), /econFlagPricing/)
   assert.match(text(), /lower bound/)
 })
 
@@ -333,7 +333,7 @@ test('a fully unpriced trend month shows no value and no bars', async () => {
   }], excluded_before_recording: 0, note: '' }
   const { container, text } = await renderSection(data)
   assert.equal(container.querySelector('.wm-econ-trend-bars'), null)
-  assert.match(text(), /— usage/)
+  assert.match(text(), /econTrendUsage/)
   assert.match(text(), /no published price/)
   assert.doesNotMatch(text(), /\$0\.00 usage/)
 })
@@ -349,18 +349,18 @@ test('a trend month without a converted fee total degrades to a text row', async
   }], excluded_before_recording: 0, note: '' }
   const { container, text } = await renderSection(data)
   assert.equal(container.querySelector('.wm-econ-trend-bars'), null)
-  assert.match(text(), /£4\.25\/mo/)
+  assert.match(text(), /econPerMonth/)
   assert.match(text(), /no FX rate dated in this month/)
 })
 
 test('the fx editor stays disabled until the saved rates load', async () => {
   const { container } = await renderSection(econFixture(), { fxReady: false, fxError: '' })
-  assert.match(container.textContent, /Reading saved FX rates/)
-  const save = [...container.querySelectorAll('button')].find(b => b.textContent === 'Save rates')
+  assert.match(container.textContent, /fxReading/)
+  const save = [...container.querySelectorAll('button')].find(b => b.textContent === 'fxSave')
   assert.ok(save && save.disabled, 'save is blocked before the read completes')
-  const add = [...container.querySelectorAll('button')].find(b => b.textContent === 'Add rate')
+  const add = [...container.querySelectorAll('button')].find(b => b.textContent === 'fxAdd')
   assert.ok(add && add.disabled, 'staging is blocked before the read completes')
-  assert.doesNotMatch(container.textContent, /No FX rates saved/)
+  assert.doesNotMatch(container.textContent, /fxEmpty/)
 })
 
 test('a failed fx read explains itself and offers a retry', async () => {
@@ -369,7 +369,7 @@ test('a failed fx read explains itself and offers a retry', async () => {
     { fxReady: false, fxError: 'Saved FX rates could not be read for this connection.',
       onRetryFx: () => { retries += 1 } })
   assert.match(container.textContent, /could not be read for this connection/)
-  const retry = [...container.querySelectorAll('button')].find(b => b.textContent === 'Retry')
+  const retry = [...container.querySelectorAll('button')].find(b => b.textContent === 'fxRetry')
   assert.ok(retry, 'retry renders')
   await React.act(async () => { retry.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
   assert.equal(retries, 1)
@@ -379,11 +379,11 @@ test('the saving flag belongs to one connection only', async () => {
   const { container } = await renderSection(econFixture())
   await React.act(async () => { T.$fxSaving.set({ origin: 'elsewhere|default#9' }) })
   await flush(2)
-  const save = [...container.querySelectorAll('button')].find(b => /Save rates|Saving…/.test(b.textContent))
-  assert.equal(save.textContent, 'Save rates', 'another connection saving does not stick this button')
+  const save = [...container.querySelectorAll('button')].find(b => /fxSave|fxSaving/.test(b.textContent))
+  assert.equal(save.textContent, 'fxSave', 'another connection saving does not stick this button')
   await React.act(async () => { T.$fxSaving.set({ origin: 'local|default#1' }) })
   await flush(2)
-  assert.equal(save.textContent, 'Saving…', 'this connection saving shows')
+  assert.equal(save.textContent, 'fxSaving', 'this connection saving shows')
   assert.ok(save.disabled)
 })
 
@@ -425,8 +425,8 @@ test('the panel blocks the fx editor when the rates read fails', async () => {
       React.createElement(T.EconomicsPanel, { identity: T.membershipIdentityNow() })))
   })
   await flush(8)
-  assert.match(container.textContent, /could not be read for this connection/)
+  assert.match(container.textContent, /fxReadError/)
   assert.doesNotMatch(container.textContent, /status 500/)
-  const save = [...container.querySelectorAll('button')].find(b => b.textContent === 'Save rates')
+  const save = [...container.querySelectorAll('button')].find(b => b.textContent === 'fxSave')
   assert.ok(save && save.disabled, 'save is blocked while the read has failed')
 })

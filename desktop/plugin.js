@@ -2720,24 +2720,24 @@ async function invalidateEconomicsFor(identity) {
 const FX_TRANSPORT = /\b[45]\d{2}\b|timeout|timed out|network|failed to fetch|fetch failed|connection|econn|socket|abort/i
 
 /** FX failures carry the server's validation sentence; anything else is generic. */
-function fxErrorMessage(error) {
+function fxErrorMessage(t, error) {
   const raw = typeof error?.message === 'string' ? error.message : ''
-  if (/conflict|409/i.test(raw)) return 'The rates changed since you loaded them. Reload, then save again.'
-  if (/401|unauthori/i.test(raw)) return 'Your Desktop session has expired. Sign in again, then retry.'
-  if (/404/i.test(raw)) return 'FX rates are not available in the running backend. Reload the plugin and check its health.'
+  if (/conflict|409/i.test(raw)) return t('fxErrConflict')
+  if (/401|unauthori/i.test(raw)) return t('fxErrSession')
+  if (/404/i.test(raw)) return t('fxErrUnavailable')
   if (/422|validation/i.test(raw)) {
     // Only the server's plain validation sentence passes through: a raw
     // transport message with no colon, or detail still carrying a status,
     // fails closed to the generic rejection sentence.
     const detail = raw.replace(/^.*?:\s*/, '')
     if (detail && detail !== raw && !FX_TRANSPORT.test(detail)) return detail
-    return 'The rates were rejected. Check each rate and retry.'
+    return t('fxErrRejected')
   }
-  if (!raw) return 'The rates could not be saved. Please retry; if it persists, check the backend log.'
+  if (!raw) return t('fxErrSave')
   // Transport failures (status codes, timeouts, network errors) never reach
   // the user verbatim; only the server's plain validation detail passes.
   if (FX_TRANSPORT.test(raw)) {
-    return 'The rates could not be saved. Please retry; if it persists, check the backend log.'
+    return t('fxErrSave')
   }
   return raw
 }
@@ -2751,17 +2751,17 @@ function fmtDay(value) {
 }
 
 /** Short human status for an economics comparison. */
-function econStatusLabel(status) {
-  return status === 'ok' ? 'Complete' : status === 'partial' ? 'Partial' : 'Unavailable'
+function econStatusLabel(t, status) {
+  return status === 'ok' ? t('econStatusOk') : status === 'partial' ? t('econStatusPartial') : t('econStatusUnavailable')
 }
 
 /** One line for a usage value and its pricing coverage. */
-function econCoverageLabel(usage) {
-  if (!usage || !num(usage.tokens)) return 'No usage observed'
-  if (usage.list_usd == null) return 'No published price'
-  if (usage.coverage == null) return 'Coverage unknown'
+function econCoverageLabel(t, usage) {
+  if (!usage || !num(usage.tokens)) return t('econNoUsage')
+  if (usage.list_usd == null) return t('econNoPrice')
+  if (usage.coverage == null) return t('econCoverageUnknown')
   const pct = Math.round(usage.coverage * 100)
-  return pct >= 100 ? 'Fully priced' : `${pct}% priced`
+  return pct >= 100 ? t('econFullyPriced') : t('econPricedPct', pct)
 }
 
 /** Window-allocated expenditure lines, one per currency — never summed here. */
@@ -2772,20 +2772,19 @@ function econWindowLines(fees) {
 }
 
 /** Display span of the reporting window for "in the last N days" labels. */
-function windowSpanLabel(windowDays) {
+function windowSpanLabel(t, windowDays) {
   const days = finiteValue(windowDays)
-  if (days == null || days <= 0) return 'in the reporting window'
-  const rounded = Math.max(1, Math.round(days))
-  return `in the last ${rounded} day${rounded === 1 ? '' : 's'}`
+  if (days == null || days <= 0) return t('econSpanWindow')
+  return t('econSpanDays', Math.max(1, Math.round(days)))
 }
 
 /** Monthly-equivalent fee lines, one per currency — never summed here. */
-function econFeeLines(fees) {
+function econFeeLines(t, fees) {
   const rows = Array.isArray(fees) ? fees : []
   if (!rows.length) return ['—']
   return rows.map(({ amount, currency }) => {
     const money = fmtMoney(amount, currency)
-    return money ? `${money}/mo` : '—'
+    return money ? t('econPerMonth', money) : '—'
   })
 }
 
@@ -3118,7 +3117,7 @@ function CostsPage() {
 }
 
 /** Paired fee-vs-usage bars for one comparable currency group. */
-function EconomicsBars({ group }) {
+function EconomicsBars({ group, t }) {
   // Windowed fees pair with windowed usage; fall back to monthly figures
   // only against an older backend that predates window allocation.
   const base = finiteValue(group.window_fees) ?? finiteValue(group.monthly_fees) ?? 0
@@ -3134,38 +3133,38 @@ function EconomicsBars({ group }) {
     jsx('span', { className: 'wm-econ-bar-value', children: analyticMoney(value) })
   ] })
   return jsxs('div', { className: 'wm-econ-bars', children: [
-    bar(fee, 'wm-econ-fee', `Fees in window (${group.currency}${group.converted ? ', in USD' : ''})`),
-    bar(usage, 'wm-econ-usage', 'API-equivalent usage'),
+    bar(fee, 'wm-econ-fee', t('econFeesInWindow', group.currency, group.converted)),
+    bar(usage, 'wm-econ-usage', t('econApiUsage')),
     group.converted && group.fx
       ? jsx('p', { className: 'wm-subtle', children:
-          `Converted at ${group.fx.usd_per_unit} USD per ${group.currency}, dated ${group.fx.as_of} (${group.fx.source}).` })
+          t('econConvertedAt', group.fx.usd_per_unit, group.currency, group.fx.as_of, group.fx.source) })
       : null
   ].filter(Boolean) })
 }
 
 /** One account row of the economics breakdown table. */
-function EconomicsAccountRow({ row }) {
+function EconomicsAccountRow({ row, t }) {
   const fee = row.fee || {}
   const monthly = row.monthly_equivalent || {}
   const windowFee = row.window_expenditure || {}
   const usage = row.usage || {}
   const renewal = row.renewal || {}
-  const feeText = fee.amount == null ? 'No fee set'
-    : `${fmtMoney(fee.amount, fee.currency)}/${fee.period === 'month' ? 'mo' : fee.period === 'year' ? 'yr' : fee.period}`
-  const basisText = fee.basis === 'declared' ? 'Your price' : fee.basis === 'custom' ? 'User-defined plan'
-    : fee.basis === 'catalogue' ? 'Catalogue price' : null
+  const feeText = fee.amount == null ? t('econNoFee')
+    : `${fmtMoney(fee.amount, fee.currency)}/${t('econPeriodAbbr', fee.period)}`
+  const basisText = fee.basis === 'declared' ? t('econFeeDeclared') : fee.basis === 'custom' ? t('econFeeCustom')
+    : fee.basis === 'catalogue' ? t('econFeeCatalogue') : null
   const renewalText = renewal.amount == null ? null
     : renewal.date_known && renewal.date
-      ? `${fmtMoney(renewal.amount, renewal.currency)} due ${fmtDay(renewal.date)}`
-      : `${fmtMoney(renewal.amount, renewal.currency)} · renewal date unknown`
+      ? t('econDue', fmtMoney(renewal.amount, renewal.currency), fmtDay(renewal.date))
+      : t('econRenewalUnknown', fmtMoney(renewal.amount, renewal.currency))
   const usageText = usage.list_usd == null ? '—' : analyticMoney(usage.list_usd)
-  const usageDetail = usage.tokens ? `${fmtTokens(usage.tokens)} · ${usage.calls} calls` : null
+  const usageDetail = usage.tokens ? t('econUsageDetail', fmtTokens(usage.tokens), usage.calls) : null
   const routes = (row.attribution?.routes || []).map(r => r.route).join(', ')
   const difference = finiteValue(row.difference_usd)
   return jsxs('tr', { children: [
     jsxs('td', { children: [
       jsx('div', { className: 'wm-econ-account', children: row.label || row.family }),
-      jsx('div', { className: 'wm-econ-dim', children: [row.plan_name || 'No plan', row.family].filter(Boolean).join(' · ') || null })
+      jsx('div', { className: 'wm-econ-dim', children: [row.plan_name || t('econNoPlan'), row.family].filter(Boolean).join(' · ') || null })
     ] }),
     jsxs('td', { children: [
       jsx('div', { children: feeText }),
@@ -3174,10 +3173,10 @@ function EconomicsAccountRow({ row }) {
     ].filter(Boolean) }),
     jsxs('td', { className: 'wm-econ-num', children: [
       jsx('div', { children: monthly.amount == null ? '—'
-        : `${fmtMoney(monthly.amount, monthly.currency)}/mo` }),
+        : t('econPerMonth', fmtMoney(monthly.amount, monthly.currency)) }),
       windowFee.amount == null ? null
         : jsx('div', { className: 'wm-econ-dim',
-            children: `${fmtMoney(windowFee.amount, windowFee.currency)} in window` })
+            children: t('econInWindow', fmtMoney(windowFee.amount, windowFee.currency)) })
     ].filter(Boolean) }),
     jsxs('td', { className: 'wm-econ-num', children: [
       jsx('div', { children: usageText }),
@@ -3185,29 +3184,28 @@ function EconomicsAccountRow({ row }) {
       routes ? jsx('div', { className: 'wm-econ-dim', children: routes }) : null
     ].filter(Boolean) }),
     jsx('td', { className: cn('wm-econ-num', difference != null && (difference < 0 ? 'wm-econ-negative' : 'wm-econ-positive')),
-      children: difference == null ? econStatusLabel(row.status) : analyticMoney(difference) }),
+      children: difference == null ? econStatusLabel(t, row.status) : analyticMoney(difference) }),
     jsxs('td', { children: [
-      jsx('div', { children: econCoverageLabel(usage) }),
-      jsx('div', { className: 'wm-econ-dim', children: econStatusLabel(row.status) })
+      jsx('div', { children: econCoverageLabel(t, usage) }),
+      jsx('div', { className: 'wm-econ-dim', children: econStatusLabel(t, row.status) })
     ] })
   ] })
 }
 
 /** Monthly trend: paired bars where comparable, honest text rows elsewhere. */
-function EconomicsTrend({ trend }) {
+function EconomicsTrend({ trend, t }) {
   const months = trend?.months || []
   if (!months.length) {
-    return jsx('p', { className: 'wm-subtle', children:
-      'No monthly history yet. The trend appears once recording and fees cover a calendar month.' })
+    return jsx('p', { className: 'wm-subtle', children: t('econTrendEmpty') })
   }
   return jsx('div', { className: 'wm-econ-trend', children: months.map(entry => {
     const difference = finiteValue(entry.difference_usd)
     const feeUsd = finiteValue(entry.fees_usd)
-    const flags = [entry.in_progress ? 'in progress' : null,
-      entry.recording_partial ? 'partial recording' : null,
-      entry.partial ? 'partial pricing' : null].filter(Boolean).join(' · ')
+    const flags = [entry.in_progress ? t('econFlagProgress') : null,
+      entry.recording_partial ? t('econFlagRecording') : null,
+      entry.partial ? t('econFlagPricing') : null].filter(Boolean).join(' · ')
     const feesText = (entry.fees_by_currency || []).map(({ amount, currency }) =>
-      `${fmtMoney(amount, currency)}/mo`).join(' + ') || 'No fees'
+      t('econPerMonth', fmtMoney(amount, currency))).join(' + ') || t('econNoFees')
     // Bars need the backend's converted fee total; without it (or without a
     // difference) the month renders as an honest text row instead of a
     // client-side currency sum.
@@ -3215,7 +3213,7 @@ function EconomicsTrend({ trend }) {
       return jsxs('div', { className: 'wm-econ-trend-row', children: [
         jsx('span', { className: 'wm-econ-trend-month', children: entry.month }, 'month'),
         jsxs('span', { className: 'wm-econ-dim', children: [
-          `${feesText} · ${analyticMoney(entry.usage_usd)} usage`,
+          t('econTrendUsage', feesText, analyticMoney(entry.usage_usd)),
           flags ? ` · ${flags}` : '',
           entry.difference_note ? ` · ${entry.difference_note}` : ''
         ].join('') }, 'detail')
@@ -3227,11 +3225,11 @@ function EconomicsTrend({ trend }) {
       jsxs('div', { className: 'wm-econ-trend-row', children: [
         jsx('span', { className: 'wm-econ-trend-month', children: entry.month }, 'month'),
         jsxs('div', { className: 'wm-econ-trend-bars', role: 'img',
-          'aria-label': `${entry.month}: fees ${analyticMoney(feeUsd)}, usage ${analyticMoney(usage)}, difference ${analyticMoney(difference)}`,
+          'aria-label': t('econTrendAria', entry.month, analyticMoney(feeUsd), analyticMoney(usage), analyticMoney(difference)),
           children: [
-            jsx('div', { className: 'wm-econ-bar-fill wm-econ-fee', title: `Fees ${analyticMoney(feeUsd)}`,
+            jsx('div', { className: 'wm-econ-bar-fill wm-econ-fee', title: t('econTrendFeeTitle', analyticMoney(feeUsd)),
               style: { width: `${Math.max(2, Math.round((feeUsd / max) * 100))}%` } }, 'fee'),
-            jsx('div', { className: 'wm-econ-bar-fill wm-econ-usage', title: `Usage ${analyticMoney(usage)}`,
+            jsx('div', { className: 'wm-econ-bar-fill wm-econ-usage', title: t('econTrendUsageTitle', analyticMoney(usage)),
               style: { width: `${Math.max(2, Math.round((usage / max) * 100))}%` } }, 'usage')
           ] }, 'bars'),
         jsxs('span', { className: cn('wm-econ-num', difference < 0 ? 'wm-econ-negative' : 'wm-econ-positive'),
@@ -3255,7 +3253,7 @@ const $fxNotice = atom(null)
  * The editor stays disabled until the saved document has loaded for this
  * connection: replacing rates that were never read would silently drop them.
  */
-function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave }) {
+function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave, t }) {
   const rawDraft = useValue($fxDraft)
   const saving = useValue($fxSaving)?.origin === identity
   const notice = useValue($fxNotice)
@@ -3271,7 +3269,7 @@ function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave }) {
     const source = read('source')
     if (!currency || !Number.isFinite(usd) || usd <= 0 || !asOf || !source) return
     if (draft.some(r => r.currency === currency)) {
-      $fxNotice.set({ tone: 'warn', origin: identity, text: `A rate for ${currency} is already staged.` })
+      $fxNotice.set({ tone: 'warn', origin: identity, text: t('fxStaged', currency) })
       return
     }
     $fxNotice.set(null)
@@ -3284,37 +3282,37 @@ function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave }) {
     !fxReady
       ? jsxs('div', { className: 'wm-econ-fx-blocked', children: [
           jsx('p', { className: 'wm-warn-note', role: 'alert',
-            children: fxError || 'Reading saved FX rates for this connection…' }),
+            children: fxError || t('fxReading') }),
           fxError && typeof onRetry === 'function'
             ? jsx(ProductButton, { type: 'button', className: 'wm-button', size: 'sm',
-                onClick: onRetry, children: 'Retry' })
+                onClick: onRetry, children: t('fxRetry') })
             : null
         ].filter(Boolean) })
       : null,
     fxReady && draft.length
       ? jsx('ul', { className: 'wm-econ-fx-list', children: draft.map(rate =>
           jsxs('li', { children: [
-            jsx('span', { children: `${rate.currency} at ${rate.usd_per_unit} USD per unit, dated ${rate.as_of} (${rate.source})` }),
+            jsx('span', { children: t('fxRateLine', rate.currency, rate.usd_per_unit, rate.as_of, rate.source) }),
             jsx(ProductButton, { type: 'button', className: 'wm-button', size: 'sm',
-              disabled: !fxReady, onClick: () => remove(rate.currency), children: 'Remove' })
+              disabled: !fxReady, onClick: () => remove(rate.currency), children: t('fxRemove') })
           ] }, rate.currency)) })
       : null,
     fxReady && !draft.length
-      ? jsx('p', { className: 'wm-subtle', children: 'No FX rates saved. Fees stay in their own currencies until you add one.' })
+      ? jsx('p', { className: 'wm-subtle', children: t('fxEmpty') })
       : null,
     jsxs('form', { className: 'wm-econ-fx-form', onSubmit: fxReady ? add : event => event.preventDefault(), children: [
-      jsx('input', { name: 'currency', placeholder: 'GBP', 'aria-label': 'Currency', maxLength: 3, disabled: !fxReady }),
-      jsx('input', { name: 'usd_per_unit', placeholder: 'USD per unit, e.g. 1.27', 'aria-label': 'USD per unit',
+      jsx('input', { name: 'currency', placeholder: 'GBP', 'aria-label': t('fxCurrency'), maxLength: 3, disabled: !fxReady }),
+      jsx('input', { name: 'usd_per_unit', placeholder: t('fxUsdPlaceholder'), 'aria-label': t('fxUsdUnit'),
         type: 'number', step: 'any', min: '0', disabled: !fxReady }),
-      jsx('input', { name: 'as_of', 'aria-label': 'Rate date', type: 'date', disabled: !fxReady }),
-      jsx('input', { name: 'source', placeholder: 'Source, e.g. Bank of England spot', 'aria-label': 'Rate source', disabled: !fxReady }),
-      jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !fxReady, children: 'Add rate' })
+      jsx('input', { name: 'as_of', 'aria-label': t('fxRateDate'), type: 'date', disabled: !fxReady }),
+      jsx('input', { name: 'source', placeholder: t('fxSourcePlaceholder'), 'aria-label': t('fxRateSource'), disabled: !fxReady }),
+      jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !fxReady, children: t('fxAdd') })
     ] }),
     notice?.origin === identity ? jsx('p', { className: notice.tone === 'good' ? 'wm-subtle' : 'wm-warn-note',
       role: notice.tone === 'good' ? 'status' : 'alert', children: notice.text }) : null,
     jsx('div', { className: 'wm-setting-action', children:
       jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !fxReady || !dirty || saving,
-        onClick: () => onSave(draft), children: saving ? 'Saving…' : 'Save rates' }) })
+        onClick: () => onSave(draft), children: saving ? t('fxSaving') : t('fxSave') }) })
   ].filter(Boolean) })
 }
 
@@ -3323,34 +3321,35 @@ function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave }) {
  * the container owns the queries, so the harness can drive this with fixtures.
  */
 function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx, onSaveFx }) {
+  const t = usePluginI18n(ID)
   const headline = data?.headline || {}
   const groups = data?.groups || []
   const accounts = data?.accounts || []
   const others = data?.non_subscription_accounts || []
   const difference = finiteValue(headline.difference_usd)
-  const feeLines = econFeeLines(headline.fees_monthly_by_currency)
-  const span = windowSpanLabel(data?.window_days)
+  const feeLines = econFeeLines(t, headline.fees_monthly_by_currency)
+  const span = windowSpanLabel(t, data?.window_days)
   const windowLines = econWindowLines(headline.fees_window_by_currency)
-  return jsxs('section', { className: 'wm-product-section', 'aria-label': 'Subscription economics', children: [
-    jsx('h2', { children: 'Subscription economics' }),
-    jsx('p', { children: 'Subscription spending against the API-equivalent value of the usage recorded against it, over the same window. The difference is an estimated value comparison, not cash saved.' }),
+  return jsxs('section', { className: 'wm-product-section', 'aria-label': t('econTitle'), children: [
+    jsx('h2', { children: t('econTitle') }),
+    jsx('p', { children: t('econIntro') }),
     jsxs('div', { className: 'wm-product-summary', children: [
       jsxs('div', { className: 'wm-product-stat', children: [
-        jsx('label', { children: 'Monthly subscriptions' }),
+        jsx('label', { children: t('econMonthlySubs') }),
         jsx('strong', { children: feeLines.join(' + ') }),
-        jsx('small', { children: `${windowLines.join(' + ')} ${span} · ${accounts.length} subscription(s) · ${econStatusLabel(headline.status)}` })
+        jsx('small', { children: t('econSubsSmall', windowLines.join(' + '), span, accounts.length, econStatusLabel(t, headline.status)) })
       ] }),
       jsxs('div', { className: 'wm-product-stat', children: [
-        jsx('label', { children: 'API-equivalent usage · 30 days' }),
+        jsx('label', { children: t('econUsageLabel') }),
         jsx('strong', { children: headline.usage_usd == null ? '—' : analyticMoney(headline.usage_usd) }),
         jsx('small', { children: headline.usage_usd == null
-          ? 'No priced usage is attributed to subscriptions.'
-          : 'Theoretical public price of attributed usage.' })
+          ? t('econNoPricedUsage')
+          : t('econTheoreticalPrice') })
       ] }),
       jsxs('div', { className: cn('wm-product-stat', difference != null && (difference < 0 ? 'wm-econ-negative' : 'wm-econ-positive')), children: [
-        jsx('label', { children: 'Estimated value comparison' }),
-        jsx('strong', { children: difference == null ? econStatusLabel(headline.status) : analyticMoney(difference) }),
-        jsx('small', { children: 'API value minus fees in the same window. Not cash saved.' })
+        jsx('label', { children: t('econDiffLabel') }),
+        jsx('strong', { children: difference == null ? econStatusLabel(t, headline.status) : analyticMoney(difference) }),
+        jsx('small', { children: t('econDiffHint') })
       ] })
     ] }),
     (headline.notes || []).length
@@ -3358,64 +3357,67 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
           jsx('li', { children: note }, i)) })
       : null,
     groups.length ? jsxs('div', { className: 'wm-econ-groups', children: [
-      jsx('h3', { children: 'Fees vs usage by currency' }),
+      jsx('h3', { children: t('econGroupsTitle') }),
       ...groups.map(group => group.difference_usd == null && !group.usage_usd && group.status === 'unavailable'
         ? jsxs('div', { className: 'wm-econ-group', children: [
             jsx('strong', { children: group.currency }),
-            jsx('span', { className: 'wm-econ-dim', children: ` ${fmtMoney(group.monthly_fees, group.currency)}/mo · ${(group.notes || []).join(' ') || 'No comparison available.'}` })
+            jsx('span', { className: 'wm-econ-dim', children: ` ${t('econPerMonth', fmtMoney(group.monthly_fees, group.currency))} · ${(group.notes || []).join(' ') || t('econNoComparison')}` })
           ] }, group.currency)
         : jsxs('div', { className: 'wm-econ-group', children: [
             jsxs('div', { className: 'wm-econ-group-head', children: [
               jsx('strong', { children: group.currency }),
               jsx('span', { className: 'wm-econ-dim', children:
-                `${fmtMoney(group.monthly_fees, group.currency)}/mo fees · ${group.window_fees == null ? '—' : fmtMoney(group.window_fees, group.currency)} in window · ${analyticMoney(group.usage_usd)} usage · ${econStatusLabel(group.status)}` })
+                t('econGroupHead', fmtMoney(group.monthly_fees, group.currency), group.window_fees == null ? '—' : fmtMoney(group.window_fees, group.currency), analyticMoney(group.usage_usd), econStatusLabel(t, group.status)) })
             ] }),
             group.difference_usd == null
-              ? jsx('p', { className: 'wm-subtle', children: (group.notes || []).join(' ') || 'No comparison available.' })
-              : jsx(EconomicsBars, { group })
+              ? jsx('p', { className: 'wm-subtle', children: (group.notes || []).join(' ') || t('econNoComparison') })
+              : jsx(EconomicsBars, { group, t })
           ] }, group.currency))
     ] }) : null,
     accounts.length ? jsxs('div', { className: 'wm-econ-accounts', children: [
-      jsx('h3', { children: 'Provider and account breakdown' }),
+      jsx('h3', { children: t('econAccountsTitle') }),
       jsx('div', { className: 'wm-econ-scroll', children:
         jsxs('table', { className: 'wm-econ-table', children: [
           jsx('thead', { children: jsx('tr', { children:
-            ['Account', 'Membership', 'Monthly equiv.', 'API-equivalent usage', 'Est. value difference', 'Pricing coverage']
-              .map(name => jsx('th', { children: name }, name)) }) }),
+            [['econColAccount', t('econColAccount')], ['econColMembership', t('econColMembership')],
+             ['econColMonthly', t('econColMonthly')], ['econApiUsage', t('econApiUsage')],
+             ['econColDifference', t('econColDifference')], ['econColCoverage', t('econColCoverage')]]
+              .map(([key, name]) => jsx('th', { children: name }, key)) }) }),
           jsx('tbody', { children: accounts.map(row =>
-            jsx(EconomicsAccountRow, { row }, row.account_id)) })
+            jsx(EconomicsAccountRow, { row, t }, row.account_id)) })
         ] }) })
     ] }) : null,
     (data?.trend?.months || []).length ? jsxs('div', { className: 'wm-econ-accounts', children: [
-      jsx('h3', { children: 'Monthly trend' }),
-      jsx(EconomicsTrend, { trend: data.trend })
+      jsx('h3', { children: t('econTrendTitle') }),
+      jsx(EconomicsTrend, { trend: data.trend, t })
     ] }) : null,
     others.length ? jsxs('div', { className: 'wm-econ-accounts', children: [
-      jsx('h3', { children: 'Not in the comparison' }),
+      jsx('h3', { children: t('econOthersTitle') }),
       jsx('ul', { className: 'wm-econ-notes', children: others.map(row =>
         jsx('li', { children:
-          `${row.label || row.family}: ${row.usage?.list_usd == null ? 'no priced usage' : `${analyticMoney(row.usage.list_usd)} API-equivalent usage`} · ${row.explanation}` },
+          `${row.label || row.family}: ${row.usage?.list_usd == null ? t('econNoPricedUsageShort') : t('econApiUsageMoney', analyticMoney(row.usage.list_usd))} · ${row.explanation}` },
         row.account_id)) })
     ] }) : null,
     (data?.unattributed?.usage?.tokens || data?.ambiguous?.usage?.tokens) ? jsxs('div', { className: 'wm-econ-accounts', children: [
-      jsx('h3', { children: 'Usage outside any subscription' }),
+      jsx('h3', { children: t('econOutsideTitle') }),
       jsx('ul', { className: 'wm-econ-notes', children: [
         data?.unattributed?.usage?.tokens ? jsx('li', { children:
-          `Unattributed: ${analyticMoney(data.unattributed.usage.list_usd)} on ${(data.unattributed.routes || []).join(', ') || 'unknown routes'}. ${data.unattributed.note}` }, 'unattributed') : null,
+          t('econUnattributedLine', analyticMoney(data.unattributed.usage.list_usd), (data.unattributed.routes || []).join(', ') || t('econUnknownRoutes'), data.unattributed.note) }, 'unattributed') : null,
         data?.ambiguous?.usage?.tokens ? jsx('li', { children:
-          `Ambiguous: ${analyticMoney(data.ambiguous.usage.list_usd)} claimed by more than one account; counted once, attributed to nobody.` }, 'ambiguous') : null
+          t('econAmbiguousLine', analyticMoney(data.ambiguous.usage.list_usd)) }, 'ambiguous') : null
       ].filter(Boolean) })
     ] }) : null,
     jsxs('div', { className: 'wm-econ-accounts', children: [
-      jsx('h3', { children: 'Currency conversion' }),
-      jsx('p', { className: 'wm-subtle', children: 'Converted totals appear only with a dated rate you supply. No rates are fetched automatically.' }),
-      jsx(EconomicsFx, { fxError, fxReady, identity, rates: fxRates || [], onRetry: onRetryFx, onSave: onSaveFx })
+      jsx('h3', { children: t('econFxTitle') }),
+      jsx('p', { className: 'wm-subtle', children: t('econFxHint') }),
+      jsx(EconomicsFx, { fxError, fxReady, identity, rates: fxRates || [], onRetry: onRetryFx, onSave: onSaveFx, t })
     ] })
   ].filter(Boolean) })
 }
 
 /** Subscription economics wired to the backend. */
 function EconomicsPanel({ identity }) {
+  const t = usePluginI18n(ID)
   const economics = useQuery(economicsQuery(identity))
   const fx = useQuery(fxQuery(identity))
   const current = economics.data?.identity === identity && membershipIdentityCurrent(identity)
@@ -3429,11 +3431,11 @@ function EconomicsPanel({ identity }) {
       await fxWrite(rates)
       if (!membershipIdentityCurrent(captured) || $fxDraft.get()?.origin !== captured) return
       $fxDraft.set(null)
-      $fxNotice.set({ tone: 'good', origin: captured, text: 'Rates saved.' })
+      $fxNotice.set({ tone: 'good', origin: captured, text: t('fxSaved') })
       await Promise.all([economics.refetch?.(), fx.refetch?.()])
     } catch (error) {
       if (membershipIdentityCurrent(captured)) {
-        $fxNotice.set({ tone: 'warn', origin: captured, text: fxErrorMessage(error) })
+        $fxNotice.set({ tone: 'warn', origin: captured, text: fxErrorMessage(t, error) })
       }
     } finally {
       // Release this save's flag even after a connection switch, so the new
@@ -3443,20 +3445,20 @@ function EconomicsPanel({ identity }) {
   }
   if (economics.error) {
     return jsx('section', { className: 'wm-product-section', children: keyedElementChildren([
-      jsx('h2', { children: 'Subscription economics' }),
+      jsx('h2', { children: t('econTitle') }),
       jsx('div', { className: 'wm-alert', role: 'alert',
         children: String(economics.error.message || economics.error) })
     ], 'econ-error') })
   }
   if (!current) {
     return jsx('section', { className: 'wm-product-section', children: keyedElementChildren([
-      jsx('h2', { children: 'Subscription economics' }),
-      jsx('p', { className: 'wm-subtle', children: 'Reading subscription economics for this connection…' })
+      jsx('h2', { children: t('econTitle') }),
+      jsx('p', { className: 'wm-subtle', children: t('econReading') })
     ], 'econ-loading') })
   }
   const fxReady = fxCurrent && !fx.error
   const fxError = fx.error && membershipIdentityCurrent(identity)
-    ? 'Saved FX rates could not be read for this connection.'
+    ? t('fxReadError')
     : ''
   return jsx(EconomicsSection, { data: economics.data, identity,
     fxRates: fxReady ? fx.data?.rates || [] : [], fxReady, fxError,
@@ -3544,6 +3546,7 @@ function settledDesktopMonth(ledger, now = new Date()) {
 }
 
 function OverviewPage() {
+  const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const analytics = useQuery(overviewAnalyticsQuery(identity))
   const accounts = useQuery(membershipQuery(false, identity))
@@ -3598,17 +3601,17 @@ function OverviewPage() {
               : 'Reading memberships for this connection…' })
         ] }),
         jsx('div', { className: cn('wm-product-stat', econDifference != null && econDifference >= 0 && 'wm-econ-positive'), children: [
-          jsx('label', { children: 'Subscription value · 30 days' }),
+          jsx('label', { children: t('econOverviewLabel') }),
           jsx('strong', { children: !econReady ? '—'
-            : econDifference == null ? econStatusLabel(econHeadline.status) : analyticMoney(econDifference) }),
+            : econDifference == null ? econStatusLabel(t, econHeadline.status) : analyticMoney(econDifference) }),
           jsx('small', { children: !econReady
-            ? economics.error ? 'Subscription economics could not be read for this connection.'
-              : 'Reading subscription economics…'
+            ? economics.error ? t('econOverviewError')
+              : t('econOverviewReading')
             : econDifference == null
-              ? (econHeadline.notes || [])[0] || 'No comparison is available. See Costs.'
-              : `${econFeeLines(econHeadline.fees_monthly_by_currency).join(' + ')} · ` +
-                `${econWindowLines(econHeadline.fees_window_by_currency).join(' + ')} ${windowSpanLabel(economics.data?.window_days)} · ` +
-                `${analyticMoney(econHeadline.usage_usd)} usage. See Costs.` })
+              ? (econHeadline.notes || [])[0] || t('econOverviewNone')
+              : t('econOverviewSmall', econFeeLines(t, econHeadline.fees_monthly_by_currency).join(' + '),
+                  econWindowLines(econHeadline.fees_window_by_currency).join(' + '),
+                  windowSpanLabel(t, economics.data?.window_days), analyticMoney(econHeadline.usage_usd)) })
         ] })
       ] }),
       (() => {
@@ -5740,6 +5743,96 @@ const I18N = {
     coverageLabel: 'Coverage',
     savingsInfo: 'Theoretical saving versus pricing the same covered prompt tokens at uncached input rates. Cache writes can cost extra, so this is an estimate, not a credit or refund.',
     partialShort: n => `${n} unpriced`,
+    // Subscription economics.
+    econTitle: 'Subscription economics',
+    econIntro: 'Subscription spending against the API-equivalent value of the usage recorded against it, over the same window. The difference is an estimated value comparison, not cash saved.',
+    econMonthlySubs: 'Monthly subscriptions',
+    econSubsSmall: (w, s, n, st) => `${w} ${s} · ${n} subscription(s) · ${st}`,
+    econUsageLabel: 'API-equivalent usage · 30 days',
+    econNoPricedUsage: 'No priced usage is attributed to subscriptions.',
+    econTheoreticalPrice: 'Theoretical public price of attributed usage.',
+    econDiffLabel: 'Estimated value comparison',
+    econDiffHint: 'API value minus fees in the same window. Not cash saved.',
+    econGroupsTitle: 'Fees vs usage by currency',
+    econNoComparison: 'No comparison available.',
+    econGroupHead: (m, w, u, st) => `${m}/mo fees · ${w} in window · ${u} usage · ${st}`,
+    econAccountsTitle: 'Provider and account breakdown',
+    econColAccount: 'Account',
+    econColMembership: 'Membership',
+    econColMonthly: 'Monthly equiv.',
+    econColDifference: 'Est. value difference',
+    econColCoverage: 'Pricing coverage',
+    econTrendTitle: 'Monthly trend',
+    econOthersTitle: 'Not in the comparison',
+    econNoPricedUsageShort: 'no priced usage',
+    econApiUsageMoney: m => `${m} API-equivalent usage`,
+    econOutsideTitle: 'Usage outside any subscription',
+    econUnknownRoutes: 'unknown routes',
+    econUnattributedLine: (m, r, n) => `Unattributed: ${m} on ${r}. ${n}`,
+    econAmbiguousLine: m => `Ambiguous: ${m} claimed by more than one account; counted once, attributed to nobody.`,
+    econFxTitle: 'Currency conversion',
+    econFxHint: 'Converted totals appear only with a dated rate you supply. No rates are fetched automatically.',
+    econReading: 'Reading subscription economics for this connection…',
+    econStatusOk: 'Complete',
+    econStatusPartial: 'Partial',
+    econStatusUnavailable: 'Unavailable',
+    econNoUsage: 'No usage observed',
+    econNoPrice: 'No published price',
+    econCoverageUnknown: 'Coverage unknown',
+    econFullyPriced: 'Fully priced',
+    econPricedPct: pct => `${pct}% priced`,
+    econSpanWindow: 'in the reporting window',
+    econSpanDays: n => `in the last ${n} day${n === 1 ? '' : 's'}`,
+    econPerMonth: money => `${money}/mo`,
+    econApiUsage: 'API-equivalent usage',
+    econFeesInWindow: (c, conv) => `Fees in window (${c}${conv ? ', in USD' : ''})`,
+    econConvertedAt: (x, c, d, s) => `Converted at ${x} USD per ${c}, dated ${d} (${s}).`,
+    econNoFee: 'No fee set',
+    econPeriodAbbr: p => p === 'month' ? 'mo' : p === 'year' ? 'yr' : p,
+    econFeeDeclared: 'Your price',
+    econFeeCustom: 'User-defined plan',
+    econFeeCatalogue: 'Catalogue price',
+    econDue: (m, d) => `${m} due ${d}`,
+    econRenewalUnknown: m => `${m} · renewal date unknown`,
+    econUsageDetail: (tok, c) => `${tok} · ${c} calls`,
+    econNoPlan: 'No plan',
+    econInWindow: m => `${m} in window`,
+    econTrendEmpty: 'No monthly history yet. The trend appears once recording and fees cover a calendar month.',
+    econFlagProgress: 'in progress',
+    econFlagRecording: 'partial recording',
+    econFlagPricing: 'partial pricing',
+    econNoFees: 'No fees',
+    econTrendUsage: (f, u) => `${f} · ${u} usage`,
+    econTrendAria: (m, f, u, d) => `${m}: fees ${f}, usage ${u}, difference ${d}`,
+    econTrendFeeTitle: f => `Fees ${f}`,
+    econTrendUsageTitle: u => `Usage ${u}`,
+    econOverviewLabel: 'Subscription value · 30 days',
+    econOverviewError: 'Subscription economics could not be read for this connection.',
+    econOverviewReading: 'Reading subscription economics…',
+    econOverviewNone: 'No comparison is available. See Costs.',
+    econOverviewSmall: (f, w, s, u) => `${f} · ${w} ${s} · ${u} usage. See Costs.`,
+    fxReading: 'Reading saved FX rates for this connection…',
+    fxRetry: 'Retry',
+    fxRateLine: (c, u, d, s) => `${c} at ${u} USD per unit, dated ${d} (${s})`,
+    fxRemove: 'Remove',
+    fxEmpty: 'No FX rates saved. Fees stay in their own currencies until you add one.',
+    fxCurrency: 'Currency',
+    fxUsdPlaceholder: 'USD per unit, e.g. 1.27',
+    fxUsdUnit: 'USD per unit',
+    fxRateDate: 'Rate date',
+    fxSourcePlaceholder: 'Source, e.g. Bank of England spot',
+    fxRateSource: 'Rate source',
+    fxAdd: 'Add rate',
+    fxSave: 'Save rates',
+    fxSaving: 'Saving…',
+    fxStaged: c => `A rate for ${c} is already staged.`,
+    fxSaved: 'Rates saved.',
+    fxReadError: 'Saved FX rates could not be read for this connection.',
+    fxErrConflict: 'The rates changed since you loaded them. Reload, then save again.',
+    fxErrSession: 'Your Desktop session has expired. Sign in again, then retry.',
+    fxErrUnavailable: 'FX rates are not available in the running backend. Reload the plugin and check its health.',
+    fxErrRejected: 'The rates were rejected. Check each rate and retry.',
+    fxErrSave: 'The rates could not be saved. Please retry; if it persists, check the backend log.',
     output: 'Output',
   pageTitle: 'Spend Sense',
     pageTitleDesktop: 'Spend Sense — this desktop',
@@ -5898,6 +5991,96 @@ const I18N = {
     coverageLabel: '覆盖率',
     savingsInfo: '与按未缓存输入价计算的理论差值。缓存写入可能产生额外费用，此为估算，不是退款或抵扣。',
     partialShort: n => `${n} 未定价`,
+    // 订阅经济分析。
+    econTitle: '订阅经济分析',
+    econIntro: '同一窗口内，订阅支出与记录用量的 API 等值价值对比。差值为估算的价值比较，不是实际节省的现金。',
+    econMonthlySubs: '月度订阅',
+    econSubsSmall: (w, s, n, st) => `${w} ${s} · ${n} 个订阅 · ${st}`,
+    econUsageLabel: 'API 等值用量 · 30 天',
+    econNoPricedUsage: '没有已定价的用量归属到订阅。',
+    econTheoreticalPrice: '归属用量的理论公开价格。',
+    econDiffLabel: '估算价值比较',
+    econDiffHint: '同一窗口内 API 价值减去费用。不是实际节省的现金。',
+    econGroupsTitle: '按货币对比费用与用量',
+    econNoComparison: '无可用的比较。',
+    econGroupHead: (m, w, u, st) => `${m}/月费用 · ${w}（窗口内）· 用量 ${u} · ${st}`,
+    econAccountsTitle: '按供应商和账户明细',
+    econColAccount: '账户',
+    econColMembership: '会员',
+    econColMonthly: '月均费用',
+    econColDifference: '估算价值差',
+    econColCoverage: '定价覆盖率',
+    econTrendTitle: '月度趋势',
+    econOthersTitle: '未纳入比较',
+    econNoPricedUsageShort: '无已定价用量',
+    econApiUsageMoney: m => `${m} API 等值用量`,
+    econOutsideTitle: '订阅之外的用量',
+    econUnknownRoutes: '未知线路',
+    econUnattributedLine: (m, r, n) => `未归属：${m}，线路 ${r}。${n}`,
+    econAmbiguousLine: m => `有歧义：${m} 被多个账户认领；仅计数一次，不归属到任何账户。`,
+    econFxTitle: '货币换算',
+    econFxHint: '仅在您提供注明日期的费率时才显示换算总额。不会自动获取任何费率。',
+    econReading: '正在读取此连接的订阅经济分析…',
+    econStatusOk: '完成',
+    econStatusPartial: '部分',
+    econStatusUnavailable: '不可用',
+    econNoUsage: '暂无用量',
+    econNoPrice: '无公开价格',
+    econCoverageUnknown: '覆盖率未知',
+    econFullyPriced: '已全部定价',
+    econPricedPct: pct => `${pct}% 已定价`,
+    econSpanWindow: '在报告窗口内',
+    econSpanDays: n => `过去 ${n} 天内`,
+    econPerMonth: money => `${money}/月`,
+    econApiUsage: 'API 等值用量',
+    econFeesInWindow: (c, conv) => `窗口内费用（${c}${conv ? '，以美元计' : ''}）`,
+    econConvertedAt: (x, c, d, s) => `按 ${x} 美元/${c} 换算，日期 ${d}（${s}）。`,
+    econNoFee: '未设置费用',
+    econPeriodAbbr: p => p === 'month' ? '月' : p === 'year' ? '年' : p === 'quarter' ? '季' : p === 'week' ? '周' : p,
+    econFeeDeclared: '您的价格',
+    econFeeCustom: '用户自定义方案',
+    econFeeCatalogue: '目录价格',
+    econDue: (m, d) => `${m} 到期日 ${d}`,
+    econRenewalUnknown: m => `${m} · 续费日期未知`,
+    econUsageDetail: (tok, c) => `${tok} · ${c} 次`,
+    econNoPlan: '无方案',
+    econInWindow: m => `${m}（窗口内）`,
+    econTrendEmpty: '暂无月度历史。记录和费用覆盖一个完整自然月后将显示趋势。',
+    econFlagProgress: '进行中',
+    econFlagRecording: '记录不完整',
+    econFlagPricing: '定价不完整',
+    econNoFees: '无费用',
+    econTrendUsage: (f, u) => `${f} · 用量 ${u}`,
+    econTrendAria: (m, f, u, d) => `${m}：费用 ${f}，用量 ${u}，差值 ${d}`,
+    econTrendFeeTitle: f => `费用 ${f}`,
+    econTrendUsageTitle: u => `用量 ${u}`,
+    econOverviewLabel: '订阅价值 · 30 天',
+    econOverviewError: '无法读取此连接的订阅经济分析。',
+    econOverviewReading: '正在读取订阅经济分析…',
+    econOverviewNone: '无可用的比较。请查看“费用”。',
+    econOverviewSmall: (f, w, s, u) => `${f} · ${w} ${s} · 用量 ${u}。请查看“费用”。`,
+    fxReading: '正在读取此连接已保存的外汇汇率…',
+    fxRetry: '重试',
+    fxRateLine: (c, u, d, s) => `${c}：${u} 美元/单位，日期 ${d}（${s}）`,
+    fxRemove: '删除',
+    fxEmpty: '尚未保存外汇汇率。在您添加之前，费用保持各自的货币。',
+    fxCurrency: '货币',
+    fxUsdPlaceholder: '美元/单位，例如 1.27',
+    fxUsdUnit: '美元/单位',
+    fxRateDate: '费率日期',
+    fxSourcePlaceholder: '来源，例如英格兰银行现货价',
+    fxRateSource: '费率来源',
+    fxAdd: '添加费率',
+    fxSave: '保存费率',
+    fxSaving: '保存中…',
+    fxStaged: c => `已暂存 ${c} 的费率。`,
+    fxSaved: '费率已保存。',
+    fxReadError: '无法读取此连接已保存的外汇汇率。',
+    fxErrConflict: '费率在您加载后已变更。请重新加载后再保存。',
+    fxErrSession: '桌面会话已过期。请重新登录后再试。',
+    fxErrUnavailable: '运行中的后端不提供外汇汇率。请重新加载插件并检查其状态。',
+    fxErrRejected: '费率被拒绝。请检查每条费率后重试。',
+    fxErrSave: '费率无法保存。请重试；如果仍然失败，请查看后端日志。',
     output: '输出',
   pageTitle: 'WolfMark 成本账本',
     providerTip: slug => `实际承载线路：${slug}`,
@@ -5932,7 +6115,67 @@ const I18N = {
     storageError: msg => `⚠ 账本保存失败（${msg}）。新用量只保留到 Hermes 重启前。`,
     today: '今日',
     total: '合计',
-    unpricedNote: n => `有 ${n} 令牌没有可用单价，未计入总额（显示为 ≥）。`
+    unpricedNote: n => `有 ${n} 令牌没有可用单价，未计入总额（显示为 ≥）。`,
+    // Ledger header, record stats, baseline reconciliation and grouping.
+    pageTitleDesktop: 'Spend Sense — 本机',
+    allHermesTitle: 'Spend Sense',
+    viewAll: '所有 Hermes',
+    viewDesktop: '本机',
+    allHermesHint: '自插件启用以来捕获的带时间戳调用。历史基线从 state.db 单独读取，从不计入本期。',
+    allHermesEmpty: '本窗口内没有记录用量。',
+    backendUnavailable: 'Spend Sense 后端无法访问。',
+    backendLoading: '正在读取带时间戳的账本…',
+    backendRetry: '重试',
+    backendUseDesktop: '使用本机账本',
+    statBasis: 'API 等值',
+    statBilled: '已计费',
+    statList: 'API 等值',
+    statCalls: '调用',
+    statCoverage: '已定价令牌',
+    upperHint: amount => `适用上下文阶梯处最高 ${amount}`,
+    listHint: '上下文阶梯可能调高此值',
+    perCallList: '每次调用目录价，精确阶梯',
+    basisMode: b => `基准：${b}`,
+    basis_hybrid: '两者',
+    basis_billed: '已计费',
+    basis_list: 'API 单价',
+    perCallExact: '精确的每次调用计价',
+    class_actual: '实际',
+    class_estimated: '估算',
+    class_included: '已包含',
+    class_unknown: '未知',
+    recordedSince: d => `自 ${d} 起记录`,
+    notRecordingYet: '尚未记录带时间戳的调用；历史基线如下。',
+    reconciled: (captured, delta) => `已对账：基线以来捕获了 ${delta} 个令牌中的 ${captured} 个。`,
+    reconcileGap: (gap, delta) => `记录缺口：${delta} 个令牌中 ${gap} 个未捕获。`,
+    reconcileOver: n => `比 state.db 增长多捕获了 ${n} 个令牌（可能是重试或清理所致）。`,
+    noBaseline: '尚未捕获历史基线。',
+    stateUnavailable: 'state.db 不可用，无法对账。',
+    noGrowth: '基线以来 state.db 尚无增长。',
+    eventsLine: (calls, failures, missing) => `${calls} 次调用 · ${failures} 次失败 · ${missing} 条缺失用量`,
+    baselineTitle: '历史基线——累计估算，非本期用量',
+    baselineTokens: '令牌（历史累计）',
+    baselineRouteLine: (name, tokens, list, billed) => `${name}——${tokens} · API ${list} · 已计费 ${billed}`,
+    billedPartial: '部分线路没有记录费用',
+    unpricedTokens: n => `${n} 未定价`,
+    unpricedTitle: '未定价用量（该线路/模型无单价）',
+    unpricedLine: (provider, model, tokens, reason) => `${provider} · ${model}——${tokens}——${reason}`,
+    limitsTitle: '这些数字的计算方式',
+    rateCard: (source, asOf) => `单价：${source}${asOf ? ` · ${asOf}` : ''}`,
+    refresh: '刷新',
+    groupName: '名称',
+    group_route: '线路',
+    group_model: '模型',
+    group_surface: '来源',
+    group_task: '任务',
+    models: '个模型',
+    unknown: '未知',
+    unpriced: '未定价',
+    status_complete: '完成',
+    status_partial: '部分',
+    status_unpriced: '未定价',
+    status_empty: '空',
+    src_fallback: slug => `按 ${slug} 单价估算——该线路无精确单价`
   }
 }
 
