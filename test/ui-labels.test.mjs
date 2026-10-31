@@ -177,13 +177,17 @@ test('savings ignore a stored value accumulated at other rates', () => {
 
 test('savings are labelled as theoretical, not cash', () => {
   assert.match(en.cacheTitle, /cache/i)
-  assert.equal(en.savedTotal, 'Net cache savings')
+  assert.equal(en.savedGauge, 'Net cache savings')
   // The wording must not imply a provider credit or recorded billing.
-  assert.doesNotMatch(en.savedTotal, /refund|credit|billed|cash/i)
-  // The compact label leans on its tooltip for the methodology.
+  assert.doesNotMatch(en.savedGauge, /refund|credit|billed|cash/i)
+  // The compact gauge label leans on its tooltip for the methodology.
   assert.match(en.savingsInfo, /theoretical/i)
   assert.match(en.savingsInfo, /not a credit or refund/i)
   assert.ok(zh.savingsInfo && !zh.savingsInfo.startsWith('savingsInfo'))
+  assert.ok(zh.savedGauge && !zh.savedGauge.startsWith('savedGauge'))
+  // The ledger keeps the self-explanatory label: it shows no tooltip.
+  assert.match(en.savedTotal, /theoretical/i)
+  assert.match(zh.savedTotal, /理论/)
 })
 
 test('composition shares split the prompt into fresh, read and write', () => {
@@ -265,7 +269,7 @@ test('meter presence distinguishes live, recorded, updating and empty', () => {
 test('every sidebar string exists in English and Chinese', () => {
   const keys = ['meterLive', 'meterRecorded', 'meterUpdating', 'apiEquivalent', 'costSourceInfo',
     'totalTokens', 'promptMix', 'cacheFresh', 'cacheMethodInfo', 'exactLabel', 'estimatedLabel',
-    'infoLabel', 'coverageLabel', 'savingsInfo']
+    'infoLabel', 'coverageLabel', 'savingsInfo', 'savedGauge']
   for (const key of keys) {
     assert.ok(en[key] && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] && zh[key] !== key, `zh has ${key}`)

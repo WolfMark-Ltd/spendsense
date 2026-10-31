@@ -262,7 +262,7 @@ test('recorded conversation totals render exactly with recorded presence', async
   const stats = container.querySelector('.wm-gauge-stats').textContent
   assert.match(stats, /coverageLabel/)
   assert.match(stats, /100%/)
-  assert.match(stats, /savedTotal/)
+  assert.match(stats, /savedGauge/)
   assert.match(stats, /\$0\.50/)
   assert.doesNotMatch(stats, /hitRate/, 'the ring is the only hit-rate display')
 })

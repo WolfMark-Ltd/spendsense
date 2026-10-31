@@ -1793,7 +1793,7 @@ function CacheGauge({ t, view }) {
         ] }, 'coverage'),
         jsxs('div', { className: 'wm-gauge-stat', children: [
           jsxs('span', { className: 'wm-metric-label', children: [
-            jsx('span', { children: t('savedTotal') }, 't'),
+            jsx('span', { children: t('savedGauge') }, 't'),
             jsx(InfoTip, { id: 'savings-method', label: t('infoLabel'), text: t('savingsInfo'), wide: true, dir: 'up' }, 'info')
           ] }, 'l'),
           jsx('span', { className: 'wm-metric-value', children: view.saved == null ? '—' : `${approx}${fmtUsd(view.saved)}` }, 'v')
@@ -5272,7 +5272,8 @@ const I18N = {
     range_week: '7 days',
     rates: 'Rates ($/Mtok)',
     saved: 'Net savings',
-    savedTotal: 'Net cache savings',
+    savedTotal: 'Theoretical net cache savings',
+    savedGauge: 'Net cache savings',
     sessionTokens: 'This session',
     src_backend: 'Hermes backend estimate',
     src_bundled: 'estimated from models.dev rates',
@@ -5362,7 +5363,8 @@ const I18N = {
     range_week: '近 7 天',
     rates: '单价（$/百万令牌）',
     saved: '净节省',
-    savedTotal: '缓存净节省',
+    savedTotal: '理论缓存净节省',
+    savedGauge: '缓存净节省',
     scopeRun: '本轮',
     scopeConversation: '对话',
     scopeTotalsConversation: '对话总计',
