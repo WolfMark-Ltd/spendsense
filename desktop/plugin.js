@@ -478,7 +478,9 @@ function cacheCoverageDetail(b, t) {
 }
 
 function cacheCoverageLine(t, coverage, bucket) {
-  return t('cacheCoverageLine', Math.round((coverage || 0) * 100), cacheCoverageDetail(bucket, t))
+  // Unavailable coverage is omitted, never displayed as a measured 0%.
+  if (coverage == null) return ''
+  return t('cacheCoverageLine', Math.round(coverage * 100), cacheCoverageDetail(bucket, t))
 }
 
 /* ----------------------------------------------------------------- ledger */

@@ -139,6 +139,13 @@ const sectionsOf = container => ({
   cards: [...container.querySelectorAll('.wm-meter-sections .wm-card')],
 })
 
+// Structural equality would pass for rebuilt lookalikes; node retention
+// needs the same count plus strict identity per card.
+const assertSameCards = (actual, expected, msg) => {
+  assert.equal(actual.length, expected.length, `${msg} (same card count)`)
+  actual.forEach((card, i) => assert.equal(card, expected[i], `${msg} [${i}]`))
+}
+
 after(() => {
   queryClient.clear()
   for (const t of intervals) clearInterval(t)
@@ -194,7 +201,7 @@ test('a transient gap keeps every section mounted and marks the reading stale', 
   await flush()
   const during = sectionsOf(container)
   assert.equal(during.head, before.head, 'header node is retained')
-  assert.deepEqual(during.cards, before.cards, 'all four cards keep their DOM nodes')
+  assertSameCards(during.cards, before.cards, 'all four cards keep their DOM nodes')
   assert.match(container.textContent, /meterUpdating/)
   assert.ok(container.querySelector('.wm-meter-sections.wm-stale'), 'stale readings are dimmed')
   assert.equal(container.querySelector('.wm-kpi-figure').textContent, figureBefore,
@@ -205,7 +212,7 @@ test('a transient gap keeps every section mounted and marks the reading stale', 
   await flush()
   const afterGap = sectionsOf(container)
   assert.equal(afterGap.head, before.head, 'header node survives the round trip')
-  assert.deepEqual(afterGap.cards, before.cards, 'cards survive the round trip')
+  assertSameCards(afterGap.cards, before.cards, 'cards survive the round trip')
   assert.doesNotMatch(container.textContent, /meterUpdating/)
   assert.match(container.textContent, /meterLive/)
 })
@@ -234,7 +241,7 @@ test('a gap with recorded history retains the live snapshot, marked stale', asyn
   await flush()
   const during = sectionsOf(container)
   assert.equal(during.head, before.head, 'header node is retained')
-  assert.deepEqual(during.cards, before.cards, 'all four cards keep their DOM nodes')
+  assertSameCards(during.cards, before.cards, 'all four cards keep their DOM nodes')
   assert.equal(container.querySelector('.wm-kpi-figure').textContent, figureBefore,
     'the live figure is retained, not swapped for behind history')
   assert.match(container.textContent, /meterUpdating/, 'the retained reading is stale')
@@ -245,7 +252,7 @@ test('a gap with recorded history retains the live snapshot, marked stale', asyn
   // The stream returns: back to live, same nodes.
   host.state.focusedUsage.set(liveUsage({ input: 2400, calls: 3 }))
   await flush()
-  assert.deepEqual(sectionsOf(container).cards, before.cards)
+  assertSameCards(sectionsOf(container).cards, before.cards, 'cards survive the round trip')
   assert.doesNotMatch(container.textContent, /meterUpdating/)
   assert.match(container.textContent, /meterLive/)
 })
@@ -261,7 +268,7 @@ test('a model change updates the header without remounting sections', async () =
   await flush()
   const afterModel = sectionsOf(container)
   assert.equal(afterModel.head, before.head)
-  assert.deepEqual(afterModel.cards, before.cards)
+  assertSameCards(afterModel.cards, before.cards, 'cards survive the model change')
   assert.equal(container.querySelector('.wm-model').textContent, 'gpt-5')
 })
 
@@ -367,7 +374,7 @@ test('a cache-only frame renders as valid live usage', async () => {
   await flush()
   const after = sectionsOf(container)
   assert.equal(after.head, before.head)
-  assert.deepEqual(after.cards, before.cards)
+  assertSameCards(after.cards, before.cards, 'cards survive the refresh')
   assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun')
 })
 
@@ -385,12 +392,19 @@ test('a calls-only frame still renders without token data', async () => {
   assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun')
   const ring = container.querySelector('.wm-ring')
   assert.match(ring.getAttribute('aria-label'), /—/, 'no prompt means no hit rate')
+  const method = container.querySelector('[aria-controls="wm-info-cache-method"]')
+  await React.act(async () => {
+    method.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+  })
+  await flush(2)
+  assert.doesNotMatch(container.querySelector('#wm-info-cache-method').textContent, /0%/,
+    'unavailable coverage is omitted, not shown as 0%')
   const before = sectionsOf(container)
   host.state.focusedUsage.set(liveUsage({ input: 0, output: 0, cache_read: 0, cache_write: 0, calls: 4 }))
   await flush()
   const after = sectionsOf(container)
   assert.equal(after.head, before.head)
-  assert.deepEqual(after.cards, before.cards)
+  assertSameCards(after.cards, before.cards, 'cards survive the refresh')
 })
 
 test('an all-zero frame keeps the genuine empty state', async () => {
@@ -419,7 +433,7 @@ test('an activation bump and fresh tick leave the sections standing', async () =
   await flush(10)
   const afterBump = sectionsOf(container)
   assert.equal(afterBump.head, before.head)
-  assert.deepEqual(afterBump.cards, before.cards)
+  assertSameCards(afterBump.cards, before.cards, 'cards survive the activation bump')
   assert.ok(container.querySelector('.wm-kpi-figure').textContent !== '—')
 })
 

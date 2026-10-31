@@ -64,6 +64,9 @@ test('cache coverage lines follow the chosen language', () => {
     '75% of prompt tokens covered · 50% exact · 25% estimated')
   assert.equal(T.cacheCoverageLine(translator('zh'), .75, data),
     '提示词令牌覆盖率 75% · 精确 50% · 估算 25%')
+  assert.equal(T.cacheCoverageLine(translator('en'), null, data), '',
+    'unavailable coverage is omitted, not shown as 0%')
+  assert.equal(T.cacheCoverageLine(translator('zh'), undefined, data), '')
   assert.equal(translator('zh')('cacheCoverageRange', 75), '缓存数据覆盖提示词令牌的 75%')
   for (const language of ['en', 'zh']) {
     for (const key of ['cacheCoverageUnavailable', 'cacheCoverageBasis', 'weightedCacheHit']) {
