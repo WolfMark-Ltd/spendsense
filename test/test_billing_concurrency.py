@@ -227,10 +227,17 @@ class MixedArrangementRegressions(unittest.TestCase):
             billing.save_profile({"id": "bad", "kind": "nonsense", "provider": "x"}, path)
 
 
+try:
+    from fastapi import HTTPException  # type: ignore
+except Exception:  # pragma: no cover - depends on the test interpreter
+    HTTPException = None  # type: ignore
+
+
+@unittest.skipUnless(HTTPException is not None,
+                     "FastAPI/httpx not installed in this interpreter")
 class SaveEndpointStatus(unittest.TestCase):
     def test_conflict_is_409_and_validation_is_422(self):
         import os, tempfile, importlib
-        from fastapi import HTTPException
         home = tempfile.mkdtemp()
         old = os.environ.get("HERMES_HOME")
         os.environ["HERMES_HOME"] = home
