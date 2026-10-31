@@ -25,7 +25,7 @@ writeFileSync(entry, `
 export { default as plugin, __test as T } from '${join(ROOT, 'desktop', 'plugin.js')}'
 export * as React from 'react'
 export * as ReactDOMClient from 'react-dom/client'
-export { QueryClientProvider, queryClient, host, $testConnectionId, $testProfile, gatewayActivationEpoch } from '@hermes/plugin-sdk'
+export { QueryClientProvider, queryClient, host, $testConnectionId, $testProfile, gatewayActivationEpoch, i18nCalls } from '@hermes/plugin-sdk'
 `)
 const bundle = join(work, 'bundle.mjs')
 const esbuild = (await import(pathToFileURL(join(HARNESS_MODULES, 'esbuild', 'lib', 'main.js')).href)).default
@@ -60,7 +60,9 @@ define('Event', dom.window.Event)
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const lib = await import(pathToFileURL(bundle).href)
-const { plugin, T, React, ReactDOMClient, QueryClientProvider, queryClient, $testConnectionId, $testProfile } = lib
+const { plugin, T, React, ReactDOMClient, QueryClientProvider, queryClient, $testConnectionId, $testProfile, i18nCalls } = lib
+const translated = (key, ...args) => i18nCalls.some(call =>
+  call.length === args.length + 1 && call[0] === key && args.every((a, i) => call[i + 1] === a))
 
 function controller() {
   const calls = []
@@ -137,6 +139,7 @@ const econFixture = () => ({
 
 const roots = []
 const renderSection = async (data, extra = {}) => {
+  i18nCalls.length = 0
   T.$fxDraft.set(null)
   T.$fxNotice.set(null)
   T.$fxSaving.set(null)
@@ -182,6 +185,10 @@ test('the economics section leads with the three headline figures', async () => 
   assert.match(text(), /econDiffHint/)
   assert.match(text(), /econSubsSmall/)
   assert.match(text(), /econTheoreticalPrice/)
+  assert.ok(translated('econPerMonth', '$20.00'), 'the monthly fee value is interpolated')
+  assert.ok(translated('econSpanDays', 30), 'the span interpolates rounded days')
+  assert.ok(translated('econSubsSmall', '$19.37', 'econSpanDays', 1, 'econStatusOk'),
+    'the window value, span, count and status are interpolated')
 })
 
 test('the breakdown names the membership, renewal and coverage', async () => {
@@ -191,6 +198,8 @@ test('the breakdown names the membership, renewal and coverage', async () => {
   assert.match(text(), /econDue/)
   assert.match(text(), /econInWindow/)
   assert.match(text(), /econFullyPriced/)
+  assert.ok(translated('econDue', '$20.00', '2026-11-12'), 'the renewal amount and date are interpolated')
+  assert.ok(translated('econInWindow', '$19.37'), 'the windowed fee is interpolated')
   const headers = [...container.querySelectorAll('th')].map(th => th.textContent)
   assert.deepEqual(headers, ['econColAccount', 'econColMembership', 'econColMonthly', 'econApiUsage',
     'econColDifference', 'econColCoverage'])
@@ -255,6 +264,8 @@ test('the fx editor stages a rate and saves the whole document', async () => {
   })
   await flush(2)
   assert.match(container.textContent, /fxRateLine/)
+  assert.ok(translated('fxRateLine', 'GBP', 1.25, '2026-10-31', 'Example Bank'),
+    'the staged rate values are interpolated')
   const save = [...container.querySelectorAll('button')].find(b => b.textContent === 'fxSave')
   assert.ok(save && !save.disabled, 'save enables once the draft differs')
   await React.act(async () => { save.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
@@ -350,6 +361,7 @@ test('a trend month without a converted fee total degrades to a text row', async
   const { container, text } = await renderSection(data)
   assert.equal(container.querySelector('.wm-econ-trend-bars'), null)
   assert.match(text(), /econPerMonth/)
+  assert.ok(translated('econPerMonth', '£4.25'), 'the fallback fee value is interpolated')
   assert.match(text(), /no FX rate dated in this month/)
 })
 

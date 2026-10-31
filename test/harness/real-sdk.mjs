@@ -84,4 +84,8 @@ export const Codicon = noop
 export const SegmentedControl = noop
 export const Tip = noop
 export const cn = (...parts) => parts.filter(Boolean).join(' ')
-export const usePluginI18n = () => (key) => key
+export const i18nCalls = []
+export const usePluginI18n = () => (key, ...args) => {
+  i18nCalls.push([key, ...args])
+  return key
+}
