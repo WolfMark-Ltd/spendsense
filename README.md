@@ -126,11 +126,15 @@ Unpriced usage is reported as unpriced. Unknown is never shown as zero, and know
 
 ## Development
 
-Run the Python tests with:
+Run the Python tests from a virtual environment — never system Python (on macOS, system pip is blocked by PEP 668, so install into the project environment instead):
 
 ```bash
-python -m unittest discover -s test -p 'test_*.py'
+python3 -m venv .venv
+.venv/bin/python -m pip install fastapi httpx
+.venv/bin/python -m unittest discover -s test -p 'test_*.py'
 ```
+
+With [uv](https://docs.astral.sh/uv/) instead: `uv venv .venv && uv pip install --python .venv/bin/python fastapi httpx`, then run the tests as above.
 
 Run the JavaScript tests with:
 
@@ -138,7 +142,7 @@ Run the JavaScript tests with:
 node --test --test-force-exit test/*.test.mjs
 ```
 
-Some API tests need FastAPI and HTTPX (`python -m pip install fastapi httpx`) and are skipped without them. The development-only UI test dependencies are installed with `npm ci --prefix test/harness`. Hermes catalogue admission additionally requires `hermes plugins validate /path/to/plugin --install-deps` on the exact commit.
+Some API tests need FastAPI and HTTPX (installed above) and are skipped without them. The development-only UI test dependencies are installed with `npm ci --prefix test/harness`. Hermes catalogue admission additionally requires `hermes plugins validate /path/to/plugin --install-deps` on the exact commit.
 
 Do not run integration tests against production data.
 
