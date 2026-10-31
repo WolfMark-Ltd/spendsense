@@ -664,7 +664,7 @@ function previousPromptCounter(prev, source) {
   if (cumulativeCounter(prev.counterPrompt) != null && prev.counterPromptSource === source) return prev.counterPrompt
   if (source === 'prompt') {
     if (prev.counterPromptSource === 'input' && cumulativeCounter(prev.counterInput) != null) {
-      return prev.counterInput + num(prev.counterCacheRead) + num(prev.counterCacheWrite)
+      return prev.counterInput + num(prev.cacheRead) + num(prev.cacheWrite)
     }
     if (cumulativeCounter(prev.counterPrompt) != null) return null
     return num(prev.input) + num(prev.cacheRead) + num(prev.cacheWrite)

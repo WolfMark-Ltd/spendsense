@@ -294,6 +294,45 @@ test('applyUsage: existing v2 snapshots continue from stored totals without repl
   assert.equal(ledger.sessions.conversation.input + ledger.sessions.conversation.cacheRead + ledger.sessions.conversation.cacheWrite, 1000)
 })
 
+test('applyUsage: input-to-prompt counter switch includes stored cache counters', () => {
+  const payload = copilotPayload({ input: '$5', output: '$25', cache: '$0.5' })
+  for (const [cacheRead, cacheWrite] of [[20, 0], [0, 25]]) {
+    for (const legacy of [false, true]) {
+      const sessionId = `counter-switch-${cacheRead}-${cacheWrite}-${legacy}`
+      const storedId = sessionId
+      const args = { now: NOW, payload, provider: 'github-copilot', sessionId, storedId }
+      let led = T.applyUsage(T.emptyLedger(), { ...args, usage: {
+        model: 'claude-opus-5', input: 100, output: 10, calls: 3,
+        cache_read: cacheRead, cache_write: cacheWrite
+      } })
+
+      if (legacy) {
+        const oldSnapshot = { ...led.snapshots[sessionId] }
+        for (const field of ['counterPrompt', 'counterPromptSource', 'counterInput', 'counterFreshInput', 'counterOutput', 'counterCalls']) {
+          delete oldSnapshot[field]
+        }
+        const stored = { ...led, snapshots: { [sessionId]: oldSnapshot } }
+        led = T.readStoredLedger({ get: key => key === 'ledger.v2' ? stored : null }, NOW).ledger
+      }
+
+      led = T.applyUsage(led, { ...args, now: NOW + 1, usage: {
+        model: 'claude-opus-5', input: 130, prompt: 160, output: 15, calls: 4,
+        cache_read: cacheRead ? 25 : 5, cache_write: cacheWrite || 5
+      } })
+
+      const session = led.sessions[storedId]
+      const expectedCost = cacheRead ? 0.0010625 : 0.0011525
+      assert.equal(session.input + session.cacheRead + session.cacheWrite, 160)
+      assert.equal(session.output, 15)
+      assert.equal(session.calls, 4)
+      assert.ok(Math.abs(session.cost - expectedCost) < 1e-15)
+      assert.equal(session.cacheCoveredPrompt, 160)
+      assert.equal(session.cacheExactPrompt, 160)
+      assert.equal(T.cacheCoverage(session), 1)
+    }
+  }
+})
+
 test('applyUsage: same model on two providers stays in separate buckets', () => {
   let led = T.emptyLedger()
   led = T.applyUsage(led, { now: NOW, provider: 'github-copilot', sessionId: 'a', usage: { model: 'claude-opus-5', input: 10 } })
