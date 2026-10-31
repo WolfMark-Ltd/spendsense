@@ -769,6 +769,58 @@ test('a re-activation while a request is pending cannot be populated by it', asy
     'a result from the previous activation must not populate the new one')
 })
 
+test('a pending membership save disables mutation controls on other accounts and restores them afterwards', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  const pending = deferred()
+  const a = account('busy-a', { label: 'Account A' })
+  const b = account('busy-b', { label: 'Account B',
+    fee: { basis: 'declared', effective: { amount: 10, currency: 'USD', period: 'month' },
+      published: { source: 'catalogue' }, override: { revision_id: 'fee-1' } },
+    quota: { windows: [{ id: 'weekly', label: 'Weekly', manual: { id: 'manual-1', status: 'active' } }] } })
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.method === 'PUT' ? pending.promise : { ok: true, accounts: [a, b] })
+  const { container } = await boot(); await flush(3)
+  const card = id => container.querySelector(`[data-account="${id}"]`)
+  await clickByText(card('busy-b'), 'Create user-defined plan')
+  await setField(container, 'Plan name', 'Test plan', card('busy-b').querySelector('.wm-custom-form'))
+  await clickByText(card('busy-b'), 'Mark exhausted')
+  await clickByText(card('busy-a'), 'Edit fee'); await typeAmount(card('busy-a'), '17')
+  await clickByText(card('busy-a'), 'Save fee'); await flush(2)
+  const button = name => [...card('busy-b').querySelectorAll('button')].find(el => el.textContent === name)
+  for (const name of ['Mark exhausted', 'Clear mark', 'Mark account exhausted', 'Save manual status',
+    'Save user-defined plan', 'Restore catalogue price']) {
+    assert.ok(button(name), `expected ${name}`)
+    assert.equal(button(name).disabled, true, `${name} disabled while another account is saving`)
+  }
+  assert.match(card('busy-a').textContent, /Saving changes/)
+  await React.act(async () => pending.resolve({ ok: true }))
+  await flush(4)
+  for (const name of ['Mark exhausted', 'Clear mark', 'Mark account exhausted', 'Save manual status',
+    'Save user-defined plan', 'Restore catalogue price']) {
+    assert.equal(button(name).disabled, false, `${name} available after save`)
+  }
+  assert.equal(transportCtl.calls.filter(c => c.method === 'PUT').length, 1)
+})
+
+test('an action in the same tick as a save receives a busy explanation', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  const pending = deferred()
+  const a = account('race-a'), b = account('race-b')
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.method === 'PUT' ? pending.promise : { ok: true, accounts: [a, b] })
+  const { container } = await boot(); await flush(3)
+  const first = container.querySelector('[data-account="race-a"]')
+  const second = container.querySelector('[data-account="race-b"]')
+  await clickByText(first, 'Edit fee'); await typeAmount(first, '17')
+  const save = [...first.querySelectorAll('button')].find(el => el.textContent === 'Save fee')
+  const mark = second.querySelector('[data-action="exhaust-account"]')
+  await React.act(async () => { save.click(); mark.click() })
+  assert.match(container.textContent, /Another membership action is still processing/)
+  assert.equal(transportCtl.calls.filter(c => c.method !== 'GET').length, 1)
+  assert.equal(second.querySelector('.wm-exhaustion-form'), null)
+  await React.act(async () => pending.resolve({ ok: true })); await flush(4)
+})
+
 test('a pending save disables duplicate submission and editing', async () => {
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
   transportCtl.reset()

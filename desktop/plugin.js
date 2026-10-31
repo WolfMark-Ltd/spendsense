@@ -3939,7 +3939,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
         : null,
     subscription && fee.basis === 'declared' && fee.published?.source === 'catalogue'
       ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'restore-catalogue-price',
-          disabled: busy === account.id, onClick: () => onAction('restore-fee', account),
+          disabled: !!busy, onClick: () => onAction('restore-fee', account),
           children: 'Restore catalogue price' })
       : null,
     subscription && fee.basis === 'declared' && fee.published?.source === 'user_defined'
@@ -4017,7 +4017,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       ] }),
       customErrors.length ? jsx('p', { className: 'wm-warn-note', role: 'alert', children: customErrors.join(' ') }) : null,
       jsx('div', { className: 'wm-setting-action', children: [
-        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: customErrors.length > 0, children: 'Save user-defined plan' }),
+        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy || customErrors.length > 0, children: 'Save user-defined plan' }),
         jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $customPlanDraft.set(null), children: 'Cancel' })
       ] })
     ] }) : null,
@@ -4031,10 +4031,10 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
           jsx('div', { className: 'wm-note', children: [row.source, row.reset,
             row.manual && !row.reset ? 'No reset time supplied by you.' : ''].filter(Boolean).join(' · ') }),
           jsxs('div', { className: 'wm-quota-actions', children: [
-            jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: busy === account.id,
+            jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
               onClick: () => openExhaustion(row.id, row.label), children: 'Mark exhausted' }),
             row.manual && row.manual.status !== 'cleared'
-              ? jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: busy === account.id,
+              ? jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
                   onClick: () => onAction('clear', account, row.manual.id), children: 'Clear mark' })
               : null
           ] })
@@ -4042,13 +4042,13 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       : jsxs('div', { className: 'wm-quota-empty', children: [
           jsx('p', { className: 'wm-note', children: 'No quota windows are published for this account. You can still record that it is used up.' }),
           jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'exhaust-account',
-            disabled: busy === account.id,
+            disabled: !!busy,
             onClick: () => openExhaustion(ACCOUNT_SCOPE, 'Account'),
             children: 'Mark account exhausted' })
         ] }),
     rows.length && !accountHolderMarked(account)
       ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'exhaust-account-footer',
-          disabled: busy === account.id,
+          disabled: !!busy,
           onClick: () => openExhaustion(ACCOUNT_SCOPE, 'Account'),
           children: 'Mark account exhausted' })
       : null,
@@ -4062,7 +4062,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       ] }),
       jsx('p', { className: 'wm-note', children: 'No reset time is inferred from when you mark it. A countdown appears only when you supply a time.' }),
       jsx('div', { className: 'wm-setting-action', children: [
-        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: busy === account.id, children: 'Save manual status' }),
+        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy, children: 'Save manual status' }),
         jsx(ProductButton, { type: 'button', className: 'wm-button',
           onClick: () => $exhaustionDraft.set(null), children: 'Cancel' })
       ] })
@@ -4150,6 +4150,11 @@ function MembershipsPage() {
     return { ok: false, stale: true }
   }
 
+  const refuseBusy = () => {
+    setMembershipNotice(identity, 'warn', 'Another membership action is still processing. Please wait and try again.')
+    return { ok: false, busy: true }
+  }
+
   /**
    * One write, bound to the identity it started in. The identity is checked
    * before the request and again after it, so nothing started here can write
@@ -4162,7 +4167,7 @@ function MembershipsPage() {
     if (captured !== identity) return refuse()
     const generation = gatewayActivationEpoch()
     const operation = claimMembershipBusy(captured, key)
-    if (!operation) return { ok: false, busy: true }
+    if (!operation) return refuseBusy()
     try {
       membershipTrace({ method, path, identity: captured, generation, outcome: 'write' })
       await membershipWrite(method, path, body)
@@ -4196,6 +4201,7 @@ function MembershipsPage() {
     // Defence in depth: the list is already gated by identity, but a click can
     // land between a switch and the re-render.
     if (!current || current.identity !== membershipIdentityNow()) return refuse()
+    if (membershipBusyKey($membershipBusy.get(), identity)) return refuseBusy()
     if (kind === 'api-only' || kind === 'arrangement') {
       const update = kind === 'api-only' ? { api_only: !!value } : { billing_arrangement: value }
       return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
@@ -4275,7 +4281,7 @@ function MembershipsPage() {
     if (captured !== identity) return refuse()
     const generation = gatewayActivationEpoch()
     const operation = claimMembershipBusy(captured, 'discover')
-    if (!operation) return refuse()
+    if (!operation) return refuseBusy()
     try {
       membershipTrace({ method: 'POST', path: '/membership/discover?native=true',
                         identity: captured, generation, outcome: 'discover' })
@@ -4314,7 +4320,7 @@ function MembershipsPage() {
     if (captured !== identity) return refuse()
     const generation = gatewayActivationEpoch()
     const operation = claimMembershipBusy(captured, 'refresh')
-    if (!operation) return refuse()
+    if (!operation) return refuseBusy()
     try {
       membershipTrace({ method: 'GET', path: '/membership/accounts?native=true',
                         identity: captured, generation, outcome: 'refresh' })
