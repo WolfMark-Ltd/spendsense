@@ -227,6 +227,19 @@ class DuplicateAndGapTests(EventLedgerCase):
         self.assertFalse(alive, "record() blocked on a contended lock")
         self.assertTrue(outcome.get("dropped"), "contention must raise WriteContended")
 
+    def test_record_fails_promptly_when_the_database_is_locked(self):
+        blocker = sqlite3.connect(self.event_db)
+        blocker.execute("BEGIN EXCLUSIVE")
+        try:
+            started = time.monotonic()
+            with self.assertRaises(sqlite3.OperationalError):
+                self.put(_record("busy-1", NOW))
+            self.assertLess(time.monotonic() - started, 4,
+                            "record() waited out the busy timeout on the hook path")
+        finally:
+            blocker.execute("ROLLBACK")
+            blocker.close()
+
     def test_streaming_call_is_recorded_with_usage(self):
         self._collector_call({
             "api_request_id": "req-stream", "session_id": "s1", "platform": "desktop",

@@ -148,10 +148,13 @@ def connect_writer(path: Optional[Path | str] = None) -> sqlite3.Connection:
             conn = None
     if conn is None:
         target.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(target, timeout=5.0, check_same_thread=False)
+        # Fail fast (no busy wait): this connection serves hook callbacks on
+        # API dispatch, where stalling for another process's lock is worse
+        # than dropping one accounting row. The collector is fail-open.
+        conn = sqlite3.connect(target, timeout=0, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA busy_timeout=0")
     _ensure_schema(conn)
     _WRITER, _WRITER_PATH = conn, key
     return conn
@@ -231,7 +234,8 @@ def record(record: dict[str, Any], path: Optional[Path | str] = None,
     """Insert one call. Duplicate event ids are ignored; a later good row upgrades a gap.
 
     Raises :class:`WriteContended` instead of waiting when another thread
-    holds the lock, so hook callbacks never stall API dispatch.
+    holds the lock, and the writer takes no SQLite busy wait either, so hook
+    callbacks never stall API dispatch.
     """
     global _INSERTS_SINCE_PRUNE
     with _exclusive():
