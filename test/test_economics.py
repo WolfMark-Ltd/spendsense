@@ -97,6 +97,17 @@ class EconomicsCase(unittest.TestCase):
         # Window-allocated expenditure behind every same-window difference.
         return round(monthly * result["window_days"] / E.MEAN_MONTH_DAYS, 6)
 
+    def assertHeadlineDifference(self, result, usage, monthly):
+        # The backend sums per-account rounded differences while this
+        # expectation windows the monthly total directly; the two paths can
+        # straddle a 6dp rounding boundary depending on the window length,
+        # so adjacent-grid-point equivalence is the contract (still four
+        # orders of magnitude tighter than a cent). Row-level assertions
+        # elsewhere pin the windowing maths exactly.
+        expected = round(usage - self.windowed(monthly, result), 6)
+        self.assertAlmostEqual(result["headline"]["difference_usd"], expected,
+                               delta=2e-6)
+
 
 class NormalisationTests(unittest.TestCase):
     def test_monthly_fee_counts_in_full(self):
@@ -360,8 +371,7 @@ class ComparisonTests(EconomicsCase):
         # $120/yr is $10/mo against $4 of usage, both windowed.
         self.assertAlmostEqual(by_id["b"]["difference_usd"],
                                round(4.0 - self.windowed(10.0, result), 6))
-        self.assertAlmostEqual(result["headline"]["difference_usd"],
-                               round(6.0 - self.windowed(30.0, result), 6))
+        self.assertHeadlineDifference(result, 6.0, 30.0)
         coverage = result["coverage"]["attribution"]
         self.assertEqual(coverage["unattributed_tokens"], 0)
         self.assertEqual(coverage["ambiguous_tokens"], 0)
@@ -381,8 +391,7 @@ class ComparisonTests(EconomicsCase):
             self.assertAlmostEqual(row["difference_usd"],
                                    round(-self.windowed(20.0, result), 6))
         # Both fees stand, but the $2 of usage backs neither of them.
-        self.assertAlmostEqual(result["headline"]["difference_usd"],
-                               round(-self.windowed(40.0, result), 6))
+        self.assertHeadlineDifference(result, 0.0, 40.0)
         self.assertEqual(result["coverage"]["attribution"]["ambiguous_tokens"], 1_000_000)
 
     def test_unattributed_usage_is_reported_separately(self):
@@ -523,8 +532,7 @@ class CurrencyTests(EconomicsCase):
                                round(1.0 - self.windowed(5.3125, result), 6))
         self.assertTrue(any("Bank of England" in note for note in by_id["gbp"]["notes"]))
         headline = result["headline"]
-        self.assertAlmostEqual(headline["difference_usd"],
-                               round(3.0 - self.windowed(25.3125, result), 6))
+        self.assertHeadlineDifference(result, 3.0, 25.3125)
         self.assertEqual(headline["status"], "ok")
         groups = {g["currency"]: g for g in result["groups"]}
         self.assertTrue(groups["GBP"]["converted"])
