@@ -1,0 +1,34 @@
+{
+  "corrections_version": "2026-10-30.2",
+  "note": "Evidence notes only: no price, kind, name or arrangement changes. Each note records that the registered source cannot establish the plan's price, so a reader can tell 'unverified' from 'unverifiable here'. Alibaba is included only to state which product its entry is; its classification is unchanged.",
+  "corrections": [
+    {
+      "plan_id": "alibaba-coding-plan.standard",
+      "field": "verification_note",
+      "value": "This entry is Alibaba's Coding Plan. Model Studio sells Coding Plan, Token Plan and pay-as-you-go as separate arrangements with separate identities and must not be merged. The registered page documents the product but states no Coding Plan price.",
+      "why": "Preserve the Coding Plan identity and record why the source has not produced a price.",
+      "evidence": {"source_id": "alibaba-coding-plan", "url": "https://www.alibabacloud.com/help/en/model-studio/coding-plan", "retrieved_at": null}
+    },
+    {
+      "plan_id": "kimi-code-plan-global.standard",
+      "field": "verification_note",
+      "value": "The registered page states that inference is billed pay-as-you-go with no subscription plan, and that Kimi Code is a different product. This source cannot verify a Kimi Code plan; the Kimi Code product page is required.",
+      "why": "A placeholder citing a page that cannot price it is indistinguishable from one that is merely unverified.",
+      "evidence": {"source_id": "kimi-coding-plan", "url": "https://platform.kimi.ai/docs/pricing/chat", "retrieved_at": null}
+    },
+    {
+      "plan_id": "minimax-coding-plan.standard",
+      "field": "verification_note",
+      "value": "Registered sources are an MCP setup guide and a documentation index; neither states a plan price. The pricing overview page is required before a price is recorded.",
+      "why": "The MCP guide confirms an M Plan exists but prices nothing.",
+      "evidence": {"source_id": "minimax-m-plan", "url": "https://platform.minimax.io/docs/guides/token-plan-mcp-guide", "retrieved_at": null}
+    },
+    {
+      "plan_id": "xai-oauth.supergrok",
+      "field": "verification_note",
+      "value": "The registered page advertises SuperGrok without stating a price, and it is a consumer chat product; the Hermes route is xai-oauth, whose subscription is treated as included rather than metered. Any price claim is withdrawn until the checkout page is read.",
+      "why": "Keeps a consumer subscription from being read as an API plan price.",
+      "evidence": {"source_id": "xai-supergrok", "url": "https://x.ai/grok", "retrieved_at": null}
+    }
+  ]
+}

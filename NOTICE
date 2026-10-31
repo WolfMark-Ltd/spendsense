@@ -1,0 +1,39 @@
+Spend Sense (formerly WolfMark Cost Ledger)
+Copyright 2026 WolfMark Ltd
+
+This product includes software developed by AFei (IT-dreamer/token-cost-meter),
+licensed under the Apache License, Version 2.0. The original licence text is
+retained in licenses/Apache-2.0.txt.
+
+Changes made for this fork:
+- Added dashboard/plugin_api.py and the wolfmark_ledger/ package: a read-only backend
+  over Hermes' session_model_usage and sessions tables, with provider-aware
+  pricing and no cross-provider rate borrowing.
+- Added a plugin-owned timestamped call store (wolfmark_ledger/store.py) and
+  observer-only collector (wolfmark_ledger/collector.py) using Hermes'
+  post_api_request, post_auxiliary_call and api_request_error hooks. It records
+  accounting metadata only: no prompts, responses, credentials or telemetry.
+- Added a separately labelled cumulative baseline and reconciliation against
+  state.db growth; period figures come only from timestamped call rows.
+- Added per-call context-tier pricing for timestamped rows and an explicitly
+  labelled average-prompt estimate for the cumulative baseline.
+- Added dashboard/manifest.json and backend attribution in plugin.yaml.
+- Added the "All Hermes" view to desktop/plugin.js; the live chip and
+  focused-session pane are retained from upstream.
+- Added catalogue/rates.json and scripts/gen-catalogue.py.
+- Added Python unit tests, collector/period tests and backend reconciliation tests.
+- Added interactive, theme-aware SVG analytics, a sortable Model Explorer,
+  read-only timestamped chart aggregation, strict per-call cache economics,
+  exact shared filters and pricing/cache coverage disclosures.
+- Added isolated analytics tests and a development-only browser review harness;
+  no external charting service or runtime chart dependency is required.
+
+Spend Sense development baseline: WolfMark Cost Ledger 0.5.0 acceptance
+candidate, including subsequently reviewed Desktop UI and regression changes.
+The earlier 0.2.4-ui-1 release is retained privately as a behavioural reference.
+Historical development commits and operational data are not part of this tree.
+
+WolfMark modified the upstream Desktop source and added the backend, membership,
+analytics, pricing and test components. The combined software is distributed
+under GPL-3.0. The upstream Apache-2.0 terms and notices continue to apply.
+Spend Sense and WolfMark branding is governed separately by BRANDING.md.

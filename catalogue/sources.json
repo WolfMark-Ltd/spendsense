@@ -1,0 +1,533 @@
+{
+  "generated_at": "2026-10-30T21:02:11Z",
+  "notes": [
+    "One row per source the catalogue cites. A row is evidence provenance, not coverage: 'parsed' is true only where an adapter exists.",
+    "evidence_kind is closed: price_page, token_price_page, product_page, docs_only, balance_api, aggregator, cannot_price.",
+    "'complete' means the page enumerates the whole family, so a missing plan is evidence of removal; otherwise a missing plan is ambiguous.",
+    "retrieved_at is null when the page was not read in this pass. It is never back-dated or forward-dated to look tidier."
+  ],
+  "sources": [
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "alibaba-coding-plan.standard"
+      ],
+      "complete": false,
+      "evidence_kind": "docs_only",
+      "family": "alibaba-coding-plan",
+      "fetched_url": "https://www.alibabacloud.com/help/en/model-studio/coding-plan",
+      "http_status": 200,
+      "id": "alibaba-coding-plan",
+      "notes": "Documentation page. The priced product on this site is the AI Token Plan.",
+      "parsed": false,
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "partial",
+      "url": "https://www.alibabacloud.com/help/en/model-studio/coding-plan"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "anthropic.claude-max-20x",
+        "anthropic.claude-max-5x",
+        "anthropic.claude-pro"
+      ],
+      "complete": false,
+      "evidence_kind": "price_page",
+      "family": "anthropic",
+      "fetched_url": "https://claude.com/pricing",
+      "http_status": null,
+      "id": "anthropic-claude-pricing",
+      "notes": "",
+      "parsed": false,
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "fetched",
+      "url": "https://claude.com/pricing"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "cline-pass.standard"
+      ],
+      "complete": false,
+      "evidence_kind": "price_page",
+      "family": "cline-pass",
+      "fetched_url": "https://cline.bot/pricing",
+      "http_status": 200,
+      "id": "cline-pricing",
+      "notes": "'No subscriptions, no vendor lock-in' \u2014 Enterprise is custom only. Retrieval timestamp not captured; recorded from the 30 October research pass.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "fetched",
+      "url": "https://cline.bot/pricing"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "commandcode.go"
+      ],
+      "complete": false,
+      "evidence_kind": "product_page",
+      "family": "commandcode",
+      "fetched_url": "https://commandcode.ai/docs/plans/go",
+      "http_status": 200,
+      "id": "commandcode-go",
+      "notes": "Go plan page describes per-model monthly credits for new subscribers from 28 September 2026 and later says the allocations draw from a shared $10 pool. It does not describe Provider API access.",
+      "parsed": false,
+      "retrieved_at": "2026-10-30T21:02:11Z",
+      "status": "fetched",
+      "url": "https://commandcode.ai/docs/plans/go"
+    },
+    {
+      "adapter": "commandcode_pricing",
+      "cited_by": [
+        "commandcode.enterprise",
+        "commandcode.go",
+        "commandcode.goat",
+        "commandcode.max-10x",
+        "commandcode.max-20x",
+        "commandcode.pro",
+        "commandcode.provider",
+        "commandcode.team-pro"
+      ],
+      "complete": true,
+      "evidence_kind": "price_page",
+      "family": "commandcode",
+      "fetched_url": "https://commandcode.ai/docs/resources/pricing-limits",
+      "http_status": 200,
+      "id": "commandcode-pricing",
+      "notes": "Plan table: prices, credit pools and rolling windows. Its Go row lists $2/$5, while the same page FAQ says $3/$6. Enterprise is sold by quote.",
+      "parsed": true,
+      "retrieved_at": "2026-10-30T21:02:11Z",
+      "status": "fetched",
+      "url": "https://commandcode.ai/docs/resources/pricing-limits"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "commandcode.provider"
+      ],
+      "complete": false,
+      "evidence_kind": "docs_only",
+      "family": "commandcode",
+      "fetched_url": "https://commandcode.ai/docs/provider",
+      "http_status": 200,
+      "id": "commandcode-provider-api",
+      "notes": "The Provider API page describes $15/month plus a $1.01 processing fee and identifies Provider as a separate pay-as-you-go plan.",
+      "parsed": false,
+      "retrieved_at": "2026-10-30T21:02:11Z",
+      "status": "fetched",
+      "url": "https://commandcode.ai/docs/provider"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "github-copilot.free",
+        "github-copilot.max",
+        "github-copilot.pro",
+        "github-copilot.pro-plus"
+      ],
+      "complete": false,
+      "evidence_kind": "price_page",
+      "family": "github-copilot",
+      "fetched_url": "https://github.com/features/copilot/plans",
+      "http_status": null,
+      "id": "github-copilot-plans",
+      "notes": "",
+      "parsed": false,
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "fetched",
+      "url": "https://github.com/features/copilot/plans"
+    },
+    {
+      "adapter": "huggingface_pricing",
+      "cited_by": [
+        "huggingface.pro"
+      ],
+      "complete": true,
+      "evidence_kind": "price_page",
+      "family": "huggingface",
+      "fetched_url": "https://huggingface.co/pricing",
+      "http_status": 200,
+      "id": "huggingface-pricing",
+      "notes": "PRO $9/month with $2 of included inference credits; seat pricing for orgs not captured. Read live on 30 October 2026.",
+      "parsed": true,
+      "retrieved_at": "2026-10-30T12:22:52Z",
+      "status": "fetched",
+      "url": "https://huggingface.co/pricing"
+    },
+    {
+      "adapter": "kilocode_pricing",
+      "cited_by": [
+        "kilocode.teams"
+      ],
+      "complete": true,
+      "evidence_kind": "price_page",
+      "family": "kilocode",
+      "fetched_url": "https://kilocode.ai/pricing",
+      "http_status": 200,
+      "id": "kilocode-pricing",
+      "notes": "Free for individuals; Teams $15/user/month; inference billed separately. Read live on 30 October 2026.",
+      "parsed": true,
+      "retrieved_at": "2026-10-30T12:22:53Z",
+      "status": "fetched",
+      "url": "https://kilo.ai/pricing"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "kimi-code-plan-global.standard"
+      ],
+      "complete": false,
+      "evidence_kind": "docs_only",
+      "family": "kimi-code-plan-global",
+      "fetched_url": "https://platform.kimi.ai/docs/pricing/chat",
+      "http_status": 200,
+      "id": "kimi-coding-plan",
+      "notes": "API token pricing. States outright that inference is pay-as-you-go with no subscription plan, so it cannot verify a Kimi Code plan.",
+      "parsed": false,
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "partial",
+      "url": "https://platform.kimi.ai/docs/pricing/chat"
+    },
+    {
+      "adapter": "manual",
+      "alias_of": "minimax-m-plan",
+      "cited_by": [],
+      "complete": false,
+      "evidence_kind": "product_page",
+      "family": "minimax-coding-plan",
+      "fetched_url": "https://platform.minimax.io/docs/coding-plan",
+      "http_status": null,
+      "id": "minimax-coding-plan",
+      "notes": "Documented URL 404s; MiniMax markets an 'M Plan' instead. Alias of minimax-m-plan: same vendor docs; no price on either page.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://platform.minimax.io/docs/coding-plan"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "minimax-coding-plan.standard"
+      ],
+      "complete": false,
+      "evidence_kind": "docs_only",
+      "family": "minimax-coding-plan",
+      "fetched_url": "https://platform.minimax.io/docs/guides/token-plan-mcp-guide",
+      "http_status": 200,
+      "id": "minimax-m-plan",
+      "notes": "Confirms the product is called 'M Plan' and is sold per seat/credits; the docs page states no price. Retrieval timestamp not captured; recorded from the 30 October research pass.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "partial",
+      "url": "https://platform.minimax.io/docs/guides/token-plan-mcp-guide"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "alibaba-coding-plan.standard",
+        "cline-pass.standard",
+        "kimi-code-plan-global.standard",
+        "minimax-coding-plan.standard",
+        "tencent-coding-plan.standard",
+        "umans-ai-coding-plan.standard",
+        "volcengine-coding-plan.standard"
+      ],
+      "complete": false,
+      "evidence_kind": "aggregator",
+      "family": null,
+      "fetched_url": "https://models.dev/api.json",
+      "http_status": null,
+      "id": "models-dev-catalogue",
+      "notes": "Third-party catalogue. Useful for model metadata, never authority for a vendor's price.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "cached_locally",
+      "url": "https://models.dev/api.json"
+    },
+    {
+      "adapter": "manual",
+      "alias_of": "kimi-coding-plan",
+      "cited_by": [],
+      "complete": false,
+      "evidence_kind": "docs_only",
+      "family": "kimi-code-plan-global",
+      "fetched_url": "https://platform.kimi.ai/docs/pricing/chat",
+      "http_status": null,
+      "id": "moonshot-coding-plan",
+      "notes": "The chat pricing page was reachable; the coding-plan page was not. Alias of kimi-coding-plan: same API pricing page as Kimi.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://platform.kimi.ai/docs/pricing/chat"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "nous.portal"
+      ],
+      "complete": false,
+      "evidence_kind": "cannot_price",
+      "family": "nous",
+      "fetched_url": "https://portal.nousresearch.com",
+      "http_status": null,
+      "id": "nous-portal",
+      "notes": "Login-gated portal. A balance can be read through Hermes; a price cannot.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://portal.nousresearch.com"
+    },
+    {
+      "adapter": "manual",
+      "alias_of": "nous-portal",
+      "cited_by": [
+        "nous.portal"
+      ],
+      "complete": false,
+      "evidence_kind": "cannot_price",
+      "family": "nous",
+      "fetched_url": "https://portal.nousresearch.com",
+      "http_status": null,
+      "id": "nous-portal-pricing",
+      "notes": "Account-scoped; no public plan table. Alias of nous-portal: same login-gated portal.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://portal.nousresearch.com"
+    },
+    {
+      "adapter": "manual",
+      "alias_of": "ollama-pricing",
+      "cited_by": [],
+      "complete": false,
+      "evidence_kind": "price_page",
+      "family": "ollama-cloud",
+      "fetched_url": "https://ollama.com/pricing",
+      "http_status": null,
+      "id": "ollama-cloud-pricing",
+      "notes": "Alias of ollama-pricing: same page; the parser lives on ollama-pricing.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://ollama.com/pricing"
+    },
+    {
+      "adapter": "ollama_pricing",
+      "cited_by": [
+        "ollama-cloud.max",
+        "ollama-cloud.pro",
+        "ollama-cloud.team"
+      ],
+      "complete": true,
+      "evidence_kind": "price_page",
+      "family": "ollama-cloud",
+      "fetched_url": "https://ollama.com/pricing",
+      "http_status": 200,
+      "id": "ollama-pricing",
+      "notes": "Pro/Max/Team/Enterprise with monthly usage credits. Read live on 30 October 2026.",
+      "parsed": true,
+      "retrieved_at": "2026-10-30T12:22:52Z",
+      "status": "fetched",
+      "url": "https://ollama.com/pricing"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "openai-codex.chatgpt-business",
+        "openai-codex.chatgpt-free",
+        "openai-codex.chatgpt-go",
+        "openai-codex.chatgpt-plus",
+        "openai-codex.chatgpt-pro",
+        "openai-codex.chatgpt-pro-20x"
+      ],
+      "complete": false,
+      "evidence_kind": "price_page",
+      "family": "openai-codex",
+      "fetched_url": "https://chatgpt.com/pricing",
+      "http_status": null,
+      "id": "openai-chatgpt-pricing",
+      "notes": "Plan list and feature matrix render server-side; the per-plan price is injected client-side, so figures were confirmed from two independent secondary trackers.",
+      "parsed": false,
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "partial",
+      "url": "https://chatgpt.com/pricing"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "opencode-zen.zen"
+      ],
+      "complete": false,
+      "evidence_kind": "docs_only",
+      "family": "opencode-zen",
+      "fetched_url": "https://opencode.ai/v2/docs/console/models/",
+      "http_status": 200,
+      "id": "opencode-console-models",
+      "notes": "Console (Zen) is pay-as-you-go at cost; the page points to Go for a subscription. Retrieval timestamp not captured; recorded from the 30 October research pass.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "fetched",
+      "url": "https://opencode.ai/v2/docs/console/models/"
+    },
+    {
+      "adapter": "opencode_go",
+      "cited_by": [
+        "opencode-go.go",
+        "opencode-go.go-plus",
+        "opencode-go.go-teams"
+      ],
+      "complete": true,
+      "evidence_kind": "price_page",
+      "family": "opencode-go",
+      "fetched_url": "https://opencode.ai/v2/docs/console/go/",
+      "http_status": 200,
+      "id": "opencode-go-plan",
+      "notes": "Separate subscription route from OpenCode Zen, with its own plans.",
+      "parsed": true,
+      "retrieved_at": null,
+      "status": "fetched",
+      "url": "https://opencode.ai/v2/docs/console/go/"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "openrouter.credits"
+      ],
+      "complete": false,
+      "evidence_kind": "balance_api",
+      "family": "openrouter",
+      "fetched_url": "https://openrouter.ai/api/v1/credits",
+      "http_status": null,
+      "id": "openrouter-credits-api",
+      "notes": "Credits endpoint. Reports a balance, never a plan price.",
+      "parsed": false,
+      "retrieved_at": "2026-10-30T04:02:00Z",
+      "status": "fetched",
+      "url": "https://openrouter.ai/api/v1/credits"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "tencent-coding-plan.standard"
+      ],
+      "complete": false,
+      "evidence_kind": "docs_only",
+      "family": "tencent-coding-plan",
+      "fetched_url": "https://cloud.tencent.com/document/product/1772",
+      "http_status": null,
+      "id": "tencent-coding-plan",
+      "notes": "Not attempted in this pass; Tencent TokenHub is reachable only through a cn-region console.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://cloud.tencent.com/document/product/1772"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "umans-ai-coding-plan.standard"
+      ],
+      "complete": false,
+      "evidence_kind": "token_price_page",
+      "family": "umans-ai-coding-plan",
+      "fetched_url": "https://umans.ai/pricing",
+      "http_status": null,
+      "id": "umans-ai",
+      "notes": "Publishes per-token rates for open models. No subscription, seat or quota window exists.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://umans.ai/pricing"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "volcengine-coding-plan.standard"
+      ],
+      "complete": false,
+      "evidence_kind": "docs_only",
+      "family": "volcengine-coding-plan",
+      "fetched_url": "https://www.volcengine.com/docs/82379",
+      "http_status": null,
+      "id": "volcengine-coding-plan",
+      "notes": "Not attempted; no Hermes provider plugin, so it is a custom endpoint.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://www.volcengine.com/docs/82379"
+    },
+    {
+      "adapter": "manual",
+      "alias_of": "xai-supergrok",
+      "cited_by": [
+        "xai-oauth.supergrok"
+      ],
+      "complete": false,
+      "evidence_kind": "product_page",
+      "family": "xai-oauth",
+      "fetched_url": "https://x.ai/grok",
+      "http_status": null,
+      "id": "xai-grok-pricing",
+      "notes": "SuperGrok is sold through an account page; no public price table was reachable without signing in. Alias of xai-supergrok: same consumer product page.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://x.ai/grok"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "xai-oauth.supergrok"
+      ],
+      "complete": false,
+      "evidence_kind": "product_page",
+      "family": "xai-oauth",
+      "fetched_url": "https://x.ai/grok",
+      "http_status": null,
+      "id": "xai-supergrok",
+      "notes": "Consumer product page. SuperGrok is a chat subscription; the API route is separate.",
+      "parsed": false,
+      "retrieved_at": null,
+      "status": "not_fetched",
+      "url": "https://x.ai/grok"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "zai-coding-plan.lite",
+        "zai-coding-plan.max",
+        "zai-coding-plan.pro"
+      ],
+      "complete": false,
+      "evidence_kind": "price_page",
+      "family": "zai-coding-plan",
+      "fetched_url": "https://z.ai/subscribe",
+      "http_status": null,
+      "id": "zai-coding-plan",
+      "notes": "",
+      "parsed": false,
+      "retrieved_at": "2026-10-30T04:40:00Z",
+      "status": "fetched",
+      "url": "https://z.ai/subscribe"
+    },
+    {
+      "adapter": "manual",
+      "cited_by": [
+        "commandcode.goat"
+      ],
+      "complete": false,
+      "evidence_kind": "product_page",
+      "family": "commandcode",
+      "fetched_url": "https://commandcode.ai/docs/plans/goat",
+      "http_status": 200,
+      "id": "commandcode-goat-plan",
+      "notes": "GOAT plan page confirms Provider API access is metered against GOAT credits, and states up to $20 per 5 hours, $50 per 7 days, and $100 per month. Checked 30 October 2026.",
+      "parsed": false,
+      "retrieved_at": "2026-10-30T21:02:11Z",
+      "status": "fetched",
+      "url": "https://commandcode.ai/docs/plans/goat"
+    }
+  ],
+  "version": 2
+}

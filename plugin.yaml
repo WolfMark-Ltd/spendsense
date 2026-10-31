@@ -1,0 +1,14 @@
+name: wolfmark-cost-ledger
+version: "0.5.0"
+description: "Spend Sense: Hermes usage accounting, provider-aware cost estimates, membership plans and fees, offline pricing, and live session usage."
+author: "WolfMark Ltd (fork of Token & Cost Meter by AFei, Apache-2.0)"
+kind: standalone
+manifest_version: 1
+requires_hermes: ">=0.22.5"
+provides_tools: []
+provides_hooks:
+  - post_api_request
+  - post_auxiliary_call
+  - api_request_error
+provides_middleware: []
+requires_env: []

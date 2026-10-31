@@ -1,0 +1,14 @@
+{
+  "name": "wolfmark-ledger-test-harness",
+  "private": true,
+  "description": "Dev-only: real TanStack Query for the membership scope regressions. Not shipped.",
+  "type": "module",
+  "dependencies": {
+    "@tanstack/react-query": "5.101.2",
+    "esbuild": "0.28.2",
+    "jsdom": "29.1.1",
+    "nanostores": "1.5.4",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  }
+}
