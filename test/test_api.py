@@ -35,6 +35,19 @@ class ApiTests(unittest.TestCase):
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
 
+    def test_rates_exposes_whether_context_tiers_prevent_a_single_rate(self):
+        from wolfmark_ledger.pricing import Catalogue, Rate, Tier
+        book = Catalogue({"test": {"plain": Rate(2, 4, .5, 3),
+                                    "tiered": Rate(2, 4, .5, 3, tiers=(Tier(100, 4, 8, 1, 6),))}},
+                         "fixture", "test", "", "1")
+        with patch.object(plugin_api, "load_catalogue", return_value=book):
+            plain = self.client.get("/api/plugins/spend-sense/rates", params={"provider": "test", "model": "plain"})
+            tiered = self.client.get("/api/plugins/spend-sense/rates", params={"provider": "test", "model": "tiered"})
+        self.assertEqual(plain.status_code, 200)
+        self.assertFalse(plain.json()["rate"]["has_tiers"])
+        self.assertEqual(plain.json()["rate"]["cache_write"], 3)
+        self.assertTrue(tiered.json()["rate"]["has_tiers"])
+
     def test_ledger_unexpected_failure_hides_exception_details(self):
         with patch.object(plugin_api, "build_ledger_report", side_effect=RuntimeError("private sentinel")):
             response = self.client.get("/api/plugins/spend-sense/ledger")

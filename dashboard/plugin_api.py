@@ -130,6 +130,7 @@ def rates(provider: str | None = Query(None), model: str | None = Query(None),
             "provider": hit.provider, "model": hit.model, "route_provider": hit.route_provider,
             "input": hit.rate.input, "output": hit.rate.output,
             "cache_read": hit.rate.cache_read, "cache_write": hit.rate.cache_write,
+            "has_tiers": bool(hit.rate.tiers),
             "provenance": hit.provenance, "source": hit.source,
             "provisional": list(getattr(hit, "provisional", ())),
         }

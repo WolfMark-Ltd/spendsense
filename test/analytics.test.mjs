@@ -22,7 +22,7 @@ const jsx = (type, props, key) => ({type, props: props || {}, key}), jsxs = jsx
 const Badge = 'badge', Button = 'button', Codicon = 'icon', SegmentedControl = 'segments', Tip = 'tip'
 const useValue = store => { globalThis.analyticsSubscriptions?.push(store); return store.get() }
 const useEffect = () => {}
-const usePluginI18n = () => key => key
+const usePluginI18n = () => (key, ...args) => { const entry = I18N[globalThis.analyticsLanguage || 'en'][key]; return typeof entry === 'function' ? entry(...args) : entry ?? key }
 const useQuery = q => { globalThis.analyticsQueries.push(q); return globalThis.analyticsResponse || {isLoading:true} }
 const queryClient = { fetchQuery: async q => q.queryFn(), getQueryData: () => null }
 `
@@ -151,6 +151,19 @@ function page(data=fixture,extra={},props={}) {
  return render(T.AnalyticsPage(props))
 }
 function button(tree,label) { return nodes(tree,n=>n.type==='button' && (n.props['aria-label']===label || text(n)===label))[0] }
+
+test('analytics cache coverage uses the selected language', () => {
+ globalThis.analyticsLanguage = 'zh'
+ const view = page({...fixture, totals:{...fixture.totals, cache_prompt_coverage:.75}})
+ assert.match(text(view), /加权缓存命中率/)
+ assert.match(text(view), /提示词令牌覆盖率 75\.0%/)
+ assert.match(text(view), /基于已记录的缓存活动/)
+ const unavailable = page({...fixture, totals:{...fixture.totals, cache_prompt_coverage:null}})
+ assert.match(text(unavailable), /提示词覆盖率不可用/)
+ globalThis.analyticsLanguage = 'en'
+ const english = page({...fixture, totals:{...fixture.totals, cache_prompt_coverage:.75}})
+ assert.match(text(english), /75\.0% of prompt tokens covered/)
+})
 
 test('/rates unavailability falls back to the bundled snapshot', () => {
  const hit = T.resolveRates({model: 'deepseek/deepseek-v4.1-flash', provider: 'commandcode', payload: null, remembered: {}})
