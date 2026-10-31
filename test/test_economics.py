@@ -93,6 +93,10 @@ class EconomicsCase(unittest.TestCase):
         self.create_events([{"event_id": "anchor", "ts": NOW - 200 * 86400,
                              "input_tokens": 10}])
 
+    def windowed(self, monthly, result):
+        # Window-allocated expenditure behind every same-window difference.
+        return round(monthly * result["window_days"] / E.MEAN_MONTH_DAYS, 6)
+
 
 class NormalisationTests(unittest.TestCase):
     def test_monthly_fee_counts_in_full(self):
@@ -210,12 +214,44 @@ class ComparisonTests(EconomicsCase):
         self.assertEqual(headline["fees_monthly_by_currency"],
                          [{"currency": "USD", "amount": 20.0}])
         self.assertEqual(headline["usage_usd"], 2.0)
-        self.assertEqual(headline["difference_usd"], -18.0)
+        # Same-window comparison: $2 of usage against ~30 days of the $20 fee.
+        expected = round(2.0 - self.windowed(20.0, result), 6)
+        self.assertAlmostEqual(headline["difference_usd"], expected)
+        self.assertGreater(headline["difference_usd"], -18.0)
         self.assertIn("Estimated value comparison", headline["difference_label"])
         row = result["accounts"][0]
         self.assertEqual(row["status"], "ok")
         self.assertEqual(row["monthly_equivalent"], {"amount": 20.0, "currency": "USD"})
-        self.assertEqual(row["difference_usd"], -18.0)
+        self.assertAlmostEqual(row["window_expenditure"]["amount"],
+                               self.windowed(20.0, result))
+        self.assertAlmostEqual(row["difference_usd"], expected)
+
+    def test_window_allocation_scales_fees_to_the_reporting_window(self):
+        self.assertAlmostEqual(E.allocate_to_window(20.0, E.MEAN_MONTH_DAYS), 20.0)
+        self.assertAlmostEqual(E.allocate_to_window(20.0, E.MEAN_MONTH_DAYS / 2), 10.0)
+        self.assertIsNone(E.allocate_to_window(None, 30.0))
+        self.assertIsNone(E.allocate_to_window(20.0, None))
+        self.assertIsNone(E.allocate_to_window(20.0, 0))
+        self.assertIsNone(E.allocate_to_window(20.0, -5))
+        self.assertIsNone(E.allocate_to_window(True, 30.0))
+
+    def test_short_window_compares_days_of_fees_not_a_whole_month(self):
+        self.anchor_coverage()
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        self.create_events([{"ts": NOW - 100, "input_tokens": 1_000_000}])
+        result = self.report(days=7, trend_months=0)
+        # About a quarter of the $20 fee falls in a 7-day window; a whole
+        # month of fees here would understate the comparison by ~$15.
+        self.assertLess(result["window_days"], 8.0)
+        expected = round(2.0 - self.windowed(20.0, result), 6)
+        self.assertAlmostEqual(result["headline"]["difference_usd"], expected)
+        self.assertGreater(result["headline"]["difference_usd"], -10.0)
+        window_fees = result["headline"]["fees_window_by_currency"]
+        self.assertEqual(len(window_fees), 1)
+        self.assertAlmostEqual(window_fees[0]["amount"], self.windowed(20.0, result))
+        # Monthly equivalents stay visible alongside the windowed figure.
+        self.assertEqual(result["headline"]["fees_monthly_by_currency"],
+                         [{"currency": "USD", "amount": 20.0}])
 
     def test_annual_fee_allocates_one_twelfth_but_renews_in_full(self):
         self.anchor_coverage()
@@ -229,7 +265,8 @@ class ComparisonTests(EconomicsCase):
         self.assertAlmostEqual(row["monthly_equivalent"]["amount"], 20.0)
         self.assertEqual(row["renewal"]["amount"], 240.0)
         self.assertEqual(row["renewal"]["date"], "2027-01-15T00:00:00Z")
-        self.assertEqual(row["difference_usd"], -18.0)
+        self.assertAlmostEqual(row["difference_usd"],
+                               round(2.0 - self.windowed(20.0, result), 6))
 
     def test_missing_fee_is_unavailable_not_zero(self):
         self.anchor_coverage()
@@ -248,6 +285,29 @@ class ComparisonTests(EconomicsCase):
         self.assertEqual(row["usage"]["list_usd"], 2.0)
         self.assertEqual(result["headline"]["status"], "unavailable")
         self.assertIsNone(result["headline"]["difference_usd"])
+
+    def test_headline_withholds_difference_when_any_fee_unknown(self):
+        # One priced subscription plus one without a fee: the headline must
+        # not present a complete-looking comparison over a silent subset.
+        self.anchor_coverage()
+        bare = plans_doc(
+            {"id": "test.plus", "provider_family": "test", "name": "Test Plus",
+             "price": {"amount": 20.0, "currency": "USD", "period": "month"}},
+            {"id": "other.mystery", "provider_family": "other", "name": "Mystery",
+             "price": {"amount": None, "currency": None, "period": "month"}})
+        self.write_store([account("a", "test", plan_id="test.plus"),
+                          account("b", "other", plan_id="other.mystery")])
+        self.create_events([{"ts": NOW - 100, "input_tokens": 1_000_000},
+                            {"ts": NOW - 90, "provider": "other",
+                             "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=0, plans=bare)
+        headline = result["headline"]
+        self.assertEqual(headline["status"], "unavailable")
+        self.assertIsNone(headline["difference_usd"])
+        self.assertTrue(any("1 subscription(s) have no fee" in note
+                            for note in headline["notes"]))
+        # Observed usage is still reported; only the comparison is withheld.
+        self.assertEqual(headline["usage_usd"], 4.0)
 
     def test_api_only_usage_cannot_manufacture_a_saving(self):
         self.anchor_coverage()
@@ -295,10 +355,13 @@ class ComparisonTests(EconomicsCase):
         by_id = {r["account_id"]: r for r in result["accounts"]}
         self.assertEqual(by_id["a"]["usage"]["list_usd"], 2.0)
         self.assertEqual(by_id["b"]["usage"]["list_usd"], 4.0)
-        self.assertEqual(by_id["a"]["difference_usd"], -18.0)
-        # $120/yr is $10/mo against $4 of usage.
-        self.assertEqual(by_id["b"]["difference_usd"], -6.0)
-        self.assertEqual(result["headline"]["difference_usd"], -24.0)
+        self.assertAlmostEqual(by_id["a"]["difference_usd"],
+                               round(2.0 - self.windowed(20.0, result), 6))
+        # $120/yr is $10/mo against $4 of usage, both windowed.
+        self.assertAlmostEqual(by_id["b"]["difference_usd"],
+                               round(4.0 - self.windowed(10.0, result), 6))
+        self.assertAlmostEqual(result["headline"]["difference_usd"],
+                               round(6.0 - self.windowed(30.0, result), 6))
         coverage = result["coverage"]["attribution"]
         self.assertEqual(coverage["unattributed_tokens"], 0)
         self.assertEqual(coverage["ambiguous_tokens"], 0)
@@ -315,9 +378,11 @@ class ComparisonTests(EconomicsCase):
         self.assertEqual(result["ambiguous"]["usage"]["list_usd"], 2.0)
         for row in result["accounts"]:
             self.assertEqual(row["usage"]["tokens"], 0)
-            self.assertEqual(row["difference_usd"], -20.0)
+            self.assertAlmostEqual(row["difference_usd"],
+                                   round(-self.windowed(20.0, result), 6))
         # Both fees stand, but the $2 of usage backs neither of them.
-        self.assertEqual(result["headline"]["difference_usd"], -40.0)
+        self.assertAlmostEqual(result["headline"]["difference_usd"],
+                               round(-self.windowed(40.0, result), 6))
         self.assertEqual(result["coverage"]["attribution"]["ambiguous_tokens"], 1_000_000)
 
     def test_unattributed_usage_is_reported_separately(self):
@@ -345,7 +410,8 @@ class ComparisonTests(EconomicsCase):
         row = result["accounts"][0]
         self.assertEqual(row["status"], "partial")
         self.assertEqual(row["usage"]["coverage"], 0.5)
-        self.assertEqual(row["difference_usd"], -18.0)
+        self.assertAlmostEqual(row["difference_usd"],
+                               round(2.0 - self.windowed(20.0, result), 6))
         self.assertTrue(any("lower bound" in note for note in row["notes"]))
         self.assertEqual(result["headline"]["status"], "partial")
 
@@ -375,7 +441,8 @@ class ComparisonTests(EconomicsCase):
         result = self.report(days=30, trend_months=0)
         row = result["accounts"][0]
         self.assertEqual(row["usage"]["list_usd"], 0.0)
-        self.assertEqual(row["difference_usd"], -20.0)
+        self.assertAlmostEqual(row["difference_usd"],
+                               round(-self.windowed(20.0, result), 6))
         self.assertEqual(row["status"], "ok")
 
     def test_family_basis_attribution_is_partial(self):
@@ -387,7 +454,8 @@ class ComparisonTests(EconomicsCase):
         row = result["accounts"][0]
         self.assertEqual(row["attribution"]["basis"], "family")
         self.assertEqual(row["status"], "partial")
-        self.assertEqual(row["difference_usd"], -18.0)
+        self.assertAlmostEqual(row["difference_usd"],
+                               round(2.0 - self.windowed(20.0, result), 6))
 
     def test_free_tier_zero_fee_is_real(self):
         self.anchor_coverage()
@@ -431,13 +499,15 @@ class CurrencyTests(EconomicsCase):
         # The USD subscription compares; the GBP one cannot; the headline
         # refuses to invent a combined difference.
         by_id = {r["account_id"]: r for r in result["accounts"]}
-        self.assertEqual(by_id["usd"]["difference_usd"], -18.0)
+        self.assertAlmostEqual(by_id["usd"]["difference_usd"],
+                               round(2.0 - self.windowed(20.0, result), 6))
         self.assertIsNone(by_id["gbp"]["difference_usd"])
         self.assertEqual(by_id["gbp"]["status"], "unavailable")
         self.assertIsNone(headline["difference_usd"])
         self.assertEqual(headline["status"], "unavailable")
         groups = {g["currency"]: g for g in result["groups"]}
-        self.assertEqual(groups["USD"]["difference_usd"], -18.0)
+        self.assertAlmostEqual(groups["USD"]["difference_usd"],
+                               round(2.0 - self.windowed(20.0, result), 6))
         self.assertIsNone(groups["GBP"]["difference_usd"])
 
     def test_explicit_fx_rate_enables_a_cited_conversion(self):
@@ -449,10 +519,12 @@ class CurrencyTests(EconomicsCase):
         by_id = {r["account_id"]: r for r in result["accounts"]}
         # GBP 4.25/mo at 1.25 is $5.3125/mo against $1.00 of usage.
         self.assertAlmostEqual(by_id["gbp"]["monthly_equivalent_usd"], 5.3125)
-        self.assertAlmostEqual(by_id["gbp"]["difference_usd"], -4.3125)
+        self.assertAlmostEqual(by_id["gbp"]["difference_usd"],
+                               round(1.0 - self.windowed(5.3125, result), 6))
         self.assertTrue(any("Bank of England" in note for note in by_id["gbp"]["notes"]))
         headline = result["headline"]
-        self.assertAlmostEqual(headline["difference_usd"], -22.3125)
+        self.assertAlmostEqual(headline["difference_usd"],
+                               round(3.0 - self.windowed(25.3125, result), 6))
         self.assertEqual(headline["status"], "ok")
         groups = {g["currency"]: g for g in result["groups"]}
         self.assertTrue(groups["GBP"]["converted"])
@@ -463,7 +535,8 @@ class CurrencyTests(EconomicsCase):
         result = self.report(days=30, trend_months=0)
         by_id = {r["account_id"]: r for r in result["accounts"]}
         self.assertIsNone(by_id["gbp"]["difference_usd"])
-        self.assertEqual(by_id["usd"]["difference_usd"], -18.0)
+        self.assertAlmostEqual(by_id["usd"]["difference_usd"],
+                               round(2.0 - self.windowed(20.0, result), 6))
         self.assertTrue(any("FX rates could not be read" in note
                             for note in result["headline"]["notes"]))
 
@@ -550,6 +623,64 @@ class TrendTests(EconomicsCase):
         self.assertNotIn("2026-09", months)
         self.assertIn("2026-10", months)
         self.assertGreaterEqual(result["trend"]["excluded_before_recording"], 1)
+
+    def test_trend_attributes_routes_from_the_full_history(self):
+        # A route used in September but silent since still backs September.
+        self.anchor_coverage()
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        september = datetime(2026, 9, 15, 12, tzinfo=timezone.utc).timestamp()
+        self.create_events([{"ts": september, "input_tokens": 1_000_000}])
+        result = self.report(days=7, trend_months=2)
+        months = {m["month"]: m for m in result["trend"]["months"]}
+        self.assertEqual(months["2026-09"]["usage_usd"], 2.0)
+        self.assertEqual(months["2026-09"]["usage_calls"], 1)
+        self.assertEqual(months["2026-09"]["difference_usd"], -18.0)
+        self.assertEqual(result["trend"]["excluded_before_recording"], 0)
+
+    def test_trend_withholds_difference_when_month_fully_unpriced(self):
+        self.anchor_coverage()
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        october = datetime(2026, 10, 15, 12, tzinfo=timezone.utc).timestamp()
+        self.create_events([{"ts": october, "model": "unknown-model",
+                             "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=1)
+        (entry,) = result["trend"]["months"]
+        self.assertEqual(entry["month"], "2026-10")
+        self.assertIsNone(entry["usage_usd"])
+        self.assertIsNone(entry["difference_usd"])
+        self.assertIsNone(entry["fees_usd"])
+        self.assertIn("no published price", entry["difference_note"])
+        self.assertTrue(entry["has_unpriced_usage"])
+
+    def test_trend_labels_mixed_pricing_month_partial(self):
+        self.anchor_coverage()
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        october = datetime(2026, 10, 15, 12, tzinfo=timezone.utc).timestamp()
+        self.create_events([{"ts": october, "input_tokens": 1_000_000},
+                            {"ts": october, "model": "unknown-model",
+                             "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=1)
+        (entry,) = result["trend"]["months"]
+        self.assertEqual(entry["usage_usd"], 2.0)
+        self.assertEqual(entry["usage_coverage"], 0.5)
+        self.assertTrue(entry["partial"])
+        self.assertEqual(entry["difference_usd"], -18.0)
+        self.assertIn("lower bound", entry["difference_note"])
+
+    def test_trend_reports_the_converted_fee_total_behind_the_bars(self):
+        self.anchor_coverage()
+        self.write_store([account("gbp", "test",
+                                  fee_overrides=[override(51, "GBP", "year")])])
+        october = datetime(2026, 10, 15, 12, tzinfo=timezone.utc).timestamp()
+        self.create_events([{"ts": october, "input_tokens": 1_000_000}])
+        E.save_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                    "as_of": "2026-10-10", "source": "Example Bank"}], self.fx)
+        result = self.report(days=30, trend_months=1)
+        (entry,) = result["trend"]["months"]
+        # GBP 4.25/mo at 1.25 converts to $5.3125/mo; the client must not
+        # re-derive or re-sum this from per-currency amounts.
+        self.assertAlmostEqual(entry["fees_usd"], 5.3125)
+        self.assertAlmostEqual(entry["difference_usd"], 2.0 - 5.3125)
 
     def test_trend_applies_only_fx_rates_dated_in_the_month(self):
         self.anchor_coverage()

@@ -1,16 +1,16 @@
 // Run: node --test test/
 //
-// Subscription economics regressions, in two halves:
-//  1. pure presentation helpers, through the same stub loader the other
-//     suites use (no React needed);
-//  2. the rendered Economics section, through the real-React harness with
-//     synthetic fixtures (real atoms, real query, fake transport).
+// Subscription economics helper regressions through the same stub loader the
+// other suites use (no React needed). Rendered-section tests live in
+// test/economics-render.test.mjs, which must stay a separate file: tests
+// registered after the harness's late top-level await are silently dropped
+// by the runner when both loaders share one module.
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { after, test } from 'node:test'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { test } from 'node:test'
+import { pathToFileURL } from 'node:url'
 
 // --- part 1: stub loader for the pure helpers ------------------------------
 const src = readFileSync(new URL('../desktop/plugin.js', import.meta.url), 'utf8')
@@ -91,6 +91,38 @@ test('fxErrorMessage keeps validation detail and translates transport states', (
   assert.match(S.fxErrorMessage(new Error('404 not found')), /not available in the running backend/)
   assert.match(S.fxErrorMessage(new Error('401 expired')), /expired/)
   assert.match(S.fxErrorMessage(new Error('conflict 409')), /changed since you loaded/)
+})
+
+test('fxErrorMessage hides transport failures behind the generic sentence', () => {
+  const generic = 'The rates could not be saved. Please retry; if it persists, check the backend log.'
+  assert.equal(S.fxErrorMessage(new Error('request failed with status 500')), generic)
+  assert.equal(S.fxErrorMessage(new Error('500 Internal Server Error: pool exhausted')), generic)
+  assert.equal(S.fxErrorMessage(new Error('request timed out after 30000ms')), generic)
+  assert.equal(S.fxErrorMessage(new Error('fetch failed: connection refused')), generic)
+  assert.equal(S.fxErrorMessage(new Error('')), generic)
+  assert.equal(S.fxErrorMessage(null), generic)
+  // The server's plain validation detail still passes through.
+  assert.match(S.fxErrorMessage(new Error('422: usd_per_unit must be a positive number')),
+    /usd_per_unit must be a positive number/)
+  assert.doesNotMatch(S.fxErrorMessage(new Error('422: usd_per_unit must be a positive number')), /422/)
+})
+
+test('econWindowLines keeps one expenditure line per currency', () => {
+  assert.deepEqual(S.econWindowLines([]), ['—'])
+  assert.deepEqual(S.econWindowLines(null), ['—'])
+  assert.deepEqual(S.econWindowLines([
+    { amount: 19.37, currency: 'USD' }, { amount: 4.19, currency: 'GBP' }
+  ]), ['$19.37', '£4.19'])
+})
+
+test('windowSpanLabel describes the reporting window', () => {
+  assert.equal(S.windowSpanLabel(30), 'in the last 30 days')
+  assert.equal(S.windowSpanLabel(29.5), 'in the last 30 days')
+  assert.equal(S.windowSpanLabel(7), 'in the last 7 days')
+  assert.equal(S.windowSpanLabel(1), 'in the last 1 day')
+  assert.equal(S.windowSpanLabel(null), 'in the reporting window')
+  assert.equal(S.windowSpanLabel(0), 'in the reporting window')
+  assert.equal(S.windowSpanLabel('bogus'), 'in the reporting window')
 })
 
 test('economics and fx queries are keyed by connection identity', () => {

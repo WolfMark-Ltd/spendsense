@@ -29,6 +29,10 @@ Model rules (each has a regression test):
    annual or quarterly renewal also needs an anniversary month, taken from the
    owner's price start date when one is recorded; otherwise the amount is shown
    with the date honestly unknown.
+8. The headline comparison covers one time window: subscription spending is
+   allocated pro-rata to the reporting window (see :data:`MEAN_MONTH_DAYS`)
+   and compared against usage recorded in that same window. Monthly
+   equivalents stay visible alongside as the recurring-spending figure.
 """
 
 from __future__ import annotations
@@ -60,6 +64,28 @@ WEEKLY_MONTHLY_FACTOR = WEEKS_PER_YEAR / 12
 #: Monthly-equivalent divisor per fee period. Weekly uses the annualised
 #: factor above instead of a divisor.
 PERIOD_DIVISORS = {"month": 1.0, "quarter": 3.0, "year": 12.0}
+
+#: Mean Gregorian month in days. Windowed subscription expenditure is a
+#: monthly equivalent multiplied by (window days / MEAN_MONTH_DAYS), so the
+#: comparison always covers the same time window as the recorded usage.
+MEAN_MONTH_DAYS = 365.2425 / 12
+
+
+def allocate_to_window(monthly: Any, window_days: Any) -> Optional[float]:
+    """Allocate a monthly-equivalent fee pro-rata to the reporting window.
+
+    Returns ``None`` for unknown inputs or a non-positive window — an
+    unallocatable fee is not a zero fee.
+    """
+    if isinstance(monthly, bool) or not isinstance(monthly, (int, float)):
+        return None
+    if isinstance(window_days, bool) or not isinstance(window_days, (int, float)):
+        return None
+    if not math.isfinite(monthly) or not math.isfinite(window_days):
+        return None
+    if window_days <= 0:
+        return None
+    return float(monthly) * float(window_days) / MEAN_MONTH_DAYS
 
 #: Arrangements that count as subscriptions in the headline comparison. A
 #: free-tier plan is a subscription with a real $0 fee; api_only, prepaid and
@@ -458,9 +484,14 @@ def build_economics_report(
     window = analytics.get("window") or {}
     recording_since = mem._epoch(recording.get("since"))
     window_since = mem._epoch(window.get("since"))
+    window_until = mem._epoch(window.get("until"))
     recording_covers_window = bool(
         recording_since is not None and window_since is not None
         and recording_since <= window_since)
+    if window_since is not None and window_until is not None and window_until > window_since:
+        window_days: float | None = round((window_until - window_since) / 86400, 6)
+    else:
+        window_days = None
 
     subscription_rows: list[dict[str, Any]] = []
     other_rows: list[dict[str, Any]] = []
@@ -504,15 +535,23 @@ def build_economics_report(
         elif monthly is not None and rate is not None:
             fee_usd = round(monthly * rate["usd_per_unit"], 6)
             notes.append(f"Fee converted to USD using {fx_citation(rate)}.")
+        window_fee = allocate_to_window(monthly, window_days)
+        window_fee = round(window_fee, 6) if window_fee is not None else None
+        window_usd = allocate_to_window(fee_usd, window_days)
+        window_usd = round(window_usd, 6) if window_usd is not None else None
 
         usage_value = usage["list_usd"]
         difference = None
-        if fee_usd is not None and usage_value is not None:
-            difference = round(usage_value - fee_usd, 6)
+        if window_usd is not None and usage_value is not None:
+            difference = round(usage_value - window_usd, 6)
 
         if monthly is None:
             status = "unavailable"
             notes.append("No fee is set for this subscription, so no comparison is possible.")
+        elif window_fee is None:
+            status = "unavailable"
+            notes.append("The reporting window length is unknown, so spending cannot be "
+                         "allocated to it for comparison.")
         elif usage_value is None:
             status = "unavailable"
             notes.append("Attributed usage has no published price, so no comparison is possible.")
@@ -544,6 +583,8 @@ def build_economics_report(
                     "confidence": _fee_confidence(fee)},
             "monthly_equivalent": {"amount": monthly, "currency": currency},
             "monthly_equivalent_usd": fee_usd,
+            "window_expenditure": {"amount": window_fee, "currency": currency},
+            "window_expenditure_usd": window_usd,
             "fx": rate,
             "renewal": renewal,
             "usage": usage, "usage_basis": "API-equivalent list value (strict catalogue pricing)",
@@ -566,6 +607,10 @@ def build_economics_report(
         known = [r for r in rows if (r["monthly_equivalent"] or {}).get("amount") is not None]
         unknown = [r["account_id"] for r in rows if r not in known]
         fees = round(sum(r["monthly_equivalent"]["amount"] for r in known), 6)
+        window_known = [r for r in known
+                        if (r["window_expenditure"] or {}).get("amount") is not None]
+        window_fees = round(sum(r["window_expenditure"]["amount"] for r in window_known), 6) \
+            if len(window_known) == len(known) else None
         group_usage = [r["usage"]["list_usd"] for r in rows]
         if any(v is None for v in group_usage):
             usage_total = None
@@ -592,7 +637,8 @@ def build_economics_report(
         else:
             status, note = "ok", ""
         groups.append({
-            "currency": currency, "monthly_fees": fees, "fee_accounts": len(known),
+            "currency": currency, "monthly_fees": fees, "window_fees": window_fees,
+            "fee_accounts": len(known),
             "unknown_fee_accounts": unknown, "usage_usd": usage_total,
             "difference_usd": difference, "converted": bool(rate) and currency != "USD",
             "fx": rate, "status": status, "notes": [note] if note else [],
@@ -600,6 +646,9 @@ def build_economics_report(
 
     headline_fees = [{"currency": g["currency"], "amount": g["monthly_fees"]}
                      for g in groups if g["currency"] != "unknown"]
+    headline_window = [{"currency": g["currency"], "amount": g["window_fees"]}
+                       for g in groups
+                       if g["currency"] != "unknown" and g["window_fees"] is not None]
     headline_values = [r["usage"]["list_usd"] for r in subscription_rows]
     if not subscription_rows or any(v is None for v in headline_values):
         headline_usage = None
@@ -607,10 +656,18 @@ def build_economics_report(
         headline_usage = round(sum(headline_values), 6)
     comparable = [r for r in subscription_rows
                   if (r["monthly_equivalent"] or {}).get("amount") is not None]
+    unpriced = len(subscription_rows) - len(comparable)
     if not comparable:
         headline_status = "unavailable"
         headline_difference = None
         headline_notes = ["No subscription has a known fee; declare fees in Memberships."]
+    elif unpriced:
+        # An unknown fee is not a zero fee: the headline withholds the
+        # combined difference rather than comparing a subset silently.
+        headline_status = "unavailable"
+        headline_difference = None
+        headline_notes = [f"{unpriced} subscription(s) have no fee; "
+                          "the headline cannot be compared."]
     elif any(r["difference_usd"] is None for r in comparable):
         headline_status = "unavailable"
         headline_difference = None
@@ -633,18 +690,21 @@ def build_economics_report(
     total_tokens = (analytics.get("totals") or {}).get("tokens") or 0
 
     trend = _build_trend(accounts, plans, book, moment, trend_months,
-                         recording_since, event_db_path, mapping, fx_by_currency)
+                         recording_since, event_db_path, fx_by_currency)
 
     return {
         "ok": True,
         "window": {**window, "kind": "timestamped_calls"},
+        "window_days": window_days,
         "fees_basis": monthly_factor_note(),
         "headline": {
             "status": headline_status,
             "fees_monthly_by_currency": headline_fees,
+            "fees_window_by_currency": headline_window,
             "usage_usd": headline_usage,
             "difference_usd": headline_difference,
-            "difference_label": "Estimated value comparison (API-equivalent value minus fees)",
+            "difference_label": ("Estimated value comparison over the same window "
+                                 "(API-equivalent value minus fees)"),
             "notes": headline_notes,
         },
         "groups": groups,
@@ -674,8 +734,9 @@ def build_economics_report(
         "notes": [
             "Monthly equivalents normalise recurring fees to one month; actual cash payments follow the renewal schedule.",
             "API-equivalent value is a theoretical public price for recorded usage, not an invoice or a cash saving.",
-            ("Fees are per calendar month; usage covers the trailing window above. "
-             "The monthly trend aligns both to calendar months."),
+            ("Subscription spending is allocated pro-rata to the reporting window above "
+             f"({MEAN_MONTH_DAYS:.2f} days per mean month), so expenditure and usage cover "
+             "the same time window. The monthly trend aligns both to calendar months."),
         ],
     }
 
@@ -684,9 +745,13 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
                  book: Catalogue, moment: float, trend_months: int,
                  recording_since: float | None,
                  event_db_path: Path | str | None,
-                 mapping: Mapping[str, Any],
                  fx_by_currency: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-    """Per-calendar-month fees vs usage, with partial-month flags."""
+    """Per-calendar-month fees vs usage, with partial-month flags.
+
+    Attribution is rebuilt from the routes observed across the whole trend
+    window: a route used in September but silent since still backs its
+    September usage, independently of the headline's trailing window.
+    """
     now_dt = datetime.fromtimestamp(moment, timezone.utc)
     months: list[dict[str, Any]] = []
     for back in range(trend_months):
@@ -724,8 +789,10 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
             else:
                 entry["unpriced_tokens"] += priced["_tokens"]
 
+    observed_routes = sorted({route for bucket in usage_by_month.values() for route in bucket})
+    trend_mapping = attribute_routes(accounts, observed_routes)
     account_routes = {aid: [item["route"] for item in entry.get("routes", [])]
-                      for aid, entry in (mapping.get("by_account") or {}).items()}
+                      for aid, entry in trend_mapping["by_account"].items()}
     entries = []
     excluded_before_recording = 0
     for spec in months:
@@ -770,25 +837,35 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
                 usage_calls += entry["calls"]
                 priced_tokens += entry["priced_tokens"]
                 total_tokens += entry["tokens"]
-        usage_total = round(usage_total, 6)
         coverage = round(priced_tokens / total_tokens, 6) if total_tokens else None
+        if total_tokens and not priced_tokens:
+            # Observed but entirely unpriced: unknown value, never zero.
+            usage_value: float | None = None
+        else:
+            usage_value = round(usage_total, 6)
+        mixed_pricing = bool(total_tokens and priced_tokens and has_unpriced)
         if not fees_by_currency and not total_tokens and not unknown_fees:
             continue
         # A historical month converts only with a rate dated inside it; a
         # current-month rate must not rewrite what an earlier month was worth.
+        # fees_usd is the converted fee total behind difference_usd, so the
+        # client never has to sum mixed currencies itself.
         difference = None
+        fees_usd: float | None = None
         difference_note = ""
         if unknown_fees:
             difference_note = f"{unknown_fees} subscription(s) have no fee for this month."
+        elif usage_value is None:
+            difference_note = "Usage in this month has no published price."
         elif len(fees_by_currency) == 1 and "USD" in fees_by_currency:
-            difference = round(usage_total, 6) - fees_by_currency["USD"]
-            difference = round(difference, 6)
+            fees_usd = fees_by_currency["USD"]
+            difference = round(usage_value - fees_usd, 6)
         elif fees_by_currency:
             convertible = True
-            fee_usd = 0.0
+            converted = 0.0
             for currency, amount in fees_by_currency.items():
                 if currency == "USD":
-                    fee_usd += amount
+                    converted += amount
                     continue
                 rate = fx_by_currency.get(currency)
                 as_of = mem._epoch((rate or {}).get("as_of"))
@@ -796,18 +873,24 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
                         or not (spec["start_ts"] <= as_of < spec["end_ts"]):
                     convertible = False
                     break
-                fee_usd += amount * rate["usd_per_unit"]
+                converted += amount * rate["usd_per_unit"]
             if convertible:
-                difference = round(usage_total - fee_usd, 6)
+                fees_usd = round(converted, 6)
+                difference = round(usage_value - fees_usd, 6)
             else:
                 difference_note = "Non-USD fees with no FX rate dated in this month."
+        if difference is not None and mixed_pricing:
+            difference_note = (f"Only {coverage * 100:.1f}% of this month's usage is priced; "
+                               "the value is a lower bound.")
         entries.append({
             "month": spec["month"], "start": spec["start"], "end": spec["end"],
             "in_progress": in_progress, "recording_partial": recording_partial,
+            "partial": mixed_pricing,
             "fees_by_currency": [{"currency": c, "amount": a}
                                  for c, a in sorted(fees_by_currency.items())],
+            "fees_usd": fees_usd,
             "unknown_fee_accounts": unknown_fees,
-            "usage_usd": usage_total, "usage_calls": usage_calls,
+            "usage_usd": usage_value, "usage_calls": usage_calls,
             "usage_coverage": coverage, "has_unpriced_usage": has_unpriced,
             "difference_usd": difference, "difference_note": difference_note,
         })
