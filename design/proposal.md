@@ -305,9 +305,10 @@ plus Desktop visual UAT per PR. Backend: zero changes in Phase A.
 
 ## Appendix A — Reconciled synthetic dataset (single source for both screens)
 
-Synthetic “today” is **18 May 2026**. Every figure below appears identically in
-`overview.html` and `memberships.html`. Source currencies are preserved; nothing
-is converted.
+Synthetic “today” is **18 May 2026**. Shared figures appear identically in
+`overview.html` and `memberships.html`; the subscription comparison row is
+rendered on Overview only (Memberships carries the underlying declared fees).
+Source currencies are preserved; nothing is converted.
 
 | Item | Value | Basis |
 | --- | --- | --- |
@@ -324,7 +325,7 @@ is converted.
 | Google | Prepaid credits | No recurring fee |
 | OpenRouter | Metered API (display label for API Only) | No recurring fee |
 | Declared fees total | £160/mo + $20/mo | By currency, never combined |
-| Subscription comparison (defensible subset) | Usage $28.40 vs declared fees $20.00 → +$8.40 covered, Partial | USD subscription accounts only (OpenAI), usage 19 Apr – 18 May. **Fee-window basis: one monthly declared fee ($20) allocated to this 30-day window — a monthly-equivalent allocation, labelled on the card. No daily pro-rata is invented, and monthly totals are never mixed into the 30-day usage figure itself** |
+| Subscription comparison (defensible subset, Overview only) | Usage $28.40 vs declared fees $20.00 → +$8.40 covered, Partial | USD subscription accounts only (OpenAI), usage 19 Apr – 18 May. **Fee-window basis: one monthly declared fee ($20) allocated to this 30-day window — a monthly-equivalent allocation, labelled on the card. No daily pro-rata is invented, and monthly totals are never mixed into the 30-day usage figure itself** |
 | Not compared | Anthropic £160/mo; Nous fee unknown | No GBP/USD rate supplied; fee unknown. Stated on the card, not hidden |
 | Route seen | `commandcode-anthropic` — owner not confirmed | No fee, not grouped under any account |
 | Needs attention | Memberships: 3 (xAI, Nous, OpenAI). Overview: 3 (xAI, Nous, plus unpriced-pricing) | Same count, different composition — Overview adds the pricing-coverage item, as production does |

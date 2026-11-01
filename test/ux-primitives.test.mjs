@@ -74,6 +74,13 @@ const renderEl = async element => {
 const flush = async (times = 3) => {
   await React.act(async () => { for (let i = 0; i < times; i += 1) await new Promise(r => setTimeout(r, 0)) })
 }
+// LedgerPage tests must own the whole document: earlier roots stay mounted
+// until `after`, and the focus-restoration effect queries the document, so a
+// leftover tab bar from another test would receive (or mask) the focus.
+const resetDom = async () => {
+  for (const root of roots.splice(0)) await React.act(async () => root.unmount())
+  document.body.innerHTML = ''
+}
 
 test('SHARED_CSS names the Phase A roles and enforces [hidden]', () => {
   assert.match(T.SHARED_CSS, /--wm-action:var\(--ui-accent\)/)
@@ -196,6 +203,7 @@ test('LedgerPage: keyboard navigation restores focus to the newly mounted select
   // tab change. Focusing the outgoing tab lost focus to <body>, so a second
   // arrow key went nowhere. This renders the real LedgerPage, not LedgerTabs
   // in isolation.
+  await resetDom()
   T.$ledgerTab.set('overview')
   const container = await renderEl(React.createElement(T.LedgerPage))
   await flush(4)
@@ -227,6 +235,47 @@ test('LedgerPage: keyboard navigation restores focus to the newly mounted select
   await React.act(async () => costsTab.click()); await flush(4)
   assert.equal(T.$ledgerTab.get(), 'costs')
   assert.notEqual(document.activeElement?.textContent, 'Memberships')
+})
+
+test('LedgerPage: a no-op Home/End press does not leak focus restoration into mouse navigation', async () => {
+  // Edge case: Home on Overview (or End on Settings) selects the tab that is
+  // already active, so no page transition mounts a new tab bar to consume
+  // the keyboard flag. A later mouse navigation must not be force-focused.
+  await resetDom()
+  T.$ledgerTab.set('overview')
+  const container = await renderEl(React.createElement(T.LedgerPage))
+  await flush(4)
+  const overviewTab = [...container.querySelectorAll('[role="tab"]')]
+    .find(el => el.textContent === 'Overview')
+  await React.act(async () => {
+    overviewTab.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
+  }); await flush(4)
+  assert.equal(T.$ledgerTab.get(), 'overview', 'Home on the first tab is a no-op')
+
+  const costsTab = [...container.querySelectorAll('[role="tab"]')]
+    .find(el => el.textContent === 'Costs')
+  await React.act(async () => costsTab.click()); await flush(4)
+  assert.equal(T.$ledgerTab.get(), 'costs')
+  const costsNow = [...container.querySelectorAll('[role="tab"]')].find(el => el.textContent === 'Costs')
+  assert.notEqual(document.activeElement, costsNow,
+    'mouse navigation after a no-op key press must not receive restored focus')
+
+  // Same at the other end: End on Settings is a no-op.
+  T.$ledgerTab.set('settings'); await flush(4)
+  const settingsTab = [...container.querySelectorAll('[role="tab"]')]
+    .find(el => el.textContent === 'Settings & About')
+  await React.act(async () => {
+    settingsTab.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
+  }); await flush(4)
+  assert.equal(T.$ledgerTab.get(), 'settings', 'End on the last tab is a no-op')
+  const overviewTab2 = [...container.querySelectorAll('[role="tab"]')]
+    .find(el => el.textContent === 'Overview')
+  await React.act(async () => overviewTab2.click()); await flush(4)
+  assert.equal(T.$ledgerTab.get(), 'overview')
+  const overviewNow = [...container.querySelectorAll('[role="tab"]')]
+    .find(el => el.textContent === 'Overview')
+  assert.notEqual(document.activeElement, overviewNow,
+    'mouse navigation after a no-op End must not receive restored focus')
 })
 
 test('membership fees are preserved per account; routes are never grouped or suppressed', () => {

@@ -2900,6 +2900,10 @@ function LedgerTabs() {
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? LEDGER_TABS.length - 1
       : (index + (event.key === 'ArrowRight' ? 1 : -1) + LEDGER_TABS.length) % LEDGER_TABS.length
     event.preventDefault()
+    // No-op (Home on the first tab, End on the last): no page transition
+    // will mount a new tab bar to consume the flag, so never set it — a
+    // stale flag would restore focus after a later mouse navigation.
+    if (LEDGER_TABS[next][0] === tab) return
     ledgerTabKeyboardNav = true
     goLedgerTab(LEDGER_TABS[next][0])
   }
@@ -2911,7 +2915,7 @@ function LedgerTabs() {
         jsx(ProductButton, { role: 'tab', variant: 'ghost', 'aria-selected': tab === id, 'aria-pressed': tab === id,
           tabIndex: tab === id ? 0 : -1,
           className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
-          onClick: () => goLedgerTab(id), children: label }, id))] }) })
+          onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) }, children: label }, id))] }) })
 }
 
 function goLedgerTab(next) {
