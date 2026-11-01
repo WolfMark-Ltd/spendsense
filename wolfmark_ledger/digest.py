@@ -493,6 +493,9 @@ def _changes_section(S: Mapping[str, str], window_label: str, days: int,
     priced = not (before.get("unpriced_tokens") or totals.get("unpriced_tokens"))
     value_pct = pct("list_usd") if priced else S["unknown"]
     value_before = _money(before.get("list_usd"))
+    if value_before is not None and before.get("unpriced_tokens"):
+        value_before = (f"≥{value_before}"
+                        if (before.get("list_usd") or 0) > 0 else None)
     lines = [
         {"label": S["label_calls"],
          "value": f"{pct('calls')} {S['change_was'].format(value=calls_before if calls_before is not None else S['unknown'])}"},

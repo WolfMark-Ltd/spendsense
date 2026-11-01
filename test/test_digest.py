@@ -443,14 +443,18 @@ class DigestReviewFixesTests(DigestCase):
             {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 3 * DAY},
             {"model": "n", "input_tokens": 500_000, "ts": NOW - 5 * DAY},
             {"model": "zzz", "input_tokens": 1_000_000, "ts": NOW - 10 * DAY},
+            {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 11 * DAY},
         ], baseline_at=NOW - 40 * DAY)
-        self.create_state(3_500_000)
+        self.create_state(4_500_000)
         result = self.report()
         changes = self.section(result, "changes")
         text = " ".join(f"{line['label']} {line['value']}" for line in changes["lines"])
         value_line = next(line["value"] for line in changes["lines"]
                           if line["label"] == "API-equivalent value")
         self.assertTrue(value_line.startswith("—"), value_line)
+        # The previous window mixes priced and unpriced calls: its subtotal
+        # is a lower bound, never an exact figure.
+        self.assertIn("(was ≥$2.00)", value_line)
         self.assertRegex(text, r"Calls [+-]")
 
     def test_markdown_escapes_formatting_and_html_in_names(self):
