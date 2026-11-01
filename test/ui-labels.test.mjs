@@ -379,7 +379,8 @@ test('every allowance-weather string exists in English and Chinese', () => {
 
 test('every digest string exists in English and Chinese', () => {
   const keys = ['reportsTitle', 'rpDays7', 'rpDays30', 'rpGenerate', 'rpGenerating',
-    'rpCopy', 'rpCopied', 'rpSave', 'rpSaveFallback', 'rpFailed', 'rpError', 'rpRetry']
+    'rpCopy', 'rpCopied', 'rpSave', 'rpSaveFallback', 'rpFailed', 'rpError', 'rpRetry',
+    'rpEmpty', 'rpStale']
   for (const key of keys) {
     assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)

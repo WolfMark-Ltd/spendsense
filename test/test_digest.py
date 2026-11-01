@@ -328,5 +328,161 @@ class DigestLocalisationTests(DigestCase):
         self.assertIn("Last 7 days", usage["window"])
 
 
+class DigestReviewFixesTests(DigestCase):
+    """PR8 review: unknown stays unknown, scopes are honest, exports escape."""
+
+    def values_text(self, section):
+        return " ".join(line["value"] for line in section["lines"])
+
+    def test_unobserved_window_withholds_every_figure(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 2 * DAY)
+        self.create_state(0)
+        result = self.report()
+        for sid in ("value", "spending"):
+            values = self.values_text(self.section(result, sid))
+            self.assertNotIn("$0.00", values, sid)
+            self.assertIn("—", values, sid)
+        for sid in ("models", "providers"):
+            notes = " ".join(self.section(result, sid)["notes"])
+            self.assertIn("incomplete", notes.lower(), sid)
+            self.assertNotIn("No ", notes, sid)
+
+    def test_covered_empty_window_keeps_genuine_spending_zero(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 40 * DAY)
+        self.create_state(0)
+        result = self.report()
+        spending = self.section(result, "spending")
+        values = self.values_text(spending)
+        self.assertNotIn("—", values)
+        self.assertIn("$0.00", values)
+
+    def test_spending_scope_follows_billing_exclusions(self):
+        self.standard_fixture()
+        expected = analytics.build_analytics_report(
+            self.events, state_db_path=self.state, days=7, now=NOW,
+            catalogue=self.book, profiles_path=self.profiles)
+        excluded = (expected.get("billing") or {}).get("excluded_out_of_cycle") or 0
+        result = self.report()
+        spending = self.section(result, "spending")
+        if excluded:
+            self.assertEqual(spending["window"], "Current billing cycles")
+            notes = " ".join(spending["notes"])
+            self.assertIn(str(excluded), notes)
+            self.assertIn("excluded from spending", notes)
+        else:
+            self.assertEqual(spending["window"], result["period"]["label"])
+
+    def test_excluded_scope_wording(self):
+        billing = {"metered_usd": 1.0, "excluded_out_of_cycle": 2,
+                   "unclassified_tokens": 0, "unclassified_calls": 0,
+                   "evidence": {"incremental_cash": {"usd": 0.0},
+                                "credits_consumed": {"usd": None}}}
+        section = D._spending_section(D.STRINGS["en"], "Last 7 days", billing, True, 5)
+        self.assertEqual(section["window"], "Current billing cycles")
+        self.assertTrue(any("2 calls outside current billing cycles" in note
+                            for note in section["notes"]))
+
+    def test_cash_lines_distinguish_zero_unknown_and_lower_bound(self):
+        self.standard_fixture()
+        result = self.report()
+        spending = self.section(result, "spending")
+        by_label = {line["label"]: line["value"] for line in spending["lines"]}
+        # No overage matched any rule: extra cash is known zero, not unknown.
+        self.assertEqual(by_label["Extra cash (incremental) spending"], "$0.00")
+        # No credit rule matched: consumption cannot be stated at all.
+        self.assertEqual(by_label["Credits consumed"], "—")
+        self.assertTrue(any("credit rule" in note for note in spending["notes"]))
+
+    def test_unvalued_calls_make_spending_a_lower_bound(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([
+            {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 1 * DAY},
+            {"model": "zzz", "input_tokens": 500_000, "ts": NOW - 2 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(1_500_000)
+        result = self.report()
+        spending = self.section(result, "spending")
+        by_label = {line["label"]: line["value"] for line in spending["lines"]}
+        self.assertEqual(by_label["Metered (allowance) spending"], "≥$2.00")
+        # One call has no price at all: extra cash is unknown, never $0.00.
+        self.assertEqual(by_label["Extra cash (incremental) spending"], "—")
+        self.assertIn("Unvalued usage", by_label)
+        notes = " ".join(spending["notes"])
+        self.assertIn("lower bound", notes.lower())
+
+    def test_value_comparison_withheld_when_current_window_partly_priced(self):
+        self.standard_fixture()
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.execute("INSERT INTO calls (event_id, ts, model, provider, outcome,"
+                         " input_tokens, total_tokens, recorded_at)"
+                         " VALUES ('unpriced', ?, 'zzz', 'test', 'ok', 500000, 500000, ?)",
+                         (NOW - 2 * DAY, NOW - 2 * DAY))
+        result = self.report()
+        changes = self.section(result, "changes")
+        text = " ".join(f"{line['label']} {line['value']}" for line in changes["lines"])
+        self.assertNotIn("+150.0%", text)
+        value_line = next(line["value"] for line in changes["lines"]
+                          if line["label"] == "API-equivalent value")
+        self.assertTrue(value_line.startswith("—"), value_line)
+        # Token and call counts still compare: they need no prices.
+        self.assertRegex(text, r"Calls [+-]")
+        self.assertRegex(text, r"Tokens [+-]")
+        self.assertTrue(any("pricing" in note.lower() for note in changes["notes"]))
+
+    def test_value_comparison_withheld_when_previous_window_partly_priced(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([{"id": "cap", "provider": "test", "kind": "api",
+                              "allowance_usd": 10.0, "billing_cycle": {"day": 1}}])
+        self.create_events([
+            {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 1 * DAY},
+            {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 3 * DAY},
+            {"model": "n", "input_tokens": 500_000, "ts": NOW - 5 * DAY},
+            {"model": "zzz", "input_tokens": 1_000_000, "ts": NOW - 10 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(3_500_000)
+        result = self.report()
+        changes = self.section(result, "changes")
+        text = " ".join(f"{line['label']} {line['value']}" for line in changes["lines"])
+        value_line = next(line["value"] for line in changes["lines"]
+                          if line["label"] == "API-equivalent value")
+        self.assertTrue(value_line.startswith("—"), value_line)
+        self.assertRegex(text, r"Calls [+-]")
+
+    def test_markdown_escapes_formatting_and_html_in_names(self):
+        nasty = "a<b>*c_`d`[e]~f|g"
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([{"model": nasty, "input_tokens": 1_000_000}],
+                           baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report()
+        models = self.section(result, "models")
+        # Sections keep the raw name for the React preview; the export escapes.
+        self.assertIn(nasty, [row[0] for row in models["rows"]])
+        self.assertIn(D._escape(nasty), result["markdown"])
+        self.assertNotIn(nasty, result["markdown"])
+        self.assertNotIn("<b>", result["markdown"])
+
+    def test_zh_report_localises_the_new_caveats(self):
+        self.standard_fixture()
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.execute("INSERT INTO calls (event_id, ts, model, provider, outcome,"
+                         " input_tokens, total_tokens, recorded_at)"
+                         " VALUES ('unpriced', ?, 'zzz', 'test', 'ok', 500000, 500000, ?)",
+                         (NOW - 2 * DAY, NOW - 2 * DAY))
+        result = self.report(lang="zh")
+        changes = self.section(result, "changes")
+        self.assertTrue(any("定价" in note for note in changes["notes"]),
+                        changes["notes"])
+        spending = self.section(result, "spending")
+        for note in spending["notes"]:
+            self.assertRegex(note, r"[\u4e00-\u9fff]", note)
+
+
 if __name__ == "__main__":
     unittest.main()

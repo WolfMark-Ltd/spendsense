@@ -47,6 +47,7 @@ test('digestQuery keys by identity, window and language', () => {
   assert.notDeepEqual(S.digestQuery('id-a', 30, 'en').queryKey, S.digestQuery('id-a', 30, 'zh').queryKey)
   assert.notDeepEqual(S.digestQuery('id-a', 30, 'en').queryKey, S.digestQuery('id-b', 30, 'en').queryKey)
   assert.equal(S.digestQuery('id-a', 30, 'en').retry, false)
+  assert.equal(S.digestQuery('id-a', 30, 'en').enabled, false)
 })
 
 test('uiLocale follows the rendered catalogue', () => {

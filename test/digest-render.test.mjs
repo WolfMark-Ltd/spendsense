@@ -152,6 +152,7 @@ test.afterEach(async () => {
   queryClient.clear()
   transportCtl.reset()
   T.$digestDays.set(30)
+  T.$ledgerTab.set('overview')
   i18nBackend.t = enT
   i18nCalls.length = 0
 })
@@ -160,11 +161,14 @@ const bootReports = async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
   T.$digestDays.set(30)
+  T.$ledgerTab.set('reports')
   transportCtl.respond(call => {
     const match = String(call.path).match(/days=(\d+).*lang=(\w+)/)
     return { ok: true, ...digestFixture(Number(match?.[1] || 30), match?.[2] || 'en') }
   })
   const rendered = await renderPage()
+  await flush(4)
+  await clickByText(rendered.container, 'Generate report')
   await flush(4)
   return rendered
 }
@@ -200,13 +204,61 @@ test('the reports page fetches and previews the digest', async () => {
   assert.match(digestCalls()[0].path, /days=30/)
 })
 
-test('switching period and generating refetch the digest', async () => {
-  const { text } = await bootReports()
+test('page entry fetches nothing until Generate', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$digestDays.set(30)
+  T.$ledgerTab.set('reports')
+  transportCtl.respond(() => ({ ok: true, ...digestFixture() }))
+  const { container, text } = await renderPage()
+  await flush(4)
+  assert.equal(digestCalls().length, 0)
+  assert.match(text(), /Choose a period, then Generate report\./)
+  assert.doesNotMatch(text(), /\$5\.00/)
+  await clickByText(container, 'Generate report')
+  await flush(4)
+  assert.equal(digestCalls().length, 1)
+  assert.match(text(), /\$5\.00/)
+})
+
+test('switching period withholds the older report until Generate', async () => {
+  const { container, text } = await bootReports()
   assert.match(text(), /Usage/)
   await React.act(async () => { T.$digestDays.set(7) })
   await flush(4)
+  assert.equal(digestCalls().length, 1)
+  assert.doesNotMatch(text(), /\$5\.00/)
+  assert.match(text(), /Choose a period, then Generate report\./)
+  const copy = [...container.querySelectorAll('button')].find(b => b.textContent === 'Copy')
+  assert.equal(copy?.disabled, true)
+  await clickByText(container, 'Generate report')
+  await flush(4)
   assert.equal(digestCalls().length, 2)
   assert.match(digestCalls()[1].path, /days=7/)
+  assert.match(text(), /\$5\.00/)
+})
+
+test('a failed refresh keeps the cached report behind a stale warning', async () => {
+  const { container, text } = await bootReports()
+  assert.match(text(), /Usage/)
+  transportCtl.respond(() => { throw new Error('backend down') })
+  await clickByText(container, 'Generate report')
+  await flush(4)
+  assert.equal(digestCalls().length, 2)
+  assert.match(text(), /Refresh failed — showing the report generated 2026-10-31\./)
+  assert.match(text(), /Usage/)
+  assert.match(text(), /\$5\.00/)
+  assert.equal(container.querySelector('.wm-digest-error'), null)
+  assert.ok(container.querySelector('[role="alert"]'))
+})
+
+test('the reports page keeps the shared tab navigation', async () => {
+  const { container } = await bootReports()
+  const tabs = [...container.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)
+  assert.deepEqual(tabs, ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Settings & About'])
+  assert.equal(T.$ledgerTab.get(), 'reports')
+  await clickByText(container, 'Costs')
+  assert.equal(T.$ledgerTab.get(), 'costs')
 })
 
 test('generate refetches the current digest', async () => {
@@ -294,28 +346,36 @@ test('a failed read offers retry', async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
   T.$digestDays.set(30)
+  T.$ledgerTab.set('reports')
   transportCtl.respond(() => { throw new Error('backend down') })
   const { container, text } = await renderPage()
+  await flush(4)
+  assert.equal(digestCalls().length, 0)
+  await clickByText(container, 'Generate report')
   await flush(4)
   assert.match(text(), /Report unavailable for this connection\./)
   transportCtl.respond(() => ({ ok: true, ...digestFixture() }))
   await clickByText(container, 'Retry')
   await flush(4)
-  assert.match(text(), /Usage/)
+  assert.match(text(), /\$5\.00/)
 })
 
 test('a Chinese catalogue requests a Chinese digest', async () => {
   i18nBackend.t = zhT
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledgerTab.set('reports')
   transportCtl.respond(call => {
     const match = String(call.path).match(/days=(\d+).*lang=(\w+)/)
     return { ok: true, ...digestFixture(Number(match?.[1] || 30), match?.[2] || 'en') }
   })
-  const { text } = await renderPage()
+  const { container, text } = await renderPage()
+  await flush(4)
+  assert.equal(digestCalls().length, 0)
+  assert.match(text(), /选择周期，然后生成报告。/)
+  await clickByText(container, '生成报告')
   await flush(4)
   assert.match(text(), /报告/)
-  assert.match(text(), /生成报告/)
   assert.match(digestCalls()[0].path, /lang=zh/)
 })
 

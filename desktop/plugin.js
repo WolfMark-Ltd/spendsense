@@ -4513,7 +4513,8 @@ function digestQuery(identity = membershipIdentityNow(), days = 30, lang = 'en')
       if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
       return { ...result, identity }
     },
-    retry: false, staleTime: 30_000
+    // Manual generation only: the page refetches on Generate, never on entry.
+    retry: false, staleTime: 30_000, enabled: false
   }
 }
 
@@ -5833,33 +5834,46 @@ function ReportsPage() {
   const report = useQuery(digestQuery(identity, days, lang))
   const current = report.data?.identity === identity && membershipIdentityCurrent(identity)
     ? report.data : null
+  // A cached report only answers the period it was generated for: switching
+  // period or locale withholds it until the next explicit Generate.
+  const matches = current && current.days === days && current.lang === lang ? current : null
   const failed = !!(report.error && membershipIdentityCurrent(identity))
-  return jsxs('div', { className: 'wm-shell wm-reports', children: [
-    jsx('style', { children: [PRODUCT_CSS, REPORTS_CSS] }),
-    jsxs('div', { className: 'wm-reports-bar', children: [
-      jsx('h2', { children: t('reportsTitle') }),
-      jsx(SegmentedControl, {
-        onChange: v => $digestDays.set(Number(v) === 7 ? 7 : 30),
-        options: [{ id: '7', label: t('rpDays7') }, { id: '30', label: t('rpDays30') }],
-        value: String(days),
-      }),
-      jsx(ProductButton, { type: 'button', className: 'wm-button wm-accent',
-        disabled: report.isFetching, onClick: () => report.refetch(),
-        children: report.isFetching ? t('rpGenerating') : t('rpGenerate') }),
-      jsx(ProductButton, { type: 'button', className: 'wm-button',
-        disabled: !current, onClick: () => digestCopy(current, t), children: t('rpCopy') }),
-      jsx(ProductButton, { type: 'button', className: 'wm-button',
-        disabled: !current, onClick: () => digestDownload(current, t), children: t('rpSave') }),
-    ] }),
-    report.isLoading && !current
-      ? jsx('p', { className: 'wm-note', role: 'status', children: t('rpGenerating') })
-      : failed && !current
-        ? jsxs('div', { className: 'wm-digest-error', children: [
-          jsx('p', { role: 'alert', children: t('rpError') }),
-          jsx(ProductButton, { type: 'button', className: 'wm-button',
-            onClick: () => report.refetch(), children: t('rpRetry') }),
+  return jsxs('div', { className: 'wm-analytics wm-product', children: [
+    jsx('style', { children: [ANALYTICS_CSS, PRODUCT_CSS, REPORTS_CSS] }),
+    jsxs('div', { className: 'wm-shell wm-reports', children: [
+      jsx(LedgerTabs, {}),
+      jsxs('div', { className: 'wm-reports-bar', children: [
+        jsx('h2', { children: t('reportsTitle') }),
+        jsx(SegmentedControl, {
+          onChange: v => $digestDays.set(Number(v) === 7 ? 7 : 30),
+          options: [{ id: '7', label: t('rpDays7') }, { id: '30', label: t('rpDays30') }],
+          value: String(days),
+        }),
+        jsx(ProductButton, { type: 'button', className: 'wm-button wm-accent',
+          disabled: report.isFetching, onClick: () => report.refetch(),
+          children: report.isFetching ? t('rpGenerating') : t('rpGenerate') }),
+        jsx(ProductButton, { type: 'button', className: 'wm-button',
+          disabled: !matches, onClick: () => digestCopy(matches, t), children: t('rpCopy') }),
+        jsx(ProductButton, { type: 'button', className: 'wm-button',
+          disabled: !matches, onClick: () => digestDownload(matches, t), children: t('rpSave') }),
+      ] }),
+      failed && matches
+        ? jsxs('div', { children: [
+          jsx('div', { className: 'wm-alert', role: 'alert',
+            children: t('rpStale', fmtDay(matches.generated_at)) }, 'stale'),
+          jsx(DigestPreview, { report: matches }, 'preview'),
         ] })
-        : current ? jsx(DigestPreview, { report: current }) : null,
+        : failed
+          ? jsxs('div', { className: 'wm-digest-error', children: [
+            jsx('p', { role: 'alert', children: t('rpError') }),
+            jsx(ProductButton, { type: 'button', className: 'wm-button',
+              onClick: () => report.refetch(), children: t('rpRetry') }),
+          ] })
+          : matches ? jsx(DigestPreview, { report: matches })
+            : report.isFetching
+              ? jsx('p', { className: 'wm-note', role: 'status', children: t('rpGenerating') })
+              : jsx('p', { className: 'wm-note', children: t('rpEmpty') }),
+    ] }),
   ] })
 }
 
@@ -6191,6 +6205,8 @@ const I18N = {
     rpFailed: 'Report action failed.',
     rpError: 'Report unavailable for this connection.',
     rpRetry: 'Retry',
+    rpEmpty: 'Choose a period, then Generate report.',
+    rpStale: date => `Refresh failed — showing the report generated ${date}.`,
     fxReading: 'Reading saved FX rates for this connection…',
     fxRetry: 'Retry',
     fxRateLine: (c, u, d, s) => `${c} at ${u} USD per unit, dated ${d} (${s})`,
@@ -6479,6 +6495,8 @@ const I18N = {
     rpFailed: '报告操作失败。',
     rpError: '此连接无法生成报告。',
     rpRetry: '重试',
+    rpEmpty: '选择周期，然后生成报告。',
+    rpStale: date => `刷新失败——显示生成于${date}的报告。`,
     fxReading: '正在读取此连接已保存的外汇汇率…',
     fxRetry: '重试',
     fxRateLine: (c, u, d, s) => `${c}：${u} 美元/单位，日期 ${d}（${s}）`,

@@ -107,6 +107,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_no_memberships": "No memberships on file.",
         "note_no_models": "No models recorded in this window.",
         "note_no_providers": "No providers recorded in this window.",
+        "spending_cycle": "Current billing cycles",
+        "note_cycle_excluded": "{calls} calls outside current billing cycles are excluded from spending.",
+        "note_cash_unknown": "Extra cash cannot be stated without a matching cost rule.",
+        "note_credits_unknown": "Credit consumption needs a matching credit rule to be stated.",
+        "note_partial_pricing": "Value comparison needs full pricing in both windows.",
         "note_recon_gap": "Recording missed about {tokens} since it began; figures may understate usage.",
         "method_local": "This report is generated locally from your recorded calls and membership store. Nothing leaves your profile unless you export it.",
         "method_windows": "Usage sections cover the trailing window above; allowance status reflects current billing cycles as of generation.",
@@ -179,6 +184,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_no_memberships": "没有已确认的会员。",
         "note_no_models": "本周期内没有记录到模型。",
         "note_no_providers": "本周期内没有记录到服务商。",
+        "spending_cycle": "当前计费周期",
+        "note_cycle_excluded": "{calls} 个当前计费周期之外的调用未计入支出。",
+        "note_cash_unknown": "没有匹配的费用规则，无法给出额外现金支出。",
+        "note_credits_unknown": "需要匹配的点数规则才能给出点数消耗。",
+        "note_partial_pricing": "价值对比需要两个周期都完整定价。",
         "note_recon_gap": "自记录开始以来约漏记 {tokens}，数据可能低估实际用量。",
         "method_local": "本报告根据您记录的调用和会员数据在本地生成。除非您主动导出，否则不会离开您的设备。",
         "method_windows": "用量部分覆盖上述报告周期；额度状态反映生成时的当前计费周期。",
@@ -230,8 +240,18 @@ def _signed_money(amount: Any, currency: str | None = "USD") -> Optional[str]:
 
 
 def _escape(cell: Any) -> str:
-    """Keep data out of Markdown structure: pipes and newlines are literal."""
-    return str(cell).replace("|", "\\|").replace("\r", "").replace("\n", " ")
+    """Render data as literal Markdown text.
+
+    Escapes structure characters (pipes, newlines), HTML delimiters and the
+    inline-formatting characters that would otherwise change how a stored
+    name looks once rendered, so exports read exactly like the preview.
+    Characters that are harmless mid-line in table cells and list values
+    (dashes, dots, hashes) are left alone to keep the raw file readable.
+    """
+    text = str(cell).replace("\r", "").replace("\n", " ")
+    for char in ("\\", "|", "<", ">", "*", "_", "`", "[", "]", "!", "~"):
+        text = text.replace(char, "\\" + char)
+    return text
 
 
 def _utc_date(value: Any) -> str:
@@ -278,7 +298,7 @@ def _usage_section(S: Mapping[str, str], window_label: str, totals: Mapping[str,
 
 def _ranked_table(S: Mapping[str, str], sid: str, heading: str, window_label: str,
                   columns: list[str], rows: list[dict[str, Any]], empty_note: str,
-                  limit: int = 5) -> dict[str, Any]:
+                  covers: bool, calls: int, limit: int = 5) -> dict[str, Any]:
     ranked = sorted(rows, key=lambda r: (r.get("list_usd") is None,
                                          -(r.get("list_usd") or 0.0)))[:limit]
     table: list[list[str]] = []
@@ -296,14 +316,25 @@ def _ranked_table(S: Mapping[str, str], sid: str, heading: str, window_label: st
                       _tokens(row.get("tokens")) or S["unknown"], shown])
     notes = [S["note_lower_bound"]] if lower_bound else []
     if not table:
-        notes.append(empty_note)
+        notes.append(empty_note if calls or covers else S["note_unknown"])
+    elif not covers:
+        notes.append(S["note_partial"])
     return {"id": sid, "heading": heading, "window": window_label, "kind": "table",
             "columns": columns, "rows": table, "notes": notes}
 
 
 def _value_section(S: Mapping[str, str], window_label: str, totals: Mapping[str, Any],
-                   pricing: Mapping[str, Any]) -> dict[str, Any]:
+                   pricing: Mapping[str, Any], covers: bool, calls: int) -> dict[str, Any]:
     notes = [S["note_api_theoretical"]]
+    if calls == 0 and not covers:
+        lines = [
+            {"label": S["label_api_value"], "value": S["unknown"]},
+            {"label": S["label_pricing_coverage"], "value": S["unknown"]},
+            {"label": S["label_unpriced"], "value": S["unknown"]},
+        ]
+        notes.append(S["note_unknown"])
+        return {"id": "value", "heading": S["heading_value"], "window": window_label,
+                "kind": "lines", "lines": lines, "notes": notes}
     value = _money(totals.get("list_usd"))
     unpriced = pricing.get("unpriced_tokens") or 0
     if value is None:
@@ -314,34 +345,79 @@ def _value_section(S: Mapping[str, str], window_label: str, totals: Mapping[str,
     else:
         shown = value
     coverage = pricing.get("coverage")
+    if calls == 0:
+        coverage_shown = S["unknown"]
+    elif isinstance(coverage, (int, float)):
+        coverage_shown = f"{coverage * 100:.1f}%"
+    else:
+        coverage_shown = S["unknown"]
     lines = [
         {"label": S["label_api_value"], "value": shown},
-        {"label": S["label_pricing_coverage"],
-         "value": f"{coverage * 100:.1f}%" if isinstance(coverage, (int, float)) else S["unknown"]},
+        {"label": S["label_pricing_coverage"], "value": coverage_shown},
         {"label": S["label_unpriced"], "value": _tokens(unpriced) or S["unknown"]},
     ]
+    if calls and not covers:
+        notes.append(S["note_partial"])
     return {"id": "value", "heading": S["heading_value"], "window": window_label,
             "kind": "lines", "lines": lines, "notes": notes}
 
 
 def _spending_section(S: Mapping[str, str], window_label: str,
-                      billing: Mapping[str, Any]) -> dict[str, Any]:
-    lines = [
-        {"label": S["label_metered"],
-         "value": _money(billing.get("metered_usd")) or S["unknown"]},
-        {"label": S["label_incremental"],
-         "value": _money(billing.get("incremental_usd")) or S["unknown"]},
-        {"label": S["label_credits"],
-         "value": _money(billing.get("credits_consumed_usd")) or S["unknown"]},
-    ]
+                      billing: Mapping[str, Any], covers: bool, calls: int) -> dict[str, Any]:
     notes = [S["note_metered_basis"]]
-    unvalued_tokens = billing.get("unclassified_tokens") or 0
-    unvalued_calls = billing.get("unclassified_calls") or 0
-    if unvalued_tokens or unvalued_calls:
-        lines.append({"label": S["label_unvalued"],
-                      "value": f"{_tokens(unvalued_tokens)} / {unvalued_calls}"})
+    excluded = billing.get("excluded_out_of_cycle") or 0
+    scope = S["spending_cycle"] if excluded else window_label
+    # Rule figures only span current billing cycles: calls the rules exclude
+    # are disclosed rather than silently missing from a windowed total.
+    if excluded:
+        notes.append(S["note_cycle_excluded"].format(calls=excluded))
+    if calls == 0 and not covers:
+        lines = [
+            {"label": S["label_metered"], "value": S["unknown"]},
+            {"label": S["label_incremental"], "value": S["unknown"]},
+            {"label": S["label_credits"], "value": S["unknown"]},
+        ]
+        notes.append(S["note_unknown"])
+        return {"id": "spending", "heading": S["heading_spending"], "window": scope,
+                "kind": "lines", "lines": lines, "notes": notes}
+    if calls == 0:
+        lines = [
+            {"label": S["label_metered"], "value": "$0.00"},
+            {"label": S["label_incremental"], "value": "$0.00"},
+            {"label": S["label_credits"], "value": "$0.00"},
+        ]
+        return {"id": "spending", "heading": S["heading_spending"], "window": scope,
+                "kind": "lines", "lines": lines, "notes": notes}
+    evidence = billing.get("evidence") or {}
+    unvalued = bool(billing.get("unclassified_tokens") or billing.get("unclassified_calls"))
+
+    def stated(amount: Any) -> str:
+        text = _money(amount)
+        if text is None:
+            return S["unknown"]
+        if float(amount or 0) == 0 and unvalued:
+            return S["unknown"]
+        return f"≥{text}" if unvalued else text
+
+    lines = [
+        {"label": S["label_metered"], "value": stated(billing.get("metered_usd"))},
+        {"label": S["label_incremental"],
+         "value": stated((evidence.get("incremental_cash") or {}).get("usd"))},
+        {"label": S["label_credits"],
+         "value": stated((evidence.get("credits_consumed") or {}).get("usd"))},
+    ]
+    if lines[1]["value"] == S["unknown"] and not unvalued:
+        notes.append(S["note_cash_unknown"])
+    if lines[2]["value"] == S["unknown"] and not unvalued:
+        notes.append(S["note_credits_unknown"])
+    if unvalued:
         notes.append(S["note_lower_bound"])
-    return {"id": "spending", "heading": S["heading_spending"], "window": window_label,
+        lines.append({"label": S["label_unvalued"],
+                      "value": f"{_tokens(billing.get('unclassified_tokens'))} / "
+                               f"{billing.get('unclassified_calls')}"})
+    elif not covers:
+        notes.append(S["note_partial"])
+    return {"id": "spending", "heading": S["heading_spending"], "window": scope,
             "kind": "lines", "lines": lines, "notes": notes}
 
 
@@ -396,7 +472,8 @@ def _allowances_section(S: Mapping[str, str], window_label: str,
 
 
 def _changes_section(S: Mapping[str, str], window_label: str, days: int,
-                     previous: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+                     previous: Mapping[str, Any],
+                     totals: Mapping[str, Any]) -> Optional[dict[str, Any]]:
     if not previous.get("comparable"):
         return None
     deltas = previous.get("deltas") or {}
@@ -410,6 +487,11 @@ def _changes_section(S: Mapping[str, str], window_label: str, days: int,
 
     calls_before = before.get("calls")
     tokens_before = _tokens(before.get("tokens"))
+    # A value ratio is only fair when both windows are fully priced: mixing
+    # an exact figure with a lower bound would present a precise-looking
+    # percentage the data cannot support. Token and call counts compare.
+    priced = not (before.get("unpriced_tokens") or totals.get("unpriced_tokens"))
+    value_pct = pct("list_usd") if priced else S["unknown"]
     value_before = _money(before.get("list_usd"))
     lines = [
         {"label": S["label_calls"],
@@ -417,10 +499,11 @@ def _changes_section(S: Mapping[str, str], window_label: str, days: int,
         {"label": S["col_tokens"],
          "value": f"{pct('tokens')} {S['change_was'].format(value=tokens_before or S['unknown'])}"},
         {"label": S["label_api_value"],
-         "value": f"{pct('list_usd')} {S['change_was'].format(value=value_before or S['unknown'])}"},
+         "value": f"{value_pct} {S['change_was'].format(value=value_before or S['unknown'])}"},
     ]
+    notes = [] if priced else [S["note_partial_pricing"]]
     return {"id": "changes", "heading": S["heading_changes"].format(days=days),
-            "window": window_label, "kind": "lines", "lines": lines, "notes": []}
+            "window": window_label, "kind": "lines", "lines": lines, "notes": notes}
 
 
 def _coverage_section(S: Mapping[str, str], window_label: str,
@@ -542,18 +625,19 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
         [S["col_model"], S["col_calls"], S["col_tokens"], S["col_cost"]],
         [{"name": r.get("model"), "calls": r.get("calls"), "tokens": r.get("tokens"),
           "list_usd": r.get("list_usd"), "unpriced_tokens": r.get("unpriced_tokens")}
-         for r in report.get("by_model", [])], S["note_no_models"]))
+         for r in report.get("by_model", [])], S["note_no_models"], covers, calls))
     sections.append(_ranked_table(
         S, "providers", S["heading_providers"], period_label,
         [S["col_provider"], S["col_calls"], S["col_tokens"], S["col_cost"]],
         [{"name": r.get("provider"), "calls": r.get("calls"), "tokens": r.get("tokens"),
           "list_usd": r.get("list_usd"), "unpriced_tokens": r.get("unpriced_tokens")}
-         for r in report.get("by_route", [])], S["note_no_providers"]))
-    sections.append(_value_section(S, period_label, totals, report.get("pricing_coverage") or {}))
-    sections.append(_spending_section(S, period_label, report.get("billing") or {}))
+         for r in report.get("by_route", [])], S["note_no_providers"], covers, calls))
+    sections.append(_value_section(S, period_label, totals, report.get("pricing_coverage") or {},
+                                   covers, calls))
+    sections.append(_spending_section(S, period_label, report.get("billing") or {}, covers, calls))
     sections.append(_fees_section(S, period_label, econ.get("headline") or {}))
     sections.append(_allowances_section(S, cycle_label, list(wx.get("accounts", []))))
-    changes = _changes_section(S, period_label, days, report.get("previous") or {})
+    changes = _changes_section(S, period_label, days, report.get("previous") or {}, totals)
     if changes is not None:
         sections.append(changes)
     sections.append(_coverage_section(
