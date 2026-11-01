@@ -2776,7 +2776,11 @@ function econCoverageLabel(t, usage) {
   if (usage.list_usd == null) return t('econNoPrice')
   if (usage.coverage == null) return t('econCoverageUnknown')
   const pct = Math.round(usage.coverage * 100)
-  return pct >= 100 ? t('econFullyPriced') : t('econPricedPct', pct)
+  // Coverage rounds to whole percent: only the exact unpriced count can
+  // certify fully priced, matching the backend status in the same cell.
+  // A rounded 100% with unpriced tokens left is "nearly all", never exact.
+  if (pct >= 100) return num(usage.unpriced_tokens) > 0 ? t('econNearlyAllPriced') : t('econFullyPriced')
+  return t('econPricedPct', pct)
 }
 
 /** Window-allocated expenditure lines, one per currency — never summed here. */
@@ -6134,6 +6138,7 @@ const I18N = {
     econNoPrice: 'No published price',
     econCoverageUnknown: 'Coverage unknown',
     econFullyPriced: 'Fully priced',
+    econNearlyAllPriced: 'Nearly all priced',
     econPricedPct: pct => `${pct}% priced`,
     econSpanWindow: 'in the reporting window',
     econSpanDays: n => `in the last ${n} day${n === 1 ? '' : 's'}`,
@@ -6424,6 +6429,7 @@ const I18N = {
     econNoPrice: '无公开价格',
     econCoverageUnknown: '覆盖率未知',
     econFullyPriced: '已全部定价',
+    econNearlyAllPriced: '几乎全部定价',
     econPricedPct: pct => `${pct}% 已定价`,
     econSpanWindow: '在报告窗口内',
     econSpanDays: n => `过去 ${n} 天内`,

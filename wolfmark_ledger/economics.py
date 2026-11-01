@@ -657,10 +657,19 @@ def build_economics_report(
             status = "unavailable"
             notes.append(f"Fee is in {currency} and usage is valued in USD with no FX rate: "
                          "add a dated rate to compare.")
-        elif usage["coverage"] is not None and usage["coverage"] < 1:
+        elif (usage.get("unpriced_tokens") or 0) > 0:
+            # The exact count, not the rounded ratio: coverage rounds to six
+            # decimals, so a large account with one unpriced token reads 1.0.
             status = "partial"
-            notes.append(f"Only {usage['coverage'] * 100:.1f}% of attributed tokens are priced; "
-                         "the value is a lower bound.")
+            share = usage["coverage"] * 100 if usage["coverage"] is not None else 0.0
+            # Decide on the displayed one-decimal figure: 99.95%+ prints as
+            # 100.0%, and "Only 100.0%" would contradict the partial status.
+            if f"{share:.1f}" != "100.0":
+                notes.append(f"Only {share:.1f}% of attributed tokens are priced; "
+                             "the value is a lower bound.")
+            else:
+                notes.append("Nearly all attributed tokens are priced; "
+                             "the value is a lower bound.")
         elif not recording_covers_window:
             status = "partial"
             notes.append("Recording started inside this window, so usage is incomplete.")

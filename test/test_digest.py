@@ -605,6 +605,7 @@ class DigestFeesCoverageTests(DigestCase):
         row = next(r for r in econ["accounts"] if r["account_id"] == "test:default")
         self.assertEqual(row["usage"]["coverage"], 1.0)
         self.assertEqual(row["usage"]["unpriced_tokens"], 1)
+        self.assertEqual(row["status"], "partial")
         result = self.report()
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
