@@ -354,3 +354,25 @@ test('every economics string exists in English and Chinese', () => {
   assert.match(zh.econTrendAria('2026-10', '$20.00', '$2.00', '−$18.00'), /差值/)
   assert.match(zh.econIntro, /不是实际节省的现金/)
 })
+
+test('every allowance-weather string exists in English and Chinese', () => {
+  const keys = ['wxTitle', 'wxAhead', 'wxOnTrack', 'wxBehind', 'wxExhausted', 'wxUnknown',
+    'wxDaysLeft', 'wxElapsed', 'wxNoCycle', 'wxProviderShare', 'wxStaleReading',
+    'wxProviderReset', 'wxManualMark', 'wxAllowance', 'wxCredits', 'wxPercentLimit',
+    'wxLimitUnknown', 'wxUsedOf', 'wxObservedSpend', 'wxLowerBound', 'wxPace',
+    'wxProjection', 'wxNoForecast', 'wxDetails', 'wxUnavailable']
+  for (const key of keys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  // The English composites keep their exact wording.
+  assert.equal(en.wxDaysLeft(1), '1 day left in cycle')
+  assert.equal(en.wxDaysLeft(12), '12 days left in cycle')
+  assert.equal(en.wxUsedOf('$6.00', '$10.00'), '$6.00 of $10.00 used')
+  assert.equal(en.wxProjection('2026-11-20'), 'At this pace, exhausted around 2026-11-20')
+  // The Chinese composites interpolate every argument.
+  assert.match(zh.wxDaysLeft(12), /12/)
+  assert.match(zh.wxUsedOf('$6.00', '$10.00'), /\/ /)
+  assert.match(zh.wxProjection('2026-11-20'), /2026-11-20/)
+})

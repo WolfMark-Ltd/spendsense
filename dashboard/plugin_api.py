@@ -26,6 +26,7 @@ if str(_ROOT) not in sys.path:
 from wolfmark_ledger import LedgerUnavailable, build_ledger_report, default_db_path, load_catalogue  # noqa: E402
 from wolfmark_ledger import store  # noqa: E402
 from wolfmark_ledger.analytics import build_analytics_report  # noqa: E402
+from wolfmark_ledger import allowance_weather  # noqa: E402
 from wolfmark_ledger import billing  # noqa: E402
 from wolfmark_ledger import economics  # noqa: E402
 from wolfmark_ledger import user_data  # noqa: E402
@@ -255,6 +256,29 @@ def economics_summary(
     except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
         log.error("spend-sense: economics report failed")
         raise HTTPException(status_code=500, detail="economics report failed") from exc
+
+
+@router.get("/allowance/weather")
+def allowance_weather_report(
+    native: bool = Query(False, description="Read account usage through Hermes"),
+) -> dict[str, Any]:
+    """Allowance pace and runway for every stored account.
+
+    Read-only: cycle position from billing-cycle maths, provider readings when
+    probed, and pace forecasts only for USD cost rules with reliable coverage.
+    ``native=true`` asks Hermes for its own account reading, like the
+    memberships view; it is off by default so a plain render never triggers
+    a provider call.
+    """
+    try:
+        return allowance_weather.build_weather_report(native=native)
+    except StoreUnreadable as exc:
+        raise _store_unreadable(exc) from exc
+    except CatalogueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
+        log.error("spend-sense: allowance weather failed")
+        raise HTTPException(status_code=500, detail="allowance weather failed") from exc
 
 
 @router.get("/membership/fx")
