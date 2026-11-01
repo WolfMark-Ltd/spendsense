@@ -4438,7 +4438,11 @@ const MEMBERSHIP_CSS = `
 .wm-fee-form{max-width:640px}
 .wm-fee-form h3{margin:0;font-size:13px}
 .wm-fee-fields{border:0;margin:0;padding:0;min-width:0}
+.wm-check{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;
+ color:var(--ui-text-secondary);cursor:pointer;white-space:nowrap}
+.wm-check input{accent-color:var(--ui-accent);width:14px;height:14px;margin:0;flex:none}
 .wm-memberships select:disabled,.wm-memberships input:disabled{opacity:.55}
+.wm-memberships .wm-check:has(input:disabled){cursor:default}
 `
 
 let membershipReadSerial = 0
@@ -5146,7 +5150,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     ] }),
     jsx('p', { className: 'wm-note', children:
       account.identity_source === 'native' ? 'Account identified by Hermes.' : 'Provider account slot; credential values are never shown.' }),
-    jsxs('label', { className: 'wm-filter', children: [
+    jsxs('label', { className: 'wm-check', children: [
       jsx('input', { type: 'checkbox', checked: apiOnly, disabled: !!busy,
         onChange: event => onAction('api-only', account, event.target.checked) }),
       jsx('span', { children: 'API Only' })
@@ -5455,6 +5459,15 @@ function MembershipsPage() {
     return { ok: false, busy: true }
   }
 
+  // A card without a revision was written outside the store API, so the
+  // backend cannot accept any edit to it. Refusing here — instead of sending
+  // a PUT that must 409 — keeps the message honest: reloading cannot help.
+  const refuseUnversioned = () => {
+    setMembershipNotice(membershipIdentityNow(), 'warn',
+      'This record has no revision and cannot be saved safely. It was probably written outside Spend Sense — restore the membership store before editing.')
+    return { ok: false, unversioned: true }
+  }
+
   /**
    * One write, bound to the identity it started in. The identity is checked
    * before the request and again after it, so nothing started here can write
@@ -5506,6 +5519,11 @@ function MembershipsPage() {
     // land between a switch and the re-render.
     if (!current || current.identity !== membershipIdentityNow()) return refuse()
     if (membershipBusyKey($membershipBusy.get(), identity)) return refuseBusy()
+    // Draft-opening kinds ('fee', 'edit-custom-plan', 'exhaust') are harmless
+    // without a revision; every kind that writes must prove one.
+    if ((kind === 'api-only' || kind === 'arrangement' || kind === 'plan' ||
+         kind === 'restore-fee' || kind === 'save-custom-plan' ||
+         kind === 'confirm-exhaust' || kind === 'clear') && !account?.rev) return refuseUnversioned()
     if (kind === 'api-only' || kind === 'arrangement') {
       const update = kind === 'api-only' ? { api_only: !!value } : { billing_arrangement: value }
       return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
@@ -5657,6 +5675,7 @@ function MembershipsPage() {
     }
     const account = list.find(a => a.id === draft.account_id)
     if (!account) return refuse()
+    if (!account.rev) return refuseUnversioned()
     const override = overrideFromDraft(draft, account)
     const outcome = await run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
                               { ...account, fee_overrides: [...(account.fee_overrides || []), override] }, 'PUT')
@@ -5672,8 +5691,8 @@ function MembershipsPage() {
 
   return jsxs('div', { className: 'wm-analytics wm-product', children: [
     jsxs('style', { children: [ANALYTICS_CSS, PRODUCT_CSS, MEMBERSHIP_CSS, WEATHER_CSS] }),
+    jsx(LedgerTabs, {}),
     jsxs('div', { className: 'wm-shell wm-memberships', children: [
-      jsx(LedgerTabs, {}),
       jsxs('div', { className: 'wm-controls', children: [
         jsx(ProductButton, { type: 'button', className: cn('wm-button', 'wm-accent'), disabled: !!busy,
           onClick: discover, children: busy === 'discover' ? 'Discovering…' : 'Discover accounts' }),
@@ -5844,8 +5863,8 @@ function ReportsPage() {
   const failed = !!(report.error && membershipIdentityCurrent(identity))
   return jsxs('div', { className: 'wm-analytics wm-product', children: [
     jsx('style', { children: [ANALYTICS_CSS, PRODUCT_CSS, REPORTS_CSS] }),
+    jsx(LedgerTabs, {}),
     jsxs('div', { className: 'wm-shell wm-reports', children: [
-      jsx(LedgerTabs, {}),
       jsxs('div', { className: 'wm-reports-bar', children: [
         jsx('h2', { children: t('reportsTitle') }),
         jsx(SegmentedControl, {
