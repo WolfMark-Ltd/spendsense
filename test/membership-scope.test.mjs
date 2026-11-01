@@ -1391,6 +1391,29 @@ test('a record without a revision refuses the write with an honest message', asy
   await flush(3)
   assert.equal(transportCtl.calls.some(call => call.method === 'PUT'), false,
     'a second write kind is refused without a revision')
+  await clickByText(container, 'Create user-defined plan')
+  await flush(2)
+  assert.equal(container.querySelector('form.wm-custom-form').noValidate, true,
+    'the custom-plan form skips native validation without a revision too')
+})
+
+test('versioned accounts keep native form validation', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.path.startsWith('/allowance/weather') ? { ok: true, accounts: [] }
+    : { ok: true, accounts: [account('pro:default', { label: 'Pro account' })],
+        store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  await clickByText(container, 'Edit fee')
+  await flush(2)
+  await clickByText(container, 'Create user-defined plan')
+  await flush(2)
+  assert.equal(container.querySelector('form.wm-fee-form').noValidate, false,
+    'the fee form keeps native validation with a revision')
+  assert.equal(container.querySelector('form.wm-custom-form').noValidate, false,
+    'the custom-plan form keeps native validation with a revision')
 })
 
 test('a fee save on a record without a revision is refused before any write', async () => {
@@ -1422,4 +1445,6 @@ test('a fee save on a record without a revision is refused before any write', as
   const pageAlert = [...container.querySelectorAll('div.wm-alert')]
     .find(alert => /has no revision/.test(alert.textContent || ''))
   assert.ok(pageAlert, 'the page-level notice is kept')
+  assert.equal(container.querySelector('form.wm-fee-form').noValidate, true,
+    'native validation is off so the revision check runs instead of field bubbles')
 })

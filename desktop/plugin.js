@@ -5193,7 +5193,10 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !subscription || !!busy, onClick: () => onAction('fee', account), children: 'Edit fee' })
     ] }) : null,
     subscription && draft && draft.account_id === account.id
-        ? jsxs('form', { className: 'wm-fee-form', onSubmit: event => { event.preventDefault(); saveFee() }, children: [
+        // Without a revision no correction can ever save, so native bubbles
+        // must not block submit before the revision check runs in saveFee().
+        ? jsxs('form', { className: 'wm-fee-form', noValidate: !account.rev,
+            onSubmit: event => { event.preventDefault(); saveFee() }, children: [
             jsx('h3', { children: `Membership fee · ${account.label || account.family}` }),
             notice?.tone === 'warn' && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
             jsx('p', { className: 'wm-note', children: 'The published catalogue price is kept separately; this becomes your own revision.' }),
@@ -5248,7 +5251,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
         onClick: () => onAction('edit-custom-plan', account),
         children: account.custom_plan ? 'Edit user-defined plan' : 'Create user-defined plan' })
     ] }) : null,
-    subscription && customDraft ? jsxs('form', { className: 'wm-custom-form', onSubmit: event => {
+    subscription && customDraft ? jsxs('form', { className: 'wm-custom-form', noValidate: !account.rev, onSubmit: event => {
       event.preventDefault()
       onAction('save-custom-plan', account, customDraft)
     }, children: [
