@@ -2868,11 +2868,14 @@ function AdvancedBillingRules() {
     const captured = draft.origin
     try {
       await billingWrite('PUT', `/billing/profiles/${encodeURIComponent(draft.id)}`, profilePayload(draft))
-      if (!membershipIdentityCurrent(captured) || $billingDraft.get() !== draft) return
+      if (!membershipIdentityCurrent(captured)) return
+      // Dependents are identity-scoped: the write landed, so they refresh even
+      // when the draft moved on while it was pending — and before the
+      // rules-list refresh, so a refresh failure cannot leave them stale.
+      await invalidateBillingDependentsFor(captured)
+      if ($billingDraft.get() !== draft) return
       $billingNotice.set({ tone: 'good', origin: captured, text: 'Saved. Recorded usage was not changed.' })
       $billingDraft.set(null)
-      // Dependents first: a rules-list refresh failure must not leave them stale.
-      await invalidateBillingDependentsFor(captured)
       await profilesQuery.refetch?.()
     } catch (error) {
       if (membershipIdentityCurrent(captured)) $billingNotice.set({ tone: 'warn', origin: captured, text: billingErrorMessage(error) })
@@ -6531,7 +6534,7 @@ export const __test = {
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,
   OVERRIDE_REASON_FALLBACK, REASON_LABELS, restoreCatalogueFee, MembershipsPage, MembershipCard, MEMBERSHIP_CSS,
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
-  billingNumberStep,
+  billingNumberStep, $billingDraft, $billingNotice,
   economicsQuery, fxQuery, fxWrite, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
   econWindowLines, windowSpanLabel, invalidateEconomicsFor,
   weatherQuery, invalidateWeatherFor, invalidateBillingDependentsFor,
