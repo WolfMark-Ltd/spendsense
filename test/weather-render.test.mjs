@@ -62,7 +62,7 @@ define('Event', dom.window.Event)
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const lib = await import(pathToFileURL(bundle).href)
-const { T, React, ReactDOMClient, queryClient, i18nCalls, i18nBackend } = lib
+const { plugin, T, React, ReactDOMClient, queryClient, i18nCalls, i18nBackend } = lib
 const translated = (key, ...args) => i18nCalls.some(call =>
   call.length === args.length + 1 && call[0] === key && args.every((a, i) => call[i + 1] === a))
 // Render through the real English catalogue: assertions see what users see,
@@ -89,7 +89,8 @@ const wxFixture = () => ({
     provider: { used_percent: 62, reset_at: '2026-11-01T00:00:00Z',
       reset_in_days: 0.5, state: 'live', age_seconds: 60 },
     manual: null, conflict: false, verdict: 'behind',
-    verdict_basis: 'provider_vs_calendar', projection: null, notes: [],
+    verdict_basis: 'provider_vs_calendar', projection: null,
+    notes: ['Verdict compares the provider-reported share with the elapsed share of the cycle.'],
   }],
   rules: [{
     profile_id: 'cap', label: 'cap · shared', provider: 'test', scope: 'profiles',
@@ -101,7 +102,7 @@ const wxFixture = () => ({
     valued_complete: true, lower_bound: false,
     pace_usd_per_day: 0.196721, projected_exhaustion: '2026-11-20T20:00:00Z',
     forecast_status: 'ok', verdict: 'behind', verdict_basis: 'observed_vs_calendar',
-    notes: [],
+    notes: ['Linear projection from observed consumption; usage outside Hermes would bring exhaustion sooner.'],
   }],
   notes: [],
 })
@@ -172,4 +173,25 @@ test('the weather stylesheet tones every verdict', () => {
     assert.match(T.WEATHER_CSS, new RegExp(`data-verdict="${verdict}"`))
   }
   assert.match(T.WEATHER_CSS, /\.wm-weather-dot/)
+  assert.match(T.WEATHER_CSS, /\.wm-weather-subnotes/)
+})
+
+test('the details list shows each row’s own explanation', async () => {
+  const { container, text } = await renderWeather({ entry: wxFixture(), error: false })
+  assert.match(text(), /Verdict compares the provider-reported share/)
+  assert.match(text(), /Linear projection from observed consumption/)
+  assert.equal(container.querySelectorAll('.wm-weather-subnotes li').length, 2)
+})
+
+test('membership edits invalidate the cached weather verdicts', async () => {
+  const identity = 'local|default#1'
+  const other = 'elsewhere|default#9'
+  queryClient.clear()
+  const keyFor = id => [plugin.id, 'allowance-weather', id]
+  queryClient.setQueryData(keyFor(identity), { ...wxFixture(), identity })
+  queryClient.setQueryData(keyFor(other), { ...wxFixture(), identity: other })
+  assert.equal(queryClient.getQueryState(keyFor(identity))?.isInvalidated, false)
+  await T.invalidateWeatherFor(identity)
+  assert.equal(queryClient.getQueryState(keyFor(identity))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(keyFor(other))?.isInvalidated, false)
 })

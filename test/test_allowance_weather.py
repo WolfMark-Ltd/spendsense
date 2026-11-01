@@ -306,10 +306,32 @@ class PoolWeatherTests(WeatherCase):
                            baseline_at=NOW - 40 * 86400)
         self.create_state(5_000_000)
         pool = self.account_entry(self.report())["rules"][0]
-        self.assertEqual(pool["verdict"], "behind")
+        # Missing calls could only raise consumption: no reassuring verdict,
+        # no exact remaining figure.
+        self.assertEqual(pool["verdict"], "unknown")
+        self.assertEqual(pool["verdict_basis"], "observed_vs_calendar_lower_bound")
+        self.assertIsNone(pool["remaining_usd"])
+        self.assertTrue(pool["lower_bound"])
         self.assertEqual(pool["forecast_status"], "unavailable")
         self.assertIsNone(pool["projected_exhaustion"])
         self.assertTrue(any("missed" in note for note in pool["notes"]))
+        self.assertTrue(any("withheld" in note for note in pool["notes"]))
+
+    def test_observed_lead_survives_a_coverage_gap(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([{"id": "cap", "provider": "test", "kind": "api",
+                              "allowance_usd": 10.0, "billing_cycle": {"day": 1}}])
+        self.create_events([{"input_tokens": 4_750_000, "ts": MID - 86400}],
+                           baseline_at=NOW - 40 * 86400)
+        self.create_state(9_000_000)
+        pool = self.account_entry(self.report(now=MID))["rules"][0]
+        # $9.50 observed of $10 with less than half the cycle gone is ahead
+        # however many calls were missed; remaining stays withheld.
+        self.assertEqual(pool["consumed_fraction"], 0.95)
+        self.assertEqual(pool["verdict"], "ahead")
+        self.assertTrue(pool["lower_bound"])
+        self.assertIsNone(pool["remaining_usd"])
+        self.assertEqual(pool["forecast_status"], "unavailable")
 
     def test_missing_baseline_withholds_the_forecast(self):
         self.write_store([account("test:default", "test", plan_id="test.plus")])
@@ -514,6 +536,22 @@ class WindowWeatherTests(WeatherCase):
         self.assertEqual(window["verdict"], "unknown")
         self.assertEqual(window["verdict_basis"], "conflicted")
 
+    def test_manual_synthesis_is_never_provider_evidence(self):
+        mark = manual_mark("monthly-credit", "Monthly credit", "2026-10-31T10:00:00Z")
+        self.write_store([account("test:default", "test", plan_id="test.plus",
+                                  manual_exhaustions=[mark])])
+        self.write_profiles([])
+        # Hermes names the window but supplies no percentage; the manual mark
+        # synthesises 100% on that row while retaining the provider basis.
+        snap = snapshot({"label": "Monthly credit", "scope": "account"})
+        window = self.account_entry(
+            self.report(native_snapshots={"test": snap}))["windows"][0]
+        self.assertIsNone(window["provider"])
+        self.assertEqual(window["verdict"], "exhausted")
+        self.assertEqual(window["verdict_basis"], "manual")
+        self.assertFalse(any("provider last reported" in note
+                             for note in window["notes"]))
+
     def test_manual_mark_outranks_a_stale_provider_share(self):
         mark = manual_mark("monthly-credit", "Monthly credit", "2026-10-31T10:00:00Z")
         self.write_store([account("test:default", "test", plan_id="test.plus",
@@ -633,6 +671,10 @@ class ReportShapeTests(WeatherCase):
         entry = self.account_entry(self.report())
         pool = entry["rules"][0]
         self.assertEqual(pool["used_usd"], 0.0)
+        # No records is not unused allowance: nothing reassuring is shown.
+        self.assertEqual(pool["verdict"], "unknown")
+        self.assertIsNone(pool["remaining_usd"])
+        self.assertTrue(pool["lower_bound"])
         self.assertEqual(pool["forecast_status"], "unavailable")
         self.assertEqual(entry["cycle"]["elapsed_days"], 30.5)
 

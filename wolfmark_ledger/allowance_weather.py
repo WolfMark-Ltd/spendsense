@@ -25,6 +25,9 @@ Model rules (each has a regression test):
    start, reconciliation clean (no missed calls), at least one elapsed day,
    complete valuation of matched rows, and observed consumption above zero.
    Anything less yields an unavailable state with the reason stated.
+   Incomplete recording coverage additionally withholds reassuring verdicts
+   (behind/on-track) and exact remaining figures: observed consumption is
+   then a lower bound, so only ahead/exhausted verdicts survive.
 4. An old usage event alone proves nothing about continuity: without a
    baseline at or before the cycle start the forecast is unavailable.
 5. Per-model limits and shared pools consume disjoint row sets, matching
@@ -104,7 +107,7 @@ def _span(start_ts: float, end_ts: float, moment: float) -> dict[str, Any]:
         "elapsed_days": round(elapsed_days, 6),
         "total_days": round(total_days, 6),
         "days_remaining": round(remaining_days, 6),
-        "days_remaining_display": max(0, int(math.ceil(remaining_days - 1e-9))),
+        "days_remaining_display": max(0, math.ceil(remaining_days - 1e-9)),
         "elapsed_fraction": elapsed_fraction,
     }
 
@@ -232,12 +235,17 @@ def _pool_row(*, profile: Mapping[str, Any], scope: str, pool: str, label: str,
     consumption = _pool_consumption(rows, profile, scope)
     used = round(consumption["used_usd"], 6)
     complete = not consumption["unvalued_tokens"] and not consumption["unvalued_calls"]
-    if limit_usd is not None and limit_usd > 0 and complete:
+    # Pricing every recorded call does not account for missing calls: a pool
+    # is only reliable when recording also covered the whole cycle cleanly.
+    coverage_ok = (baseline_at is not None and baseline_at <= span["start_ts"]
+                   and recon.get("status") == "ok")
+    reliable = complete and coverage_ok
+    if limit_usd is not None and limit_usd > 0 and reliable:
         consumed_fraction: Optional[float] = round(used / limit_usd, 6)
         remaining: Optional[float] = round(limit_usd - used, 6)
     elif limit_usd is not None and limit_usd <= 0:
         consumed_fraction = 1.0 if used > 0 else 0.0
-        remaining = round(limit_usd - used, 6)
+        remaining = round(limit_usd - used, 6) if reliable else None
     elif limit_usd is not None:
         consumed_fraction = round(used / limit_usd, 6) if limit_usd > 0 else None
         remaining = None
@@ -260,7 +268,7 @@ def _pool_row(*, profile: Mapping[str, Any], scope: str, pool: str, label: str,
         "consumed_fraction": consumed_fraction,
         "calls": consumption["calls"],
         "valued_complete": complete,
-        "lower_bound": not complete,
+        "lower_bound": not reliable,
         "coverage": {
             "baseline_at": mem._iso(baseline_at),
             "baseline_covers_cycle": (baseline_at is not None
@@ -269,17 +277,22 @@ def _pool_row(*, profile: Mapping[str, Any], scope: str, pool: str, label: str,
             "gap_tokens": recon.get("gap_tokens"),
         },
     }
+    if not coverage_ok:
+        notes = ["Recording coverage for this cycle is incomplete, so consumption "
+                 "may be understated: reassuring verdicts and exact remaining "
+                 "figures are withheld."]
+    else:
+        notes = []
     if limit_usd is None:
         entry["verdict"] = "unknown"
         entry["verdict_basis"] = "none"
-        notes = ["Prepaid wallet: observed spend only — the wallet balance is "
-                 "unknown because top-ups are not tracked."]
+        notes.append("Prepaid wallet: observed spend only — the wallet balance is "
+                     "unknown because top-ups are not tracked.")
     else:
         entry["verdict"] = verdict(consumed_fraction, span["elapsed_fraction"],
-                                   lower_bound=not complete)
-        entry["verdict_basis"] = ("observed_vs_calendar_lower_bound" if not complete
+                                   lower_bound=not reliable)
+        entry["verdict_basis"] = ("observed_vs_calendar_lower_bound" if not reliable
                                   else "observed_vs_calendar")
-        notes = []
         if not complete:
             notes.append(f"{consumption['unvalued_tokens']} tokens "
                          f"({consumption['unvalued_calls']} calls) in this cycle have no "
@@ -380,7 +393,11 @@ def _window_entry(*, row: Mapping[str, Any], window_def: Mapping[str, Any] | Non
         notes.append("No usable cycle is known for this allowance; no pace verdict is made.")
     bases = row.get("basis") or []
     used = row.get("used_percent")
+    # A manual mark on a window the provider never quantified synthesises
+    # 100% while retaining the provider basis; that is the owner's claim,
+    # never provider evidence.
     provider_percent = (float(used) if "provider_reported" in bases
+                        and row.get("used_percent_from") != "manual"
                         and isinstance(used, (int, float)) else None)
     manual = row.get("manual") if isinstance(row.get("manual"), dict) else None
     manual_status = (manual or {}).get("status")

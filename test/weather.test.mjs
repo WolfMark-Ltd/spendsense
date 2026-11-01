@@ -148,3 +148,21 @@ test('needsAttention flags weather pace without duplicating quota flags', () => 
   // Without weather the same account raises nothing new.
   assert.deepEqual(S.needsAttention([{ ...account, plan_id: 'p', fee: { basis: 'declared' } }]), [])
 })
+
+test('needsAttention keeps weather warnings for every arrangement', () => {
+  const weather = new Map([
+    ['prepaid', { windows: [], rules: [{ label: 'wallet · cap', used_usd: 11, verdict: 'exhausted' }] }],
+    ['api', { windows: [{ label: 'Monthly credit', verdict: 'ahead' }], rules: [] }],
+    ['new', { windows: [], rules: [{ label: 'cap · shared', used_usd: 9, verdict: 'ahead' }] }],
+  ])
+  const items = S.needsAttention([
+    { id: 'prepaid', label: 'P', quota: {}, effective_arrangement: 'prepaid' },
+    { id: 'api', label: 'A', quota: {}, effective_arrangement: 'api_only' },
+    { id: 'new', label: 'N', quota: {}, effective_arrangement: 'unconfirmed' },
+  ], weather)
+  const texts = items.map(item => item.text)
+  assert.ok(texts.includes('wallet · cap: reached its allowance.'))
+  assert.ok(texts.includes('Monthly credit: ahead of pace.'))
+  assert.ok(texts.includes('cap · shared: ahead of pace.'))
+  assert.ok(texts.includes('Billing arrangement not confirmed.'))
+})
