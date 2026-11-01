@@ -196,6 +196,9 @@ class MixedArrangementRegressions(unittest.TestCase):
         self.assertAlmostEqual(report["evidence"]["incremental_cash"]["usd"], 2.00)
         self.assertAlmostEqual(report["api_equivalent_usd"], 2.30)
         self.assertEqual(report["by_kind"]["unknown"]["calls"], 1)
+        # The unknown-kind row contributes a forced zero, so the $2.00
+        # subtotal is only a lower bound: the basis must say unknown.
+        self.assertEqual(report["evidence"]["incremental_cash"]["basis"], "unknown")
 
     def test_payg_usage_is_not_membership_credit(self):
         report = billing.classify([self.row("direct", "m", 2.00, "a")], self.mixed())

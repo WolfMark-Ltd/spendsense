@@ -482,8 +482,10 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                                  "basis": "inferred" if credits else "none",
                                  "source": "profile membership assumption, not provider-confirmed deduction"},
             "incremental_cash": {"usd": final_incremental if profile_configured else None,
-                                 "basis": ("inferred" if final_incremental else
-                                           ("unknown" if unknown_seen else "none")),
+                                 # Unknown-kind rows contribute a forced zero, so any
+                                 # subtotal alongside them is only a lower bound.
+                                 "basis": ("unknown" if unknown_seen else
+                                           ("inferred" if final_incremental else "none")),
                                  "source": "profile allowance/overage assumption, not provider-confirmed"},
             "subscription_fee": {"usd": round(sum(fees.values()), 6) if fees else None,
                                  "basis": "profile" if fees else "none",
