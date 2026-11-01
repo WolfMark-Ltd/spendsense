@@ -140,6 +140,42 @@ class ApiTests(unittest.TestCase):
                     self.assertNotIn("private implementation detail", response.text)
                     self.assertNotIn("Traceback", response.text)
 
+    def test_weather_returns_report_shape(self):
+        fixture = {"ok": True, "generated_at": "2026-10-31T12:00:00Z",
+                   "accounts": [{"account_id": "a", "rollup": {"state": "behind"}}],
+                   "unlinked_rules": []}
+        with patch.object(plugin_api.allowance_weather, "build_weather_report",
+                          return_value=fixture) as builder:
+            response = self.client.get("/api/plugins/spend-sense/allowance/weather")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["accounts"][0]["rollup"]["state"], "behind")
+        builder.assert_called_once_with(native=False)
+
+    def test_weather_native_flag_is_forwarded(self):
+        with patch.object(plugin_api.allowance_weather, "build_weather_report",
+                          return_value={"ok": True}) as builder:
+            response = self.client.get("/api/plugins/spend-sense/allowance/weather",
+                                       params={"native": True})
+        self.assertEqual(response.status_code, 200)
+        builder.assert_called_once_with(native=True)
+
+    def test_weather_failures_return_safe_error_responses(self):
+        from wolfmark_ledger.membership_store import StoreUnreadable
+
+        with TestClient(self.client.app, raise_server_exceptions=False) as client:
+            with patch.object(plugin_api.allowance_weather, "build_weather_report",
+                              side_effect=StoreUnreadable("membership store unreadable: boom")):
+                response = client.get("/api/plugins/spend-sense/allowance/weather")
+                self.assertEqual(response.status_code, 503)
+                self.assertIn("store_unreadable", response.json()["detail"])
+            with patch.object(plugin_api.allowance_weather, "build_weather_report",
+                              side_effect=RuntimeError("private implementation detail")), \
+                 self.assertLogs(plugin_api.log, level="ERROR"):
+                response = client.get("/api/plugins/spend-sense/allowance/weather")
+                self.assertEqual(response.status_code, 500)
+                self.assertNotIn("private implementation detail", response.text)
+                self.assertNotIn("Traceback", response.text)
+
     def test_health_never_raises(self):
         response = self.client.get("/api/plugins/spend-sense/health")
         self.assertEqual(response.status_code, 200)

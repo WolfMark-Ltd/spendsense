@@ -1060,6 +1060,106 @@ test('Costs explains pending membership data instead of showing an empty total',
   assert.match(container.textContent, /No saved memberships yet/)
 })
 
+test('a rule save refreshes dependents even when the draft moves mid-write', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const identity = T.membershipIdentityNow()
+  T.$billingDraft.set(null)
+  T.$billingNotice.set(null)
+  queryClient.setQueryData([plugin.id, 'economics-summary', identity], { identity })
+  queryClient.setQueryData([plugin.id, 'allowance-weather', identity], { identity })
+  const draft = { id: 'cap', kind: 'api', provider: 'test', model: '', monthly_fee_usd: '',
+    allowance_usd: '10', allowance_model: '', cycle_day: 1, overage_paid: false,
+    rate_input: '', rate_output: '', rate_cache: '', label: '',
+    effective_from: '', effective_to: '', origin: identity,
+    original_allowance_model: '', original_scalar_allowance: '' }
+  T.$billingDraft.set(draft)
+  const releaseWrite = deferred()
+  transportCtl.respond(call => {
+    if (call.method === 'PUT' && call.path.startsWith('/billing/profiles/')) {
+      // The user keeps editing while the write is pending.
+      T.$billingDraft.set({ ...draft, allowance_usd: '20' })
+      return releaseWrite.promise
+    }
+    return { ok: true, profiles: [] }
+  })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.AdvancedBillingRules))))
+  await flush(2)
+  const form = container.querySelector('form.wm-custom-form')
+  assert.ok(form, 'the edit form renders for the draft')
+  await React.act(async () => {
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }))
+  })
+  await flush(2)
+  assert.equal(T.$billingDraft.get().allowance_usd, '20', 'the draft moved while the write was pending')
+  await React.act(async () => { releaseWrite.resolve({ ok: true, profiles: [] }) })
+  await flush(4)
+  try {
+    // The backend write landed, so both dependents refresh despite the moved draft.
+    assert.equal(queryClient.getQueryState([plugin.id, 'economics-summary', identity])?.isInvalidated, true)
+    assert.equal(queryClient.getQueryState([plugin.id, 'allowance-weather', identity])?.isInvalidated, true)
+    // The draft check still protects UI state: no Saved notice, no cleared draft.
+    assert.equal(T.$billingDraft.get().allowance_usd, '20')
+    assert.equal(T.$billingNotice.get(), null)
+  } finally {
+    T.$billingDraft.set(null)
+    T.$billingNotice.set(null)
+  }
+})
+
+test('a rule save refreshes dependents even when the connection switches mid-write', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const identity = T.membershipIdentityNow()
+  T.$billingDraft.set(null)
+  T.$billingNotice.set(null)
+  queryClient.setQueryData([plugin.id, 'economics-summary', identity], { identity })
+  queryClient.setQueryData([plugin.id, 'allowance-weather', identity], { identity })
+  const draft = { id: 'cap', kind: 'api', provider: 'test', model: '', monthly_fee_usd: '',
+    allowance_usd: '10', allowance_model: '', cycle_day: 1, overage_paid: false,
+    rate_input: '', rate_output: '', rate_cache: '', label: '',
+    effective_from: '', effective_to: '', origin: identity,
+    original_allowance_model: '', original_scalar_allowance: '' }
+  T.$billingDraft.set(draft)
+  const releaseWrite = deferred()
+  transportCtl.respond(call => {
+    if (call.method === 'PUT' && call.path.startsWith('/billing/profiles/')) {
+      // The connection switches while the write is pending.
+      $testConnectionId.set('gateway-b')
+      return releaseWrite.promise
+    }
+    return { ok: true, profiles: [] }
+  })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.AdvancedBillingRules))))
+  await flush(2)
+  const form = container.querySelector('form.wm-custom-form')
+  assert.ok(form, 'the edit form renders for the draft')
+  await React.act(async () => {
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }))
+  })
+  await flush(2)
+  await React.act(async () => { releaseWrite.resolve({ ok: true, profiles: [] }) })
+  await flush(4)
+  try {
+    // The write landed for the captured identity, so its dependents refresh.
+    assert.equal(queryClient.getQueryState([plugin.id, 'economics-summary', identity])?.isInvalidated, true)
+    assert.equal(queryClient.getQueryState([plugin.id, 'allowance-weather', identity])?.isInvalidated, true)
+    // The identity check still protects UI state on the new connection.
+    assert.equal(T.$billingDraft.get().allowance_usd, '10')
+    assert.equal(T.$billingNotice.get(), null)
+  } finally {
+    $testConnectionId.set('gateway-a')
+    T.$billingDraft.set(null)
+    T.$billingNotice.set(null)
+  }
+})
+
 test('Overview renders its settled Desktop cost summary without a React render error', async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')

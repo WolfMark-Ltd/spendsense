@@ -2716,6 +2716,20 @@ async function invalidateEconomicsFor(identity) {
   }
 }
 
+async function invalidateWeatherFor(identity) {
+  try {
+    await queryClient.invalidateQueries({ queryKey: [ID, 'allowance-weather', identity] })
+  } catch {
+    /* the cached verdicts simply stay until their stale time elapses */
+  }
+}
+
+/** Billing profiles feed the economics comparison and the weather pools alike. */
+async function invalidateBillingDependentsFor(identity) {
+  await invalidateEconomicsFor(identity)
+  await invalidateWeatherFor(identity)
+}
+
 /** Transport markers that must never reach the user verbatim. The numeric arm matches HTTP statuses (400-599) only, so validation details mentioning ordinary values such as 255 characters still pass through. */
 const FX_TRANSPORT = /\b[45]\d{2}\b|timeout|timed out|network|failed to fetch|fetch failed|connection|econn|socket|abort/i
 
@@ -2854,7 +2868,12 @@ function AdvancedBillingRules() {
     const captured = draft.origin
     try {
       await billingWrite('PUT', `/billing/profiles/${encodeURIComponent(draft.id)}`, profilePayload(draft))
-      if (!membershipIdentityCurrent(captured) || $billingDraft.get() !== draft) return
+      // Dependents are identity-scoped: the write landed, so they refresh even
+      // when the draft moved on — or the connection switched — while it was
+      // pending. The checks below protect UI updates only.
+      await invalidateBillingDependentsFor(captured)
+      if (!membershipIdentityCurrent(captured)) return
+      if ($billingDraft.get() !== draft) return
       $billingNotice.set({ tone: 'good', origin: captured, text: 'Saved. Recorded usage was not changed.' })
       $billingDraft.set(null)
       await profilesQuery.refetch?.()
@@ -2867,6 +2886,9 @@ function AdvancedBillingRules() {
     if (!membershipIdentityCurrent(captured)) return
     try {
       await billingWrite('DELETE', `/billing/profiles/${encodeURIComponent(profile.id)}`)
+      // The write landed, so identity-scoped dependents refresh even when the
+      // connection switched while it was pending; the check below guards UI only.
+      await invalidateBillingDependentsFor(captured)
       if (!membershipIdentityCurrent(captured)) return
       $billingNotice.set({ tone: 'good', origin: captured, text: 'Removed. Recorded usage was not changed.' })
       await profilesQuery.refetch?.()
@@ -3728,6 +3750,7 @@ function SettingsPage() {
       await queryClient.invalidateQueries({ queryKey: [ID, 'membership-accounts', captured] })
       await queryClient.invalidateQueries({ queryKey: [ID, 'billing-profiles', captured] })
       await invalidateEconomicsFor(captured)
+      await invalidateWeatherFor(captured)
       $modelRefreshState.set({ origin: captured, tone: 'good',
         text: 'Memberships and advanced billing rules were cleared for this profile. Captured usage records were retained.' })
     } catch (error) {
@@ -4460,6 +4483,23 @@ function membershipPlansQuery(identity = membershipIdentityNow(),
   }
 }
 
+function weatherQuery(identity = membershipIdentityNow(), native = false) {
+  return {
+    queryKey: [ID, 'allowance-weather', identity, native ? 'native' : 'stored'],
+    queryFn: async () => {
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      if (typeof rest !== 'function') throw new Error('This desktop build has no plugin backend bridge.')
+      const result = await rest(`/allowance/weather${native ? '?native=true' : ''}`)
+      if (!result || result.ok === false) throw new Error(result?.error || 'Allowance weather is unavailable.')
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      return { ...result, identity }
+    },
+    retry: false, staleTime: 30_000,
+    // Stored readings poll like analytics; provider reads stay explicit.
+    refetchInterval: native ? false : 60_000
+  }
+}
+
 /** ctx.rest takes `body` as a value; the main process serialises it. */
 async function membershipWrite(method, path, body, transport = rest) {
   if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
@@ -4604,8 +4644,144 @@ function fmtCountdown(value, now = Date.now()) {
   return target >= now ? `in ${span}` : `${span} ago`
 }
 
+/** Short human label for a weather verdict; anything unknown stays unknown. */
+function wxVerdictLabel(t, verdict) {
+  switch (verdict) {
+    case 'ahead': return t('wxAhead')
+    case 'on_track': return t('wxOnTrack')
+    case 'behind': return t('wxBehind')
+    case 'exhausted': return t('wxExhausted')
+    default: return t('wxUnknown')
+  }
+}
+
+/** Declared limit from the backend's structured fields, never its English text. */
+function wxLimitLabel(t, declared) {
+  const kind = declared?.kind || 'unknown'
+  if (kind === 'amount' && declared.currency) {
+    const money = fmtMoney(declared.amount, declared.currency)
+    return money ? `${money} ${t('wxAllowance')}` : t('wxLimitUnknown')
+  }
+  if (kind === 'amount' && declared.amount !== null && declared.amount !== undefined) {
+    return `${declared.amount} ${t('wxAllowance')}`
+  }
+  if (kind === 'credits') return t('wxCredits', declared.amount)
+  if (kind === 'percent') return t('wxPercentLimit')
+  return t('wxLimitUnknown')
+}
+
+/** One line for a cycle position; a missing cycle is no position, not zero. */
+function wxCycleSummary(t, cycle) {
+  if (!cycle || cycle.days_remaining_display === null || cycle.days_remaining_display === undefined) {
+    return t('wxNoCycle')
+  }
+  const elapsed = cycle.elapsed_fraction === null || cycle.elapsed_fraction === undefined
+    || !Number.isFinite(Number(cycle.elapsed_fraction))
+    ? null : Math.round(Number(cycle.elapsed_fraction) * 100)
+  return `${t('wxDaysLeft', cycle.days_remaining_display)}` +
+    (elapsed === null ? '' : ` · ${t('wxElapsed', elapsed)}`)
+}
+
+/** One line for a provider-window row: readings, never invented consumption. */
+function wxWindowRow(t, window) {
+  const parts = [wxLimitLabel(t, window.declared)]
+  const provider = window.provider || null
+  const share = provider && provider.used_percent !== null && provider.used_percent !== undefined &&
+    Number.isFinite(Number(provider.used_percent)) ? Math.round(Number(provider.used_percent)) : null
+  if (share !== null) parts.push(t('wxProviderShare', share))
+  if (provider && provider.state === 'stale') parts.push(t('wxStaleReading'))
+  if (provider && provider.reset_at) parts.push(t('wxProviderReset', fmtDay(provider.reset_at)))
+  if (window.manual) parts.push(t('wxManualMark'))
+  parts.push(wxVerdictLabel(t, window.verdict))
+  return `${window.label || window.id}: ${parts.join(' · ')}`
+}
+
+/** One line for a cost-rule pool: rule-basis figures with their caveats. */
+function wxRuleRow(t, rule) {
+  const used = fmtMoney(rule.used_usd, 'USD')
+  if (rule.limit_usd === null || rule.limit_usd === undefined) {
+    return `${rule.label}: ${t('wxObservedSpend', used || '—')}`
+  }
+  const parts = [t('wxUsedOf', used || '—', fmtMoney(rule.limit_usd, 'USD') || '—')]
+  if (rule.consumed_fraction !== null && rule.consumed_fraction !== undefined &&
+      Number.isFinite(Number(rule.consumed_fraction))) {
+    parts.push(`${Math.round(Number(rule.consumed_fraction) * 100)}%`)
+  }
+  if (rule.lower_bound) parts.push(t('wxLowerBound'))
+  if (rule.pace_usd_per_day !== null && rule.pace_usd_per_day !== undefined) {
+    parts.push(t('wxPace', fmtMoney(rule.pace_usd_per_day, 'USD') || '—'))
+  }
+  if (rule.projected_exhaustion) {
+    parts.push(t('wxProjection', fmtDay(rule.projected_exhaustion)))
+  } else if (rule.forecast_status === 'unavailable') {
+    parts.push(t('wxNoForecast'))
+  }
+  parts.push(wxVerdictLabel(t, rule.verdict))
+  return `${rule.label}: ${parts.join(' · ')}`
+}
+
+const WEATHER_CSS = `
+.wm-weather{border-top:1px solid var(--ui-stroke-secondary);padding-top:8px;display:grid;gap:6px}
+.wm-weather-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}
+.wm-weather-head strong{font-size:12px;font-weight:600}
+.wm-weather-dot{width:8px;height:8px;border-radius:50%;background:var(--ui-text-tertiary);flex:none}
+.wm-weather[data-verdict="exhausted"] .wm-weather-dot{background:var(--ui-warning)}
+.wm-weather[data-verdict="ahead"] .wm-weather-dot{background:var(--ui-accent)}
+.wm-weather[data-verdict="on_track"] .wm-weather-dot{background:var(--ui-success,#3fb950)}
+.wm-weather[data-verdict="behind"] .wm-weather-dot{background:var(--ui-text-secondary)}
+.wm-weather-verdict{font-weight:600;font-size:12px}
+.wm-weather[data-verdict="exhausted"] .wm-weather-verdict,.wm-weather[data-verdict="ahead"] .wm-weather-verdict{color:var(--ui-warning)}
+.wm-weather[data-verdict="on_track"] .wm-weather-verdict{color:var(--ui-success,#3fb950)}
+.wm-weather-details{font-size:11.5px;color:var(--ui-text-secondary)}
+.wm-weather-details ul{margin:6px 0 0;padding-left:16px;display:grid;gap:3px}
+.wm-weather-details ul.wm-weather-subnotes{margin:4px 0 2px;padding-left:16px;display:grid;gap:2px;font-size:11px;color:var(--ui-text-tertiary)}
+.wm-weather-notes{margin:0;padding-left:16px;display:grid;gap:3px;font-size:11.5px;color:var(--ui-text-secondary)}
+`
+
+/** Compact allowance-weather indicator for one membership card. */
+function AllowanceWeather({ entry, error }) {
+  const t = usePluginI18n(ID)
+  if (!entry && !error) return null
+  if (!entry) {
+    return jsx('p', { className: 'wm-note', role: 'status', children: t('wxUnavailable') })
+  }
+  // A failed refetch keeps the previous entry: show it, but never as current.
+  const stale = !!error
+  const rollup = entry.rollup?.state || 'unknown'
+  const windows = Array.isArray(entry.windows) ? entry.windows : []
+  const rules = Array.isArray(entry.rules) ? entry.rules : []
+  const notes = Array.isArray(entry.notes) ? entry.notes : []
+  const rowNotes = row => Array.isArray(row.notes) ? row.notes.filter(note => note) : []
+  const rows = [
+    ...windows.map(window => ({ summary: wxWindowRow(t, window), notes: rowNotes(window) })),
+    ...rules.map(rule => ({ summary: wxRuleRow(t, rule), notes: rowNotes(rule) })),
+  ]
+  return jsxs('section', { className: 'wm-weather', 'data-verdict': rollup,
+    'aria-label': t('wxTitle'), children: [
+      jsxs('div', { className: 'wm-weather-head', children: [
+        jsx('span', { className: 'wm-weather-dot', 'aria-hidden': 'true' }),
+        jsx('strong', { children: t('wxTitle') }),
+        jsx('span', { className: 'wm-weather-verdict', children: wxVerdictLabel(t, rollup) }),
+        jsx('span', { className: 'wm-note', children: wxCycleSummary(t, entry.cycle) }),
+      ] }),
+      stale ? jsx('p', { className: 'wm-note', role: 'status', children: t('wxStale') }) : null,
+      rows.length ? jsxs('details', { className: 'wm-weather-details', children: [
+        jsx('summary', { children: t('wxDetails') }),
+        jsxs('ul', { children: rows.map((row, index) => row.notes.length
+          ? jsxs('li', { children: [
+              row.summary,
+              jsxs('ul', { className: 'wm-weather-subnotes',
+                children: row.notes.map((note, noteIndex) => jsx('li', { children: note }, `n${noteIndex}`)) }),
+            ] }, index)
+          : jsx('li', { children: row.summary }, index)) }),
+      ] }) : null,
+      notes.length ? jsxs('ul', { className: 'wm-weather-notes',
+        children: notes.map((note, index) => jsx('li', { children: note }, index)) }) : null,
+    ] })
+}
+
 /** Everything the owner should look at, most urgent first. */
-function needsAttention(accounts) {
+function needsAttention(accounts, weatherById) {
   const out = []
   for (const account of accounts) {
     const quota = account.quota || {}
@@ -4618,6 +4794,19 @@ function needsAttention(accounts) {
     for (const row of quotaRows(account)) {
       if (row.manual && row.manual.status === 'reconfirm_due') {
         out.push({ account, tone: 'info', text: `${row.label}: no reliable reset time — please confirm or clear.` })
+      }
+    }
+    // Before the arrangement exits: rule pools link by route whatever the
+    // arrangement, so prepaid, API-only and unconfirmed accounts keep theirs.
+    const weather = weatherById?.get?.(account.id)
+    if (weather) {
+      for (const row of [...(weather.windows || []), ...(weather.rules || [])]) {
+        if (row.verdict === 'ahead') {
+          out.push({ account, tone: 'info', text: `${row.label}: ahead of pace.` })
+        } else if (row.used_usd !== undefined && row.verdict === 'exhausted') {
+          // Rule pools only: window exhaustion already surfaces through the quota flags above.
+          out.push({ account, tone: 'info', text: `${row.label}: reached its allowance.` })
+        }
       }
     }
     if (account.effective_arrangement === 'api_only' || account.effective_arrangement === 'prepaid') continue
@@ -4874,7 +5063,7 @@ function accountHolderMarked(account) {
     entry && entry.scope && entry.scope.kind === 'account' && entry.state !== 'cleared')
 }
 
-function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalogue, notice }) {
+function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError }) {
   const identity = useValue($membershipIdentity)
   const now = useValue($membershipClock)
   const rawPlanDraft = useValue($customPlanDraft)
@@ -5120,6 +5309,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
             onClick: () => openExhaustion(ACCOUNT_SCOPE, 'Account'),
             children: 'Mark account exhausted' })
         ] }),
+    jsx(AllowanceWeather, { entry: weather || null, error: !!weatherError }),
     rows.length && !accountHolderMarked(account)
       ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'exhaust-account-footer',
           disabled: !!busy,
@@ -5154,6 +5344,7 @@ function MembershipsPage() {
   const native = useValue($membershipNative)
   const attentionOnly = useValue($membershipAttentionOnly)
   const accounts = useQuery(membershipQuery(native, identity))
+  const weather = useQuery(weatherQuery(identity, native))
   const rawDraft = useValue($membershipDraft)
   const rawNotice = useValue($membershipNotice)
   const rawBusy = useValue($membershipBusy)
@@ -5203,7 +5394,11 @@ function MembershipsPage() {
 
   const list = current ? membershipAccounts(current) : []
   const accountsReady = !!current
-  const attention = needsAttention(list)
+  const weatherCurrent = weather.data?.identity === identity && membershipIdentityCurrent(identity)
+  const weatherById = new Map(
+    ((weatherCurrent ? weather.data.accounts : []) || []).map(entry => [entry.account_id, entry]))
+  const weatherError = !!(weather.error && membershipIdentityCurrent(identity))
+  const attention = needsAttention(list, weatherById)
   const attentionIds = new Set(attention.map(item => item.account.id))
   const displayed = attentionOnly ? list.filter(account => attentionIds.has(account.id)) : list
   const jumpToAccount = account => {
@@ -5264,6 +5459,7 @@ function MembershipsPage() {
           `Saved, but the list could not be re-read. ${membershipErrorText(readError, 'read')}`, operation)
       }
       await invalidateEconomicsFor(captured)
+      await invalidateWeatherFor(captured)
       return { ok: membershipOperationCurrent(captured, operation), identity: captured }
     } catch (error) {
       setMembershipNotice(captured, 'warn', membershipErrorText(error, 'write'), operation, key)
@@ -5381,6 +5577,7 @@ function MembershipsPage() {
           `${summary} The refreshed list could not be read. ${membershipErrorText(readError, 'read')}`, operation)
       }
       await invalidateEconomicsFor(captured)
+      await invalidateWeatherFor(captured)
     } catch (error) {
       setMembershipNotice(captured, 'warn', membershipErrorText(error, 'discover'), operation)
     } finally {
@@ -5407,6 +5604,7 @@ function MembershipsPage() {
       $membershipNative.set(true)
       $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
                                 store: payload.store, notes: payload.notes })
+      await invalidateWeatherFor(captured)
       setMembershipNotice(captured, 'good', 'Readings refreshed from Hermes.', operation)
     } catch (error) {
       setMembershipNotice(captured, 'warn', membershipErrorText(error, 'refresh'), operation)
@@ -5442,7 +5640,7 @@ function MembershipsPage() {
   }
 
   return jsxs('div', { className: 'wm-analytics wm-product', children: [
-    jsxs('style', { children: [ANALYTICS_CSS, PRODUCT_CSS, MEMBERSHIP_CSS] }),
+    jsxs('style', { children: [ANALYTICS_CSS, PRODUCT_CSS, MEMBERSHIP_CSS, WEATHER_CSS] }),
     jsxs('div', { className: 'wm-shell wm-memberships', children: [
       jsx(LedgerTabs, {}),
       jsxs('div', { className: 'wm-controls', children: [
@@ -5507,7 +5705,8 @@ function MembershipsPage() {
             ? displayed.map(account => jsx(MembershipCard, {
                 account,
                 plans: accountPlanChoices(account),
-                busy, onAction, draft, saveFee, catalogue, notice
+                busy, onAction, draft, saveFee, catalogue, notice,
+                weather: weatherById.get(account.id) || null, weatherError
               }, account.id))
             : [jsx('p', { className: 'wm-empty', children: accounts.error
                 ? 'Memberships could not be read for this connection.'
@@ -5811,6 +6010,33 @@ const I18N = {
     econOverviewReading: 'Reading subscription economics…',
     econOverviewNone: 'No comparison is available. See Costs.',
     econOverviewSmall: (f, w, s, u) => `${f} · ${w} ${s} · ${u} usage. See Costs.`,
+    // Allowance weather.
+    wxTitle: 'Allowance weather',
+    wxAhead: 'Ahead of pace',
+    wxOnTrack: 'On track',
+    wxBehind: 'Behind pace',
+    wxExhausted: 'Exhausted',
+    wxUnknown: 'Unknown',
+    wxDaysLeft: n => n === 1 ? '1 day left in cycle' : `${n} days left in cycle`,
+    wxElapsed: pct => `${pct}% of cycle elapsed`,
+    wxNoCycle: 'No cycle position',
+    wxProviderShare: pct => `Provider reports ${pct}% used`,
+    wxStaleReading: 'Provider reading is stale',
+    wxProviderReset: d => `Provider reset ${d}`,
+    wxManualMark: 'You reported this exhausted',
+    wxAllowance: 'allowance',
+    wxCredits: n => `${n} credits`,
+    wxPercentLimit: 'share of provider limit',
+    wxLimitUnknown: 'Limit unknown',
+    wxUsedOf: (used, limit) => `${used} of ${limit} used`,
+    wxObservedSpend: used => `${used} observed spend`,
+    wxLowerBound: 'lower bound',
+    wxPace: pace => `${pace}/day`,
+    wxProjection: d => `At this pace, exhausted around ${d}`,
+    wxNoForecast: 'No forecast — see details',
+    wxDetails: 'Details',
+    wxUnavailable: 'Allowance weather is unavailable for this connection.',
+    wxStale: 'Refresh failed — showing the last read.',
     fxReading: 'Reading saved FX rates for this connection…',
     fxRetry: 'Retry',
     fxRateLine: (c, u, d, s) => `${c} at ${u} USD per unit, dated ${d} (${s})`,
@@ -6059,6 +6285,33 @@ const I18N = {
     econOverviewReading: '正在读取订阅经济分析…',
     econOverviewNone: '无可用的比较。请查看“费用”。',
     econOverviewSmall: (f, w, s, u) => `${f} · ${w} ${s} · 用量 ${u}。请查看“费用”。`,
+    // 额度动态。
+    wxTitle: '额度动态',
+    wxAhead: '消耗偏快',
+    wxOnTrack: '正常',
+    wxBehind: '消耗偏慢',
+    wxExhausted: '已用完',
+    wxUnknown: '未知',
+    wxDaysLeft: n => `本周期还剩 ${n} 天`,
+    wxElapsed: pct => `周期已过 ${pct}%`,
+    wxNoCycle: '无周期位置',
+    wxProviderShare: pct => `提供方报告已用 ${pct}%`,
+    wxStaleReading: '提供方读数已过期',
+    wxProviderReset: d => `提供方重置 ${d}`,
+    wxManualMark: '你已报告用完',
+    wxAllowance: '额度',
+    wxCredits: n => `${n} 点数`,
+    wxPercentLimit: '提供方限额占比',
+    wxLimitUnknown: '限额未知',
+    wxUsedOf: (used, limit) => `已用 ${used} / ${limit}`,
+    wxObservedSpend: used => `观察到支出 ${used}`,
+    wxLowerBound: '下限',
+    wxPace: pace => `${pace}/天`,
+    wxProjection: d => `按当前速度，预计 ${d} 用完`,
+    wxNoForecast: '无预测——见详情',
+    wxDetails: '详情',
+    wxUnavailable: '此连接无法读取额度动态。',
+    wxStale: '刷新失败——显示上次读取的数据。',
     fxReading: '正在读取此连接已保存的外汇汇率…',
     fxRetry: '重试',
     fxRateLine: (c, u, d, s) => `${c}：${u} 美元/单位，日期 ${d}（${s}）`,
@@ -6289,9 +6542,12 @@ export const __test = {
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,
   OVERRIDE_REASON_FALLBACK, REASON_LABELS, restoreCatalogueFee, MembershipsPage, MembershipCard, MEMBERSHIP_CSS,
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
-  billingNumberStep,
+  billingNumberStep, $billingDraft, $billingNotice,
   economicsQuery, fxQuery, fxWrite, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
   econWindowLines, windowSpanLabel, invalidateEconomicsFor,
+  weatherQuery, invalidateWeatherFor, invalidateBillingDependentsFor,
+  wxVerdictLabel, wxLimitLabel, wxCycleSummary, wxWindowRow, wxRuleRow,
+  AllowanceWeather, WEATHER_CSS,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
