@@ -44,6 +44,25 @@ define('MouseEvent', dom.window.MouseEvent); define('KeyboardEvent', dom.window.
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const lib = await import(pathToFileURL(bundle).href)
 const { T, React, ReactDOMClient, QueryClientProvider, queryClient } = lib
+// Register with a benign transport so LedgerPage can mount its real pages.
+lib.plugin.register({
+  rest: async path => {
+    if (path.startsWith('/membership/accounts')) return { ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] }
+    if (path.startsWith('/membership/plans')) return { ok: true, plans: [], vocabulary: {} }
+    if (path.startsWith('/economics')) return { ok: true, headline: {}, accounts: [] }
+    if (path.startsWith('/allowance')) return { ok: true, accounts: [] }
+    if (path.startsWith('/analytics')) return { ok: true, totals: {}, rows: [], buckets: [] }
+    if (path.startsWith('/billing')) return { ok: true, billing: {}, profiles: [] }
+    if (path.startsWith('/rates')) return { ok: true, catalogue: { source: 'test' } }
+    return { ok: true, accounts: [], totals: {} }
+  },
+  storage: { get: (_k, d) => d, set() {}, delete() {} },
+  register() {}, registerMany() {}, onDispose() {}, onEvent: () => () => {},
+  setTimeout: fn => { const t = setTimeout(fn, 0); return () => clearTimeout(t) },
+  setInterval: () => () => {},
+  addEventListener: () => () => {},
+  os: {}, pet: null, i18n: { register() {}, t: key => key },
+})
 const roots = []
 after(async () => { for (const r of roots) await React.act(async () => r.unmount()) })
 const renderEl = async element => {
@@ -170,6 +189,44 @@ test('InfoTip: focus opens an accessible tooltip, Escape closes it', async () =>
   }); await flush()
   assert.equal(container.querySelector('.wm-info-pop'), null, 'Escape closes the tooltip')
   T.$infoOpen.set(null)
+})
+
+test('LedgerPage: keyboard navigation restores focus to the newly mounted selected tab', async () => {
+  // Regression: LedgerPage replaces the whole page (tab bar included) on a
+  // tab change. Focusing the outgoing tab lost focus to <body>, so a second
+  // arrow key went nowhere. This renders the real LedgerPage, not LedgerTabs
+  // in isolation.
+  T.$ledgerTab.set('overview')
+  const container = await renderEl(React.createElement(T.LedgerPage))
+  await flush(4)
+  const firstBar = container.querySelector('.wm-product-tabs')
+  assert.ok(firstBar, 'the ledger page mounts a tab bar')
+  const overviewTab = [...container.querySelectorAll('[role="tab"]')]
+    .find(el => el.textContent === 'Overview')
+  await React.act(async () => {
+    overviewTab.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+  }); await flush(4)
+  assert.equal(T.$ledgerTab.get(), 'usage')
+  assert.notEqual(container.querySelector('.wm-product-tabs'), firstBar,
+    'the page (and its tab bar) was actually replaced')
+  assert.equal(document.activeElement?.textContent, 'Usage',
+    'focus is restored to the newly mounted selected tab')
+  assert.equal(document.activeElement?.getAttribute('aria-selected'), 'true')
+
+  // A second arrow continues from the restored focus without re-tabbing.
+  await React.act(async () => {
+    document.activeElement.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+  }); await flush(4)
+  assert.equal(T.$ledgerTab.get(), 'costs')
+  assert.equal(document.activeElement?.textContent, 'Costs')
+
+  // Mouse navigation does not get focus forced by the keyboard path.
+  T.$ledgerTab.set('overview'); await flush(4)
+  const costsTab = [...container.querySelectorAll('[role="tab"]')]
+    .find(el => el.textContent === 'Costs')
+  await React.act(async () => costsTab.click()); await flush(4)
+  assert.equal(T.$ledgerTab.get(), 'costs')
+  assert.notEqual(document.activeElement?.textContent, 'Memberships')
 })
 
 test('membership fees are preserved per account; routes are never grouped or suppressed', () => {

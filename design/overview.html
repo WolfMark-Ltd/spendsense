@@ -149,6 +149,9 @@ details.method .body p{margin:6px 0}
   .presence .live-word{display:none}
   .section{scroll-margin-top:70px}
 }
+@container (max-width:560px){.info-pop{left:auto;right:-6px;width:min(230px,78vw)}}
+.tab:disabled{opacity:.5;cursor:not-allowed}
+.tab:disabled:hover{background:transparent;color:var(--ui-text-tertiary)}
 </style>
 </head>
 <body>
@@ -184,11 +187,11 @@ details.method .body p{margin:6px 0}
   <!-- C1: six-tab bar (fixed height, no jump) -->
   <nav class="tabbar" role="tablist" aria-label="Spend Sense">
     <button class="tab" role="tab" aria-selected="true" tabindex="0"><span class="n">01</span>Overview</button>
-    <button class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">02</span>Usage</button>
-    <button class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">03</span>Costs</button>
-    <button class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">04</span>Memberships</button>
-    <button class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">05</span>Reports</button>
-    <button class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">06</span>Settings &amp; About</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">02</span>Usage</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">03</span>Costs</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">04</span>Memberships</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">05</span>Reports</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">06</span>Settings &amp; About</button>
   </nav>
 
   <div>
@@ -246,7 +249,7 @@ details.method .body p{margin:6px 0}
       </div>
       <div data-state="available">
         <div class="figure">+$8.40 <small>covered</small></div>
-        <p class="prov vs">Usage value <b>$28.40</b> vs fees <b>$20.00</b> · USD subscriptions only (OpenAI)</p>
+        <p class="prov vs">Usage value <b>$28.40</b> (19 Apr – 18 May) vs declared fees <b>$20.00</b> · USD subscriptions only (OpenAI). Fee basis: one monthly declared fee allocated to this 30-day window (monthly-equivalent; no daily pro-rata).</p>
         <p class="prov">Not compared: Anthropic £160/mo (no GBP/USD rate supplied) · Nous fee unknown.</p>
       </div>
       <div data-state="unavailable" hidden>
@@ -344,33 +347,20 @@ document.querySelectorAll('.info-btn').forEach(function(btn){
 });
 document.addEventListener('keydown',function(e){ if(e.key==='Escape' && openTip) closeTip(true); });
 document.addEventListener('click',function(e){ if(openTip && !e.target.closest('.info')) closeTip(false); });
-// Attention actions: in production these switch tab + highlight the field.
+// Attention actions: this reference does not navigate. In production these
+// switch tab + highlight the field; here the button only states that, and
+// never claims a navigation happened.
 document.querySelectorAll('[data-jump]').forEach(function(b){
+  var original=b.textContent;
   b.addEventListener('click',function(){
-    b.textContent='Opening…'; b.disabled=true;
-    setTimeout(function(){ b.disabled=false; b.textContent='Opened in Memberships ✓';
-      setTimeout(function(){ b.textContent=b.getAttribute('data-jump')==='usage'?'View coverage':(b.getAttribute('data-jump')==='nous'?'Set fee':'Confirm arrangement'); },1600);
-    },450);
+    if(b.disabled) return;
+    b.disabled=true; b.textContent='Preview only — no navigation in this reference';
+    setTimeout(function(){ b.disabled=false; b.textContent=original; },1600);
   });
 });
-// Tab bar: roving tabindex + arrows/Home/End, matching production LedgerTabs
-var tabs=[...document.querySelectorAll('.tabbar .tab')];
-function selectTab(tab, focus){
-  tabs.forEach(function(x){ x.setAttribute('aria-selected','false'); x.tabIndex=-1; });
-  tab.setAttribute('aria-selected','true'); tab.tabIndex=0;
-  if(focus) tab.focus();
-}
-tabs.forEach(function(tab, i){
-  tab.addEventListener('click',function(){ selectTab(tab,false); });
-  tab.addEventListener('keydown',function(e){
-    var next=null;
-    if(e.key==='ArrowRight') next=tabs[(i+1)%tabs.length];
-    else if(e.key==='ArrowLeft') next=tabs[(i-1+tabs.length)%tabs.length];
-    else if(e.key==='Home') next=tabs[0];
-    else if(e.key==='End') next=tabs[tabs.length-1];
-    if(next){ e.preventDefault(); selectTab(next,true); }
-  });
-});
+// Reference tab bar: only the current screen exists in this file. Unavailable
+// tabs are disabled (non-interactive) rather than selectable with no panel;
+// production tab behaviour lives in desktop/plugin.js LedgerTabs.
 // Subscription-value card: preview the honest unavailable state
 var vBtn=document.getElementById('toggle-value-state');
 if(vBtn){

@@ -318,13 +318,13 @@ is converted.
 | Plans confirmed | 3 of 6 | Anthropic, OpenAI, Nous (Portal). Google prepaid and OpenRouter metered are excluded by definition; xAI has none |
 | Marked exhausted | 1 | OpenAI (manual mark, reconfirm due) |
 | Anthropic | Claude Max 20x, catalogue $200/mo; declared £160/mo, renews 12 Jun 2026 | Fee counted: £160/mo |
-| OpenAI (openai-codex) | ChatGPT Plus, catalogue $20/mo | Fee counted: $20/mo |
+| OpenAI (openai-codex) | ChatGPT Plus; declared $20/mo (synthetic). Catalogue price is also $20/mo and is kept separate | Fee counted: $20/mo **declared** (never the catalogue price) |
 | Nous | Nous Portal, catalogue unpriced | Fee: Unknown, excluded from totals (never $0) |
 | xAI (xai-oauth) | No plan confirmed (catalogue offers SuperGrok, unpriced) | Fee: Unknown |
 | Google | Prepaid credits | No recurring fee |
 | OpenRouter | Metered API (display label for API Only) | No recurring fee |
 | Declared fees total | £160/mo + $20/mo | By currency, never combined |
-| Subscription comparison (defensible subset) | Usage $28.40 vs fees $20.00 → +$8.40 covered, Partial | USD subscription accounts only (OpenAI), 19 Apr – 18 May |
+| Subscription comparison (defensible subset) | Usage $28.40 vs declared fees $20.00 → +$8.40 covered, Partial | USD subscription accounts only (OpenAI), usage 19 Apr – 18 May. **Fee-window basis: one monthly declared fee ($20) allocated to this 30-day window — a monthly-equivalent allocation, labelled on the card. No daily pro-rata is invented, and monthly totals are never mixed into the 30-day usage figure itself** |
 | Not compared | Anthropic £160/mo; Nous fee unknown | No GBP/USD rate supplied; fee unknown. Stated on the card, not hidden |
 | Route seen | `commandcode-anthropic` — owner not confirmed | No fee, not grouped under any account |
 | Needs attention | Memberships: 3 (xAI, Nous, OpenAI). Overview: 3 (xAI, Nous, plus unpriced-pricing) | Same count, different composition — Overview adds the pricing-coverage item, as production does |

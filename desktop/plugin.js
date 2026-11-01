@@ -2869,6 +2869,14 @@ function econFeeLines(t, fees) {
 const LEDGER_TABS = [['overview', 'Overview'], ['usage', 'Usage'], ['costs', 'Costs'],
   ['memberships', 'Memberships'], ['reports', 'Reports'], ['settings', 'Settings & About']]
 const $digestDays = atom(30)
+/**
+ * Set only by the tab bar's arrow/Home/End handler. LedgerPage replaces the
+ * whole page (including this tab bar) on every tab change, so focusing the
+ * outgoing tab loses focus to <body>; the newly mounted tab bar consumes
+ * this flag and restores focus to its selected tab. Mouse and hash-driven
+ * navigation never set it, so their focus behaviour is unchanged.
+ */
+let ledgerTabKeyboardNav = false
 function LedgerTabs() {
   const tab = useValue($ledgerTab)
   useEffect(() => {
@@ -2880,14 +2888,20 @@ function LedgerTabs() {
     window.addEventListener('hashchange', sync)
     return () => window.removeEventListener('hashchange', sync)
   }, [])
+  useEffect(() => {
+    if (!ledgerTabKeyboardNav) return
+    ledgerTabKeyboardNav = false
+    if (typeof document === 'undefined') return
+    document.querySelector('.wm-product-tabs [role="tab"][aria-selected="true"]')?.focus()
+  }, [tab])
   const onKeyDown = event => {
     if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return
     const index = LEDGER_TABS.findIndex(([id]) => id === tab)
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? LEDGER_TABS.length - 1
       : (index + (event.key === 'ArrowRight' ? 1 : -1) + LEDGER_TABS.length) % LEDGER_TABS.length
     event.preventDefault()
+    ledgerTabKeyboardNav = true
     goLedgerTab(LEDGER_TABS[next][0])
-    event.currentTarget.querySelectorAll('[role="tab"]')[next]?.focus()
   }
   return jsx('div', { className: 'wm-shell', style: { paddingBottom: 0 }, children:
     jsx('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': 'Spend Sense sections', onKeyDown, children:
@@ -6827,7 +6841,7 @@ export const __test = {
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
-  CostsPage, OverviewPage, SettingsPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark, PRODUCT_CSS,
+  CostsPage, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark, PRODUCT_CSS,
   SHARED_CSS, ProductHeader, AsyncButton,
   settledDesktopMonth, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,

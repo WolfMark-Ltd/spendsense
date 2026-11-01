@@ -160,6 +160,9 @@ button[aria-expanded="true"] .chev{transform:rotate(90deg)}
   .attention li{flex-wrap:wrap}.attention .btn{width:100%}
   .presence .live-word{display:none}
 }
+@container (max-width:560px){.info-pop{left:auto;right:-6px;width:min(230px,78vw)}}
+.tab:disabled{opacity:.5;cursor:not-allowed}
+.tab:disabled:hover{background:transparent;color:var(--ui-text-tertiary)}
 </style>
 </head>
 <body>
@@ -190,12 +193,12 @@ button[aria-expanded="true"] .chev{transform:rotate(90deg)}
   </div>
 
   <nav class="tabbar" role="tablist" aria-label="Spend Sense">
-    <button class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">01</span>Overview</button>
-    <button class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">02</span>Usage</button>
-    <button class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">03</span>Costs</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">01</span>Overview</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">02</span>Usage</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">03</span>Costs</button>
     <button class="tab" role="tab" aria-selected="true" tabindex="0"><span class="n">04</span>Memberships</button>
-    <button class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">05</span>Reports</button>
-    <button class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">06</span>Settings &amp; About</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">05</span>Reports</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">06</span>Settings &amp; About</button>
   </nav>
 
   <div>
@@ -310,7 +313,7 @@ button[aria-expanded="true"] .chev{transform:rotate(90deg)}
         <span class="avatar" aria-hidden="true">O</span>
         <div class="m-id"><strong>OpenAI · main</strong><span>Subscription · ChatGPT Plus</span></div>
         <div class="m-mid">
-          <span class="m-fee">$20 <small>/mo · catalogue</small></span>
+          <span class="m-fee">$20 <small>/mo · declared</small></span>
           <span class="chip" data-c="warn">Check reading</span>
           <button class="btn small" type="button" aria-expanded="false" aria-controls="body-openai" data-toggle="body-openai">Details <span class="chev" aria-hidden="true">›</span></button>
         </div>
@@ -328,9 +331,10 @@ button[aria-expanded="true"] .chev{transform:rotate(90deg)}
             <div class="grid2">
               <label class="field">Plan for this account
                 <select><option>ChatGPT Plus</option><option>ChatGPT Pro (5x)</option><option>ChatGPT Pro (20x)</option><option>ChatGPT Business</option><option>ChatGPT Go</option><option>ChatGPT Free</option><option>— clear selection —</option></select></label>
-              <label class="field">Effective fee
-                <input value="$20.00 / month · catalogue (USD)" disabled></label>
+              <label class="field">Effective fee (declared)
+                <input value="$20.00 / month · declared (USD)" disabled></label>
             </div>
+            <p class="help">Declared $20/mo — this is the counted fee. The catalogue price for ChatGPT Plus is also $20/mo; it is kept separate and is not what the totals count.</p>
           </div>
         </div>
         <div class="group">
@@ -658,24 +662,9 @@ document.querySelectorAll('.info-btn').forEach(function(btn){
 });
 document.addEventListener('keydown',function(e){ if(e.key==='Escape' && openTip) closeTip(true); });
 document.addEventListener('click',function(e){ if(openTip && !e.target.closest('.info')) closeTip(false); });
-// Tab bar: roving tabindex + arrows/Home/End, matching production LedgerTabs
-var tabs=[...document.querySelectorAll('.tabbar .tab')];
-function selectTab(tab, focus){
-  tabs.forEach(function(x){ x.setAttribute('aria-selected','false'); x.tabIndex=-1; });
-  tab.setAttribute('aria-selected','true'); tab.tabIndex=0;
-  if(focus) tab.focus();
-}
-tabs.forEach(function(tab, i){
-  tab.addEventListener('click',function(){ selectTab(tab,false); });
-  tab.addEventListener('keydown',function(e){
-    var next=null;
-    if(e.key==='ArrowRight') next=tabs[(i+1)%tabs.length];
-    else if(e.key==='ArrowLeft') next=tabs[(i-1+tabs.length)%tabs.length];
-    else if(e.key==='Home') next=tabs[0];
-    else if(e.key==='End') next=tabs[tabs.length-1];
-    if(next){ e.preventDefault(); selectTab(next,true); }
-  });
-});
+// Reference tab bar: only Memberships exists in this file. Unavailable tabs
+// are disabled in the markup (non-interactive) rather than selectable with
+// no panel; production tab behaviour lives in desktop/plugin.js LedgerTabs.
 readout();
 </script>
 </body>
