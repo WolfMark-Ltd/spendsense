@@ -457,6 +457,33 @@ class DigestReviewFixesTests(DigestCase):
         self.assertIn("(was ≥$2.00)", value_line)
         self.assertRegex(text, r"Calls [+-]")
 
+    def test_unknown_cash_basis_withholds_the_zero(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([{"id": "mystery", "provider": "test", "kind": "unknown"}])
+        self.create_events([
+            {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 1 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report()
+        spending = self.section(result, "spending")
+        by_label = {line["label"]: line["value"] for line in spending["lines"]}
+        # The call is priced and classified, yet its arrangement is unknown:
+        # a zero incremental subtotal is not a known zero.
+        self.assertEqual(by_label["Extra cash (incremental) spending"], "—")
+        self.assertTrue(any("matching cost rule" in note for note in spending["notes"]))
+        # Metered value is unaffected: the catalogue priced the call.
+        self.assertEqual(by_label["Metered (allowance) spending"], "$2.00")
+
+    def test_unknown_cash_basis_marks_a_positive_subtotal_a_lower_bound(self):
+        billing = {"metered_usd": 5.0, "excluded_out_of_cycle": 0,
+                   "unclassified_tokens": 0, "unclassified_calls": 0,
+                   "evidence": {"incremental_cash": {"usd": 1.5, "basis": "unknown"},
+                                "credits_consumed": {"usd": None}}}
+        section = D._spending_section(D.STRINGS["en"], "Last 7 days", billing, True, 5)
+        by_label = {line["label"]: line["value"] for line in section["lines"]}
+        self.assertEqual(by_label["Extra cash (incremental) spending"], "≥$1.50")
+        self.assertTrue(any("matching cost rule" in note for note in section["notes"]))
+
     def test_markdown_escapes_formatting_and_html_in_names(self):
         nasty = "a<b>*c_`d`[e]~f|g"
         self.write_store([account("test:default", "test", plan_id="test.plus")])

@@ -399,14 +399,25 @@ def _spending_section(S: Mapping[str, str], window_label: str,
             return S["unknown"]
         return f"≥{text}" if unvalued else text
 
+    def stated_cash(entry: Mapping[str, Any]) -> str:
+        # An unknown basis means some calls escaped judgment: a zero is not
+        # a known zero, and any positive subtotal is only a lower bound.
+        if entry.get("basis") != "unknown":
+            return stated(entry.get("usd"))
+        text = _money(entry.get("usd"))
+        if text is None or float(entry.get("usd") or 0) == 0:
+            return S["unknown"]
+        return f"≥{text}"
+
+    incremental = evidence.get("incremental_cash") or {}
     lines = [
         {"label": S["label_metered"], "value": stated(billing.get("metered_usd"))},
-        {"label": S["label_incremental"],
-         "value": stated((evidence.get("incremental_cash") or {}).get("usd"))},
+        {"label": S["label_incremental"], "value": stated_cash(incremental)},
         {"label": S["label_credits"],
          "value": stated((evidence.get("credits_consumed") or {}).get("usd"))},
     ]
-    if lines[1]["value"] == S["unknown"] and not unvalued:
+    if (lines[1]["value"] == S["unknown"]
+            or incremental.get("basis") == "unknown") and not unvalued:
         notes.append(S["note_cash_unknown"])
     if lines[2]["value"] == S["unknown"] and not unvalued:
         notes.append(S["note_credits_unknown"])
