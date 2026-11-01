@@ -61,6 +61,93 @@ class TempStore(unittest.TestCase):
         self.tmp.cleanup()
 
 
+class SavePayloadContract(TempStore):
+    """The GET → PUT round trip the Memberships UI performs on every edit.
+
+    The card echoes back the stored ``rev``; ``save_payload`` must accept that
+    revision, rotate it, and never persist a client-supplied value. A record
+    with no revision — one written outside the store API, as the early UAT
+    seed did — must fail closed with ``MembershipConflict`` rather than being
+    silently adopted.
+    """
+
+    def _seeded_id(self):
+        account = M.member_from_native(native_payload())
+        return store.save_account(account, self.store)["account"]["id"]
+
+    def _card(self, account_id):
+        cards = api.accounts_payload(path=self.store, catalogue=self.catalogue)["accounts"]
+        return next(card for card in cards if card["id"] == account_id)
+
+    def test_put_round_trip_succeeds_with_the_revision_from_get(self):
+        account_id = self._seeded_id()
+        card = self._card(account_id)
+        self.assertTrue(card.get("rev"))
+        result = api.save_payload(account_id, {**card, "billing_arrangement": "prepaid"},
+                                  path=self.store)
+        self.assertTrue(result["ok"])
+        stored = store.accounts_by_id(self.store)[account_id]
+        self.assertEqual(stored["billing_arrangement"], "prepaid")
+        self.assertNotEqual(stored["rev"], card["rev"])
+
+    def test_put_without_a_revision_conflicts_on_existing_records(self):
+        account_id = self._seeded_id()
+        card = self._card(account_id)
+        body = {key: value for key, value in card.items() if key != "rev"}
+        with self.assertRaises(store.MembershipConflict):
+            api.save_payload(account_id, {**body, "billing_arrangement": "prepaid"},
+                             path=self.store)
+        self.assertNotEqual(store.accounts_by_id(self.store)[account_id].get("billing_arrangement"),
+                            "prepaid")
+
+    def test_put_with_a_stale_revision_conflicts_and_keeps_the_first_write(self):
+        account_id = self._seeded_id()
+        first = self._card(account_id)
+        api.save_payload(account_id, {**first, "label": "first write"}, path=self.store)
+        with self.assertRaises(store.MembershipConflict):
+            api.save_payload(account_id, {**first, "label": "stale write"}, path=self.store)
+        self.assertEqual(store.accounts_by_id(self.store)[account_id]["label"], "first write")
+
+    def test_put_never_persists_a_client_supplied_revision(self):
+        account_id = self._seeded_id()
+        card = self._card(account_id)
+        result = api.save_payload(account_id, {**card, "rev": "forged-by-client"},
+                                  if_rev=card["rev"], path=self.store)
+        self.assertTrue(result["ok"])
+        self.assertNotEqual(result["account"]["rev"], "forged-by-client")
+        self.assertEqual(store.accounts_by_id(self.store)[account_id]["rev"],
+                         result["account"]["rev"])
+
+    def test_put_for_unknown_ids_refuses_to_create(self):
+        ghost = {**M.member_from_native(native_payload()), "id": "ghost:default"}
+        with self.assertRaises(KeyError):
+            api.save_payload("ghost:default", {**ghost, "rev": "whatever"},
+                             path=self.store)
+
+    def test_records_written_outside_the_store_api_have_no_revision_to_send(self):
+        # Mirrors the early UAT seed, which wrote memberships.json directly and
+        # bypassed ``save_account``: the card carries no rev, so the PUT the UI
+        # builds from it must fail closed instead of adopting the record.
+        self.store.write_text(json.dumps({"version": 1, "accounts": [
+            {**M.member_from_native(native_payload()), "rev": None}]}))
+        stored = store.accounts_by_id(self.store)
+        account_id = next(iter(stored))
+        self.assertFalse(stored[account_id].get("rev"))
+        card = self._card(account_id)
+        self.assertFalse(card.get("rev"))
+        with self.assertRaises(store.MembershipConflict):
+            api.save_payload(account_id, {**card, "billing_arrangement": "prepaid"},
+                             path=self.store)
+
+    def test_exhaustion_marks_on_unversioned_records_conflict(self):
+        self.store.write_text(json.dumps({"version": 1, "accounts": [
+            M.member_from_native(native_payload())]}))
+        account_id = next(iter(store.accounts_by_id(self.store)))
+        with self.assertRaises(store.MembershipConflict):
+            api.declare_payload(account_id, {"scope_id": "account", "scope_kind": "account"},
+                                path=self.store)
+
+
 class StoreContract(TempStore):
     def test_editing_an_existing_membership_requires_a_revision(self):
         account = M.member_from_native(native_payload())

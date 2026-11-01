@@ -256,6 +256,14 @@ test('the reports page keeps the shared tab navigation', async () => {
   const { container } = await bootReports()
   const tabs = [...container.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)
   assert.deepEqual(tabs, ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Settings & About'])
+  // The tab bar is a top-level sibling of the content shell — never nested
+  // inside it, which pushed it down the page. Compare booleans only: handing
+  // live DOM nodes to assert hangs the runner while it serialises them.
+  const tablist = container.querySelector('[role="tablist"]')
+  assert.ok(tablist, 'reports renders the tab bar')
+  const tabShell = tablist.closest('.wm-shell')
+  assert.ok(tabShell && [...container.firstElementChild.children].includes(tabShell),
+    'reports keeps the tab bar as a top-level sibling of the content shell')
   assert.equal(T.$ledgerTab.get(), 'reports')
   await clickByText(container, 'Costs')
   assert.equal(T.$ledgerTab.get(), 'costs')

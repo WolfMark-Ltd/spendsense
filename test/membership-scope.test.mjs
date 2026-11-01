@@ -1276,3 +1276,175 @@ test('Restore catalogue price closes the fee revision instead of saving zero', a
   assert.ok(Number.isFinite(Date.parse(override.effective_to)))
   assert.equal(write.body.fee_overrides.some(item => item.amount === 0), false)
 })
+
+test('every tab keeps the shared tab bar as a direct child of the page root', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$digestDays.set(30)
+  // Membership reads succeed with an empty list; everything else fails, so
+  // each page renders its error state — the tab bar must still sit outside
+  // the content shell in exactly the same place on all six tabs.
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] }
+    : call.path === '/membership/plans' ? plansOk()
+    : call.path === '/allowance/weather' ? { ok: true, accounts: [] }
+    : Promise.reject(new Error('backend down')))
+  const pages = [
+    ['overview', T.OverviewPage, {}],
+    ['usage', T.AnalyticsPage, { productPage: true }],
+    ['costs', T.CostsPage, {}],
+    ['memberships', T.MembershipsPage, {}],
+    ['reports', T.ReportsPage, {}],
+    ['settings', T.SettingsPage, {}],
+  ]
+  for (const [tab, Component, props] of pages) {
+    queryClient.clear()
+    T.$ledgerTab.set(tab)
+    T.$membershipSnapshot.set(null); T.$membershipNotice.set(null); T.$membershipBusy.set(null)
+    const container = document.createElement('div'); document.body.appendChild(container)
+    const root = ReactDOMClient.createRoot(container); roots.push(root)
+    await React.act(async () => {
+      root.render(React.createElement(QueryClientProvider, { client: queryClient },
+        React.createElement(Component, props)))
+    })
+    await flush(4)
+    assert.equal(container.querySelectorAll('[role="tab"]').length, 6, `${tab} shows all six tabs`)
+    // LedgerTabs brings its own shell wrapper, so the pin is structural: the
+    // tab shell must be a direct child of the page root — a sibling of the
+    // content shell, never nested inside it. Compare booleans only: handing
+    // live DOM nodes to assert hangs the runner while it serialises them.
+    const pageRoot = container.firstElementChild
+    const tablist = container.querySelector('[role="tablist"]')
+    assert.ok(tablist, `${tab} renders the tab bar`)
+    const tabShell = tablist.closest('.wm-shell')
+    assert.ok(tabShell && [...pageRoot.children].includes(tabShell),
+      `${tab} keeps the tab bar as a top-level sibling of the content shell`)
+    assert.ok([...container.querySelectorAll('.wm-shell')]
+      .every(shell => shell === tabShell || !shell.contains(tablist)),
+      `${tab} never nests the tab bar inside a content shell`)
+    await React.act(async () => { root.unmount() })
+    roots.pop()
+    container.remove()
+  }
+})
+
+test('the sidebar usage view intentionally has no tab bar', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.respond(() => Promise.reject(new Error('backend down')))
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => {
+    root.render(React.createElement(QueryClientProvider, { client: queryClient },
+      React.createElement(T.AnalyticsPage, {})))
+  })
+  await flush(4)
+  assert.equal(container.querySelector('[role="tablist"]'), null,
+    'sidebar mode renders no tab bar by design')
+})
+
+test('toggling API Only sends the card revision and confirms the save', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const current = account('anthropic:default', { label: 'UAT anthropic', api_only: false })
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.path.startsWith('/allowance/weather') ? { ok: true, accounts: [] }
+    : call.method === 'PUT'
+      ? { ok: true, account: { ...call.body, rev: 'r2' }, accounts: [{ ...call.body, rev: 'r2' }] }
+      : { ok: true, accounts: [current], store: { loaded: true, error: '' }, notes: [] })
+  const { container, text } = await boot()
+  await flush(4)
+  const label = container.querySelector('label.wm-check')
+  assert.ok(label, 'the API Only control is a checkbox row, not a stacked filter caption')
+  const box = label.querySelector('input[type="checkbox"]')
+  assert.ok(box)
+  assert.equal(box.checked, false)
+  assert.equal(label.textContent.trim(), 'API Only')
+  await React.act(async () => { box.click() })
+  await flush(6)
+  const write = transportCtl.calls.find(call => call.method === 'PUT')
+  assert.ok(write, 'toggling sends a PUT')
+  assert.equal(write.body.api_only, true)
+  assert.equal(write.body.rev, 'r1', 'the PUT carries the revision served by GET')
+  assert.match(text(), /Saved\./, 'a successful edit shows clear feedback')
+})
+
+test('a record without a revision refuses the write with an honest message', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const bare = account('legacy:default', { label: 'Legacy account' })
+  delete bare.rev
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.path.startsWith('/allowance/weather') ? { ok: true, accounts: [] }
+    : { ok: true, accounts: [bare], store: { loaded: true, error: '' }, notes: [] })
+  const { container, text } = await boot()
+  await flush(4)
+  const box = container.querySelector('label.wm-check input[type="checkbox"]')
+  assert.ok(box, 'the card renders even without a revision')
+  await React.act(async () => { box.click() })
+  await flush(3)
+  assert.equal(transportCtl.calls.some(call => call.method === 'PUT'), false,
+    'no doomed PUT is sent for an unversioned record')
+  assert.match(text(), /has no revision/, 'the notice names the real problem, not a reload loop')
+  // The guard is an opener-allowlist, so a different write kind is refused too.
+  await setField(container, 'Billing arrangement', 'prepaid')
+  await flush(3)
+  assert.equal(transportCtl.calls.some(call => call.method === 'PUT'), false,
+    'a second write kind is refused without a revision')
+  await clickByText(container, 'Create user-defined plan')
+  await flush(2)
+  assert.equal(container.querySelector('form.wm-custom-form').noValidate, true,
+    'the custom-plan form skips native validation without a revision too')
+})
+
+test('versioned accounts keep native form validation', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.path.startsWith('/allowance/weather') ? { ok: true, accounts: [] }
+    : { ok: true, accounts: [account('pro:default', { label: 'Pro account' })],
+        store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  await clickByText(container, 'Edit fee')
+  await flush(2)
+  await clickByText(container, 'Create user-defined plan')
+  await flush(2)
+  assert.equal(container.querySelector('form.wm-fee-form').noValidate, false,
+    'the fee form keeps native validation with a revision')
+  assert.equal(container.querySelector('form.wm-custom-form').noValidate, false,
+    'the custom-plan form keeps native validation with a revision')
+})
+
+test('a fee save on a record without a revision is refused before any write', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const bare = account('legacy:default', { label: 'Legacy account' })
+  delete bare.rev
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.path.startsWith('/allowance/weather') ? { ok: true, accounts: [] }
+    : { ok: true, accounts: [bare], store: { loaded: true, error: '' }, notes: [] })
+  const { container, text } = await boot()
+  await flush(4)
+  await clickByText(container, 'Edit fee')
+  await flush(2)
+  // Submit untouched: the empty amount is invalid, so reaching validation
+  // would report that instead. The revision refusal must come first.
+  await clickByText(container, 'Save fee')
+  await flush(3)
+  assert.equal(transportCtl.calls.some(call => call.method === 'PUT'), false,
+    'the fee save is refused before any write')
+  assert.match(text(), /has no revision/)
+  assert.doesNotMatch(text(), /Enter an amount/,
+    'the refusal names the revision, not the unfilled form')
+  // The warning is account-scoped, so it appears beside the affected fee
+  // form as well as in the page-level notice.
+  const inline = container.querySelector('form.wm-fee-form p[role="alert"]')
+  assert.ok(inline, 'the fee form shows the revision warning inline')
+  assert.match(inline.textContent, /has no revision/)
+  const pageAlert = [...container.querySelectorAll('div.wm-alert')]
+    .find(alert => /has no revision/.test(alert.textContent || ''))
+  assert.ok(pageAlert, 'the page-level notice is kept')
+  assert.equal(container.querySelector('form.wm-fee-form').noValidate, true,
+    'native validation is off so the revision check runs instead of field bubbles')
+})
