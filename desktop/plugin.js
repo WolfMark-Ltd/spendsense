@@ -5519,11 +5519,11 @@ function MembershipsPage() {
     // land between a switch and the re-render.
     if (!current || current.identity !== membershipIdentityNow()) return refuse()
     if (membershipBusyKey($membershipBusy.get(), identity)) return refuseBusy()
-    // Draft-opening kinds ('fee', 'edit-custom-plan', 'exhaust') are harmless
-    // without a revision; every kind that writes must prove one.
-    if ((kind === 'api-only' || kind === 'arrangement' || kind === 'plan' ||
-         kind === 'restore-fee' || kind === 'save-custom-plan' ||
-         kind === 'confirm-exhaust' || kind === 'clear') && !account?.rev) return refuseUnversioned()
+    // Draft-opening kinds never write, so they need no revision; every other
+    // kind must prove one. An allowlist (not a writer denylist) so a future
+    // mutating kind fails closed instead of sending a PUT that must 409.
+    if (!account?.rev && kind !== 'fee' && kind !== 'edit-custom-plan' &&
+        kind !== 'exhaust') return refuseUnversioned()
     if (kind === 'api-only' || kind === 'arrangement') {
       const update = kind === 'api-only' ? { api_only: !!value } : { billing_arrangement: value }
       return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
@@ -5668,14 +5668,16 @@ function MembershipsPage() {
     // anything, including when the switch happens in the same tick as the click.
     const origin = draft?.origin
     if (!draft || !origin || !membershipIdentityCurrent(origin)) return refuse()
+    const account = list.find(a => a.id === draft.account_id)
+    if (!account) return refuse()
+    // Before draft validation: on an unversioned record the form can never
+    // save, so say that first instead of asking for corrections.
+    if (!account.rev) return refuseUnversioned()
     const errors = feeDraftErrors(draft)
     if (errors.length) {
       setMembershipNotice(origin, 'warn', errors.join(' '), null, draft.account_id)
       return { ok: false, invalid: true }
     }
-    const account = list.find(a => a.id === draft.account_id)
-    if (!account) return refuse()
-    if (!account.rev) return refuseUnversioned()
     const override = overrideFromDraft(draft, account)
     const outcome = await run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
                               { ...account, fee_overrides: [...(account.fee_overrides || []), override] }, 'PUT')

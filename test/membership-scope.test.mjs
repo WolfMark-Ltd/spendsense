@@ -1386,6 +1386,11 @@ test('a record without a revision refuses the write with an honest message', asy
   assert.equal(transportCtl.calls.some(call => call.method === 'PUT'), false,
     'no doomed PUT is sent for an unversioned record')
   assert.match(text(), /has no revision/, 'the notice names the real problem, not a reload loop')
+  // The guard is an opener-allowlist, so a different write kind is refused too.
+  await setField(container, 'Billing arrangement', 'prepaid')
+  await flush(3)
+  assert.equal(transportCtl.calls.some(call => call.method === 'PUT'), false,
+    'a second write kind is refused without a revision')
 })
 
 test('a fee save on a record without a revision is refused before any write', async () => {
@@ -1400,10 +1405,13 @@ test('a fee save on a record without a revision is refused before any write', as
   await flush(4)
   await clickByText(container, 'Edit fee')
   await flush(2)
-  await typeAmount(container, '19.50')
+  // Submit untouched: the empty amount is invalid, so reaching validation
+  // would report that instead. The revision refusal must come first.
   await clickByText(container, 'Save fee')
   await flush(3)
   assert.equal(transportCtl.calls.some(call => call.method === 'PUT'), false,
     'the fee save is refused before any write')
   assert.match(text(), /has no revision/)
+  assert.doesNotMatch(text(), /Enter an amount/,
+    'the refusal names the revision, not the unfilled form')
 })
