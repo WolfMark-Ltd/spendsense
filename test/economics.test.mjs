@@ -43,6 +43,10 @@ const en = (key, ...args) => {
   const entry = S.I18N.en[key]
   return typeof entry === 'function' ? entry(...args) : entry ?? key
 }
+const zh = (key, ...args) => {
+  const entry = S.I18N.zh[key]
+  return typeof entry === 'function' ? entry(...args) : entry ?? key
+}
 
 test('fmtDay renders renewal dates as UTC calendar days', () => {
   assert.equal(S.fmtDay('2027-01-15T00:00:00Z'), '2027-01-15')
@@ -70,9 +74,14 @@ test('econCoverageLabel withholds fully priced on rounded 100% coverage', () => 
   // 3M priced + 1 unpriced token rounds coverage to 1.0; the label must
   // not contradict the partial backend status shown in the same cell.
   assert.equal(S.econCoverageLabel(en,
-    { tokens: 3000001, list_usd: 6, coverage: 1, unpriced_tokens: 1 }), '100% priced')
+    { tokens: 3000001, list_usd: 6, coverage: 1, unpriced_tokens: 1 }), 'Nearly all priced')
   assert.equal(S.econCoverageLabel(en,
     { tokens: 3000000, list_usd: 6, coverage: 1, unpriced_tokens: 0 }), 'Fully priced')
+  // Whole-percent rounding reaches 100% well before the ratio does.
+  assert.equal(S.econCoverageLabel(en,
+    { tokens: 1000, list_usd: 2, coverage: 0.9995, unpriced_tokens: 1 }), 'Nearly all priced')
+  assert.equal(S.econCoverageLabel(zh,
+    { tokens: 3000001, list_usd: 6, coverage: 1, unpriced_tokens: 1 }), '几乎全部定价')
 })
 
 test('econFeeLines keeps one line per currency', () => {

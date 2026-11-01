@@ -317,7 +317,7 @@ test('every economics string exists in English and Chinese', () => {
     'econNoPricedUsageShort', 'econApiUsageMoney', 'econOutsideTitle', 'econUnknownRoutes',
     'econUnattributedLine', 'econAmbiguousLine', 'econFxTitle', 'econFxHint', 'econReading',
     'econStatusOk', 'econStatusPartial', 'econStatusUnavailable', 'econNoUsage', 'econNoPrice',
-    'econCoverageUnknown', 'econFullyPriced', 'econPricedPct', 'econSpanWindow', 'econSpanDays',
+    'econCoverageUnknown', 'econFullyPriced', 'econNearlyAllPriced', 'econPricedPct', 'econSpanWindow', 'econSpanDays',
     'econPerMonth', 'econApiUsage', 'econFeesInWindow', 'econConvertedAt', 'econNoFee',
     'econPeriodAbbr', 'econFeeDeclared', 'econFeeCustom', 'econFeeCatalogue', 'econDue',
     'econRenewalUnknown', 'econUsageDetail', 'econNoPlan', 'econInWindow', 'econTrendEmpty',

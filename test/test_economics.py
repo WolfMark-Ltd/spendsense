@@ -509,6 +509,8 @@ class ComparisonTests(EconomicsCase):
         self.assertAlmostEqual(row["difference_usd"],
                                round(2.0 - self.windowed(20.0, result), 6))
         self.assertTrue(any("lower bound" in note for note in row["notes"]))
+        self.assertTrue(any(note.startswith("Only 50.0%") for note in row["notes"]),
+                        row["notes"])
         self.assertEqual(result["headline"]["status"], "partial")
 
     def test_single_unpriced_token_survives_rounded_coverage(self):
@@ -527,6 +529,21 @@ class ComparisonTests(EconomicsCase):
         self.assertFalse(any("Only 100.0%" in note for note in row["notes"]),
                          row["notes"])
         self.assertEqual(result["headline"]["status"], "partial")
+
+    def test_nearly_all_priced_selects_the_truthful_note(self):
+        self.anchor_coverage()
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        self.create_events([{"ts": NOW - 100, "input_tokens": 999_999},
+                            {"ts": NOW - 90, "model": "unknown-model",
+                             "input_tokens": 1}])
+        result = self.report(days=30, trend_months=0)
+        row = result["accounts"][0]
+        self.assertEqual(row["usage"]["coverage"], 0.999999)
+        self.assertEqual(row["status"], "partial")
+        self.assertTrue(any("Nearly all attributed tokens are priced" in note
+                            for note in row["notes"]), row["notes"])
+        self.assertFalse(any("Only 100.0%" in note for note in row["notes"]),
+                         row["notes"])
 
     def test_fully_unpriced_usage_is_unavailable(self):
         self.anchor_coverage()

@@ -662,7 +662,9 @@ def build_economics_report(
             # decimals, so a large account with one unpriced token reads 1.0.
             status = "partial"
             share = usage["coverage"] * 100 if usage["coverage"] is not None else 0.0
-            if share < 100:
+            # Decide on the displayed one-decimal figure: 99.95%+ prints as
+            # 100.0%, and "Only 100.0%" would contradict the partial status.
+            if f"{share:.1f}" != "100.0":
                 notes.append(f"Only {share:.1f}% of attributed tokens are priced; "
                              "the value is a lower bound.")
             else:
