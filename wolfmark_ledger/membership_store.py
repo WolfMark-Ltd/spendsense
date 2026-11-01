@@ -236,9 +236,15 @@ def save_account(account: Mapping[str, Any], path: Optional[Path | str] = None,
                 raise MembershipConflict("conflict: editing an existing membership requires if_rev")
             if if_rev != str(existing.get("rev") or ""):
                 raise MembershipConflict("conflict: this membership changed since you loaded it; reload before saving")
-            accounts = [a for a in accounts if str(a.get("id")) != str(account.get("id"))]
+            position = next(i for i, a in enumerate(accounts)
+                            if str(a.get("id")) == str(account.get("id")))
         record = {**dict(account), "rev": account_revision(account)}
-        accounts.append(record)
+        if existing is not None:
+            # Replace in place: remove-and-append reordered the cards on
+            # every edit, moving the saved membership to the end.
+            accounts[position] = record
+        else:
+            accounts.append(record)
         _write(accounts, target)
         return {"accounts": accounts, "account": record, "path": str(target)}
 

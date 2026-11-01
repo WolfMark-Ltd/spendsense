@@ -72,6 +72,16 @@ class StoreContract(TempStore):
         ok = store.save_account({**account, "label": "x"}, self.store, if_rev=saved["account"]["rev"])
         self.assertEqual(ok["account"]["label"], "x")
 
+    def test_saving_an_existing_membership_keeps_its_position(self):
+        first = M.member_from_native(native_payload("openai-codex"))
+        second = M.member_from_native(native_payload("commandcode"))
+        saved_first = store.save_account(first, self.store)
+        store.save_account(second, self.store)
+        store.save_account({**first, "label": "renamed"},
+                           self.store, if_rev=saved_first["account"]["rev"])
+        ids = [account["id"] for account in store.load_store(self.store)["accounts"]]
+        self.assertEqual(ids, [first["id"], second["id"]])
+
     def test_fee_summary_uses_memberships_by_currency_and_period(self):
         goat = {**M.member_from_native(native_payload("commandcode")),
                 "plan_id": "commandcode.goat"}
