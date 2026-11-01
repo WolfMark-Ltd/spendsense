@@ -515,5 +515,86 @@ class DigestReviewFixesTests(DigestCase):
             self.assertRegex(note, r"[\u4e00-\u9fff]", note)
 
 
+class DigestFeesCoverageTests(DigestCase):
+    """The fees section respects coverage like every other usage section."""
+
+    def test_fees_withhold_usage_when_window_unobserved(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 2 * DAY)
+        self.create_state(0)
+        result = self.report()
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(by_label["Attributed usage value"], "—")
+        self.assertEqual(
+            by_label["Estimated value comparison (API-equivalent minus fees)"], "—")
+        # The declared fee is known independently of usage coverage.
+        fee_line = next(line["value"] for line in fees["lines"] if "USD" in line["label"])
+        self.assertNotEqual(fee_line, "—")
+        self.assertTrue(any("usage cannot be stated" in note for note in fees["notes"]),
+                        fees["notes"])
+
+    def test_fees_keep_genuine_zero_when_covered_empty(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 40 * DAY)
+        self.create_state(0)
+        result = self.report()
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(by_label["Attributed usage value"], "$0.00")
+        for value in by_label.values():
+            self.assertNotIn("≥", value, value)
+
+    def test_fees_exact_when_fully_priced_and_covered(self):
+        self.standard_fixture()
+        result = self.report()
+        fees = self.section(result, "fees")
+        text = " ".join(f"{line['label']} {line['value']}" for line in fees["lines"])
+        self.assertIn("Attributed usage value $5.00", text)
+        self.assertNotIn("≥", text)
+
+    def test_fees_lower_bound_when_attributed_scope_partly_priced(self):
+        self.standard_fixture()
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.execute("INSERT INTO calls (event_id, ts, model, provider, outcome,"
+                         " input_tokens, total_tokens, recorded_at)"
+                         " VALUES ('unpriced', ?, 'zzz', 'test', 'ok', 500000, 500000, ?)",
+                         (NOW - 2 * DAY, NOW - 2 * DAY))
+        result = self.report()
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(by_label["Attributed usage value"], "≥$5.00")
+        self.assertTrue(
+            by_label["Estimated value comparison (API-equivalent minus fees)"].startswith("≥"),
+            by_label)
+        self.assertTrue(any("lower bound" in note.lower() for note in fees["notes"]),
+                        fees["notes"])
+
+    def test_fees_lower_bound_when_partly_observed(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([{"input_tokens": 1_000_000}],
+                           baseline_at=NOW - 2 * DAY)
+        self.create_state(1_000_000)
+        result = self.report()
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(by_label["Attributed usage value"], "≥$2.00")
+
+    def test_fees_unknown_is_localised(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 2 * DAY)
+        self.create_state(0)
+        result = self.report(lang="zh")
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(by_label["归因用量价值"], "—")
+        self.assertTrue(any("无法给出用量" in note for note in fees["notes"]),
+                        fees["notes"])
+
+
 if __name__ == "__main__":
     unittest.main()

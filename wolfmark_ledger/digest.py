@@ -432,8 +432,23 @@ def _spending_section(S: Mapping[str, str], window_label: str,
             "kind": "lines", "lines": lines, "notes": notes}
 
 
+def _attributed_pricing_partial(accounts: Any) -> bool:
+    """True when any subscription row prices only part of its usage.
+
+    Economics marks such rows partial itself ("the value is a lower
+    bound"); the digest reuses that evidence rather than re-deriving it.
+    """
+    for row in accounts or []:
+        coverage = ((row or {}).get("usage") or {}).get("coverage")
+        if isinstance(coverage, (int, float)) and not isinstance(coverage, bool) \
+                and coverage < 1:
+            return True
+    return False
+
+
 def _fees_section(S: Mapping[str, str], window_label: str,
-                  headline: Mapping[str, Any]) -> dict[str, Any]:
+                  headline: Mapping[str, Any], covers: bool, calls: int,
+                  pricing_partial: bool) -> dict[str, Any]:
     lines: list[dict[str, str]] = []
     fees = sorted(headline.get("fees_window_by_currency") or [],
                   key=lambda e: str((e or {}).get("currency") or ""))
@@ -445,11 +460,32 @@ def _fees_section(S: Mapping[str, str], window_label: str,
     if not lines:
         lines.append({"label": S["label_fees_window"].format(currency="USD"),
                       "value": S["unknown"]})
-    usage = _money(headline.get("usage_usd"))
-    lines.append({"label": S["label_usage_value"], "value": usage or S["unknown"]})
-    difference = _signed_money(headline.get("difference_usd"))
-    lines.append({"label": S["label_difference"], "value": difference or S["unknown"]})
+    # Declared fees stand on their own; the usage-derived lines below follow
+    # the same coverage rules as every other section.
+    lower = pricing_partial or not covers
+    if calls == 0 and not covers:
+        usage_shown: str | None = None
+        difference_shown: str | None = None
+    else:
+        usage_text = _money(headline.get("usage_usd"))
+        if usage_text is None or (headline.get("usage_usd") == 0 and lower):
+            usage_shown = None
+        else:
+            usage_shown = f"≥{usage_text}" if lower else usage_text
+        if usage_shown is None:
+            difference_shown = None
+        else:
+            difference_text = _signed_money(headline.get("difference_usd"))
+            difference_shown = (f"≥{difference_text}" if lower else difference_text) \
+                if difference_text is not None else None
+    lines.append({"label": S["label_usage_value"], "value": usage_shown or S["unknown"]})
+    lines.append({"label": S["label_difference"], "value": difference_shown or S["unknown"]})
     notes = [S["note_fees_prorata"]]
+    if calls == 0 and not covers:
+        notes.append(S["note_unknown"])
+    if (usage_shown is not None and usage_shown.startswith("≥")) \
+            or (difference_shown is not None and difference_shown.startswith("≥")):
+        notes.append(S["note_lower_bound"])
     status = headline.get("status")
     if status == "partial":
         notes.append(S["note_partial_comparison"])
@@ -649,7 +685,8 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
     sections.append(_value_section(S, period_label, totals, report.get("pricing_coverage") or {},
                                    covers, calls))
     sections.append(_spending_section(S, period_label, report.get("billing") or {}, covers, calls))
-    sections.append(_fees_section(S, period_label, econ.get("headline") or {}))
+    sections.append(_fees_section(S, period_label, econ.get("headline") or {}, covers, calls,
+                                   _attributed_pricing_partial(econ.get("accounts"))))
     sections.append(_allowances_section(S, cycle_label, list(wx.get("accounts", []))))
     changes = _changes_section(S, period_label, days, report.get("previous") or {}, totals)
     if changes is not None:
