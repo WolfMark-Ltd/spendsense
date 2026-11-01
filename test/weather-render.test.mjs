@@ -195,3 +195,19 @@ test('membership edits invalidate the cached weather verdicts', async () => {
   assert.equal(queryClient.getQueryState(keyFor(identity))?.isInvalidated, true)
   assert.equal(queryClient.getQueryState(keyFor(other))?.isInvalidated, false)
 })
+
+test('billing rule writes invalidate the economics and weather dependents', async () => {
+  const identity = 'local|default#1'
+  const other = 'elsewhere|default#9'
+  queryClient.clear()
+  const keys = [id => [plugin.id, 'economics-summary', id], id => [plugin.id, 'allowance-weather', id]]
+  for (const keyFor of keys) {
+    queryClient.setQueryData(keyFor(identity), { identity })
+    queryClient.setQueryData(keyFor(other), { identity: other })
+  }
+  await T.invalidateBillingDependentsFor(identity)
+  for (const keyFor of keys) {
+    assert.equal(queryClient.getQueryState(keyFor(identity))?.isInvalidated, true)
+    assert.equal(queryClient.getQueryState(keyFor(other))?.isInvalidated, false)
+  }
+})

@@ -2724,6 +2724,12 @@ async function invalidateWeatherFor(identity) {
   }
 }
 
+/** Billing profiles feed the economics comparison and the weather pools alike. */
+async function invalidateBillingDependentsFor(identity) {
+  await invalidateEconomicsFor(identity)
+  await invalidateWeatherFor(identity)
+}
+
 /** Transport markers that must never reach the user verbatim. The numeric arm matches HTTP statuses (400-599) only, so validation details mentioning ordinary values such as 255 characters still pass through. */
 const FX_TRANSPORT = /\b[45]\d{2}\b|timeout|timed out|network|failed to fetch|fetch failed|connection|econn|socket|abort/i
 
@@ -2865,6 +2871,8 @@ function AdvancedBillingRules() {
       if (!membershipIdentityCurrent(captured) || $billingDraft.get() !== draft) return
       $billingNotice.set({ tone: 'good', origin: captured, text: 'Saved. Recorded usage was not changed.' })
       $billingDraft.set(null)
+      // Dependents first: a rules-list refresh failure must not leave them stale.
+      await invalidateBillingDependentsFor(captured)
       await profilesQuery.refetch?.()
     } catch (error) {
       if (membershipIdentityCurrent(captured)) $billingNotice.set({ tone: 'warn', origin: captured, text: billingErrorMessage(error) })
@@ -2877,6 +2885,8 @@ function AdvancedBillingRules() {
       await billingWrite('DELETE', `/billing/profiles/${encodeURIComponent(profile.id)}`)
       if (!membershipIdentityCurrent(captured)) return
       $billingNotice.set({ tone: 'good', origin: captured, text: 'Removed. Recorded usage was not changed.' })
+      // Dependents first: a rules-list refresh failure must not leave them stale.
+      await invalidateBillingDependentsFor(captured)
       await profilesQuery.refetch?.()
     } catch (error) {
       if (membershipIdentityCurrent(captured)) $billingNotice.set({ tone: 'warn', origin: captured, text: billingErrorMessage(error) })
@@ -6524,7 +6534,8 @@ export const __test = {
   billingNumberStep,
   economicsQuery, fxQuery, fxWrite, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
   econWindowLines, windowSpanLabel, invalidateEconomicsFor,
-  weatherQuery, invalidateWeatherFor, wxVerdictLabel, wxLimitLabel, wxCycleSummary, wxWindowRow, wxRuleRow,
+  weatherQuery, invalidateWeatherFor, invalidateBillingDependentsFor,
+  wxVerdictLabel, wxLimitLabel, wxCycleSummary, wxWindowRow, wxRuleRow,
   AllowanceWeather, WEATHER_CSS,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   $fxDraft, $fxSaving, $fxNotice,
