@@ -571,6 +571,8 @@ class DigestFeesCoverageTests(DigestCase):
             by_label)
         self.assertTrue(any("lower bound" in note.lower() for note in fees["notes"]),
                         fees["notes"])
+        self.assertFalse(any("Recording started inside" in note for note in fees["notes"]),
+                         fees["notes"])
 
     def test_fees_lower_bound_when_partly_observed(self):
         self.write_store([account("test:default", "test", plan_id="test.plus")])
@@ -582,6 +584,31 @@ class DigestFeesCoverageTests(DigestCase):
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
         self.assertEqual(by_label["Attributed usage value"], "≥$2.00")
+        # The bound comes from the recording gap, not missing prices.
+        self.assertTrue(any("Recording started inside" in note for note in fees["notes"]),
+                        fees["notes"])
+        self.assertFalse(any("lower bound" in note.lower() for note in fees["notes"]),
+                         fees["notes"])
+
+    def test_fees_bound_survives_rounded_coverage(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([
+            {"model": "m", "input_tokens": 3_000_000, "ts": NOW - 1 * DAY},
+            {"model": "zzz", "input_tokens": 1, "ts": NOW - 2 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(3_000_001)
+        econ = economics.build_economics_report(
+            days=7, trend_months=0, now=NOW, event_db_path=self.events,
+            state_db_path=self.state, membership_path=self.memberships,
+            plans=PLANS, profiles_path=self.profiles, catalogue=self.book)
+        row = next(r for r in econ["accounts"] if r["account_id"] == "test:default")
+        self.assertEqual(row["usage"]["coverage"], 1.0)
+        self.assertEqual(row["usage"]["unpriced_tokens"], 1)
+        result = self.report()
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(by_label["Attributed usage value"], "≥$6.00")
 
     def test_fees_unknown_is_localised(self):
         self.write_store([account("test:default", "test", plan_id="test.plus")])

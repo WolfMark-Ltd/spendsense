@@ -433,15 +433,13 @@ def _spending_section(S: Mapping[str, str], window_label: str,
 
 
 def _attributed_pricing_partial(accounts: Any) -> bool:
-    """True when any subscription row prices only part of its usage.
+    """True when any subscription row leaves usage unpriced.
 
-    Economics marks such rows partial itself ("the value is a lower
-    bound"); the digest reuses that evidence rather than re-deriving it.
+    Checks the unrounded token count: row coverage is rounded to six
+    decimals, so a large account with one unpriced token still reads 1.0.
     """
     for row in accounts or []:
-        coverage = ((row or {}).get("usage") or {}).get("coverage")
-        if isinstance(coverage, (int, float)) and not isinstance(coverage, bool) \
-                and coverage < 1:
+        if (((row or {}).get("usage") or {}).get("unpriced_tokens") or 0) > 0:
             return True
     return False
 
@@ -480,12 +478,16 @@ def _fees_section(S: Mapping[str, str], window_label: str,
                 if difference_text is not None else None
     lines.append({"label": S["label_usage_value"], "value": usage_shown or S["unknown"]})
     lines.append({"label": S["label_difference"], "value": difference_shown or S["unknown"]})
+    bound = (usage_shown is not None and usage_shown.startswith("≥")) \
+        or (difference_shown is not None and difference_shown.startswith("≥"))
     notes = [S["note_fees_prorata"]]
     if calls == 0 and not covers:
         notes.append(S["note_unknown"])
-    if (usage_shown is not None and usage_shown.startswith("≥")) \
-            or (difference_shown is not None and difference_shown.startswith("≥")):
-        notes.append(S["note_lower_bound"])
+    else:
+        if bound and pricing_partial:
+            notes.append(S["note_lower_bound"])
+        if calls > 0 and not covers:
+            notes.append(S["note_partial"])
     status = headline.get("status")
     if status == "partial":
         notes.append(S["note_partial_comparison"])
