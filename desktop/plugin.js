@@ -2868,11 +2868,11 @@ function AdvancedBillingRules() {
     const captured = draft.origin
     try {
       await billingWrite('PUT', `/billing/profiles/${encodeURIComponent(draft.id)}`, profilePayload(draft))
-      if (!membershipIdentityCurrent(captured)) return
       // Dependents are identity-scoped: the write landed, so they refresh even
-      // when the draft moved on while it was pending — and before the
-      // rules-list refresh, so a refresh failure cannot leave them stale.
+      // when the draft moved on — or the connection switched — while it was
+      // pending. The checks below protect UI updates only.
       await invalidateBillingDependentsFor(captured)
+      if (!membershipIdentityCurrent(captured)) return
       if ($billingDraft.get() !== draft) return
       $billingNotice.set({ tone: 'good', origin: captured, text: 'Saved. Recorded usage was not changed.' })
       $billingDraft.set(null)
@@ -2886,10 +2886,11 @@ function AdvancedBillingRules() {
     if (!membershipIdentityCurrent(captured)) return
     try {
       await billingWrite('DELETE', `/billing/profiles/${encodeURIComponent(profile.id)}`)
+      // The write landed, so identity-scoped dependents refresh even when the
+      // connection switched while it was pending; the check below guards UI only.
+      await invalidateBillingDependentsFor(captured)
       if (!membershipIdentityCurrent(captured)) return
       $billingNotice.set({ tone: 'good', origin: captured, text: 'Removed. Recorded usage was not changed.' })
-      // Dependents first: a rules-list refresh failure must not leave them stale.
-      await invalidateBillingDependentsFor(captured)
       await profilesQuery.refetch?.()
     } catch (error) {
       if (membershipIdentityCurrent(captured)) $billingNotice.set({ tone: 'warn', origin: captured, text: billingErrorMessage(error) })
@@ -4493,7 +4494,9 @@ function weatherQuery(identity = membershipIdentityNow(), native = false) {
       if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
       return { ...result, identity }
     },
-    retry: false, staleTime: 30_000
+    retry: false, staleTime: 30_000,
+    // Stored readings poll like analytics; provider reads stay explicit.
+    refetchInterval: native ? false : 60_000
   }
 }
 
@@ -4742,6 +4745,8 @@ function AllowanceWeather({ entry, error }) {
   if (!entry) {
     return jsx('p', { className: 'wm-note', role: 'status', children: t('wxUnavailable') })
   }
+  // A failed refetch keeps the previous entry: show it, but never as current.
+  const stale = !!error
   const rollup = entry.rollup?.state || 'unknown'
   const windows = Array.isArray(entry.windows) ? entry.windows : []
   const rules = Array.isArray(entry.rules) ? entry.rules : []
@@ -4759,6 +4764,7 @@ function AllowanceWeather({ entry, error }) {
         jsx('span', { className: 'wm-weather-verdict', children: wxVerdictLabel(t, rollup) }),
         jsx('span', { className: 'wm-note', children: wxCycleSummary(t, entry.cycle) }),
       ] }),
+      stale ? jsx('p', { className: 'wm-note', role: 'status', children: t('wxStale') }) : null,
       rows.length ? jsxs('details', { className: 'wm-weather-details', children: [
         jsx('summary', { children: t('wxDetails') }),
         jsxs('ul', { children: rows.map((row, index) => row.notes.length
@@ -6030,6 +6036,7 @@ const I18N = {
     wxNoForecast: 'No forecast — see details',
     wxDetails: 'Details',
     wxUnavailable: 'Allowance weather is unavailable for this connection.',
+    wxStale: 'Refresh failed — showing the last read.',
     fxReading: 'Reading saved FX rates for this connection…',
     fxRetry: 'Retry',
     fxRateLine: (c, u, d, s) => `${c} at ${u} USD per unit, dated ${d} (${s})`,
@@ -6304,6 +6311,7 @@ const I18N = {
     wxNoForecast: '无预测——见详情',
     wxDetails: '详情',
     wxUnavailable: '此连接无法读取额度动态。',
+    wxStale: '刷新失败——显示上次读取的数据。',
     fxReading: '正在读取此连接已保存的外汇汇率…',
     fxRetry: '重试',
     fxRateLine: (c, u, d, s) => `${c}：${u} 美元/单位，日期 ${d}（${s}）`,

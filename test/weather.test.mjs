@@ -133,6 +133,11 @@ test('weatherQuery keys by identity and native flag', () => {
   assert.notEqual(S.weatherQuery('id-a', false).queryKey[2], S.weatherQuery('id-b', false).queryKey[2])
 })
 
+test('weatherQuery polls stored readings but never provider reads', () => {
+  assert.equal(S.weatherQuery('id-a', false).refetchInterval, 60_000)
+  assert.equal(S.weatherQuery('id-a', true).refetchInterval, false)
+})
+
 test('needsAttention flags weather pace without duplicating quota flags', () => {
   const account = { id: 'a', label: 'A', quota: {}, fee: {} }
   const byId = new Map([['a', {

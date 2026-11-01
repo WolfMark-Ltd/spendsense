@@ -168,6 +168,15 @@ test('a failed read renders the unavailable line; nothing renders without data',
   assert.equal(idle.text(), '')
 })
 
+test('a failed refetch keeps the cached entry but marks it stale', async () => {
+  const { text } = await renderWeather({ entry: wxFixture(), error: true })
+  assert.match(text(), /Behind pace/)
+  assert.match(text(), /Refresh failed — showing the last read\./)
+  assert.ok(translated('wxStale'), 'the stale warning renders through i18n')
+  const fresh = await renderWeather({ entry: wxFixture(), error: false })
+  assert.doesNotMatch(fresh.text(), /showing the last read/)
+})
+
 test('the weather stylesheet tones every verdict', () => {
   for (const verdict of ['exhausted', 'ahead', 'on_track', 'behind']) {
     assert.match(T.WEATHER_CSS, new RegExp(`data-verdict="${verdict}"`))

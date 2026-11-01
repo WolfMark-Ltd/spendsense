@@ -360,7 +360,7 @@ test('every allowance-weather string exists in English and Chinese', () => {
     'wxDaysLeft', 'wxElapsed', 'wxNoCycle', 'wxProviderShare', 'wxStaleReading',
     'wxProviderReset', 'wxManualMark', 'wxAllowance', 'wxCredits', 'wxPercentLimit',
     'wxLimitUnknown', 'wxUsedOf', 'wxObservedSpend', 'wxLowerBound', 'wxPace',
-    'wxProjection', 'wxNoForecast', 'wxDetails', 'wxUnavailable']
+    'wxProjection', 'wxNoForecast', 'wxDetails', 'wxUnavailable', 'wxStale']
   for (const key of keys) {
     assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
