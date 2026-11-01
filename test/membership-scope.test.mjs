@@ -1414,4 +1414,12 @@ test('a fee save on a record without a revision is refused before any write', as
   assert.match(text(), /has no revision/)
   assert.doesNotMatch(text(), /Enter an amount/,
     'the refusal names the revision, not the unfilled form')
+  // The warning is account-scoped, so it appears beside the affected fee
+  // form as well as in the page-level notice.
+  const inline = container.querySelector('form.wm-fee-form p[role="alert"]')
+  assert.ok(inline, 'the fee form shows the revision warning inline')
+  assert.match(inline.textContent, /has no revision/)
+  const pageAlert = [...container.querySelectorAll('div.wm-alert')]
+    .find(alert => /has no revision/.test(alert.textContent || ''))
+  assert.ok(pageAlert, 'the page-level notice is kept')
 })

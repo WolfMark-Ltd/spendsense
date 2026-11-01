@@ -5462,9 +5462,12 @@ function MembershipsPage() {
   // A card without a revision was written outside the store API, so the
   // backend cannot accept any edit to it. Refusing here — instead of sending
   // a PUT that must 409 — keeps the message honest: reloading cannot help.
-  const refuseUnversioned = () => {
+  // The account id scopes the warning to its card (including the open fee
+  // form); the page-level notice renders regardless.
+  const refuseUnversioned = (accountId = null) => {
     setMembershipNotice(membershipIdentityNow(), 'warn',
-      'This record has no revision and cannot be saved safely. It was probably written outside Spend Sense — restore the membership store before editing.')
+      'This record has no revision and cannot be saved safely. It was probably written outside Spend Sense — restore the membership store before editing.',
+      null, accountId)
     return { ok: false, unversioned: true }
   }
 
@@ -5523,7 +5526,7 @@ function MembershipsPage() {
     // kind must prove one. An allowlist (not a writer denylist) so a future
     // mutating kind fails closed instead of sending a PUT that must 409.
     if (!account?.rev && kind !== 'fee' && kind !== 'edit-custom-plan' &&
-        kind !== 'exhaust') return refuseUnversioned()
+        kind !== 'exhaust') return refuseUnversioned(account?.id)
     if (kind === 'api-only' || kind === 'arrangement') {
       const update = kind === 'api-only' ? { api_only: !!value } : { billing_arrangement: value }
       return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
@@ -5672,7 +5675,7 @@ function MembershipsPage() {
     if (!account) return refuse()
     // Before draft validation: on an unversioned record the form can never
     // save, so say that first instead of asking for corrections.
-    if (!account.rev) return refuseUnversioned()
+    if (!account.rev) return refuseUnversioned(account.id)
     const errors = feeDraftErrors(draft)
     if (errors.length) {
       setMembershipNotice(origin, 'warn', errors.join(' '), null, draft.account_id)
