@@ -2612,6 +2612,7 @@ const $ledgerTab = atom(typeof location !== 'undefined' && /memberships?/.test(l
   : typeof location !== 'undefined' && /billing/.test(location.hash) ? 'costs'
     : typeof location !== 'undefined' && /usage/.test(location.hash) ? 'usage'
       : typeof location !== 'undefined' && /costs/.test(location.hash) ? 'costs'
+        : typeof location !== 'undefined' && /reports/.test(location.hash) ? 'reports'
         : typeof location !== 'undefined' && /settings/.test(location.hash) ? 'settings' : 'overview')
 const $billingNotice = atom(null)
 const $billingProfiles = atom({ profiles: [], loading: true, error: '' })
@@ -2803,7 +2804,8 @@ function econFeeLines(t, fees) {
 }
 
 const LEDGER_TABS = [['overview', 'Overview'], ['usage', 'Usage'], ['costs', 'Costs'],
-  ['memberships', 'Memberships'], ['settings', 'Settings & About']]
+  ['memberships', 'Memberships'], ['reports', 'Reports'], ['settings', 'Settings & About']]
+const $digestDays = atom(30)
 function LedgerTabs() {
   const tab = useValue($ledgerTab)
   useEffect(() => {
@@ -4500,6 +4502,30 @@ function weatherQuery(identity = membershipIdentityNow(), native = false) {
   }
 }
 
+function digestQuery(identity = membershipIdentityNow(), days = 30, lang = 'en') {
+  return {
+    queryKey: [ID, 'digest-report', identity, days, lang],
+    queryFn: async () => {
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      if (typeof rest !== 'function') throw new Error('This desktop build has no plugin backend bridge.')
+      const result = await rest(`/reports/digest?days=${days}&lang=${lang}`)
+      if (!result || result.ok === false) throw new Error(result?.error || 'Report is unavailable.')
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      return { ...result, identity }
+    },
+    retry: false, staleTime: 30_000
+  }
+}
+
+/** The SDK exposes no locale getter, so detect it from catalogue rendering. */
+function uiLocale(t) {
+  try {
+    return /[\u4e00-\u9fff]/.test(t('reportsTitle')) ? 'zh' : 'en'
+  } catch {
+    return 'en'
+  }
+}
+
 /** ctx.rest takes `body` as a value; the main process serialises it. */
 async function membershipWrite(method, path, body, transport = rest) {
   if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
@@ -5723,6 +5749,120 @@ function MembershipsPage() {
   ] })
 }
 
+async function digestCopy(report, t) {
+  if (!report || !report.markdown) return false
+  const ok = await writeClipboard(report.markdown)
+  host.notify({ kind: ok ? 'success' : 'error', message: ok ? t('rpCopied') : t('rpFailed') })
+  return ok
+}
+
+async function digestDownload(report, t) {
+  if (!report || !report.markdown) return
+  try {
+    const url = URL.createObjectURL(new Blob([report.markdown], { type: 'text/markdown;charset=utf-8' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = report.filename || 'spend-sense-digest.md'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  } catch {
+    const ok = await writeClipboard(report.markdown)
+    host.notify({ kind: ok ? 'info' : 'error', message: ok ? t('rpSaveFallback') : t('rpFailed') })
+  }
+}
+
+const REPORTS_CSS = `
+.wm-reports-bar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:8px 0;background:var(--ui-fill-primary);border-bottom:1px solid var(--ui-stroke-secondary)}
+.wm-reports-bar h2{font-size:13px;font-weight:600;margin:0 auto 0 0}
+.wm-digest{display:grid;gap:12px;padding:12px 0}
+.wm-digest-head{font-size:12px;color:var(--ui-text-secondary)}
+.wm-digest-section h3{font-size:12.5px;font-weight:600;margin:0 0 2px}
+.wm-digest-lines{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:3px;font-size:12px}
+.wm-digest-lines li{display:flex;justify-content:space-between;gap:12px}
+.wm-digest-lines li span:first-child{color:var(--ui-text-secondary)}
+.wm-digest-lines li span:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.wm-digest table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+.wm-digest th{text-align:left;font-weight:600;color:var(--ui-text-secondary);padding:3px 8px 3px 0;border-bottom:1px solid var(--ui-stroke-secondary)}
+.wm-digest td{padding:3px 8px 3px 0;border-bottom:1px solid var(--ui-stroke-secondary);font-variant-numeric:tabular-nums}
+.wm-digest-notes{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:3px;font-size:11.5px;color:var(--ui-text-secondary)}
+.wm-digest-method{font-size:11.5px;color:var(--ui-text-secondary)}
+.wm-digest-error{display:grid;gap:8px;justify-items:start;padding:12px 0}
+`
+
+/** Generic section renderer: headings, tables, lines and notes, React-escaped. */
+function DigestPreview({ report }) {
+  const sections = Array.isArray(report?.sections) ? report.sections : []
+  return jsxs('div', { className: 'wm-digest', children: [
+    jsx('p', { className: 'wm-digest-head',
+      children: `${report?.period?.label || ''} · ${fmtDay(report?.generated_at)}` }),
+    ...sections.map(section => section.id === 'methodology'
+      ? jsxs('details', { className: 'wm-digest-method', children: [
+        jsx('summary', { children: section.heading }),
+        jsxs('ul', { className: 'wm-digest-notes',
+          children: (section.notes || []).map((note, index) => jsx('li', { children: note }, `n${index}`)) }),
+      ] }, section.id)
+      : jsxs('section', { className: 'wm-digest-section', 'aria-label': section.heading, children: [
+        jsx('h3', { children: section.heading }),
+        section.window ? jsx('p', { className: 'wm-note', children: section.window }) : null,
+        section.kind === 'table' ? jsxs('table', { children: [
+          jsx('thead', { children: jsx('tr', { children: (section.columns || [])
+            .map((column, index) => jsx('th', { children: column }, `h${index}`)) }) }),
+          jsx('tbody', { children: (section.rows || [])
+            .map((row, index) => jsx('tr', { children: row
+              .map((cell, cellIndex) => jsx('td', { children: cell }, `c${cellIndex}`)) }, `r${index}`)) }),
+        ] }) : null,
+        (section.lines || []).length ? jsxs('ul', { className: 'wm-digest-lines',
+          children: section.lines.map((line, index) => jsxs('li', { children: [
+            jsx('span', { children: line.label }),
+            jsx('span', { children: line.value }),
+          ] }, `l${index}`)) }) : null,
+        (section.notes || []).length ? jsxs('ul', { className: 'wm-digest-notes',
+          children: section.notes.map((note, index) => jsx('li', { children: note }, `n${index}`)) }) : null,
+      ] }, section.id)),
+  ] })
+}
+
+function ReportsPage() {
+  const t = usePluginI18n(ID)
+  const identity = useValue($membershipIdentity)
+  const days = useValue($digestDays)
+  const lang = uiLocale(t)
+  const report = useQuery(digestQuery(identity, days, lang))
+  const current = report.data?.identity === identity && membershipIdentityCurrent(identity)
+    ? report.data : null
+  const failed = !!(report.error && membershipIdentityCurrent(identity))
+  return jsxs('div', { className: 'wm-shell wm-reports', children: [
+    jsx('style', { children: [PRODUCT_CSS, REPORTS_CSS] }),
+    jsxs('div', { className: 'wm-reports-bar', children: [
+      jsx('h2', { children: t('reportsTitle') }),
+      jsx(SegmentedControl, {
+        onChange: v => $digestDays.set(Number(v) === 7 ? 7 : 30),
+        options: [{ id: '7', label: t('rpDays7') }, { id: '30', label: t('rpDays30') }],
+        value: String(days),
+      }),
+      jsx(ProductButton, { type: 'button', className: 'wm-button wm-accent',
+        disabled: report.isFetching, onClick: () => report.refetch(),
+        children: report.isFetching ? t('rpGenerating') : t('rpGenerate') }),
+      jsx(ProductButton, { type: 'button', className: 'wm-button',
+        disabled: !current, onClick: () => digestCopy(current, t), children: t('rpCopy') }),
+      jsx(ProductButton, { type: 'button', className: 'wm-button',
+        disabled: !current, onClick: () => digestDownload(current, t), children: t('rpSave') }),
+    ] }),
+    report.isLoading && !current
+      ? jsx('p', { className: 'wm-note', role: 'status', children: t('rpGenerating') })
+      : failed && !current
+        ? jsxs('div', { className: 'wm-digest-error', children: [
+          jsx('p', { role: 'alert', children: t('rpError') }),
+          jsx(ProductButton, { type: 'button', className: 'wm-button',
+            onClick: () => report.refetch(), children: t('rpRetry') }),
+        ] })
+        : current ? jsx(DigestPreview, { report: current }) : null,
+  ] })
+}
+
 function LedgerPage() {
   const t = usePluginI18n(ID)
   const led = useValue($ledger)
@@ -5752,6 +5892,7 @@ function LedgerPage() {
   if (view === VIEW_ALL) {
     if (tab === 'costs' || tab === 'billing') return jsx(CostsPage, {})
     if (tab === 'memberships') return jsx(MembershipsPage, {})
+    if (tab === 'reports') return jsx(ReportsPage, {})
     if (tab === 'overview') return jsx(OverviewPage, {})
     if (tab === 'settings') return jsx(SettingsPage, {})
     return jsx(AnalyticsPage, { productPage: true })
@@ -6037,6 +6178,19 @@ const I18N = {
     wxDetails: 'Details',
     wxUnavailable: 'Allowance weather is unavailable for this connection.',
     wxStale: 'Refresh failed — showing the last read.',
+    // Local digest reports.
+    reportsTitle: 'Reports',
+    rpDays7: 'Last 7 days',
+    rpDays30: 'Last 30 days',
+    rpGenerate: 'Generate report',
+    rpGenerating: 'Generating…',
+    rpCopy: 'Copy',
+    rpCopied: 'Report copied to the clipboard.',
+    rpSave: 'Save',
+    rpSaveFallback: 'Download unavailable — report copied to the clipboard instead.',
+    rpFailed: 'Report action failed.',
+    rpError: 'Report unavailable for this connection.',
+    rpRetry: 'Retry',
     fxReading: 'Reading saved FX rates for this connection…',
     fxRetry: 'Retry',
     fxRateLine: (c, u, d, s) => `${c} at ${u} USD per unit, dated ${d} (${s})`,
@@ -6312,6 +6466,19 @@ const I18N = {
     wxDetails: '详情',
     wxUnavailable: '此连接无法读取额度动态。',
     wxStale: '刷新失败——显示上次读取的数据。',
+    // 本地摘要报告。
+    reportsTitle: '报告',
+    rpDays7: '过去 7 天',
+    rpDays30: '过去 30 天',
+    rpGenerate: '生成报告',
+    rpGenerating: '正在生成…',
+    rpCopy: '复制',
+    rpCopied: '报告已复制到剪贴板。',
+    rpSave: '保存',
+    rpSaveFallback: '无法下载——报告已复制到剪贴板。',
+    rpFailed: '报告操作失败。',
+    rpError: '此连接无法生成报告。',
+    rpRetry: '重试',
     fxReading: '正在读取此连接已保存的外汇汇率…',
     fxRetry: '重试',
     fxRateLine: (c, u, d, s) => `${c}：${u} 美元/单位，日期 ${d}（${s}）`,
@@ -6548,6 +6715,8 @@ export const __test = {
   weatherQuery, invalidateWeatherFor, invalidateBillingDependentsFor,
   wxVerdictLabel, wxLimitLabel, wxCycleSummary, wxWindowRow, wxRuleRow,
   AllowanceWeather, WEATHER_CSS,
+  digestQuery, uiLocale, digestCopy, digestDownload, DigestPreview, ReportsPage,
+  REPORTS_CSS, $digestDays,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,

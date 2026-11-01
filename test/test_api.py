@@ -176,6 +176,42 @@ class ApiTests(unittest.TestCase):
                 self.assertNotIn("private implementation detail", response.text)
                 self.assertNotIn("Traceback", response.text)
 
+    def test_digest_returns_report_shape(self):
+        fixture = {"ok": True, "days": 7, "lang": "en", "sections": [],
+                   "markdown": "# Digest\n", "filename": "digest.md"}
+        with patch.object(plugin_api.digest, "build_digest",
+                          return_value=fixture) as builder:
+            response = self.client.get("/api/plugins/spend-sense/reports/digest",
+                                       params={"days": 7, "lang": "en"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["markdown"], "# Digest\n")
+        builder.assert_called_once_with(days=7, lang="en")
+
+    def test_digest_rejects_other_windows_and_languages(self):
+        bad_days = self.client.get("/api/plugins/spend-sense/reports/digest",
+                                   params={"days": 5})
+        self.assertEqual(bad_days.status_code, 400)
+        self.assertIn("7 or 30", bad_days.json()["detail"])
+        self.assertEqual(self.client.get("/api/plugins/spend-sense/reports/digest",
+                                         params={"lang": "fr"}).status_code, 422)
+
+    def test_digest_failures_return_safe_error_responses(self):
+        from wolfmark_ledger.membership_store import StoreUnreadable
+
+        with TestClient(self.client.app, raise_server_exceptions=False) as client:
+            with patch.object(plugin_api.digest, "build_digest",
+                              side_effect=StoreUnreadable("membership store unreadable: boom")):
+                response = client.get("/api/plugins/spend-sense/reports/digest")
+                self.assertEqual(response.status_code, 503)
+                self.assertIn("store_unreadable", response.json()["detail"])
+            with patch.object(plugin_api.digest, "build_digest",
+                              side_effect=RuntimeError("private implementation detail")), \
+                 self.assertLogs(plugin_api.log, level="ERROR"):
+                response = client.get("/api/plugins/spend-sense/reports/digest")
+                self.assertEqual(response.status_code, 500)
+                self.assertNotIn("private implementation detail", response.text)
+                self.assertNotIn("Traceback", response.text)
+
     def test_health_never_raises(self):
         response = self.client.get("/api/plugins/spend-sense/health")
         self.assertEqual(response.status_code, 200)

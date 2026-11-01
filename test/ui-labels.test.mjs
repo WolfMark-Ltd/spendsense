@@ -376,3 +376,16 @@ test('every allowance-weather string exists in English and Chinese', () => {
   assert.match(zh.wxUsedOf('$6.00', '$10.00'), /\/ /)
   assert.match(zh.wxProjection('2026-11-20'), /2026-11-20/)
 })
+
+test('every digest string exists in English and Chinese', () => {
+  const keys = ['reportsTitle', 'rpDays7', 'rpDays30', 'rpGenerate', 'rpGenerating',
+    'rpCopy', 'rpCopied', 'rpSave', 'rpSaveFallback', 'rpFailed', 'rpError', 'rpRetry']
+  for (const key of keys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  assert.equal(en.reportsTitle, 'Reports')
+  assert.match(zh.reportsTitle, /报告/)
+  assert.match(zh.rpSaveFallback, /剪贴板/)
+})

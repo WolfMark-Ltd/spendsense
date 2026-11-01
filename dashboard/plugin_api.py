@@ -28,6 +28,7 @@ from wolfmark_ledger import store  # noqa: E402
 from wolfmark_ledger.analytics import build_analytics_report  # noqa: E402
 from wolfmark_ledger import allowance_weather  # noqa: E402
 from wolfmark_ledger import billing  # noqa: E402
+from wolfmark_ledger import digest  # noqa: E402
 from wolfmark_ledger import economics  # noqa: E402
 from wolfmark_ledger import user_data  # noqa: E402
 from wolfmark_ledger import membership_api as members  # noqa: E402
@@ -279,6 +280,30 @@ def allowance_weather_report(
     except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
         log.error("spend-sense: allowance weather failed")
         raise HTTPException(status_code=500, detail="allowance weather failed") from exc
+
+
+@router.get("/reports/digest")
+def digest_report(
+    days: int = Query(30, description="Trailing window in days: 7 or 30"),
+    lang: str = Query("en", pattern="^(en|zh)$", description="Report language"),
+) -> dict[str, Any]:
+    """A readable Markdown digest assembled from existing reports.
+
+    Read-only: usage, value, spending, fees and allowance figures are
+    transmitted from the analytics, economics and weather builders. Only
+    stored data is reported; provider readings are never probed.
+    """
+    if days not in (7, 30):
+        raise HTTPException(status_code=400, detail="days must be 7 or 30")
+    try:
+        return digest.build_digest(days=days, lang=lang)
+    except StoreUnreadable as exc:
+        raise _store_unreadable(exc) from exc
+    except CatalogueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
+        log.error("spend-sense: digest failed")
+        raise HTTPException(status_code=500, detail="digest failed") from exc
 
 
 @router.get("/membership/fx")
