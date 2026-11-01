@@ -1616,6 +1616,7 @@ function InfoTip({ dir = 'down', id, label, text, wide = false }) {
         'aria-label': label,
         'aria-expanded': isOpen,
         'aria-controls': `wm-info-${id}`,
+        'aria-describedby': isOpen ? `wm-info-${id}` : undefined,
         onMouseEnter: show,
         onFocus: show,
         onBlur: hide,
@@ -1903,7 +1904,37 @@ function BrandMark({ size = 20, id = 'mark' }) {
     ] })
 }
 
+/**
+ * Phase A shared design roles (design/proposal.md §3–§4). Colour roles map to
+ * host theme variables; this layer only names the role, it never introduces a
+ * palette the host did not provide. Layout breakpoints everywhere in the
+ * product use container queries on .wm-analytics (container-type:inline-size),
+ * so the Hermes pane width — not the window — drives narrow layouts.
+ * `[hidden]` is enforced explicitly: components that set display via a class
+ * (e.g. certainty chips with display:inline-flex) must never leak a hidden
+ * element back into view.
+ */
+const SHARED_CSS = [
+  '.wm-analytics,.wm-pane{--wm-action:var(--ui-accent);--wm-brand:#813cf8;--wm-positive:var(--ui-success,#2dd4bf);--wm-attention:var(--ui-warning);--wm-error:#f26d6d;--wm-space-1:4px;--wm-space-2:8px;--wm-space-3:12px;--wm-space-4:16px;--wm-space-5:24px;--wm-radius-card:8px;--wm-radius-ctl:6px;--wm-font-display:24px;--wm-font-kpi:20px;--wm-font-section:14px;--wm-font-body:13px;--wm-font-caption:11.5px}',
+  '.wm-analytics [hidden],.wm-pane [hidden]{display:none!important}',
+  '.wm-certainty{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:1px 8px;font-size:11px;line-height:1.5;color:var(--ui-text-secondary);white-space:nowrap;background:transparent}',
+  '.wm-certainty[data-certainty="partial"],.wm-certainty[data-certainty="lower-bound"]{color:var(--ui-warning);border-color:color-mix(in srgb,var(--ui-warning) 45%,transparent)}',
+  '.wm-certainty[data-certainty="ok"]{color:var(--ui-success,#2dd4bf)}',
+  '.wm-async{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}',
+  '.wm-async-status{font-size:11.5px;line-height:1.4}',
+  '.wm-async-status[data-status="success"]{color:var(--ui-success,#2dd4bf)}',
+  '.wm-async-status[data-status="error"]{color:var(--ui-error)}',
+  '.wm-info{position:static;display:inline-flex;flex-shrink:0}',
+  '.wm-info-btn{width:24px;height:24px;border-radius:50%;border:1px solid var(--ui-text-quaternary);background:none;color:var(--ui-text-quaternary);font-size:10px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;cursor:pointer;display:inline-grid;place-items:center}',
+  '.wm-info-btn:hover,.wm-info-btn:focus-visible{border-color:var(--ui-accent);color:var(--ui-accent)}',
+  '.wm-info-btn:focus-visible{outline:2px solid var(--ui-accent);outline-offset:1px}',
+  '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:20;background:var(--ui-fill-secondary,#1a1d26);border:1px solid var(--ui-stroke-secondary);border-radius:7px;padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;white-space:normal;color:var(--ui-text-secondary);box-shadow:0 6px 20px rgba(0,0,0,.35)}',
+  '.wm-info-pop.wm-info-up{top:auto;bottom:calc(100% + 6px)}',
+  '.wm-info-pop-wide{left:auto;right:0;width:max-content;max-width:200px}'
+].join('');
+
 const METER_CSS = [
+  SHARED_CSS,
   '.wm-pane{display:flex;height:100%;flex-direction:column;gap:10px;overflow:auto;padding:12px;min-width:0}',
   '.wm-meter-head{display:flex;flex-direction:column;gap:7px;padding-bottom:10px;border-bottom:1px solid var(--ui-stroke-secondary)}',
   '.wm-meter-brandrow{display:flex;align-items:center;gap:8px;min-width:0}',
@@ -1958,13 +1989,6 @@ const METER_CSS = [
   '.wm-kpi-source,.wm-card-title,.wm-rates-head,.wm-gauge-stat{position:relative}',
   '.wm-gauge-stat .wm-info{margin-left:5px;vertical-align:1px}',
   '.wm-partial-chip{position:relative;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-warning)}',
-  '.wm-info{position:static;display:inline-flex;flex-shrink:0}',
-  '.wm-info-btn{width:15px;height:15px;border-radius:50%;border:1px solid var(--ui-text-quaternary);background:none;color:var(--ui-text-quaternary);font-size:9px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;cursor:pointer;display:inline-grid;place-items:center}',
-  '.wm-info-btn:hover,.wm-info-btn:focus-visible{border-color:var(--ui-accent);color:var(--ui-accent)}',
-  '.wm-info-btn:focus-visible{outline:2px solid var(--ui-accent);outline-offset:1px}',
-  '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:20;background:var(--ui-fill-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:7px;padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;white-space:normal;color:var(--ui-text-secondary);box-shadow:0 6px 20px rgba(0,0,0,.35)}',
-  '.wm-info-pop.wm-info-up{top:auto;bottom:calc(100% + 6px)}',
-  '.wm-info-pop-wide{left:auto;right:0;width:max-content;max-width:200px}',
   '.wm-stale .wm-kpi-figure,.wm-stale .wm-metric-value,.wm-stale .wm-legend-value,.wm-stale .wm-ring-text{opacity:.62}',
   '.wm-meter-empty{display:flex;flex-direction:column;gap:10px}',
   '.wm-pane :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}',
@@ -2169,7 +2193,7 @@ function analyticsQuery(days, filters, scope) {
 
 /* ---------------------------------------------------------- analytics UI */
 
-const ANALYTICS_CSS = `
+const ANALYTICS_CSS = SHARED_CSS + `
 .wm-analytics{height:100%;overflow:auto;container-type:inline-size;color:var(--ui-text-primary);font-size:12px;line-height:1.5}
 .wm-analytics *{box-sizing:border-box}.wm-analytics .wm-shell{max-width:1560px;padding:28px 32px 40px;margin:auto;display:grid;gap:22px;min-width:0}
 .wm-analytics h1,.wm-analytics h2,.wm-analytics p{margin:0}.wm-analytics h1{font-size:27px;line-height:1.2;font-weight:650;letter-spacing:-1px}.wm-analytics h2{font-size:13px;font-weight:600;letter-spacing:-.15px}
@@ -2225,6 +2249,41 @@ function analyticMoney(value) { return finiteValue(value)==null ? '—' : value<
 function keyActivate(event, fn) { if (event.key === 'Enter' || event.key === ' ') {event.preventDefault();fn()} }
 function ProductButton({children, variant = 'outline', size = 'sm', ...props}) {
   return jsx(Button, { ...props, size, variant, children })
+}
+/**
+ * Phase A async-action button (proposal C8). Stateless: the caller owns the
+ * operation and passes its phase, so connection/profile isolation stays with
+ * the existing call sites. Pending disables the button (duplicate clicks are
+ * impossible) and swaps in pendingLabel; success/error text, when supplied,
+ * is announced beside the button rather than in a distant banner. When no
+ * status text is supplied only the button state changes — existing page
+ * notices remain the single source of feedback.
+ */
+function AsyncButton({ status = 'idle', pendingLabel, successLabel, errorLabel,
+                       children, disabled, ...props }) {
+  const pending = status === 'pending'
+  const statusText = status === 'success' ? successLabel
+    : status === 'error' ? errorLabel : null
+  return jsxs('span', { className: 'wm-async', children: keyedElementChildren([
+    jsx(ProductButton, { ...props, disabled: disabled || pending,
+      'aria-busy': pending || undefined,
+      'data-status': status,
+      children: pending && pendingLabel ? pendingLabel : children }, 'btn'),
+    statusText
+      ? jsx('span', { className: 'wm-async-status', 'data-status': status,
+          role: status === 'error' ? 'alert' : 'status', children: statusText }, 'status')
+      : null
+  ].filter(Boolean), 'wm-async') })
+}
+/** Shared product-page heading (proposal C1): title, one-line subtitle, actions. */
+function ProductHeader({ title, subtitle, actions }) {
+  return jsxs('header', { className: 'wm-product-heading', children: keyedElementChildren([
+    jsxs('div', { children: keyedElementChildren([
+      jsx('h1', { children: title }, 'h'),
+      subtitle ? jsx('p', { children: subtitle }, 'p') : null
+    ].filter(Boolean), 'wm-ph-title') }, 'title'),
+    actions || null
+  ].filter(Boolean), 'wm-product-heading') })
 }
 function keyedElementChildren(children, prefix) {
   return children.map((child, index) => {
@@ -2836,6 +2895,7 @@ function LedgerTabs() {
         children: jsx(BrandMark, { size: 16, id: 'tabs' }) }, 'brand'),
       ...LEDGER_TABS.map(([id, label]) =>
         jsx(ProductButton, { role: 'tab', variant: 'ghost', 'aria-selected': tab === id, 'aria-pressed': tab === id,
+          tabIndex: tab === id ? 0 : -1,
           className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
           onClick: () => goLedgerTab(id), children: label }, id))] }) })
 }
@@ -2974,8 +3034,8 @@ function AdvancedBillingRules() {
 const PRODUCT_CSS = [
   '.wm-product .wm-shell{max-width:1180px;padding:24px 22px;gap:18px}',
   '.wm-product .wm-product-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}',
-  '.wm-product .wm-product-heading h1{margin:0;font-size:24px;line-height:1.2;font-weight:620;letter-spacing:-.35px}',
-  '.wm-product .wm-product-heading p{margin:5px 0 0;color:var(--ui-text-tertiary);font-size:13px;line-height:1.45}',
+  '.wm-product .wm-product-heading h1{margin:0;font-size:var(--wm-font-display,24px);line-height:1.2;font-weight:620;letter-spacing:-.35px}',
+  '.wm-product .wm-product-heading p{margin:5px 0 0;color:var(--ui-text-tertiary);font-size:var(--wm-font-body,13px);line-height:1.45}',
   '.wm-product .wm-product-tabs{display:flex;gap:4px;overflow:auto;padding:3px;border-bottom:1px solid var(--ui-stroke-secondary);position:sticky;top:0;z-index:6;background:var(--ui-fill-primary)}',
   '.wm-product .wm-product-brand{display:inline-flex;align-items:center;flex-shrink:0;align-self:center;margin:0 6px 0 2px}',
   '.wm-product .wm-product-tab{border:0;background:transparent;color:var(--ui-text-tertiary);border-radius:6px;padding:8px 13px;min-height:38px;display:inline-flex;align-items:center;font:inherit;font-size:13px;white-space:nowrap;cursor:pointer;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}',
@@ -3074,12 +3134,10 @@ function CostsPage() {
     jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + ECONOMICS_CSS }),
     jsx(LedgerTabs, {}),
     jsxs('main', { className: 'wm-shell', children: [
-      jsxs('header', { className: 'wm-product-heading', children: [
-        jsxs('div', { children: [jsx('h1', { children: 'Costs' }),
-          jsx('p', { children: 'Recorded usage, current price estimates and the memberships you have declared.' })] }),
-        jsx('button', { type: 'button', className: 'wm-source-link',
-          onClick: () => goLedgerTab('settings'), children: sourceText })
-      ] }),
+      jsx(ProductHeader, { title: 'Costs',
+        subtitle: 'Recorded usage, current price estimates and the memberships you have declared.',
+        actions: jsx('button', { type: 'button', className: 'wm-source-link',
+          onClick: () => goLedgerTab('settings'), children: sourceText }) }),
       summary.error
         ? jsx('div', { className: 'wm-alert', role: 'alert', children: String(summary.error.message || summary.error) })
         : null,
@@ -3593,10 +3651,8 @@ function OverviewPage() {
     jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + ECONOMICS_CSS }),
     jsx(LedgerTabs, {}),
     jsxs('main', { className: 'wm-shell', children: [
-      jsxs('header', { className: 'wm-product-heading', children: [
-        jsxs('div', { children: [jsx('h1', { children: 'Overview' }),
-          jsx('p', { children: 'A quick view of recorded costs, estimates and the memberships you have declared.' })] })
-      ] }),
+      jsx(ProductHeader, { title: 'Overview',
+        subtitle: 'A quick view of recorded costs, estimates and the memberships you have declared.' }),
       analytics.error ? jsx('div', { className: 'wm-alert', role: 'alert',
         children: String(analytics.error.message || analytics.error) }) : null,
       jsx('section', { className: 'wm-product-summary', children: [
@@ -3798,10 +3854,8 @@ function SettingsPage() {
     jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS }),
     jsx(LedgerTabs, {}),
     jsxs('main', { className: 'wm-shell', children: [
-      jsxs('header', { className: 'wm-product-heading', children: [
-        jsxs('div', { children: [jsx('h1', { children: 'Settings & About' }),
-          jsx('p', { children: 'Privacy, pricing provenance, diagnostics and recovery.' })] })
-      ] }),
+      jsx(ProductHeader, { title: 'Settings & About',
+        subtitle: 'Privacy, pricing provenance, diagnostics and recovery.' }),
       jsxs('div', { className: 'wm-settings-grid', children: keyedElementChildren([
         jsxs('section', { className: 'wm-product-section', children: [
           jsx('h2', { children: 'External data and privacy' }),
@@ -5702,10 +5756,12 @@ function MembershipsPage() {
     jsx(LedgerTabs, {}),
     jsxs('div', { className: 'wm-shell wm-memberships', children: [
       jsxs('div', { className: 'wm-controls', children: [
-        jsx(ProductButton, { type: 'button', className: cn('wm-button', 'wm-accent'), disabled: !!busy,
-          onClick: discover, children: busy === 'discover' ? 'Discovering…' : 'Discover accounts' }),
-        jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
-          onClick: refreshReadings, children: busy === 'refresh' ? 'Refreshing…' : 'Refresh readings' })
+        jsx(AsyncButton, { type: 'button', className: cn('wm-button', 'wm-accent'), disabled: !!busy,
+          status: busy === 'discover' ? 'pending' : 'idle', pendingLabel: 'Discovering…',
+          onClick: discover, children: 'Discover accounts' }),
+        jsx(AsyncButton, { type: 'button', className: 'wm-button', disabled: !!busy,
+          status: busy === 'refresh' ? 'pending' : 'idle', pendingLabel: 'Refreshing…',
+          onClick: refreshReadings, children: 'Refresh readings' })
       ] }),
       notice ? jsx('div', { className: 'wm-alert', 'data-tone': notice.tone === 'warn' ? 'warn' : 'good',
         role: 'status', children: notice.text }) : null,
@@ -5880,9 +5936,9 @@ function ReportsPage() {
           options: [{ id: '7', label: t('rpDays7') }, { id: '30', label: t('rpDays30') }],
           value: String(days),
         }),
-        jsx(ProductButton, { type: 'button', className: 'wm-button wm-accent',
-          disabled: report.isFetching, onClick: () => report.refetch(),
-          children: report.isFetching ? t('rpGenerating') : t('rpGenerate') }),
+        jsx(AsyncButton, { type: 'button', className: 'wm-button wm-accent',
+          status: report.isFetching ? 'pending' : 'idle', pendingLabel: t('rpGenerating'),
+          onClick: () => report.refetch(), children: t('rpGenerate') }),
         jsx(ProductButton, { type: 'button', className: 'wm-button',
           disabled: !matches, onClick: () => digestCopy(matches, t), children: t('rpCopy') }),
         jsx(ProductButton, { type: 'button', className: 'wm-button',
@@ -6772,6 +6828,7 @@ export const __test = {
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
   CostsPage, OverviewPage, SettingsPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark, PRODUCT_CSS,
+  SHARED_CSS, ProductHeader, AsyncButton,
   settledDesktopMonth, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
   setRest: value => { rest = value },
