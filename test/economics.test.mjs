@@ -66,6 +66,15 @@ test('econCoverageLabel never reports unknown pricing as priced', () => {
   assert.equal(S.econCoverageLabel(en, { tokens: 10, list_usd: 1, coverage: 0.5 }), '50% priced')
 })
 
+test('econCoverageLabel withholds fully priced on rounded 100% coverage', () => {
+  // 3M priced + 1 unpriced token rounds coverage to 1.0; the label must
+  // not contradict the partial backend status shown in the same cell.
+  assert.equal(S.econCoverageLabel(en,
+    { tokens: 3000001, list_usd: 6, coverage: 1, unpriced_tokens: 1 }), '100% priced')
+  assert.equal(S.econCoverageLabel(en,
+    { tokens: 3000000, list_usd: 6, coverage: 1, unpriced_tokens: 0 }), 'Fully priced')
+})
+
 test('econFeeLines keeps one line per currency', () => {
   assert.deepEqual(S.econFeeLines(en, []), ['—'])
   assert.deepEqual(S.econFeeLines(en, null), ['—'])

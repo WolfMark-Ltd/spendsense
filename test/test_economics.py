@@ -511,6 +511,23 @@ class ComparisonTests(EconomicsCase):
         self.assertTrue(any("lower bound" in note for note in row["notes"]))
         self.assertEqual(result["headline"]["status"], "partial")
 
+    def test_single_unpriced_token_survives_rounded_coverage(self):
+        self.anchor_coverage()
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        self.create_events([{"ts": NOW - 100, "input_tokens": 3_000_000},
+                            {"ts": NOW - 90, "model": "unknown-model",
+                             "input_tokens": 1}])
+        result = self.report(days=30, trend_months=0)
+        row = result["accounts"][0]
+        self.assertEqual(row["usage"]["coverage"], 1.0)
+        self.assertEqual(row["usage"]["unpriced_tokens"], 1)
+        self.assertEqual(row["status"], "partial")
+        self.assertTrue(any("lower bound" in note for note in row["notes"]),
+                        row["notes"])
+        self.assertFalse(any("Only 100.0%" in note for note in row["notes"]),
+                         row["notes"])
+        self.assertEqual(result["headline"]["status"], "partial")
+
     def test_fully_unpriced_usage_is_unavailable(self):
         self.anchor_coverage()
         self.write_store([account("a", "test", plan_id="test.plus")])
