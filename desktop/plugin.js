@@ -5382,17 +5382,19 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   }
   const exhaustionDraft = rawExhaustionDraft?.origin === identity && rawExhaustionDraft.account_id === account.id
     ? rawExhaustionDraft : null
-  // The button that opened the current draft, so Cancel can return focus to
-  // it instead of dropping focus to the page when the form unmounts.
-  const draftOpener = useRef(null)
-  const cancelDraft = clear => {
+  // The button that opened each draft, keyed by draft kind: several drafts
+  // can be open on one card, so a shared slot would return focus to the
+  // wrong opener. Cancel returns focus instead of dropping it to the page
+  // when the form unmounts.
+  const draftOpener = useRef({})
+  const cancelDraft = (kind, clear) => {
     clear()
-    const opener = draftOpener.current
-    draftOpener.current = null
+    const opener = draftOpener.current[kind]
+    delete draftOpener.current[kind]
     if (opener && opener.isConnected) opener.focus()
   }
   const openExhaustion = (scopeId, label, opener) => {
-    draftOpener.current = opener || null
+    draftOpener.current.exhaustion = opener || null
     onAction('exhaust', account, scopeId, label)
   }
   const submitExhaustion = event => {
@@ -5425,7 +5427,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy,
         children: busy === account.id ? 'Saving…' : 'Save manual status' }),
       jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
-        onClick: () => cancelDraft(() => $exhaustionDraft.set(null)), children: 'Cancel' })
+        onClick: () => cancelDraft('exhaustion', () => $exhaustionDraft.set(null)), children: 'Cancel' })
     ] })
   ] }) : null
   const exhaustionAnchored = !exhaustionDraft
@@ -5444,7 +5446,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   const customPlanButton = jsx('div', { className: 'wm-setting-action', children: [
       jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
         'aria-expanded': !!customDraft,
-        onClick: event => { draftOpener.current = event.currentTarget; onAction('edit-custom-plan', account) },
+        onClick: event => { draftOpener.current.custom = event.currentTarget; onAction('edit-custom-plan', account) },
         children: account.custom_plan ? 'Edit user-defined plan' : 'Create user-defined plan' })
     ] })
 
@@ -5517,7 +5519,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       customErrors.length ? jsx('p', { className: 'wm-warn-note', role: 'alert', children: customErrors.join(' ') }) : null,
       jsx('div', { className: 'wm-setting-action', children: [
         jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy || customErrors.length > 0, children: busy === account.id ? 'Saving…' : 'Save user-defined plan' }),
-        jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy, onClick: () => cancelDraft(() => $customPlanDraft.set(null)), children: 'Cancel' })
+        jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy, onClick: () => cancelDraft('custom', () => $customPlanDraft.set(null)), children: 'Cancel' })
       ] })
     ] }) : null
 
@@ -5597,7 +5599,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     subscription || apiOnly ? jsxs('div', { className: 'wm-fee-row', children: [
       jsx('span', { className: 'wm-fee', children: feeLabel(fee) }),
       jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !subscription || !!busy, 'aria-expanded': draft?.account_id === account.id,
-        onClick: event => { draftOpener.current = event.currentTarget; onAction('fee', account) }, children: 'Edit fee' })
+        onClick: event => { draftOpener.current.fee = event.currentTarget; onAction('fee', account) }, children: 'Edit fee' })
     ] }) : null,
     subscription && draft && draft.account_id === account.id
         // Without a revision no correction can ever save, so native bubbles
@@ -5641,7 +5643,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
             ] }),
             jsxs('div', { className: 'wm-controls', children: [
               jsx(ProductButton, { type: 'submit', className: cn('wm-button', 'wm-accent'), disabled: !!busy, children: busy === account.id ? 'Saving…' : 'Save fee' }),
-              jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy, onClick: () => cancelDraft(() => $membershipDraft.set(null)), children: 'Cancel' })
+              jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy, onClick: () => cancelDraft('fee', () => $membershipDraft.set(null)), children: 'Cancel' })
             ] })
           ] })
         : null,

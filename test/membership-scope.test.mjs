@@ -2022,6 +2022,42 @@ test('PR-C: Details → Allowances → exhaustion shows the exhaustion editor', 
   await flush(2)
 })
 
+test('PR-C: each draft cancel returns focus to its own opener', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const sub = account('openai-codex:default', {
+    family: 'openai-codex', label: 'main', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } }
+  })
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+    : { ok: true })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="openai-codex:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'plan')
+  const editFee = [...card.querySelectorAll('button')].find(b => b.textContent === 'Edit fee')
+  await React.act(async () => { editFee.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await flush(2)
+  await toggleGroup(card, 'advanced')
+  await clickByText(card, 'Create user-defined plan')
+  await flush(2)
+  assert.ok(card.querySelector('form.wm-fee-form'), 'the fee draft stays open')
+  assert.ok(card.querySelector('form.wm-custom-form'), 'the custom draft opens alongside')
+  // Plan group precedes Advanced, so the first Cancel belongs to the fee form.
+  await clickByText(card, 'Cancel')
+  await flush(2)
+  assert.ok(document.activeElement === editFee, 'fee cancel returns to Edit fee, not the later opener')
+  const createPlan = [...card.querySelectorAll('button')].find(b => b.textContent === 'Create user-defined plan')
+  await clickByText(card.querySelector('form.wm-custom-form'), 'Cancel')
+  await flush(2)
+  assert.ok(document.activeElement === createPlan, 'custom cancel returns to its own opener')
+})
+
 test('PR-C: window exhaustion form opens inline under its button and takes focus', async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
@@ -2052,10 +2088,10 @@ test('PR-C: window exhaustion form opens inline under its button and takes focus
   assert.equal(forms.length, 1, 'one exhaustion form opens')
   assert.equal(forms[0].closest('li[data-window]')?.dataset.window, 'win-2',
     'the form renders inside the clicked window row, not at the group bottom')
-  assert.equal(li.querySelector('.wm-quota-actions').nextElementSibling, forms[0],
+  assert.ok(li.querySelector('.wm-quota-actions').nextElementSibling === forms[0],
     'the form sits immediately beneath the clicked button')
   assert.equal(button.getAttribute('aria-expanded'), 'true', 'the opener announces the open form')
-  assert.equal(document.activeElement, forms[0].querySelector('input[type="datetime-local"]'),
+  assert.ok(document.activeElement === forms[0].querySelector('input[type="datetime-local"]'),
     'the first field takes focus so the response is visible')
   await clickByText(card, 'Cancel')
   await flush(2)
@@ -2086,13 +2122,13 @@ test('PR-C: account exhaustion form opens under the account button; cancel retur
   const form = card.querySelector('form.wm-exhaustion-form')
   assert.ok(form, 'the exhaustion form opens')
   assert.ok(form.closest('.wm-quota-empty'), 'the form renders under the account button')
-  assert.equal(button.nextElementSibling, form, 'nothing sits between the button and its form')
-  assert.equal(document.activeElement, form.querySelector('input[type="datetime-local"]'),
+  assert.ok(button.nextElementSibling === form, 'nothing sits between the button and its form')
+  assert.ok(document.activeElement === form.querySelector('input[type="datetime-local"]'),
     'the first field takes focus')
   await clickByText(card, 'Cancel')
   await flush(2)
   assert.equal(card.querySelector('form.wm-exhaustion-form'), null, 'cancel closes the form')
-  assert.equal(document.activeElement, button, 'cancel returns focus to the opener')
+  assert.ok(document.activeElement === button, 'cancel returns focus to the opener')
 })
 
 test('PR-C: exhaustion save shows Saving, and a failed save keeps the draft with an alert', async () => {
