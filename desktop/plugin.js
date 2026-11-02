@@ -5320,12 +5320,13 @@ function accountHolderMarked(account) {
 
 /** Short arrangement label for the compact row. Vocabulary matches the
  * existing card; the PR-D display rename (Metered API) is out of scope. */
-function arrangementLabel(arrangement) {
-  return arrangement === 'subscription' ? 'Subscription'
-    : arrangement === 'prepaid' ? 'Prepaid credits'
-    : arrangement === 'api_only' ? 'API Only' : 'Not confirmed'
+function arrangementLabel(arrangement, t) {
+  return arrangement === 'subscription' ? t('memArrSubscription')
+    : arrangement === 'prepaid' ? t('memArrPrepaid')
+    : arrangement === 'api_only' ? t('memArrApiOnly') : t('memArrUnconfirmed')
 }
 function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention }) {
+  const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const now = useValue($membershipClock)
   const rawPlanDraft = useValue($customPlanDraft)
@@ -5459,25 +5460,25 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   }
   const identityLabel = account.label && account.label !== account.family
     ? `${account.family} · ${account.label}` : account.family
-  const planName = planSaved ? (account.plan?.name || account.plan_id) : 'No plan confirmed'
+  const planName = planSaved ? (account.plan?.name || account.plan_id) : t('attnNoPlan')
   return jsxs('article', { className: 'wm-card', 'data-account': account.id, children: keyedElementChildren([
     jsxs('div', { className: 'wm-row-head', children: [
       jsxs('div', { className: 'wm-row-id', children: [
         jsx('strong', { children: identityLabel }),
-        jsx('span', { children: `${arrangementLabel(arrangement)} · ${planName}` })
+        jsx('span', { children: `${arrangementLabel(arrangement, t)} · ${planName}` })
       ] }),
       jsxs('div', { className: 'wm-row-mid', children: [
         jsx('span', { className: 'wm-row-fee', children: feeLabel(fee) }),
-        hasAttention ? jsx('span', { className: 'wm-certainty', 'data-certainty': 'partial', children: 'Needs attention' }) : null,
-        busy === account.id ? jsx('span', { className: 'wm-note', role: 'status', children: 'Saving…' }) : null,
+        hasAttention ? jsx('span', { className: 'wm-certainty', 'data-certainty': 'partial', children: t('memNeedsAttention') }) : null,
+        busy === account.id ? jsx('span', { className: 'wm-note', role: 'status', children: t('memSaving') }) : null,
         jsx(ProductButton, { type: 'button', className: 'wm-button', 'aria-expanded': expanded, 'aria-controls': bodyId,
-          onClick: toggleExpanded, children: ['Details ', jsx('span', { className: 'wm-chev', 'aria-hidden': true, children: '›' }, 'chev')] })
+          onClick: toggleExpanded, children: [t('memDetails') + ' ', jsx('span', { className: 'wm-chev', 'aria-hidden': true, children: '›' }, 'chev')] })
       ] })
     ] }),
     jsxs('div', { className: 'wm-row-body', id: bodyId, hidden: expanded ? undefined : true, children: [
     jsxs('details', { className: 'wm-group', 'data-group': 'plan',
       ...(draft?.account_id === account.id || customDraft ? { open: true } : {}), children: [
-      jsx('summary', { children: 'Plan & billing' }),
+      jsx('summary', { children: t('memGroupPlan') }),
       jsxs('div', { className: 'wm-group-body', children: [
     jsxs('label', { className: 'wm-check', children: [
       jsx('input', { type: 'checkbox', checked: apiOnly, disabled: !!busy,
@@ -5578,7 +5579,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     ] }) ] }),
     jsxs('details', { className: 'wm-group', 'data-group': 'allowances',
       ...(exhaustionDraft ? { open: true } : {}), children: [
-      jsx('summary', { children: 'Allowances & readings' }),
+      jsx('summary', { children: t('memGroupAllow') }),
       jsxs('div', { className: 'wm-group-body', children: [
     rows.length
       ? jsxs('ul', { className: 'wm-quota', children: rows.map(row => jsxs('li', { 'data-window': row.id, 'data-state': row.state, children: [
@@ -5629,13 +5630,13 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     ] }) : null,
     ] }) ] }),
     jsxs('details', { className: 'wm-group', 'data-group': 'advanced', children: [
-      jsx('summary', { children: 'Advanced & diagnostics' }),
+      jsx('summary', { children: t('memGroupAdvanced') }),
       jsxs('div', { className: 'wm-group-body', children: [
         jsx('span', { className: 'wm-chip', 'data-state': account.credential_present ? 'live' : 'no_data',
           children: account.credential_present ? 'configured credential' : 'credential not found' }),
         jsx('p', { className: 'wm-note', children:
           account.identity_source === 'native' ? 'Account identified by Hermes.' : 'Provider account slot; credential values are never shown.' }),
-        jsx('p', { className: 'wm-note', children: `Account ID: ${account.id}` }),
+        jsx('p', { className: 'wm-note', children: t('memAccountId', account.id) }),
         subscription ? customPlanButton : null,
         subscription && customDraft ? customPlanForm : null
       ] })
@@ -5975,18 +5976,17 @@ function MembershipsPage() {
     jsxs('style', { children: [ANALYTICS_CSS, PRODUCT_CSS, MEMBERSHIP_CSS, WEATHER_CSS] }),
     jsx(LedgerTabs, {}),
     jsxs('div', { className: 'wm-shell wm-memberships', children: [
-      jsx(ProductHeader, { title: 'Memberships',
-        subtitle: 'Confirm each account’s plan and declared fee. Usage tracking never depends on this page.' }),
+      jsx(ProductHeader, { title: t('memTitle'), subtitle: t('memSubtitle') }),
       jsxs('div', { className: 'wm-controls', children: [
         jsx(AsyncButton, { type: 'button', className: cn('wm-button', 'wm-accent'), disabled: !!busy,
           status: busy === 'discover' ? 'pending' : 'idle', pendingLabel: 'Discovering…',
           onClick: discover, children: 'Discover accounts' }),
         jsx(AsyncButton, { type: 'button', className: 'wm-button', disabled: !!busy,
           status: busy === 'refresh' ? 'pending' : 'idle', pendingLabel: 'Refreshing…',
-          onClick: refreshReadings, children: 'Refresh provider usage' })
+          onClick: refreshReadings, children: t('memRefresh') })
       ] }),
       jsx('p', { className: 'wm-note',
-        children: 'Refresh provider usage checks provider-reported usage and allowance information where supported. It does not change plans, fees or marks.' }),
+        children: t('memRefreshNote') }),
       notice ? jsx('div', { className: 'wm-alert', 'data-tone': notice.tone === 'warn' ? 'warn' : 'good',
         role: 'status', children: notice.text }) : null,
       storeError
@@ -6004,11 +6004,11 @@ function MembershipsPage() {
           jsx('div', { className: 'wm-statvalue', children: accountsReady ? `${summary.withPlan} of ${summary.total}` : '—' })] }),
         jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: 'Marked exhausted' }),
           jsx('div', { className: 'wm-statvalue', children: accountsReady ? String(summary.exhausted) : '—' })] }),
-        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: 'Membership fees' }),
+        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: t('memFeesLabel') }),
           jsx('div', { className: 'wm-statvalue', children: accountsReady ? feesLabel(summary) : '—' })] })
       ] }),
       jsx('p', { className: 'wm-note',
-        children: 'Membership fees are the effective amounts by currency and period. Provider percentages are limits, not money, and are never added to them.' }),
+        children: t('memFeesNote') }),
       attention.length
         ? jsxs('section', { className: 'wm-attention', 'aria-label': 'Needs attention', children: [
             jsx('h3', { children: 'Needs attention' }),
@@ -6508,6 +6508,24 @@ const I18N = {
     attnReconfirmPlan: label => `Hermes now reports "${label}" — reconfirm the saved plan.`,
     attnNoPlan: 'No plan confirmed yet.',
     attnNoFee: 'No fee set for the chosen plan.',
+    // Memberships layout (Phase C).
+    memTitle: 'Memberships',
+    memSubtitle: 'Confirm each account’s plan and declared fee. Usage tracking never depends on this page.',
+    memDetails: 'Details',
+    memGroupPlan: 'Plan & billing',
+    memGroupAllow: 'Allowances & readings',
+    memGroupAdvanced: 'Advanced & diagnostics',
+    memNeedsAttention: 'Needs attention',
+    memSaving: 'Saving…',
+    memArrSubscription: 'Subscription',
+    memArrPrepaid: 'Prepaid credits',
+    memArrApiOnly: 'API Only',
+    memArrUnconfirmed: 'Not confirmed',
+    memRefresh: 'Refresh provider usage',
+    memRefreshNote: 'Refresh provider usage checks provider-reported usage and allowance information where supported. It does not change plans, fees or marks.',
+    memFeesLabel: 'Membership fees',
+    memFeesNote: 'Membership fees are the effective amounts by currency and period. Provider percentages are limits, not money, and are never added to them.',
+    memAccountId: id => `Account ID: ${id}`,
     ovCertDeclared: 'Declared',
     ovCertCatalogue: 'Catalogue',
     ovCertCustom: 'Custom plan',
@@ -6850,6 +6868,24 @@ const I18N = {
     attnReconfirmPlan: label => `Hermes 当前显示“${label}”——请重新确认已保存的方案。`,
     attnNoPlan: '尚未确认方案。',
     attnNoFee: '所选方案尚未设置费用。',
+    // 会员布局（第三阶段）。
+    memTitle: '会员',
+    memSubtitle: '确认每个账户的方案与已申报费用。用量跟踪不依赖于此页面。',
+    memDetails: '详情',
+    memGroupPlan: '方案与账单',
+    memGroupAllow: '额度与读数',
+    memGroupAdvanced: '高级与诊断',
+    memNeedsAttention: '需要注意',
+    memSaving: '正在保存…',
+    memArrSubscription: '订阅',
+    memArrPrepaid: '预付额度',
+    memArrApiOnly: '仅 API',
+    memArrUnconfirmed: '未确认',
+    memRefresh: '刷新服务商用量',
+    memRefreshNote: '刷新服务商用量会检查支持的服务商上报用量与额度信息。不会更改方案、费用或标记。',
+    memFeesLabel: '会员费用',
+    memFeesNote: '会员费用是按币种与账单周期的有效金额。服务商百分比是额度而非金额，绝不会计入其中。',
+    memAccountId: id => `账户 ID：${id}`,
     ovCertDeclared: '已申报',
     ovCertCatalogue: '目录价格',
     ovCertCustom: '自定义方案',
