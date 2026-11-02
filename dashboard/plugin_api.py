@@ -42,19 +42,58 @@ router = APIRouter()
 VERSION = "0.5.0"
 
 
+def _exists_for_health(path: Path) -> bool:
+    """Presence check that keeps health's never-raises contract."""
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
 @router.get("/health")
 def health() -> dict[str, Any]:
     """Cheap liveness/readiness probe. Never raises."""
     db = default_db_path()
     event_db = store.event_db_path()
     catalogue = load_catalogue()
+    db_present = _exists_for_health(db)
+    event_db_present = _exists_for_health(event_db)
     return {
-        "ok": db.exists() or event_db.exists(),
+        "ok": db_present or event_db_present,
         "version": VERSION,
-        "db_present": db.exists(),
-        "event_db_present": event_db.exists(),
+        "db_present": db_present,
+        "event_db_present": event_db_present,
+        "event_db_status": _event_db_status(event_db),
         "rate_card": catalogue.meta(),
     }
+
+
+def _event_db_status(event_db: Path) -> str:
+    """Usability of the usage store: missing, ready, or unreadable.
+
+    Presence alone cannot distinguish an empty-but-valid store from a
+    corrupt one, so reporting endpoints need this to explain zero usage
+    honestly. Read-only: the probe opens, validates and closes.
+    """
+    try:
+        event_db.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return "missing"
+    except OSError:
+        return "unreadable"
+    try:
+        conn = store.connect_reader(event_db)
+    except LedgerUnavailable:
+        return "unreadable"
+    except Exception:  # noqa: BLE001 - health must never raise
+        log.error("spend-sense: usage store probe failed")
+        return "unreadable"
+    if conn is None:  # pragma: no cover - raced deletion between exists() and open
+        return "missing"
+    try:
+        return "ready"
+    finally:
+        conn.close()
 
 
 @router.get("/analytics")
@@ -277,6 +316,8 @@ def allowance_weather_report(
         raise _store_unreadable(exc) from exc
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LedgerUnavailable as exc:
+        raise HTTPException(status_code=503, detail="allowance call store unavailable") from exc
     except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
         log.error("spend-sense: allowance weather failed")
         raise HTTPException(status_code=500, detail="allowance weather failed") from exc
@@ -301,6 +342,8 @@ def digest_report(
         raise _store_unreadable(exc) from exc
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LedgerUnavailable as exc:
+        raise HTTPException(status_code=503, detail="digest call store unavailable") from exc
     except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
         log.error("spend-sense: digest failed")
         raise HTTPException(status_code=500, detail="digest failed") from exc
@@ -332,7 +375,10 @@ def billing_summary(days: int = Query(30, ge=1, le=365)) -> dict[str, Any]:
     for profile in billing.load_profiles().get("profiles", []):
         if profile.get("billing_cycle"):
             span = max(span, 32)
-    report = build_analytics_report(days=span)
+    try:
+        report = build_analytics_report(days=span)
+    except LedgerUnavailable as exc:
+        raise HTTPException(status_code=503, detail="billing call store unavailable") from exc
     try:
         membership_fees = members.fee_summary_payload()
     except StoreUnreadable as exc:
