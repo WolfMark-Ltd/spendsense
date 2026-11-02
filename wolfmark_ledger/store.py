@@ -169,8 +169,16 @@ def connect_reader(path: Optional[Path | str] = None) -> Optional[sqlite3.Connec
     migrated or repaired here.
     """
     target = Path(path) if path else event_db_path()
-    if not target.exists():
+    try:
+        target.stat()
+    except FileNotFoundError:
         return None
+    except NotADirectoryError:
+        return None
+    except OSError as exc:
+        # stat() raises where exists() merely returns False: a missing
+        # file is empty, but an inaccessible one is an unreadable store.
+        raise LedgerUnavailable(f"could not access usage database: {exc}") from exc
     try:
         conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True, timeout=5)
     except sqlite3.Error as exc:

@@ -42,17 +42,27 @@ router = APIRouter()
 VERSION = "0.5.0"
 
 
+def _exists_for_health(path: Path) -> bool:
+    """Presence check that keeps health's never-raises contract."""
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
 @router.get("/health")
 def health() -> dict[str, Any]:
     """Cheap liveness/readiness probe. Never raises."""
     db = default_db_path()
     event_db = store.event_db_path()
     catalogue = load_catalogue()
+    db_present = _exists_for_health(db)
+    event_db_present = _exists_for_health(event_db)
     return {
-        "ok": db.exists() or event_db.exists(),
+        "ok": db_present or event_db_present,
         "version": VERSION,
-        "db_present": db.exists(),
-        "event_db_present": event_db.exists(),
+        "db_present": db_present,
+        "event_db_present": event_db_present,
         "event_db_status": _event_db_status(event_db),
         "rate_card": catalogue.meta(),
     }
@@ -65,8 +75,12 @@ def _event_db_status(event_db: Path) -> str:
     corrupt one, so reporting endpoints need this to explain zero usage
     honestly. Read-only: the probe opens, validates and closes.
     """
-    if not event_db.exists():
+    try:
+        event_db.stat()
+    except (FileNotFoundError, NotADirectoryError):
         return "missing"
+    except OSError:
+        return "unreadable"
     try:
         conn = store.connect_reader(event_db)
     except LedgerUnavailable:

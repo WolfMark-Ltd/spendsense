@@ -87,6 +87,18 @@ class ConnectReaderTests(unittest.TestCase):
         with self.assertRaises(LedgerUnavailable):
             store.connect_reader(target)
 
+    def test_inaccessible_parent_raises_ledger_unavailable(self) -> None:
+        vault = self.dir / "vault"
+        vault.mkdir()
+        target = vault / "usage.db"
+        target.write_bytes(b"\x00\x01not-a-sqlite-file" * 64)
+        vault.chmod(0o000)
+        try:
+            with self.assertRaises(LedgerUnavailable):
+                store.connect_reader(target)
+        finally:
+            vault.chmod(0o700)
+
     def test_failed_open_leaves_file_untouched(self) -> None:
         target = self.dir / "usage.db"
         payload = b"\x00\x01not-a-sqlite-file" * 64
@@ -161,11 +173,13 @@ class BuilderTests(unittest.TestCase):
 try:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-
-    from dashboard import plugin_api
 except Exception:  # pragma: no cover - depends on the test interpreter
     FastAPI = None  # type: ignore
     TestClient = None  # type: ignore
+if FastAPI is not None:
+    # Imported outside the optional-dependency guard so a broken dashboard
+    # errors loudly instead of masking itself as a dependency skip.
+    from dashboard import plugin_api
 
 
 @unittest.skipUnless(FastAPI is not None and TestClient is not None,
@@ -248,6 +262,20 @@ class UnreadableStoreApiTests(unittest.TestCase):
                                        params={"days": 7})
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"], "billing call store unavailable")
+
+    def test_health_inaccessible_store_never_raises(self) -> None:
+        vault = self.dir / "vault"
+        vault.mkdir()
+        target = vault / "usage.db"
+        target.write_bytes(b"\x00\x01not-a-sqlite-file" * 64)
+        vault.chmod(0o000)
+        try:
+            with patch.object(store, "event_db_path", return_value=target):
+                response = self.client.get("/api/plugins/spend-sense/health")
+        finally:
+            vault.chmod(0o700)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["event_db_status"], "unreadable")
 
     def test_health_partial_store_is_unreadable_not_ready(self) -> None:
         target = self.dir / "usage.db"
