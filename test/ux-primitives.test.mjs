@@ -278,6 +278,50 @@ test('LedgerPage: a no-op Home/End press does not leak focus restoration into mo
     'mouse navigation after a no-op End must not receive restored focus')
 })
 
+test('every attention (attn*) string exists in both en and zh, and zh renders', () => {
+  const enKeys = Object.keys(T.I18N.en).filter(k => k.startsWith('attn'))
+  assert.ok(enKeys.length > 5, 'the attention copy set is non-trivial')
+  for (const key of enKeys) {
+    assert.ok(key in T.I18N.zh, `zh is missing attention key ${key}`)
+    assert.equal(typeof T.I18N.zh[key], typeof T.I18N.en[key], `zh type matches en for ${key}`)
+  }
+  const zhT = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const items = T.needsAttention([{
+    id: 'x', label: 'xAI', plan_id: null, effective_arrangement: 'unconfirmed', quota: { windows: [] },
+  }], null, zhT)
+  assert.equal(items.length, 1)
+  assert.match(items[0].text, /未确认/, 'the zh attention message renders through the translator')
+})
+
+test('every Overview (ov*) string exists in both en and zh', () => {
+  const enKeys = Object.keys(T.I18N.en).filter(k => k.startsWith('ov'))
+  assert.ok(enKeys.length > 10, 'the Overview copy set is non-trivial')
+  for (const key of enKeys) {
+    assert.ok(key in T.I18N.zh, `zh is missing Overview key ${key}`)
+    assert.equal(typeof T.I18N.zh[key], typeof T.I18N.en[key], `zh type matches en for ${key}`)
+  }
+})
+
+test('Overview KPIs use a scoped 2x2 grid that collapses to one column in narrow panes', () => {
+  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/)
+  assert.match(T.PRODUCT_CSS,
+    /\.wm-product \.wm-product-summary\{display:grid;grid-template-columns:repeat\(auto-fit,minmax\(185px,1fr\)\)/,
+    'the shared summary grid used by Costs and others is unchanged')
+  assert.match(T.PRODUCT_CSS, /@container\(max-width:620px\)\{[\s\S]*?\.wm-overview-grid\{grid-template-columns:1fr\}/,
+    'narrow panes stack the Overview cards in one column')
+  assert.match(T.PRODUCT_CSS, /\.wm-kpi-figure\{[^}]*overflow-wrap:anywhere/,
+    'long currency and fee values wrap inside the fixed columns')
+})
+
+test('the methodology disclosure has a visible chevron for both states', () => {
+  assert.match(T.PRODUCT_CSS, /\.wm-method summary::before\{content:"›"/)
+  assert.match(T.PRODUCT_CSS, /\.wm-method\[open\] > summary::before\{transform:rotate\(90deg\)\}/)
+  assert.match(T.PRODUCT_CSS, /summary::-[a-z]+-details-marker\{display:none\}/)
+})
+
 test('membership fees are preserved per account; routes are never grouped or suppressed', () => {
   const acct = (id, amount, currency) => ({
     id, plan_id: `${id}-plan`, effective_arrangement: 'subscription',

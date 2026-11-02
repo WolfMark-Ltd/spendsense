@@ -36,7 +36,7 @@ writeFileSync(entry, `
 export { default as plugin, __test as T } from '${join(ROOT, 'desktop', 'plugin.js')}'
 export * as React from 'react'
 export * as ReactDOMClient from 'react-dom/client'
-export { QueryClientProvider, queryClient, host, hostRequests as __hostRequests, $testConnectionId, $testProfile, __bumpActivation, __bumpActivationQuiet, gatewayActivationEpoch } from '@hermes/plugin-sdk'
+export { QueryClientProvider, queryClient, host, hostRequests as __hostRequests, $testConnectionId, $testProfile, __bumpActivation, __bumpActivationQuiet, gatewayActivationEpoch, i18nBackend } from '@hermes/plugin-sdk'
 `)
 const bundle = join(work, 'bundle.mjs')
 const esbuild = (await import(pathToFileURL(join(HARNESS_MODULES, 'esbuild', 'lib', 'main.js')).href)).default
@@ -72,7 +72,13 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const lib = await import(pathToFileURL(bundle).href)
 const { plugin, T, React, ReactDOMClient, QueryClientProvider, queryClient, host, __hostRequests,
-  $testConnectionId, $testProfile, __bumpActivation } = lib
+  $testConnectionId, $testProfile, __bumpActivation, i18nBackend } = lib
+// Render through the real English catalogue: assertions see what users see,
+// and a key missing from en fails closed to the key itself.
+i18nBackend.t = (key, ...args) => {
+  const entry = T.I18N.en[key]
+  return typeof entry === 'function' ? entry(...args) : entry ?? key
+}
 
 // --- the transport the test drives ----------------------------------------
 function controller() {
@@ -1168,7 +1174,7 @@ test('Overview renders its settled Desktop cost summary without a React render e
   T.$ledger.set({ ...T.emptyLedger(), days: { [`${month}-01`]: {
     bucket: { cost: 0.42, pricedTokens: 1200, legacy: false }
   } } })
-  assert.deepEqual(T.settledDesktopMonth(T.emptyLedger()), { known: false, cost: 0, pricedTokens: 0 })
+  assert.deepEqual(T.settledDesktopMonth(T.emptyLedger()), { known: false, cost: 0, pricedTokens: 0, unpricedTokens: 0 })
   T.$ledgerTab.set('overview')
   const pendingAccounts = deferred()
   transportCtl.respond(call => call.path.startsWith('/analytics')
@@ -1184,13 +1190,13 @@ test('Overview renders its settled Desktop cost summary without a React render e
   await flush(2)
 
   assert.match(container.textContent, /Overview/)
-  assert.match(container.textContent, /Desktop-recorded this month/)
+  assert.match(container.textContent, /Recorded usage/)
   assert.match(container.querySelector('.wm-product-summary').textContent, /\$0\.42/)
-  assert.match(container.textContent, /Backend API-equivalent/)
-  assert.match(container.textContent, /Declared membership fees/)
+  assert.match(container.textContent, /API-equivalent/)
+  assert.match(container.textContent, /Membership fees/)
   const summary = container.querySelector('.wm-product-summary')
   assert.match(summary.textContent, /Reading memberships for this connection/)
-  assert.doesNotMatch(summary.textContent, /0 saved plan\(s\) across 0 account\(s\)/)
+  assert.doesNotMatch(summary.textContent, /0 of 0 accounts/)
   assert.match(summary.textContent, /No backend calls recorded in the last 30 days/)
 
   const commandcode = account('commandcode:default', {
@@ -1207,8 +1213,352 @@ test('Overview renders its settled Desktop cost summary without a React render e
     store: { loaded: true, error: '' }, notes: [] }))
   await flush(3)
   assert.match(summary.textContent, /\$30\.00\/mo/)
-  assert.match(summary.textContent, /2 saved plan\(s\) across 2 account\(s\)/)
+  assert.match(summary.textContent, /2 of 2 accounts have a confirmed plan/)
+  // Fee-basis honesty: both effective fees are catalogue prices, so the card
+  // shows a Catalogue chip and never claims they are declared.
+  const chips = [...summary.querySelectorAll('.wm-certainty')].map(el => el.textContent)
+  assert.ok(chips.includes('Catalogue'), `catalogue basis is labelled (${chips})`)
+  assert.ok(!chips.includes('Declared'), `catalogue fees are not called declared (${chips})`)
+  assert.match(container.textContent, /How these figures are calculated/)
+  assert.ok(summary.classList.contains('wm-overview-grid'), 'the 2x2 grid is scoped to Overview')
+  const method = container.querySelector('details.wm-method > summary')
+  assert.ok(method, 'the methodology disclosure keeps native details/summary behaviour')
+  assert.match(method.textContent, /How these figures are calculated/)
   await React.act(async () => T.$ledger.set(T.emptyLedger()))
+})
+
+test('Overview value certainty comes from the economics response, not analytics', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  const economics = {
+    ok: true, window_days: 30,
+    headline: {
+      status: 'partial', difference_usd: 8.4, usage_usd: 28.4,
+      fees_monthly_by_currency: [{ currency: 'USD', amount: 20 }],
+      fees_window_by_currency: [{ currency: 'USD', amount: 20 }],
+      notes: ['Estimated value comparison; at least one input is partial.'],
+    },
+    accounts: [{ usage: { tokens: 100, priced_tokens: 100, unpriced_tokens: 0 } }],
+  }
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 28.4, calls: 5, unpriced_tokens: 0 } }
+    : call.path === '/economics/summary?days=30&trend_months=6' ? economics
+    : call.path === '/membership/accounts'
+      ? { ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] }
+      : { ok: true })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  const cards = [...container.querySelectorAll('.wm-product-summary .wm-kpi')]
+  assert.equal(cards.length, 4)
+  const valueCard = cards[3].textContent
+  assert.match(valueCard, /Partial/, 'a partial economics status shows Partial with zero unpriced analytics tokens')
+  assert.doesNotMatch(cards[1].textContent, /Partial/, 'the estimate card stays clean when analytics are fully priced')
+})
+
+test('Overview does not mark a complete subscription comparison partial', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  const economics = {
+    ok: true, window_days: 30,
+    headline: {
+      status: 'ok', difference_usd: 8.4, usage_usd: 28.4,
+      fees_monthly_by_currency: [{ currency: 'USD', amount: 20 }],
+      fees_window_by_currency: [{ currency: 'USD', amount: 20 }],
+      notes: ['Estimated value comparison of recorded usage against fees.'],
+    },
+    accounts: [{ usage: { tokens: 100, priced_tokens: 100, unpriced_tokens: 0 } }],
+  }
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 47.9, calls: 5, unpriced_tokens: 18240 } }
+    : call.path === '/economics/summary?days=30&trend_months=6' ? economics
+    : call.path === '/membership/accounts'
+      ? { ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] }
+      : { ok: true })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  const cards = [...container.querySelectorAll('.wm-product-summary .wm-kpi')]
+  assert.match(cards[1].textContent, /Partial/, 'unpriced backend usage marks the estimate card')
+  assert.doesNotMatch(cards[3].textContent, /Partial/, 'a complete comparison is not marked partial')
+  assert.doesNotMatch(cards[3].textContent, /lower bound/, 'a complete comparison is not a lower bound')
+})
+
+test('Overview marks a partly priced Desktop month as a lower bound', async () => {
+  assert.deepEqual(
+    T.settledDesktopMonth({ days: { [`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`]: {
+      session: { cost: 0.42, pricedTokens: 1200, unpricedTokens: 300 } } } }),
+    { known: true, cost: 0.42, pricedTokens: 1200, unpricedTokens: 300 },
+    'the month keeps its unpriced-token count')
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set({ ...T.emptyLedger(), days: { [`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`]: {
+    session: { cost: 0.42, pricedTokens: 1200, unpricedTokens: 300 } } } })
+  T.$ledgerTab.set('overview')
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 0, calls: 0, unpriced_tokens: 0 } }
+    : { ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  const recorded = container.querySelectorAll('.wm-product-summary .wm-kpi')[0].textContent
+  assert.match(recorded, /\$0\.42/, 'the priced subtotal is shown')
+  assert.match(recorded, /lower bound/, 'a partly priced month is a lower bound')
+  assert.match(recorded, /Partial/, 'a partly priced month carries Partial')
+  await React.act(async () => T.$ledger.set(T.emptyLedger()))
+})
+
+test('Overview fee heading describes billing periods, not a monthly conversion', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  const yearly = account('openai-codex:default', {
+    family: 'openai-codex', label: 'ChatGPT', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' },
+    fee: { basis: 'declared', effective: { amount: 120, currency: 'USD', period: 'year' } }
+  })
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 0, calls: 0 } }
+    : call.path === '/membership/accounts'
+      ? { ok: true, accounts: [yearly], store: { loaded: true, error: '' }, notes: [] }
+      : { ok: true })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  assert.doesNotMatch(container.textContent, /monthly equivalent/i, 'no conversion is claimed')
+  assert.match(container.textContent, /by billing period/i)
+  assert.match(container.textContent, /\$120\.00\/yr/, 'the original period is preserved')
+})
+
+test('Overview distinguishes unknown subscription fees from having no recurring fees', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  const unpricedSub = account('nous:default', {
+    family: 'nous', label: 'Nous', plan_id: 'nous.portal', plan: { name: 'Nous Portal' },
+    effective_arrangement: 'subscription',
+    fee: { basis: 'unpriced', effective: { amount: null } }
+  })
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 0, calls: 0 } }
+    : call.path === '/membership/accounts'
+      ? { ok: true, accounts: [unpricedSub], store: { loaded: true, error: '' }, notes: [] }
+      : { ok: true })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  const fees = container.querySelectorAll('.wm-product-summary .wm-kpi')[2].textContent
+  assert.match(fees, /Unknown/, 'an unknown subscription fee is Unknown, not a dash')
+  assert.match(fees, /1 account\(s\) have no known fee/, 'the subtotal discloses the missing fee')
+
+  // Genuinely fee-free accounts are a different state, not Unknown.
+  queryClient.clear()
+  const metered = account('openrouter:default', {
+    family: 'openrouter', label: 'OpenRouter', effective_arrangement: 'api_only' })
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 0, calls: 0 } }
+    : call.path === '/membership/accounts'
+      ? { ok: true, accounts: [metered], store: { loaded: true, error: '' }, notes: [] }
+      : { ok: true })
+  const container2 = document.createElement('div'); document.body.appendChild(container2)
+  const root2 = ReactDOMClient.createRoot(container2); roots.push(root2)
+  await React.act(async () => root2.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  const fees2 = container2.querySelectorAll('.wm-product-summary .wm-kpi')[2].textContent
+  assert.match(fees2, /No recurring fees/)
+  assert.doesNotMatch(fees2, /no known fee/)
+  const chips2 = [...container2.querySelectorAll('.wm-product-summary .wm-kpi')[2]
+    .querySelectorAll('.wm-certainty')].map(el => el.textContent)
+  assert.ok(!chips2.includes('Unknown'), `a fee-free state carries no Unknown chip (${chips2})`)
+})
+
+test('Overview shows a known fee subtotal as Partial when some fees are unknown', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  const declared = account('openai-codex:default', {
+    family: 'openai-codex', label: 'ChatGPT Plus', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } }
+  })
+  const unpricedSub = account('nous:default', {
+    family: 'nous', label: 'Nous', plan_id: 'nous.portal', plan: { name: 'Nous Portal' },
+    effective_arrangement: 'subscription',
+    fee: { basis: 'unpriced', effective: { amount: null } }
+  })
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 0, calls: 0 } }
+    : call.path === '/membership/accounts'
+      ? { ok: true, accounts: [declared, unpricedSub], store: { loaded: true, error: '' }, notes: [] }
+      : { ok: true })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  const card = container.querySelectorAll('.wm-product-summary .wm-kpi')[2]
+  assert.match(card.textContent, /\$20\.00\/mo/, 'the known subtotal keeps its amount, currency and period')
+  assert.match(card.textContent, /Partial/, 'an unknown subscription marks the subtotal Partial')
+  assert.match(card.textContent, /1 account\(s\) have no known fee/, 'the missing fee is disclosed')
+})
+
+test('Overview never treats an unconfirmed or plan-less account as a zero fee', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  const unconfirmed = account('xai:default', {
+    family: 'xai', label: 'xAI', effective_arrangement: 'unconfirmed' })
+  const noPlan = account('custom:default', {
+    family: 'custom', label: 'Custom', effective_arrangement: 'subscription' })
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 0, calls: 0 } }
+    : call.path === '/membership/accounts'
+      ? { ok: true, accounts: [unconfirmed, noPlan], store: { loaded: true, error: '' }, notes: [] }
+      : { ok: true })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  const fees = container.querySelectorAll('.wm-product-summary .wm-kpi')[2].textContent
+  assert.match(fees, /Unknown/, 'unconfirmed and plan-less accounts are Unknown, not zero')
+  assert.doesNotMatch(fees, /No recurring fees/)
+  assert.match(fees, /2 account\(s\) have no known fee/)
+})
+
+test('Overview attention includes stored allowance weather without provider reads', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  const sub = account('openai-codex:default', {
+    family: 'openai-codex', label: 'ChatGPT Plus', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } }
+  })
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/analytics')) return { ok: true, totals: { list_usd: 0, calls: 0 } }
+    if (call.path === '/membership/accounts') {
+      return { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+    }
+    if (call.path === '/allowance/weather') {
+      return { ok: true, accounts: [{ account_id: 'openai-codex:default',
+        windows: [{ label: 'Weekly pool', verdict: 'ahead' }], rules: [] }] }
+    }
+    return { ok: true }
+  })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  assert.match(container.textContent, /Weekly pool: ahead of pace\./)
+  assert.equal(transportCtl.count(call => call.path.includes('native')), 0, 'no native provider read')
+  assert.ok(transportCtl.count(call => call.path === '/allowance/weather') >= 1, 'stored weather is read')
+})
+
+test('Overview labels retained weather verdicts as stale after a failed refresh', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  const sub = account('openai-codex:default', {
+    family: 'openai-codex', label: 'ChatGPT Plus', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } }
+  })
+  const weatherOk = { ok: true, accounts: [{ account_id: 'openai-codex:default',
+    windows: [{ label: 'Weekly pool', verdict: 'ahead' }], rules: [] }] }
+  let failWeather = false
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/analytics')) return { ok: true, totals: { list_usd: 0, calls: 0 } }
+    if (call.path === '/membership/accounts') {
+      return { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+    }
+    if (call.path === '/allowance/weather') {
+      if (failWeather) throw new Error('boom')
+      return weatherOk
+    }
+    return { ok: true }
+  })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  assert.match(container.textContent, /Weekly pool: ahead of pace\./)
+  assert.doesNotMatch(container.textContent, /may be stale/)
+
+  failWeather = true
+  await React.act(async () => {
+    await queryClient.invalidateQueries({ predicate: q => q.queryKey[1] === 'allowance-weather' })
+  })
+  await flush(4)
+  assert.match(container.textContent, /Weekly pool: ahead of pace\./, 'the retained verdict stays visible')
+  const stale = container.querySelector('#wm-needs-attention [role="status"]')
+  assert.ok(stale, 'a stale-reading warning is shown')
+  assert.match(stale.textContent, /may be stale/)
+})
+
+test('Overview attention rows route to Memberships and Usage', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  const xai = account('xai:default', { family: 'xai', label: 'xAI', effective_arrangement: 'unconfirmed' })
+  const codex = account('openai-codex:default', {
+    family: 'openai-codex', label: 'ChatGPT Plus', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' },
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } }
+  })
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 47.9, calls: 5, unpriced_tokens: 18240 } }
+    : call.path === '/membership/accounts'
+      ? { ok: true, accounts: [xai, codex], store: { loaded: true, error: '' }, notes: [] }
+      : { ok: true })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+
+  const summary = container.querySelector('.wm-product-summary')
+  assert.match(summary.textContent, /Unknown/, 'no priced Desktop cost renders Unknown, not a zero')
+  assert.match(summary.textContent, /lower bound/, 'unpriced tokens make the total a lower bound')
+  const chips = [...summary.querySelectorAll('.wm-certainty')].map(el => el.textContent)
+  assert.ok(chips.includes('Partial'), `partial certainty is labelled (${chips})`)
+  assert.ok(chips.includes('Declared'), `the declared fee keeps its own chip (${chips})`)
+  assert.ok(!chips.includes('Catalogue'), `no catalogue fee means no catalogue chip (${chips})`)
+
+  assert.match(container.querySelector('.wm-attn-strip').textContent, /2 need attention/)
+  const rows = [...container.querySelectorAll('.wm-attention-rows li')]
+  assert.equal(rows.length, 2)
+  assert.match(rows[0].textContent, /xAI/)
+  await clickByText(rows[0], 'Open Memberships')
+  assert.equal(T.$ledgerTab.get(), 'memberships')
+  T.$ledgerTab.set('overview'); await flush(3)
+  assert.match(rows[1].textContent, /Usage pricing/)
+  await clickByText(rows[1], 'Open Usage')
+  assert.equal(T.$ledgerTab.get(), 'usage')
 })
 
 test('the membership card saves a user-defined plan against its selected credential account', async () => {
