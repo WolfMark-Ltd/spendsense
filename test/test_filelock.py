@@ -62,11 +62,13 @@ def _membership_writer(path_str: str, worker: int, barrier: "mp.synchronize.Barr
 
 
 def _billing_conflict_racer(path_str: str, rev: str, label: str,
-                            queue: "mp.queues.Queue") -> None:
+                            queue: "mp.queues.Queue",
+                            barrier: "mp.synchronize.Barrier") -> None:
     from pathlib import Path as _Path
 
     from wolfmark_ledger import billing as _billing
 
+    barrier.wait()
     try:
         _billing.save_profile(
             {"id": "shared", "kind": "api", "provider": "commandcode", "label": label},
@@ -81,11 +83,13 @@ def _billing_conflict_racer(path_str: str, rev: str, label: str,
 
 
 def _membership_conflict_racer(path_str: str, rev: str, label: str,
-                               queue: "mp.queues.Queue") -> None:
+                               queue: "mp.queues.Queue",
+                               barrier: "mp.synchronize.Barrier") -> None:
     from pathlib import Path as _Path
 
     from wolfmark_ledger import membership_store as _store
 
+    barrier.wait()
     try:
         _store.save_account(
             {"id": "shared", "family": "openai-codex", "label": label,
@@ -102,12 +106,18 @@ def _membership_conflict_racer(path_str: str, rev: str, label: str,
 
 def _join_all(test: unittest.TestCase, procs: list) -> None:
     """Join with a timeout: a locking regression must fail, not hang CI."""
+    hung = []
     for proc in procs:
         proc.join(JOIN_TIMEOUT)
         if proc.is_alive():
-            proc.terminate()
-            proc.join(10)
-            test.fail(f"worker {proc.name} hung: the lock may be broken")
+            hung.append(proc)
+    for proc in hung:
+        proc.terminate()
+    for proc in hung:
+        proc.join(10)
+    if hung:
+        names = ", ".join(proc.name for proc in hung)
+        test.fail(f"workers hung and were terminated ({names}): the lock may be broken")
 
 
 class CrossProcessBillingTests(unittest.TestCase):
@@ -138,8 +148,9 @@ class CrossProcessBillingTests(unittest.TestCase):
         rev = next(p["rev"] for p in billing.load_profiles(self.path)["profiles"]
                    if p["id"] == "shared")
         queue: mp.queues.Queue = SPAWN.Queue()
+        barrier = SPAWN.Barrier(4)
         procs = [SPAWN.Process(target=_billing_conflict_racer, name=f"racer-{w}",
-                               args=(str(self.path), rev, f"v{w + 1}", queue))
+                               args=(str(self.path), rev, f"v{w + 1}", queue, barrier))
                  for w in range(4)]
         for proc in procs:
             proc.start()
@@ -182,8 +193,9 @@ class CrossProcessMembershipTests(unittest.TestCase):
             self.path)
         rev = membership_store.accounts_by_id(self.path)["shared"]["rev"]
         queue: mp.queues.Queue = SPAWN.Queue()
+        barrier = SPAWN.Barrier(4)
         procs = [SPAWN.Process(target=_membership_conflict_racer, name=f"racer-{w}",
-                               args=(str(self.path), rev, f"v{w + 1}", queue))
+                               args=(str(self.path), rev, f"v{w + 1}", queue, barrier))
                  for w in range(4)]
         for proc in procs:
             proc.start()
@@ -277,6 +289,54 @@ class FailClosedTests(unittest.TestCase):
                     with filelock.locked(self.path):
                         ran.append(True)
         self.assertEqual(ran, [])
+
+    def test_windows_contention_retries_until_acquired(self) -> None:
+        import errno as _errno
+        import sys as _sys
+
+        calls: list = []
+
+        class ContendedMsvcrt:
+            LK_LOCK = "LK_LOCK"
+            LK_UNLCK = "LK_UNLCK"
+
+            @staticmethod
+            def locking(fd: int, mode: str, nbytes: int) -> None:
+                calls.append(mode)
+                # LK_LOCK waits ~10s then reports EDEADLK while another
+                # process holds the range; that must wait, not fail.
+                if mode == "LK_LOCK" and calls.count("LK_LOCK") < 3:
+                    raise OSError(_errno.EDEADLK, "lock contention")
+
+        ran = []
+        with patch("os.name", "nt"):
+            with patch.dict(_sys.modules, {"msvcrt": ContendedMsvcrt}):
+                with filelock.locked(self.path):
+                    ran.append(True)
+        self.assertEqual(ran, [True])
+        self.assertEqual(calls, ["LK_LOCK", "LK_LOCK", "LK_LOCK", "LK_UNLCK"])
+
+    def test_windows_non_contention_error_fails_fast(self) -> None:
+        import errno as _errno
+        import sys as _sys
+
+        calls: list = []
+
+        class BrokenMsvcrt:
+            LK_LOCK = "LK_LOCK"
+            LK_UNLCK = "LK_UNLCK"
+
+            @staticmethod
+            def locking(fd: int, mode: str, nbytes: int) -> None:
+                calls.append(mode)
+                raise OSError(_errno.EACCES, "locking violation")
+
+        with patch("os.name", "nt"):
+            with patch.dict(_sys.modules, {"msvcrt": BrokenMsvcrt}):
+                with self.assertRaises(filelock.LockUnavailable):
+                    with filelock.locked(self.path):
+                        pass
+        self.assertEqual(calls, ["LK_LOCK"])
 
 
 if __name__ == "__main__":

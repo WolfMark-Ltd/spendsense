@@ -8,8 +8,10 @@ is never read from or written to.
 
 POSIX uses ``fcntl.flock``; Windows uses a one-byte ``msvcrt.locking``
 range at offset 0. Both are real cross-process exclusive locks acquired
-with a blocking wait. Anything else fails closed: an unsupported platform
-or a lock failure raises instead of writing unlocked.
+with a blocking wait (the CRT's ``LK_LOCK`` gives up after ~10s with
+``EDEADLK``, so contention is retried until the lock is held).
+Anything else fails closed: an unsupported platform or a lock failure
+raises instead of writing unlocked.
 
 The lock is not re-entrant and must not be nested on the same file: the
 Windows byte-range lock conflicts even within one process.
@@ -17,6 +19,7 @@ Windows byte-range lock conflicts even within one process.
 
 from __future__ import annotations
 
+import errno
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -32,10 +35,17 @@ def _lock_handle(handle: BinaryIO) -> None:
         import msvcrt
 
         handle.seek(0)
-        try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-        except OSError as exc:
-            raise LockUnavailable(f"could not lock {handle.name}: {exc}") from exc
+        while True:
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                break
+            except OSError as exc:
+                if exc.errno == errno.EDEADLK:
+                    # Ordinary contention: LK_LOCK already waited ~10s, so
+                    # re-enter it and keep waiting like flock(LOCK_EX)
+                    # rather than failing the write.
+                    continue
+                raise LockUnavailable(f"could not lock {handle.name}: {exc}") from exc
     elif os.name == "posix":
         import fcntl
 
