@@ -282,6 +282,10 @@ be re-measured there):
 3. **The subscription comparison card is kept**, with an honest unavailable
    state when no defensible comparison exists (no shared currency/window, or
    fees unknown). The Overview reference previews both states on the card.
+4. **Memberships refresh copy (retained for PR-C/D):** rename `Refresh
+   readings` to `Refresh provider usage` and explain that it checks
+   provider-reported usage and allowance information where supported. Display
+   copy only — the underlying refresh behaviour is unchanged.
 
 Remaining open item: none for Phase A. (Issue #12 backend compatibility remains
 a separate pre-release gate, unchanged.)
