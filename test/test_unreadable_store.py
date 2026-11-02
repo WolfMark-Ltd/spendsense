@@ -26,6 +26,25 @@ def _healthy_db(path: Path) -> None:
                   "provider": "p", "total_tokens": 10}, path)
 
 
+def _partial_schema_db(path: Path) -> None:
+    """Both tables present, but calls lacks the reader columns, with one row.
+
+    Without column validation this passes the table check and the report
+    builders treat the missing token columns as zero: misleading data from
+    a store that is actually incomplete.
+    """
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE calls (event_id TEXT PRIMARY KEY, ts REAL)")
+    conn.execute(
+        "CREATE TABLE baseline (id INTEGER PRIMARY KEY CHECK (id = 1),"
+        " captured_at REAL NOT NULL, total_tokens INTEGER NOT NULL,"
+        " main_tokens INTEGER NOT NULL, aux_tokens INTEGER NOT NULL)"
+    )
+    conn.execute("INSERT INTO calls (event_id, ts) VALUES ('e1', ?)", (NOW - 100,))
+    conn.commit()
+    conn.close()
+
+
 class ConnectReaderTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -86,6 +105,57 @@ class ConnectReaderTests(unittest.TestCase):
         conn.close()
         with self.assertRaises(LedgerUnavailable):
             store.connect_reader(target)
+
+    def test_partial_schema_missing_calls_columns_raises(self) -> None:
+        target = self.dir / "usage.db"
+        _partial_schema_db(target)
+        with self.assertRaises(LedgerUnavailable) as ctx:
+            store.connect_reader(target)
+        self.assertIn("calls table is missing required columns", str(ctx.exception))
+        self.assertIn("total_tokens", str(ctx.exception))
+
+    def test_partial_schema_missing_baseline_columns_raises(self) -> None:
+        target = self.dir / "usage.db"
+        store.bootstrap(None, target)
+        if store._WRITER is not None:
+            store._WRITER.close()
+        store._WRITER = None
+        store._WRITER_PATH = None
+        sabotage = sqlite3.connect(target)
+        sabotage.execute("ALTER TABLE baseline DROP COLUMN total_tokens")
+        sabotage.commit()
+        sabotage.close()
+        with self.assertRaises(LedgerUnavailable) as ctx:
+            store.connect_reader(target)
+        self.assertIn("baseline table is missing required columns", str(ctx.exception))
+
+    def test_column_check_leaves_file_untouched(self) -> None:
+        target = self.dir / "usage.db"
+        _partial_schema_db(target)
+        before = target.read_bytes()
+        with self.assertRaises(LedgerUnavailable):
+            store.connect_reader(target)
+        self.assertEqual(target.read_bytes(), before)
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["usage.db"])
+
+    def test_extra_columns_are_tolerated(self) -> None:
+        target = self.dir / "usage.db"
+        _healthy_db(target)
+        if store._WRITER is not None:
+            store._WRITER.close()
+        store._WRITER = None
+        store._WRITER_PATH = None
+        extra = sqlite3.connect(target)
+        extra.execute("ALTER TABLE calls ADD COLUMN future_col TEXT")
+        extra.commit()
+        extra.close()
+        conn = store.connect_reader(target)
+        self.assertIsNotNone(conn)
+        try:
+            rows = store.query_calls(conn, since=0.0, until=NOW + 1)
+        finally:
+            conn.close()
+        self.assertEqual(len(rows), 1)
 
     def test_inaccessible_parent_raises_ledger_unavailable(self) -> None:
         vault = self.dir / "vault"
@@ -167,6 +237,14 @@ class BuilderTests(unittest.TestCase):
         from wolfmark_ledger.economics import build_economics_report
         with self.assertRaises(LedgerUnavailable):
             build_economics_report(event_db_path=self._garbage(),
+                                   state_db_path=self.state_db, days=7, now=NOW)
+
+    def test_analytics_partial_schema_raises_not_zeros(self) -> None:
+        from wolfmark_ledger.analytics import build_analytics_report
+        target = self.dir / "usage.db"
+        _partial_schema_db(target)
+        with self.assertRaises(LedgerUnavailable):
+            build_analytics_report(event_db_path=target,
                                    state_db_path=self.state_db, days=7, now=NOW)
 
 
@@ -288,6 +366,25 @@ class UnreadableStoreApiTests(unittest.TestCase):
         body = response.json()
         self.assertTrue(body["event_db_present"])
         self.assertEqual(body["event_db_status"], "unreadable")
+
+    def test_health_partial_schema_is_unreadable_not_ready(self) -> None:
+        target = self.dir / "usage.db"
+        _partial_schema_db(target)
+        with patch.object(store, "event_db_path", return_value=target):
+            response = self.client.get("/api/plugins/spend-sense/health")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["event_db_present"])
+        self.assertEqual(body["event_db_status"], "unreadable")
+
+    def test_billing_endpoint_partial_schema_is_503_with_fixed_detail(self) -> None:
+        target = self.dir / "usage.db"
+        _partial_schema_db(target)
+        with patch.object(store, "event_db_path", return_value=target):
+            response = self.client.get("/api/plugins/spend-sense/billing/summary",
+                                       params={"days": 7})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "billing call store unavailable")
 
 
 if __name__ == "__main__":

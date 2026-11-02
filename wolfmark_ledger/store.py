@@ -72,6 +72,25 @@ CREATE TABLE IF NOT EXISTS baseline (
 );
 """
 
+# Columns the readers require. The writer and reader ship together, so a
+# store missing any canonical column was not produced by this writer and
+# must fail clearly: the report builders treat absent keys as zero/blank.
+# Extra columns are tolerated (a newer writer's additive change).
+_REQUIRED_COLUMNS = {
+    "calls": frozenset({
+        "event_id", "ts", "started_at", "ended_at", "session_id",
+        "task_id", "turn_id", "platform", "model", "provider",
+        "api_mode", "aux_task", "streaming", "outcome",
+        "api_call_count", "input_tokens", "output_tokens",
+        "cache_read_tokens", "cache_write_tokens", "reasoning_tokens",
+        "prompt_tokens", "total_tokens", "error_type", "status_code",
+        "recorded_at",
+    }),
+    "baseline": frozenset({
+        "id", "captured_at", "total_tokens", "main_tokens", "aux_tokens",
+    }),
+}
+
 _WRITE_LOCK = threading.Lock()
 _WRITER: Optional[sqlite3.Connection] = None
 _WRITER_PATH: Optional[str] = None
@@ -164,9 +183,9 @@ def connect_reader(path: Optional[Path | str] = None) -> Optional[sqlite3.Connec
     """Read-only connection, or None when the collector has never run.
 
     A missing file is a valid empty state. An existing file that cannot be
-    opened or lacks the required tables raises LedgerUnavailable: callers
-    must report unavailable data, never silent zeros. Nothing is created,
-    migrated or repaired here.
+    opened or lacks the required tables or columns raises
+    LedgerUnavailable: callers must report unavailable data, never silent
+    zeros. Nothing is created, migrated or repaired here.
     """
     target = Path(path) if path else event_db_path()
     try:
@@ -200,6 +219,22 @@ def connect_reader(path: Optional[Path | str] = None) -> Optional[sqlite3.Connec
             "usage database is missing required tables: "
             + ", ".join(sorted(missing))
         )
+    try:
+        for table in ("calls", "baseline"):
+            have = {row[1] for row in
+                    conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
+            absent = _REQUIRED_COLUMNS[table] - have
+            if absent:
+                conn.close()
+                raise LedgerUnavailable(
+                    f"usage database {table} table is missing required columns: "
+                    + ", ".join(sorted(absent))
+                )
+    except LedgerUnavailable:
+        raise
+    except sqlite3.Error as exc:
+        conn.close()
+        raise LedgerUnavailable(f"could not read usage database: {exc}") from exc
     return conn
 
 
