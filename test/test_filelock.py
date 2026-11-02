@@ -15,6 +15,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -106,9 +107,10 @@ def _membership_conflict_racer(path_str: str, rev: str, label: str,
 
 def _join_all(test: unittest.TestCase, procs: list) -> None:
     """Join with a timeout: a locking regression must fail, not hang CI."""
+    deadline = time.monotonic() + JOIN_TIMEOUT
     hung = []
     for proc in procs:
-        proc.join(JOIN_TIMEOUT)
+        proc.join(max(0.0, deadline - time.monotonic()))
         if proc.is_alive():
             hung.append(proc)
     for proc in hung:
