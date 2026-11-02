@@ -278,6 +278,15 @@ test('LedgerPage: a no-op Home/End press does not leak focus restoration into mo
     'mouse navigation after a no-op End must not receive restored focus')
 })
 
+test('every Overview (ov*) string exists in both en and zh', () => {
+  const enKeys = Object.keys(T.I18N.en).filter(k => k.startsWith('ov'))
+  assert.ok(enKeys.length > 10, 'the Overview copy set is non-trivial')
+  for (const key of enKeys) {
+    assert.ok(key in T.I18N.zh, `zh is missing Overview key ${key}`)
+    assert.equal(typeof T.I18N.zh[key], typeof T.I18N.en[key], `zh type matches en for ${key}`)
+  }
+})
+
 test('membership fees are preserved per account; routes are never grouped or suppressed', () => {
   const acct = (id, amount, currency) => ({
     id, plan_id: `${id}-plan`, effective_arrangement: 'subscription',

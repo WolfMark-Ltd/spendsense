@@ -3069,6 +3069,24 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-stat{border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-primary);padding:14px 15px;min-width:0;min-height:98px}',
   '.wm-product .wm-product-stat label{display:block;color:var(--ui-text-tertiary);font-size:12px}',
   '.wm-product .wm-product-stat strong{display:block;margin-top:5px;font-size:19px;line-height:1.3;font-weight:580;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
+  '.wm-product .wm-kpi{display:flex;flex-direction:column;gap:6px;min-height:118px}',
+  '.wm-product .wm-kpi-eyebrow{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--ui-text-tertiary)}',
+  '.wm-product .wm-kpi-figure{font-size:var(--wm-font-kpi,20px);line-height:1.25;font-weight:620;letter-spacing:-.3px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
+  '.wm-product .wm-kpi-prov{font-size:11.5px;line-height:1.45;color:var(--ui-text-tertiary)}',
+  '.wm-product .wm-kpi-foot{margin-top:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
+  '.wm-product .wm-attn-strip{display:none}',
+  '.wm-product .wm-attention-rows{list-style:none;margin:10px 0 0;padding:0;display:grid}',
+  '.wm-product .wm-attention-rows li{display:flex;align-items:center;gap:10px;padding:10px 4px;border-top:1px solid var(--ui-stroke-secondary);min-width:0}',
+  '.wm-product .wm-attention-rows li:first-child{border-top:0;padding-top:2px}',
+  '.wm-product .wm-attn-dot{width:8px;height:8px;border-radius:50%;background:var(--ui-warning);flex:none}',
+  '.wm-product .wm-attn-dot[data-tone="info"]{background:var(--ui-accent)}',
+  '.wm-product .wm-attn-main{flex:1;min-width:0}',
+  '.wm-product .wm-attn-main strong{font-size:13px;font-weight:600}',
+  '.wm-product .wm-attn-main span{display:block;font-size:12px;color:var(--ui-text-secondary);overflow-wrap:anywhere}',
+  '.wm-product .wm-method{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:12px 16px;background:var(--ui-fill-primary)}',
+  '.wm-product .wm-method summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--ui-text-secondary);min-height:32px;display:flex;align-items:center}',
+  '.wm-product .wm-method summary:hover{color:var(--ui-text-primary)}',
+  '.wm-product .wm-method p{font-size:12.5px;line-height:1.6;color:var(--ui-text-secondary);max-width:78ch}',
   '.wm-product .wm-product-section{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:17px;background:var(--ui-fill-primary)}',
   '.wm-product .wm-product-section h2{margin:0 0 4px;font-size:16px;font-weight:590}',
   '.wm-product .wm-product-section > p{margin:4px 0 12px;color:var(--ui-text-tertiary);font-size:12px;line-height:1.5}',
@@ -3095,7 +3113,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-stat small{display:block;margin-top:6px;color:var(--ui-text-tertiary);font-size:11px;line-height:1.4}',
   '.wm-product .wm-product-section p{max-width:78ch}',
   '.wm-product :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}',
-  '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}}'
+  '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}}'
 ].join('');
 
 function pricingStatusQuery(identity = membershipIdentityNow()) {
@@ -3649,6 +3667,21 @@ function settledDesktopMonth(ledger, now = new Date()) {
   return { known: priced > 0, cost, pricedTokens: priced }
 }
 
+/** Fee bases contributing to the membership totals, so declared fees and
+ * catalogue prices are never presented as one undifferentiated figure. */
+function feeBasisMix(accounts) {
+  const bases = new Set()
+  for (const account of accounts || []) {
+    const effective = account.fee?.effective
+    if (effective && effective.amount !== null && effective.amount !== undefined) {
+      bases.add(account.fee?.basis || 'unknown')
+    }
+  }
+  return bases
+}
+function certaintyChip(certainty, text, key) {
+  return jsx('span', { className: 'wm-certainty', 'data-certainty': certainty, children: text }, key)
+}
 function OverviewPage() {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
@@ -3665,77 +3698,117 @@ function OverviewPage() {
   const econReady = economics.data?.identity === identity && membershipIdentityCurrent(identity)
   const econHeadline = econReady ? economics.data?.headline || {} : {}
   const econDifference = finiteValue(econHeadline.difference_usd)
+  // Both backend calls below use the same 30-day window, so the analytics
+  // unpriced-token count is the honest Partial signal for both cards.
+  const unpriced = Number(result.unpriced_tokens || 0)
+  const items = accountsReady ? needsAttention(currentAccounts) : []
+  const bases = feeBasisMix(currentAccounts)
+  const feeChips = ['declared', 'catalogue', 'custom']
+    .filter(basis => bases.has(basis))
+    .map(basis => certaintyChip(basis === 'declared' ? 'declared' : basis,
+      basis === 'declared' ? t('ovCertDeclared') : basis === 'catalogue' ? t('ovCertCatalogue') : t('ovCertCustom'), basis))
+  const scrollToAttention = () => {
+    try {
+      const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+      document.getElementById('wm-needs-attention')
+        ?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+    } catch {}
+  }
   return jsxs('div', { className: 'wm-analytics wm-product', children: [
     jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + ECONOMICS_CSS }),
     jsx(LedgerTabs, {}),
     jsxs('main', { className: 'wm-shell', children: [
-      jsx(ProductHeader, { title: 'Overview',
-        subtitle: 'A quick view of recorded costs, estimates and the memberships you have declared.' }),
+      jsx(ProductHeader, { title: t('ovTitle'), subtitle: t('ovSubtitle') }),
       analytics.error ? jsx('div', { className: 'wm-alert', role: 'alert',
         children: String(analytics.error.message || analytics.error) }) : null,
-      jsx('section', { className: 'wm-product-summary', children: [
-        jsx('div', { className: 'wm-product-stat', children: [
-          jsx('label', { children: 'Desktop-recorded this month' }),
-          jsx('strong', { children: local.known ? fmtUsd(local.cost) : '—' }),
-          jsx('small', { children: local.known
-            ? 'Settled at the rates captured when each usage delta was recorded.'
-            : 'No priced Desktop cost is available for this month.' })
+      items.length || unpriced
+        ? jsxs('div', { className: 'wm-attn-strip', role: 'region', 'aria-label': t('ovAttention'), children: [
+            jsx('span', { className: 'wm-attn-dot', 'aria-hidden': true }),
+            jsx('span', { children: t('ovStrip', items.length + (unpriced ? 1 : 0)) }),
+            jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: scrollToAttention, children: t('ovStripReview') })
+          ] })
+        : null,
+      jsxs('section', { className: 'wm-product-summary', 'aria-label': t('ovFigures'), children: [
+        jsxs('article', { className: 'wm-product-stat wm-kpi', children: [
+          jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovRecordedLabel') }),
+          jsx('div', { className: 'wm-kpi-figure', children: local.known ? fmtUsd(local.cost) : t('ovUnknown') }),
+          jsx('p', { className: 'wm-kpi-prov', children: t('ovRecordedProv') }),
+          jsx('div', { className: 'wm-kpi-foot', children: certaintyChip('ok', t('ovCertRecorded'), 'recorded') })
         ] }),
-        jsx('div', { className: 'wm-product-stat', children: [
-          jsx('label', { children: 'Backend API-equivalent · 30 days' }),
-          jsx('strong', { children: result.list_usd == null ? '—' : fmtUsd(result.list_usd) }),
-          jsx('small', { children: analytics.isLoading && !analytics.data
-            ? 'Reading backend usage…'
-              : analytics.error && !analytics.data
-              ? 'Backend usage could not be read for this connection.'
-              : !analytics.data
-                ? 'Backend usage data is not available for this connection.'
-                : result.calls === 0
-                ? 'No backend calls recorded in the last 30 days.'
-                : 'Estimate at the current available catalogue; not a historical charge.' })
+        jsxs('article', { className: 'wm-product-stat wm-kpi', children: [
+          jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovEstimatedLabel') }),
+          jsx('div', { className: 'wm-kpi-figure', children: result.list_usd == null ? t('ovUnknown')
+            : unpriced ? [fmtUsd(result.list_usd), jsx('small', { children: ' ' + t('ovLowerBound') }, 'lb')] : fmtUsd(result.list_usd) }),
+          jsx('p', { className: 'wm-kpi-prov', children: analytics.isLoading && !analytics.data ? t('ovBackendLoading')
+            : analytics.error && !analytics.data ? t('ovBackendError')
+            : !analytics.data ? t('ovBackendNone')
+            : result.calls === 0 ? t('ovBackendEmpty') : t('ovBackendProv') }),
+          jsxs('div', { className: 'wm-kpi-foot', children: [
+            certaintyChip('estimated', t('ovCertEstimated'), 'est'),
+            unpriced ? certaintyChip('partial', t('ovCertPartial'), 'part') : null
+          ].filter(Boolean) })
         ] }),
-        jsx('div', { className: 'wm-product-stat', children: [
-          jsx('label', { children: 'Declared membership fees' }),
-          jsx('strong', { children: accountsReady ? feesLabel(fees) : '—' }),
-          jsx('small', { children: accountsReady
-            ? fees.withPlan + ' saved plan(s) across ' + fees.total + ' account(s).'
-            : accounts.error ? 'Memberships could not be read for this connection.'
-              : 'Reading memberships for this connection…' })
+        jsxs('article', { className: 'wm-product-stat wm-kpi', children: [
+          jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovFeesLabel') }),
+          jsx('div', { className: 'wm-kpi-figure', children: accountsReady ? feesLabel(fees) : t('ovUnknown') }),
+          jsx('p', { className: 'wm-kpi-prov', children: accountsReady ? t('ovPlansConfirmed', fees.withPlan, fees.total)
+            : accounts.error ? t('ovFeesError') : t('ovFeesLoading') }),
+          jsx('div', { className: 'wm-kpi-foot', children: feeChips.length ? feeChips : certaintyChip('unknown', t('ovUnknown'), 'u') })
         ] }),
-        jsx('div', { className: cn('wm-product-stat', econDifference != null && econDifference >= 0 && 'wm-econ-positive'), children: [
-          jsx('label', { children: t('econOverviewLabel') }),
-          jsx('strong', { children: !econReady ? '—'
+        jsxs('article', { className: cn('wm-product-stat wm-kpi', econDifference != null && econDifference >= 0 && 'wm-econ-positive'), children: [
+          jsx('div', { className: 'wm-kpi-eyebrow', children: t('econOverviewLabel') }),
+          jsx('div', { className: 'wm-kpi-figure', children: !econReady ? t('ovUnknown')
             : econDifference == null ? econStatusLabel(t, econHeadline.status) : analyticMoney(econDifference) }),
-          jsx('small', { children: !econReady
+          jsx('p', { className: 'wm-kpi-prov', children: !econReady
             ? economics.error ? t('econOverviewError')
               : t('econOverviewReading')
             : econDifference == null
               ? (econHeadline.notes || [])[0] || t('econOverviewNone')
               : t('econOverviewSmall', econFeeLines(t, econHeadline.fees_monthly_by_currency).join(' + '),
                   econWindowLines(econHeadline.fees_window_by_currency).join(' + '),
-                  windowSpanLabel(t, economics.data?.window_days), analyticMoney(econHeadline.usage_usd)) })
+                  windowSpanLabel(t, economics.data?.window_days), analyticMoney(econHeadline.usage_usd)) }),
+          jsx('div', { className: 'wm-kpi-foot', children:
+            econReady && econDifference != null && unpriced ? certaintyChip('partial', t('ovCertPartial'), 'vp') : null })
         ] })
       ] }),
-      (() => {
-        const items = accountsReady ? needsAttention(currentAccounts) : []
-        const unpriced = Number(result.unpriced_tokens || 0)
-        return jsxs('div', { className: 'wm-product-section', children: [
-          jsx('h2', { children: items.length || unpriced ? 'Needs attention' : 'Continue' }),
-          items.length
-            ? jsx('ul', { className: 'wm-overview-attention', children: items.slice(0, 5).map((item, index) =>
-                jsx('li', { children: `${item.account.label || item.account.family}: ${item.text}` }, index)) })
-            : jsx('p', { children: accountsReady
-                ? 'Nothing needs confirming right now. Usage shows Hermes analytics, Costs brings estimates and declared memberships together, and Memberships is where plans and fees live.'
-                : 'Usage shows Hermes analytics, Costs brings estimates and declared memberships together, and Memberships is where plans and fees live.' }),
-          unpriced ? jsx('p', { className: 'wm-subtle', children: unpriced.toLocaleString('en-GB') + ' tokens in the last 30 days have no published price, so API-equivalent totals are partial. See Usage for coverage.' }) : null,
-          jsx('div', { className: 'wm-setting-action', children: [
-            items.length ? jsx(ProductButton, { className: 'wm-button wm-accent', onClick: () => goLedgerTab('memberships'), children: 'Review memberships' }) : null,
-            jsx(ProductButton, { className: 'wm-button', onClick: () => goLedgerTab('usage'), children: 'Open Usage' }),
-            jsx(ProductButton, { className: 'wm-button', onClick: () => goLedgerTab('costs'), children: 'Open Costs' }),
-            items.length ? null : jsx(ProductButton, { className: 'wm-button', onClick: () => goLedgerTab('memberships'), children: 'Manage memberships' })
-          ].filter(Boolean) })
-        ] })
-      })()
+      jsxs('section', { className: 'wm-product-section', id: 'wm-needs-attention', children: [
+        jsx('h2', { children: items.length || unpriced ? t('ovAttention') : t('ovContinue') }),
+        items.length || unpriced
+          ? jsx('p', { children: t('ovAttentionHint') })
+          : jsx('p', { children: t('ovNothingToDo') }),
+        items.length || unpriced
+          ? jsxs('ul', { className: 'wm-attention-rows', children: [
+              ...items.slice(0, 3).map((item, index) => jsxs('li', { children: [
+                jsx('span', { className: 'wm-attn-dot', 'data-tone': item.tone === 'warn' ? 'warn' : 'info', 'aria-hidden': true }),
+                jsxs('div', { className: 'wm-attn-main', children: [
+                  jsx('strong', { children: item.account.label || item.account.family }),
+                  jsx('span', { children: item.text })
+                ] }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button',
+                  onClick: () => goLedgerTab('memberships'), children: t('ovOpenMemberships') })
+              ] }, index)),
+              unpriced ? jsxs('li', { children: [
+                jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
+                jsxs('div', { className: 'wm-attn-main', children: [
+                  jsx('strong', { children: t('ovPricingTitle') }),
+                  jsx('span', { children: t('ovUnpriced', unpriced.toLocaleString('en-GB')) })
+                ] }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button',
+                  onClick: () => goLedgerTab('usage'), children: t('ovOpenUsage') })
+              ] }, 'unpriced') : null
+            ].filter(Boolean) })
+          : null,
+        jsx('div', { className: 'wm-setting-action', children: [
+          items.length ? jsx(ProductButton, { type: 'button', className: 'wm-button wm-accent', onClick: () => goLedgerTab('memberships'), children: t('ovReviewMemberships') }) : null,
+          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => goLedgerTab('usage'), children: t('ovOpenUsage') }),
+          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => goLedgerTab('costs'), children: t('ovOpenCosts') }),
+          items.length ? null : jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => goLedgerTab('memberships'), children: t('ovManageMemberships') })
+        ].filter(Boolean) })
+      ] }),
+      jsxs('details', { className: 'wm-method', children: [
+        jsx('summary', { children: t('ovMethodTitle') }),
+        jsx('div', { children: jsx('p', { children: t('ovMethodBody') }) })
+      ] })
     ] })
   ] })
 }
@@ -6271,6 +6344,45 @@ const I18N = {
     econOverviewReading: 'Reading subscription economics…',
     econOverviewNone: 'No comparison is available. See Costs.',
     econOverviewSmall: (f, w, s, u) => `${f} · ${w} ${s} · ${u} usage. See Costs.`,
+    // Overview (Phase B).
+    ovTitle: 'Overview',
+    ovSubtitle: 'Recorded usage, estimates and membership fees — each labelled, never mixed.',
+    ovFigures: 'Key figures',
+    ovRecordedLabel: 'Recorded usage · this month',
+    ovRecordedProv: 'Desktop ledger · priced when recorded, not a bill',
+    ovCertRecorded: 'Recorded usage',
+    ovUnknown: 'Unknown',
+    ovEstimatedLabel: 'API-equivalent · 30 days',
+    ovCertEstimated: 'Estimated',
+    ovCertPartial: 'Partial',
+    ovLowerBound: 'lower bound',
+    ovBackendLoading: 'Reading backend usage…',
+    ovBackendError: 'Backend usage could not be read for this connection.',
+    ovBackendNone: 'Backend usage data is not available for this connection.',
+    ovBackendEmpty: 'No backend calls recorded in the last 30 days.',
+    ovBackendProv: 'Backend usage at current catalogue rates',
+    ovFeesLabel: 'Membership fees · monthly equivalent',
+    ovPlansConfirmed: (w, t) => `${w} of ${t} accounts have a confirmed plan`,
+    ovCertDeclared: 'Declared',
+    ovCertCatalogue: 'Catalogue',
+    ovCertCustom: 'Custom plan',
+    ovFeesLoading: 'Reading memberships for this connection…',
+    ovFeesError: 'Memberships could not be read for this connection.',
+    ovAttention: 'Needs attention',
+    ovContinue: 'Continue',
+    ovAttentionHint: 'Each item names the account and the action.',
+    ovNothingToDo: 'Nothing needs confirming right now.',
+    ovPricingTitle: 'Usage pricing',
+    ovUnpriced: u => `${u} tokens in the last 30 days have no published price, so API-equivalent totals are partial.`,
+    ovStrip: n => `${n} need attention`,
+    ovStripReview: 'Review',
+    ovOpenMemberships: 'Open Memberships',
+    ovOpenUsage: 'Open Usage',
+    ovOpenCosts: 'Open Costs',
+    ovReviewMemberships: 'Review memberships',
+    ovManageMemberships: 'Manage memberships',
+    ovMethodTitle: 'How these figures are calculated',
+    ovMethodBody: 'Recorded usage is Desktop-ledger usage priced at the rates captured when each delta was recorded — a priced record, not a provider bill. API-equivalent re-prices backend usage at the current catalogue over the last 30 days and is a lower bound while any tokens are unpriced. Membership fees are the effective fees from Memberships, kept separate by currency and labelled by basis (declared, catalogue or custom). Subscription value compares attributed usage with fees only when window and currency align; otherwise no ratio is shown. Per-model detail lives in Usage; fee evidence and economics live in Costs.',
     // Allowance weather.
     wxTitle: 'Allowance weather',
     wxAhead: 'Ahead of pace',
@@ -6562,6 +6674,45 @@ const I18N = {
     econOverviewReading: '正在读取订阅经济分析…',
     econOverviewNone: '无可用的比较。请查看“费用”。',
     econOverviewSmall: (f, w, s, u) => `${f} · ${w} ${s} · 用量 ${u}。请查看“费用”。`,
+    // 总览（第二阶段）。
+    ovTitle: '总览',
+    ovSubtitle: '已记录用量、估算与会员费用——各项均有标注，互不混淆。',
+    ovFigures: '关键数据',
+    ovRecordedLabel: '已记录用量 · 本月',
+    ovRecordedProv: '桌面账本 · 按记录时价格计价，非账单',
+    ovCertRecorded: '已记录用量',
+    ovUnknown: '未知',
+    ovEstimatedLabel: 'API 等价 · 30 天',
+    ovCertEstimated: '估算',
+    ovCertPartial: '部分',
+    ovLowerBound: '下限',
+    ovBackendLoading: '正在读取后端用量…',
+    ovBackendError: '无法读取此连接的后端用量。',
+    ovBackendNone: '此连接没有可用的后端用量数据。',
+    ovBackendEmpty: '过去 30 天没有后端调用记录。',
+    ovBackendProv: '按当前价格目录计算的后端用量',
+    ovFeesLabel: '会员费用 · 按月折算',
+    ovPlansConfirmed: (w, t) => `${t} 个账户中有 ${w} 个已确认方案`,
+    ovCertDeclared: '已申报',
+    ovCertCatalogue: '目录价格',
+    ovCertCustom: '自定义方案',
+    ovFeesLoading: '正在读取此连接的会员信息…',
+    ovFeesError: '无法读取此连接的会员信息。',
+    ovAttention: '需要注意',
+    ovContinue: '继续',
+    ovAttentionHint: '每一项都列出账户与操作。',
+    ovNothingToDo: '目前没有需要确认的事项。',
+    ovPricingTitle: '用量定价',
+    ovUnpriced: u => `过去 30 天有 ${u} 个 token 没有公布价格，因此 API 等价总额为部分数据。`,
+    ovStrip: n => `有 ${n} 项需要注意`,
+    ovStripReview: '查看',
+    ovOpenMemberships: '打开会员',
+    ovOpenUsage: '打开用量',
+    ovOpenCosts: '打开费用',
+    ovReviewMemberships: '检查会员',
+    ovManageMemberships: '管理会员',
+    ovMethodTitle: '这些数据的计算方式',
+    ovMethodBody: '已记录用量是按每次增量记录时捕获的价格计价的桌面账本用量——是计价记录，不是服务商账单。API 等价按当前价格目录对过去 30 天的后端用量重新计价；只要有 token 未定价，它就是下限值。会员费用是会员页中的有效费用，按币种分开，并按依据（已申报、目录价格或自定义）标注。订阅价值仅在窗口与币种一致时比较用量与费用，否则不显示比率。各模型的明细见“用量”；费用依据与经济分析见“费用”。',
     // 额度动态。
     wxTitle: '额度动态',
     wxAhead: '消耗偏快',
@@ -6846,7 +6997,7 @@ export const __test = {
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
   CostsPage, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark, PRODUCT_CSS,
-  SHARED_CSS, ProductHeader, AsyncButton,
+  SHARED_CSS, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
   setRest: value => { rest = value },
