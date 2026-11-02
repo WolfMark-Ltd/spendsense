@@ -309,7 +309,7 @@ test('every Memberships layout (mem*) string exists in both en and zh', () => {
   }
   assert.equal(T.arrangementLabel('subscription', zhT), '订阅')
   assert.equal(T.arrangementLabel('prepaid', zhT), '预付额度')
-  assert.equal(T.arrangementLabel('api_only', zhT), '仅 API')
+  assert.equal(T.arrangementLabel('api_only', zhT), '按量 API')
   assert.equal(T.arrangementLabel('unconfirmed', zhT), '未确认')
 })
 

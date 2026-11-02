@@ -3829,7 +3829,8 @@ function OverviewPage() {
                   jsx('span', { children: item.text })
                 ] }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
-                  onClick: () => goLedgerTab('memberships'), children: t('ovOpenMemberships') })
+                  onClick: () => { queueMembershipTarget(item); goLedgerTab('memberships') },
+                  children: attentionActionLabel(item.issue, t) })
               ] }, index)),
               unpriced ? jsxs('li', { children: [
                 jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
@@ -4482,6 +4483,11 @@ const $membershipAttentionOnly = atom(false)
 // stamped with the identity it belongs to so a switch never shows one
 // backend's rows expanded under another's accounts.
 const $membershipExpanded = atom({ origin: null, ids: [] })
+// Pending attention navigation: { origin, accountId, issue, group, focus,
+// windowId }. Set by an Overview or Memberships attention action, consumed by
+// MembershipsPage once the target identity's accounts are on screen. Stamped
+// with the connection identity so a gateway/profile switch discards it.
+const $membershipTarget = atom(null)
 // Groups the user has collapsed while their draft is active. A draft opens
 // its group, but the user's own toggle always wins afterwards: re-renders
 // never snap a collapsed group back open, and draft values are untouched.
@@ -4642,16 +4648,25 @@ const MEMBERSHIP_CSS = `
 .wm-attention{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:10px 12px}
 .wm-attention h3{margin:0 0 6px;font-size:12px;font-weight:600}
 .wm-attention ul{margin:0;padding-left:16px;display:grid;gap:3px}
-.wm-attention li{font-size:11.5px;line-height:1.5;color:var(--ui-text-secondary)}
+.wm-attention li{display:flex;align-items:center;gap:10px;font-size:11.5px;line-height:1.5;color:var(--ui-text-secondary)}
 .wm-attention li[data-tone="warn"]{color:var(--ui-warning)}
+.wm-attention li > span:first-child{flex:1;min-width:0}
+.wm-attention li .wm-button{flex:none}
 .wm-fee-form{max-width:640px}
 .wm-fee-form h3{margin:0;font-size:13px}
 .wm-fee-fields{border:0;margin:0;padding:0;min-width:0}
-.wm-check{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;
- color:var(--ui-text-secondary);cursor:pointer;white-space:nowrap}
-.wm-check input{accent-color:var(--ui-accent);width:14px;height:14px;margin:0;flex:none}
+.wm-billing-head{display:flex;align-items:center;gap:8px;position:relative}
+.wm-billing-label{font-size:12px;font-weight:600;color:var(--ui-text-secondary)}
+.wm-seg{display:flex;flex-wrap:wrap;border:1px solid var(--ui-stroke-secondary);border-radius:6px;overflow:hidden;width:fit-content;max-width:100%}
+.wm-seg button{border:0;border-left:1px solid var(--ui-stroke-secondary);background:transparent;color:var(--ui-text-tertiary);padding:7px 11px;min-height:34px;font-size:12px;cursor:pointer}
+.wm-seg button:first-child{border-left:0}
+.wm-seg button:hover:not([disabled]){color:var(--ui-text-primary);background:var(--ui-fill-secondary)}
+.wm-seg button[aria-pressed="true"]{background:var(--ui-fill-tertiary);color:var(--ui-text-primary);font-weight:600}
+.wm-seg button[disabled]{opacity:.55;cursor:default}
+.wm-flash{box-shadow:0 0 0 2px var(--ui-warning);border-radius:6px;animation:wm-flash 1.6s ease}
+@keyframes wm-flash{0%{box-shadow:0 0 0 2px var(--ui-warning)}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){.wm-flash{animation:none}.wm-chev{transition:none}.wm-group > summary::before{transition:none}}
 .wm-memberships select:disabled,.wm-memberships input:disabled{opacity:.55}
-.wm-memberships .wm-check:has(input:disabled){cursor:default}
 .wm-memberships .wm-stats{grid-template-columns:repeat(4,minmax(0,1fr))}
 @container(max-width:1050px){.wm-memberships .wm-stats{grid-template-columns:1fr 1fr}.wm-memberships .wm-stat:nth-child(2n){border-right:0}.wm-memberships .wm-stat:nth-child(-n+2){border-bottom:1px solid var(--ui-stroke-secondary)}}
 @container(max-width:380px){.wm-memberships .wm-stats{grid-template-columns:1fr}.wm-memberships .wm-stat{border-right:0;border-bottom:1px solid var(--ui-stroke-secondary)}.wm-memberships .wm-stat:last-child{border-bottom:0}}
@@ -4675,7 +4690,7 @@ button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
 .wm-group > summary::before{content:"›";display:inline-block;font-size:17px;line-height:1;font-weight:700;color:var(--ui-text-primary);transition:transform .15s ease}
 .wm-group[open] > summary::before{transform:rotate(90deg)}
 .wm-group-body{display:grid;gap:8px;padding:4px 0 10px}
-@container(max-width:620px){.wm-memberships .wm-row-mid{margin-left:0;width:100%}.wm-memberships .wm-row-head{align-items:flex-start}}
+@container(max-width:620px){.wm-memberships .wm-row-mid{margin-left:0;width:100%}.wm-memberships .wm-row-head{align-items:flex-start}.wm-memberships .wm-seg button{min-height:38px}.wm-memberships .wm-attention li{flex-wrap:wrap}.wm-memberships .wm-attention li .wm-button{width:100%}}
 `
 
 let membershipReadSerial = 0
@@ -4859,7 +4874,7 @@ function feeLabel(fee) {
   const effective = fee.effective || {}
   const amount = fmtMoney(effective.amount, effective.currency)
   const period = effective.period ? `/${String(effective.period).replace('month', 'mo').replace('year', 'yr')}` : ''
-  if (fee.basis === 'api_only') return 'API Only · no recurring membership fee'
+  if (fee.basis === 'api_only') return 'Metered API · no recurring membership fee'
   if (fee.basis === 'prepaid') return 'Prepaid credits · no recurring membership fee'
   if (fee.basis === 'unconfirmed') return 'No confirmed billing arrangement'
   if (fee.basis === 'declared') {
@@ -5035,9 +5050,19 @@ function AllowanceWeather({ entry, error }) {
   const notes = Array.isArray(entry.notes) ? entry.notes : []
   const rowNotes = row => Array.isArray(row.notes) ? row.notes.filter(note => note) : []
   const rows = [
-    ...windows.map(window => ({ summary: wxWindowRow(t, window), notes: rowNotes(window) })),
-    ...rules.map(rule => ({ summary: wxRuleRow(t, rule), notes: rowNotes(rule) })),
+    ...windows.map(window => ({ kind: 'window', key: `w:${window.id}`, id: window.id,
+      summary: wxWindowRow(t, window), notes: rowNotes(window) })),
+    ...rules.map(rule => ({ kind: 'rule', key: `r:${rule.profile_id}:${rule.pool}`,
+      profile: rule.profile_id, pool: rule.pool,
+      summary: wxRuleRow(t, rule), notes: rowNotes(rule) })),
   ]
+  // Rows carry their stable backend identifiers so attention navigation can
+  // target the exact reading. tabIndex -1 admits programmatic focus without
+  // adding tab stops.
+  const rowAttrs = row => row.kind === 'window'
+    ? { 'data-weather-kind': 'window', 'data-weather-id': row.id, tabIndex: -1 }
+    : { 'data-weather-kind': 'rule', 'data-weather-profile': row.profile,
+        'data-weather-pool': row.pool, tabIndex: -1 }
   return jsxs('section', { className: 'wm-weather', 'data-verdict': rollup,
     'aria-label': t('wxTitle'), children: [
       jsxs('div', { className: 'wm-weather-head', children: [
@@ -5050,12 +5075,12 @@ function AllowanceWeather({ entry, error }) {
       rows.length ? jsxs('details', { className: 'wm-weather-details', children: [
         jsx('summary', { children: t('wxDetails') }),
         jsxs('ul', { children: rows.map((row, index) => row.notes.length
-          ? jsxs('li', { children: [
+          ? jsxs('li', { ...rowAttrs(row), children: [
               row.summary,
               jsxs('ul', { className: 'wm-weather-subnotes',
                 children: row.notes.map((note, noteIndex) => jsx('li', { children: note }, `n${noteIndex}`)) }),
-            ] }, index)
-          : jsx('li', { children: row.summary }, index)) }),
+            ] }, row.key || index)
+          : jsx('li', { ...rowAttrs(row), children: row.summary }, row.key || index)) }),
       ] }) : null,
       notes.length ? jsxs('ul', { className: 'wm-weather-notes',
         children: notes.map((note, index) => jsx('li', { children: note }, index)) }) : null,
@@ -5073,14 +5098,17 @@ function needsAttention(accounts, weatherById, t = needsAttentionEn) {
   for (const account of accounts) {
     const quota = account.quota || {}
     if (quota.conflicts && quota.conflicts.length) {
-      out.push({ account, tone: 'warn', text: t('attnConflict', quota.conflicts.join(', ')) })
+      out.push({ account, tone: 'warn', text: t('attnConflict', quota.conflicts.join(', ')),
+        issue: 'conflict', target: { group: 'allowances', focus: 'window', windowId: quota.conflicts[0] } })
     }
     if (quota.account_exhausted) {
-      out.push({ account, tone: 'warn', text: t('attnExhausted') })
+      out.push({ account, tone: 'warn', text: t('attnExhausted'),
+        issue: 'exhausted', target: { group: 'allowances', focus: 'allowances' } })
     }
     for (const row of quotaRows(account)) {
       if (row.manual && row.manual.status === 'reconfirm_due') {
-        out.push({ account, tone: 'info', text: t('attnReconfirm', row.label) })
+        out.push({ account, tone: 'info', text: t('attnReconfirm', row.label),
+          issue: 'reconfirm', target: { group: 'allowances', focus: 'window', windowId: row.id } })
       }
     }
     // Before the arrangement exits: rule pools link by route whatever the
@@ -5088,30 +5116,154 @@ function needsAttention(accounts, weatherById, t = needsAttentionEn) {
     const weather = weatherById?.get?.(account.id)
     if (weather) {
       for (const row of [...(weather.windows || []), ...(weather.rules || [])]) {
+        // Rules carry cost figures; windows never do. The same test keeps
+        // the reading target on the row the warning names.
+        const reading = row.used_usd !== undefined
+          ? { readingKind: 'rule', readingProfile: row.profile_id, readingPool: row.pool }
+          : { readingKind: 'window', readingId: row.id }
         if (row.verdict === 'ahead') {
-          out.push({ account, tone: 'info', text: t('attnAhead', row.label) })
+          out.push({ account, tone: 'info', text: t('attnAhead', row.label),
+            issue: 'ahead', target: { group: 'allowances', focus: 'reading', ...reading } })
         } else if (row.used_usd !== undefined && row.verdict === 'exhausted') {
           // Rule pools only: window exhaustion already surfaces through the quota flags above.
-          out.push({ account, tone: 'info', text: t('attnReached', row.label) })
+          out.push({ account, tone: 'info', text: t('attnReached', row.label),
+            issue: 'reached', target: { group: 'allowances', focus: 'reading', ...reading } })
         }
       }
     }
     if (account.effective_arrangement === 'api_only' || account.effective_arrangement === 'prepaid') continue
     if (account.effective_arrangement === 'unconfirmed') {
-      out.push({ account, tone: 'info', text: t('attnUnconfirmed') })
+      out.push({ account, tone: 'info', text: t('attnUnconfirmed'),
+        issue: 'unconfirmed', target: { group: 'plan', focus: 'arrangement' } })
       continue
     }
     if (account.plan_reconfirmation?.required) {
-      out.push({ account, tone: 'info', text: t('attnReconfirmPlan', account.plan_reconfirmation.reported_label) })
+      out.push({ account, tone: 'info', text: t('attnReconfirmPlan', account.plan_reconfirmation.reported_label),
+        issue: 'reconfirm-plan', target: { group: 'plan', focus: 'plan' } })
     }
     const basis = account.fee?.basis
     if (!account.plan_id) {
-      out.push({ account, tone: 'info', text: t('attnNoPlan') })
+      out.push({ account, tone: 'info', text: t('attnNoPlan'),
+        issue: 'no-plan', target: { group: 'plan', focus: 'plan' } })
     } else if (basis === 'unpriced' || basis === 'no_plan') {
-      out.push({ account, tone: 'info', text: t('attnNoFee') })
+      out.push({ account, tone: 'info', text: t('attnNoFee'),
+        issue: 'no-fee', target: { group: 'plan', focus: 'fee' } })
     }
   }
   return out
+}
+
+/** Action label for an attention issue; never parsed from the warning text. */
+function attentionActionLabel(issue, t) {
+  return issue === 'unconfirmed' ? t('attnActArrangement')
+    : issue === 'no-plan' ? t('attnActPlan')
+    : issue === 'no-fee' ? t('attnActFee')
+    : issue === 'reconfirm-plan' ? t('attnActPlanReview')
+    : t('attnActReading')
+}
+
+/** Queue an attention jump for the Memberships page to consume on arrival. */
+function queueMembershipTarget(item) {
+  if (!item?.account?.id || !item?.target) return
+  $membershipTarget.set({ origin: membershipIdentityNow(),
+    accountId: item.account.id, issue: item.issue || 'unknown', ...item.target })
+}
+
+/** Locate a weather reading row by its stable backend identifiers. */
+function weatherReadingLi(card, nav) {
+  if (!card) return null
+  if (nav?.readingKind === 'window' && nav.readingId) {
+    return card.querySelector(`li[data-weather-kind="window"][data-weather-id="${nav.readingId}"]`)
+  }
+  if (nav?.readingKind === 'rule' && nav.readingProfile && nav.readingPool) {
+    return card.querySelector(
+      `li[data-weather-kind="rule"][data-weather-profile="${nav.readingProfile}"][data-weather-pool="${nav.readingPool}"]`)
+  }
+  return null
+}
+
+/**
+ * DOM half of attention navigation. Runs after React commits the expanded
+ * row: opens the target group, scrolls the resolved target itself into
+ * view, focuses the control and applies a temporary highlight. Falls back
+ * to the account Details section when the precise target is gone. Pure UI:
+ * no reads, no writes, no provider requests.
+ */
+function membershipTargetDom(nav) {
+  if (typeof document === 'undefined' || !nav?.accountId) return
+  if (!membershipIdentityCurrent(nav.origin)) return
+  let card = null
+  try { card = document.querySelector(`[data-account="${nav.accountId}"]`) } catch { return }
+  if (!card || !card.isConnected) return
+  const groupEl = nav.group ? card.querySelector(`details[data-group="${nav.group}"]`) : null
+  if (groupEl) { try { groupEl.open = true } catch {} }
+  let focusEl = null
+  let flashEl = null
+  try {
+    if (nav.focus === 'arrangement') {
+      const seg = card.querySelector('[data-nav="arrangement"]')
+      focusEl = seg?.querySelector('button[aria-pressed="true"]:not([disabled])')
+        || seg?.querySelector('button:not([disabled])')
+      flashEl = seg
+    } else if (nav.focus === 'plan') {
+      const sel = card.querySelector('select[data-nav="plan"]')
+      if (sel && !sel.disabled) { focusEl = sel; flashEl = sel }
+    } else if (nav.focus === 'fee') {
+      const btn = card.querySelector('button[data-action="edit-fee"]')
+      if (btn && !btn.disabled) { focusEl = btn; flashEl = btn }
+    } else if (nav.focus === 'window' && nav.windowId) {
+      const li = card.querySelector(`li[data-window="${nav.windowId}"]`)
+      if (li) {
+        focusEl = li.querySelector('button[data-action="clear-mark"]:not([disabled])')
+          || li.querySelector('button[data-action="mark-exhausted"]:not([disabled])')
+        flashEl = li
+      }
+    } else if (nav.focus === 'reading') {
+      // Provider weather readings live inside the weather details; user
+      // exhaustion marks are never a substitute for them.
+      const details = card.querySelector('.wm-weather-details')
+      if (details) { try { details.open = true } catch {} }
+      const li = weatherReadingLi(card, nav)
+      if (li) { focusEl = li; flashEl = li }
+      else {
+        // The reading disappeared since the warning was raised: fall back
+        // to the allowance section rather than an unrelated action.
+        flashEl = groupEl
+        focusEl = groupEl?.querySelector('summary')
+      }
+    } else if (nav.focus === 'allowances') {
+      // Section-level target (provider-reported exhaustion): focus the
+      // section itself, never another window's Clear mark button.
+      flashEl = groupEl
+      focusEl = groupEl?.querySelector('summary')
+    }
+  } catch { focusEl = null; flashEl = null }
+  if (!focusEl || !focusEl.isConnected) {
+    focusEl = card.querySelector('.wm-row-head button[aria-expanded]')
+    flashEl = card.querySelector('.wm-row-head') || card
+  }
+  if (!flashEl || !flashEl.isConnected) flashEl = card
+  try {
+    // The highlight always contains the focused control, so scrolling it
+    // with 'nearest' reveals the destination even in tall expanded cards.
+    const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    ;(flashEl || focusEl || card).scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'nearest' })
+  } catch {}
+  if (flashEl) {
+    try {
+      flashEl.classList.remove('wm-flash')
+      void flashEl.offsetWidth
+      flashEl.classList.add('wm-flash')
+      const clear = () => { try { flashEl.classList.remove('wm-flash') } catch {} }
+      setTimeout(clear, 1700)
+      flashEl.addEventListener('pointerdown', clear, { once: true })
+    } catch {}
+  }
+  if (focusEl) {
+    try { focusEl.focus({ preventScroll: true }) } catch {
+      try { focusEl.focus() } catch {}
+    }
+  }
 }
 
 function membershipSummary(accounts) {
@@ -5350,12 +5502,12 @@ function accountHolderMarked(account) {
     entry && entry.scope && entry.scope.kind === 'account' && entry.state !== 'cleared')
 }
 
-/** Short arrangement label for the compact row. Vocabulary matches the
- * existing card; the PR-D display rename (Metered API) is out of scope. */
+/** Short arrangement label for the compact row. Metered API is the
+ * display label for the existing api_only semantics; storage is untouched. */
 function arrangementLabel(arrangement, t) {
   return arrangement === 'subscription' ? t('memArrSubscription')
     : arrangement === 'prepaid' ? t('memArrPrepaid')
-    : arrangement === 'api_only' ? t('memArrApiOnly') : t('memArrUnconfirmed')
+    : arrangement === 'api_only' ? t('memArrMetered') : t('memArrUnconfirmed')
 }
 function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention }) {
   const t = usePluginI18n(ID)
@@ -5558,27 +5710,26 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       onToggle: event => membershipGroupToggled(account.id, 'plan', event.currentTarget.open), children: [
       jsx('summary', { children: t('memGroupPlan') }),
       jsxs('div', { className: 'wm-group-body', children: [
-    jsxs('label', { className: 'wm-check', children: [
-      jsx('input', { type: 'checkbox', checked: apiOnly, disabled: !!busy,
-        onChange: event => onAction('api-only', account, event.target.checked) }),
-      jsx('span', { children: 'API Only' })
+    jsxs('div', { className: 'wm-billing-head', children: [
+      jsx('span', { className: 'wm-billing-label', children: t('memBillingType') }, 'label'),
+      jsx(InfoTip, { id: `billing-${account.id}`, label: t('memBillingType'), text: t('memBillingTip') }, 'tip')
     ] }),
+    jsxs('div', { className: 'wm-seg', role: 'group', 'aria-label': t('memBillingTypeFor', identityLabel),
+      'data-nav': 'arrangement', children:
+        [['subscription', t('memArrSubscription')], ['prepaid', t('memArrPrepaid')],
+         ['api_only', t('memArrMetered')], ['unconfirmed', t('memArrUnconfirmed')]].map(([value, label]) =>
+          jsx('button', { type: 'button', 'aria-pressed': arrangement === value, disabled: !!busy,
+            onClick: () => { if (value !== arrangement) onAction('arrangement', account, value) },
+            children: label }, value)) }),
     jsx('p', { className: 'wm-note', children: apiOnly
-      ? 'API Only: no recurring membership fee. Usage and API cost estimates remain available.'
+      ? 'Metered API: no recurring membership fee. Usage and API cost estimates remain available.'
       : arrangement === 'prepaid' ? 'Prepaid credit account. Top-ups are not recurring membership fees; configure cost rules separately in Costs.'
       : arrangement === 'subscription' ? 'Subscription account.' : 'No confirmed billing arrangement.' }),
-    !apiOnly ? jsxs('label', { className: 'wm-filter', children: [
-      jsx('span', { children: 'Billing arrangement' }),
-      jsxs('select', { value: arrangement, disabled: !!busy,
-        onChange: event => onAction('arrangement', account, event.target.value), children: [
-          jsx('option', { value: 'unconfirmed', children: 'Not confirmed' }),
-          jsx('option', { value: 'subscription', children: 'Subscription' }),
-          jsx('option', { value: 'prepaid', children: 'Prepaid credits' })
-        ] })
-    ] }) : null,
     busy === account.id ? jsx('p', { role: 'status', className: 'wm-note', children: 'Saving changes…' }) : null,
     notice?.accountId === account.id && notice.tone === 'good'
       ? jsx('p', { role: 'status', className: 'wm-note', children: notice.text }) : null,
+    notice?.accountId === account.id && notice.tone === 'warn'
+      ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
     subscription && ['xai', 'grok'].includes(account.family)
       ? jsx('p', { className: 'wm-note', children: 'Grok consumer subscriptions and xAI API billing are separate. Select a subscription only if it applies to this account.' }) : null,
     subscription && proposal ? jsx('p', { className: 'wm-note wm-accent-note', children: proposal }) : null,
@@ -5588,7 +5739,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     subscription || apiOnly ? jsxs('label', { className: 'wm-filter', children: [
       jsx('span', { children: 'Plan for this provider account' }),
       jsxs('select', {
-        value: account.plan_id || '', disabled: !subscription || !!busy,
+        value: account.plan_id || '', disabled: !subscription || !!busy, 'data-nav': 'plan',
         onChange: event => onAction('plan', account, event.target.value),
         children: [
           jsx('option', { value: '', children: planSaved ? '— clear selection —' : '— confirm a plan —' }, 'unselected'),
@@ -5598,7 +5749,8 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     ] }) : null,
     subscription || apiOnly ? jsxs('div', { className: 'wm-fee-row', children: [
       jsx('span', { className: 'wm-fee', children: feeLabel(fee) }),
-      jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !subscription || !!busy, 'aria-expanded': draft?.account_id === account.id,
+      jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'edit-fee',
+        disabled: !subscription || !!busy, 'aria-expanded': draft?.account_id === account.id,
         onClick: event => { draftOpener.current.fee = event.currentTarget; onAction('fee', account) }, children: 'Edit fee' })
     ] }) : null,
     subscription && draft && draft.account_id === account.id
@@ -5671,12 +5823,14 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
           jsx('div', { className: 'wm-note', children: [row.source, row.reset,
             row.manual && !row.reset ? 'No reset time supplied by you.' : ''].filter(Boolean).join(' · ') }),
           jsxs('div', { className: 'wm-quota-actions', children: [
-            jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
+            jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'mark-exhausted',
+              disabled: !!busy,
               'aria-expanded': exhaustionDraft?.scope_kind === 'window' && exhaustionDraft.scope_id === row.id,
               onClick: event => openExhaustion(row.id, row.label, event.currentTarget),
               children: 'Mark exhausted' }),
             row.manual && row.manual.status !== 'cleared'
-              ? jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
+              ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'clear-mark',
+                  disabled: !!busy,
                   onClick: () => onAction('clear', account, row.manual.id), children: 'Clear mark' })
               : null
           ] }),
@@ -5736,6 +5890,7 @@ function MembershipsPage() {
   const rawNotice = useValue($membershipNotice)
   const rawBusy = useValue($membershipBusy)
   const snapshot = useValue($membershipSnapshot)
+  const target = useValue($membershipTarget)
   // Every hook runs on every render: no conditional useValue here.
   const catalogue = plans.data || {}
 
@@ -5764,6 +5919,8 @@ function MembershipsPage() {
     if (said && said.origin !== identity) $membershipNotice.set(null)
     const working = $membershipBusy.get()
     if (working && working.origin !== identity) $membershipBusy.set(null)
+    const queued = $membershipTarget.get()
+    if (queued && queued.origin !== identity) $membershipTarget.set(null)
     $membershipNative.set(false)
     $membershipAttentionOnly.set(false)
     $membershipExpanded.set({ origin: null, ids: [] })
@@ -5800,6 +5957,32 @@ function MembershipsPage() {
         ?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
     } catch {}
   }
+  // Attention navigation: consume a queued target once this identity's
+  // accounts are on screen. Survives async loading (waits for accountsReady),
+  // never crosses identities, leaves drafts and order untouched.
+  useEffect(() => {
+    if (!target || target.origin !== identity || !membershipIdentityCurrent(identity)) return
+    if (!accountsReady) return
+    if (!list.some(a => a.id === target.accountId)) {
+      if ($membershipTarget.get() === target) $membershipTarget.set(null)
+      return
+    }
+    if (attentionOnly && !attentionIds.has(target.accountId)) $membershipAttentionOnly.set(false)
+    const held = $membershipExpanded.get()
+    const ids = held.origin === identity ? held.ids : []
+    if (!ids.includes(target.accountId)) {
+      $membershipExpanded.set({ origin: identity, ids: [...ids, target.accountId] })
+    }
+    for (const group of ['plan', 'allowances', 'advanced']) membershipGroupClosed.delete(`${target.accountId}:${group}`)
+    const nav = { ...target }
+    // Consumed in the callback, not here: clearing the atom synchronously
+    // would re-render and run this effect's cleanup, cancelling the timer.
+    const timer = setTimeout(() => {
+      membershipTargetDom(nav)
+      if ($membershipTarget.get() === target) $membershipTarget.set(null)
+    }, 60)
+    return () => clearTimeout(timer)
+  }, [target, accountsReady, identity])
   const summary = membershipSummary(list)
   const storeError = current?.store?.error || ''
   const storeNotes = Array.isArray(current?.notes) ? current.notes : []
@@ -5884,8 +6067,12 @@ function MembershipsPage() {
     // mutating kind fails closed instead of sending a PUT that must 409.
     if (!account?.rev && kind !== 'fee' && kind !== 'edit-custom-plan' &&
         kind !== 'exhaust') return refuseUnversioned(account?.id)
-    if (kind === 'api-only' || kind === 'arrangement') {
-      const update = kind === 'api-only' ? { api_only: !!value } : { billing_arrangement: value }
+    if (kind === 'arrangement') {
+      // One write for the segmented control: Metered API sets the api_only
+      // flag and preserves the stored billing arrangement for switching back;
+      // every other choice clears the flag and stores its own arrangement.
+      // Plan, fees and overrides ride along untouched via the spread.
+      const update = value === 'api_only' ? { api_only: true } : { api_only: false, billing_arrangement: value }
       return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
                  { ...account, ...update }, 'PUT')
     }
@@ -6092,7 +6279,12 @@ function MembershipsPage() {
         ? jsxs('section', { className: 'wm-attention', 'aria-label': 'Needs attention', children: [
             jsx('h3', { children: 'Needs attention' }),
             jsxs('ul', { children: attention.slice(0, 6).map((item, index) =>
-              jsx('li', { 'data-tone': item.tone, children: `${item.account.label || item.account.family}: ${item.text}` }, index)) })
+              jsxs('li', { 'data-tone': item.tone, children: [
+                jsx('span', { children: `${item.account.label || item.account.family}: ${item.text}` }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button',
+                  onClick: () => queueMembershipTarget(item),
+                  children: attentionActionLabel(item.issue, t) })
+              ] }, index)) })
           ] })
         : null,
       storeNotes.length
@@ -6587,6 +6779,11 @@ const I18N = {
     attnReconfirmPlan: label => `Hermes now reports "${label}" — reconfirm the saved plan.`,
     attnNoPlan: 'No plan confirmed yet.',
     attnNoFee: 'No fee set for the chosen plan.',
+    attnActArrangement: 'Confirm arrangement',
+    attnActPlan: 'Confirm plan',
+    attnActFee: 'Set fee',
+    attnActPlanReview: 'Review plan',
+    attnActReading: 'Review reading',
     // Memberships layout (Phase C).
     memTitle: 'Memberships',
     memSubtitle: 'Confirm each account’s plan and declared fee. Usage tracking never depends on this page.',
@@ -6598,8 +6795,11 @@ const I18N = {
     memSaving: 'Saving…',
     memArrSubscription: 'Subscription',
     memArrPrepaid: 'Prepaid credits',
-    memArrApiOnly: 'API Only',
+    memArrMetered: 'Metered API',
     memArrUnconfirmed: 'Not confirmed',
+    memBillingType: 'Billing type',
+    memBillingTypeFor: account => `Billing type for ${account}`,
+    memBillingTip: 'Subscription: a recurring fee you declare. Prepaid credits: top-ups, not a recurring fee. Metered API: pay-as-you-go, no recurring fee. Usage is always tracked.',
     memRefresh: 'Refresh provider usage',
     memRefreshNote: 'Refresh provider usage checks provider-reported usage and allowance information where supported. It does not change plans, fees or marks.',
     memFeesLabel: 'Membership fees',
@@ -6619,7 +6819,6 @@ const I18N = {
     ovWeatherStale: 'Refresh failed — weather warnings may be stale.',
     ovStrip: n => `${n} need attention`,
     ovStripReview: 'Review',
-    ovOpenMemberships: 'Open Memberships',
     ovOpenUsage: 'Open Usage',
     ovOpenCosts: 'Open Costs',
     ovReviewMemberships: 'Review memberships',
@@ -6947,6 +7146,11 @@ const I18N = {
     attnReconfirmPlan: label => `Hermes 当前显示“${label}”——请重新确认已保存的方案。`,
     attnNoPlan: '尚未确认方案。',
     attnNoFee: '所选方案尚未设置费用。',
+    attnActArrangement: '确认账单安排',
+    attnActPlan: '确认方案',
+    attnActFee: '设置费用',
+    attnActPlanReview: '查看方案',
+    attnActReading: '查看读数',
     // 会员布局（第三阶段）。
     memTitle: '会员',
     memSubtitle: '确认每个账户的方案与已申报费用。用量跟踪不依赖于此页面。',
@@ -6958,8 +7162,11 @@ const I18N = {
     memSaving: '正在保存…',
     memArrSubscription: '订阅',
     memArrPrepaid: '预付额度',
-    memArrApiOnly: '仅 API',
+    memArrMetered: '按量 API',
     memArrUnconfirmed: '未确认',
+    memBillingType: '账单类型',
+    memBillingTypeFor: account => `${account} 的账单类型`,
+    memBillingTip: '订阅：您申报的周期性费用。预付额度：充值，非周期性费用。按量 API：按用量付费，无周期性费用。用量始终会被跟踪。',
     memRefresh: '刷新服务商用量',
     memRefreshNote: '刷新服务商用量会检查支持的服务商上报用量与额度信息。不会更改方案、费用或标记。',
     memFeesLabel: '会员费用',
@@ -6979,7 +7186,6 @@ const I18N = {
     ovWeatherStale: '刷新失败——额度预警可能已过期。',
     ovStrip: n => `有 ${n} 项需要注意`,
     ovStripReview: '查看',
-    ovOpenMemberships: '打开会员',
     ovOpenUsage: '打开用量',
     ovOpenCosts: '打开费用',
     ovReviewMemberships: '检查会员',
@@ -7257,7 +7463,8 @@ export const __test = {
   excludedPlansNote, planOptionLabel,
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,
   OVERRIDE_REASON_FALLBACK, REASON_LABELS, restoreCatalogueFee, MembershipsPage, MembershipCard, MEMBERSHIP_CSS,
-  $membershipExpanded, arrangementLabel,
+  $membershipExpanded, $membershipTarget, arrangementLabel, attentionActionLabel, queueMembershipTarget,
+  membershipTargetDom, weatherReadingLi,
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
   billingNumberStep, $billingDraft, $billingNotice,
   economicsQuery, fxQuery, fxWrite, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,

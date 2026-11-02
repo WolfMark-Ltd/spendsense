@@ -135,6 +135,9 @@ const boot = async () => {
   T.$membershipNotice.set(null)
   T.$membershipBusy.set(null)
   T.$membershipNative.set(false)
+  T.$membershipTarget.set(null)
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$membershipAttentionOnly.set(false)
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = ReactDOMClient.createRoot(container)
@@ -454,7 +457,7 @@ test('a write that is followed by a failed read says exactly that', async () => 
   assert.match(container.textContent, /A account/, 'the last known rows stay on screen')
 })
 
-test('API Only persists, disables subscription controls and restores the saved subscription', async () => {
+test('Metered API persists, disables subscription controls and restores the saved subscription', async () => {
   $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
   let saved = account('api', { label: 'Account A', plan_id: 'example.pro',
     plan_choices: [{ id: 'example.pro', name: 'Pro', price: { amount: 20, currency: 'USD', period: 'month' } }],
@@ -470,16 +473,19 @@ test('API Only persists, disables subscription controls and restores the saved s
     return { ok: true, accounts: [saved] }
   })
   const { container } = await boot(); await flush(3)
-  const checkbox = container.querySelector('input[type="checkbox"]')
-  await React.act(async () => checkbox.click()); await flush(4)
+  const seg = () => container.querySelector('[data-nav="arrangement"]')
+  const press = label => [...seg().querySelectorAll('button')].find(b => b.textContent === label)
+  assert.equal(press('Subscription').getAttribute('aria-pressed'), 'true')
+  await React.act(async () => press('Metered API').click()); await flush(4)
   assert.equal(saved.api_only, true)
   assert.equal(saved.plan_id, 'example.pro')
-  assert.match(container.textContent, /API Only · no recurring membership fee/)
+  assert.match(container.textContent, /Metered API · no recurring membership fee/)
   const planSelect = [...container.querySelectorAll('label')].find(l => l.textContent.includes('Plan for this provider account')).querySelector('select')
   assert.equal(planSelect.disabled, true)
   assert.equal([...container.querySelectorAll('button')].find(b => b.textContent === 'Edit fee').disabled, true)
-  await React.act(async () => checkbox.click()); await flush(4)
+  await React.act(async () => press('Subscription').click()); await flush(4)
   assert.equal(saved.api_only, false)
+  assert.equal(saved.billing_arrangement, 'subscription')
   assert.equal(planSelect.disabled, false)
   assert.match(container.textContent, /£17.00\/yr/)
 })
@@ -499,11 +505,13 @@ test('unconfirmed and prepaid accounts show their arrangements without subscript
   const card = container.querySelector('[data-account="wallet"]')
   assert.match(card.textContent, /No confirmed billing arrangement/)
   assert.doesNotMatch(card.textContent, /Plan for this provider account/)
-  const select = [...card.querySelectorAll('label')].find(l => l.textContent.includes('Billing arrangement')).querySelector('select')
+  const seg = card.querySelector('[data-nav="arrangement"]')
+  assert.equal([...seg.querySelectorAll('button')].find(b => b.textContent === 'Not confirmed').getAttribute('aria-pressed'), 'true')
   await React.act(async () => {
-    select.value = 'prepaid'; select.dispatchEvent(new window.Event('change', { bubbles: true }))
+    [...seg.querySelectorAll('button')].find(b => b.textContent === 'Prepaid credits').click()
   }); await flush(4)
   assert.equal(saved.billing_arrangement, 'prepaid')
+  assert.equal(saved.api_only, false)
   assert.match(card.textContent, /Prepaid credit account/)
   assert.doesNotMatch(card.textContent, /Plan for this provider account/)
   assert.doesNotMatch(card.textContent, /Edit fee/)
@@ -1553,12 +1561,18 @@ test('Overview attention rows route to Memberships and Usage', async () => {
   const rows = [...container.querySelectorAll('.wm-attention-rows li')]
   assert.equal(rows.length, 2)
   assert.match(rows[0].textContent, /xAI/)
-  await clickByText(rows[0], 'Open Memberships')
+  await clickByText(rows[0], 'Confirm arrangement')
   assert.equal(T.$ledgerTab.get(), 'memberships')
+  const queued = T.$membershipTarget.get()
+  assert.ok(queued, 'the attention action queues a navigation target')
+  assert.equal(queued.accountId, 'xai:default')
+  assert.equal(queued.issue, 'unconfirmed')
+  assert.equal(queued.focus, 'arrangement')
   T.$ledgerTab.set('overview'); await flush(3)
   assert.match(rows[1].textContent, /Usage pricing/)
   await clickByText(rows[1], 'Open Usage')
   assert.equal(T.$ledgerTab.get(), 'usage')
+  T.$membershipTarget.set(null)
 })
 
 test('the membership card saves a user-defined plan against its selected credential account', async () => {
@@ -1693,7 +1707,7 @@ test('the sidebar usage view intentionally has no tab bar', async () => {
     'sidebar mode renders no tab bar by design')
 })
 
-test('toggling API Only sends the card revision and confirms the save', async () => {
+test('selecting Metered API sends the card revision and confirms the save', async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
   const current = account('anthropic:default', { label: 'UAT anthropic', api_only: false })
@@ -1704,16 +1718,16 @@ test('toggling API Only sends the card revision and confirms the save', async ()
       : { ok: true, accounts: [current], store: { loaded: true, error: '' }, notes: [] })
   const { container, text } = await boot()
   await flush(4)
-  const label = container.querySelector('label.wm-check')
-  assert.ok(label, 'the API Only control is a checkbox row, not a stacked filter caption')
-  const box = label.querySelector('input[type="checkbox"]')
-  assert.ok(box)
-  assert.equal(box.checked, false)
-  assert.equal(label.textContent.trim(), 'API Only')
-  await React.act(async () => { box.click() })
+  const seg = container.querySelector('[data-nav="arrangement"]')
+  assert.ok(seg, 'the billing arrangement is a segmented control')
+  assert.equal(seg.getAttribute('role'), 'group')
+  const buttons = [...seg.querySelectorAll('button')]
+  assert.deepEqual(buttons.map(b => b.textContent),
+    ['Subscription', 'Prepaid credits', 'Metered API', 'Not confirmed'])
+  await React.act(async () => { buttons.find(b => b.textContent === 'Metered API').click() })
   await flush(6)
   const write = transportCtl.calls.find(call => call.method === 'PUT')
-  assert.ok(write, 'toggling sends a PUT')
+  assert.ok(write, 'selecting sends a PUT')
   assert.equal(write.body.api_only, true)
   assert.equal(write.body.rev, 'r1', 'the PUT carries the revision served by GET')
   assert.match(text(), /Saved\./, 'a successful edit shows clear feedback')
@@ -1729,18 +1743,22 @@ test('a record without a revision refuses the write with an honest message', asy
     : { ok: true, accounts: [bare], store: { loaded: true, error: '' }, notes: [] })
   const { container, text } = await boot()
   await flush(4)
-  const box = container.querySelector('label.wm-check input[type="checkbox"]')
-  assert.ok(box, 'the card renders even without a revision')
-  await React.act(async () => { box.click() })
+  const seg = container.querySelector('[data-nav="arrangement"]')
+  assert.ok(seg, 'the card renders even without a revision')
+  await React.act(async () => {
+    [...seg.querySelectorAll('button')].find(b => b.textContent === 'Metered API').click()
+  })
   await flush(3)
   assert.equal(transportCtl.calls.some(call => call.method === 'PUT'), false,
     'no doomed PUT is sent for an unversioned record')
   assert.match(text(), /has no revision/, 'the notice names the real problem, not a reload loop')
   // The guard is an opener-allowlist, so a different write kind is refused too.
-  await setField(container, 'Billing arrangement', 'prepaid')
+  await React.act(async () => {
+    [...seg.querySelectorAll('button')].find(b => b.textContent === 'Prepaid credits').click()
+  })
   await flush(3)
   assert.equal(transportCtl.calls.some(call => call.method === 'PUT'), false,
-    'a second write kind is refused without a revision')
+    'a second arrangement choice is refused without a revision')
   await clickByText(container, 'Create user-defined plan')
   await flush(2)
   assert.equal(container.querySelector('form.wm-custom-form').noValidate, true,
@@ -1827,7 +1845,7 @@ test('PR-C: account rows are compact, collapsed by default, and expand on Detail
   const groups = [...card.querySelectorAll('.wm-group')]
   assert.deepEqual(groups.map(g => g.querySelector('summary').textContent),
     ['Plan & billing', 'Allowances & readings', 'Advanced & diagnostics'])
-  assert.ok(card.querySelector('[data-group="plan"] input[type="checkbox"]'), 'plan group keeps the API Only checkbox')
+  assert.ok(card.querySelector('[data-group="plan"] [data-nav="arrangement"]'), 'plan group keeps the billing arrangement control')
   assert.ok(card.querySelector('[data-group="advanced"]'), 'advanced group exists')
   assert.match(card.querySelector('[data-group="advanced"]').textContent, /Account ID: anthropic:default/)
   await React.act(async () => { details.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
@@ -1859,8 +1877,8 @@ test('PR-C: plan-less API-only and prepaid rows show No plan, not the confirm pr
   const { container } = await boot()
   await flush(4)
   const head = id => container.querySelector(`[data-account="${id}"] .wm-row-head`).textContent
-  assert.match(head('deepseek:default'), /API Only · No plan/,
-    'a plan-less API-only row does not ask for plan confirmation')
+  assert.match(head('deepseek:default'), /Metered API · No plan/,
+    'a plan-less metered row does not ask for plan confirmation')
   assert.match(head('openai:default'), /Prepaid credits · No plan/,
     'a plan-less prepaid row does not ask for plan confirmation')
   assert.match(head('openai-codex:default'), /Subscription · No plan confirmed yet\./,
@@ -2230,4 +2248,376 @@ test('PR-C: refresh is renamed with an explanation and the operation is unchange
   await flush(4)
   assert.ok(transportCtl.calls.some(call => call.path === '/membership/accounts?native=true'),
     'the renamed button still triggers the stored-plus-native refresh')
+})
+
+// ---------------------------------------------------------------------------
+// PR-D: segmented billing control and attention navigation.
+// ---------------------------------------------------------------------------
+
+test('PR-D: clicking the selected arrangement sends no write', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [account('s:acct', { label: 'S account' })],
+        store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  const seg = container.querySelector('[data-nav="arrangement"]')
+  const selected = [...seg.querySelectorAll('button')].find(b => b.getAttribute('aria-pressed') === 'true')
+  assert.equal(selected.textContent, 'Subscription')
+  await React.act(async () => { selected.click() })
+  await flush(2)
+  assert.equal(transportCtl.calls.filter(c => c.method === 'PUT').length, 0,
+    'a no-op click on the current arrangement writes nothing')
+})
+
+test('PR-D: a failed arrangement write keeps the previous selection and reports inline', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'PUT') throw new Error('409 Conflict')
+    return { ok: true, accounts: [account('f:acct', { label: 'F account' })],
+      store: { loaded: true, error: '' }, notes: [] }
+  })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="f:acct"]')
+  const seg = card.querySelector('[data-nav="arrangement"]')
+  await React.act(async () => {
+    [...seg.querySelectorAll('button')].find(b => b.textContent === 'Prepaid credits').click()
+  })
+  await flush(4)
+  const pressed = [...seg.querySelectorAll('button')].find(b => b.getAttribute('aria-pressed') === 'true')
+  assert.equal(pressed.textContent, 'Subscription',
+    'the control is derived from server state, so a failed write cannot move it')
+  // A 409 maps to the stale-revision message via the existing error
+  // classification; the point is the failure surfaces beside the control.
+  assert.match(card.textContent, /changed since you loaded it/,
+    'the card shows the failure beside the control')
+})
+
+test('PR-D: attention items carry structured issue targets, not parsed text', () => {
+  const t = (key, ...args) => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const unconfirmed = account('x:default', { effective_arrangement: 'unconfirmed' })
+  const noPlan = account('s:default', { effective_arrangement: 'subscription', plan_id: null })
+  const noFee = account('n:default', { effective_arrangement: 'subscription',
+    plan_id: 'n.pro', plan: { name: 'Pro' }, fee: { basis: 'unpriced', effective: { amount: null } } })
+  const items = T.needsAttention([unconfirmed, noPlan, noFee], new Map(), t)
+  const byId = Object.fromEntries(items.map(i => [i.account.id, i]))
+  assert.equal(byId['x:default'].issue, 'unconfirmed')
+  assert.deepEqual(byId['x:default'].target, { group: 'plan', focus: 'arrangement' })
+  assert.equal(byId['s:default'].issue, 'no-plan')
+  assert.deepEqual(byId['s:default'].target, { group: 'plan', focus: 'plan' })
+  assert.equal(byId['n:default'].issue, 'no-fee')
+  assert.deepEqual(byId['n:default'].target, { group: 'plan', focus: 'fee' })
+  assert.equal(T.attentionActionLabel('unconfirmed', t), 'Confirm arrangement')
+  assert.equal(T.attentionActionLabel('no-plan', t), 'Confirm plan')
+  assert.equal(T.attentionActionLabel('no-fee', t), 'Set fee')
+  assert.equal(T.attentionActionLabel('reconfirm-plan', t), 'Review plan')
+  assert.equal(T.attentionActionLabel('conflict', t), 'Review reading')
+  const zhT = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  assert.equal(T.attentionActionLabel('unconfirmed', zhT), '确认账单安排')
+  assert.equal(T.attentionActionLabel('no-fee', zhT), '设置费用')
+})
+
+test('PR-D: a queued target expands the account, opens the group and focuses the control', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const xai = account('xai:default', { family: 'xai', label: 'xAI',
+    billing_arrangement: 'unconfirmed', effective_arrangement: 'unconfirmed' })
+  const sub = account('anthropic:default', { family: 'anthropic', label: 'main',
+    plan_id: 'anthropic.pro', plan: { name: 'Pro' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 45, currency: 'GBP', period: 'month' } } })
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [xai, sub], store: { loaded: true, error: '' }, notes: [] })
+  const scrolled = []
+  const proto = window.HTMLElement.prototype
+  const originalScroll = proto.scrollIntoView
+  proto.scrollIntoView = function (opts) { scrolled.push([this, opts]) }
+  try {
+    const { container } = await boot()
+    await flush(4)
+    T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'xai:default',
+      issue: 'unconfirmed', group: 'plan', focus: 'arrangement' })
+    await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+    await flush(2)
+    const card = container.querySelector('[data-account="xai:default"]')
+    assert.equal(card.querySelector('.wm-row-head button').getAttribute('aria-expanded'), 'true',
+      'navigation expands the target account row')
+    assert.equal(card.querySelector('[data-group="plan"]').open, true,
+      'navigation opens the Plan & billing group')
+    const seg = card.querySelector('[data-nav="arrangement"]')
+    // Identity, not deep equality: handing two live nodes to assert hangs
+    // the runner while it serialises them (see the tab-bar test below).
+    assert.ok(document.activeElement === seg.querySelector('button[aria-pressed="true"]'),
+      'focus moves to the pressed arrangement button')
+    assert.ok(seg.classList.contains('wm-flash'), 'the target control is highlighted')
+    assert.ok(scrolled.some(([el, opts]) => el === seg && opts?.block === 'nearest'),
+      'the resolved target itself is scrolled into view, not the card header')
+    assert.equal(T.$membershipTarget.get(), null, 'the target is consumed')
+    // The other account is untouched.
+    assert.equal(container.querySelector('[data-account="anthropic:default"] .wm-row-head button')
+      .getAttribute('aria-expanded'), 'false')
+  } finally {
+    if (originalScroll) proto.scrollIntoView = originalScroll
+    else delete proto.scrollIntoView
+  }
+})
+
+test('PR-D: navigation waits for async loading instead of dropping the target', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const pending = deferred()
+  const xai = account('xai:default', { family: 'xai', label: 'xAI',
+    billing_arrangement: 'unconfirmed', effective_arrangement: 'unconfirmed' })
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk() : pending.promise)
+  const { container } = await boot()
+  await flush(1)
+  T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'xai:default',
+    issue: 'unconfirmed', group: 'plan', focus: 'arrangement' })
+  await flush(2)
+  assert.ok(T.$membershipTarget.get(), 'the target is held while accounts load')
+  pending.resolve({ ok: true, accounts: [xai], store: { loaded: true, error: '' }, notes: [] })
+  await flush(4)
+  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await flush(2)
+  assert.equal(container.querySelector('[data-account="xai:default"] .wm-row-head button')
+    .getAttribute('aria-expanded'), 'true', 'navigation lands once the accounts arrive')
+  assert.equal(T.$membershipTarget.get(), null)
+})
+
+test('PR-D: a profile switch discards a stale navigation intention', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [account('a:acct', { label: 'A account' })],
+        store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'a:acct',
+    issue: 'no-plan', group: 'plan', focus: 'plan' })
+  await React.act(async () => { $testProfile.set('work') })
+  await flush(4)
+  assert.equal(T.$membershipTarget.get(), null, 'the stale target never crosses identities')
+  assert.equal(container.querySelector('[data-account="a:acct"] .wm-row-head button')
+    .getAttribute('aria-expanded'), 'false', 'no navigation runs for the discarded target')
+})
+
+test('PR-D: navigation leaves an open fee draft intact', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const sub = account('s:acct', { family: 's', label: 'S account',
+    plan_id: 's.pro', plan: { name: 'Pro' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 10, currency: 'USD', period: 'month' } } })
+  const xai = account('xai:default', { family: 'xai', label: 'xAI',
+    billing_arrangement: 'unconfirmed', effective_arrangement: 'unconfirmed' })
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [sub, xai], store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  await clickByText(container.querySelector('[data-account="s:acct"]'), 'Edit fee')
+  await typeAmount(container, '33')
+  T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'xai:default',
+    issue: 'unconfirmed', group: 'plan', focus: 'arrangement' })
+  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await flush(2)
+  const form = container.querySelector('[data-account="s:acct"] form.wm-fee-form')
+  assert.ok(form, 'the fee draft stays open through navigation')
+  assert.equal(form.querySelector('input[type="number"]').value, '33', 'typed values survive')
+  assert.equal(container.querySelector('[data-account="xai:default"] .wm-row-head button')
+    .getAttribute('aria-expanded'), 'true')
+})
+
+test('PR-D: a missing precise target falls back to the account Details section', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  // Metered accounts render the plan selector disabled, so a plan target
+  // cannot focus it and must fall back safely.
+  const metered = account('m:acct', { family: 'm', label: 'M account',
+    plan_id: null, effective_arrangement: 'api_only',
+    fee: { basis: 'api_only', effective: { amount: null } } })
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [metered], store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'm:acct',
+    issue: 'no-plan', group: 'plan', focus: 'plan' })
+  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await flush(2)
+  const card = container.querySelector('[data-account="m:acct"]')
+  assert.equal(card.querySelector('.wm-row-head button').getAttribute('aria-expanded'), 'true')
+  // Identity, not deep equality: handing two live nodes to assert hangs
+  // the runner while it serialises them.
+  assert.ok(document.activeElement === card.querySelector('.wm-row-head button'),
+    'focus falls back to the Details toggle')
+  assert.ok(card.querySelector('.wm-row-head').classList.contains('wm-flash'),
+    'the Details section header is highlighted')
+})
+
+test('PR-D: Memberships attention actions jump within the page', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const xai = account('xai:default', { family: 'xai', label: 'xAI',
+    billing_arrangement: 'unconfirmed', effective_arrangement: 'unconfirmed' })
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [xai], store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  const section = [...container.querySelectorAll('.wm-attention')]
+    .find(el => el.getAttribute('aria-label') === 'Needs attention')
+  assert.ok(section, 'the Memberships attention section renders')
+  await clickByText(section, 'Confirm arrangement')
+  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await flush(2)
+  assert.equal(container.querySelector('[data-account="xai:default"] .wm-row-head button')
+    .getAttribute('aria-expanded'), 'true', 'the in-page action expands the account')
+  assert.ok(container.querySelector('[data-account="xai:default"] [data-nav="arrangement"]')
+    .classList.contains('wm-flash'))
+})
+
+// ---------------------------------------------------------------------------
+// PR-D review: target visibility, reading targets, tooltip anchor.
+// ---------------------------------------------------------------------------
+
+test('PR-D review: an ahead warning targets its own weather reading, not a user mark', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  // The quota window carries an unrelated reconfirm mark: the provider
+  // reading target must not resolve to its Clear mark button.
+  const sub = account('w:acct', { family: 'w', label: 'W account',
+    plan_id: 'w.pro', plan: { name: 'Pro' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 10, currency: 'USD', period: 'month' } },
+    quota: { windows: [{ id: 'win-1', label: 'Weekly window', used_percent: 10,
+      state: 'manual', used_percent_from: 'manual',
+      manual: { id: 'man-1', status: 'reconfirm_due' } }] } })
+  const weather = { ok: true, accounts: [{ account_id: 'w:acct',
+    rollup: { state: 'ahead' }, cycle: {}, notes: [],
+    windows: [{ id: 'win-1', label: 'Weekly pool', verdict: 'ahead' }], rules: [] }] }
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.path === '/allowance/weather' ? weather
+    : { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'w:acct',
+    issue: 'ahead', group: 'allowances', focus: 'reading',
+    readingKind: 'window', readingId: 'win-1' })
+  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await flush(2)
+  const card = container.querySelector('[data-account="w:acct"]')
+  assert.equal(card.querySelector('.wm-weather-details').open, true,
+    'the weather details open for the reading')
+  const li = card.querySelector('li[data-weather-kind="window"][data-weather-id="win-1"]')
+  assert.ok(li, 'the reading row carries its stable identifier')
+  assert.ok(document.activeElement === li, 'focus moves to the reading itself')
+  assert.ok(li.classList.contains('wm-flash'), 'the reading is highlighted')
+  assert.ok(document.activeElement !== card.querySelector('button[data-action="clear-mark"]'),
+    'an unrelated user mark is never focused for a provider reading')
+})
+
+test('PR-D review: a reached rule warning targets the rule reading by profile and pool', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const sub = account('r:acct', { family: 'r', label: 'R account',
+    plan_id: 'r.pro', plan: { name: 'Pro' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 10, currency: 'USD', period: 'month' } } })
+  const weather = { ok: true, accounts: [{ account_id: 'r:acct',
+    rollup: { state: 'exhausted' }, cycle: {}, notes: [], windows: [],
+    rules: [{ profile_id: 'prof-1', pool: 'main', label: 'Main pool', verdict: 'exhausted',
+      used_usd: 50, limit_usd: 40, consumed_fraction: 1.0, lower_bound: false,
+      pace_usd_per_day: null, projected_exhaustion: null, forecast_status: 'unavailable' }] }] }
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.path === '/allowance/weather' ? weather
+    : { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'r:acct',
+    issue: 'reached', group: 'allowances', focus: 'reading',
+    readingKind: 'rule', readingProfile: 'prof-1', readingPool: 'main' })
+  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await flush(2)
+  const card = container.querySelector('[data-account="r:acct"]')
+  const li = card.querySelector(
+    'li[data-weather-kind="rule"][data-weather-profile="prof-1"][data-weather-pool="main"]')
+  assert.ok(li, 'the rule reading is addressable by profile and pool')
+  assert.ok(document.activeElement === li, 'focus moves to the rule reading')
+  assert.ok(li.classList.contains('wm-flash'), 'the rule reading is highlighted')
+})
+
+test('PR-D review: a disappeared reading falls back to the allowance section', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [account('g:acct', { label: 'G account' })],
+        store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'g:acct',
+    issue: 'ahead', group: 'allowances', focus: 'reading',
+    readingKind: 'window', readingId: 'win-gone' })
+  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await flush(2)
+  const card = container.querySelector('[data-account="g:acct"]')
+  const summary = card.querySelector('[data-group="allowances"] > summary')
+  assert.ok(document.activeElement === summary,
+    'a missing reading falls back to the allowance section')
+  assert.ok(card.querySelector('[data-group="allowances"]').classList.contains('wm-flash'))
+  assert.ok(document.activeElement !== card.querySelector('.wm-row-head button'),
+    'the section fallback is distinct from the Details fallback')
+})
+
+test('PR-D review: account exhaustion focuses the allowance section, not a clear action', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const sub = account('e:acct', { family: 'e', label: 'E account',
+    plan_id: 'e.pro', plan: { name: 'Pro' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 10, currency: 'USD', period: 'month' } },
+    quota: { account_exhausted: true, windows: [{ id: 'win-1', label: 'Weekly window',
+      used_percent: 10, state: 'manual', used_percent_from: 'manual',
+      manual: { id: 'man-1', status: 'reconfirm_due' } }] } })
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'e:acct',
+    issue: 'exhausted', group: 'allowances', focus: 'allowances' })
+  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await flush(2)
+  const card = container.querySelector('[data-account="e:acct"]')
+  assert.ok(document.activeElement === card.querySelector('[data-group="allowances"] > summary'),
+    'provider-reported exhaustion focuses the section, not another window mark')
+  assert.ok(document.activeElement !== card.querySelector('button[data-action="clear-mark"]'))
+})
+
+test('PR-D review: structured reading targets come from weather rows', () => {
+  const t = (key, ...args) => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const sub = account('s:default', { effective_arrangement: 'subscription',
+    plan_id: 's.pro', plan: { name: 'Pro' },
+    fee: { basis: 'declared', effective: { amount: 10, currency: 'USD', period: 'month' } } })
+  const weatherById = new Map([['s:default', {
+    windows: [{ id: 'win-1', label: 'Weekly pool', verdict: 'ahead' }],
+    rules: [{ profile_id: 'prof-1', pool: 'main', label: 'Main pool',
+      verdict: 'exhausted', used_usd: 50 }],
+  }]])
+  const items = T.needsAttention([sub], weatherById, t)
+  const byIssue = Object.fromEntries(items.map(i => [i.issue, i]))
+  assert.deepEqual(byIssue.ahead.target,
+    { group: 'allowances', focus: 'reading', readingKind: 'window', readingId: 'win-1' })
+  assert.deepEqual(byIssue.reached.target,
+    { group: 'allowances', focus: 'reading', readingKind: 'rule',
+      readingProfile: 'prof-1', readingPool: 'main' })
+})
+
+test('PR-D review: the billing header anchors its info tooltip', () => {
+  assert.match(T.MEMBERSHIP_CSS, /\.wm-billing-head\{[^}]*position:relative/,
+    'the billing header establishes the positioned containing block')
 })
