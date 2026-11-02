@@ -1472,6 +1472,49 @@ test('Overview attention includes stored allowance weather without provider read
   assert.ok(transportCtl.count(call => call.path === '/allowance/weather') >= 1, 'stored weather is read')
 })
 
+test('Overview labels retained weather verdicts as stale after a failed refresh', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  const sub = account('openai-codex:default', {
+    family: 'openai-codex', label: 'ChatGPT Plus', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } }
+  })
+  const weatherOk = { ok: true, accounts: [{ account_id: 'openai-codex:default',
+    windows: [{ label: 'Weekly pool', verdict: 'ahead' }], rules: [] }] }
+  let failWeather = false
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/analytics')) return { ok: true, totals: { list_usd: 0, calls: 0 } }
+    if (call.path === '/membership/accounts') {
+      return { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+    }
+    if (call.path === '/allowance/weather') {
+      if (failWeather) throw new Error('boom')
+      return weatherOk
+    }
+    return { ok: true }
+  })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  assert.match(container.textContent, /Weekly pool: ahead of pace\./)
+  assert.doesNotMatch(container.textContent, /may be stale/)
+
+  failWeather = true
+  await React.act(async () => {
+    await queryClient.invalidateQueries({ predicate: q => q.queryKey[1] === 'allowance-weather' })
+  })
+  await flush(4)
+  assert.match(container.textContent, /Weekly pool: ahead of pace\./, 'the retained verdict stays visible')
+  const stale = container.querySelector('#wm-needs-attention [role="status"]')
+  assert.ok(stale, 'a stale-reading warning is shown')
+  assert.match(stale.textContent, /may be stale/)
+})
+
 test('Overview attention rows route to Memberships and Usage', async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')

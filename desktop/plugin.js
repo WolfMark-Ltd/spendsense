@@ -3701,6 +3701,9 @@ function OverviewPage() {
   const weatherCurrent = weather.data?.identity === identity && membershipIdentityCurrent(identity)
   const weatherById = new Map(
     ((weatherCurrent ? weather.data.accounts : []) || []).map(entry => [entry.account_id, entry]))
+  // Retained verdicts after a failed refresh must not read as current —
+  // same identity-guarded pattern as Memberships.
+  const weatherStale = weatherById.size > 0 && !!(weather.error && membershipIdentityCurrent(identity))
   const local = settledDesktopMonth(ledger)
   const result = analytics.data?.totals || {}
   const econReady = economics.data?.identity === identity && membershipIdentityCurrent(identity)
@@ -3812,6 +3815,7 @@ function OverviewPage() {
         items.length || unpriced
           ? jsx('p', { children: t('ovAttentionHint') })
           : jsx('p', { children: t('ovNothingToDo') }),
+        weatherStale ? jsx('p', { className: 'wm-subtle', role: 'status', children: t('ovWeatherStale') }) : null,
         items.length || unpriced
           ? jsxs('ul', { className: 'wm-attention-rows', children: [
               ...items.slice(0, 3).map((item, index) => jsxs('li', { children: [
@@ -6427,6 +6431,7 @@ const I18N = {
     ovNothingToDo: 'Nothing needs confirming right now.',
     ovPricingTitle: 'Usage pricing',
     ovUnpriced: u => `${u} tokens in the last 30 days have no published price, so API-equivalent totals are partial.`,
+    ovWeatherStale: 'Refresh failed — weather warnings may be stale.',
     ovStrip: n => `${n} need attention`,
     ovStripReview: 'Review',
     ovOpenMemberships: 'Open Memberships',
@@ -6768,6 +6773,7 @@ const I18N = {
     ovNothingToDo: '目前没有需要确认的事项。',
     ovPricingTitle: '用量定价',
     ovUnpriced: u => `过去 30 天有 ${u} 个 token 没有公布价格，因此 API 等价总额为部分数据。`,
+    ovWeatherStale: '刷新失败——额度预警可能已过期。',
     ovStrip: n => `有 ${n} 项需要注意`,
     ovStripReview: '查看',
     ovOpenMemberships: '打开会员',
