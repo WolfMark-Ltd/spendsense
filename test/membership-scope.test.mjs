@@ -1836,7 +1836,19 @@ test('PR-C: account rows are compact, collapsed by default, and expand on Detail
   assert.equal(card.querySelector('.wm-row-body').hidden, false)
 })
 
-test('PR-C: opening a fee edit auto-opens its detail group', async () => {
+const openCard = async card => {
+  const details = [...card.querySelectorAll('.wm-row-head button')].find(b => /Details/.test(b.textContent))
+  await React.act(async () => { details.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await flush(2)
+  return details
+}
+const toggleGroup = async (card, group) => {
+  const summary = card.querySelector(`[data-group="${group}"] > summary`)
+  await React.act(async () => { summary.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await flush(2)
+}
+
+test('PR-C: Details → Plan & billing → Edit fee shows the editor; collapse keeps the draft', async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
   T.$membershipExpanded.set({ origin: null, ids: [] })
@@ -1851,12 +1863,75 @@ test('PR-C: opening a fee edit auto-opens its detail group', async () => {
     : { ok: true })
   const { container } = await boot()
   await flush(4)
-  const card = id => container.querySelector(`[data-account="${id}"]`)
-  await clickByText(card('openai-codex:default'), 'Edit fee')
+  const card = container.querySelector('[data-account="openai-codex:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'plan')
+  await clickByText(card, 'Edit fee')
   await flush(2)
-  assert.equal(
-    card('openai-codex:default').querySelector('[data-group="plan"]').open, true,
-    'the fee draft opens Plan & billing')
+  assert.ok(card.querySelector('form.wm-fee-form'), 'the fee editor is shown')
+  await typeAmount(card, '25')
+  await toggleGroup(card, 'plan')
+  assert.equal(card.querySelector('[data-group="plan"]').open, false, 'the group collapses on summary click')
+  await toggleGroup(card, 'plan')
+  assert.equal(card.querySelector('form input[type="number"]').value, '25',
+    'reopening keeps the draft value')
+  await clickByText(card, 'Cancel')
+  await flush(2)
+})
+
+test('PR-C: Details → Advanced → user-defined plan opens Advanced, not Plan & billing', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const sub = account('openai-codex:default', {
+    family: 'openai-codex', label: 'main', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } }
+  })
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+    : { ok: true })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="openai-codex:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'advanced')
+  await clickByText(card, 'Create user-defined plan')
+  await flush(2)
+  assert.ok(card.querySelector('form.wm-custom-form'), 'the custom-plan editor is shown')
+  assert.equal(card.querySelector('[data-group="advanced"]').open, true, 'the custom draft opens Advanced')
+  assert.equal(card.querySelector('[data-group="plan"]').open, false,
+    'the custom draft does not open the unrelated Plan & billing group')
+  await clickByText(card, 'Cancel')
+  await flush(2)
+})
+
+test('PR-C: Details → Allowances → exhaustion shows the exhaustion editor', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const sub = account('openai-codex:default', {
+    family: 'openai-codex', label: 'main', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } }
+  })
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+    : { ok: true })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="openai-codex:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'allowances')
+  await clickByText(card, 'Mark account exhausted')
+  await flush(2)
+  assert.ok(card.querySelector('form.wm-exhaustion-form'), 'the exhaustion editor is shown')
+  assert.equal(card.querySelector('[data-group="allowances"]').open, true,
+    'the exhaustion draft opens Allowances & readings')
+  await clickByText(card, 'Cancel')
+  await flush(2)
 })
 
 test('PR-C: expanded rows are identity-isolated and the summary strip keeps its values', async () => {

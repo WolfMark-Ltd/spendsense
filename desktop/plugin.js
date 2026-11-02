@@ -4482,6 +4482,22 @@ const $membershipAttentionOnly = atom(false)
 // stamped with the identity it belongs to so a switch never shows one
 // backend's rows expanded under another's accounts.
 const $membershipExpanded = atom({ origin: null, ids: [] })
+// Groups the user has collapsed while their draft is active. A draft opens
+// its group, but the user's own toggle always wins afterwards: re-renders
+// never snap a collapsed group back open, and draft values are untouched.
+// Without a draft the groups are fully uncontrolled.
+const membershipGroupClosed = new Set()
+function membershipGroupOpen(accountId, group, active) {
+  const key = `${accountId}:${group}`
+  if (!active) { membershipGroupClosed.delete(key); return {} }
+  if (membershipGroupClosed.has(key)) return {}
+  return { open: true }
+}
+function membershipGroupToggled(accountId, group, open) {
+  const key = `${accountId}:${group}`
+  if (open) membershipGroupClosed.delete(key)
+  else membershipGroupClosed.add(key)
+}
 /**
  * Last good account payload. A refetch with a new query key unmounts the cards
  * for a moment; rendering from this keeps the pane from flashing "no memberships"
@@ -4637,6 +4653,8 @@ const MEMBERSHIP_CSS = `
 .wm-memberships select:disabled,.wm-memberships input:disabled{opacity:.55}
 .wm-memberships .wm-check:has(input:disabled){cursor:default}
 .wm-memberships .wm-stats{grid-template-columns:repeat(4,minmax(0,1fr))}
+@container(max-width:1050px){.wm-memberships .wm-stats{grid-template-columns:1fr 1fr}.wm-memberships .wm-stat:nth-child(2n){border-right:0}.wm-memberships .wm-stat:nth-child(-n+2){border-bottom:1px solid var(--ui-stroke-secondary)}}
+@container(max-width:380px){.wm-memberships .wm-stats{grid-template-columns:1fr}.wm-memberships .wm-stat{border-right:0;border-bottom:1px solid var(--ui-stroke-secondary)}.wm-memberships .wm-stat:last-child{border-bottom:0}}
 .wm-memberships .wm-stat{padding:10px 14px}
 .wm-memberships .wm-statlabel{margin-bottom:2px;font-weight:600}
 .wm-memberships .wm-statvalue{font-size:16px;letter-spacing:-.2px;margin-bottom:0;font-variant-numeric:tabular-nums}
@@ -5477,7 +5495,8 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     ] }),
     jsxs('div', { className: 'wm-row-body', id: bodyId, hidden: expanded ? undefined : true, children: [
     jsxs('details', { className: 'wm-group', 'data-group': 'plan',
-      ...(draft?.account_id === account.id || customDraft ? { open: true } : {}), children: [
+      ...membershipGroupOpen(account.id, 'plan', draft?.account_id === account.id),
+      onToggle: event => membershipGroupToggled(account.id, 'plan', event.currentTarget.open), children: [
       jsx('summary', { children: t('memGroupPlan') }),
       jsxs('div', { className: 'wm-group-body', children: [
     jsxs('label', { className: 'wm-check', children: [
@@ -5578,7 +5597,8 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       : null,
     ] }) ] }),
     jsxs('details', { className: 'wm-group', 'data-group': 'allowances',
-      ...(exhaustionDraft ? { open: true } : {}), children: [
+      ...membershipGroupOpen(account.id, 'allowances', !!exhaustionDraft),
+      onToggle: event => membershipGroupToggled(account.id, 'allowances', event.currentTarget.open), children: [
       jsx('summary', { children: t('memGroupAllow') }),
       jsxs('div', { className: 'wm-group-body', children: [
     rows.length
@@ -5629,7 +5649,9 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       ] })
     ] }) : null,
     ] }) ] }),
-    jsxs('details', { className: 'wm-group', 'data-group': 'advanced', children: [
+    jsxs('details', { className: 'wm-group', 'data-group': 'advanced',
+      ...membershipGroupOpen(account.id, 'advanced', !!customDraft),
+      onToggle: event => membershipGroupToggled(account.id, 'advanced', event.currentTarget.open), children: [
       jsx('summary', { children: t('memGroupAdvanced') }),
       jsxs('div', { className: 'wm-group-body', children: [
         jsx('span', { className: 'wm-chip', 'data-state': account.credential_present ? 'live' : 'no_data',
@@ -5692,6 +5714,7 @@ function MembershipsPage() {
     $membershipNative.set(false)
     $membershipAttentionOnly.set(false)
     $membershipExpanded.set({ origin: null, ids: [] })
+    membershipGroupClosed.clear()
     // The request log is deliberately *not* cleared: it is already bounded, and
     // wiping it would erase the very requests that failed to load.
   }, [identity])
