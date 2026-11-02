@@ -109,6 +109,8 @@ class EventLedgerCase(unittest.TestCase):
         store.bootstrap(self.state_db, self.event_db)
 
     def tearDown(self) -> None:
+        if store._WRITER is not None:
+            store._WRITER.close()
         store._WRITER = None
         store._WRITER_PATH = None
         self.tmp.cleanup()
