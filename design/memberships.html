@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spend Sense — Memberships reference (synthetic data)</title>
+<style>
+:root{
+  --ui-fill-primary:#12141a; --ui-fill-secondary:#1a1d26; --ui-fill-tertiary:#232633;
+  --ui-stroke-secondary:#2b2f40;
+  --ui-text-primary:#eef0f6; --ui-text-secondary:#b9bdd1; --ui-text-tertiary:#a9aec6; --ui-text-quaternary:#9398b0;
+  --ui-accent:#4f7cff; --btn-primary-bg:#2f5fd0; --brand-blue:#2563eb; --brand-violet:#813cf8;
+  --ui-success:#2dd4bf; --ui-warning:#f5b544; --ui-error:#f26d6d;
+  --radius-card:8px; --radius-ctl:6px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#0a0b0f;color:var(--ui-text-primary);
+  font:400 13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px;border-radius:4px}
+.review-bar{position:sticky;top:0;z-index:50;display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+  padding:8px 14px;background:#050608;border-bottom:1px solid #1e212e;font-size:12px;color:var(--ui-text-secondary)}
+.review-bar strong{color:var(--ui-warning)}
+.review-bar .seg{display:inline-flex;border:1px solid var(--ui-stroke-secondary);border-radius:99px;overflow:hidden;margin-left:auto}
+.review-bar .seg button{border:0;background:transparent;color:var(--ui-text-tertiary);padding:5px 12px;min-height:30px}
+.review-bar .seg button[aria-pressed="true"]{background:var(--ui-fill-tertiary);color:var(--ui-text-primary);font-weight:600}
+.synthetic-flag{display:inline-block;border:1px solid var(--ui-warning);color:var(--ui-warning);border-radius:99px;padding:1px 8px;font-size:11px;font-weight:600}
+.frame{margin:18px auto;transition:max-width .25s ease;padding:0 10px}
+.frame[data-w="full"]{max-width:1120px}.frame[data-w="pane"]{max-width:400px}
+.app{border:1px solid var(--ui-stroke-secondary);border-radius:12px;overflow:hidden;background:var(--ui-fill-primary);container-type:inline-size}
+[hidden]{display:none!important}
+.shell{max-width:1180px;margin:0 auto;padding:22px 22px 26px;display:flex;flex-direction:column;gap:14px}
+.brandrow{display:flex;align-items:center;gap:10px;min-width:0}
+.mark{width:26px;height:26px;flex:none;display:grid;place-items:center}
+.brandname{font-size:15px;font-weight:650;letter-spacing:-.2px;white-space:nowrap}
+.presence{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-text-tertiary);white-space:nowrap}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ui-success);flex:none}
+.scope-chip{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--ui-text-quaternary);border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:2px 8px;white-space:nowrap}
+.tagline{margin:2px 0 0;color:var(--ui-text-tertiary);font-size:13px}
+.tabbar{display:flex;gap:4px;overflow-x:auto;padding:4px 2px;border-bottom:1px solid var(--ui-stroke-secondary);scrollbar-width:none;min-height:46px;align-items:center}
+.tabbar::-webkit-scrollbar{display:none}
+.tab{display:inline-flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--ui-text-tertiary);border-radius:6px;padding:8px 13px;min-height:38px;font-size:13px;white-space:nowrap;transition:background-color .15s,color .15s}
+.tab:hover{background:var(--ui-fill-secondary);color:var(--ui-text-primary)}
+.tab[aria-selected="true"]{background:var(--ui-fill-secondary);color:var(--ui-text-primary);font-weight:600;box-shadow:inset 0 -2px 0 var(--ui-accent)}
+.tab .n{font-size:10px;color:var(--ui-text-quaternary);font-weight:600}
+h1.page{margin:0;font-size:22px;line-height:1.2;font-weight:640;letter-spacing:-.35px}
+.page-sub{margin:4px 0 0;color:var(--ui-text-tertiary);font-size:13px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{border:1px solid var(--ui-stroke-secondary);background:var(--ui-fill-secondary);color:var(--ui-text-primary);border-radius:var(--radius-ctl);padding:7px 13px;min-height:34px;font-size:13px;white-space:nowrap;transition:background-color .15s}
+.btn:hover{background:var(--ui-fill-tertiary)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{border-color:transparent;color:#fff;font-weight:600;background:var(--btn-primary-bg)}
+.btn.primary:hover{filter:brightness(1.12)}
+.btn.small{min-height:32px;padding:5px 11px;font-size:12px}
+.btn[disabled]{opacity:.55;cursor:wait;transform:none}
+.notice{border:1px solid var(--ui-stroke-secondary);border-radius:var(--radius-card);padding:9px 12px;font-size:12px}
+.notice[data-tone="good"]{border-color:color-mix(in srgb,var(--ui-success) 45%,var(--ui-stroke-secondary));color:var(--ui-success)}
+.notice[hidden]{display:none}
+
+/* Compact summary strip (replaces 4 oversized stat cells) */
+.summary{display:flex;flex-wrap:wrap;border:1px solid var(--ui-stroke-secondary);border-radius:var(--radius-card);background:var(--ui-fill-primary);overflow:hidden}
+.summary .cell{flex:1 1 140px;padding:10px 14px;border-left:1px solid var(--ui-stroke-secondary);min-width:0}
+.summary .cell:first-child{border-left:0}
+.summary .k{font-size:11px;font-weight:600;color:var(--ui-text-tertiary)}
+.summary .v{font-size:16px;font-weight:620;font-variant-numeric:tabular-nums;margin-top:1px;overflow-wrap:anywhere}
+.summary .v small{font-size:11px;font-weight:500;color:var(--ui-text-tertiary)}
+.note-line{margin:0;font-size:11.5px;color:var(--ui-text-tertiary)}
+
+/* C3 attention */
+.section{border:1px solid var(--ui-stroke-secondary);border-radius:var(--radius-card);padding:14px 16px;background:var(--ui-fill-primary)}
+.section h2{margin:0;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+.section h2 .count{font-size:11px;font-weight:600;color:#0a0b0f;background:var(--ui-warning);border-radius:99px;padding:0 7px;line-height:18px}
+.attention{list-style:none;margin:10px 0 0;padding:0}
+.attention li{display:flex;align-items:center;gap:10px;padding:9px 4px;border-top:1px solid var(--ui-stroke-secondary);min-width:0}
+.attention li:first-child{border-top:0;padding-top:2px}
+.attn-dot{width:8px;height:8px;border-radius:50%;background:var(--ui-warning);flex:none}
+.attn-dot[data-t="info"]{background:var(--ui-accent)}
+.attn-main{flex:1;min-width:0}.attn-main strong{font-size:13px;font-weight:600}
+.attn-main span{display:block;font-size:12px;color:var(--ui-text-secondary);overflow-wrap:anywhere}
+.filterrow{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.fchip{border:1px solid var(--ui-stroke-secondary);background:transparent;color:var(--ui-text-secondary);border-radius:99px;padding:6px 11px;min-height:32px;font-size:12px}
+.fchip:hover{background:var(--ui-fill-secondary);color:var(--ui-text-primary)}
+.fchip[aria-pressed="true"]{background:var(--ui-fill-tertiary);color:var(--ui-text-primary);font-weight:600;border-color:var(--ui-accent)}
+.fchip[data-attn="true"]{border-color:color-mix(in srgb,var(--ui-warning) 55%,transparent)}
+
+/* C5 compact membership rows */
+.cards{display:grid;gap:10px}
+.mrow{border:1px solid var(--ui-stroke-secondary);border-radius:var(--radius-card);background:var(--ui-fill-primary);overflow:hidden}
+.mrow[data-attn="true"]{border-color:color-mix(in srgb,var(--ui-warning) 40%,var(--ui-stroke-secondary))}
+.mrow-head{display:flex;align-items:center;gap:10px;padding:11px 14px;flex-wrap:wrap}
+.avatar{width:30px;height:30px;border-radius:7px;flex:none;display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff;background:var(--ui-fill-tertiary);border:1px solid var(--ui-stroke-secondary)}
+.m-id{min-width:0}
+.m-id strong{font-size:13.5px;font-weight:620;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.m-id span{font-size:11.5px;color:var(--ui-text-tertiary);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.m-mid{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
+.m-fee{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.m-fee small{font-weight:500;color:var(--ui-text-tertiary)}
+.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:1px 8px;font-size:11px;line-height:1.5;color:var(--ui-text-secondary);white-space:nowrap;background:transparent}
+.chip::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ui-text-quaternary);flex:none}
+.chip[data-c="ok"]{color:var(--ui-success)}.chip[data-c="ok"]::before{background:var(--ui-success)}
+.chip[data-c="warn"]{color:var(--ui-warning);border-color:color-mix(in srgb,var(--ui-warning) 45%,transparent)}.chip[data-c="warn"]::before{background:var(--ui-warning)}
+.chip[data-c="info"]{color:#a9c2ff}.chip[data-c="info"]::before{background:var(--ui-accent)}
+.chip[data-c="declared"]{color:#d6bcff}.chip[data-c="declared"]::before{background:var(--brand-violet)}
+.chev{font-size:14px;line-height:1;transition:transform .15s;color:var(--ui-text-tertiary)}
+button[aria-expanded="true"] .chev{transform:rotate(90deg)}
+.route-row{display:flex;gap:8px;align-items:center;margin:0 14px 10px 54px;padding:7px 10px;border:1px dashed var(--ui-stroke-secondary);border-radius:6px;font-size:12px;color:var(--ui-text-secondary);flex-wrap:wrap}
+.route-row code{font-size:11px;color:var(--ui-text-tertiary)}
+
+/* C6 expanded detail groups */
+.m-body{border-top:1px solid var(--ui-stroke-secondary);padding:6px 14px 14px}
+.m-body[hidden]{display:none}
+.group{border-top:1px solid var(--ui-stroke-secondary);padding:10px 0 4px}
+.group:first-child{border-top:0}
+.group>button.ghead{width:100%;display:flex;align-items:center;gap:8px;border:0;background:none;padding:6px 0;color:var(--ui-text-primary);font-size:13px;font-weight:600;text-align:left;min-height:36px}
+.group>button.ghead .gchev{margin-left:auto;color:var(--ui-text-tertiary);transition:transform .15s}
+.group>button.ghead[aria-expanded="true"] .gchev{transform:rotate(90deg)}
+.group .gbody{padding:2px 0 10px}
+.group .gbody[hidden]{display:none}
+.gbody p{font-size:12.5px;line-height:1.55;color:var(--ui-text-secondary);margin:4px 0;max-width:78ch}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-top:8px}
+.field{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ui-text-tertiary);min-width:0}
+.field select,.field input{min-height:34px;border:1px solid var(--ui-stroke-secondary);border-radius:6px;padding:7px 9px;background:var(--ui-fill-primary);color:var(--ui-text-primary);font:inherit;font-size:13px;width:100%}
+.field select:disabled,.field input:disabled{opacity:.55}
+.seg-ctl{display:flex;flex-wrap:wrap;gap:0;border:1px solid var(--ui-stroke-secondary);border-radius:6px;overflow:hidden;width:fit-content;max-width:100%}
+.seg-ctl button{border:0;border-left:1px solid var(--ui-stroke-secondary);background:transparent;color:var(--ui-text-tertiary);padding:7px 11px;min-height:34px;font-size:12px}
+.seg-ctl button:first-child{border-left:0}
+.seg-ctl button:hover{color:var(--ui-text-primary);background:var(--ui-fill-secondary)}
+.seg-ctl button[aria-pressed="true"]{background:var(--ui-fill-tertiary);color:var(--ui-text-primary);font-weight:600}
+.help{font-size:11.5px;color:var(--ui-text-tertiary);line-height:1.5;margin:6px 0 0;max-width:78ch}
+.inline-status{font-size:12px;margin-left:8px}
+.inline-status[data-s="ok"]{color:var(--ui-success)}
+.inline-status[data-s="err"]{color:var(--ui-error)}
+.quota{display:grid;gap:8px;margin-top:8px}
+.quota .qrow{border:1px solid var(--ui-stroke-secondary);border-radius:7px;padding:9px 11px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.quota .qrow strong{font-size:12.5px}
+.quota .reading{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+.bar{height:6px;border-radius:3px;background:var(--ui-fill-tertiary);overflow:hidden;flex:1 1 120px;min-width:90px}
+.bar i{display:block;height:100%;background:var(--ui-success);border-radius:3px}
+.bar i[data-w="warn"]{background:var(--ui-warning)}
+.info{position:relative;display:inline-flex;flex:none}
+.info-btn{width:32px;height:32px;border-radius:50%;border:1px solid var(--ui-text-quaternary);background:none;color:var(--ui-text-tertiary);font-size:12px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;cursor:pointer;display:inline-grid;place-items:center}
+.info-btn:hover,.info-btn:focus-visible{border-color:var(--ui-accent);color:var(--ui-accent)}
+.info-pop{position:absolute;top:calc(100% + 6px);left:0;z-index:30;width:min(230px,72vw);background:var(--ui-fill-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:7px;padding:8px 10px;font-size:11px;line-height:1.5;color:var(--ui-text-secondary);box-shadow:0 6px 20px rgba(0,0,0,.45)}
+.skip-link{position:absolute;left:-999px;top:0;background:var(--btn-primary-bg);color:#fff;padding:8px 14px;z-index:60;border-radius:0 0 8px 0}
+.skip-link:focus{left:0}
+.mrow[hidden]{display:none!important}
+.info-pop[hidden]{display:none}
+.flash{animation:flash 1.6s ease}
+@keyframes flash{0%{box-shadow:0 0 0 2px var(--ui-warning)}100%{box-shadow:0 0 0 0 transparent}}
+.statebox{border:1px dashed var(--ui-stroke-secondary);border-radius:7px;padding:10px 12px;font-size:12px;color:var(--ui-text-secondary);margin-top:8px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@container (max-width:560px){
+  .shell{padding:16px 12px 20px;gap:12px}
+  .summary .cell{flex:1 1 40%}
+  .m-mid{margin-left:40px;width:100%}
+  .route-row{margin-left:14px}
+  .fchip{min-height:38px}
+  .btn.small{min-height:38px}
+  .seg-ctl button{min-height:38px}
+  .attention li{flex-wrap:wrap}.attention .btn{width:100%}
+  .presence .live-word{display:none}
+}
+@container (max-width:560px){.info-pop{left:0;right:auto;width:min(230px,78vw)}}
+.tab:disabled{opacity:.5;cursor:not-allowed}
+.tab:disabled:hover{background:transparent;color:var(--ui-text-tertiary)}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+
+<div class="review-bar">
+  <span class="synthetic-flag">SYNTHETIC DATA</span>
+  <strong>Design reference — not the production UI.</strong>
+  <span>Memberships · Issue #13 Phase A · Try Details, the billing-type control, and Save.</span>
+  <span class="seg" role="group" aria-label="Preview width">
+    <button type="button" data-setw="full" aria-pressed="true">Ledger · 1100px</button>
+    <button type="button" data-setw="pane" aria-pressed="false">Pane · 380px</button>
+  </span>
+</div>
+
+<div class="frame" data-w="full" id="frame">
+<div class="app">
+<div class="shell" id="main">
+
+  <div>
+    <div class="brandrow">
+      <span class="mark" aria-hidden="true"><svg viewBox="0 0 512 512" width="24" height="24" focusable="false"><defs><linearGradient id="bm-mb" x1="84" y1="256" x2="428" y2="256" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#2563EB"/><stop offset="100%" stop-color="#813CF8"/></linearGradient></defs><path fill="url(#bm-mb)" d="M352 84H208c-7.4 0-14.5 2.9-19.8 8.2L92.2 188.2C86.9 193.5 84 200.6 84 208v16c0 10 5.3 19.2 13.9 24.2l13.9 98c13.4 7.8 30.5 3.3 38.3-10.1 7.8-13.4 3.3-30.5-10.1-38.3L126.1 199.8 112 224h28v-16H112l19.8 19.8 96-96L208 140h144c15.5 0 28-12.5 28-28s-12.5-28-28-28Zm-192 344h144c7.4 0 14.5-2.9 19.8-8.2l96-96c5.3-5.3 8.2-12.4 8.2-19.8v-16c0-10-5.3-19.2-13.9-24.2l-168-98c-13.4-7.8-30.5-3.3-38.3 10.1-7.8 13.4-3.3 30.5 10.1 38.3l168 98L400 288h-28v16h28l-19.8-19.8-96 96L304 372H160c-15.5 0-28 12.5-28 28s12.5 28 28 28Z"/></svg></span>
+      <span class="brandname">Spend Sense</span>
+      <span class="presence"><span class="dot" aria-hidden="true"></span><span class="live-word">Live · </span>default profile</span>
+      <span class="scope-chip">Synthetic</span>
+    </div>
+    <p class="tagline">What you used, what it was priced at, and the fees you declared — recorded locally.</p>
+  </div>
+
+  <nav class="tabbar" role="tablist" aria-label="Spend Sense">
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">01</span>Overview</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">02</span>Usage</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">03</span>Costs</button>
+    <button class="tab" role="tab" aria-selected="true" tabindex="0"><span class="n">04</span>Memberships</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">05</span>Reports</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">06</span>Settings &amp; About</button>
+  </nav>
+
+  <div>
+    <h1 class="page">Memberships</h1>
+    <p class="page-sub">Confirm each account’s plan and declared fee. As of 18 May 2026 (synthetic). Declared fees are not verified against a provider bill.</p>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn primary" type="button" id="btn-discover">Discover accounts</button>
+    <button class="btn" type="button" id="btn-refresh">Refresh readings</button>
+    <span class="inline-status" id="toolbar-status" role="status"></span>
+  </div>
+
+  <div class="notice" data-tone="good" id="page-notice" role="status" hidden></div>
+
+  <!-- Compact summary strip: same membershipSummary() data, a third of the height -->
+  <div class="summary" role="list" aria-label="Membership summary">
+    <div class="cell" role="listitem"><div class="k">Accounts</div><div class="v">6</div></div>
+    <div class="cell" role="listitem"><div class="k">Plans confirmed</div><div class="v">3 <small>of 6</small></div></div>
+    <div class="cell" role="listitem"><div class="k">Marked exhausted</div><div class="v">1</div></div>
+    <div class="cell" role="listitem"><div class="k">Declared fees · by currency</div><div class="v">£160 <small>/mo</small> + $20 <small>/mo</small></div></div>
+  </div>
+  <p class="note-line">A declared fee is the amount you told Spend Sense; it is not checked against a provider bill. Provider percentages are limits, not money, and are never added to it. Currencies stay separate.</p>
+
+  <!-- C3 attention: click jumps to + expands + highlights the exact card -->
+  <section class="section" aria-labelledby="attn-h">
+    <h2 id="attn-h">Needs attention <span class="count">3</span></h2>
+    <ul class="attention">
+      <li><span class="attn-dot" aria-hidden="true"></span>
+        <div class="attn-main"><strong>xAI — Grok</strong><span>Billing arrangement not confirmed.</span></div>
+        <button class="btn small" type="button" data-goto="acct-xai" data-open-group="plan">Confirm arrangement</button></li>
+      <li><span class="attn-dot" data-t="info" aria-hidden="true"></span>
+        <div class="attn-main"><strong>Nous Research</strong><span>No fee set for the chosen plan (catalogue price unpriced).</span></div>
+        <button class="btn small" type="button" data-goto="acct-nous" data-open-group="plan">Set fee</button></li>
+      <li><span class="attn-dot" data-t="info" aria-hidden="true"></span>
+        <div class="attn-main"><strong>OpenAI</strong><span>Rolling window has no reliable reset time — confirm or clear your mark.</span></div>
+        <button class="btn small" type="button" data-goto="acct-openai" data-open-group="allow">Review reading</button></li>
+    </ul>
+  </section>
+
+  <div class="filterrow" role="group" aria-label="Filter accounts">
+    <button class="fchip" type="button" id="filter-attn" aria-pressed="false">Needs attention only (<span id="filter-count">3</span>)</button>
+    <span id="filter-status" role="status" aria-live="polite" style="font-size:12px;color:var(--ui-text-tertiary)"></span>
+    <button class="fchip" type="button" data-chip-goto="acct-anthropic">Anthropic</button>
+    <button class="fchip" type="button" data-chip-goto="acct-openai">OpenAI</button>
+    <button class="fchip" type="button" data-chip-goto="acct-nous">Nous</button>
+    <button class="fchip" type="button" data-chip-goto="acct-xai" data-attn="true">xAI · check</button>
+    <button class="fchip" type="button" data-chip-goto="acct-google">Google</button>
+    <button class="fchip" type="button" data-chip-goto="acct-openrouter">OpenRouter</button>
+  </div>
+
+  <div class="cards" id="cards">
+
+    <!-- Anthropic: healthy subscription. No route is nested here: ownership of
+         commandcode-anthropic is unconfirmed, so it sits in Routes seen below. -->
+    <article class="mrow" id="acct-anthropic" data-account="anthropic">
+      <div class="mrow-head">
+        <span class="avatar" aria-hidden="true">A</span>
+        <div class="m-id"><strong>Anthropic · main</strong><span>Subscription · Claude Max 20x</span></div>
+        <div class="m-mid">
+          <span class="m-fee">£160 <small>/mo · declared</small></span>
+          <span class="chip" data-c="ok">On track</span>
+          <button class="btn small" type="button" aria-expanded="false" aria-controls="body-anthropic" data-toggle="body-anthropic">Details <span class="chev" aria-hidden="true">›</span></button>
+        </div>
+      </div>
+      <div class="m-body" id="body-anthropic" hidden>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="true" aria-controls="g-anthropic-plan" data-gtoggle="g-anthropic-plan">Plan &amp; billing <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-anthropic-plan">
+            <p style="margin-top:0">Billing type
+              <span class="info"><button class="info-btn" type="button" aria-label="About billing types" aria-describedby="tip-billing-a" aria-expanded="false" data-tip="tip-billing-a">i</button>
+              <span class="info-pop" id="tip-billing-a" role="tooltip" hidden>Subscription: a recurring fee you declare. Prepaid credits: top-ups, not a recurring fee. Metered API: pay-as-you-go per call, no recurring fee (display label for the existing API Only setting). This control only changes how Spend Sense labels the account — usage is always tracked.</span></span>
+            </p>
+            <div class="seg-ctl" role="group" aria-label="Billing type for Anthropic">
+              <button type="button" aria-pressed="true">Subscription</button>
+              <button type="button" aria-pressed="false">Prepaid credits</button>
+              <button type="button" aria-pressed="false">Metered API</button>
+              <button type="button" aria-pressed="false">Not confirmed</button>
+            </div>
+            <div class="grid2">
+              <label class="field">Plan for this account
+                <select><option>Claude Max 20x</option><option>Claude Max 5x</option><option>Claude Pro</option><option>— clear selection —</option></select></label>
+              <label class="field">Effective fee (declared)
+                <input value="£160.00 / month · renews 12 Jun 2026" disabled></label>
+            </div>
+            <p class="help">Declared £160/mo in GBP. Catalogue price $200/mo (USD) is kept separately and is not converted. <button class="btn small" type="button" data-demo-save>Edit fee</button> <button class="btn small" type="button">Restore catalogue price</button> <span class="inline-status" data-save-status role="status" aria-live="polite"></span></p>
+          </div>
+        </div>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="false" aria-controls="g-anthropic-allow" data-gtoggle="g-anthropic-allow">Allowances &amp; readings <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-anthropic-allow" hidden>
+            <div class="quota">
+              <div class="qrow"><strong>Current session</strong><span class="reading">38% used</span><span class="bar"><i style="width:38%"></i></span><span class="chip" data-c="ok">Live</span><span style="font-size:11.5px;color:var(--ui-text-tertiary)">Provider-reported · resets in 2h 14m (synthetic reading)</span></div>
+              <div class="qrow"><strong>Current week</strong><span class="reading">61% used</span><span class="bar"><i data-w="warn" style="width:61%"></i></span><span class="chip" data-c="ok">On track</span><span style="font-size:11.5px;color:var(--ui-text-tertiary)">Rolling 7-day window · resets 21 May 2026 (synthetic)</span></div>
+            </div>
+            <p class="help">Allowance weather: <strong>On track.</strong> Detail and pace sit here, collapsed — not on the row.</p>
+          </div>
+        </div>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="false" aria-controls="g-anthropic-adv" data-gtoggle="g-anthropic-adv">Advanced &amp; diagnostics <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-anthropic-adv" hidden>
+            <p>Account identified by Hermes (native). Credential values are never shown. Custom plan, model restrictions and request diagnostics live here.</p>
+            <div class="toolbar"><button class="btn small" type="button">Create user-defined plan</button><button class="btn small" type="button">Mark account exhausted</button></div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <!-- OpenAI (Codex): ChatGPT Plus; manual mark is the 1 exhausted account -->
+    <article class="mrow" id="acct-openai" data-account="openai" data-attn="true">
+      <div class="mrow-head">
+        <span class="avatar" aria-hidden="true">O</span>
+        <div class="m-id"><strong>OpenAI · main</strong><span>Subscription · ChatGPT Plus</span></div>
+        <div class="m-mid">
+          <span class="m-fee">$20 <small>/mo · declared</small></span>
+          <span class="chip" data-c="warn">Check reading</span>
+          <button class="btn small" type="button" aria-expanded="false" aria-controls="body-openai" data-toggle="body-openai">Details <span class="chev" aria-hidden="true">›</span></button>
+        </div>
+      </div>
+      <div class="m-body" id="body-openai" hidden>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="true" aria-controls="g-openai-plan" data-gtoggle="g-openai-plan">Plan &amp; billing <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-openai-plan">
+            <div class="seg-ctl" role="group" aria-label="Billing type for OpenAI">
+              <button type="button" aria-pressed="true">Subscription</button>
+              <button type="button" aria-pressed="false">Prepaid credits</button>
+              <button type="button" aria-pressed="false">Metered API</button>
+              <button type="button" aria-pressed="false">Not confirmed</button>
+            </div>
+            <div class="grid2">
+              <label class="field">Plan for this account
+                <select><option>ChatGPT Plus</option><option>ChatGPT Pro (5x)</option><option>ChatGPT Pro (20x)</option><option>ChatGPT Business</option><option>ChatGPT Go</option><option>ChatGPT Free</option><option>— clear selection —</option></select></label>
+              <label class="field">Effective fee (declared)
+                <input value="$20.00 / month · declared (USD)" disabled></label>
+            </div>
+            <p class="help">Declared $20/mo — this is the counted fee. The catalogue price for ChatGPT Plus is also $20/mo; it is kept separate and is not what the totals count.</p>
+          </div>
+        </div>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="false" aria-controls="g-openai-allow" data-gtoggle="g-openai-allow">Allowances &amp; readings <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-openai-allow" hidden>
+            <div class="statebox" role="status">Your manual mark has <strong>no reliable reset time</strong> — please confirm it is still exhausted, or clear it. Nothing is inferred from when you marked it.</div>
+            <div class="toolbar" style="margin-top:8px"><button class="btn small" type="button">Confirm still exhausted</button><button class="btn small" type="button">Clear mark</button></div>
+          </div>
+        </div>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="false" aria-controls="g-openai-adv" data-gtoggle="g-openai-adv">Advanced &amp; diagnostics <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-openai-adv" hidden><p>Provider account slot; credential values are never shown.</p></div>
+        </div>
+      </div>
+    </article>
+
+    <!-- Nous: Nous Portal chosen; catalogue price unpriced, so fee unknown -->
+    <article class="mrow" id="acct-nous" data-account="nous" data-attn="true">
+      <div class="mrow-head">
+        <span class="avatar" aria-hidden="true">N</span>
+        <div class="m-id"><strong>Nous Research · main</strong><span>Subscription · Nous Portal</span></div>
+        <div class="m-mid">
+          <span class="m-fee">Fee unknown</span>
+          <span class="chip" data-c="warn">No fee set</span>
+          <button class="btn small" type="button" aria-expanded="false" aria-controls="body-nous" data-toggle="body-nous">Details <span class="chev" aria-hidden="true">›</span></button>
+        </div>
+      </div>
+      <div class="m-body" id="body-nous" hidden>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="true" aria-controls="g-nous-plan" data-gtoggle="g-nous-plan">Plan &amp; billing <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-nous-plan">
+            <div class="seg-ctl" role="group" aria-label="Billing type for Nous">
+              <button type="button" aria-pressed="true">Subscription</button>
+              <button type="button" aria-pressed="false">Prepaid credits</button>
+              <button type="button" aria-pressed="false">Metered API</button>
+              <button type="button" aria-pressed="false">Not confirmed</button>
+            </div>
+            <p><strong>Nous Portal</strong> (the catalogue plan selected here) has <strong>no published catalogue price</strong>, so no fee is counted. This account is excluded from fee totals until you set your own fee — it is never treated as $0. Other catalogue plans for this provider are Nous Free, Nous Plus ($20/mo), Nous Super ($100/mo) and Nous Ultra ($200/mo).</p>
+            <div class="grid2">
+              <label class="field">Plan for this account
+                <select><option>Nous Portal — unpriced</option><option>Nous Free</option><option>Nous Plus</option><option>Nous Super</option><option>Nous Ultra</option><option>— clear selection —</option></select></label>
+              <label class="field">Your fee amount<input type="number" name="nous-fee" autocomplete="off" inputmode="decimal" placeholder="e.g. 25.00…" data-fee-amount></label>
+              <label class="field">Currency &amp; period
+                <select><option>USD / month</option><option>GBP / month</option><option>EUR / month</option></select></label>
+            </div>
+            <p class="help"><button class="btn small primary" type="button" data-demo-save>Save fee</button> <span class="inline-status" data-save-status role="status" aria-live="polite"></span></p>
+          </div>
+        </div>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="false" aria-controls="g-nous-allow" data-gtoggle="g-nous-allow">Allowances &amp; readings <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-nous-allow" hidden><div class="statebox">No quota windows are published for this account. You can still record that it is used up. <button class="btn small" type="button">Mark account exhausted</button></div></div>
+        </div>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="false" aria-controls="g-nous-adv" data-gtoggle="g-nous-adv">Advanced &amp; diagnostics <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-nous-adv" hidden><p>Plan names and prices on this card are the actual catalogue entries (catalogue v2026-10-31.1). Only the account’s selection and readings are synthetic.</p></div>
+        </div>
+      </div>
+    </article>
+
+    <!-- xAI: unconfirmed arrangement, no plan (unknown case) -->
+    <article class="mrow" id="acct-xai" data-account="xai" data-attn="true">
+      <div class="mrow-head">
+        <span class="avatar" aria-hidden="true">X</span>
+        <div class="m-id"><strong>xAI — Grok · main</strong><span>Not confirmed · no plan confirmed</span></div>
+        <div class="m-mid">
+          <span class="m-fee">Unknown</span>
+          <span class="chip" data-c="warn">Not confirmed</span>
+          <button class="btn small" type="button" aria-expanded="false" aria-controls="body-xai" data-toggle="body-xai">Details <span class="chev" aria-hidden="true">›</span></button>
+        </div>
+      </div>
+      <div class="m-body" id="body-xai" hidden>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="true" aria-controls="g-xai-plan" data-gtoggle="g-xai-plan">Plan &amp; billing <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-xai-plan">
+            <p style="margin-top:0">Grok consumer subscriptions and xAI API billing are separate. Choose <strong>Subscription</strong> only if this credential is on a consumer plan; choose <strong>Metered API</strong> for pay-as-you-go API billing.</p>
+            <div class="seg-ctl" role="group" aria-label="Billing type for xAI">
+              <button type="button" aria-pressed="false">Subscription</button>
+              <button type="button" aria-pressed="false">Prepaid credits</button>
+              <button type="button" aria-pressed="false">Metered API</button>
+              <button type="button" aria-pressed="true">Not confirmed</button>
+            </div>
+            <div class="grid2">
+              <label class="field">Plan for this account
+                <select disabled><option>No plan confirmed</option></select></label>
+              <label class="field">Effective fee
+                <input value="Unknown — confirm arrangement first" disabled></label>
+            </div>
+            <p class="help">The catalogue offers one plan for this provider (<strong>SuperGrok</strong>, unpriced) — select it only after confirming a subscription above. Until then this account contributes usage but no fee, and is flagged here rather than silently counted as free.</p>
+          </div>
+        </div>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="false" aria-controls="g-xai-allow" data-gtoggle="g-xai-allow">Allowances &amp; readings <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-xai-allow" hidden><div class="statebox">No reading recorded. A missing reading is shown as <strong>Not recorded</strong>, never as 0% used.</div></div>
+        </div>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="false" aria-controls="g-xai-adv" data-gtoggle="g-xai-adv">Advanced &amp; diagnostics <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-xai-adv" hidden><p>Route, account and subscription are different things: this card is one provider <em>account</em>; models route through it. See proposal §6.2.</p></div>
+        </div>
+      </div>
+    </article>
+
+    <!-- Google: prepaid credits (no recurring fee, tracked separately) -->
+    <article class="mrow" id="acct-google" data-account="google">
+      <div class="mrow-head">
+        <span class="avatar" aria-hidden="true">G</span>
+        <div class="m-id"><strong>Google · main</strong><span>Prepaid credits · top-ups, not a subscription</span></div>
+        <div class="m-mid">
+          <span class="m-fee">No recurring fee</span>
+          <span class="chip" data-c="info">Prepaid</span>
+          <button class="btn small" type="button" aria-expanded="false" aria-controls="body-google" data-toggle="body-google">Details <span class="chev" aria-hidden="true">›</span></button>
+        </div>
+      </div>
+      <div class="m-body" id="body-google" hidden>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="true" aria-controls="g-google-plan" data-gtoggle="g-google-plan">Plan &amp; billing <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-google-plan">
+            <div class="seg-ctl" role="group" aria-label="Billing type for Google">
+              <button type="button" aria-pressed="false">Subscription</button>
+              <button type="button" aria-pressed="true">Prepaid credits</button>
+              <button type="button" aria-pressed="false">Metered API</button>
+              <button type="button" aria-pressed="false">Not confirmed</button>
+            </div>
+            <p>Prepaid balance is not a recurring membership fee and is never added to fee totals. Cost rules for this wallet live in Costs.</p>
+          </div>
+        </div>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="false" aria-controls="g-google-allow" data-gtoggle="g-google-allow">Allowances &amp; readings <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-google-allow" hidden><div class="quota"><div class="qrow"><strong>Credit pool (rule)</strong><span class="reading">$12.40 of $50</span><span class="bar"><i style="width:25%"></i></span><span class="chip" data-c="ok">On track</span></div></div></div>
+        </div>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="false" aria-controls="g-google-adv" data-gtoggle="g-google-adv">Advanced &amp; diagnostics <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-google-adv" hidden><p>Advanced billing rules for this route are edited in Costs, not duplicated here.</p></div>
+        </div>
+      </div>
+    </article>
+
+    <!-- OpenRouter: metered API (the former "API Only", renamed as display label) -->
+    <article class="mrow" id="acct-openrouter" data-account="openrouter">
+      <div class="mrow-head">
+        <span class="avatar" aria-hidden="true">R</span>
+        <div class="m-id"><strong>OpenRouter · main</strong><span>Metered API · pay-as-you-go</span></div>
+        <div class="m-mid">
+          <span class="m-fee">No recurring fee</span>
+          <span class="chip" data-c="info">Metered</span>
+          <button class="btn small" type="button" aria-expanded="false" aria-controls="body-openrouter" data-toggle="body-openrouter">Details <span class="chev" aria-hidden="true">›</span></button>
+        </div>
+      </div>
+      <div class="m-body" id="body-openrouter" hidden>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="true" aria-controls="g-or-plan" data-gtoggle="g-or-plan">Plan &amp; billing <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-or-plan">
+            <div class="seg-ctl" role="group" aria-label="Billing type for OpenRouter">
+              <button type="button" aria-pressed="false">Subscription</button>
+              <button type="button" aria-pressed="false">Prepaid credits</button>
+              <button type="button" aria-pressed="true">Metered API</button>
+              <button type="button" aria-pressed="false">Not confirmed</button>
+            </div>
+            <p><strong>Metered API</strong> replaces the old “API Only” checkbox as a display label: per-call charges at API rates, no recurring fee, usage and estimates still tracked. Stored semantics are unchanged in this proposal (see proposal §9).</p>
+          </div>
+        </div>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="false" aria-controls="g-or-allow" data-gtoggle="g-or-allow">Allowances &amp; readings <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-or-allow" hidden><div class="statebox">No allowance windows for a metered route. Spend pace for USD cost rules appears here when a rule exists.</div></div>
+        </div>
+        <div class="group">
+          <button class="ghead" type="button" aria-expanded="false" aria-controls="g-or-adv" data-gtoggle="g-or-adv">Advanced &amp; diagnostics <span class="gchev" aria-hidden="true">›</span></button>
+          <div class="gbody" id="g-or-adv" hidden><p>Saved plan and fee revisions are retained while metered, so switching back restores them.</p></div>
+        </div>
+      </div>
+    </article>
+
+  </div>
+
+  <!-- Routes seen: grouped only when entitlement ownership is known. This route's
+       owner is NOT confirmed, so it is not nested under Anthropic (or any account),
+       carries no fee, and never enters a total. -->
+  <section class="section" aria-labelledby="routes-h">
+    <h2 id="routes-h">Routes seen</h2>
+    <ul class="attention">
+      <li><span class="attn-dot" data-t="info" aria-hidden="true"></span>
+        <div class="attn-main"><strong><code>commandcode-anthropic</code></strong><span>Route observed in usage. Entitlement owner not confirmed — no fee counted for this route. Group it under an account only when backend entitlement data confirms ownership.</span></div>
+        <span class="chip" data-c="unknown">Owner not confirmed</span></li>
+    </ul>
+  </section>
+
+  <details style="border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:10px 14px">
+    <summary style="cursor:pointer;font-size:12.5px;font-weight:600;color:var(--ui-text-secondary);min-height:32px;display:flex;align-items:center">Request diagnostics (this session)</summary>
+    <p style="font-size:12px;color:var(--ui-text-tertiary);margin:4px 0">Collapsed by default. In production this keeps the existing bounded, redacted request log — method, path, status and scope only.</p>
+  </details>
+
+  <p style="margin:0;font-size:11px;color:var(--ui-text-quaternary)">Synthetic reference for design review (issue #13). Account selections, readings and figures are invented; plan names/prices are the actual catalogue entries (v2026-10-31.1). Synthetic date: 18 May 2026 — identical dataset to the Overview reference (proposal Appendix A). Interactions demonstrate the proposed states only. List order never changes on save. Current state: <code id="state-readout">all collapsed</code></p>
+
+</div>
+</div>
+</div>
+
+<script>
+var frame=document.getElementById('frame');
+document.querySelectorAll('[data-setw]').forEach(function(b){
+  b.addEventListener('click',function(){
+    document.querySelectorAll('[data-setw]').forEach(function(x){x.setAttribute('aria-pressed','false')});
+    b.setAttribute('aria-pressed','true'); frame.setAttribute('data-w',b.getAttribute('data-setw'));
+  });
+});
+function readout(){
+  var open=[...document.querySelectorAll('.m-body:not([hidden])')].map(function(el){return el.id.replace('body-','')});
+  document.getElementById('state-readout').textContent = open.length? ('expanded: '+open.join(', ')) : 'all collapsed';
+}
+function setRow(id, expand){
+  var body=document.getElementById('body-'+id); if(!body) return;
+  body.hidden=!expand;
+  document.querySelectorAll('[data-toggle="body-'+id+'"]').forEach(function(b){b.setAttribute('aria-expanded',String(expand))});
+  readout();
+}
+document.querySelectorAll('[data-toggle]').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    var body=document.getElementById(btn.getAttribute('data-toggle'));
+    setRow(btn.getAttribute('data-toggle').replace('body-',''), body.hidden);
+  });
+});
+document.querySelectorAll('[data-gtoggle]').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    var body=document.getElementById(btn.getAttribute('data-gtoggle'));
+    body.hidden=!body.hidden; btn.setAttribute('aria-expanded',String(!body.hidden));
+  });
+});
+function jumpTo(cardId, group){
+  var card=document.getElementById(cardId); if(!card) return;
+  // Defect fixed: jumping to a row hidden by the attention filter did nothing
+  // visible. A jump always clears the filter first.
+  if(card.hidden) setFilter(false);
+  setRow(cardId.replace('acct-',''), true);
+  if(group){
+    var map={plan:0,allow:1};
+    var idx=map[group]; var bodies=card.querySelectorAll('.gbody'); var heads=card.querySelectorAll('.ghead');
+    if(bodies[idx]){ bodies[idx].hidden=false; heads[idx].setAttribute('aria-expanded','true'); }
+  }
+  var reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  card.scrollIntoView({behavior:reduce?'auto':'smooth',block:'start'});
+  card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
+  var head=card.querySelector('[data-toggle]'); if(head) head.focus({preventScroll:true});
+}
+document.querySelectorAll('[data-goto]').forEach(function(b){
+  b.addEventListener('click',function(){ jumpTo(b.getAttribute('data-goto'), b.getAttribute('data-open-group')); });
+});
+document.querySelectorAll('[data-chip-goto]').forEach(function(b){
+  b.addEventListener('click',function(){ jumpTo(b.getAttribute('data-chip-goto'), null); });
+});
+// Segmented billing control: single-select per group (display-only in this reference)
+document.querySelectorAll('.seg-ctl').forEach(function(ctl){
+  ctl.querySelectorAll('button').forEach(function(b){
+    b.addEventListener('click',function(){
+      ctl.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed','false')});
+      b.setAttribute('aria-pressed','true');
+    });
+  });
+});
+// C8 AsyncButton demo: pending -> success beside the control; duplicates blocked
+document.querySelectorAll('[data-demo-save]').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    if(btn.disabled) return;
+    var status=btn.closest('.gbody').querySelector('[data-save-status]') || btn.parentElement.querySelector('[data-save-status]');
+    var old=btn.textContent; btn.disabled=true; btn.textContent='Saving…';
+    if(status){status.textContent=''; status.removeAttribute('data-s');}
+    setTimeout(function(){
+      btn.disabled=false; btn.textContent=old;
+      if(status){status.textContent='Saved.'; status.setAttribute('data-s','ok');}
+    },700);
+  });
+});
+function toolbarDemo(id){
+  var btn=document.getElementById(id), st=document.getElementById('toolbar-status');
+  var old=btn.textContent; btn.disabled=true; btn.textContent = id==='btn-discover'?'Discovering…':'Refreshing…';
+  setTimeout(function(){ btn.disabled=false; btn.textContent=old; st.textContent='Done (synthetic).'; st.setAttribute('data-s','ok');
+    setTimeout(function(){st.textContent='';},2000); },800);
+}
+document.getElementById('btn-discover').addEventListener('click',function(){toolbarDemo('btn-discover')});
+document.getElementById('btn-refresh').addEventListener('click',function(){toolbarDemo('btn-refresh')});
+// Attention-only filter. Defects fixed: (1) OpenAI's row was missing data-attn,
+// so the count (3) disagreed with the rows actually shown (2) — the count is now
+// derived from the rows; (2) rows were hidden with inline display while `hidden`
+// state/readout went stale — now uses the hidden attribute; (3) the result is
+// announced via aria-live; (4) jumps clear the filter (see jumpTo).
+var fBtn=document.getElementById('filter-attn');
+var filterStatus=document.getElementById('filter-status');
+var attnRows=[...document.querySelectorAll('.mrow[data-attn="true"]')];
+document.getElementById('filter-count').textContent=String(attnRows.length);
+function setFilter(on){
+  fBtn.setAttribute('aria-pressed',String(on));
+  var shown=0;
+  document.querySelectorAll('.mrow').forEach(function(row){
+    var hide = on && row.getAttribute('data-attn')!=='true';
+    row.hidden=hide; if(!hide) shown++;
+  });
+  filterStatus.textContent = on ? ('Showing '+shown+' of 6 accounts.') : '';
+  readout();
+}
+fBtn.addEventListener('click',function(){ setFilter(fBtn.getAttribute('aria-pressed')!=='true'); });
+// InfoTip: same pinned pattern as Overview (hover/focus opens, click pins,
+// Esc closes and returns focus, aria-expanded in sync).
+var openTip=null, openBtn=null, pinned=false;
+function closeTip(restoreFocus){
+  if(openTip){ openTip.hidden=true; }
+  if(openBtn){ openBtn.setAttribute('aria-expanded','false'); }
+  if(restoreFocus && openBtn){ openBtn.focus(); }
+  openTip=null; openBtn=null; pinned=false;
+}
+function showTip(btn,pop,pin){
+  if(openTip===pop && pinned===pin) return;
+  closeTip(false);
+  pop.hidden=false; btn.setAttribute('aria-expanded','true');
+  openTip=pop; openBtn=btn; pinned=!!pin;
+}
+document.querySelectorAll('.info-btn').forEach(function(btn){
+  var pop=document.getElementById(btn.getAttribute('data-tip'));
+  var wrap=btn.closest('.info');
+  btn.addEventListener('mouseenter',function(){ if(!pinned) showTip(btn,pop,false); });
+  btn.addEventListener('focus',function(){ if(!pinned) showTip(btn,pop,false); });
+  btn.addEventListener('click',function(e){
+    e.stopPropagation();
+    if(openTip===pop && pinned){ closeTip(false); } else { showTip(btn,pop,true); }
+  });
+  wrap.addEventListener('mouseleave',function(){ if(!pinned && document.activeElement!==btn) closeTip(false); });
+  btn.addEventListener('blur',function(){ if(!pinned) closeTip(false); });
+});
+document.addEventListener('keydown',function(e){ if(e.key==='Escape' && openTip) closeTip(true); });
+document.addEventListener('click',function(e){ if(openTip && !e.target.closest('.info')) closeTip(false); });
+// Reference tab bar: only Memberships exists in this file. Unavailable tabs
+// are disabled in the markup (non-interactive) rather than selectable with
+// no panel; production tab behaviour lives in desktop/plugin.js LedgerTabs.
+readout();
+</script>
+</body>
+</html>

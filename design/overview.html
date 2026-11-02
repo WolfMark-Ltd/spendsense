@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spend Sense — Overview reference (synthetic data)</title>
+<style>
+/* ===== Host theme tokens (Hermes --ui-* with Spend Sense fallbacks) ===== */
+:root{
+  --ui-fill-primary:#12141a; --ui-fill-secondary:#1a1d26; --ui-fill-tertiary:#232633;
+  --ui-stroke-secondary:#2b2f40;
+  --ui-text-primary:#eef0f6; --ui-text-secondary:#b9bdd1; --ui-text-tertiary:#a9aec6; --ui-text-quaternary:#9398b0;
+  --ui-accent:#4f7cff; --btn-primary-bg:#2f5fd0; --brand-blue:#2563eb; --brand-violet:#813cf8;
+  --ui-success:#2dd4bf; --ui-warning:#f5b544; --ui-error:#f26d6d;
+  --radius-card:8px; --radius-ctl:6px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#0a0b0f;color:var(--ui-text-primary);
+  font:400 13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px;border-radius:4px}
+::selection{background:rgba(79,124,255,.35)}
+
+/* ===== Review chrome (NOT part of the product design) ===== */
+.review-bar{position:sticky;top:0;z-index:50;display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+  padding:8px 14px;background:#050608;border-bottom:1px solid #1e212e;font-size:12px;color:var(--ui-text-secondary)}
+.review-bar strong{color:var(--ui-warning);letter-spacing:.02em}
+.review-bar .seg{display:inline-flex;border:1px solid var(--ui-stroke-secondary);border-radius:99px;overflow:hidden;margin-left:auto}
+.review-bar .seg button{border:0;background:transparent;color:var(--ui-text-tertiary);padding:5px 12px;min-height:30px}
+.review-bar .seg button[aria-pressed="true"]{background:var(--ui-fill-tertiary);color:var(--ui-text-primary);font-weight:600}
+.synthetic-flag{display:inline-block;border:1px solid var(--ui-warning);color:var(--ui-warning);
+  border-radius:99px;padding:1px 8px;font-size:11px;font-weight:600}
+
+/* ===== App frame ===== */
+.frame{margin:18px auto;transition:max-width .25s ease;padding:0 10px}
+.frame[data-w="full"]{max-width:1120px}
+.frame[data-w="pane"]{max-width:400px}
+.app{border:1px solid var(--ui-stroke-secondary);border-radius:12px;overflow:hidden;background:var(--ui-fill-primary);container-type:inline-size}
+[hidden]{display:none!important}
+.shell{max-width:1180px;margin:0 auto;padding:22px 22px 26px;display:flex;flex-direction:column;gap:16px}
+
+/* ===== C1: Header + TabBar ===== */
+.brandrow{display:flex;align-items:center;gap:10px;min-width:0}
+.mark{width:26px;height:26px;flex:none;display:grid;place-items:center}
+.brandname{font-size:15px;font-weight:650;letter-spacing:-.2px;white-space:nowrap}
+.presence{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-text-tertiary);white-space:nowrap}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ui-success);flex:none}
+.scope-chip{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--ui-text-quaternary);
+  border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:2px 8px;white-space:nowrap}
+.tagline{margin:2px 0 0;color:var(--ui-text-tertiary);font-size:13px}
+.tabbar{display:flex;gap:4px;overflow-x:auto;padding:4px 2px;border-bottom:1px solid var(--ui-stroke-secondary);
+  scrollbar-width:none;min-height:46px;align-items:center}
+.tabbar::-webkit-scrollbar{display:none}
+.tab{display:inline-flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--ui-text-tertiary);
+  border-radius:6px;padding:8px 13px;min-height:38px;font-size:13px;white-space:nowrap;transition:background-color .15s,color .15s}
+.tab:hover{background:var(--ui-fill-secondary);color:var(--ui-text-primary)}
+.tab[aria-selected="true"]{background:var(--ui-fill-secondary);color:var(--ui-text-primary);font-weight:600;
+  box-shadow:inset 0 -2px 0 var(--ui-accent)}
+.tab .n{font-size:10px;color:var(--ui-text-quaternary);font-weight:600}
+h1.page{margin:0;font-size:22px;line-height:1.2;font-weight:640;letter-spacing:-.35px}
+.page-sub{margin:4px 0 0;color:var(--ui-text-tertiary);font-size:13px}
+
+/* ===== C2: KPI cards ===== */
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.kpi{border:1px solid var(--ui-stroke-secondary);border-radius:var(--radius-card);
+  background:var(--ui-fill-primary);padding:14px 15px;min-width:0;display:flex;flex-direction:column;gap:6px;min-height:118px}
+.kpi .eyebrow{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--ui-text-tertiary);min-height:16px}
+.kpi .figure{font-size:21px;line-height:1.25;font-weight:620;letter-spacing:-.3px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.kpi .figure small{font-size:12px;font-weight:500;color:var(--ui-text-tertiary)}
+.kpi .prov{font-size:11.5px;line-height:1.45;color:var(--ui-text-tertiary)}
+.kpi .foot{margin-top:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.kpi[data-kind="positive"] .figure{color:var(--ui-success)}
+.kpi .vs{font-size:11.5px;color:var(--ui-text-secondary)}
+.kpi .vs b{color:var(--ui-success);font-weight:620}
+
+/* ===== C4: Certainty chips ===== */
+.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--ui-stroke-secondary);border-radius:99px;
+  padding:1px 8px;font-size:11px;line-height:1.5;color:var(--ui-text-secondary);white-space:nowrap;background:transparent}
+.chip::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ui-text-quaternary);flex:none}
+.chip[data-c="estimated"]{color:#a9c2ff}.chip[data-c="estimated"]::before{background:var(--ui-accent)}
+.chip[data-c="declared"]{color:#d6bcff}.chip[data-c="declared"]::before{background:var(--brand-violet)}
+.chip[data-c="partial"],.chip[data-c="lower"]{color:var(--ui-warning);border-color:color-mix(in srgb,var(--ui-warning) 45%,transparent)}
+.chip[data-c="partial"]::before,.chip[data-c="lower"]::before{background:var(--ui-warning)}
+.chip[data-c="ok"]{color:var(--ui-success)}.chip[data-c="ok"]::before{background:var(--ui-success)}
+.chip[data-c="unknown"]{color:var(--ui-text-tertiary)}
+
+/* ===== C7: InfoTip ===== */
+.info{position:relative;display:inline-flex;flex:none}
+.info-btn{width:32px;height:32px;border-radius:50%;border:1px solid var(--ui-text-quaternary);background:none;
+  color:var(--ui-text-tertiary);font-size:12px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;
+  cursor:pointer;display:inline-grid;place-items:center}
+.info-btn:hover,.info-btn:focus-visible{border-color:var(--ui-accent);color:var(--ui-accent)}
+.info-pop{position:absolute;top:calc(100% + 6px);left:0;z-index:30;width:min(230px,72vw);background:var(--ui-fill-secondary);
+  border:1px solid var(--ui-stroke-secondary);border-radius:7px;padding:8px 10px;font-size:11px;line-height:1.5;
+  font-weight:400;color:var(--ui-text-secondary);box-shadow:0 6px 20px rgba(0,0,0,.45)}
+.info-pop[hidden]{display:none}
+
+/* ===== Sections / C3: Attention ===== */
+.section{border:1px solid var(--ui-stroke-secondary);border-radius:var(--radius-card);padding:16px;background:var(--ui-fill-primary)}
+.section h2{margin:0;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+.section h2 .count{font-size:11px;font-weight:600;color:#0a0b0f;background:var(--ui-warning);border-radius:99px;padding:0 7px;line-height:18px}
+.section .hint{margin:4px 0 0;color:var(--ui-text-tertiary);font-size:12px}
+.attention{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:0}
+.attention li{display:flex;align-items:center;gap:10px;padding:10px 4px;border-top:1px solid var(--ui-stroke-secondary);min-width:0}
+.attention li:first-child{border-top:0;padding-top:2px}
+.attn-dot{width:8px;height:8px;border-radius:50%;background:var(--ui-warning);flex:none}
+.attn-dot[data-t="info"]{background:var(--ui-accent)}
+.attn-main{flex:1;min-width:0}
+.attn-main strong{font-size:13px;font-weight:600}
+.attn-main span{display:block;font-size:12px;color:var(--ui-text-secondary);overflow-wrap:anywhere}
+.btn{border:1px solid var(--ui-stroke-secondary);background:var(--ui-fill-secondary);color:var(--ui-text-primary);
+  border-radius:var(--radius-ctl);padding:7px 13px;min-height:34px;font-size:13px;white-space:nowrap;
+  transition:background-color .15s,border-color .15s}
+.btn:hover{background:var(--ui-fill-tertiary)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{border-color:transparent;color:#fff;font-weight:600;background:var(--btn-primary-bg)}
+.btn.primary:hover{filter:brightness(1.12)}
+.btn.small{min-height:32px;padding:5px 11px;font-size:12px}
+.btn[disabled]{opacity:.55;cursor:wait;transform:none}
+.routes{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+
+/* ===== Disclosure ===== */
+details.method{border:1px solid var(--ui-stroke-secondary);border-radius:var(--radius-card);padding:12px 16px;background:var(--ui-fill-primary)}
+details.method summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--ui-text-secondary);min-height:32px;display:flex;align-items:center}
+details.method summary:hover{color:var(--ui-text-primary)}
+details.method .body{font-size:12.5px;line-height:1.6;color:var(--ui-text-secondary);max-width:78ch}
+details.method .body p{margin:6px 0}
+.flash{animation:flash 1.6s ease}
+@keyframes flash{0%{box-shadow:0 0 0 2px var(--ui-warning)}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* ===== Narrow-pane attention strip (visible <=560px only) ===== */
+.attn-strip{display:none}
+.skip-link{position:absolute;left:-999px;top:0;background:var(--btn-primary-bg);color:#fff;padding:8px 14px;z-index:60;border-radius:0 0 8px 0}
+.skip-link:focus{left:0}
+/* ===== Responsive: narrow Hermes pane ===== */
+@container (max-width:900px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (max-width:560px){
+  .shell{padding:16px 12px 20px;gap:12px}
+  .attn-strip{display:flex;align-items:center;gap:9px;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));
+    border-radius:var(--radius-card);padding:10px 12px;background:var(--ui-fill-primary);font-size:12.5px}
+  .attn-strip .btn{margin-left:auto;min-height:38px}
+  .kpis{grid-template-columns:1fr}
+  .kpi{min-height:0;padding:12px 13px}
+  .btn.small{min-height:38px}
+  .attention li{flex-wrap:wrap}
+  .attention .btn{width:100%}
+  .presence .live-word{display:none}
+  .section{scroll-margin-top:70px}
+}
+@container (max-width:560px){.info-pop{left:auto;right:-6px;width:min(230px,78vw)}}
+.tab:disabled{opacity:.5;cursor:not-allowed}
+.tab:disabled:hover{background:transparent;color:var(--ui-text-tertiary)}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+
+<div class="review-bar">
+  <span class="synthetic-flag">SYNTHETIC DATA</span>
+  <strong>Design reference — not the production UI.</strong>
+  <span>Overview · Issue #13 Phase A · All figures invented for layout review.</span>
+  <span class="seg" role="group" aria-label="Preview width">
+    <button type="button" data-setw="full" aria-pressed="true">Ledger · 1100px</button>
+    <button type="button" data-setw="pane" aria-pressed="false">Pane · 380px</button>
+  </span>
+</div>
+
+<div class="frame" data-w="full" id="frame">
+<div class="app">
+<div class="shell" id="main">
+
+  <!-- C1: header -->
+  <div>
+    <div class="brandrow">
+      <span class="mark" aria-hidden="true">
+        <svg viewBox="0 0 512 512" width="24" height="24" focusable="false"><defs><linearGradient id="bm-ov" x1="84" y1="256" x2="428" y2="256" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#2563EB"/><stop offset="100%" stop-color="#813CF8"/></linearGradient></defs><path fill="url(#bm-ov)" d="M352 84H208c-7.4 0-14.5 2.9-19.8 8.2L92.2 188.2C86.9 193.5 84 200.6 84 208v16c0 10 5.3 19.2 13.9 24.2l13.9 98c13.4 7.8 30.5 3.3 38.3-10.1 7.8-13.4 3.3-30.5-10.1-38.3L126.1 199.8 112 224h28v-16H112l19.8 19.8 96-96L208 140h144c15.5 0 28-12.5 28-28s-12.5-28-28-28Zm-192 344h144c7.4 0 14.5-2.9 19.8-8.2l96-96c5.3-5.3 8.2-12.4 8.2-19.8v-16c0-10-5.3-19.2-13.9-24.2l-168-98c-13.4-7.8-30.5-3.3-38.3 10.1-7.8 13.4-3.3 30.5 10.1 38.3l168 98L400 288h-28v16h28l-19.8-19.8-96 96L304 372H160c-15.5 0-28 12.5-28 28s12.5 28 28 28Z"/></svg>
+      </span>
+      <span class="brandname">Spend Sense</span>
+      <span class="presence"><span class="dot" aria-hidden="true"></span><span class="live-word">Live · </span>default profile</span>
+      <span class="scope-chip">Synthetic</span>
+    </div>
+    <p class="tagline">What you used, what it was priced at, and the fees you declared — recorded locally.</p>
+  </div>
+
+  <!-- C1: six-tab bar (fixed height, no jump) -->
+  <nav class="tabbar" role="tablist" aria-label="Spend Sense">
+    <button class="tab" role="tab" aria-selected="true" tabindex="0"><span class="n">01</span>Overview</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">02</span>Usage</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">03</span>Costs</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">04</span>Memberships</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">05</span>Reports</button>
+    <button disabled title="Not included in this reference" class="tab" role="tab" aria-selected="false" tabindex="-1"><span class="n">06</span>Settings &amp; About</button>
+  </nav>
+
+  <div>
+    <h1 class="page">Overview</h1>
+    <p class="page-sub">Recorded usage, estimates and declared fees — each labelled, never mixed. As of 18 May 2026 (synthetic).</p>
+  </div>
+
+  <!-- Narrow panes only: attention is discoverable before the stacked KPI cards -->
+  <div class="attn-strip" role="region" aria-label="Needs attention summary">
+    <span class="attn-dot" aria-hidden="true"></span>
+    <span><strong>3 need attention</strong> — xAI arrangement · Nous fee · pricing coverage</span>
+    <a class="btn small" href="#needs-attention" style="text-decoration:none;display:inline-flex;align-items:center">Review</a>
+  </div>
+
+  <!-- C2: KPI cards. Kind + time base in the eyebrow; certainty as a word. -->
+  <div class="kpis" role="list" aria-label="Key figures">
+
+    <article class="kpi" role="listitem">
+      <div class="eyebrow">Recorded usage, priced at capture · 1–18 May 2026
+        <span class="info"><button class="info-btn" type="button" aria-label="About recorded usage pricing" aria-describedby="tip-rec" aria-expanded="false" data-tip="tip-rec">i</button>
+        <span class="info-pop" id="tip-rec" role="tooltip" hidden>Desktop-ledger usage priced at the rates captured when each call was recorded. It is a priced record of usage — not a provider bill, invoice, or proof of payment.</span></span>
+      </div>
+      <div class="figure">$24.60</div>
+      <p class="prov">Desktop ledger · priced when recorded, not billed evidence</p>
+      <div class="foot"><span class="chip" data-c="ok">Recorded usage</span></div>
+    </article>
+
+    <article class="kpi" role="listitem">
+      <div class="eyebrow">API-equivalent · 19 Apr – 18 May 2026
+        <span class="info"><button class="info-btn" type="button" aria-label="About API-equivalent estimate" aria-describedby="tip-api" aria-expanded="false" data-tip="tip-api">i</button>
+        <span class="info-pop" id="tip-api" role="tooltip" hidden>What the same backend usage would cost at current published API rates. An estimate for comparison — not a charge. 18,240 tokens had no published price, so this total is a lower bound.</span></span>
+      </div>
+      <div class="figure">$47.90 <small>lower bound</small></div>
+      <p class="prov">Backend usage at current catalogue rates · 30 days</p>
+      <div class="foot">
+        <span class="chip" data-c="estimated">Estimated</span>
+        <span class="chip" data-c="partial">Partial</span>
+      </div>
+    </article>
+
+    <article class="kpi" role="listitem">
+      <div class="eyebrow">Declared fees · Monthly equivalent
+        <span class="info"><button class="info-btn" type="button" aria-label="About declared fees" aria-describedby="tip-fees" aria-expanded="false" data-tip="tip-fees">i</button>
+        <span class="info-pop" id="tip-fees" role="tooltip" hidden>Recurring fees you declared in Memberships, grouped by currency. Spend Sense does not verify them against a provider bill. Currencies are never combined without an exchange rate you supply.</span></span>
+      </div>
+      <div class="figure">£160 <small>/mo</small> + $20 <small>/mo</small></div>
+      <p class="prov">3 of 6 accounts have a confirmed plan · by currency</p>
+      <div class="foot"><span class="chip" data-c="declared">Declared</span></div>
+    </article>
+
+    <article class="kpi" role="listitem" data-kind="positive" id="value-card">
+      <div class="eyebrow">Subscription value · 19 Apr – 18 May 2026
+        <span class="info"><button class="info-btn" type="button" aria-label="About subscription value" aria-describedby="tip-val" aria-expanded="false" data-tip="tip-val">i</button>
+        <span class="info-pop" id="tip-val" role="tooltip" hidden>API-equivalent value of usage attributed to subscriptions, against declared fees for the same accounts and window. Shown only where both sides share a currency. Fees in another currency, or with no fee set, are listed as not compared — never converted or guessed.</span></span>
+      </div>
+      <div data-state="available">
+        <div class="figure">+$8.40 <small>covered</small></div>
+        <p class="prov vs">Usage value <b>$28.40</b> (19 Apr – 18 May) vs declared fees <b>$20.00</b> · USD subscriptions only (OpenAI). Fee basis: one monthly declared fee allocated to this 30-day window (monthly-equivalent; no daily pro-rata).</p>
+        <p class="prov">Not compared: Anthropic £160/mo (no GBP/USD rate supplied) · Nous fee unknown.</p>
+      </div>
+      <div data-state="unavailable" hidden>
+        <div class="figure" style="color:var(--ui-text-primary)">Not available</div>
+        <p class="prov">No defensible comparison: subscription fees are in GBP or unknown, and no exchange rate has been supplied. No ratio is shown rather than an invented one.</p>
+      </div>
+      <div class="foot">
+        <span class="chip" data-c="ok" data-chip-available>Covered</span>
+        <span class="chip" data-c="partial" data-chip-available>Partial</span>
+        <span class="chip" data-c="unknown" data-chip-unavailable hidden>Unknown</span>
+        <button class="btn small" type="button" id="toggle-value-state" aria-pressed="false" style="margin-left:auto">Preview unavailable</button>
+      </div>
+    </article>
+  </div>
+
+  <!-- C3: actionable attention -->
+  <section class="section" id="needs-attention" aria-labelledby="attn-h">
+    <h2 id="attn-h">Needs attention <span class="count">3</span></h2>
+    <p class="hint">Each item names the account and the action. Selecting it opens the exact field.</p>
+    <ul class="attention">
+      <li>
+        <span class="attn-dot" aria-hidden="true"></span>
+        <div class="attn-main"><strong>xAI — Grok</strong><span>Billing arrangement not confirmed. No fee is counted for this account yet.</span></div>
+        <button class="btn small" type="button" data-jump="xai">Confirm arrangement</button>
+      </li>
+      <li>
+        <span class="attn-dot" data-t="info" aria-hidden="true"></span>
+        <div class="attn-main"><strong>Nous Research</strong><span>Plan fee is unpriced in the catalogue. Set your own fee to complete the totals.</span></div>
+        <button class="btn small" type="button" data-jump="nous">Set fee</button>
+      </li>
+      <li>
+        <span class="attn-dot" data-t="info" aria-hidden="true"></span>
+        <div class="attn-main"><strong>Usage pricing</strong><span>18,240 tokens in 30 days have no published price. API-equivalent totals are partial.</span></div>
+        <button class="btn small" type="button" data-jump="usage">View coverage</button>
+      </li>
+    </ul>
+    <div class="routes" aria-label="Go to">
+      <button class="btn primary" type="button">Review memberships</button>
+      <button class="btn" type="button">Open Usage</button>
+      <button class="btn" type="button">Open Costs</button>
+    </div>
+  </section>
+
+  <!-- Progressive disclosure: methodology out of the default view -->
+  <details class="method">
+    <summary>How these figures are calculated</summary>
+    <div class="body">
+      <p><strong>Recorded usage</strong> is Desktop-ledger usage priced at the rates captured when each delta was recorded (1–18 May in this synthetic set). It records what usage was priced at — it is not a provider bill, invoice, or proof of payment. <strong>API-equivalent</strong> re-prices backend usage at the currently available catalogue over 19 Apr – 18 May — a comparison estimate, never a charge, and a lower bound while any tokens are unpriced. <strong>Declared fees</strong> are the recurring amounts you confirmed in Memberships, kept separate by currency and period; Spend Sense does not verify them against a bill. <strong>Subscription value</strong> compares attributed usage value with fees only when window and currency align; otherwise the card shows Not available with the reason.</p>
+      <p>Full per-model detail lives in Usage; fee evidence and economics live in Costs. Nothing here sends data anywhere.</p>
+    </div>
+  </details>
+
+  <p style="margin:0;font-size:11px;color:var(--ui-text-quaternary)">Synthetic reference for design review (issue #13). Figures do not come from any real account. In production these cards bind to <code>settledDesktopMonth</code>, backend analytics totals, <code>membershipSummary</code> and the economics headline — with the same labels and windows.</p>
+
+</div>
+</div>
+</div>
+
+<script>
+// Review-chrome width toggle (not product behaviour)
+var frame=document.getElementById('frame');
+document.querySelectorAll('[data-setw]').forEach(function(b){
+  b.addEventListener('click',function(){
+    document.querySelectorAll('[data-setw]').forEach(function(x){x.setAttribute('aria-pressed','false')});
+    b.setAttribute('aria-pressed','true'); frame.setAttribute('data-w',b.getAttribute('data-setw'));
+  });
+});
+// C7 InfoTip: hover/focus opens; pinned by click; Esc closes and returns focus.
+// Defects fixed: click after hover no longer instantly closes an open tip;
+// blur/mouseleave no longer close a click-pinned tip; aria-expanded stays in sync.
+var openTip=null, openBtn=null, pinned=false;
+function closeTip(restoreFocus){
+  if(openTip){ openTip.hidden=true; }
+  if(openBtn){ openBtn.setAttribute('aria-expanded','false'); }
+  if(restoreFocus && openBtn){ openBtn.focus(); }
+  openTip=null; openBtn=null; pinned=false;
+}
+function showTip(btn,pop,pin){
+  if(openTip===pop && pinned===pin) return;
+  closeTip(false);
+  pop.hidden=false; btn.setAttribute('aria-expanded','true');
+  openTip=pop; openBtn=btn; pinned=!!pin;
+}
+document.querySelectorAll('.info-btn').forEach(function(btn){
+  var pop=document.getElementById(btn.getAttribute('data-tip'));
+  var wrap=btn.closest('.info');
+  btn.addEventListener('mouseenter',function(){ if(!pinned) showTip(btn,pop,false); });
+  btn.addEventListener('focus',function(){ if(!pinned) showTip(btn,pop,false); });
+  btn.addEventListener('click',function(e){
+    e.stopPropagation();
+    if(openTip===pop && pinned){ closeTip(false); } else { showTip(btn,pop,true); }
+  });
+  wrap.addEventListener('mouseleave',function(){ if(!pinned && document.activeElement!==btn) closeTip(false); });
+  btn.addEventListener('blur',function(){ if(!pinned) closeTip(false); });
+});
+document.addEventListener('keydown',function(e){ if(e.key==='Escape' && openTip) closeTip(true); });
+document.addEventListener('click',function(e){ if(openTip && !e.target.closest('.info')) closeTip(false); });
+// Attention actions: this reference does not navigate. In production these
+// switch tab + highlight the field; here the button only states that, and
+// never claims a navigation happened.
+document.querySelectorAll('[data-jump]').forEach(function(b){
+  var original=b.textContent;
+  b.addEventListener('click',function(){
+    if(b.disabled) return;
+    b.disabled=true; b.textContent='Preview only — no navigation in this reference';
+    setTimeout(function(){ b.disabled=false; b.textContent=original; },1600);
+  });
+});
+// Reference tab bar: only the current screen exists in this file. Unavailable
+// tabs are disabled (non-interactive) rather than selectable with no panel;
+// production tab behaviour lives in desktop/plugin.js LedgerTabs.
+// Subscription-value card: preview the honest unavailable state
+var vBtn=document.getElementById('toggle-value-state');
+if(vBtn){
+  vBtn.addEventListener('click',function(){
+    var card=document.getElementById('value-card');
+    var avail=card.querySelector('[data-state="available"]');
+    var unavail=card.querySelector('[data-state="unavailable"]');
+    var showUnavail=unavail.hidden;
+    avail.hidden=showUnavail; unavail.hidden=!showUnavail;
+    card.querySelectorAll('[data-chip-available]').forEach(function(c){ c.hidden=showUnavail; });
+    card.querySelectorAll('[data-chip-unavailable]').forEach(function(c){ c.hidden=!showUnavail; });
+    card.removeAttribute('data-kind');
+    if(!showUnavail) card.setAttribute('data-kind','positive');
+    vBtn.setAttribute('aria-pressed',String(showUnavail));
+    vBtn.textContent=showUnavail?'Show comparison':'Preview unavailable';
+  });
+}
+</script>
+</body>
+</html>
