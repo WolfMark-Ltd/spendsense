@@ -7,7 +7,7 @@ holds a credential, and it never stores a resolved price — that is computed at
 read time from the catalogue so a catalogue refresh cannot silently rewrite a
 past month.
 
-Writes mirror ``billing.py``: an exclusive ``flock`` around the whole
+Writes mirror ``billing.py``: an exclusive file lock around the whole
 read-modify-write, an ``os.replace`` swap, and a revision hash so a stale edit is
 rejected with 409 rather than overwriting a newer one.
 """
@@ -18,11 +18,11 @@ import hashlib
 import json
 import os
 import tempfile
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
 from . import membership as mem
+from .filelock import locked as _locked
 
 STORE_NAME = "memberships.json"
 STORE_VERSION = 1
@@ -165,20 +165,6 @@ def load_store(path: Optional[Path | str] = None, *, strict: bool = False) -> di
 
 def accounts_by_id(path: Optional[Path | str] = None) -> dict[str, dict[str, Any]]:
     return {str(a.get("id")): a for a in load_store(path).get("accounts", [])}
-
-
-@contextmanager
-def _locked(target: Path):
-    import fcntl
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(target.with_suffix(target.suffix + ".lock"), "a+")
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        yield handle
-    finally:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        handle.close()
 
 
 def _write(accounts: Iterable[Mapping[str, Any]], target: Path) -> None:

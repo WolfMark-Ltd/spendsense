@@ -26,13 +26,13 @@ Shape::
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-
 import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
+
+from .filelock import locked as _locked
 
 PRESENTATIONS = ("both", "spend", "api", "accounting")
 _CREDIT_KINDS = {"subscription_credits", "prepaid", "free"}
@@ -570,20 +570,6 @@ def profile_revision(profile: dict) -> str:
     import hashlib, json
     body = {k: v for k, v in profile.items() if k != 'rev'}
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:12]
-
-
-@contextmanager
-def _locked(target: Path):
-    """Exclusive advisory lock around the whole read-modify-write cycle."""
-    import fcntl
-    target.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(target.with_suffix(target.suffix + ".lock"), "a+")
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        yield handle
-    finally:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        handle.close()
 
 
 def save_profile(profile: dict, path: Path | None = None, if_rev: str | None = None) -> dict:
