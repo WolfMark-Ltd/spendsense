@@ -229,7 +229,7 @@ class ApiTests(unittest.TestCase):
             event_db = Path(scratch) / "usage.db"
             state_db = Path(scratch) / "state.db"
             now = time.time()
-            with sqlite3.connect(state_db) as conn:
+            with closing(sqlite3.connect(state_db)) as conn, conn:
                 conn.executescript("""
                     CREATE TABLE sessions (
                         id TEXT PRIMARY KEY, source TEXT, title TEXT,
