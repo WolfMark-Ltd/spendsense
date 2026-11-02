@@ -361,7 +361,10 @@ def billing_summary(days: int = Query(30, ge=1, le=365)) -> dict[str, Any]:
     for profile in billing.load_profiles().get("profiles", []):
         if profile.get("billing_cycle"):
             span = max(span, 32)
-    report = build_analytics_report(days=span)
+    try:
+        report = build_analytics_report(days=span)
+    except LedgerUnavailable as exc:
+        raise HTTPException(status_code=503, detail="billing call store unavailable") from exc
     try:
         membership_fees = members.fee_summary_payload()
     except StoreUnreadable as exc:

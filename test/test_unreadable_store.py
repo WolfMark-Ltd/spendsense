@@ -78,6 +78,15 @@ class ConnectReaderTests(unittest.TestCase):
         with self.assertRaises(LedgerUnavailable):
             store.connect_reader(target)
 
+    def test_partial_store_missing_baseline_raises_ledger_unavailable(self) -> None:
+        target = self.dir / "usage.db"
+        conn = sqlite3.connect(target)
+        conn.execute("CREATE TABLE calls (event_id TEXT PRIMARY KEY, ts REAL)")
+        conn.commit()
+        conn.close()
+        with self.assertRaises(LedgerUnavailable):
+            store.connect_reader(target)
+
     def test_failed_open_leaves_file_untouched(self) -> None:
         target = self.dir / "usage.db"
         payload = b"\x00\x01not-a-sqlite-file" * 64
@@ -231,6 +240,26 @@ class UnreadableStoreApiTests(unittest.TestCase):
         with patch.object(store, "event_db_path", return_value=target):
             response = self.client.get("/api/plugins/spend-sense/allowance/weather")
         self.assertEqual(response.status_code, 503)
+
+    def test_billing_endpoint_unreadable_is_503_with_fixed_detail(self) -> None:
+        target = self._garbage()
+        with patch.object(store, "event_db_path", return_value=target):
+            response = self.client.get("/api/plugins/spend-sense/billing/summary",
+                                       params={"days": 7})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "billing call store unavailable")
+
+    def test_health_partial_store_is_unreadable_not_ready(self) -> None:
+        target = self.dir / "usage.db"
+        conn = sqlite3.connect(target)
+        conn.execute("CREATE TABLE calls (event_id TEXT PRIMARY KEY, ts REAL)")
+        conn.commit()
+        conn.close()
+        with patch.object(store, "event_db_path", return_value=target):
+            response = self.client.get("/api/plugins/spend-sense/health")
+        body = response.json()
+        self.assertTrue(body["event_db_present"])
+        self.assertEqual(body["event_db_status"], "unreadable")
 
 
 if __name__ == "__main__":

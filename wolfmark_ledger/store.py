@@ -164,8 +164,8 @@ def connect_reader(path: Optional[Path | str] = None) -> Optional[sqlite3.Connec
     """Read-only connection, or None when the collector has never run.
 
     A missing file is a valid empty state. An existing file that cannot be
-    opened or has no call history raises LedgerUnavailable: callers must
-    report unavailable data, never silent zeros. Nothing is created,
+    opened or lacks the required tables raises LedgerUnavailable: callers
+    must report unavailable data, never silent zeros. Nothing is created,
     migrated or repaired here.
     """
     target = Path(path) if path else event_db_path()
@@ -179,16 +179,18 @@ def connect_reader(path: Optional[Path | str] = None) -> Optional[sqlite3.Connec
     try:
         conn.execute("PRAGMA query_only=ON")
         conn.execute("PRAGMA busy_timeout=5000")
-        has_calls = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='calls'"
-        ).fetchone()
+        present = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('calls', 'baseline')"
+        ).fetchall()}
     except sqlite3.Error as exc:
         conn.close()
         raise LedgerUnavailable(f"could not read usage database: {exc}") from exc
-    if has_calls is None:
+    missing = {"calls", "baseline"} - present
+    if missing:
         conn.close()
         raise LedgerUnavailable(
-            f"usage database has no call history table: {target}"
+            "usage database is missing required tables: "
+            + ", ".join(sorted(missing))
         )
     return conn
 
