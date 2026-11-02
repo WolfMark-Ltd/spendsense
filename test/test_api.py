@@ -270,6 +270,12 @@ class ApiTests(unittest.TestCase):
             with patch.object(plugin_api, "build_ledger_report", side_effect=report):
                 response = self.client.get("/api/plugins/spend-sense/ledger",
                                            params={"days": 30, "basis": "hybrid"})
+            # bootstrap() opened the shared writer on the temp usage.db;
+            # leaving it open locks the file on Windows at cleanup.
+            if store._WRITER is not None:
+                store._WRITER.close()
+            store._WRITER = None
+            store._WRITER_PATH = None
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertTrue(body["ok"])
