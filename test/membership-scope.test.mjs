@@ -1361,7 +1361,7 @@ test('Overview distinguishes unknown subscription fees from having no recurring 
   await flush(4)
   const fees = container.querySelectorAll('.wm-product-summary .wm-kpi')[2].textContent
   assert.match(fees, /Unknown/, 'an unknown subscription fee is Unknown, not a dash')
-  assert.match(fees, /1 subscription\(s\) have no known fee/, 'the subtotal discloses the missing fee')
+  assert.match(fees, /1 account\(s\) have no known fee/, 'the subtotal discloses the missing fee')
 
   // Genuinely fee-free accounts are a different state, not Unknown.
   queryClient.clear()
@@ -1380,6 +1380,65 @@ test('Overview distinguishes unknown subscription fees from having no recurring 
   const fees2 = container2.querySelectorAll('.wm-product-summary .wm-kpi')[2].textContent
   assert.match(fees2, /No recurring fees/)
   assert.doesNotMatch(fees2, /no known fee/)
+  const chips2 = [...container2.querySelectorAll('.wm-product-summary .wm-kpi')[2]
+    .querySelectorAll('.wm-certainty')].map(el => el.textContent)
+  assert.ok(!chips2.includes('Unknown'), `a fee-free state carries no Unknown chip (${chips2})`)
+})
+
+test('Overview shows a known fee subtotal as Partial when some fees are unknown', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  const declared = account('openai-codex:default', {
+    family: 'openai-codex', label: 'ChatGPT Plus', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } }
+  })
+  const unpricedSub = account('nous:default', {
+    family: 'nous', label: 'Nous', plan_id: 'nous.portal', plan: { name: 'Nous Portal' },
+    effective_arrangement: 'subscription',
+    fee: { basis: 'unpriced', effective: { amount: null } }
+  })
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 0, calls: 0 } }
+    : call.path === '/membership/accounts'
+      ? { ok: true, accounts: [declared, unpricedSub], store: { loaded: true, error: '' }, notes: [] }
+      : { ok: true })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  const card = container.querySelectorAll('.wm-product-summary .wm-kpi')[2]
+  assert.match(card.textContent, /\$20\.00\/mo/, 'the known subtotal keeps its amount, currency and period')
+  assert.match(card.textContent, /Partial/, 'an unknown subscription marks the subtotal Partial')
+  assert.match(card.textContent, /1 account\(s\) have no known fee/, 'the missing fee is disclosed')
+})
+
+test('Overview never treats an unconfirmed or plan-less account as a zero fee', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  const unconfirmed = account('xai:default', {
+    family: 'xai', label: 'xAI', effective_arrangement: 'unconfirmed' })
+  const noPlan = account('custom:default', {
+    family: 'custom', label: 'Custom', effective_arrangement: 'subscription' })
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 0, calls: 0 } }
+    : call.path === '/membership/accounts'
+      ? { ok: true, accounts: [unconfirmed, noPlan], store: { loaded: true, error: '' }, notes: [] }
+      : { ok: true })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  const fees = container.querySelectorAll('.wm-product-summary .wm-kpi')[2].textContent
+  assert.match(fees, /Unknown/, 'unconfirmed and plan-less accounts are Unknown, not zero')
+  assert.doesNotMatch(fees, /No recurring fees/)
+  assert.match(fees, /2 account\(s\) have no known fee/)
 })
 
 test('Overview attention includes stored allowance weather without provider reads', async () => {

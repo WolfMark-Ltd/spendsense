@@ -3715,10 +3715,12 @@ function OverviewPage() {
     .reduce((sum, row) => sum + (Number(row?.usage?.unpriced_tokens) || 0), 0)
   const valuePartial = econReady && econDifference != null && econHeadline.status === 'partial'
   const valueLowerBound = econReady && econDifference != null && econUnpriced > 0
-  // Subscriptions (plan-bearing, non-excluded arrangement) whose fee is
-  // unknown are neither zero nor absent — count them for disclosure.
-  const unknownSubs = currentAccounts.filter(account => account.plan_id
-    && !['api_only', 'prepaid', 'unconfirmed'].includes(account.effective_arrangement)
+  // Accounts that could carry a recurring fee but have no known amount —
+  // unpriced subscriptions, unconfirmed arrangements and plan-less
+  // subscription accounts — are neither zero nor absent. Only api_only and
+  // prepaid accounts are verified to have no recurring fee.
+  const unknownFeeCount = currentAccounts.filter(account =>
+    !['api_only', 'prepaid'].includes(account.effective_arrangement)
     && (account.fee?.effective?.amount === null || account.fee?.effective?.amount === undefined)).length
   const feeEntries = Object.keys(fees.byCurrencyPeriod || {}).length
   const items = accountsReady ? needsAttention(currentAccounts, weatherById, t) : []
@@ -3776,12 +3778,16 @@ function OverviewPage() {
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovFeesLabel') }),
           jsx('div', { className: 'wm-kpi-figure', children: !accountsReady ? t('ovUnknown')
             : feeEntries ? feesLabel(fees)
-            : unknownSubs ? t('ovUnknown') : t('ovNoFees') }),
+            : unknownFeeCount ? t('ovUnknown') : t('ovNoFees') }),
           jsx('p', { className: 'wm-kpi-prov', children: !accountsReady
             ? accounts.error ? t('ovFeesError') : t('ovFeesLoading')
             : t('ovPlansConfirmed', fees.withPlan, fees.total)
-              + (unknownSubs ? ' ' + t('ovFeesMissing', unknownSubs) : '') }),
-          jsx('div', { className: 'wm-kpi-foot', children: feeChips.length ? feeChips : certaintyChip('unknown', t('ovUnknown'), 'u') })
+              + (unknownFeeCount ? ' ' + t('ovFeesMissing', unknownFeeCount) : '') }),
+          jsxs('div', { className: 'wm-kpi-foot', children: [
+            ...feeChips,
+            feeEntries && unknownFeeCount ? certaintyChip('partial', t('ovCertPartial'), 'fpart') : null,
+            !feeEntries && unknownFeeCount ? certaintyChip('unknown', t('ovUnknown'), 'u') : null
+          ].filter(Boolean) })
         ] }),
         jsxs('article', { className: cn('wm-product-stat wm-kpi', econDifference != null && econDifference >= 0 && 'wm-econ-positive'), children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('econOverviewLabel') }),
@@ -6400,7 +6406,7 @@ const I18N = {
     ovFeesLabel: 'Membership fees · by billing period',
     ovPlansConfirmed: (w, t) => `${w} of ${t} accounts have a confirmed plan`,
     ovNoFees: 'No recurring fees',
-    ovFeesMissing: n => `${n} subscription(s) have no known fee; the subtotal excludes them.`,
+    ovFeesMissing: n => `${n} account(s) have no known fee; the subtotal excludes them.`,
     attnConflict: list => `Provider data disagrees with your manual mark on ${list}.`,
     attnExhausted: 'Account marked exhausted.',
     attnReconfirm: label => `${label}: no reliable reset time — please confirm or clear.`,
@@ -6741,7 +6747,7 @@ const I18N = {
     ovFeesLabel: '会员费用 · 按账单周期',
     ovPlansConfirmed: (w, t) => `${t} 个账户中有 ${w} 个已确认方案`,
     ovNoFees: '无周期性费用',
-    ovFeesMissing: n => `有 ${n} 个订阅没有已知费用；小计不含这些订阅。`,
+    ovFeesMissing: n => `有 ${n} 个账户没有已知费用；小计不含这些账户。`,
     attnConflict: list => `服务商数据与您的手动标记不一致：${list}。`,
     attnExhausted: '账户已标记为用尽。',
     attnReconfirm: label => `${label}：没有可靠的重置时间——请确认或清除。`,
