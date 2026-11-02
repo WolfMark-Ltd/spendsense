@@ -305,7 +305,7 @@ test('a failed refresh never claims the readings were refreshed', async () => {
   await flush(3)
 
   transportCtl.respond(() => { throw new Error('500 Internal Server Error') })
-  await clickByText(container, 'Refresh readings')
+  await clickByText(container, 'Refresh provider usage')
   await flush(3)
 
   const text = container.textContent
@@ -340,7 +340,7 @@ test('recovery: after a 503 the next read renders accounts and clears the error'
   transportCtl.respond(call => call.path.startsWith('/membership/plans')
     ? plansOk()
     : { ok: true, accounts: [account('a:acct', { label: 'Recovered account' })] })
-  await clickByText(container, 'Refresh readings')
+  await clickByText(container, 'Refresh provider usage')
   await flush(4)
 
   assert.match(container.textContent, /Recovered account/, 'the pane recovers without a reload')
@@ -924,7 +924,7 @@ test('a late initial read cannot overwrite a newer refresh in the same activatio
   const { container } = await boot(); await flush(2)
   transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
     : { ok: true, accounts: [account('new', { label: 'New reading' })] })
-  await clickByText(container, 'Refresh readings'); await flush(3)
+  await clickByText(container, 'Refresh provider usage'); await flush(3)
   await React.act(async () => { old.resolve({ ok: true, accounts: [account('old', { label: 'Old reading' })] }); await new Promise(r => setTimeout(r, 0)) }); await flush(3)
   assert.match(container.textContent, /New reading/)
   assert.doesNotMatch(container.textContent, /Old reading/)
@@ -1797,4 +1797,107 @@ test('a fee save on a record without a revision is refused before any write', as
   assert.ok(pageAlert, 'the page-level notice is kept')
   assert.equal(container.querySelector('form.wm-fee-form').noValidate, true,
     'native validation is off so the revision check runs instead of field bubbles')
+})
+
+test('PR-C: account rows are compact, collapsed by default, and expand on Details', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const sub = account('anthropic:default', {
+    family: 'anthropic', label: 'main', plan_id: 'anthropic.claude-pro',
+    plan: { name: 'Claude Pro' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 45, currency: 'GBP', period: 'month' } }
+  })
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+    : { ok: true })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="anthropic:default"]')
+  const head = card.querySelector('.wm-row-head')
+  assert.ok(head, 'the card renders a compact row head')
+  assert.match(head.textContent, /anthropic · main/)
+  assert.match(head.textContent, /Subscription · Claude Pro/)
+  assert.match(head.textContent, /£45\.00\/mo/)
+  const details = [...head.querySelectorAll('button')].find(b => /Details/.test(b.textContent))
+  assert.equal(details.getAttribute('aria-expanded'), 'false', 'rows start collapsed')
+  assert.equal(card.querySelector('.wm-row-body').hidden, true)
+  // Detail groups exist in the DOM with their controls, collapsed.
+  const groups = [...card.querySelectorAll('.wm-group')]
+  assert.deepEqual(groups.map(g => g.querySelector('summary').textContent),
+    ['Plan & billing', 'Allowances & readings', 'Advanced & diagnostics'])
+  assert.ok(card.querySelector('[data-group="plan"] input[type="checkbox"]'), 'plan group keeps the API Only checkbox')
+  assert.ok(card.querySelector('[data-group="advanced"]'), 'advanced group exists')
+  assert.match(card.querySelector('[data-group="advanced"]').textContent, /Account ID: anthropic:default/)
+  await React.act(async () => { details.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await flush(2)
+  assert.equal(details.getAttribute('aria-expanded'), 'true')
+  assert.equal(card.querySelector('.wm-row-body').hidden, false)
+})
+
+test('PR-C: opening a fee edit auto-opens its detail group', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const sub = account('openai-codex:default', {
+    family: 'openai-codex', label: 'main', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } }
+  })
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+    : { ok: true })
+  const { container } = await boot()
+  await flush(4)
+  const card = id => container.querySelector(`[data-account="${id}"]`)
+  await clickByText(card('openai-codex:default'), 'Edit fee')
+  await flush(2)
+  assert.equal(
+    card('openai-codex:default').querySelector('[data-group="plan"]').open, true,
+    'the fee draft opens Plan & billing')
+})
+
+test('PR-C: expanded rows are identity-isolated and the summary strip keeps its values', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [account('a:acct', { label: 'A account' })],
+        store: { loaded: true, error: '' }, notes: [] }
+    : { ok: true })
+  const { container } = await boot()
+  await flush(4)
+  assert.match(container.querySelector('.wm-stats').textContent, /Accounts/)
+  assert.match(container.querySelector('.wm-stats').textContent, /Membership fees/)
+  const card = container.querySelector('[data-account="a:acct"]')
+  const details = [...card.querySelectorAll('button')].find(b => /Details/.test(b.textContent))
+  await React.act(async () => { details.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await flush(2)
+  assert.equal(details.getAttribute('aria-expanded'), 'true')
+  await React.act(async () => { $testProfile.set('work') })
+  await flush(4)
+  const relaid = container.querySelector('[data-account="a:acct"] .wm-row-head button')
+  assert.equal(relaid.getAttribute('aria-expanded'), 'false',
+    'a profile switch collapses rows from the previous identity')
+})
+
+test('PR-C: refresh is renamed with an explanation and the operation is unchanged', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledgerTab.set('memberships')
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [account('a:acct', { label: 'A account' })],
+        store: { loaded: true, error: '' }, notes: [] }
+    : { ok: true })
+  const { container, text } = await boot()
+  await flush(4)
+  assert.ok([...container.querySelectorAll('button')].some(b => b.textContent === 'Refresh provider usage'))
+  assert.match(text(), /checks provider-reported usage and allowance information where supported/)
+  await clickByText(container, 'Refresh provider usage')
+  await flush(4)
+  assert.ok(transportCtl.calls.some(call => call.path === '/membership/accounts?native=true'),
+    'the renamed button still triggers the stored-plus-native refresh')
 })

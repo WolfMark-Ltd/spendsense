@@ -4478,6 +4478,10 @@ const $membershipBusy = atom('')
 /** Read account usage through Hermes on the next fetch. */
 const $membershipNative = atom(false)
 const $membershipAttentionOnly = atom(false)
+// Expanded account rows, keyed by account id. Pure UI state, but still
+// stamped with the identity it belongs to so a switch never shows one
+// backend's rows expanded under another's accounts.
+const $membershipExpanded = atom({ origin: null, ids: [] })
 /**
  * Last good account payload. A refetch with a new query key unmounts the cards
  * for a moment; rendering from this keeps the pane from flashing "no memberships"
@@ -4632,6 +4636,28 @@ const MEMBERSHIP_CSS = `
 .wm-check input{accent-color:var(--ui-accent);width:14px;height:14px;margin:0;flex:none}
 .wm-memberships select:disabled,.wm-memberships input:disabled{opacity:.55}
 .wm-memberships .wm-check:has(input:disabled){cursor:default}
+.wm-memberships .wm-stats{grid-template-columns:repeat(4,minmax(0,1fr))}
+.wm-memberships .wm-stat{padding:10px 14px}
+.wm-memberships .wm-statlabel{margin-bottom:2px;font-weight:600}
+.wm-memberships .wm-statvalue{font-size:16px;letter-spacing:-.2px;margin-bottom:0;font-variant-numeric:tabular-nums}
+.wm-memberships .wm-cards{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+.wm-row-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.wm-row-id{min-width:0}
+.wm-row-id strong{display:block;font-size:13.5px;font-weight:620;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wm-row-id span{display:block;font-size:11.5px;color:var(--ui-text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wm-row-mid{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
+.wm-row-fee{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.wm-chev{display:inline-block;transition:transform .15s ease}
+button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
+.wm-row-body{border-top:1px solid var(--ui-stroke-secondary);padding:6px 2px 2px}
+.wm-group{border-top:1px solid var(--ui-stroke-secondary);padding:10px 0 4px}
+.wm-group:first-child{border-top:0}
+.wm-group > summary{cursor:pointer;list-style:none;font-size:13px;font-weight:600;min-height:36px;display:flex;align-items:center;gap:8px;color:var(--ui-text-primary)}
+.wm-group > summary::-webkit-details-marker{display:none}
+.wm-group > summary::before{content:"›";display:inline-block;font-size:17px;line-height:1;font-weight:700;color:var(--ui-text-primary);transition:transform .15s ease}
+.wm-group[open] > summary::before{transform:rotate(90deg)}
+.wm-group-body{display:grid;gap:8px;padding:4px 0 10px}
+@container(max-width:620px){.wm-memberships .wm-row-mid{margin-left:0;width:100%}.wm-memberships .wm-row-head{align-items:flex-start}}
 `
 
 let membershipReadSerial = 0
@@ -5292,7 +5318,14 @@ function accountHolderMarked(account) {
     entry && entry.scope && entry.scope.kind === 'account' && entry.state !== 'cleared')
 }
 
-function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError }) {
+/** Short arrangement label for the compact row. Vocabulary matches the
+ * existing card; the PR-D display rename (Metered API) is out of scope. */
+function arrangementLabel(arrangement) {
+  return arrangement === 'subscription' ? 'Subscription'
+    : arrangement === 'prepaid' ? 'Prepaid credits'
+    : arrangement === 'api_only' ? 'API Only' : 'Not confirmed'
+}
+function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention }) {
   const identity = useValue($membershipIdentity)
   const now = useValue($membershipClock)
   const rawPlanDraft = useValue($customPlanDraft)
@@ -5335,15 +5368,117 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       : jsx('input', { type: options.type || 'text', value: customDraft[key] ?? '',
         placeholder: options.placeholder || '', onChange: event => setPlanField(key, event.target.value) })
   ] }, key)
+  // Custom-plan controls live in Advanced & diagnostics; the group below
+  // references these unchanged elements.
+  const customPlanButton = jsx('div', { className: 'wm-setting-action', children: [
+      jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
+        onClick: () => onAction('edit-custom-plan', account),
+        children: account.custom_plan ? 'Edit user-defined plan' : 'Create user-defined plan' })
+    ] })
+
+  const customPlanForm = subscription && customDraft ? jsxs('form', { className: 'wm-custom-form', noValidate: !account.rev, onSubmit: event => {
+      event.preventDefault()
+      onAction('save-custom-plan', account, customDraft)
+    }, children: [
+      jsx('h3', { children: 'User-defined plan for this credential' }),
+      jsx('p', { className: 'wm-note', children: 'Provider and account are taken from this discovered card. This plan stays attached to this account and outside the bundled catalogue.' }),
+      jsx('div', { className: 'wm-custom-grid', children: [
+        field('Plan name', 'name'),
+        field('Fee (optional)', 'amount', { type: 'number' }),
+        field('Currency', 'currency', { choices: feeCurrencies({ vocabulary: { currencies: ['USD', 'GBP', 'EUR', 'AUD', 'CAD', 'JPY', 'CNY', 'CHF', 'SEK', 'PLN', 'INR'] } }).map(code => [code, code]) }),
+        field('Billing frequency', 'period', { choices: [['month', 'Monthly'], ['year', 'Yearly'], ['quarter', 'Quarterly'], ['week', 'Weekly']] }),
+        field('Billing-cycle anchor day', 'anchor_day', { type: 'number' }),
+        field('Effective from', 'effective_from', { type: 'date' }),
+        field('Effective to', 'effective_to', { type: 'date' }),
+        field('Model restrictions (comma-separated)', 'model_restrictions')
+      ] }),
+      jsx('div', { className: 'wm-allowances', children: [
+        jsxs('div', { className: 'wm-card-head', children: [
+          jsx('strong', { children: 'Optional allowance definitions' }),
+          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () =>
+            $customPlanDraft.set({ ...customDraft, allowances: [...(customDraft.allowances || []),
+              { label: '', kind: 'rolling', duration_minutes: '', amount: '', currency: 'USD', scope: 'account' }] }),
+            children: 'Add allowance' })
+        ] }),
+        ...(customDraft.allowances || []).map((window, index) => jsxs('div', { className: 'wm-allowance-editor',
+          'data-custom-allowance': String(index), children: [
+            jsx('label', { className: 'wm-filter', children: [
+              jsx('span', { children: 'Window name' }),
+              jsx('input', { value: window.label, onChange: event => setAllowance(index, 'label', event.target.value) })
+            ] }),
+            jsx('label', { className: 'wm-filter', children: [
+              jsx('span', { children: 'Window kind' }),
+              jsx('select', { value: window.kind, onChange: event => setAllowance(index, 'kind', event.target.value),
+                children: [['rolling', 'Rolling'], ['billing_cycle', 'Billing cycle'], ['monthly_credit', 'Monthly credit']]
+                  .map(([value, text]) => jsx('option', { value, children: text }, value)) })
+            ] }),
+            jsx('label', { className: 'wm-filter', children: [
+              jsx('span', { children: 'Rolling duration (minutes, optional)' }),
+              jsx('input', { type: 'number', min: '1', value: window.duration_minutes,
+                onChange: event => setAllowance(index, 'duration_minutes', event.target.value) })
+            ] }),
+            jsx('label', { className: 'wm-filter', children: [
+              jsx('span', { children: 'Credit amount (optional)' }),
+              jsx('input', { type: 'number', min: '0', value: window.amount,
+                onChange: event => setAllowance(index, 'amount', event.target.value) })
+            ] }),
+            jsx('label', { className: 'wm-filter', children: [
+              jsx('span', { children: 'Currency' }),
+              jsx('select', { value: window.currency, onChange: event => setAllowance(index, 'currency', event.target.value),
+                children: ['USD', 'GBP', 'EUR', 'AUD', 'CAD', 'JPY', 'CNY', 'CHF', 'SEK', 'PLN', 'INR']
+                  .map(code => jsx('option', { value: code, children: code }, code)) })
+            ] }),
+            jsx('label', { className: 'wm-filter', children: [
+              jsx('span', { children: 'Applies to' }),
+              jsx('select', { value: window.scope, onChange: event => setAllowance(index, 'scope', event.target.value),
+                children: [['account', 'Account'], ['model', 'Model']].map(([value, text]) =>
+                  jsx('option', { value, children: text }, value)) })
+            ] }),
+            jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () =>
+              $customPlanDraft.set({ ...customDraft,
+                allowances: customDraft.allowances.filter((_, i) => i !== index) }),
+              children: 'Remove window' })
+          ]
+        }, index))
+      ] }),
+      customErrors.length ? jsx('p', { className: 'wm-warn-note', role: 'alert', children: customErrors.join(' ') }) : null,
+      jsx('div', { className: 'wm-setting-action', children: [
+        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy || customErrors.length > 0, children: 'Save user-defined plan' }),
+        jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $customPlanDraft.set(null), children: 'Cancel' })
+      ] })
+    ] }) : null
+
+  const expandedState = useValue($membershipExpanded)
+  const expanded = expandedState.origin === identity && expandedState.ids.includes(account.id)
+  const bodyId = `wm-card-body-${account.id}`
+  const toggleExpanded = () => {
+    const current = $membershipExpanded.get()
+    const ids = current.origin === identity ? current.ids : []
+    $membershipExpanded.set({ origin: identity,
+      ids: ids.includes(account.id) ? ids.filter(id => id !== account.id) : [...ids, account.id] })
+  }
+  const identityLabel = account.label && account.label !== account.family
+    ? `${account.family} · ${account.label}` : account.family
+  const planName = planSaved ? (account.plan?.name || account.plan_id) : 'No plan confirmed'
   return jsxs('article', { className: 'wm-card', 'data-account': account.id, children: keyedElementChildren([
-    jsxs('header', { className: 'wm-card-head', children: [
-      jsx('h3', { children: account.label && account.label !== account.family
-        ? `${account.family} · ${account.label}` : account.family }),
-      jsx('span', { className: 'wm-chip', 'data-state': account.credential_present ? 'live' : 'no_data',
-        children: account.credential_present ? 'configured credential' : 'credential not found' })
+    jsxs('div', { className: 'wm-row-head', children: [
+      jsxs('div', { className: 'wm-row-id', children: [
+        jsx('strong', { children: identityLabel }),
+        jsx('span', { children: `${arrangementLabel(arrangement)} · ${planName}` })
+      ] }),
+      jsxs('div', { className: 'wm-row-mid', children: [
+        jsx('span', { className: 'wm-row-fee', children: feeLabel(fee) }),
+        hasAttention ? jsx('span', { className: 'wm-certainty', 'data-certainty': 'partial', children: 'Needs attention' }) : null,
+        busy === account.id ? jsx('span', { className: 'wm-note', role: 'status', children: 'Saving…' }) : null,
+        jsx(ProductButton, { type: 'button', className: 'wm-button', 'aria-expanded': expanded, 'aria-controls': bodyId,
+          onClick: toggleExpanded, children: ['Details ', jsx('span', { className: 'wm-chev', 'aria-hidden': true, children: '›' }, 'chev')] })
+      ] })
     ] }),
-    jsx('p', { className: 'wm-note', children:
-      account.identity_source === 'native' ? 'Account identified by Hermes.' : 'Provider account slot; credential values are never shown.' }),
+    jsxs('div', { className: 'wm-row-body', id: bodyId, hidden: expanded ? undefined : true, children: [
+    jsxs('details', { className: 'wm-group', 'data-group': 'plan',
+      ...(draft?.account_id === account.id || customDraft ? { open: true } : {}), children: [
+      jsx('summary', { children: 'Plan & billing' }),
+      jsxs('div', { className: 'wm-group-body', children: [
     jsxs('label', { className: 'wm-check', children: [
       jsx('input', { type: 'checkbox', checked: apiOnly, disabled: !!busy,
         onChange: event => onAction('api-only', account, event.target.checked) }),
@@ -5440,82 +5575,11 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     subscription && fee.basis === 'declared' && fee.published?.source === 'user_defined'
       ? jsx('p', { className: 'wm-note', children: 'Your fee override is shown separately from the user-defined plan price.' })
       : null,
-    subscription ? jsx('div', { className: 'wm-setting-action', children: [
-      jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
-        onClick: () => onAction('edit-custom-plan', account),
-        children: account.custom_plan ? 'Edit user-defined plan' : 'Create user-defined plan' })
-    ] }) : null,
-    subscription && customDraft ? jsxs('form', { className: 'wm-custom-form', noValidate: !account.rev, onSubmit: event => {
-      event.preventDefault()
-      onAction('save-custom-plan', account, customDraft)
-    }, children: [
-      jsx('h3', { children: 'User-defined plan for this credential' }),
-      jsx('p', { className: 'wm-note', children: 'Provider and account are taken from this discovered card. This plan stays attached to this account and outside the bundled catalogue.' }),
-      jsx('div', { className: 'wm-custom-grid', children: [
-        field('Plan name', 'name'),
-        field('Fee (optional)', 'amount', { type: 'number' }),
-        field('Currency', 'currency', { choices: feeCurrencies({ vocabulary: { currencies: ['USD', 'GBP', 'EUR', 'AUD', 'CAD', 'JPY', 'CNY', 'CHF', 'SEK', 'PLN', 'INR'] } }).map(code => [code, code]) }),
-        field('Billing frequency', 'period', { choices: [['month', 'Monthly'], ['year', 'Yearly'], ['quarter', 'Quarterly'], ['week', 'Weekly']] }),
-        field('Billing-cycle anchor day', 'anchor_day', { type: 'number' }),
-        field('Effective from', 'effective_from', { type: 'date' }),
-        field('Effective to', 'effective_to', { type: 'date' }),
-        field('Model restrictions (comma-separated)', 'model_restrictions')
-      ] }),
-      jsx('div', { className: 'wm-allowances', children: [
-        jsxs('div', { className: 'wm-card-head', children: [
-          jsx('strong', { children: 'Optional allowance definitions' }),
-          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () =>
-            $customPlanDraft.set({ ...customDraft, allowances: [...(customDraft.allowances || []),
-              { label: '', kind: 'rolling', duration_minutes: '', amount: '', currency: 'USD', scope: 'account' }] }),
-            children: 'Add allowance' })
-        ] }),
-        ...(customDraft.allowances || []).map((window, index) => jsxs('div', { className: 'wm-allowance-editor',
-          'data-custom-allowance': String(index), children: [
-            jsx('label', { className: 'wm-filter', children: [
-              jsx('span', { children: 'Window name' }),
-              jsx('input', { value: window.label, onChange: event => setAllowance(index, 'label', event.target.value) })
-            ] }),
-            jsx('label', { className: 'wm-filter', children: [
-              jsx('span', { children: 'Window kind' }),
-              jsx('select', { value: window.kind, onChange: event => setAllowance(index, 'kind', event.target.value),
-                children: [['rolling', 'Rolling'], ['billing_cycle', 'Billing cycle'], ['monthly_credit', 'Monthly credit']]
-                  .map(([value, text]) => jsx('option', { value, children: text }, value)) })
-            ] }),
-            jsx('label', { className: 'wm-filter', children: [
-              jsx('span', { children: 'Rolling duration (minutes, optional)' }),
-              jsx('input', { type: 'number', min: '1', value: window.duration_minutes,
-                onChange: event => setAllowance(index, 'duration_minutes', event.target.value) })
-            ] }),
-            jsx('label', { className: 'wm-filter', children: [
-              jsx('span', { children: 'Credit amount (optional)' }),
-              jsx('input', { type: 'number', min: '0', value: window.amount,
-                onChange: event => setAllowance(index, 'amount', event.target.value) })
-            ] }),
-            jsx('label', { className: 'wm-filter', children: [
-              jsx('span', { children: 'Currency' }),
-              jsx('select', { value: window.currency, onChange: event => setAllowance(index, 'currency', event.target.value),
-                children: ['USD', 'GBP', 'EUR', 'AUD', 'CAD', 'JPY', 'CNY', 'CHF', 'SEK', 'PLN', 'INR']
-                  .map(code => jsx('option', { value: code, children: code }, code)) })
-            ] }),
-            jsx('label', { className: 'wm-filter', children: [
-              jsx('span', { children: 'Applies to' }),
-              jsx('select', { value: window.scope, onChange: event => setAllowance(index, 'scope', event.target.value),
-                children: [['account', 'Account'], ['model', 'Model']].map(([value, text]) =>
-                  jsx('option', { value, children: text }, value)) })
-            ] }),
-            jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () =>
-              $customPlanDraft.set({ ...customDraft,
-                allowances: customDraft.allowances.filter((_, i) => i !== index) }),
-              children: 'Remove window' })
-          ]
-        }, index))
-      ] }),
-      customErrors.length ? jsx('p', { className: 'wm-warn-note', role: 'alert', children: customErrors.join(' ') }) : null,
-      jsx('div', { className: 'wm-setting-action', children: [
-        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy || customErrors.length > 0, children: 'Save user-defined plan' }),
-        jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $customPlanDraft.set(null), children: 'Cancel' })
-      ] })
-    ] }) : null,
+    ] }) ] }),
+    jsxs('details', { className: 'wm-group', 'data-group': 'allowances',
+      ...(exhaustionDraft ? { open: true } : {}), children: [
+      jsx('summary', { children: 'Allowances & readings' }),
+      jsxs('div', { className: 'wm-group-body', children: [
     rows.length
       ? jsxs('ul', { className: 'wm-quota', children: rows.map(row => jsxs('li', { 'data-window': row.id, 'data-state': row.state, children: [
           jsxs('div', { className: 'wm-quota-head', children: [
@@ -5562,7 +5626,21 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
         jsx(ProductButton, { type: 'button', className: 'wm-button',
           onClick: () => $exhaustionDraft.set(null), children: 'Cancel' })
       ] })
-    ] }) : null
+    ] }) : null,
+    ] }) ] }),
+    jsxs('details', { className: 'wm-group', 'data-group': 'advanced', children: [
+      jsx('summary', { children: 'Advanced & diagnostics' }),
+      jsxs('div', { className: 'wm-group-body', children: [
+        jsx('span', { className: 'wm-chip', 'data-state': account.credential_present ? 'live' : 'no_data',
+          children: account.credential_present ? 'configured credential' : 'credential not found' }),
+        jsx('p', { className: 'wm-note', children:
+          account.identity_source === 'native' ? 'Account identified by Hermes.' : 'Provider account slot; credential values are never shown.' }),
+        jsx('p', { className: 'wm-note', children: `Account ID: ${account.id}` }),
+        subscription ? customPlanButton : null,
+        subscription && customDraft ? customPlanForm : null
+      ] })
+    ] })
+    ] })
   ], `membership-card-${account.id}`) })
 }
 
@@ -5612,6 +5690,7 @@ function MembershipsPage() {
     if (working && working.origin !== identity) $membershipBusy.set(null)
     $membershipNative.set(false)
     $membershipAttentionOnly.set(false)
+    $membershipExpanded.set({ origin: null, ids: [] })
     // The request log is deliberately *not* cleared: it is already bounded, and
     // wiping it would erase the very requests that failed to load.
   }, [identity])
@@ -5896,14 +5975,18 @@ function MembershipsPage() {
     jsxs('style', { children: [ANALYTICS_CSS, PRODUCT_CSS, MEMBERSHIP_CSS, WEATHER_CSS] }),
     jsx(LedgerTabs, {}),
     jsxs('div', { className: 'wm-shell wm-memberships', children: [
+      jsx(ProductHeader, { title: 'Memberships',
+        subtitle: 'Confirm each account’s plan and declared fee. Usage tracking never depends on this page.' }),
       jsxs('div', { className: 'wm-controls', children: [
         jsx(AsyncButton, { type: 'button', className: cn('wm-button', 'wm-accent'), disabled: !!busy,
           status: busy === 'discover' ? 'pending' : 'idle', pendingLabel: 'Discovering…',
           onClick: discover, children: 'Discover accounts' }),
         jsx(AsyncButton, { type: 'button', className: 'wm-button', disabled: !!busy,
           status: busy === 'refresh' ? 'pending' : 'idle', pendingLabel: 'Refreshing…',
-          onClick: refreshReadings, children: 'Refresh readings' })
+          onClick: refreshReadings, children: 'Refresh provider usage' })
       ] }),
+      jsx('p', { className: 'wm-note',
+        children: 'Refresh provider usage checks provider-reported usage and allowance information where supported. It does not change plans, fees or marks.' }),
       notice ? jsx('div', { className: 'wm-alert', 'data-tone': notice.tone === 'warn' ? 'warn' : 'good',
         role: 'status', children: notice.text }) : null,
       storeError
@@ -5921,11 +6004,11 @@ function MembershipsPage() {
           jsx('div', { className: 'wm-statvalue', children: accountsReady ? `${summary.withPlan} of ${summary.total}` : '—' })] }),
         jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: 'Marked exhausted' }),
           jsx('div', { className: 'wm-statvalue', children: accountsReady ? String(summary.exhausted) : '—' })] }),
-        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: 'Your declared fees' }),
+        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: 'Membership fees' }),
           jsx('div', { className: 'wm-statvalue', children: accountsReady ? feesLabel(summary) : '—' })] })
       ] }),
       jsx('p', { className: 'wm-note',
-        children: 'A declared fee is what you pay; provider percentages are limits, not money, and are never added to it.' }),
+        children: 'Membership fees are the effective amounts by currency and period. Provider percentages are limits, not money, and are never added to them.' }),
       attention.length
         ? jsxs('section', { className: 'wm-attention', 'aria-label': 'Needs attention', children: [
             jsx('h3', { children: 'Needs attention' }),
@@ -5961,7 +6044,8 @@ function MembershipsPage() {
                 account,
                 plans: accountPlanChoices(account),
                 busy, onAction, draft, saveFee, catalogue, notice,
-                weather: weatherById.get(account.id) || null, weatherError
+                weather: weatherById.get(account.id) || null, weatherError,
+                hasAttention: attentionIds.has(account.id)
               }, account.id))
             : [jsx('p', { className: 'wm-empty', children: accounts.error
                 ? 'Memberships could not be read for this connection.'
@@ -7058,6 +7142,7 @@ export const __test = {
   excludedPlansNote, planOptionLabel,
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,
   OVERRIDE_REASON_FALLBACK, REASON_LABELS, restoreCatalogueFee, MembershipsPage, MembershipCard, MEMBERSHIP_CSS,
+  $membershipExpanded, arrangementLabel,
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
   billingNumberStep, $billingDraft, $billingNotice,
   economicsQuery, fxQuery, fxWrite, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
