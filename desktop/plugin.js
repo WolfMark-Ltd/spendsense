@@ -3654,9 +3654,11 @@ function settledDesktopMonth(ledger, now = new Date()) {
   const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   let cost = 0
   let priced = 0
+  let unpriced = 0
   for (const [day, buckets] of Object.entries(ledger?.days || {})) {
     if (!day.startsWith(month)) continue
     for (const bucket of Object.values(buckets || {})) {
+      unpriced += Number(bucket?.unpricedTokens) || 0
       if (bucket?.legacy || !Number(bucket?.pricedTokens)) continue
       const value = Number(bucket?.cost)
       if (!Number.isFinite(value)) continue
@@ -3664,7 +3666,7 @@ function settledDesktopMonth(ledger, now = new Date()) {
       priced += Number(bucket.pricedTokens)
     }
   }
-  return { known: priced > 0, cost, pricedTokens: priced }
+  return { known: priced > 0, cost, pricedTokens: priced, unpricedTokens: unpriced }
 }
 
 /** Fee bases contributing to the membership totals, so declared fees and
@@ -3688,20 +3690,38 @@ function OverviewPage() {
   const analytics = useQuery(overviewAnalyticsQuery(identity))
   const accounts = useQuery(membershipQuery(false, identity))
   const economics = useQuery(economicsQuery(identity))
+  // Stored allowance readings only: native=false can never trigger a
+  // provider request, so attention stays passive.
+  const weather = useQuery(weatherQuery(identity, false))
   const ledger = useValue($ledger)
   const accountsReady = accounts.data?.identity === identity && membershipIdentityCurrent(identity)
   const currentAccounts = accountsReady
     ? membershipAccounts({ accounts: accounts.data.accounts }) : []
   const fees = membershipSummary(currentAccounts)
+  const weatherCurrent = weather.data?.identity === identity && membershipIdentityCurrent(identity)
+  const weatherById = new Map(
+    ((weatherCurrent ? weather.data.accounts : []) || []).map(entry => [entry.account_id, entry]))
   const local = settledDesktopMonth(ledger)
   const result = analytics.data?.totals || {}
   const econReady = economics.data?.identity === identity && membershipIdentityCurrent(identity)
   const econHeadline = econReady ? economics.data?.headline || {} : {}
   const econDifference = finiteValue(econHeadline.difference_usd)
-  // Both backend calls below use the same 30-day window, so the analytics
-  // unpriced-token count is the honest Partial signal for both cards.
   const unpriced = Number(result.unpriced_tokens || 0)
-  const items = accountsReady ? needsAttention(currentAccounts) : []
+  // Certainty for the subscription comparison comes from the economics
+  // response itself — its status and its attributed usage coverage — never
+  // from the general analytics unpriced count, which includes usage outside
+  // subscriptions.
+  const econUnpriced = ((econReady ? economics.data.accounts : []) || [])
+    .reduce((sum, row) => sum + (Number(row?.usage?.unpriced_tokens) || 0), 0)
+  const valuePartial = econReady && econDifference != null && econHeadline.status === 'partial'
+  const valueLowerBound = econReady && econDifference != null && econUnpriced > 0
+  // Subscriptions (plan-bearing, non-excluded arrangement) whose fee is
+  // unknown are neither zero nor absent — count them for disclosure.
+  const unknownSubs = currentAccounts.filter(account => account.plan_id
+    && !['api_only', 'prepaid', 'unconfirmed'].includes(account.effective_arrangement)
+    && (account.fee?.effective?.amount === null || account.fee?.effective?.amount === undefined)).length
+  const feeEntries = Object.keys(fees.byCurrencyPeriod || {}).length
+  const items = accountsReady ? needsAttention(currentAccounts, weatherById, t) : []
   const bases = feeBasisMix(currentAccounts)
   const feeChips = ['declared', 'catalogue', 'custom']
     .filter(basis => bases.has(basis))
@@ -3731,9 +3751,13 @@ function OverviewPage() {
       jsxs('section', { className: 'wm-product-summary', 'aria-label': t('ovFigures'), children: [
         jsxs('article', { className: 'wm-product-stat wm-kpi', children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovRecordedLabel') }),
-          jsx('div', { className: 'wm-kpi-figure', children: local.known ? fmtUsd(local.cost) : t('ovUnknown') }),
+          jsx('div', { className: 'wm-kpi-figure', children: !local.known ? t('ovUnknown')
+            : local.unpricedTokens ? [fmtUsd(local.cost), jsx('small', { children: ' ' + t('ovLowerBound') }, 'lb')] : fmtUsd(local.cost) }),
           jsx('p', { className: 'wm-kpi-prov', children: t('ovRecordedProv') }),
-          jsx('div', { className: 'wm-kpi-foot', children: certaintyChip('ok', t('ovCertRecorded'), 'recorded') })
+          jsxs('div', { className: 'wm-kpi-foot', children: [
+            certaintyChip('ok', t('ovCertRecorded'), 'recorded'),
+            local.known && local.unpricedTokens ? certaintyChip('partial', t('ovCertPartial'), 'rpart') : null
+          ].filter(Boolean) })
         ] }),
         jsxs('article', { className: 'wm-product-stat wm-kpi', children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovEstimatedLabel') }),
@@ -3750,15 +3774,21 @@ function OverviewPage() {
         ] }),
         jsxs('article', { className: 'wm-product-stat wm-kpi', children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovFeesLabel') }),
-          jsx('div', { className: 'wm-kpi-figure', children: accountsReady ? feesLabel(fees) : t('ovUnknown') }),
-          jsx('p', { className: 'wm-kpi-prov', children: accountsReady ? t('ovPlansConfirmed', fees.withPlan, fees.total)
-            : accounts.error ? t('ovFeesError') : t('ovFeesLoading') }),
+          jsx('div', { className: 'wm-kpi-figure', children: !accountsReady ? t('ovUnknown')
+            : feeEntries ? feesLabel(fees)
+            : unknownSubs ? t('ovUnknown') : t('ovNoFees') }),
+          jsx('p', { className: 'wm-kpi-prov', children: !accountsReady
+            ? accounts.error ? t('ovFeesError') : t('ovFeesLoading')
+            : t('ovPlansConfirmed', fees.withPlan, fees.total)
+              + (unknownSubs ? ' ' + t('ovFeesMissing', unknownSubs) : '') }),
           jsx('div', { className: 'wm-kpi-foot', children: feeChips.length ? feeChips : certaintyChip('unknown', t('ovUnknown'), 'u') })
         ] }),
         jsxs('article', { className: cn('wm-product-stat wm-kpi', econDifference != null && econDifference >= 0 && 'wm-econ-positive'), children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('econOverviewLabel') }),
           jsx('div', { className: 'wm-kpi-figure', children: !econReady ? t('ovUnknown')
-            : econDifference == null ? econStatusLabel(t, econHeadline.status) : analyticMoney(econDifference) }),
+            : econDifference == null ? econStatusLabel(t, econHeadline.status)
+            : valueLowerBound ? [analyticMoney(econDifference), jsx('small', { children: ' ' + t('ovLowerBound') }, 'vlb')]
+            : analyticMoney(econDifference) }),
           jsx('p', { className: 'wm-kpi-prov', children: !econReady
             ? economics.error ? t('econOverviewError')
               : t('econOverviewReading')
@@ -3768,7 +3798,7 @@ function OverviewPage() {
                   econWindowLines(econHeadline.fees_window_by_currency).join(' + '),
                   windowSpanLabel(t, economics.data?.window_days), analyticMoney(econHeadline.usage_usd)) }),
           jsx('div', { className: 'wm-kpi-foot', children:
-            econReady && econDifference != null && unpriced ? certaintyChip('partial', t('ovCertPartial'), 'vp') : null })
+            valuePartial ? certaintyChip('partial', t('ovCertPartial'), 'vp') : null })
         ] })
       ] }),
       jsxs('section', { className: 'wm-product-section', id: 'wm-needs-attention', children: [
@@ -4961,19 +4991,24 @@ function AllowanceWeather({ entry, error }) {
 }
 
 /** Everything the owner should look at, most urgent first. */
-function needsAttention(accounts, weatherById) {
+/** English fallback translator for callers outside a translated render. */
+function needsAttentionEn(key, ...args) {
+  const entry = I18N.en[key]
+  return typeof entry === 'function' ? entry(...args) : entry ?? key
+}
+function needsAttention(accounts, weatherById, t = needsAttentionEn) {
   const out = []
   for (const account of accounts) {
     const quota = account.quota || {}
     if (quota.conflicts && quota.conflicts.length) {
-      out.push({ account, tone: 'warn', text: `Provider data disagrees with your manual mark on ${quota.conflicts.join(', ')}.` })
+      out.push({ account, tone: 'warn', text: t('attnConflict', quota.conflicts.join(', ')) })
     }
     if (quota.account_exhausted) {
-      out.push({ account, tone: 'warn', text: 'Account marked exhausted.' })
+      out.push({ account, tone: 'warn', text: t('attnExhausted') })
     }
     for (const row of quotaRows(account)) {
       if (row.manual && row.manual.status === 'reconfirm_due') {
-        out.push({ account, tone: 'info', text: `${row.label}: no reliable reset time — please confirm or clear.` })
+        out.push({ account, tone: 'info', text: t('attnReconfirm', row.label) })
       }
     }
     // Before the arrangement exits: rule pools link by route whatever the
@@ -4982,26 +5017,26 @@ function needsAttention(accounts, weatherById) {
     if (weather) {
       for (const row of [...(weather.windows || []), ...(weather.rules || [])]) {
         if (row.verdict === 'ahead') {
-          out.push({ account, tone: 'info', text: `${row.label}: ahead of pace.` })
+          out.push({ account, tone: 'info', text: t('attnAhead', row.label) })
         } else if (row.used_usd !== undefined && row.verdict === 'exhausted') {
           // Rule pools only: window exhaustion already surfaces through the quota flags above.
-          out.push({ account, tone: 'info', text: `${row.label}: reached its allowance.` })
+          out.push({ account, tone: 'info', text: t('attnReached', row.label) })
         }
       }
     }
     if (account.effective_arrangement === 'api_only' || account.effective_arrangement === 'prepaid') continue
     if (account.effective_arrangement === 'unconfirmed') {
-      out.push({ account, tone: 'info', text: 'Billing arrangement not confirmed.' })
+      out.push({ account, tone: 'info', text: t('attnUnconfirmed') })
       continue
     }
     if (account.plan_reconfirmation?.required) {
-      out.push({ account, tone: 'info', text: `Hermes now reports "${account.plan_reconfirmation.reported_label}" — reconfirm the saved plan.` })
+      out.push({ account, tone: 'info', text: t('attnReconfirmPlan', account.plan_reconfirmation.reported_label) })
     }
     const basis = account.fee?.basis
     if (!account.plan_id) {
-      out.push({ account, tone: 'info', text: 'No plan confirmed yet.' })
+      out.push({ account, tone: 'info', text: t('attnNoPlan') })
     } else if (basis === 'unpriced' || basis === 'no_plan') {
-      out.push({ account, tone: 'info', text: 'No fee set for the chosen plan.' })
+      out.push({ account, tone: 'info', text: t('attnNoFee') })
     }
   }
   return out
@@ -5522,6 +5557,7 @@ function MembershipsPage() {
   // The identity is reactive: switching gateway or profile, or a re-activation
   // of the same gateway, re-renders this page with a different value, which
   // re-keys every membership query and re-stamps every piece of local state.
+  const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const plans = useQuery(membershipPlansQuery(identity))
   const native = useValue($membershipNative)
@@ -5581,7 +5617,7 @@ function MembershipsPage() {
   const weatherById = new Map(
     ((weatherCurrent ? weather.data.accounts : []) || []).map(entry => [entry.account_id, entry]))
   const weatherError = !!(weather.error && membershipIdentityCurrent(identity))
-  const attention = needsAttention(list, weatherById)
+  const attention = needsAttention(list, weatherById, t)
   const attentionIds = new Set(attention.map(item => item.account.id))
   const displayed = attentionOnly ? list.filter(account => attentionIds.has(account.id)) : list
   const jumpToAccount = account => {
@@ -6361,8 +6397,19 @@ const I18N = {
     ovBackendNone: 'Backend usage data is not available for this connection.',
     ovBackendEmpty: 'No backend calls recorded in the last 30 days.',
     ovBackendProv: 'Backend usage at current catalogue rates',
-    ovFeesLabel: 'Membership fees · monthly equivalent',
+    ovFeesLabel: 'Membership fees · by billing period',
     ovPlansConfirmed: (w, t) => `${w} of ${t} accounts have a confirmed plan`,
+    ovNoFees: 'No recurring fees',
+    ovFeesMissing: n => `${n} subscription(s) have no known fee; the subtotal excludes them.`,
+    attnConflict: list => `Provider data disagrees with your manual mark on ${list}.`,
+    attnExhausted: 'Account marked exhausted.',
+    attnReconfirm: label => `${label}: no reliable reset time — please confirm or clear.`,
+    attnAhead: label => `${label}: ahead of pace.`,
+    attnReached: label => `${label}: reached its allowance.`,
+    attnUnconfirmed: 'Billing arrangement not confirmed.',
+    attnReconfirmPlan: label => `Hermes now reports "${label}" — reconfirm the saved plan.`,
+    attnNoPlan: 'No plan confirmed yet.',
+    attnNoFee: 'No fee set for the chosen plan.',
     ovCertDeclared: 'Declared',
     ovCertCatalogue: 'Catalogue',
     ovCertCustom: 'Custom plan',
@@ -6691,8 +6738,19 @@ const I18N = {
     ovBackendNone: '此连接没有可用的后端用量数据。',
     ovBackendEmpty: '过去 30 天没有后端调用记录。',
     ovBackendProv: '按当前价格目录计算的后端用量',
-    ovFeesLabel: '会员费用 · 按月折算',
+    ovFeesLabel: '会员费用 · 按账单周期',
     ovPlansConfirmed: (w, t) => `${t} 个账户中有 ${w} 个已确认方案`,
+    ovNoFees: '无周期性费用',
+    ovFeesMissing: n => `有 ${n} 个订阅没有已知费用；小计不含这些订阅。`,
+    attnConflict: list => `服务商数据与您的手动标记不一致：${list}。`,
+    attnExhausted: '账户已标记为用尽。',
+    attnReconfirm: label => `${label}：没有可靠的重置时间——请确认或清除。`,
+    attnAhead: label => `${label}：消耗偏快。`,
+    attnReached: label => `${label}：已达到额度。`,
+    attnUnconfirmed: '账单安排未确认。',
+    attnReconfirmPlan: label => `Hermes 当前显示“${label}”——请重新确认已保存的方案。`,
+    attnNoPlan: '尚未确认方案。',
+    attnNoFee: '所选方案尚未设置费用。',
     ovCertDeclared: '已申报',
     ovCertCatalogue: '目录价格',
     ovCertCustom: '自定义方案',

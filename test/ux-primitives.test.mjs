@@ -278,6 +278,24 @@ test('LedgerPage: a no-op Home/End press does not leak focus restoration into mo
     'mouse navigation after a no-op End must not receive restored focus')
 })
 
+test('every attention (attn*) string exists in both en and zh, and zh renders', () => {
+  const enKeys = Object.keys(T.I18N.en).filter(k => k.startsWith('attn'))
+  assert.ok(enKeys.length > 5, 'the attention copy set is non-trivial')
+  for (const key of enKeys) {
+    assert.ok(key in T.I18N.zh, `zh is missing attention key ${key}`)
+    assert.equal(typeof T.I18N.zh[key], typeof T.I18N.en[key], `zh type matches en for ${key}`)
+  }
+  const zhT = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const items = T.needsAttention([{
+    id: 'x', label: 'xAI', plan_id: null, effective_arrangement: 'unconfirmed', quota: { windows: [] },
+  }], null, zhT)
+  assert.equal(items.length, 1)
+  assert.match(items[0].text, /未确认/, 'the zh attention message renders through the translator')
+})
+
 test('every Overview (ov*) string exists in both en and zh', () => {
   const enKeys = Object.keys(T.I18N.en).filter(k => k.startsWith('ov'))
   assert.ok(enKeys.length > 10, 'the Overview copy set is non-trivial')

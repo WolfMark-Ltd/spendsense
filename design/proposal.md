@@ -302,6 +302,7 @@ detection) remains a separate pre-release gate.
 | PR-B | Overview rebuilt on C2/C3; copy diet; disclosure for methodology | Medium — copy + i18n (en/zh) |
 | PR-C | Memberships summary strip + C5 collapsed rows; detail moved into C6 groups (no logic change) | Medium — largest structural change; keep all `data-*` hooks and identity/busy logic identical |
 | PR-D | Memberships detail groups polish: segmented billing control (display), field highlight on attention jump, save-state placement | Medium |
+| — | **Outstanding for PR-C/D** (explicitly deferred from PR-B): Overview attention rows currently route to the Memberships tab; per-account jump-to-card + field highlight stays in PR-D scope | — |
 | PR-E+ | Phase B rollout to Sidebar, Usage, Costs, Reports, Settings per issue #13 | Per-surface |
 
 Estimated effort: PR-A ~0.5 day, PR-B ~1 day, PR-C ~1.5–2 days, PR-D ~1 day,
