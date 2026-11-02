@@ -497,22 +497,24 @@ def route_billing_status(state_db_path: Path | str | None = None) -> dict[str, d
         return {"exact": {}}
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
-        rows = conn.execute(
-            """
-            SELECT billing_provider, model, cost_status, actual_cost_usd, estimated_cost_usd
-              FROM (
-                SELECT billing_provider, model, cost_status,
-                       actual_cost_usd, estimated_cost_usd,
-                       ROW_NUMBER() OVER (
-                         PARTITION BY billing_provider, model
-                         ORDER BY COALESCE(last_seen, 0) DESC
-                       ) AS rn
-                  FROM session_model_usage
-              )
-             WHERE rn = 1
-            """
-        ).fetchall()
-        conn.close()
+        try:
+            rows = conn.execute(
+                """
+                SELECT billing_provider, model, cost_status, actual_cost_usd, estimated_cost_usd
+                  FROM (
+                    SELECT billing_provider, model, cost_status,
+                           actual_cost_usd, estimated_cost_usd,
+                           ROW_NUMBER() OVER (
+                             PARTITION BY billing_provider, model
+                             ORDER BY COALESCE(last_seen, 0) DESC
+                           ) AS rn
+                      FROM session_model_usage
+                  )
+                 WHERE rn = 1
+                """
+            ).fetchall()
+        finally:
+            conn.close()
     except sqlite3.Error:
         return {"exact": {}}
 

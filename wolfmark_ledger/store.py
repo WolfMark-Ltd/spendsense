@@ -249,17 +249,19 @@ def capture_baseline(conn: sqlite3.Connection, state_db_path: Optional[Path | st
         return None
     try:
         state = sqlite3.connect(f"file:{state_path}?mode=ro", uri=True, timeout=5)
-        total, main, aux = state.execute(
-            """
-            SELECT COALESCE(SUM(input_tokens+output_tokens+cache_read_tokens+cache_write_tokens), 0),
-                   COALESCE(SUM(CASE WHEN task='' THEN
-                       input_tokens+output_tokens+cache_read_tokens+cache_write_tokens ELSE 0 END), 0),
-                   COALESCE(SUM(CASE WHEN task!='' THEN
-                       input_tokens+output_tokens+cache_read_tokens+cache_write_tokens ELSE 0 END), 0)
-              FROM session_model_usage
-            """
-        ).fetchone()
-        state.close()
+        try:
+            total, main, aux = state.execute(
+                """
+                SELECT COALESCE(SUM(input_tokens+output_tokens+cache_read_tokens+cache_write_tokens), 0),
+                       COALESCE(SUM(CASE WHEN task='' THEN
+                           input_tokens+output_tokens+cache_read_tokens+cache_write_tokens ELSE 0 END), 0),
+                       COALESCE(SUM(CASE WHEN task!='' THEN
+                           input_tokens+output_tokens+cache_read_tokens+cache_write_tokens ELSE 0 END), 0)
+                  FROM session_model_usage
+                """
+            ).fetchone()
+        finally:
+            state.close()
     except sqlite3.Error:
         return None
 
@@ -433,11 +435,13 @@ def reconciliation(conn: Optional[sqlite3.Connection],
                 "baseline_at": base["captured_at"], "baseline_tokens": int(base["total_tokens"])}
     try:
         state = sqlite3.connect(f"file:{state_path}?mode=ro", uri=True, timeout=5)
-        current = state.execute(
-            "SELECT COALESCE(SUM(input_tokens+output_tokens+cache_read_tokens+cache_write_tokens), 0) "
-            "FROM session_model_usage"
-        ).fetchone()[0]
-        state.close()
+        try:
+            current = state.execute(
+                "SELECT COALESCE(SUM(input_tokens+output_tokens+cache_read_tokens+cache_write_tokens), 0) "
+                "FROM session_model_usage"
+            ).fetchone()[0]
+        finally:
+            state.close()
     except sqlite3.Error:
         return {**empty, "status": "state_db_unavailable",
                 "baseline_at": base["captured_at"], "baseline_tokens": int(base["total_tokens"])}

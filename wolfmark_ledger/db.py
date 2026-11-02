@@ -95,6 +95,11 @@ def connect_readonly(path: Path | str) -> sqlite3.Connection:
     except sqlite3.Error as exc:
         conn.close()
         raise LedgerUnavailable(f"could not read usage database: {exc}") from exc
+    except LedgerUnavailable:
+        # A schema rejection must not leak the handle: on Windows an open
+        # connection keeps the file locked until GC, breaking cleanup.
+        conn.close()
+        raise
     return conn
 
 

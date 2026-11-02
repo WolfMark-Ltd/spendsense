@@ -8,7 +8,7 @@ the installed release; it reads the current tree and writes a copy.
 
     python3 scripts/build-test-plugin.py --out /path/to/spend-sense-test
 
-The backend namespace follows the plugin id (``ctx.rest`` → `/api/plugins/<id>`),
+The backend namespace follows the plugin id (``ctx.rest`` -> `/api/plugins/<id>`),
 so the API is mounted under the test name wherever this copy is installed.
 """
 
@@ -98,9 +98,9 @@ def main() -> int:
         count = source.count(before)
         if count:
             source = source.replace(before, after)
-            report.append({"file": "desktop/plugin.js", "change": f"{before} → {after}", "count": count})
+            report.append({"file": "desktop/plugin.js", "change": f"{before} -> {after}", "count": count})
 
-    report.insert(0, {"file": "desktop/plugin.js", "change": f"ID {args.source_id} → {args.test_id}", "count": 1})
+    report.insert(0, {"file": "desktop/plugin.js", "change": f"ID {args.source_id} -> {args.test_id}", "count": 1})
 
     version_declaration = "const PLUGIN_VERSION = '0.5.0'"
     if source.count(version_declaration) != 1:
@@ -116,7 +116,7 @@ def main() -> int:
         raise SystemExit(f"expected 1 occurrence of {route_before!r} in plugin.js")
     source = source.replace(route_before, f"const LEDGER_ROUTE = '{test_route}'", 1)
     report.append({"file": "desktop/plugin.js",
-                   "change": f"{route_before} → const LEDGER_ROUTE = '{test_route}'", "count": 1})
+                   "change": f"{route_before} -> const LEDGER_ROUTE = '{test_route}'", "count": 1})
 
     # 2c. the identity the user reads
     for index, (before, after) in enumerate(IDENTITY):
@@ -125,7 +125,7 @@ def main() -> int:
         if count != expected:
             raise SystemExit(f"expected {expected} occurrence(s) of {before!r} in plugin.js, found {count}")
         source = source.replace(before, after, 1)
-        report.append({"file": "desktop/plugin.js", "change": f"{before} → {after}", "count": 1})
+        report.append({"file": "desktop/plugin.js", "change": f"{before} -> {after}", "count": 1})
 
     plugin.write_text(source, encoding="utf-8")
 
@@ -142,7 +142,7 @@ def main() -> int:
         raise SystemExit("dashboard manifest does not declare the expected production tab route")
     tab["path"] = test_route
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    report.append({"file": "dashboard/manifest.json", "change": f"name → {args.test_id}, version → {TEST_VERSION}, tab path → {tab['path']}", "count": 1})
+    report.append({"file": "dashboard/manifest.json", "change": f"name -> {args.test_id}, version -> {TEST_VERSION}, tab path -> {tab['path']}", "count": 1})
 
     # 4. the agent-facing manifest
     yaml_path = out / "plugin.yaml"
@@ -156,7 +156,7 @@ def main() -> int:
             lines[index] = ('description: "Phase A test build of the Spend Sense — '
                             'isolated backend, synthetic data, not the installed release."')
     yaml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    report.append({"file": "plugin.yaml", "change": f"name → {args.test_id}, version → {TEST_VERSION}", "count": 1})
+    report.append({"file": "plugin.yaml", "change": f"name -> {args.test_id}, version -> {TEST_VERSION}", "count": 1})
 
     # Namespace every copied backend store as well as the Desktop and routes.
     # Refuse to produce a misleading build if the source layout has changed.
@@ -185,7 +185,7 @@ def main() -> int:
         raise SystemExit("plugin_api.py VERSION is not the expected 0.5.0")
     api.write_text(api_source.replace('VERSION = "0.5.0"', f'VERSION = "{TEST_VERSION}"', 1),
                    encoding="utf-8")
-    report.append({"file": "dashboard/plugin_api.py", "change": f"VERSION → {TEST_VERSION}", "count": 1})
+    report.append({"file": "dashboard/plugin_api.py", "change": f"VERSION -> {TEST_VERSION}", "count": 1})
 
     # 6. prove the identity actually changed and nothing else claims it
     final = plugin.read_text(encoding="utf-8")
@@ -196,7 +196,7 @@ def main() -> int:
 
     print(f"test plugin: {out}")
     for row in report:
-        print(f"  {row['file']:<28} {row['change']} ×{row['count']}")
+        print(f"  {row['file']:<28} {row['change']} x{row['count']}")
     print(f"  desktop/plugin.js sha256    {sha(plugin)}")
     print(f"  dashboard/plugin_api.py     {sha(api)}")
     return 0

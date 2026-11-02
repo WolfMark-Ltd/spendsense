@@ -229,7 +229,7 @@ class ApiTests(unittest.TestCase):
             event_db = Path(scratch) / "usage.db"
             state_db = Path(scratch) / "state.db"
             now = time.time()
-            with sqlite3.connect(state_db) as conn:
+            with closing(sqlite3.connect(state_db)) as conn, conn:
                 conn.executescript("""
                     CREATE TABLE sessions (
                         id TEXT PRIMARY KEY, source TEXT, title TEXT,
@@ -262,14 +262,22 @@ class ApiTests(unittest.TestCase):
 
             from wolfmark_ledger import store
 
-            store.bootstrap(state_db_path=state_db, path=event_db)
+            try:
+                store.bootstrap(state_db_path=state_db, path=event_db)
 
-            def report(**kwargs):
-                return real_report(event_db_path=event_db, state_db_path=state_db, **kwargs)
+                def report(**kwargs):
+                    return real_report(event_db_path=event_db, state_db_path=state_db, **kwargs)
 
-            with patch.object(plugin_api, "build_ledger_report", side_effect=report):
-                response = self.client.get("/api/plugins/spend-sense/ledger",
-                                           params={"days": 30, "basis": "hybrid"})
+                with patch.object(plugin_api, "build_ledger_report", side_effect=report):
+                    response = self.client.get("/api/plugins/spend-sense/ledger",
+                                               params={"days": 30, "basis": "hybrid"})
+            finally:
+                # bootstrap() opened the shared writer on the temp usage.db;
+                # leaving it open locks the file on Windows at cleanup.
+                if store._WRITER is not None:
+                    store._WRITER.close()
+                store._WRITER = None
+                store._WRITER_PATH = None
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertTrue(body["ok"])

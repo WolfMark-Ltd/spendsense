@@ -5,6 +5,7 @@ import importlib
 import importlib.util
 import os
 import sqlite3
+import sys
 import tempfile
 import time
 import unittest
@@ -21,6 +22,8 @@ NOW = datetime(2026, 10, 29, 12, tzinfo=timezone.utc).timestamp()
 
 @contextmanager
 def local_zone(name):
+    if sys.platform == "win32":
+        raise unittest.SkipTest("requires POSIX time.tzset; covered on Linux CI")
     previous = os.environ.get("TZ")
     os.environ["TZ"] = name
     time.tzset()
