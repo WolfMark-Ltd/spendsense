@@ -1836,6 +1836,37 @@ test('PR-C: account rows are compact, collapsed by default, and expand on Detail
   assert.equal(card.querySelector('.wm-row-body').hidden, false)
 })
 
+test('PR-C: plan-less API-only and prepaid rows show No plan, not the confirm prompt', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const api = account('deepseek:default', {
+    family: 'deepseek', label: 'main', plan_id: null, effective_arrangement: 'api_only',
+    fee: { basis: 'api_only', effective: { amount: null } }
+  })
+  const prepaid = account('openai:default', {
+    family: 'openai', label: 'main', plan_id: null, effective_arrangement: 'prepaid',
+    fee: { basis: 'prepaid', effective: { amount: null } }
+  })
+  const sub = account('openai-codex:default', {
+    family: 'openai-codex', label: 'main', plan_id: null, effective_arrangement: 'subscription',
+    fee: { basis: 'no_plan', effective: { amount: null } }
+  })
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [api, prepaid, sub], store: { loaded: true, error: '' }, notes: [] }
+    : { ok: true })
+  const { container } = await boot()
+  await flush(4)
+  const head = id => container.querySelector(`[data-account="${id}"] .wm-row-head`).textContent
+  assert.match(head('deepseek:default'), /API Only · No plan/,
+    'a plan-less API-only row does not ask for plan confirmation')
+  assert.match(head('openai:default'), /Prepaid credits · No plan/,
+    'a plan-less prepaid row does not ask for plan confirmation')
+  assert.match(head('openai-codex:default'), /Subscription · No plan confirmed yet\./,
+    'a plan-less subscription row keeps the confirm prompt')
+})
+
 const openCard = async card => {
   const details = [...card.querySelectorAll('.wm-row-head button')].find(b => /Details/.test(b.textContent))
   await React.act(async () => { details.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })

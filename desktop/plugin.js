@@ -5478,7 +5478,10 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   }
   const identityLabel = account.label && account.label !== account.family
     ? `${account.family} · ${account.label}` : account.family
-  const planName = planSaved ? (account.plan?.name || account.plan_id) : t('attnNoPlan')
+  // API-only and prepaid accounts need no plan, so they never show the
+  // "not confirmed yet" prompt. Mirrors the arrangement skip in needsAttention.
+  const planName = planSaved ? (account.plan?.name || account.plan_id)
+    : (apiOnly || arrangement === 'prepaid') ? t('econNoPlan') : t('attnNoPlan')
   return jsxs('article', { className: 'wm-card', 'data-account': account.id, children: keyedElementChildren([
     jsxs('div', { className: 'wm-row-head', children: [
       jsxs('div', { className: 'wm-row-id', children: [
