@@ -2359,7 +2359,8 @@ test('PR-D: a queued target expands the account, opens the group and focuses the
     assert.ok(document.activeElement === seg.querySelector('button[aria-pressed="true"]'),
       'focus moves to the pressed arrangement button')
     assert.ok(seg.classList.contains('wm-flash'), 'the target control is highlighted')
-    assert.ok(scrolled.some(([el]) => el === card), 'the card is scrolled into view')
+    assert.ok(scrolled.some(([el, opts]) => el === seg && opts?.block === 'nearest'),
+      'the resolved target itself is scrolled into view, not the card header')
     assert.equal(T.$membershipTarget.get(), null, 'the target is consumed')
     // The other account is untouched.
     assert.equal(container.querySelector('[data-account="anthropic:default"] .wm-row-head button')
@@ -2456,7 +2457,8 @@ test('PR-D: a missing precise target falls back to the account Details section',
   // the runner while it serialises them.
   assert.ok(document.activeElement === card.querySelector('.wm-row-head button'),
     'focus falls back to the Details toggle')
-  assert.ok(card.classList.contains('wm-flash'), 'the card itself is highlighted')
+  assert.ok(card.querySelector('.wm-row-head').classList.contains('wm-flash'),
+    'the Details section header is highlighted')
 })
 
 test('PR-D: Memberships attention actions jump within the page', async () => {
@@ -2478,4 +2480,144 @@ test('PR-D: Memberships attention actions jump within the page', async () => {
     .getAttribute('aria-expanded'), 'true', 'the in-page action expands the account')
   assert.ok(container.querySelector('[data-account="xai:default"] [data-nav="arrangement"]')
     .classList.contains('wm-flash'))
+})
+
+// ---------------------------------------------------------------------------
+// PR-D review: target visibility, reading targets, tooltip anchor.
+// ---------------------------------------------------------------------------
+
+test('PR-D review: an ahead warning targets its own weather reading, not a user mark', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  // The quota window carries an unrelated reconfirm mark: the provider
+  // reading target must not resolve to its Clear mark button.
+  const sub = account('w:acct', { family: 'w', label: 'W account',
+    plan_id: 'w.pro', plan: { name: 'Pro' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 10, currency: 'USD', period: 'month' } },
+    quota: { windows: [{ id: 'win-1', label: 'Weekly window', used_percent: 10,
+      state: 'manual', used_percent_from: 'manual',
+      manual: { id: 'man-1', status: 'reconfirm_due' } }] } })
+  const weather = { ok: true, accounts: [{ account_id: 'w:acct',
+    rollup: { state: 'ahead' }, cycle: {}, notes: [],
+    windows: [{ id: 'win-1', label: 'Weekly pool', verdict: 'ahead' }], rules: [] }] }
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.path === '/allowance/weather' ? weather
+    : { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'w:acct',
+    issue: 'ahead', group: 'allowances', focus: 'reading',
+    readingKind: 'window', readingId: 'win-1' })
+  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await flush(2)
+  const card = container.querySelector('[data-account="w:acct"]')
+  assert.equal(card.querySelector('.wm-weather-details').open, true,
+    'the weather details open for the reading')
+  const li = card.querySelector('li[data-weather-kind="window"][data-weather-id="win-1"]')
+  assert.ok(li, 'the reading row carries its stable identifier')
+  assert.ok(document.activeElement === li, 'focus moves to the reading itself')
+  assert.ok(li.classList.contains('wm-flash'), 'the reading is highlighted')
+  assert.ok(document.activeElement !== card.querySelector('button[data-action="clear-mark"]'),
+    'an unrelated user mark is never focused for a provider reading')
+})
+
+test('PR-D review: a reached rule warning targets the rule reading by profile and pool', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const sub = account('r:acct', { family: 'r', label: 'R account',
+    plan_id: 'r.pro', plan: { name: 'Pro' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 10, currency: 'USD', period: 'month' } } })
+  const weather = { ok: true, accounts: [{ account_id: 'r:acct',
+    rollup: { state: 'exhausted' }, cycle: {}, notes: [], windows: [],
+    rules: [{ profile_id: 'prof-1', pool: 'main', label: 'Main pool', verdict: 'exhausted',
+      used_usd: 50, limit_usd: 40, consumed_fraction: 1.0, lower_bound: false,
+      pace_usd_per_day: null, projected_exhaustion: null, forecast_status: 'unavailable' }] }] }
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.path === '/allowance/weather' ? weather
+    : { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'r:acct',
+    issue: 'reached', group: 'allowances', focus: 'reading',
+    readingKind: 'rule', readingProfile: 'prof-1', readingPool: 'main' })
+  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await flush(2)
+  const card = container.querySelector('[data-account="r:acct"]')
+  const li = card.querySelector(
+    'li[data-weather-kind="rule"][data-weather-profile="prof-1"][data-weather-pool="main"]')
+  assert.ok(li, 'the rule reading is addressable by profile and pool')
+  assert.ok(document.activeElement === li, 'focus moves to the rule reading')
+  assert.ok(li.classList.contains('wm-flash'), 'the rule reading is highlighted')
+})
+
+test('PR-D review: a disappeared reading falls back to the allowance section', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [account('g:acct', { label: 'G account' })],
+        store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'g:acct',
+    issue: 'ahead', group: 'allowances', focus: 'reading',
+    readingKind: 'window', readingId: 'win-gone' })
+  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await flush(2)
+  const card = container.querySelector('[data-account="g:acct"]')
+  const summary = card.querySelector('[data-group="allowances"] > summary')
+  assert.ok(document.activeElement === summary,
+    'a missing reading falls back to the allowance section')
+  assert.ok(card.querySelector('[data-group="allowances"]').classList.contains('wm-flash'))
+  assert.ok(document.activeElement !== card.querySelector('.wm-row-head button'),
+    'the section fallback is distinct from the Details fallback')
+})
+
+test('PR-D review: account exhaustion focuses the allowance section, not a clear action', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const sub = account('e:acct', { family: 'e', label: 'E account',
+    plan_id: 'e.pro', plan: { name: 'Pro' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 10, currency: 'USD', period: 'month' } },
+    quota: { account_exhausted: true, windows: [{ id: 'win-1', label: 'Weekly window',
+      used_percent: 10, state: 'manual', used_percent_from: 'manual',
+      manual: { id: 'man-1', status: 'reconfirm_due' } }] } })
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot()
+  await flush(4)
+  T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'e:acct',
+    issue: 'exhausted', group: 'allowances', focus: 'allowances' })
+  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await flush(2)
+  const card = container.querySelector('[data-account="e:acct"]')
+  assert.ok(document.activeElement === card.querySelector('[data-group="allowances"] > summary'),
+    'provider-reported exhaustion focuses the section, not another window mark')
+  assert.ok(document.activeElement !== card.querySelector('button[data-action="clear-mark"]'))
+})
+
+test('PR-D review: structured reading targets come from weather rows', () => {
+  const t = (key, ...args) => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const sub = account('s:default', { effective_arrangement: 'subscription',
+    plan_id: 's.pro', plan: { name: 'Pro' },
+    fee: { basis: 'declared', effective: { amount: 10, currency: 'USD', period: 'month' } } })
+  const weatherById = new Map([['s:default', {
+    windows: [{ id: 'win-1', label: 'Weekly pool', verdict: 'ahead' }],
+    rules: [{ profile_id: 'prof-1', pool: 'main', label: 'Main pool',
+      verdict: 'exhausted', used_usd: 50 }],
+  }]])
+  const items = T.needsAttention([sub], weatherById, t)
+  const byIssue = Object.fromEntries(items.map(i => [i.issue, i]))
+  assert.deepEqual(byIssue.ahead.target,
+    { group: 'allowances', focus: 'reading', readingKind: 'window', readingId: 'win-1' })
+  assert.deepEqual(byIssue.reached.target,
+    { group: 'allowances', focus: 'reading', readingKind: 'rule',
+      readingProfile: 'prof-1', readingPool: 'main' })
+})
+
+test('PR-D review: the billing header anchors its info tooltip', () => {
+  assert.match(T.MEMBERSHIP_CSS, /\.wm-billing-head\{[^}]*position:relative/,
+    'the billing header establishes the positioned containing block')
 })

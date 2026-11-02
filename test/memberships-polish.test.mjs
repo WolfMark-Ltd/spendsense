@@ -88,19 +88,19 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
         'focus lands on the current arrangement, not the first button')
       assert.equal(arrangement.flashed, true, 'the arrangement control is highlighted')
       assert.equal(arrangement.laidOut, true, 'the focused option has real size inside its card')
-      assert.equal(arrangement.scrolled, true, 'the card is scrolled into view')
+      assert.equal(arrangement.scrolled, true, 'the arrangement control is scrolled into view')
       const fee = result.steps.fee
       assert.equal(fee.expanded, true, 'fee target expands its account')
       assert.equal(fee.focused, true, 'fee target focuses the fee action')
       assert.equal(fee.flashed, true, 'the fee action is highlighted')
       assert.equal(fee.laidOut, true, 'the fee action has real size inside its card')
-      assert.equal(fee.scrolled, true, 'the fee card is scrolled into view')
+      assert.equal(fee.scrolled, true, 'the fee action is scrolled into view')
       const window = result.steps.window
       assert.equal(window.groupOpen, true, 'window target opens Allowances & readings')
       assert.equal(window.focused, true, 'window target focuses the Clear mark action')
       assert.equal(window.flashed, true, 'the window row is highlighted')
       assert.equal(window.laidOut, true, 'the Clear mark action has real size inside its card')
-      assert.equal(window.scrolled, true, 'the allowance card is scrolled into view')
+      assert.equal(window.scrolled, true, 'the window row is scrolled into view')
       // A real segmented write persists through the current guards.
       assert.equal(result.steps.write.puts.length, 1, 'one arrangement write is sent')
       assert.deepEqual(result.steps.write.puts[0],

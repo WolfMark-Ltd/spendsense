@@ -101,8 +101,12 @@ try {
   const scrollCalls = []
   const nativeScrollIntoView = Element.prototype.scrollIntoView
   Element.prototype.scrollIntoView = function (opts) {
-    scrollCalls.push({ account: this.closest?.('[data-account]')?.dataset?.account || null,
-      block: opts?.block || null, behavior: opts?.behavior || null })
+    const el = this
+    scrollCalls.push({ account: el.closest?.('[data-account]')?.dataset?.account || null,
+      block: opts?.block || null, behavior: opts?.behavior || null,
+      target: el.dataset?.nav === 'arrangement' ? 'arrangement'
+        : el.dataset?.action === 'edit-fee' ? 'fee'
+        : el.dataset?.window ? 'window' : (el.tagName || '').toLowerCase() })
     if (nativeScrollIntoView) {
       try { nativeScrollIntoView.call(this, opts) } catch {}
     }
@@ -117,8 +121,8 @@ try {
     return r.left >= c.left - 2 && r.right <= c.right + 2 &&
       r.top >= c.top - 2 && r.bottom <= c.bottom + 2
   }
-  const scrolledCard = accountId => scrollCalls.some(call =>
-    call.account === accountId && call.block === 'start')
+  const scrolledTarget = (accountId, target) => scrollCalls.some(call =>
+    call.account === accountId && call.block === 'nearest' && call.target === target)
   setTimeout(() => {
     (async () => {
       try {
@@ -175,7 +179,7 @@ try {
             focusedLabel: pressed.textContent,
             flashed: seg.classList.contains('wm-flash'),
             laidOut: laidOutInCard(pressed),
-            scrolled: scrolledCard('xai:default'),
+            scrolled: scrolledTarget('xai:default', 'arrangement'),
           }
         })
         // nous: fee target.
@@ -188,7 +192,7 @@ try {
             focused: document.activeElement === btn,
             flashed: btn.classList.contains('wm-flash'),
             laidOut: laidOutInCard(btn),
-            scrolled: scrolledCard('nous:default'),
+            scrolled: scrolledTarget('nous:default', 'fee'),
           }
         })
         // openai: window target prefers the Clear mark action.
@@ -202,7 +206,7 @@ try {
             focused: document.activeElement === btn,
             flashed: li.classList.contains('wm-flash'),
             laidOut: laidOutInCard(btn),
-            scrolled: scrolledCard('openai:default'),
+            scrolled: scrolledTarget('openai:default', 'window'),
           }
         })
         // Real segmented write on xai, last so attention order stays stable.

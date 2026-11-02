@@ -4655,7 +4655,7 @@ const MEMBERSHIP_CSS = `
 .wm-fee-form{max-width:640px}
 .wm-fee-form h3{margin:0;font-size:13px}
 .wm-fee-fields{border:0;margin:0;padding:0;min-width:0}
-.wm-billing-head{display:flex;align-items:center;gap:8px}
+.wm-billing-head{display:flex;align-items:center;gap:8px;position:relative}
 .wm-billing-label{font-size:12px;font-weight:600;color:var(--ui-text-secondary)}
 .wm-seg{display:flex;flex-wrap:wrap;border:1px solid var(--ui-stroke-secondary);border-radius:6px;overflow:hidden;width:fit-content;max-width:100%}
 .wm-seg button{border:0;border-left:1px solid var(--ui-stroke-secondary);background:transparent;color:var(--ui-text-tertiary);padding:7px 11px;min-height:34px;font-size:12px;cursor:pointer}
@@ -5050,9 +5050,19 @@ function AllowanceWeather({ entry, error }) {
   const notes = Array.isArray(entry.notes) ? entry.notes : []
   const rowNotes = row => Array.isArray(row.notes) ? row.notes.filter(note => note) : []
   const rows = [
-    ...windows.map(window => ({ summary: wxWindowRow(t, window), notes: rowNotes(window) })),
-    ...rules.map(rule => ({ summary: wxRuleRow(t, rule), notes: rowNotes(rule) })),
+    ...windows.map(window => ({ kind: 'window', key: `w:${window.id}`, id: window.id,
+      summary: wxWindowRow(t, window), notes: rowNotes(window) })),
+    ...rules.map(rule => ({ kind: 'rule', key: `r:${rule.profile_id}:${rule.pool}`,
+      profile: rule.profile_id, pool: rule.pool,
+      summary: wxRuleRow(t, rule), notes: rowNotes(rule) })),
   ]
+  // Rows carry their stable backend identifiers so attention navigation can
+  // target the exact reading. tabIndex -1 admits programmatic focus without
+  // adding tab stops.
+  const rowAttrs = row => row.kind === 'window'
+    ? { 'data-weather-kind': 'window', 'data-weather-id': row.id, tabIndex: -1 }
+    : { 'data-weather-kind': 'rule', 'data-weather-profile': row.profile,
+        'data-weather-pool': row.pool, tabIndex: -1 }
   return jsxs('section', { className: 'wm-weather', 'data-verdict': rollup,
     'aria-label': t('wxTitle'), children: [
       jsxs('div', { className: 'wm-weather-head', children: [
@@ -5065,12 +5075,12 @@ function AllowanceWeather({ entry, error }) {
       rows.length ? jsxs('details', { className: 'wm-weather-details', children: [
         jsx('summary', { children: t('wxDetails') }),
         jsxs('ul', { children: rows.map((row, index) => row.notes.length
-          ? jsxs('li', { children: [
+          ? jsxs('li', { ...rowAttrs(row), children: [
               row.summary,
               jsxs('ul', { className: 'wm-weather-subnotes',
                 children: row.notes.map((note, noteIndex) => jsx('li', { children: note }, `n${noteIndex}`)) }),
-            ] }, index)
-          : jsx('li', { children: row.summary }, index)) }),
+            ] }, row.key || index)
+          : jsx('li', { ...rowAttrs(row), children: row.summary }, row.key || index)) }),
       ] }) : null,
       notes.length ? jsxs('ul', { className: 'wm-weather-notes',
         children: notes.map((note, index) => jsx('li', { children: note }, index)) }) : null,
@@ -5106,13 +5116,18 @@ function needsAttention(accounts, weatherById, t = needsAttentionEn) {
     const weather = weatherById?.get?.(account.id)
     if (weather) {
       for (const row of [...(weather.windows || []), ...(weather.rules || [])]) {
+        // Rules carry cost figures; windows never do. The same test keeps
+        // the reading target on the row the warning names.
+        const reading = row.used_usd !== undefined
+          ? { readingKind: 'rule', readingProfile: row.profile_id, readingPool: row.pool }
+          : { readingKind: 'window', readingId: row.id }
         if (row.verdict === 'ahead') {
           out.push({ account, tone: 'info', text: t('attnAhead', row.label),
-            issue: 'ahead', target: { group: 'allowances', focus: 'allowances' } })
+            issue: 'ahead', target: { group: 'allowances', focus: 'reading', ...reading } })
         } else if (row.used_usd !== undefined && row.verdict === 'exhausted') {
           // Rule pools only: window exhaustion already surfaces through the quota flags above.
           out.push({ account, tone: 'info', text: t('attnReached', row.label),
-            issue: 'reached', target: { group: 'allowances', focus: 'allowances' } })
+            issue: 'reached', target: { group: 'allowances', focus: 'reading', ...reading } })
         }
       }
     }
@@ -5154,12 +5169,25 @@ function queueMembershipTarget(item) {
     accountId: item.account.id, issue: item.issue || 'unknown', ...item.target })
 }
 
+/** Locate a weather reading row by its stable backend identifiers. */
+function weatherReadingLi(card, nav) {
+  if (!card) return null
+  if (nav?.readingKind === 'window' && nav.readingId) {
+    return card.querySelector(`li[data-weather-kind="window"][data-weather-id="${nav.readingId}"]`)
+  }
+  if (nav?.readingKind === 'rule' && nav.readingProfile && nav.readingPool) {
+    return card.querySelector(
+      `li[data-weather-kind="rule"][data-weather-profile="${nav.readingProfile}"][data-weather-pool="${nav.readingPool}"]`)
+  }
+  return null
+}
+
 /**
  * DOM half of attention navigation. Runs after React commits the expanded
- * row: opens the target group, scrolls the card into view, focuses the
- * control and applies a temporary highlight. Falls back to the account
- * Details section when the precise target is gone. Pure UI: no reads, no
- * writes, no provider requests.
+ * row: opens the target group, scrolls the resolved target itself into
+ * view, focuses the control and applies a temporary highlight. Falls back
+ * to the account Details section when the precise target is gone. Pure UI:
+ * no reads, no writes, no provider requests.
  */
 function membershipTargetDom(nav) {
   if (typeof document === 'undefined' || !nav?.accountId) return
@@ -5190,20 +5218,36 @@ function membershipTargetDom(nav) {
           || li.querySelector('button[data-action="mark-exhausted"]:not([disabled])')
         flashEl = li
       }
+    } else if (nav.focus === 'reading') {
+      // Provider weather readings live inside the weather details; user
+      // exhaustion marks are never a substitute for them.
+      const details = card.querySelector('.wm-weather-details')
+      if (details) { try { details.open = true } catch {} }
+      const li = weatherReadingLi(card, nav)
+      if (li) { focusEl = li; flashEl = li }
+      else {
+        // The reading disappeared since the warning was raised: fall back
+        // to the allowance section rather than an unrelated action.
+        flashEl = groupEl
+        focusEl = groupEl?.querySelector('summary')
+      }
     } else if (nav.focus === 'allowances') {
+      // Section-level target (provider-reported exhaustion): focus the
+      // section itself, never another window's Clear mark button.
       flashEl = groupEl
-      focusEl = card.querySelector('button[data-action="clear-mark"]:not([disabled])')
-        || groupEl?.querySelector('summary')
+      focusEl = groupEl?.querySelector('summary')
     }
   } catch { focusEl = null; flashEl = null }
   if (!focusEl || !focusEl.isConnected) {
     focusEl = card.querySelector('.wm-row-head button[aria-expanded]')
-    flashEl = card
+    flashEl = card.querySelector('.wm-row-head') || card
   }
   if (!flashEl || !flashEl.isConnected) flashEl = card
   try {
+    // The highlight always contains the focused control, so scrolling it
+    // with 'nearest' reveals the destination even in tall expanded cards.
     const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-    card.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+    ;(flashEl || focusEl || card).scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'nearest' })
   } catch {}
   if (flashEl) {
     try {
@@ -7420,7 +7464,7 @@ export const __test = {
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,
   OVERRIDE_REASON_FALLBACK, REASON_LABELS, restoreCatalogueFee, MembershipsPage, MembershipCard, MEMBERSHIP_CSS,
   $membershipExpanded, $membershipTarget, arrangementLabel, attentionActionLabel, queueMembershipTarget,
-  membershipTargetDom,
+  membershipTargetDom, weatherReadingLi,
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
   billingNumberStep, $billingDraft, $billingNotice,
   economicsQuery, fxQuery, fxWrite, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
