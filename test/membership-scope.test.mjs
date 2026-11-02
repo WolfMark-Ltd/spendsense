@@ -1220,6 +1220,10 @@ test('Overview renders its settled Desktop cost summary without a React render e
   assert.ok(chips.includes('Catalogue'), `catalogue basis is labelled (${chips})`)
   assert.ok(!chips.includes('Declared'), `catalogue fees are not called declared (${chips})`)
   assert.match(container.textContent, /How these figures are calculated/)
+  assert.ok(summary.classList.contains('wm-overview-grid'), 'the 2x2 grid is scoped to Overview')
+  const method = container.querySelector('details.wm-method > summary')
+  assert.ok(method, 'the methodology disclosure keeps native details/summary behaviour')
+  assert.match(method.textContent, /How these figures are calculated/)
   await React.act(async () => T.$ledger.set(T.emptyLedger()))
 })
 

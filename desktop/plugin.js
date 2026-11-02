@@ -3066,6 +3066,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-account-chip[data-attention="true"]{border-color:var(--ui-warning);color:var(--ui-text-primary)}',
   '.wm-product .wm-overview-attention{margin:6px 0 4px;padding-left:18px;display:grid;gap:5px;font-size:13px;line-height:1.5;color:var(--ui-text-secondary)}',
   '.wm-product .wm-product-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:10px}',
+  '.wm-product .wm-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}',
   '.wm-product .wm-product-stat{border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-primary);padding:14px 15px;min-width:0;min-height:98px}',
   '.wm-product .wm-product-stat label{display:block;color:var(--ui-text-tertiary);font-size:12px}',
   '.wm-product .wm-product-stat strong{display:block;margin-top:5px;font-size:19px;line-height:1.3;font-weight:580;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
@@ -3084,7 +3085,10 @@ const PRODUCT_CSS = [
   '.wm-product .wm-attn-main strong{font-size:13px;font-weight:600}',
   '.wm-product .wm-attn-main span{display:block;font-size:12px;color:var(--ui-text-secondary);overflow-wrap:anywhere}',
   '.wm-product .wm-method{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:12px 16px;background:var(--ui-fill-primary)}',
-  '.wm-product .wm-method summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--ui-text-secondary);min-height:32px;display:flex;align-items:center}',
+  '.wm-product .wm-method summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--ui-text-secondary);min-height:32px;display:flex;align-items:center;list-style:none}',
+  '.wm-product .wm-method summary::-webkit-details-marker{display:none}',
+  '.wm-product .wm-method summary::before{content:"›";display:inline-block;margin-right:8px;font-size:17px;line-height:1;font-weight:700;color:var(--ui-text-primary);transition:transform .15s ease}',
+  '.wm-product .wm-method[open] > summary::before{transform:rotate(90deg)}',
   '.wm-product .wm-method summary:hover{color:var(--ui-text-primary)}',
   '.wm-product .wm-method p{font-size:12.5px;line-height:1.6;color:var(--ui-text-secondary);max-width:78ch}',
   '.wm-product .wm-product-section{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:17px;background:var(--ui-fill-primary)}',
@@ -3113,7 +3117,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-stat small{display:block;margin-top:6px;color:var(--ui-text-tertiary);font-size:11px;line-height:1.4}',
   '.wm-product .wm-product-section p{max-width:78ch}',
   '.wm-product :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}',
-  '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}}'
+  '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-overview-grid{grid-template-columns:1fr}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}}'
 ].join('');
 
 function pricingStatusQuery(identity = membershipIdentityNow()) {
@@ -3753,7 +3757,7 @@ function OverviewPage() {
             jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: scrollToAttention, children: t('ovStripReview') })
           ] })
         : null,
-      jsxs('section', { className: 'wm-product-summary', 'aria-label': t('ovFigures'), children: [
+      jsxs('section', { className: 'wm-product-summary wm-overview-grid', 'aria-label': t('ovFigures'), children: [
         jsxs('article', { className: 'wm-product-stat wm-kpi', children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovRecordedLabel') }),
           jsx('div', { className: 'wm-kpi-figure', children: !local.known ? t('ovUnknown')
