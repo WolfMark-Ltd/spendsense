@@ -25,7 +25,7 @@ if (!chrome) {
     t.skip('No Chrome/Chromium binary available: layout geometry cannot be verified here.')
   })
 } else {
-  test('memberships summary: 1 column at 380px, 4 at ledger width, long fees wrap', async () => {
+  test('memberships layout: summary columns, long fees, and inline exhaustion at 380px', async () => {
     const work = mkdtempSync(join(tmpdir(), 'wm-memberships-layout-'))
     try {
       const esbuild = (await import(pathToFileURL(join(HARNESS_MODULES, 'esbuild', 'lib', 'main.js')).href)).default
@@ -66,6 +66,13 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
       assert.ok(narrow.overflow.every(px => px <= 1),
         `fee values do not overflow their cells (${JSON.stringify(narrow.overflow)})`)
       assert.ok(narrow.paneOverflow <= 1, `the 380px pane has no horizontal overflow (${narrow.paneOverflow}px)`)
+      const flow = result.narrowExhaustion
+      assert.ok(flow, 'the narrow-pane exhaustion flow ran')
+      assert.equal(flow.formOpened, true, 'Mark exhausted opens the form at 380px')
+      assert.equal(flow.inlineInWindow, true, 'the form renders inside the clicked window row')
+      assert.equal(flow.directlyUnderButton, true, 'the form sits immediately beneath its button')
+      assert.equal(flow.focusInForm, true, 'focus moves into the opened form')
+      assert.ok(flow.paneOverflow <= 1, `the open form fits the 380px pane (${flow.paneOverflow}px)`)
       assert.equal(wide.columns, 4, `ledger width keeps four columns (got ${wide.columns})`)
       assert.equal(result.hostCalls, 0, 'no host/gateway calls were made')
     } finally {

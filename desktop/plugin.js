@@ -38,7 +38,7 @@ import {
   useQuery,
   useValue
 } from '@hermes/plugin-sdk'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
@@ -4832,6 +4832,20 @@ function membershipAccounts(payload) {
   return payload.accounts
 }
 
+/**
+ * Stable presentation order for membership accounts: provider family, then
+ * account label, then account id. A refetch may return the backend list in
+ * any order; sorting the displayed copy keeps rows, navigation and filtered
+ * lists still. The store keeps backend order.
+ */
+function compareMembershipAccounts(a, b) {
+  const rank = value => String(value || '').toLowerCase()
+  const by = (x, y) => x < y ? -1 : x > y ? 1 : 0
+  return by(rank(a?.family), rank(b?.family))
+    || by(rank(a?.label), rank(b?.label))
+    || by(String(a?.id || ''), String(b?.id || ''))
+}
+
 function fmtMoney(amount, currency) {
   if (amount === null || amount === undefined || amount === '' || Number.isNaN(Number(amount))) return null
   const value = Number(amount)
@@ -5368,7 +5382,19 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   }
   const exhaustionDraft = rawExhaustionDraft?.origin === identity && rawExhaustionDraft.account_id === account.id
     ? rawExhaustionDraft : null
-  const openExhaustion = (scopeId, label) => onAction('exhaust', account, scopeId, label)
+  // The button that opened the current draft, so Cancel can return focus to
+  // it instead of dropping focus to the page when the form unmounts.
+  const draftOpener = useRef(null)
+  const cancelDraft = clear => {
+    clear()
+    const opener = draftOpener.current
+    draftOpener.current = null
+    if (opener && opener.isConnected) opener.focus()
+  }
+  const openExhaustion = (scopeId, label, opener) => {
+    draftOpener.current = opener || null
+    onAction('exhaust', account, scopeId, label)
+  }
   const submitExhaustion = event => {
     event.preventDefault()
     if (!exhaustionDraft) return
@@ -5379,6 +5405,32 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     }
     onAction('confirm-exhaust', account, { ...exhaustionDraft, reset_at })
   }
+  // One form, rendered beneath the button that opened it: inside the matching
+  // window row, under the account button, or — if a refetch removed its
+  // anchor — at the group bottom so the draft is never stranded. The first
+  // field takes focus on open (no smooth scrolling, so reduced-motion safe);
+  // Cancel returns focus to the opener. Submit mirrors the fee form: the
+  // label switches while saving and a scoped failure renders in place.
+  const exhaustionForm = exhaustionDraft ? jsxs('form', { className: 'wm-exhaustion-form', onSubmit: submitExhaustion, children: [
+    jsx('h3', { children: 'Record your exhaustion report' }),
+    notice?.tone === 'warn' && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
+    jsx('p', { className: 'wm-note', children: `${exhaustionDraft.label} · This is user-reported and is not provider-confirmed.` }),
+    jsx('label', { className: 'wm-filter', children: [
+      jsx('span', { children: 'Expected reset date and time (optional)' }),
+      jsx('input', { type: 'datetime-local', autoFocus: true, value: exhaustionDraft.reset_local || '',
+        onChange: event => $exhaustionDraft.set({ ...exhaustionDraft, reset_local: event.target.value }) })
+    ] }),
+    jsx('p', { className: 'wm-note', children: 'No reset time is inferred from when you mark it. A countdown appears only when you supply a time.' }),
+    jsx('div', { className: 'wm-setting-action', children: [
+      jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy,
+        children: busy === account.id ? 'Saving…' : 'Save manual status' }),
+      jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
+        onClick: () => cancelDraft(() => $exhaustionDraft.set(null)), children: 'Cancel' })
+    ] })
+  ] }) : null
+  const exhaustionAnchored = !exhaustionDraft
+    || (exhaustionDraft.scope_kind === 'window' && rows.some(row => row.id === exhaustionDraft.scope_id))
+    || (exhaustionDraft.scope_kind === 'account' && (!rows.length || !accountHolderMarked(account)))
   const field = (label, key, options = {}) => jsxs('label', { className: 'wm-filter', children: [
     jsx('span', { children: label }),
     options.choices
@@ -5391,7 +5443,8 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   // references these unchanged elements.
   const customPlanButton = jsx('div', { className: 'wm-setting-action', children: [
       jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
-        onClick: () => onAction('edit-custom-plan', account),
+        'aria-expanded': !!customDraft,
+        onClick: event => { draftOpener.current = event.currentTarget; onAction('edit-custom-plan', account) },
         children: account.custom_plan ? 'Edit user-defined plan' : 'Create user-defined plan' })
     ] })
 
@@ -5400,6 +5453,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       onAction('save-custom-plan', account, customDraft)
     }, children: [
       jsx('h3', { children: 'User-defined plan for this credential' }),
+      notice?.tone === 'warn' && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
       jsx('p', { className: 'wm-note', children: 'Provider and account are taken from this discovered card. This plan stays attached to this account and outside the bundled catalogue.' }),
       jsx('div', { className: 'wm-custom-grid', children: [
         field('Plan name', 'name'),
@@ -5462,8 +5516,8 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       ] }),
       customErrors.length ? jsx('p', { className: 'wm-warn-note', role: 'alert', children: customErrors.join(' ') }) : null,
       jsx('div', { className: 'wm-setting-action', children: [
-        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy || customErrors.length > 0, children: 'Save user-defined plan' }),
-        jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $customPlanDraft.set(null), children: 'Cancel' })
+        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy || customErrors.length > 0, children: busy === account.id ? 'Saving…' : 'Save user-defined plan' }),
+        jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy, onClick: () => cancelDraft(() => $customPlanDraft.set(null)), children: 'Cancel' })
       ] })
     ] }) : null
 
@@ -5542,7 +5596,8 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     ] }) : null,
     subscription || apiOnly ? jsxs('div', { className: 'wm-fee-row', children: [
       jsx('span', { className: 'wm-fee', children: feeLabel(fee) }),
-      jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !subscription || !!busy, onClick: () => onAction('fee', account), children: 'Edit fee' })
+      jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !subscription || !!busy, 'aria-expanded': draft?.account_id === account.id,
+        onClick: event => { draftOpener.current = event.currentTarget; onAction('fee', account) }, children: 'Edit fee' })
     ] }) : null,
     subscription && draft && draft.account_id === account.id
         // Without a revision no correction can ever save, so native bubbles
@@ -5586,7 +5641,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
             ] }),
             jsxs('div', { className: 'wm-controls', children: [
               jsx(ProductButton, { type: 'submit', className: cn('wm-button', 'wm-accent'), disabled: !!busy, children: busy === account.id ? 'Saving…' : 'Save fee' }),
-              jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy, onClick: () => $membershipDraft.set(null), children: 'Cancel' })
+              jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy, onClick: () => cancelDraft(() => $membershipDraft.set(null)), children: 'Cancel' })
             ] })
           ] })
         : null,
@@ -5615,42 +5670,35 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
             row.manual && !row.reset ? 'No reset time supplied by you.' : ''].filter(Boolean).join(' · ') }),
           jsxs('div', { className: 'wm-quota-actions', children: [
             jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
-              onClick: () => openExhaustion(row.id, row.label), children: 'Mark exhausted' }),
+              'aria-expanded': exhaustionDraft?.scope_kind === 'window' && exhaustionDraft.scope_id === row.id,
+              onClick: event => openExhaustion(row.id, row.label, event.currentTarget),
+              children: 'Mark exhausted' }),
             row.manual && row.manual.status !== 'cleared'
               ? jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
                   onClick: () => onAction('clear', account, row.manual.id), children: 'Clear mark' })
               : null
-          ] })
+          ] }),
+          exhaustionDraft?.scope_kind === 'window' && exhaustionDraft.scope_id === row.id ? exhaustionForm : null
         ] }, row.id)) })
       : jsxs('div', { className: 'wm-quota-empty', children: [
           jsx('p', { className: 'wm-note', children: 'No quota windows are published for this account. You can still record that it is used up.' }),
           jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'exhaust-account',
             disabled: !!busy,
-            onClick: () => openExhaustion(ACCOUNT_SCOPE, 'Account'),
-            children: 'Mark account exhausted' })
+            'aria-expanded': exhaustionDraft?.scope_kind === 'account',
+            onClick: event => openExhaustion(ACCOUNT_SCOPE, 'Account', event.currentTarget),
+            children: 'Mark account exhausted' }),
+          exhaustionDraft?.scope_kind === 'account' ? exhaustionForm : null
         ] }),
     jsx(AllowanceWeather, { entry: weather || null, error: !!weatherError }),
     rows.length && !accountHolderMarked(account)
       ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'exhaust-account-footer',
           disabled: !!busy,
-          onClick: () => openExhaustion(ACCOUNT_SCOPE, 'Account'),
+          'aria-expanded': exhaustionDraft?.scope_kind === 'account',
+          onClick: event => openExhaustion(ACCOUNT_SCOPE, 'Account', event.currentTarget),
           children: 'Mark account exhausted' })
       : null,
-    exhaustionDraft ? jsxs('form', { className: 'wm-exhaustion-form', onSubmit: submitExhaustion, children: [
-      jsx('h3', { children: 'Record your exhaustion report' }),
-      jsx('p', { className: 'wm-note', children: `${exhaustionDraft.label} · This is user-reported and is not provider-confirmed.` }),
-      jsx('label', { className: 'wm-filter', children: [
-        jsx('span', { children: 'Expected reset date and time (optional)' }),
-        jsx('input', { type: 'datetime-local', value: exhaustionDraft.reset_local || '',
-          onChange: event => $exhaustionDraft.set({ ...exhaustionDraft, reset_local: event.target.value }) })
-      ] }),
-      jsx('p', { className: 'wm-note', children: 'No reset time is inferred from when you mark it. A countdown appears only when you supply a time.' }),
-      jsx('div', { className: 'wm-setting-action', children: [
-        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy, children: 'Save manual status' }),
-        jsx(ProductButton, { type: 'button', className: 'wm-button',
-          onClick: () => $exhaustionDraft.set(null), children: 'Cancel' })
-      ] })
-    ] }) : null,
+    rows.length && !accountHolderMarked(account) && exhaustionDraft?.scope_kind === 'account' ? exhaustionForm : null,
+    exhaustionDraft && !exhaustionAnchored ? exhaustionForm : null,
     ] }) ] }),
     jsxs('details', { className: 'wm-group', 'data-group': 'advanced',
       ...membershipGroupOpen(account.id, 'advanced', !!customDraft),
@@ -5731,7 +5779,10 @@ function MembershipsPage() {
                               store: accounts.data.store, notes: accounts.data.notes })
   }, [accounts.data, identity])
 
-  const list = current ? membershipAccounts(current) : []
+  // Sorted copy: membershipAccounts returns the live cached array, so sort
+  // must not run on it directly. Cards, jump navigation, attention and the
+  // filtered list all derive from here and share the order.
+  const list = current ? [...membershipAccounts(current)].sort(compareMembershipAccounts) : []
   const accountsReady = !!current
   const weatherCurrent = weather.data?.identity === identity && membershipIdentityCurrent(identity)
   const weatherById = new Map(

@@ -1867,6 +1867,63 @@ test('PR-C: plan-less API-only and prepaid rows show No plan, not the confirm pr
     'a plan-less subscription row keeps the confirm prompt')
 })
 
+test('PR-C: row order is stable by family, label, id across a reversed refetch', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const mk = (id, family, label, extra = {}) => account(id, { family, label,
+    plan_id: `${family}.pro`, plan: { name: 'Pro' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 10, currency: 'USD', period: 'month' } }, ...extra })
+  // Labels deliberately oppose family order; b:2 and d:5 share family+label
+  // so the id tie-breaker decides between them.
+  const b2 = mk('b:2', 'alpha', 'Alfa')
+  const d5 = mk('d:5', 'alpha', 'Alfa')
+  const a4 = mk('a:4', 'alpha', 'Echo')
+  const a3 = mk('a:3', 'beta', 'Delta', { plan_id: 'beta.pro',
+    fee: { basis: 'unpriced', effective: { amount: null } } })
+  const c1 = mk('c:1', 'zebra', 'Able', { plan_id: null, plan: null,
+    fee: { basis: 'no_plan', effective: { amount: null } } })
+  const initial = [c1, a3, d5, b2, a4]
+  let saved = false
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'PUT') { saved = true; return { ok: true, account: b2 } }
+    return { ok: true, accounts: saved ? [...initial].reverse() : initial,
+      store: { loaded: true, error: '' }, notes: [] }
+  })
+  const { container } = await boot()
+  await flush(4)
+  const order = () => [...container.querySelectorAll('article[data-account]')].map(a => a.dataset.account)
+  const navOrder = () => [...container.querySelectorAll('.wm-account-chip')]
+    .map(chip => chip.textContent.replace(' · check', ''))
+    .filter(text => !/Needs attention|Showing/.test(text))
+  const expected = ['b:2', 'd:5', 'a:4', 'a:3', 'c:1']
+  assert.deepEqual(order(), expected, 'rows sort by family, then label, then id')
+  assert.deepEqual(navOrder(), ['Alfa', 'Alfa', 'Echo', 'Delta', 'Able'],
+    'account navigation follows the same order')
+  // The filtered list keeps the order too: a:3 (unpriced fee) and c:1 (no
+  // plan) need attention.
+  await clickByText(container, 'Needs attention only')
+  await flush(2)
+  assert.deepEqual(order(), ['a:3', 'c:1'], 'the filtered list keeps the stable order')
+  await clickByText(container, 'show all')
+  await flush(2)
+  // A fee save refetches with the backend order reversed; the visible order
+  // must not move.
+  const card = container.querySelector('[data-account="b:2"]')
+  await openCard(card)
+  await toggleGroup(card, 'plan')
+  await clickByText(card, 'Edit fee')
+  await typeAmount(card, '23')
+  await clickByText(card, 'Save fee')
+  await flush(5)
+  assert.equal(transportCtl.count(c => c.method === 'PUT'), 1, 'the fee saved')
+  assert.deepEqual(order(), expected, 'rows do not move when the refetch reverses backend order')
+  assert.deepEqual(navOrder(), ['Alfa', 'Alfa', 'Echo', 'Delta', 'Able'],
+    'navigation does not move when the refetch reverses backend order')
+})
+
 const openCard = async card => {
   const details = [...card.querySelectorAll('.wm-row-head button')].find(b => /Details/.test(b.textContent))
   await React.act(async () => { details.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
@@ -1961,6 +2018,137 @@ test('PR-C: Details → Allowances → exhaustion shows the exhaustion editor', 
   assert.ok(card.querySelector('form.wm-exhaustion-form'), 'the exhaustion editor is shown')
   assert.equal(card.querySelector('[data-group="allowances"]').open, true,
     'the exhaustion draft opens Allowances & readings')
+  await clickByText(card, 'Cancel')
+  await flush(2)
+})
+
+test('PR-C: window exhaustion form opens inline under its button and takes focus', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const sub = account('openai-codex:default', {
+    family: 'openai-codex', label: 'main', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } },
+    quota: { windows: [
+      { id: 'win-1', label: 'Weekly window', used_percent: 10, state: 'live' },
+      { id: 'win-2', label: 'Monthly window', used_percent: 40, state: 'live' },
+    ] }
+  })
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+    : { ok: true })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="openai-codex:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'allowances')
+  const li = card.querySelector('li[data-window="win-2"]')
+  const button = [...li.querySelectorAll('button')].find(b => b.textContent === 'Mark exhausted')
+  await React.act(async () => { button.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await flush(2)
+  const forms = [...card.querySelectorAll('form.wm-exhaustion-form')]
+  assert.equal(forms.length, 1, 'one exhaustion form opens')
+  assert.equal(forms[0].closest('li[data-window]')?.dataset.window, 'win-2',
+    'the form renders inside the clicked window row, not at the group bottom')
+  assert.equal(li.querySelector('.wm-quota-actions').nextElementSibling, forms[0],
+    'the form sits immediately beneath the clicked button')
+  assert.equal(button.getAttribute('aria-expanded'), 'true', 'the opener announces the open form')
+  assert.equal(document.activeElement, forms[0].querySelector('input[type="datetime-local"]'),
+    'the first field takes focus so the response is visible')
+  await clickByText(card, 'Cancel')
+  await flush(2)
+})
+
+test('PR-C: account exhaustion form opens under the account button; cancel returns focus', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const sub = account('openai-codex:default', {
+    family: 'openai-codex', label: 'main', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } },
+    quota: { windows: [] }
+  })
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+    : { ok: true })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="openai-codex:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'allowances')
+  const button = [...card.querySelectorAll('button')].find(b => b.textContent === 'Mark account exhausted')
+  await React.act(async () => { button.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await flush(2)
+  const form = card.querySelector('form.wm-exhaustion-form')
+  assert.ok(form, 'the exhaustion form opens')
+  assert.ok(form.closest('.wm-quota-empty'), 'the form renders under the account button')
+  assert.equal(button.nextElementSibling, form, 'nothing sits between the button and its form')
+  assert.equal(document.activeElement, form.querySelector('input[type="datetime-local"]'),
+    'the first field takes focus')
+  await clickByText(card, 'Cancel')
+  await flush(2)
+  assert.equal(card.querySelector('form.wm-exhaustion-form'), null, 'cancel closes the form')
+  assert.equal(document.activeElement, button, 'cancel returns focus to the opener')
+})
+
+test('PR-C: exhaustion save shows Saving, and a failed save keeps the draft with an alert', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const sub = account('openai-codex:default', {
+    family: 'openai-codex', label: 'main', plan_id: 'openai-codex.chatgpt-plus',
+    plan: { name: 'ChatGPT Plus' }, effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } },
+    quota: { windows: [] }
+  })
+  const gate = deferred()
+  let failWrites = false
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'POST' && call.path.endsWith('/exhaustion')) {
+      return failWrites ? Promise.reject(new Error('500 Internal Server Error')) : gate.promise
+    }
+    return { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+  })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="openai-codex:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'allowances')
+  await clickByText(card, 'Mark account exhausted')
+  await flush(2)
+  const form = card.querySelector('form.wm-exhaustion-form')
+  const dt = form.querySelector('input[type="datetime-local"]')
+  await React.act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(dt, '2026-12-31T23:59')
+    dt.dispatchEvent(new window.Event('input', { bubbles: true }))
+  })
+  await flush(2)
+  await clickByText(card, 'Save manual status')
+  await flush(2)
+  const submit = [...card.querySelectorAll('form.wm-exhaustion-form button')].find(b => b.type === 'submit')
+  assert.match(submit.textContent, /Saving…/, 'the submit button distinguishes saving from drafting')
+  assert.equal([...card.querySelectorAll('form.wm-exhaustion-form button')]
+    .find(b => b.textContent === 'Cancel').disabled, true, 'cancel waits while the save is in flight')
+  await React.act(async () => { gate.resolve({ ok: true }); await new Promise(r => setTimeout(r, 0)) })
+  await flush(5)
+  assert.equal(card.querySelector('form.wm-exhaustion-form'), null, 'a clean save closes the form')
+  // A failed save keeps the typed draft and explains itself inside the form.
+  failWrites = true
+  await clickByText(card, 'Mark account exhausted')
+  await flush(2)
+  await clickByText(card, 'Save manual status')
+  await flush(5)
+  const kept = card.querySelector('form.wm-exhaustion-form')
+  assert.ok(kept, 'the failed save keeps the draft open')
+  assert.match(kept.querySelector('[role="alert"]').textContent, /The backend answered with an error/,
+    'the failure is explained where the save was attempted')
   await clickByText(card, 'Cancel')
   await flush(2)
 })

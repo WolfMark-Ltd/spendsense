@@ -21,13 +21,14 @@ const Badge = noop, Button = noop, Codicon = noop, SegmentedControl = noop, Tip 
 const cn = (...a) => a.filter(Boolean).join(' ')
 const host = { state: { focusedSessionId: { get: () => null, listen: () => () => {} }, focusedStoredSessionId: { get: () => null, listen: () => () => {} }, profile: { get: () => '' }, focusedSessionProfile: { get: () => '' } }, notify() {}, navigate(p) { globalThis.__nav.push(p); globalThis.window.location.hash = '#' + p }, request: async () => null }
 const useEffect = noop
+const useRef = initial => ({ current: initial })
 const queryClient = { fetchQuery: async q => q.queryFn(), getQueryData: () => null }
 const usePluginI18n = noop, useQuery = noop, useValue = noop
 const jsx = noop, jsxs = noop
 `
 const body = src
   .replace(/import \{[^}]*\} from '@hermes\/plugin-sdk'\n/, stub)
-  .replace(/import \{ useEffect \} from 'react'\n/, '')
+  .replace(/import \{[^}]*\} from 'react'\n/, '')
   .replace(/import \{ jsx, jsxs \} from 'react\/jsx-runtime'\n/, '')
 globalThis.__nav = []
 globalThis.window = { location: { hash: '' }, addEventListener() {}, removeEventListener() {} }

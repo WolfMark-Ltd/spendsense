@@ -22,12 +22,13 @@ const jsx = (type, props, key) => ({type, props: props || {}, key}), jsxs = jsx
 const Badge = 'badge', Button = 'button', Codicon = 'icon', SegmentedControl = 'segments', Tip = 'tip'
 const useValue = store => { globalThis.analyticsSubscriptions?.push(store); return store.get() }
 const useEffect = () => {}
+const useRef = initial => ({ current: initial })
 const usePluginI18n = () => (key, ...args) => { const entry = I18N[globalThis.analyticsLanguage || 'en'][key]; return typeof entry === 'function' ? entry(...args) : entry ?? key }
 const useQuery = q => { globalThis.analyticsQueries.push(q); return globalThis.analyticsResponse || {isLoading:true} }
 const queryClient = { fetchQuery: async q => q.queryFn(), getQueryData: () => null }
 `
 const body = source.replace(/import \{[^}]*\} from '@hermes\/plugin-sdk'\n/, stub)
- .replace(/import \{ useEffect \} from 'react'\n/, '')
+ .replace(/import \{[^}]*\} from 'react'\n/, '')
  .replace(/import \{ jsx, jsxs \} from 'react\/jsx-runtime'\n/, '')
 const dir = mkdtempSync(join(tmpdir(), 'analytics-test-'))
 const file = join(dir, 'plugin.mjs')
