@@ -21,9 +21,9 @@ from pathlib import Path
 from typing import Any, Iterator, Optional
 
 try:
-    from .db import default_db_path
+    from .db import LedgerUnavailable, default_db_path
 except ImportError:  # isolated capability probe loads store as top-level
-    from db import default_db_path  # type: ignore
+    from db import LedgerUnavailable, default_db_path  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -161,17 +161,35 @@ def connect_writer(path: Optional[Path | str] = None) -> sqlite3.Connection:
 
 
 def connect_reader(path: Optional[Path | str] = None) -> Optional[sqlite3.Connection]:
-    """Read-only connection, or None when the collector has never run."""
+    """Read-only connection, or None when the collector has never run.
+
+    A missing file is a valid empty state. An existing file that cannot be
+    opened or has no call history raises LedgerUnavailable: callers must
+    report unavailable data, never silent zeros. Nothing is created,
+    migrated or repaired here.
+    """
     target = Path(path) if path else event_db_path()
     if not target.exists():
         return None
     try:
         conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True, timeout=5)
-    except sqlite3.Error:
-        return None
+    except sqlite3.Error as exc:
+        raise LedgerUnavailable(f"could not open usage database read-only: {exc}") from exc
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only=ON")
-    conn.execute("PRAGMA busy_timeout=5000")
+    try:
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
+        has_calls = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='calls'"
+        ).fetchone()
+    except sqlite3.Error as exc:
+        conn.close()
+        raise LedgerUnavailable(f"could not read usage database: {exc}") from exc
+    if has_calls is None:
+        conn.close()
+        raise LedgerUnavailable(
+            f"usage database has no call history table: {target}"
+        )
     return conn
 
 
@@ -309,20 +327,26 @@ def record(record: dict[str, Any], path: Optional[Path | str] = None,
 
 
 def query_calls(conn: sqlite3.Connection, *, since: float, until: float) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        "SELECT * FROM calls WHERE ts >= ? AND ts < ? ORDER BY ts ASC",
-        (since, until),
-    ).fetchall()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM calls WHERE ts >= ? AND ts < ? ORDER BY ts ASC",
+            (since, until),
+        ).fetchall()
+    except sqlite3.Error as exc:
+        raise LedgerUnavailable(f"could not query usage calls: {exc}") from exc
     return [dict(row) for row in rows]
 
 
 def recording_info(conn: Optional[sqlite3.Connection]) -> dict[str, Any]:
     if conn is None:
         return {"calls": 0, "since": None, "last": None, "baseline_at": None}
-    row = conn.execute(
-        "SELECT COUNT(*) AS calls, MIN(ts) AS since, MAX(ts) AS last FROM calls"
-    ).fetchone()
-    base = conn.execute("SELECT captured_at FROM baseline WHERE id=1").fetchone()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS calls, MIN(ts) AS since, MAX(ts) AS last FROM calls"
+        ).fetchone()
+        base = conn.execute("SELECT captured_at FROM baseline WHERE id=1").fetchone()
+    except sqlite3.Error as exc:
+        raise LedgerUnavailable(f"could not read usage recording state: {exc}") from exc
     return {
         "calls": int(row["calls"] or 0),
         "since": row["since"],
@@ -351,7 +375,10 @@ def reconciliation(conn: Optional[sqlite3.Connection],
     }
     if conn is None:
         return empty
-    base = conn.execute("SELECT * FROM baseline WHERE id=1").fetchone()
+    try:
+        base = conn.execute("SELECT * FROM baseline WHERE id=1").fetchone()
+    except sqlite3.Error as exc:
+        raise LedgerUnavailable(f"could not read usage baseline: {exc}") from exc
     if base is None:
         return empty
 
@@ -370,13 +397,16 @@ def reconciliation(conn: Optional[sqlite3.Connection],
         return {**empty, "status": "state_db_unavailable",
                 "baseline_at": base["captured_at"], "baseline_tokens": int(base["total_tokens"])}
 
-    captured_row = conn.execute(
-        "SELECT COUNT(*) AS calls, COALESCE(SUM(total_tokens),0) AS tokens "
-        "FROM calls WHERE recorded_at >= ?",
-        # The first callback can be recorded a moment before the baseline
-        # insert completes; a 2s tolerance keeps that first call in the count.
-        (base["captured_at"] - 2.0,),
-    ).fetchone()
+    try:
+        captured_row = conn.execute(
+            "SELECT COUNT(*) AS calls, COALESCE(SUM(total_tokens),0) AS tokens "
+            "FROM calls WHERE recorded_at >= ?",
+            # The first callback can be recorded a moment before the baseline
+            # insert completes; a 2s tolerance keeps that first call in the count.
+            (base["captured_at"] - 2.0,),
+        ).fetchone()
+    except sqlite3.Error as exc:
+        raise LedgerUnavailable(f"could not read captured usage: {exc}") from exc
     delta = int(current or 0) - int(base["total_tokens"] or 0)
     captured = int(captured_row["tokens"] or 0)
     gap = delta - captured

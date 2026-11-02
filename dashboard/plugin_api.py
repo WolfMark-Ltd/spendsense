@@ -53,8 +53,33 @@ def health() -> dict[str, Any]:
         "version": VERSION,
         "db_present": db.exists(),
         "event_db_present": event_db.exists(),
+        "event_db_status": _event_db_status(event_db),
         "rate_card": catalogue.meta(),
     }
+
+
+def _event_db_status(event_db: Path) -> str:
+    """Usability of the usage store: missing, ready, or unreadable.
+
+    Presence alone cannot distinguish an empty-but-valid store from a
+    corrupt one, so reporting endpoints need this to explain zero usage
+    honestly. Read-only: the probe opens, validates and closes.
+    """
+    if not event_db.exists():
+        return "missing"
+    try:
+        conn = store.connect_reader(event_db)
+    except LedgerUnavailable:
+        return "unreadable"
+    except Exception:  # noqa: BLE001 - health must never raise
+        log.error("spend-sense: usage store probe failed")
+        return "unreadable"
+    if conn is None:  # pragma: no cover - raced deletion between exists() and open
+        return "missing"
+    try:
+        return "ready"
+    finally:
+        conn.close()
 
 
 @router.get("/analytics")
@@ -277,6 +302,8 @@ def allowance_weather_report(
         raise _store_unreadable(exc) from exc
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LedgerUnavailable as exc:
+        raise HTTPException(status_code=503, detail="allowance call store unavailable") from exc
     except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
         log.error("spend-sense: allowance weather failed")
         raise HTTPException(status_code=500, detail="allowance weather failed") from exc
@@ -301,6 +328,8 @@ def digest_report(
         raise _store_unreadable(exc) from exc
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LedgerUnavailable as exc:
+        raise HTTPException(status_code=503, detail="digest call store unavailable") from exc
     except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
         log.error("spend-sense: digest failed")
         raise HTTPException(status_code=500, detail="digest failed") from exc
