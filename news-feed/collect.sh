@@ -42,7 +42,9 @@ fail() {
 mkdir -p "$STATE"
 mkdir "$LOCKDIR" 2>/dev/null || fail "another run holds the lock (remove $LOCKDIR if stale)"
 # Trap only after acquiring: a refused run must never touch the holder's lock.
-trap 'rmdir "$LOCKDIR" 2>/dev/null; rm -f "$LIVE_TMP" 2>/dev/null' EXIT INT TERM
+# Each step is '|| :'-guarded: under 'set -e' a failing rmdir (e.g. the lock
+# already removed) would otherwise abort the trap and override our exit status.
+trap 'rmdir "$LOCKDIR" 2>/dev/null || :; rm -f "$LIVE_TMP" 2>/dev/null || :' EXIT INT TERM
 
 [ -x "$PYTHON" ] || fail "python not executable: $PYTHON"
 "$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 10))' \
