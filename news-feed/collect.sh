@@ -27,6 +27,7 @@ LIVE="$WEBROOT/feed/v1/news.json"
 LIVE_TMP="$WEBROOT/feed/v1/.news.json.new"
 ROLLBACK="$STATE/news.json.prev"
 LOCKDIR="$STATE/collect.lock"
+RECOVERING="$STATE/collect.recovering"
 PYTHON="${FEED_PYTHON:-/usr/bin/python3}"
 MODELS_URL="${MODELS_DEV_URL:-https://models.dev/api.json}"
 RETAIN_DAYS="${FEED_RETAIN_DAYS:-90}"
@@ -44,16 +45,23 @@ fail() {
 # (strace-proven: the syscall fails, the binary reports success), which
 # would let two runs hold the lock at once. The syscall reports truthfully.
 lock_mkdir() {
-    "$PYTHON" -c 'import os, sys; os.mkdir(sys.argv[1])' "$LOCKDIR" 2>/dev/null
+    "$PYTHON" -c 'import os, sys; os.mkdir(sys.argv[1])' "$1" 2>/dev/null
 }
 
 # Directory lock with stale recovery: a reboot or SIGKILL leaves the lock
 # behind with no trap running, which would refuse every later run. A lock
 # whose recorded pid is dead is removed and retried once; an unreadable
 # pid means a holder we cannot verify, so refuse and let the next run retry.
+# Stale recovery itself is serialised by a second dir: without it, two runs
+# could both read the same dead pid, clear each other's fresh lock, and
+# both proceed. The recovery dir has no recovery of its own (a crash in
+# that microsecond window only wedges the recovery path, loudly).
 acquire_lock() {
-    if lock_mkdir; then
-        echo $$ > "$LOCKDIR/pid" || return 1
+    if lock_mkdir "$LOCKDIR"; then
+        if ! echo $$ > "$LOCKDIR/pid"; then
+            rmdir "$LOCKDIR" 2>/dev/null || :
+            return 1
+        fi
         return 0
     fi
     lock_pid="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
@@ -63,10 +71,22 @@ acquire_lock() {
     if kill -0 "$lock_pid" 2>/dev/null; then
         return 1
     fi
+    lock_mkdir "$RECOVERING" || return 1
     rm -f "$LOCKDIR/pid" 2>/dev/null || :
-    rmdir "$LOCKDIR" 2>/dev/null || return 1
-    lock_mkdir || return 1
-    echo $$ > "$LOCKDIR/pid" || return 1
+    if ! rmdir "$LOCKDIR" 2>/dev/null; then
+        rmdir "$RECOVERING" 2>/dev/null || :
+        return 1
+    fi
+    if ! lock_mkdir "$LOCKDIR"; then
+        rmdir "$RECOVERING" 2>/dev/null || :
+        return 1
+    fi
+    if ! echo $$ > "$LOCKDIR/pid"; then
+        rmdir "$LOCKDIR" 2>/dev/null || :
+        rmdir "$RECOVERING" 2>/dev/null || :
+        return 1
+    fi
+    rmdir "$RECOVERING" 2>/dev/null || :
     return 0
 }
 
@@ -74,7 +94,7 @@ mkdir -p "$STATE"
 [ -x "$PYTHON" ] || fail "python not executable: $PYTHON"
 "$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 10))' \
     || fail "python 3.10+ required"
-acquire_lock || fail "another run holds the lock (remove $LOCKDIR if stale)"
+acquire_lock || fail "another run holds the lock (remove $LOCKDIR and $RECOVERING if stale)"
 # Trap only after acquiring: a refused run must never touch the holder's lock.
 # Each step is '|| :'-guarded: under 'set -e' a failing rmdir (e.g. the lock
 # already removed) would otherwise abort the trap and override our exit status.

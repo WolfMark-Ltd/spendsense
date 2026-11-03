@@ -87,6 +87,50 @@ class CollectLockTests(unittest.TestCase):
         self.assertTrue(feed["items"])
         self.assertFalse(lock.exists())
 
+    def test_concurrent_stale_recovery_serialises(self):
+        proc = subprocess.Popen(["true"])
+        proc.wait()
+        lock = self.home / "state" / "collect.lock"
+        lock.mkdir()
+        (lock / "pid").write_text(str(proc.pid))
+        results = []
+
+        def target():
+            results.append(self.run_collect())
+
+        threads = [threading.Thread(target=target) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        detail = "\n".join(f"rc={r.returncode} stderr={r.stderr.strip()}" for r in results)
+        self.assertEqual(sorted(r.returncode for r in results), [0, 1], msg=detail)
+        loser = next(r for r in results if r.returncode != 0)
+        self.assertIn("lock", loser.stderr)
+        live = self.home / "www" / "feed" / "v1" / "news.json"
+        feed = json.loads(live.read_text())
+        self.assertEqual(feed["version"], 1)
+        self.assertTrue(feed["items"])
+        self.assertFalse(lock.exists())
+        self.assertFalse((self.home / "state" / "collect.recovering").exists())
+
+    def test_run_refuses_while_recovery_in_progress(self):
+        proc = subprocess.Popen(["true"])
+        proc.wait()
+        lock = self.home / "state" / "collect.lock"
+        lock.mkdir()
+        (lock / "pid").write_text(str(proc.pid))
+        (self.home / "state" / "collect.recovering").mkdir()
+        try:
+            result = self.run_collect()
+        finally:
+            shutil.rmtree(lock, ignore_errors=True)
+            shutil.rmtree(self.home / "state" / "collect.recovering",
+                          ignore_errors=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("lock", result.stderr)
+        self.assertFalse((self.home / "www" / "feed" / "v1" / "news.json").exists())
+
     def test_terminated_run_releases_lock_and_exits_nonzero(self):
         requested = threading.Event()
         release = threading.Event()
