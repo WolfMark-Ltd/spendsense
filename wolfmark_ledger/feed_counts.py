@@ -115,11 +115,18 @@ def _write_totals(totals_path: Path, merged: Mapping[str, Mapping[str, int]]) ->
 
 
 def _append_all(target: Path, lines: list[str]) -> None:
-    """Append lines atomically; a short write rolls back, never half-dupes."""
+    """Append lines atomically; a short write rolls back, never half-dupes.
+
+    Symlinks are refused: the count log lives in a writer-shared directory,
+    and an append redirected through a planted link would write outside it.
+    """
     if not lines:
         return
     blob = "".join(line + "\n" for line in lines).encode("utf-8")
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o644)
+    except OSError as exc:
+        raise CountsError(f"cannot stage leftover lines: {exc}") from exc
     try:
         before = os.fstat(fd).st_size
         written = os.write(fd, blob)
@@ -130,15 +137,35 @@ def _append_all(target: Path, lines: list[str]) -> None:
         os.close(fd)
 
 
+def _reopen(reopener: Callable[[], None]) -> None:
+    try:
+        reopener()
+    except Exception as exc:  # noqa: BLE001 - any reopen failure must fail the run
+        raise CountsError(f"log reopen failed: {exc}") from exc
+
+
+def _read_settled(path: Path, settle_delay: float, settle_rounds: int) -> list[str]:
+    """Read a rotated log only once it stops growing (bounded wait)."""
+    lines = _read_lines(path)
+    for _ in range(settle_rounds):
+        time.sleep(settle_delay)
+        again = _read_lines(path)
+        if len(again) == len(lines):
+            break
+        lines = again
+    return lines
+
+
 def run(temp_log: Path, totals_path: Path, reopener: Callable[[], None], *,
         settle_delay: float = 2.0, settle_rounds: int = 3) -> dict[str, dict[str, int]]:
     """Rotate the temp log aside, fold it by line date, discard it.
 
-    Any leftover rotated log from an interrupted run is folded first, so a
-    retry never loses lines. Anything that fails before the totals write
-    leaves the rotated file in place for the next run; only a crash between
-    the totals write and the final delete can double-count, which is why
-    these stay approximate counts.
+    A leftover rotated log from an interrupted run is folded first, but only
+    after a reopen migrates any writers still on it: reading and deleting it
+    beforehand would lose lines written after our read. Anything that fails
+    before the totals write leaves the rotated file in place for the next
+    run; only a crash between the totals write and the final delete can
+    double-count, which is why these stay approximate counts.
 
     Workers may still hold the old file briefly after the reopen, so the
     rotated log is not folded until two consecutive reads agree (bounded by
@@ -146,25 +173,21 @@ def run(temp_log: Path, totals_path: Path, reopener: Callable[[], None], *,
     uncounted.
     """
     rotated = temp_log.with_name(temp_log.name + ".1")
-    backlog = _read_lines(rotated) if rotated.exists() else []
-    if backlog:
-        _append_all(temp_log, backlog)
+    if rotated.exists():
+        _reopen(reopener)
+        backlog = _read_settled(rotated, settle_delay, settle_rounds)
+        if backlog:
+            _append_all(temp_log, backlog)
         rotated.unlink()
     if not temp_log.exists():
-        temp_log.write_text("", encoding="utf-8")
+        try:
+            fd = os.open(temp_log, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        except OSError as exc:
+            raise CountsError(f"cannot create temp log: {exc}") from exc
+        os.close(fd)
     os.replace(temp_log, rotated)
-    try:
-        reopener()
-    except Exception as exc:  # noqa: BLE001 - any reopen failure must fail the run
-        raise CountsError(f"log reopen failed: {exc}") from exc
-    lines = _read_lines(rotated)
-    for _ in range(settle_rounds):
-        time.sleep(settle_delay)
-        again = _read_lines(rotated)
-        if len(again) == len(lines):
-            break
-        lines = again
-    counts = aggregate_lines(lines)
+    _reopen(reopener)
+    counts = aggregate_lines(_read_settled(rotated, settle_delay, settle_rounds))
     existing = _load_totals(totals_path)
     _write_totals(totals_path, merge_totals(existing, counts))
     rotated.unlink()

@@ -77,6 +77,32 @@ class AggregateTests(unittest.TestCase):
         summary = counts.run(tmp, totals, noop_reopen, settle_delay=0)
         self.assertEqual(summary, {"2026-11-01": {"GB": 1}, "2026-11-02": {"US": 1}})
 
+    def test_run_reopens_before_folding_leftover(self):
+        root = self.scratch()
+        tmp, totals = root / "count.tmp.log", root / "country-daily.json"
+        rotated = tmp.parent / "count.tmp.log.1"
+        rotated.write_text("2026-11-02 GET 200 US\n")
+        tmp.write_text("2026-11-02 GET 200 GB\n")
+        calls = []
+        real_read = counts._read_lines
+
+        def spy_read(path):
+            calls.append(("read", path.name))
+            return real_read(path)
+
+        def spy_reopen():
+            calls.append(("reopen",))
+
+        with mock.patch.object(counts, "_read_lines", side_effect=spy_read):
+            summary = counts.run(tmp, totals, spy_reopen, settle_delay=0)
+        self.assertEqual(summary, {"2026-11-02": {"US": 1, "GB": 1}})
+        first_leftover_read = next(i for i, call in enumerate(calls)
+                                   if call == ("read", rotated.name))
+        reopens_before = [i for i, call in enumerate(calls)
+                          if call == ("reopen",) and i < first_leftover_read]
+        self.assertTrue(reopens_before, f"leftover read before any reopen: {calls}")
+        self.assertFalse(rotated.exists())
+
     def test_run_failure_keeps_rotated_log_for_retry(self):
         root = self.scratch()
         tmp, totals = root / "count.tmp.log", root / "country-daily.json"
@@ -123,6 +149,19 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual(summary, {"2026-11-02": {"US": 1, "FR": 1}})
         self.assertEqual(len(sleeps), 2)  # waited for quiet, not just once
         self.assertFalse(rotated.exists())
+
+    def test_run_refuses_symlinked_temp_log(self):
+        root = self.scratch()
+        tmp, totals = root / "count.tmp.log", root / "country-daily.json"
+        victim = root / "victim.txt"
+        victim.write_text("keep\n")
+        tmp.symlink_to(victim)
+        rotated = tmp.parent / "count.tmp.log.1"
+        rotated.write_text("2026-11-02 GET 200 US\n")
+        with self.assertRaises(counts.CountsError):
+            counts.run(tmp, totals, noop_reopen, settle_delay=0)
+        self.assertEqual(victim.read_text(), "keep\n")
+        self.assertTrue(rotated.exists())
 
     def test_main_aggregates_and_reports(self):
         root = self.scratch()
