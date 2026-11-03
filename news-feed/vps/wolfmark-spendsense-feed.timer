@@ -2,8 +2,8 @@
 Description=Rebuild the Spend Sense Model News feed every six hours
 
 # Monotonic schedule (elapsed time), deliberately not wall-clock: the host
-# runs Europe/London, and monotonic timers are timezone-independent, so the
-# six-hour cadence is identical in every zone including UTC.
+# runs a non-UTC local timezone, and monotonic timers are
+# timezone-independent, so the six-hour cadence is identical in UTC.
 
 [Timer]
 OnBootSec=10min

@@ -5,9 +5,9 @@ Public, user-agnostic model and subscription announcements for the optional
 the server learns nothing except what the connection itself reveals (see
 Privacy below).
 
-Deployment target: the WolfMark Contabo VPS (Ubuntu, Nginx) — chosen over
-shared cPanel hosting precisely because the platform there cannot disable
-request logging. Nothing here is deployed yet.
+Deployment target: the WolfMark VPS (Ubuntu, Nginx) — chosen over
+shared hosting precisely because that platform cannot disable request
+logging. Nothing here is deployed yet.
 
 ## Files
 
@@ -95,7 +95,7 @@ visitor id), person profiles off (`$process_person_profile: false`), and
 PostHog GeoIP enrichment disabled. No export code ships now, no PostHog
 client SDK goes into Spend Sense, and per-visitor events are never sent.
 
-## Serving configuration (Nginx, Contabo VPS)
+## Serving configuration (Nginx, VPS)
 
 The feed host is a plain Nginx server block serving one static file, plus a
 port-80 block that answers ACME challenges and redirects everything else to
@@ -118,10 +118,9 @@ and the operator's own curated file.
 - `error_log` stays at `warn` per house convention. It records failures
   only, but a failed request can include the client address in an error
   entry. There is no other routine visitor record on this host.
-- No upstream proxy or CDN fronts this host (the Cloudflare fronting on
-  this VPS applies to `qwiz.live` only), so there is no upstream request
-  logging to account for. Transient TCP/TLS metadata remains visible while
-  any request is served, as with any HTTPS server.
+- No upstream proxy or CDN fronts this host, so there is no upstream
+  request logging to account for. Transient TCP/TLS metadata remains
+  visible while any request is served, as with any HTTPS server.
 - Net verdict: the privacy requirements are genuinely met here — better
   than the shared host, where platform access logs cannot be disabled.
 
@@ -134,7 +133,7 @@ stays out of the GET totals. Timer failures are also visible via
 
 ## Activation (requires explicit approval — do NOT run yet)
 
-DNS is done (`spendsense.wolfmark.co.uk` → `161.97.122.4`, no AAAA).
+DNS is done (A record live, no AAAA).
 Remaining steps, in order — `nginx -t` must pass before every reload:
 1. On the VPS: `mkdir -p /opt/wolfmark-spendsense-feed/state
    /var/www/spendsense.wolfmark.co.uk/feed/v1`; clone the repo to
@@ -144,7 +143,7 @@ Remaining steps, in order — `nginx -t` must pass before every reload:
    `/var/lib/spendsense-feed` owned `www-data:www-data 0750` for the
    temporary count log.
 2. Install the GeoIP2 module (`apt install libnginx-mod-http-geoip2`) and
-   download GeoLite2-Country.mmdb (free MaxMind licence) to
+   download GeoLite2-Country.mmdb (free vendor licence) to
    `/usr/share/GeoIP/`; confirm the module loads.
 3. Install `vps/spendsense-feed-http.conf` to `/etc/nginx/conf.d/` plus
    the HTTP-only bootstrap vhost from
