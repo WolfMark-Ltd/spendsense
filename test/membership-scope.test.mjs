@@ -1647,7 +1647,7 @@ test('every tab keeps the shared tab bar as a direct child of the page root', as
   T.$digestDays.set(30)
   // Membership reads succeed with an empty list; everything else fails, so
   // each page renders its error state — the tab bar must still sit outside
-  // the content shell in exactly the same place on all six tabs.
+  // the content shell in exactly the same place on all seven tabs.
   transportCtl.respond(call => call.path === '/membership/accounts'
     ? { ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] }
     : call.path === '/membership/plans' ? plansOk()
@@ -1659,6 +1659,7 @@ test('every tab keeps the shared tab bar as a direct child of the page root', as
     ['costs', T.CostsPage, {}],
     ['memberships', T.MembershipsPage, {}],
     ['reports', T.ReportsPage, {}],
+    ['news', T.NewsPage, {}],
     ['settings', T.SettingsPage, {}],
   ]
   for (const [tab, Component, props] of pages) {
@@ -1672,7 +1673,7 @@ test('every tab keeps the shared tab bar as a direct child of the page root', as
         React.createElement(Component, props)))
     })
     await flush(4)
-    assert.equal(container.querySelectorAll('[role="tab"]').length, 6, `${tab} shows all six tabs`)
+    assert.equal(container.querySelectorAll('[role="tab"]').length, 7, `${tab} shows all seven tabs`)
     // LedgerTabs brings its own shell wrapper, so the pin is structural: the
     // tab shell must be a direct child of the page root — a sibling of the
     // content shell, never nested inside it. Compare booleans only: handing

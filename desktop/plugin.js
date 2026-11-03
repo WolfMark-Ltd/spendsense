@@ -42,7 +42,7 @@ import { useEffect, useRef } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.5.0'
+const PLUGIN_VERSION = '0.6.0'
 const LEDGER_KEY = 'ledger.v2'
 /** Pre-1.0 ledger. Migrated on first load and left untouched as a backup. */
 const LEGACY_LEDGER_KEY = 'ledger.v1'
@@ -2672,6 +2672,7 @@ const $ledgerTab = atom(typeof location !== 'undefined' && /memberships?/.test(l
     : typeof location !== 'undefined' && /usage/.test(location.hash) ? 'usage'
       : typeof location !== 'undefined' && /costs/.test(location.hash) ? 'costs'
         : typeof location !== 'undefined' && /reports/.test(location.hash) ? 'reports'
+        : typeof location !== 'undefined' && /news/.test(location.hash) ? 'news'
         : typeof location !== 'undefined' && /settings/.test(location.hash) ? 'settings' : 'overview')
 const $billingNotice = atom(null)
 const $billingProfiles = atom({ profiles: [], loading: true, error: '' })
@@ -2867,8 +2868,14 @@ function econFeeLines(t, fees) {
 }
 
 const LEDGER_TABS = [['overview', 'Overview'], ['usage', 'Usage'], ['costs', 'Costs'],
-  ['memberships', 'Memberships'], ['reports', 'Reports'], ['settings', 'Settings & About']]
+  ['memberships', 'Memberships'], ['reports', 'Reports'], ['news', 'Model News'],
+  ['settings', 'Settings & About']]
 const $digestDays = atom(30)
+/** Model News view state: audience scope plus one category filter. */
+const $newsScope = atom('foryou')
+const $newsCategory = atom('all')
+/** Live-updates opt-in flow: confirm box plus the last notice, per connection. */
+const $newsLiveState = atom(null)
 /**
  * Set only by the tab bar's arrow/Home/End handler. LedgerPage replaces the
  * whole page (including this tab bar) on every tab change, so focusing the
@@ -3859,6 +3866,7 @@ function OverviewPage() {
 }
 
 function SettingsPage() {
+  const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const status = useQuery(pricingStatusQuery(identity))
   const planCatalogue = useQuery(membershipPlansQuery(identity))
@@ -3879,6 +3887,25 @@ function SettingsPage() {
   const liveConfirmation = confirmation?.origin === identity ? confirmation : null
   const liveRefresh = refreshState?.origin === identity ? refreshState : null
   const [clock] = [useValue($membershipClock)]
+  const newsSettings = useQuery(newsSettingsQuery(identity))
+  const liveNewsState = useValue($newsLiveState)
+  const liveNewsView = liveNewsState?.origin === identity ? liveNewsState : null
+  const liveNewsKnown = newsSettings.data?.identity === identity && membershipIdentityCurrent(identity)
+  const liveNewsOn = liveNewsKnown ? !!newsSettings.data.settings?.live_updates : null
+
+  const saveLiveNews = async next => {
+    const captured = identity
+    try {
+      const result = await newsSaveSettings(next)
+      if (!membershipIdentityCurrent(captured)) return
+      $newsLiveState.set({ origin: captured, tone: 'good',
+        text: t('newsLiveSaved', !!result?.live_updates) })
+      await invalidateNewsFor(captured)
+    } catch (error) {
+      if (membershipIdentityCurrent(captured)) $newsLiveState.set({ origin: captured,
+        tone: 'warn', text: t('newsLiveFailed') + ' ' + String(error.message || error) })
+    }
+  }
 
   const copyRecovery = async () => {
     const captured = identity
@@ -3999,6 +4026,38 @@ function SettingsPage() {
           jsx('p', { children: 'Automatic Hermes model-options refresh is off by default. When enabled, the live pane asks Hermes for current options on session/model changes and every 15 minutes. Hermes may refresh public models.dev metadata or make authenticated requests to configured provider endpoints using credentials it manages. Membership discovery parses Hermes authentication storage to count configured credential slots; it does not return or log credential values.' }),
           jsx('p', { children: 'Spend Sense stores accounting metadata, membership choices, fee history, custom plan details, and optional user-reported exhaustion marks. It does not collect prompts, responses or telemetry. The plugin backend uses its existing profile-specific plugin data.' }),
           jsx('p', { children: 'With automatic refresh off, the plugin uses options already cached in this Desktop session and bundled rates. If a route is uncertain, it may use a clearly labelled fallback estimate or remain unpriced; it is never presented as a confirmed provider price. Account discovery and account readings remain user-triggered.' })
+        ] }),
+        jsxs('section', { className: 'wm-product-section', children: [
+          jsx('h2', { children: t('newsLiveTitle') }),
+          jsx('p', { children: t('newsLiveExplain') }),
+          jsx('p', { children: t('newsLiveIp') }),
+          newsSettings.error && membershipIdentityCurrent(identity)
+            ? jsx('p', { className: 'wm-warn-note', role: 'status', children: t('newsLiveFailed') }) : null,
+          jsx('label', { className: 'wm-setting-toggle', children: [
+            jsx('input', { type: 'checkbox', checked: liveNewsOn === true, disabled: liveNewsOn == null,
+              onChange: event => {
+                if (!membershipIdentityCurrent(identity)) return
+                if (event.target.checked) $newsLiveState.set({ origin: identity, stage: 'confirm-live' })
+                else saveLiveNews(false)
+              } }),
+            jsx('span', { children: t('newsLiveToggle') }),
+          ] }),
+          liveNewsView?.stage === 'confirm-live'
+            ? jsx('div', { className: 'wm-confirm-box', children: [
+                jsx('p', { role: 'alert', children: t('newsLiveConfirmText') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button',
+                  onClick: () => saveLiveNews(true), children: t('newsLiveConfirm') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button',
+                  onClick: () => $newsLiveState.set(null), children: t('newsLiveCancel') }),
+              ] })
+            : null,
+          liveNewsView?.text
+            ? jsx('p', { className: liveNewsView.tone === 'warn' ? 'wm-warn-note' : 'wm-subtle',
+                role: 'status', children: liveNewsView.text })
+            : null,
+          liveNewsOn === true ? jsx('p', { className: 'wm-subtle', children: t('newsLiveOn') })
+            : liveNewsOn === false ? jsx('p', { className: 'wm-subtle', children: t('newsLiveOff') })
+              : null,
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
           jsx('h2', { children: 'Pricing provenance and freshness' }),
@@ -6460,6 +6519,255 @@ function ReportsPage() {
   ] })
 }
 
+/* ------------------------------------------------------------- model news */
+
+function newsQuery(identity = membershipIdentityNow()) {
+  return {
+    queryKey: [ID, 'model-news', identity],
+    queryFn: async () => {
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      if (typeof rest !== 'function') throw new Error('This desktop build has no plugin backend bridge.')
+      const result = await rest('/news/refresh', { method: 'POST' })
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      if (!result || result.ok === false) throw new Error(result?.detail || result?.error || 'Model news is unavailable.')
+      return { ...result, identity }
+    },
+    retry: false, staleTime: 60_000
+  }
+}
+
+function newsSettingsQuery(identity = membershipIdentityNow()) {
+  return {
+    queryKey: [ID, 'news-settings', identity],
+    queryFn: async () => {
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      if (typeof rest !== 'function') throw new Error('This desktop build has no plugin backend bridge.')
+      const result = await rest('/news')
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      if (!result || result.ok === false) throw new Error(result?.Detail || result?.error || 'News settings are unavailable.')
+      return { ...result, identity }
+    },
+    retry: false, staleTime: 30_000
+  }
+}
+
+async function newsSaveSettings(liveUpdates, transport = rest) {
+  if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
+  const result = await transport('/news/settings', { method: 'PUT', body: { live_updates: liveUpdates } })
+  if (!result || result.ok === false) throw new Error(result?.Detail || result?.error || 'The setting was not saved.')
+  return result
+}
+
+async function invalidateNewsFor(identity) {
+  try {
+    await queryClient.invalidateQueries({ queryKey: [ID, 'model-news', identity] })
+    await queryClient.invalidateQueries({ queryKey: [ID, 'news-settings', identity] })
+  } catch {
+    /* the cached news simply stays until its stale time elapses */
+  }
+}
+
+function newsFilter(items, scope, category) {
+  if (!Array.isArray(items)) return []
+  return items.filter(item =>
+    (scope === 'all' || item.for_you) && (category === 'all' || item.category === category))
+}
+
+function newsCategoryLabel(category, t) {
+  if (category === 'new_model') return t('newsCatNewModels')
+  if (category === 'price_reduction') return t('newsCatReductions')
+  if (category === 'price_increase') return t('newsCatIncreases')
+  if (category === 'subscription') return t('newsCatSubscription')
+  return t('newsCatAll')
+}
+
+function newsImpactText(impact, t) {
+  if (!impact) return null
+  if (impact.basis === 'unavailable') return t('newsImpactUnavailable', impact.reason || '')
+  if (impact.basis === 'partial') return t('newsImpactPartial', fmtUsd(impact.delta_usd), impact.window_days)
+  return t('newsImpactFull', fmtUsd(impact.delta_usd), impact.window_days)
+}
+
+function newsAgeDays(iso, nowMs) {
+  if (!iso) return null
+  const when = new Date(iso).getTime()
+  if (!Number.isFinite(when)) return null
+  const days = Math.floor((nowMs - when) / 86_400_000)
+  return days < 0 ? 0 : days
+}
+
+function newsFreshLabel(days, t) {
+  if (days == null) return t('newsFreshUnknown')
+  if (days <= 0) return t('newsFreshToday')
+  return t('newsFreshDays', days)
+}
+
+const NEWS_CSS = `
+.wm-news-list{display:grid;gap:12px}
+.wm-news-card{border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-primary);padding:15px 17px;min-width:0}
+.wm-news-card h3{margin:0;font-size:14.5px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}
+.wm-news-card h3 small{display:block;margin-top:2px;font-size:12px;font-weight:400;color:var(--ui-text-tertiary)}
+.wm-news-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.wm-news-badge{flex:none;font-size:11px;font-weight:600;border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:3px 10px;color:var(--ui-text-secondary);white-space:nowrap}
+.wm-news-badge[data-cat="price_reduction"]{color:var(--ui-success);border-color:var(--ui-success)}
+.wm-news-badge[data-cat="price_increase"]{color:var(--ui-warning);border-color:var(--ui-warning)}
+.wm-news-badge[data-cat="new_model"]{color:var(--ui-accent);border-color:var(--ui-accent)}
+.wm-news-dates{margin:7px 0 0;font-size:11.5px;color:var(--ui-text-tertiary)}
+.wm-news-summary{margin:9px 0 0;font-size:13px;line-height:1.55;color:var(--ui-text-primary);max-width:78ch}
+.wm-news-rates{margin:11px 0 0;width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.wm-news-rates th{font-weight:500;color:var(--ui-text-tertiary);font-size:11px;text-align:right;padding:4px 0 4px 12px}
+.wm-news-rates th:first-child,.wm-news-rates td:first-child{text-align:left;padding-left:0}
+.wm-news-rates td{padding:4px 0 4px 12px;text-align:right;color:var(--ui-text-primary)}
+.wm-news-rates td:first-child{color:var(--ui-text-secondary)}
+.wm-news-impact{margin:11px 0 0;font-size:12.5px;line-height:1.5;color:var(--ui-text-secondary)}
+.wm-news-impact[data-tone="good"]{color:var(--ui-success)}
+.wm-news-impact[data-tone="warn"]{color:var(--ui-warning)}
+.wm-news-meta{margin:11px 0 0;font-size:11.5px;line-height:1.5;color:var(--ui-text-tertiary)}
+.wm-news-conditions{margin:7px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-secondary)}
+.wm-news-routes{display:flex;gap:6px;flex-wrap:wrap;margin:9px 0 0;font-size:11.5px;color:var(--ui-text-tertiary)}
+.wm-news-route{border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:2px 9px;color:var(--ui-text-secondary)}
+.wm-news-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.wm-news-note{margin:0;font-size:12px;line-height:1.55;color:var(--ui-text-tertiary);max-width:78ch}
+`
+
+function NewsRateTable({ previous, current, t }) {
+  const rows = [
+    ['newsRateInput', 'input'], ['newsRateOutput', 'output'],
+    ['newsRateCacheRead', 'cache_read'], ['newsRateCacheWrite', 'cache_write'],
+  ].filter(([, key]) => (previous && previous[key] != null) || (current && current[key] != null))
+  if (!rows.length || !current) return null
+  const compare = !!previous
+  return jsx('table', { className: 'wm-news-rates', children: [
+    jsx('thead', { children: jsx('tr', { children: [
+      jsx('th', { children: '' }, 'h0'),
+      compare ? jsx('th', { children: t('newsRateWas') }, 'h1') : null,
+      jsx('th', { children: compare ? t('newsRateNow') : t('newsListedAt') }, 'h2'),
+    ].filter(Boolean) }) }),
+    jsx('tbody', { children: rows.map(([label, key]) => jsxs('tr', { children: [
+      jsx('td', { children: t(label) }),
+      compare ? jsx('td', { children: previous[key] == null ? '—' : fmtRate(previous[key]) }) : null,
+      jsx('td', { children: current[key] == null ? '—' : fmtRate(current[key]) }),
+    ].filter(Boolean) }, key)) }),
+  ] })
+}
+
+function NewsCard({ item, impact, t }) {
+  const title = item.model || item.provider
+  const subtitle = item.model ? item.provider : null
+  const impactText = newsImpactText(impact, t)
+  const tone = !impact || impact.basis === 'unavailable' ? null
+    : impact.delta_usd < 0 ? 'good' : impact.delta_usd > 0 ? 'warn' : null
+  const dates = [t('newsObserved', fmtDay(item.observed_at))]
+  if (item.effective_at) dates.push(t('newsEffective', fmtDay(item.effective_at)))
+  return jsxs('article', { className: 'wm-news-card', children: [
+    jsxs('div', { className: 'wm-news-top', children: [
+      jsxs('h3', { children: [title, subtitle ? jsx('small', { children: subtitle }) : null] }),
+      jsx('span', { className: 'wm-news-badge', 'data-cat': item.category,
+        children: newsCategoryLabel(item.category, t) }),
+    ] }),
+    jsx('p', { className: 'wm-news-dates', children: dates.join(' · ') }),
+    jsx('p', { className: 'wm-news-summary', children: item.summary }),
+    jsx(NewsRateTable, { previous: item.previous, current: item.current, t }),
+    impactText ? jsx('p', { className: 'wm-news-impact', 'data-tone': tone, children: impactText }) : null,
+    item.conditions ? jsx('p', { className: 'wm-news-conditions', children: item.conditions }) : null,
+    (item.related_routes && item.related_routes.length)
+      ? jsx('div', { className: 'wm-news-routes', children: [
+          jsx('span', { children: t('newsRoutes', '') }),
+          ...item.related_routes.map(route => jsx('span', { className: 'wm-news-route', children: route }, route)),
+        ] })
+      : null,
+    jsxs('p', { className: 'wm-news-meta', children: [
+      `${item.provenance || ''} · ${item.confidence || ''}`,
+      item.source_url
+        ? jsxs('span', { children: [' · ', jsx('a', { href: item.source_url, target: '_blank',
+            rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
+        : null,
+    ] }),
+  ] })
+}
+
+const NEWS_CATEGORIES = ['all', 'new_model', 'price_reduction', 'price_increase', 'subscription']
+
+function NewsPage() {
+  const t = usePluginI18n(ID)
+  const identity = useValue($membershipIdentity)
+  const scope = useValue($newsScope)
+  const category = useValue($newsCategory)
+  const query = useQuery(newsQuery(identity))
+  const current = query.data?.identity === identity && membershipIdentityCurrent(identity)
+    ? query.data : null
+  const failed = !!(query.error && membershipIdentityCurrent(identity))
+  const localItems = current?.local?.items || []
+  const centralItems = current?.central?.items || []
+  const central = current?.central || {}
+  const liveOn = !!current?.settings?.live_updates
+  const combined = [...localItems, ...centralItems].sort((a, b) =>
+    String(b.observed_at || '').localeCompare(String(a.observed_at || '')) ||
+    String(a.id || '').localeCompare(String(b.id || '')))
+  const forYouCount = combined.filter(item => item.for_you).length
+  const visible = newsFilter(combined, scope, category)
+  const impacts = current?.impacts || {}
+  const emptyText = scope === 'foryou' && category === 'all' ? t('newsEmptyForYou')
+    : category !== 'all' ? t('newsEmptyCategory') : t('newsEmptyAll')
+  const freshDays = newsAgeDays(central.fetched_at, Date.now())
+  return jsxs('div', { className: 'wm-analytics wm-product', children: [
+    jsx('style', { children: [ANALYTICS_CSS, PRODUCT_CSS, NEWS_CSS] }),
+    jsx(LedgerTabs, {}),
+    jsxs('main', { className: 'wm-shell', children: [
+      jsx(ProductHeader, { title: t('newsTitle'), subtitle: t('newsSubtitle'),
+        actions: jsx(AsyncButton, { type: 'button', className: 'wm-button',
+          status: query.isFetching ? 'pending' : 'idle', pendingLabel: t('newsRefreshing'),
+          onClick: () => query.refetch?.(), children: t('newsRefresh') }) }),
+      !liveOn ? jsxs('section', { className: 'wm-product-section', children: [
+        jsx('p', { className: 'wm-news-note', children: t('newsLiveOffText') }),
+        jsx('div', { className: 'wm-setting-action', children:
+          jsx(ProductButton, { type: 'button', className: 'wm-button',
+            onClick: () => goLedgerTab('settings'), children: t('newsOpenSettings') }) }),
+      ] }) : null,
+      liveOn && central.fetched_at ? jsx('p', { className: 'wm-news-note', role: 'status',
+        children: t('newsCentralFresh', newsFreshLabel(freshDays, t)) }) : null,
+      liveOn && central.state === 'stale' ? jsx('div', { className: 'wm-alert', role: 'status',
+        children: central.error || t('newsCentralStale') }) : null,
+      jsxs('div', { className: 'wm-news-controls', children: [
+        jsx(SegmentedControl, {
+          onChange: v => $newsScope.set(v === 'all' ? 'all' : 'foryou'),
+          options: [
+            { id: 'foryou', label: `${t('newsForYou')} (${forYouCount})` },
+            { id: 'all', label: `${t('newsAllUpdates')} (${combined.length})` },
+          ],
+          value: scope,
+        }),
+        jsx(AnalyticsSegments, { label: t('newsCatAll'), value: category,
+          options: NEWS_CATEGORIES.map(id => [id, id === 'all' ? t('newsCatAll') : newsCategoryLabel(id, t)]),
+          onChange: id => $newsCategory.set(id) }),
+      ] }),
+      current?.local?.baseline && current.local.snapshot_at
+        ? jsx('p', { className: 'wm-news-note', children: t('newsBaseline', fmtDay(current.local.snapshot_at)) })
+        : null,
+      (current?.local?.removed_model_count || 0) > 0
+        ? jsx('p', { className: 'wm-news-note', children: t('newsRemoved', current.local.removed_model_count) })
+        : null,
+      failed && !current
+        ? jsxs('div', { className: 'wm-product-section', children: [
+            jsx('p', { role: 'alert', children: t('newsError') }),
+            jsx(ProductButton, { type: 'button', className: 'wm-button',
+              onClick: () => query.refetch?.(), children: t('newsRetry') }),
+          ] })
+        : failed && current
+          ? jsxs('div', { className: 'wm-news-list', children: [
+              jsx('div', { className: 'wm-alert', role: 'alert', children: t('newsStale') }),
+              ...visible.map(item => jsx(NewsCard, { item, impact: impacts[item.id], t }, item.id)),
+            ] })
+          : !current
+            ? jsx('p', { className: 'wm-note', role: 'status', children: t('newsLoading') })
+            : visible.length
+              ? jsx('div', { className: 'wm-news-list', role: 'list', children:
+                  visible.map(item => jsx(NewsCard, { item, impact: impacts[item.id], t }, item.id)) })
+              : jsx('div', { className: 'wm-empty', role: 'status', children: jsx('p', { children: emptyText }) }),
+    ] }),
+  ] })
+}
+
 function LedgerPage() {
   const t = usePluginI18n(ID)
   const led = useValue($ledger)
@@ -6491,6 +6799,7 @@ function LedgerPage() {
     if (tab === 'memberships') return jsx(MembershipsPage, {})
     if (tab === 'reports') return jsx(ReportsPage, {})
     if (tab === 'overview') return jsx(OverviewPage, {})
+    if (tab === 'news') return jsx(NewsPage, {})
     if (tab === 'settings') return jsx(SettingsPage, {})
     return jsx(AnalyticsPage, { productPage: true })
   }
@@ -6867,6 +7176,59 @@ const I18N = {
     rpRetry: 'Retry',
     rpEmpty: 'Choose a period, then Generate report.',
     rpStale: date => `Refresh failed — showing the report generated ${date}.`,
+    // Model News.
+    newsTitle: 'Model News',
+    newsSubtitle: 'New models, price changes and subscription updates, matched against your own usage.',
+    newsForYou: 'For You',
+    newsAllUpdates: 'All Updates',
+    newsCatAll: 'All',
+    newsCatNewModels: 'New Models',
+    newsCatReductions: 'Reductions',
+    newsCatIncreases: 'Increases',
+    newsCatSubscription: 'Subscription Updates',
+    newsRefresh: 'Refresh',
+    newsRefreshing: 'Refreshing…',
+    newsLoading: 'Loading model news…',
+    newsError: 'Model news is unavailable for this connection.',
+    newsRetry: 'Retry',
+    newsStale: 'Refresh failed — showing the last read.',
+    newsEmptyForYou: 'No updates for your providers or models yet. New catalogue changes will appear here.',
+    newsEmptyAll: 'No news yet. The first snapshot is a baseline; later catalogue changes will appear here.',
+    newsEmptyCategory: 'Nothing in this category yet.',
+    newsBaseline: date => `Catalogue baseline taken ${date}. Changes observed from the next refresh will appear here.`,
+    newsRemoved: n => `${n} model(s) are no longer listed.`,
+    newsLiveOffText: 'Local catalogue news is shown. Turn on Spend Sense Live Updates in Settings for public announcements from Spend Sense.',
+    newsOpenSettings: 'Open Settings',
+    newsCentralFresh: label => `Spend Sense announcements · updated ${label}.`,
+    newsCentralStale: 'Spend Sense announcements could not be refreshed — showing the last fetch.',
+    newsObserved: date => `Observed ${date}`,
+    newsEffective: date => `Effective ${date}`,
+    newsRateWas: 'Was',
+    newsRateNow: 'Now',
+    newsRateInput: 'Input / MTok',
+    newsRateOutput: 'Output / MTok',
+    newsRateCacheRead: 'Cache read / MTok',
+    newsRateCacheWrite: 'Cache write / MTok',
+    newsListedAt: 'Listed at',
+    newsImpactFull: (money, days) => `API-equivalent estimate: ${money} over your last ${days} days of usage. Not savings on a subscription.`,
+    newsImpactPartial: (money, days) => `Partial API-equivalent estimate: ${money} over your last ${days} days of usage (some rates unpublished). Not savings on a subscription.`,
+    newsImpactUnavailable: reason => `Personal estimate unavailable: ${reason}.`,
+    newsRoutes: () => 'Your routes:',
+    newsSource: 'Source',
+    newsLiveTitle: 'Spend Sense Live Updates',
+    newsLiveExplain: 'Download public model and subscription updates from Spend Sense. No personal usage, accounts, credentials, model selections or telemetry are uploaded.',
+    newsLiveIp: 'Enabling involves an HTTPS request whose source IP is visible to the server. On a remote Hermes host, that host makes the request.',
+    newsLiveToggle: 'Download public updates from Spend Sense (off by default).',
+    newsLiveConfirmText: 'Turn on Spend Sense Live Updates for this profile?',
+    newsLiveConfirm: 'Enable live updates',
+    newsLiveCancel: 'Cancel',
+    newsLiveOn: 'Live updates are on for this profile.',
+    newsLiveOff: 'Live updates are off. No update requests are made.',
+    newsLiveSaved: on => on ? 'Live updates enabled. Announcements refresh with Model News.' : 'Live updates disabled. No further update requests will be made.',
+    newsLiveFailed: 'The setting was not saved.',
+    newsFreshToday: 'today',
+    newsFreshDays: n => `${n} day(s) ago`,
+    newsFreshUnknown: 'date unknown',
     fxReading: 'Reading saved FX rates for this connection…',
     fxRetry: 'Retry',
     fxRateLine: (c, u, d, s) => `${c} at ${u} USD per unit, dated ${d} (${s})`,
@@ -7234,6 +7596,59 @@ const I18N = {
     rpRetry: '重试',
     rpEmpty: '选择周期，然后生成报告。',
     rpStale: date => `刷新失败——显示生成于${date}的报告。`,
+    // 模型动态。
+    newsTitle: '模型动态',
+    newsSubtitle: '新模型、价格变动与订阅更新，并对照您自己的用量。',
+    newsForYou: '为你推荐',
+    newsAllUpdates: '全部动态',
+    newsCatAll: '全部',
+    newsCatNewModels: '新模型',
+    newsCatReductions: '降价',
+    newsCatIncreases: '涨价',
+    newsCatSubscription: '订阅更新',
+    newsRefresh: '刷新',
+    newsRefreshing: '正在刷新…',
+    newsLoading: '正在加载模型动态…',
+    newsError: '此连接无法读取模型动态。',
+    newsRetry: '重试',
+    newsStale: '刷新失败——显示上次读取的数据。',
+    newsEmptyForYou: '暂无与您的供应商或模型相关的动态。目录有新的变化时会显示在这里。',
+    newsEmptyAll: '暂无动态。首次快照仅为基线；之后的目录变化会显示在这里。',
+    newsEmptyCategory: '此分类暂无内容。',
+    newsBaseline: date => `目录基线已于${date}建立。从下次刷新起观察到的变化将显示在这里。`,
+    newsRemoved: n => `${n} 个模型已不再收录。`,
+    newsLiveOffText: '当前显示本地目录动态。在“设置”中开启 Spend Sense 实时更新，可获取 Spend Sense 的公开公告。',
+    newsOpenSettings: '打开设置',
+    newsCentralFresh: label => `Spend Sense 公告 · 更新于${label}。`,
+    newsCentralStale: '无法刷新 Spend Sense 公告——显示上次获取的数据。',
+    newsObserved: date => `观察于${date}`,
+    newsEffective: date => `生效于${date}`,
+    newsRateWas: '原价',
+    newsRateNow: '现价',
+    newsRateInput: '输入 / 百万Token',
+    newsRateOutput: '输出 / 百万Token',
+    newsRateCacheRead: '缓存读取 / 百万Token',
+    newsRateCacheWrite: '缓存写入 / 百万Token',
+    newsListedAt: '收录价格',
+    newsImpactFull: (money, days) => `API 等效估算：过去 ${days} 天用量对应 ${money}。并非订阅节省额。`,
+    newsImpactPartial: (money, days) => `部分 API 等效估算：过去 ${days} 天用量对应 ${money}（部分价格未公布）。并非订阅节省额。`,
+    newsImpactUnavailable: reason => `无法给出个人估算：${reason}。`,
+    newsRoutes: () => '您的路由：',
+    newsSource: '来源',
+    newsLiveTitle: 'Spend Sense 实时更新',
+    newsLiveExplain: '从 Spend Sense 下载公开的模型与订阅更新。不会上传个人用量、帐户、凭据、模型选择或遥测数据。',
+    newsLiveIp: '开启后会发出 HTTPS 请求，其来源 IP 对服务器可见。在远程 Hermes 主机上，由该主机发出请求。',
+    newsLiveToggle: '从 Spend Sense 下载公开更新（默认关闭）。',
+    newsLiveConfirmText: '要为此配置文件开启 Spend Sense 实时更新吗？',
+    newsLiveConfirm: '开启实时更新',
+    newsLiveCancel: '取消',
+    newsLiveOn: '此配置文件已开启实时更新。',
+    newsLiveOff: '实时更新已关闭。不会发出更新请求。',
+    newsLiveSaved: on => on ? '已开启实时更新。公告将随模型动态一起刷新。' : '已关闭实时更新。不会再发出更新请求。',
+    newsLiveFailed: '设置未能保存。',
+    newsFreshToday: '今天',
+    newsFreshDays: n => `${n} 天前`,
+    newsFreshUnknown: '日期未知',
     fxReading: '正在读取此连接已保存的外汇汇率…',
     fxRetry: '重试',
     fxRateLine: (c, u, d, s) => `${c}：${u} 美元/单位，日期 ${d}（${s}）`,
@@ -7474,6 +7889,9 @@ export const __test = {
   AllowanceWeather, WEATHER_CSS,
   digestQuery, uiLocale, digestCopy, digestDownload, DigestPreview, ReportsPage,
   REPORTS_CSS, $digestDays,
+  newsQuery, newsSettingsQuery, newsSaveSettings, invalidateNewsFor, newsFilter, newsCategoryLabel,
+  newsImpactText, newsAgeDays, newsFreshLabel, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
+  NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,

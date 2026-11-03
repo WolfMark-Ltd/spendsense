@@ -104,19 +104,19 @@ test('layout breakpoints use container queries on the plugin root, not the viewp
   assert.match(T.PRODUCT_CSS, /@container\(max-width:620px\)/)
 })
 
-test('LedgerTabs: six tabs in order, roving tabindex, click and arrow navigation', async () => {
+test('LedgerTabs: seven tabs in order, roving tabindex, click and arrow navigation', async () => {
   T.$ledgerTab.set('overview')
   const container = await renderEl(React.createElement(T.LedgerTabs))
   const tabs = [...container.querySelectorAll('[role="tab"]')]
-  assert.deepEqual(tabs.map(el => el.textContent), ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Settings & About'])
+  assert.deepEqual(tabs.map(el => el.textContent), ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings & About'])
   assert.equal(tabs[0].getAttribute('aria-selected'), 'true')
-  assert.deepEqual(tabs.map(el => el.tabIndex), [0, -1, -1, -1, -1, -1], 'only the active tab is tabbable')
+  assert.deepEqual(tabs.map(el => el.tabIndex), [0, -1, -1, -1, -1, -1, -1], 'only the active tab is tabbable')
 
   await React.act(async () => tabs[2].click()); await flush()
   assert.equal(T.$ledgerTab.get(), 'costs')
   const after = [...container.querySelectorAll('[role="tab"]')]
   assert.equal(after[2].getAttribute('aria-selected'), 'true')
-  assert.deepEqual(after.map(el => el.tabIndex), [-1, -1, 0, -1, -1, -1])
+  assert.deepEqual(after.map(el => el.tabIndex), [-1, -1, 0, -1, -1, -1, -1])
 
   // ArrowRight from Costs moves selection and focus to Memberships.
   await React.act(async () => {
@@ -133,7 +133,7 @@ test('LedgerTabs: six tabs in order, roving tabindex, click and arrow navigation
   assert.equal(T.$ledgerTab.get(), 'settings')
   const last = [...container.querySelectorAll('[role="tab"]')]
   await React.act(async () => {
-    last[5].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
+    last[6].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
   }); await flush()
   assert.equal(T.$ledgerTab.get(), 'overview')
 })

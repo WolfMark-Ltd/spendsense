@@ -1,0 +1,136 @@
+// Run: node --test test/
+//
+// Model News helper regressions through the same stub loader the other
+// suites use (no React needed).
+import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test } from 'node:test'
+import { pathToFileURL } from 'node:url'
+
+// --- stub loader for the pure helpers --------------------------------------
+const src = readFileSync(new URL('../desktop/plugin.js', import.meta.url), 'utf8')
+const stub = `
+const atom = v => { let s = v; return { get: () => s, set: n => { s = n }, listen: () => () => {} } }
+const gatewayActivationEpoch = () => 1
+const computed = (stores, cb) => {
+  const list = Array.isArray(stores) ? stores : [stores]
+  return { get: () => cb(...list.map(s => s.get())), listen: () => () => {} }
+}
+const noop = () => null
+const Badge = noop, Button = noop, Codicon = noop, SegmentedControl = noop, Tip = noop
+const cn = (...a) => a.filter(Boolean).join(' ')
+const host = { state: { focusedSessionId: { get: () => null, listen: () => () => {} }, focusedStoredSessionId: { get: () => null, listen: () => () => {} }, profile: { get: () => '' }, focusedSessionProfile: { get: () => '' } }, notify() {}, navigate() {}, request: async () => null }
+const useEffect = noop
+const useRef = initial => ({ current: initial })
+const queryClient = { fetchQuery: async q => q.queryFn(), getQueryData: () => null }
+const usePluginI18n = noop, useQuery = noop, useValue = noop
+const jsx = noop, jsxs = noop
+`
+const stubBody = src
+  .replace(/import \{[^}]*\} from '@hermes\/plugin-sdk'\n/, stub)
+  .replace(/import \{[^}]*\} from 'react'\n/, '')
+  .replace(/import \{ jsx, jsxs \} from 'react\/jsx-runtime'\n/, '')
+globalThis.window = { location: { hash: '' }, addEventListener() {}, removeEventListener() {} }
+const stubDir = mkdtempSync(join(process.env.TMPDIR || tmpdir(), 'tcm-nw-'))
+const stubFile = join(stubDir, 'plugin.mjs')
+writeFileSync(stubFile, stubBody)
+const S = (await import(pathToFileURL(stubFile).href)).__test
+
+const t = (key, ...args) => `${key}(${args.join('|')})`
+const item = (id, category, forYou) => ({ id, category, for_you: forYou })
+
+test('LEDGER_TABS contains Model News before Settings', () => {
+  const ids = S.LEDGER_TABS.map(([id]) => id)
+  assert.ok(ids.includes('news'))
+  assert.ok(ids.indexOf('news') < ids.indexOf('settings'))
+  assert.equal(S.LEDGER_TABS.find(([id]) => id === 'news')[1], 'Model News')
+})
+
+test('newsQuery keys by identity and refreshes through the backend', async () => {
+  const id = S.membershipIdentityNow()
+  const query = S.newsQuery(id)
+  assert.deepEqual(query.queryKey, ['spend-sense', 'model-news', id])
+  assert.notDeepEqual(S.newsQuery('other').queryKey, query.queryKey)
+  assert.equal(query.retry, false)
+  S.setRest(async (path, options) => {
+    assert.equal(path, '/news/refresh')
+    assert.equal(options?.method, 'POST')
+    return { ok: true, settings: { live_updates: false }, local: { items: [] }, central: {} }
+  })
+  try {
+    const data = await query.queryFn()
+    assert.equal(data.ok, true)
+    assert.equal(data.identity, id)
+  } finally {
+    S.setRest(null)
+  }
+})
+
+test('newsQuery fails closed without a backend bridge', async () => {
+  S.setRest(null)
+  await assert.rejects(() => S.newsQuery(S.membershipIdentityNow()).queryFn(), /backend bridge/)
+})
+
+test('newsSettingsQuery reads settings without refreshing', async () => {
+  const id = S.membershipIdentityNow()
+  const query = S.newsSettingsQuery(id)
+  assert.deepEqual(query.queryKey, ['spend-sense', 'news-settings', id])
+  assert.equal(query.retry, false)
+  S.setRest(async path => {
+    assert.equal(path, '/news')
+    return { ok: true, settings: { live_updates: true }, central: { state: 'ok' } }
+  })
+  try {
+    const data = await query.queryFn()
+    assert.equal(data.settings.live_updates, true)
+  } finally {
+    S.setRest(null)
+  }
+})
+
+test('newsFilter scopes For You and categories', () => {
+  const items = [
+    item('a', 'new_model', true),
+    item('b', 'price_reduction', true),
+    item('c', 'price_reduction', false),
+    item('d', 'subscription', false),
+  ]
+  assert.deepEqual(S.newsFilter(items, 'foryou', 'all').map(i => i.id), ['a', 'b'])
+  assert.deepEqual(S.newsFilter(items, 'all', 'price_reduction').map(i => i.id), ['b', 'c'])
+  assert.deepEqual(S.newsFilter(items, 'foryou', 'subscription').map(i => i.id), [])
+  assert.deepEqual(S.newsFilter(items, 'all', 'all').map(i => i.id), ['a', 'b', 'c', 'd'])
+  assert.deepEqual(S.newsFilter(null, 'all', 'all'), [])
+})
+
+test('newsCategoryLabel covers every category', () => {
+  assert.equal(S.newsCategoryLabel('new_model', t), 'newsCatNewModels()')
+  assert.equal(S.newsCategoryLabel('price_reduction', t), 'newsCatReductions()')
+  assert.equal(S.newsCategoryLabel('price_increase', t), 'newsCatIncreases()')
+  assert.equal(S.newsCategoryLabel('subscription', t), 'newsCatSubscription()')
+})
+
+test('newsImpactText labels API-equivalent estimates, never savings', () => {
+  assert.equal(S.newsImpactText(null, t), null)
+  assert.equal(
+    S.newsImpactText({ basis: 'full', delta_usd: -1.234, window_days: 30 }, t),
+    'newsImpactFull(−$1.23|30)')
+  assert.equal(
+    S.newsImpactText({ basis: 'partial', delta_usd: 0.5, window_days: 30 }, t),
+    'newsImpactPartial($0.500|30)')
+  assert.equal(
+    S.newsImpactText({ basis: 'unavailable', reason: 'rate comparison unavailable' }, t),
+    'newsImpactUnavailable(rate comparison unavailable)')
+})
+
+test('newsAgeDays and newsFreshLabel describe freshness honestly', () => {
+  const now = Date.parse('2026-11-03T12:00:00Z')
+  assert.equal(S.newsAgeDays('2026-11-03T00:00:00+00:00', now), 0)
+  assert.equal(S.newsAgeDays('2026-11-01T12:00:00Z', now), 2)
+  assert.equal(S.newsAgeDays('', now), null)
+  assert.equal(S.newsAgeDays('not-a-date', now), null)
+  assert.equal(S.newsFreshLabel(0, t), 'newsFreshToday()')
+  assert.equal(S.newsFreshLabel(3, t), 'newsFreshDays(3)')
+  assert.equal(S.newsFreshLabel(null, t), 'newsFreshUnknown()')
+})

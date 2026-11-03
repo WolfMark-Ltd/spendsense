@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 SOURCE_ID = "spend-sense"
 TEST_ID = "spend-sense-test"
-TEST_VERSION = "0.5.0-test.5"
+TEST_VERSION = "0.6.0-test.1"
 
 #: Local contribution ids. The host namespaces them as `<pluginId>:<id>` anyway,
 #: but distinct local ids keep a stray log line unambiguous.
@@ -102,7 +102,7 @@ def main() -> int:
 
     report.insert(0, {"file": "desktop/plugin.js", "change": f"ID {args.source_id} -> {args.test_id}", "count": 1})
 
-    version_declaration = "const PLUGIN_VERSION = '0.5.0'"
+    version_declaration = "const PLUGIN_VERSION = '0.6.0'"
     if source.count(version_declaration) != 1:
         raise SystemExit("Desktop version declaration is missing or ambiguous")
     source = source.replace(version_declaration, f"const PLUGIN_VERSION = '{TEST_VERSION}'", 1)
@@ -181,9 +181,9 @@ def main() -> int:
     # 5. the API announces which build it is
     api = out / "dashboard" / "plugin_api.py"
     api_source = api.read_text(encoding="utf-8")
-    if 'VERSION = "0.5.0"' not in api_source:
-        raise SystemExit("plugin_api.py VERSION is not the expected 0.5.0")
-    api.write_text(api_source.replace('VERSION = "0.5.0"', f'VERSION = "{TEST_VERSION}"', 1),
+    if 'VERSION = "0.6.0"' not in api_source:
+        raise SystemExit("plugin_api.py VERSION is not the expected 0.6.0")
+    api.write_text(api_source.replace('VERSION = "0.6.0"', f'VERSION = "{TEST_VERSION}"', 1),
                    encoding="utf-8")
     report.append({"file": "dashboard/plugin_api.py", "change": f"VERSION -> {TEST_VERSION}", "count": 1})
 

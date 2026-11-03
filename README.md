@@ -7,7 +7,7 @@
   <a href="https://github.com/WolfMark-Ltd/spendsense/actions/workflows/ci.yml"><img src="https://github.com/WolfMark-Ltd/spendsense/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/Hermes-%3E%3D0.22.5-informational" alt="Requires Hermes 0.22.5 or newer" />
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="GPL-3.0 license" />
-  <img src="https://img.shields.io/badge/version-0.5.0-informational" alt="Version 0.5.0" />
+  <img src="https://img.shields.io/badge/version-0.6.0-informational" alt="Version 0.6.0" />
   <a href="https://coderabbit.ai"><img src="https://img.shields.io/coderabbit/prs/github/WolfMark-Ltd/spendsense?label=Reviewed%20by%20CodeRabbit&logo=coderabbit" alt="Reviewed by CodeRabbit" /></a>
   <a href="https://www.greptile.com/?utm_source=oss_badge&utm_medium=readme&utm_campaign=greptile_for_open_source"><img src="https://www.greptile.com/badge.svg" alt="Greptile: The War on Bugs" /></a>
   <a href="https://github.com/WolfMark-Ltd/spendsense"><img src="https://img.shields.io/github/stars/WolfMark-Ltd/spendsense?logo=github" alt="GitHub stars" /></a>
@@ -84,6 +84,7 @@ Spend Sense is local-first: each Hermes records only the usage it sees, and memb
 | **Subscription economics** | Monthly-equivalent fees compared with the API-equivalent value of usage attributed to each subscription, per currency, with renewal dates, a monthly trend and partial/unavailable states instead of misleading totals. Non-USD fees convert only with a dated rate you supply. |
 | **Memberships** | Discover the provider accounts Hermes is configured for, confirm which plan each account is on, add fee overrides, and mark allowances as exhausted. On request, Spend Sense can read account usage through Hermes itself to prefill plan hints and quota windows. Each card also shows allowance weather: cycle position, provider-reported consumption, and — for USD cost rules with reliable coverage — consumption pace with a projected exhaustion date. |
 | **Reports** | Generate a local 7- or 30-day digest of usage, costs, fees and allowances as Markdown, then review, copy or save it. Nothing is scheduled, uploaded or sent anywhere. |
+| **Model News** | New models, API price changes and subscription updates detected from your local catalogues, with API-equivalent impact estimates from your own usage — plus optional public Spend Sense announcements. |
 | **Offline-capable pricing** | No direct pricing calls of its own: Hermes' local models.dev pricing cache when available, with a bundled offline rate snapshot as fallback. |
 
 ## The problem
@@ -109,7 +110,7 @@ Spend Sense answers those from the usage Hermes already sees, on your own machin
 1. **Collect.** Hermes observer hooks (`post_api_request`, `post_auxiliary_call`, `api_request_error`) hand Spend Sense accounting metadata for each call: provider, model, route, token buckets, outcome and timestamps. Prompts, responses and credentials are never recorded.
 2. **Store locally.** Calls go into a profile-scoped SQLite store in the plugin's data directory. Memberships and billing rules live in separate local JSON files and survive plugin upgrades.
 3. **Price.** Each recorded call is priced from the best available catalogue — Hermes' models.dev cache first, then the bundled snapshot. The Desktop ledger uses the rates captured at the time; backend analytics use the currently available catalogue. They are related, but they are not the same view and are not presented as one figure.
-4. **Present.** The Desktop plugin renders the live pane, the ledger, the Usage analytics, Costs, Memberships and Settings & About views from the local backend. Nothing needs to leave your machine for the core views.
+4. **Present.** The Desktop plugin renders the live pane, the ledger, the Usage analytics, Costs, Memberships, Model News, Reports and Settings & About views from the local backend. Nothing needs to leave your machine for the core views.
 
 ### Membership discovery
 
@@ -149,6 +150,8 @@ Unpriced usage is reported as unpriced. Unknown is never shown as zero, and know
 - Records accounting metadata only: identifiers, route and model, token buckets, outcome and timestamps. No prompts, responses, credentials or telemetry.
 - Membership discovery counts credential slots in memory. It does not return or log credential values.
 - Spend Sense makes no direct HTTP pricing requests. Automatic Hermes model-options refresh is off by default; when enabled, Hermes may refresh public models.dev metadata or contact configured providers using credentials Hermes manages.
+- Model News snapshots your local Hermes pricing cache and bundled plan catalogue to detect newly listed models and rate changes. The first snapshot is a baseline, not news. Nothing is uploaded and no network request is made; everything works offline.
+- Spend Sense Live Updates (Settings, off by default) downloads the public Model News feed over HTTPS when enabled: an unauthenticated GET of a static file with no user IDs, accounts, credentials, model lists, usage totals or tracking tokens in the URL, headers or body. Enabling involves an HTTPS request whose source IP is visible to the server — on a remote Hermes host, that host makes the request. Disabling stops all update requests; local news keeps working. See [news-feed/README.md](news-feed/README.md) for the feed, schema and serving configuration.
 - Settings & About can clear your Memberships and advanced billing rules for the current profile. Captured usage records, Hermes data and provider credentials are left untouched.
 
 ## Requirements and compatibility
