@@ -6584,7 +6584,7 @@ function newsCategoryLabel(category, t) {
 function newsImpactText(impact, t) {
   if (!impact) return null
   if (impact.basis === 'unavailable') return t('newsImpactUnavailable', impact.reason || '')
-  if (impact.basis === 'partial') return t('newsImpactPartial', fmtUsd(impact.delta_usd), impact.window_days)
+  if (impact.basis === 'partial') return t('newsImpactPartial', fmtUsd(impact.delta_usd), impact.window_days, impact.reason || '')
   return t('newsImpactFull', fmtUsd(impact.delta_usd), impact.window_days)
 }
 
@@ -7217,7 +7217,7 @@ const I18N = {
     newsRateCacheWrite: 'Cache write / MTok',
     newsListedAt: 'Listed at',
     newsImpactFull: (money, days) => `API-equivalent estimate: ${money} over your last ${days} days of usage. Not savings on a subscription.`,
-    newsImpactPartial: (money, days) => `Partial API-equivalent estimate: ${money} over your last ${days} days of usage (some rates unpublished). Not savings on a subscription.`,
+    newsImpactPartial: (money, days, reason) => `Partial API-equivalent estimate: ${money} over your last ${days} days of usage${reason ? ` (${reason})` : ''}. Not savings on a subscription.`,
     newsImpactUnavailable: reason => `Personal estimate unavailable: ${reason}.`,
     newsRoutes: () => 'Your routes:',
     newsSource: 'Source',
@@ -7637,7 +7637,7 @@ const I18N = {
     newsRateCacheWrite: '缓存写入 / 百万Token',
     newsListedAt: '收录价格',
     newsImpactFull: (money, days) => `API 等效估算：过去 ${days} 天用量对应 ${money}。并非订阅节省额。`,
-    newsImpactPartial: (money, days) => `部分 API 等效估算：过去 ${days} 天用量对应 ${money}（部分价格未公布）。并非订阅节省额。`,
+    newsImpactPartial: (money, days, reason) => `部分 API 等效估算：过去 ${days} 天用量对应 ${money}${reason ? `（${reason}）` : ''}。并非订阅节省额。`,
     newsImpactUnavailable: reason => `无法给出个人估算：${reason}。`,
     newsRoutes: () => '您的路由：',
     newsSource: '来源',

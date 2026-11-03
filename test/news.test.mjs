@@ -117,8 +117,13 @@ test('newsImpactText labels API-equivalent estimates, never savings', () => {
     S.newsImpactText({ basis: 'full', delta_usd: -1.234, window_days: 30 }, t),
     'newsImpactFull(−$1.23|30)')
   assert.equal(
-    S.newsImpactText({ basis: 'partial', delta_usd: 0.5, window_days: 30 }, t),
-    'newsImpactPartial($0.500|30)')
+    S.newsImpactText({ basis: 'partial', delta_usd: 0.5, window_days: 30,
+      reason: 'cache rates unavailable for comparison; cache tokens excluded' }, t),
+    'newsImpactPartial($0.500|30|cache rates unavailable for comparison; cache tokens excluded)')
+  assert.equal(
+    S.newsImpactText({ basis: 'partial', delta_usd: 0, window_days: 30,
+      reason: 'tiered pricing applies; base rates compared' }, t),
+    'newsImpactPartial($0.00|30|tiered pricing applies; base rates compared)')
   assert.equal(
     S.newsImpactText({ basis: 'unavailable', reason: 'rate comparison unavailable' }, t),
     'newsImpactUnavailable(rate comparison unavailable)')
