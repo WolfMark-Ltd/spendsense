@@ -46,7 +46,8 @@ covers it; `generate.py` only wires the repo path to the CLI.
    atomically renames it over `feed/v1/news.json` (same directory, so the
    rename can never cross filesystems), keeping the previous live feed
    outside the web root as the rollback copy. A directory lock
-   serialises runs.
+   serialises runs, recovering automatically if a previous holder died
+   without releasing it (reboot, SIGKILL).
 5. Rotates the snapshot (`models-prev.json`) and appends one operational
    line to `state/collect.log` (kept to the last 200 lines).
 
@@ -95,7 +96,10 @@ rotated lines into `state/country-daily.json`
 the rotated file so the per-request lines are discarded. Only successful
 GETs count; monitoring checks must use HEAD, which keeps them out of the
 totals. A leftover rotated file from an interrupted run is folded first on
-the next run, so retries lose nothing; these stay approximate counts.
+the next run, so retries lose nothing; these stay approximate counts. The
+aggregator waits for the rotated log to stop growing before folding it, and
+refuses symlinked log paths, so a planted link can neither lose lines nor
+redirect writes outside the count directory.
 
 The totals file is shaped for an optional later export to PostHog: one
 aggregate event per country per day, a single fixed identifier (never a

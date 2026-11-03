@@ -5,6 +5,7 @@ only; skipped elsewhere (including Windows CI).
 """
 from __future__ import annotations
 
+import http.server
 import json
 import os
 import shutil
@@ -13,7 +14,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 import unittest
 from pathlib import Path
 
@@ -61,23 +61,72 @@ class CollectLockTests(unittest.TestCase):
         self.assertIn("lock", result.stderr)
         self.assertFalse((self.home / "www" / "feed" / "v1" / "news.json").exists())
 
+    def test_run_refuses_when_lock_holder_is_alive(self):
+        lock = self.home / "state" / "collect.lock"
+        lock.mkdir()
+        try:
+            (lock / "pid").write_text(str(os.getpid()))
+            result = self.run_collect()
+        finally:
+            shutil.rmtree(lock, ignore_errors=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("lock", result.stderr)
+        self.assertFalse((self.home / "www" / "feed" / "v1" / "news.json").exists())
+
+    def test_run_recovers_stale_lock(self):
+        proc = subprocess.Popen(["true"])
+        proc.wait()
+        lock = self.home / "state" / "collect.lock"
+        lock.mkdir()
+        (lock / "pid").write_text(str(proc.pid))
+        result = self.run_collect()
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        live = self.home / "www" / "feed" / "v1" / "news.json"
+        feed = json.loads(live.read_text())
+        self.assertEqual(feed["version"], 1)
+        self.assertTrue(feed["items"])
+        self.assertFalse(lock.exists())
+
     def test_terminated_run_releases_lock_and_exits_nonzero(self):
-        proc = subprocess.Popen(["sh", str(COLLECT)], env=self.env,
+        requested = threading.Event()
+        release = threading.Event()
+        body = (self.home / "v2.json").read_bytes()
+
+        class BlockingHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 - stdlib handler name
+                requested.set()
+                release.wait(timeout=30)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), BlockingHandler)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        env = {**self.env,
+               "MODELS_DEV_URL": f"http://127.0.0.1:{server.server_port}/v2.json"}
+        proc = subprocess.Popen(["sh", str(COLLECT)], env=env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
-            lock = self.home / "state" / "collect.lock"
-            deadline = time.time() + 10
-            while not lock.exists():
-                self.assertLess(time.time(), deadline, "collector never took the lock")
-                time.sleep(0.01)
-            time.sleep(0.05)  # let the trap-arming line run
+            # The request proves the collector is blocked in curl, hence past
+            # trap-arming: no sleep-guessed synchronisation.
+            self.assertTrue(requested.wait(timeout=30),
+                            "collector never started its download")
             proc.send_signal(signal.SIGTERM)
+            release.set()
             self.assertNotEqual(proc.wait(timeout=30), 0)
         finally:
+            release.set()
             if proc.poll() is None:
                 proc.kill()
                 proc.wait()
-        self.assertFalse(lock.exists())
+        self.assertFalse((self.home / "state" / "collect.lock").exists())
         self.assertFalse((self.home / "www" / "feed" / "v1" / "news.json").exists())
 
     def test_concurrent_runs_leave_a_valid_feed(self):

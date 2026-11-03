@@ -39,14 +39,37 @@ fail() {
     exit 1
 }
 
+# Directory lock with stale recovery: a reboot or SIGKILL leaves the lock
+# behind with no trap running, which would refuse every later run. A lock
+# whose recorded pid is dead is removed and retried once; an unreadable
+# pid means a holder we cannot verify, so refuse and let the next run retry.
+acquire_lock() {
+    if mkdir "$LOCKDIR" 2>/dev/null; then
+        echo $$ > "$LOCKDIR/pid" || return 1
+        return 0
+    fi
+    lock_pid="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
+    case "$lock_pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    if kill -0 "$lock_pid" 2>/dev/null; then
+        return 1
+    fi
+    rm -f "$LOCKDIR/pid" 2>/dev/null || :
+    rmdir "$LOCKDIR" 2>/dev/null || return 1
+    mkdir "$LOCKDIR" 2>/dev/null || return 1
+    echo $$ > "$LOCKDIR/pid" || return 1
+    return 0
+}
+
 mkdir -p "$STATE"
-mkdir "$LOCKDIR" 2>/dev/null || fail "another run holds the lock (remove $LOCKDIR if stale)"
+acquire_lock || fail "another run holds the lock (remove $LOCKDIR if stale)"
 # Trap only after acquiring: a refused run must never touch the holder's lock.
 # Each step is '|| :'-guarded: under 'set -e' a failing rmdir (e.g. the lock
 # already removed) would otherwise abort the trap and override our exit status.
 # Signals exit through the EXIT trap, so cleanup runs exactly once at exit
 # instead of inline with the pipeline continuing unlocked afterwards.
-trap 'rmdir "$LOCKDIR" 2>/dev/null || :; rm -f "$LIVE_TMP" 2>/dev/null || :' EXIT
+trap 'rm -f "$LOCKDIR/pid" 2>/dev/null || :; rmdir "$LOCKDIR" 2>/dev/null || :; rm -f "$LIVE_TMP" 2>/dev/null || :' EXIT
 trap 'exit 1' INT TERM
 
 [ -x "$PYTHON" ] || fail "python not executable: $PYTHON"
