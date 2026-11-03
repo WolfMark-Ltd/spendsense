@@ -39,12 +39,20 @@ fail() {
     exit 1
 }
 
+# The lock mkdir goes through Python's os.mkdir rather than mkdir(1):
+# coreutils mkdir 9.5 has been observed to exit 0 after a racy EEXIST
+# (strace-proven: the syscall fails, the binary reports success), which
+# would let two runs hold the lock at once. The syscall reports truthfully.
+lock_mkdir() {
+    "$PYTHON" -c 'import os, sys; os.mkdir(sys.argv[1])' "$LOCKDIR" 2>/dev/null
+}
+
 # Directory lock with stale recovery: a reboot or SIGKILL leaves the lock
 # behind with no trap running, which would refuse every later run. A lock
 # whose recorded pid is dead is removed and retried once; an unreadable
 # pid means a holder we cannot verify, so refuse and let the next run retry.
 acquire_lock() {
-    if mkdir "$LOCKDIR" 2>/dev/null; then
+    if lock_mkdir; then
         echo $$ > "$LOCKDIR/pid" || return 1
         return 0
     fi
@@ -57,12 +65,15 @@ acquire_lock() {
     fi
     rm -f "$LOCKDIR/pid" 2>/dev/null || :
     rmdir "$LOCKDIR" 2>/dev/null || return 1
-    mkdir "$LOCKDIR" 2>/dev/null || return 1
+    lock_mkdir || return 1
     echo $$ > "$LOCKDIR/pid" || return 1
     return 0
 }
 
 mkdir -p "$STATE"
+[ -x "$PYTHON" ] || fail "python not executable: $PYTHON"
+"$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 10))' \
+    || fail "python 3.10+ required"
 acquire_lock || fail "another run holds the lock (remove $LOCKDIR if stale)"
 # Trap only after acquiring: a refused run must never touch the holder's lock.
 # Each step is '|| :'-guarded: under 'set -e' a failing rmdir (e.g. the lock
@@ -72,9 +83,6 @@ acquire_lock || fail "another run holds the lock (remove $LOCKDIR if stale)"
 trap 'rm -f "$LOCKDIR/pid" 2>/dev/null || :; rmdir "$LOCKDIR" 2>/dev/null || :; rm -f "$LIVE_TMP" 2>/dev/null || :' EXIT
 trap 'exit 1' INT TERM
 
-[ -x "$PYTHON" ] || fail "python not executable: $PYTHON"
-"$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 10))' \
-    || fail "python 3.10+ required"
 [ -f "$STATE/curated.json" ] || fail "missing $STATE/curated.json (seed it at activation)"
 mkdir -p "$STAGING" "$WEBROOT/feed/v1" || fail "cannot create staging or webroot directories"
 
