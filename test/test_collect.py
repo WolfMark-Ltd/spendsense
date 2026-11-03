@@ -66,7 +66,8 @@ class CollectLockTests(unittest.TestCase):
             thread.start()
         for thread in threads:
             thread.join()
-        self.assertEqual(sorted(r.returncode for r in results), [0, 1])
+        detail = "\n".join(f"rc={r.returncode} stderr={r.stderr.strip()}" for r in results)
+        self.assertEqual(sorted(r.returncode for r in results), [0, 1], msg=detail)
         loser = next(r for r in results if r.returncode != 0)
         self.assertIn("lock", loser.stderr)
         live = self.home / "www" / "feed" / "v1" / "news.json"
@@ -74,6 +75,22 @@ class CollectLockTests(unittest.TestCase):
         self.assertEqual(feed["version"], 1)
         self.assertTrue(feed["items"])
         self.assertFalse((self.home / "state" / "collect.lock").exists())
+
+    def test_run_tolerates_spaces_in_paths(self):
+        root = self.home / "with space" / "root"
+        (root / "state").mkdir(parents=True)
+        shutil.copy(self.home / "state" / "curated.json", root / "state" / "curated.json")
+        shutil.copy(self.home / "state" / "models-prev.json", root / "state" / "models-prev.json")
+        env = {**self.env,
+               "FEED_ROOT": str(root),
+               "FEED_WEBROOT": str(root / "www")}
+        result = subprocess.run(["sh", str(COLLECT)], env=env,
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        live = root / "www" / "feed" / "v1" / "news.json"
+        feed = json.loads(live.read_text())
+        self.assertEqual(feed["version"], 1)
+        self.assertTrue(feed["items"])
 
 
 if __name__ == "__main__":

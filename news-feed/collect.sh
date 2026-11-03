@@ -48,7 +48,7 @@ trap 'rmdir "$LOCKDIR" 2>/dev/null; rm -f "$LIVE_TMP" 2>/dev/null' EXIT INT TERM
 "$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 10))' \
     || fail "python 3.10+ required"
 [ -f "$STATE/curated.json" ] || fail "missing $STATE/curated.json (seed it at activation)"
-mkdir -p "$STAGING" "$WEBROOT/feed/v1"
+mkdir -p "$STAGING" "$WEBROOT/feed/v1" || fail "cannot create staging or webroot directories"
 
 OBSERVED="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
 NEW_SNAPSHOT="$STAGING/models-new.json"
@@ -62,18 +62,15 @@ curl -fsSL --retry 3 --retry-delay 10 --max-time 180 \
 "$PYTHON" -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8-sig"))' \
     "$NEW_SNAPSHOT" || fail "models.dev snapshot is not valid JSON"
 
-PREV_ARGS=""
-[ -f "$STATE/models-prev.json" ] && PREV_ARGS="--previous $STATE/models-prev.json"
-PRIOR_ARGS=""
-[ -f "$LIVE" ] && PRIOR_ARGS="--prior-feed $LIVE"
-
-# shellcheck disable=SC2086
-"$PYTHON" "$REPO/news-feed/generate.py" \
-    --current "$NEW_SNAPSHOT" $PREV_ARGS \
-    --curated "$STATE/curated.json" \
-    --observed-at "$OBSERVED" $PRIOR_ARGS \
-    --retain-days "$RETAIN_DAYS" \
-    --out "$STAGING/feed.json" > /dev/null || fail "feed generation failed"
+# Build the generator argv with positional parameters so state paths containing
+# spaces survive intact (an unquoted $ARGS string would word-split them and
+# fail argument parsing).
+set -- --current "$NEW_SNAPSHOT"
+[ -f "$STATE/models-prev.json" ] && set -- "$@" --previous "$STATE/models-prev.json"
+set -- "$@" --curated "$STATE/curated.json" --observed-at "$OBSERVED"
+[ -f "$LIVE" ] && set -- "$@" --prior-feed "$LIVE"
+set -- "$@" --retain-days "$RETAIN_DAYS" --out "$STAGING/feed.json"
+"$PYTHON" "$REPO/news-feed/generate.py" "$@" > /dev/null || fail "feed generation failed"
 
 [ "$(wc -c < "$STAGING/feed.json")" -le "$MAX_FEED_BYTES" ] \
     || fail "generated feed exceeds ${MAX_FEED_BYTES} bytes"
@@ -92,15 +89,19 @@ EOF
 [ "$FEED_CHECK" != "CHECK-FAILED" ] && [ -n "$FEED_CHECK" ] \
     || fail "generated feed failed client validation"
 
-[ -f "$LIVE" ] && cp -p "$LIVE" "$ROLLBACK"
+if [ -f "$LIVE" ]; then
+    cp -p "$LIVE" "$ROLLBACK" || fail "cannot copy live feed to rollback"
+fi
 # Stage beside LIVE so the final rename never crosses filesystems: a rename
 # within one directory is atomic, while a cross-device mv would copy (readers
 # could see partial JSON, and a failed copy could take the live feed with it).
 cp -p "$STAGING/feed.json" "$LIVE_TMP" || fail "staging to live directory failed"
-chmod 0644 "$LIVE_TMP"  # world-readable under restrictive umasks
-mv "$LIVE_TMP" "$LIVE"
-mv "$NEW_SNAPSHOT" "$STATE/models-prev.json"
+chmod 0644 "$LIVE_TMP" || fail "cannot set feed permissions"  # world-readable under restrictive umasks
+mv "$LIVE_TMP" "$LIVE" || fail "atomic feed publication failed"
+mv "$NEW_SNAPSHOT" "$STATE/models-prev.json" || fail "cannot rotate snapshot"
 
-echo "$(date -u +%FT%TZ) OK $FEED_CHECK retain=${RETAIN_DAYS}d" >> "$STATE/collect.log"
-tail -200 "$STATE/collect.log" > "$STAGING/collect.log" && mv "$STAGING/collect.log" "$STATE/collect.log"
+echo "$(date -u +%FT%TZ) OK $FEED_CHECK retain=${RETAIN_DAYS}d" >> "$STATE/collect.log" \
+    || fail "cannot write run log"
+tail -200 "$STATE/collect.log" > "$STAGING/collect.log" && mv "$STAGING/collect.log" "$STATE/collect.log" \
+    || fail "cannot rotate run log"
 exit 0
