@@ -74,9 +74,9 @@ provider, a summary and an https `source_url` the reader can check. Never
 invent a change: if the effective date or the new allowance cannot be
 established from the source, leave that field out and say so in
 `conditions`. Give notes a stable `id` so corrections replace the earlier
-wording instead of duplicating it; list published ids under `withdraw` to
-remove carried notes early. A malformed curated file fails the run without
-publishing.
+wording instead of duplicating it (`md-` ids are reserved for model items);
+list published ids under `withdraw` to remove carried notes early.
+A malformed curated file fails the run without publishing.
 
 ## Anonymous country counting
 

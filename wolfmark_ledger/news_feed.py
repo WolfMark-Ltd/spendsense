@@ -187,6 +187,9 @@ def _curated(entries: Any, observed_at: str) -> tuple[list[dict[str, Any]], list
             if not _STABLE_ID.fullmatch(item_id):
                 problems.append(f"{where}: id must be 1-64 letters, digits, . _ : -")
                 continue
+            if item_id.startswith("md-"):
+                problems.append(f"{where}: id prefix 'md-' is reserved for model items")
+                continue
         if item_id in seen:
             problems.append(f"{where}: duplicate curated id {item_id}")
             continue

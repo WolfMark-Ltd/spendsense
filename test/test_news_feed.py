@@ -309,6 +309,18 @@ class BuildFeedTests(unittest.TestCase):
             observed_at=self.OBSERVED)
         self.assertTrue(any("duplicate" in problem for problem in problems))
 
+    def test_curated_md_prefix_ids_rejected(self):
+        feed = feed_module()
+        snapshot = models([("acme", "alpha", {"input": 2.0, "output": 10.0})])
+        doc, problems = feed.build_feed(
+            snapshot, None,
+            {"announcements": [{"id": "md-sneaky", "provider": "acme",
+                                "summary": "Tries the model prefix.",
+                                "source_url": "https://example.com/pricing"}]},
+            observed_at=self.OBSERVED)
+        self.assertTrue(any("reserved" in problem for problem in problems))
+        self.assertEqual(doc["items"], [])
+
     def test_withdraw_removes_carried_announcement(self):
         feed = feed_module()
         snapshot = models([("acme", "alpha", {"input": 2.0, "output": 10.0})])
