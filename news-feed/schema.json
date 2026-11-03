@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spendsense.wolfmark.co.uk/feed/v1/schema.json",
+  "title": "Spend Sense Model News feed",
+  "description": "Public, user-agnostic model and subscription announcements. This feed must never contain user-specific information.",
+  "type": "object",
+  "required": ["version", "generated_at", "items"],
+  "additionalProperties": true,
+  "properties": {
+    "version": {"const": 1},
+    "generated_at": {"type": "string"},
+    "items": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["id", "category", "provider", "summary", "observed_at", "source_url"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "category": {"enum": ["new_model", "price_reduction", "price_increase", "subscription"]},
+          "provider": {"type": "string", "minLength": 1, "maxLength": 128},
+          "model": {"type": "string", "maxLength": 256},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+          "previous": {"anyOf": [{"$ref": "#/$defs/rateBlock"}, {"type": "null"}]},
+          "current": {"anyOf": [{"$ref": "#/$defs/rateBlock"}, {"type": "null"}]},
+          "has_tiers": {"type": "boolean"},
+          "observed_at": {"type": "string", "minLength": 1, "maxLength": 64},
+          "effective_at": {"type": "string", "maxLength": 64},
+          "source_url": {"type": "string", "pattern": "^https?://", "maxLength": 500},
+          "confidence": {"enum": ["observed", "verified", "curated"]},
+          "provenance": {"type": "string", "maxLength": 256},
+          "conditions": {"type": "string", "maxLength": 500}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"category": {"enum": ["price_reduction", "price_increase"]}}, "required": ["category"]},
+            "then": {
+              "required": ["previous", "current"],
+              "properties": {
+                "previous": {"$ref": "#/$defs/rateBlock"},
+                "current": {"$ref": "#/$defs/rateBlock"}
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "rateBlock": {
+      "type": "object",
+      "required": ["input", "output"],
+      "properties": {
+        "input": {"type": "number", "minimum": 0},
+        "output": {"type": "number", "minimum": 0},
+        "cache_read": {"type": ["number", "null"], "minimum": 0},
+        "cache_write": {"type": ["number", "null"], "minimum": 0}
+      }
+    }
+  }
+}

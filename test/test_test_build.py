@@ -193,15 +193,20 @@ def plugin_db(name, filename):
     return sqlite3.connect(':memory:', check_same_thread=False)
 ps.plugin_db = plugin_db
 sys.modules['plugins'] = plugins; sys.modules['plugins.plugin_storage'] = ps
-from wolfmark_ledger import store, membership_store, billing, user_data
+from wolfmark_ledger import store, membership_store, billing, user_data, news
 prod = home / 'plugin-data' / 'spend-sense'; prod.mkdir(parents=True)
-for name in ('usage.db','memberships.json','billing-profiles.json'):
+for name in ('usage.db','memberships.json','billing-profiles.json','news-settings.json','news-local.json'):
     (prod / name).write_text('production sentinel')
 assert store.event_db_path() == home / 'plugin-data' / 'spend-sense-test' / 'usage.db'
 store.connect_writer()
 assert seen == [('spend-sense-test','usage.db')]
 assert membership_store.store_path().parent.name == 'spend-sense-test'
 assert billing.profiles_path().parent.name == 'spend-sense-test'
+assert news.settings_path().parent.name == 'spend-sense-test'
+assert news.items_path().parent.name == 'spend-sense-test'
+news.save_settings(True)
+assert (store.event_db_path().parent / 'news-settings.json').exists()
+assert all((prod / name).read_text() == 'production sentinel' for name in ('news-settings.json','news-local.json'))
 test = store.event_db_path().parent; test.mkdir(parents=True, exist_ok=True)
 (test / 'usage.db').write_text('test sentinel')
 membership_store.save_account({'id':'test-sentinel','family':'example','route_slugs':['example']}, test / 'memberships.json')

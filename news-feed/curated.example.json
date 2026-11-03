@@ -1,0 +1,11 @@
+{"announcements": [{"conditions": "Illustrative wording; allowances are plan terms, not remaining use.",
+                    "confidence": "curated",
+                    "effective_at": "2026-12-01",
+                    "model": "",
+                    "observed_at": "2026-11-03T00:00:00+00:00",
+                    "provenance": "Spend Sense curation",
+                    "provider": "sample-provider",
+                    "source_url": "https://example.com/pricing",
+                    "summary": "Sample Subscription Pro rises to USD 25/month from 1 December."}],
+ "notes": ["EXAMPLE ONLY. Copy entries into curated.json after verifying them against the cited source.",
+           "This file is never read by the generator."]}

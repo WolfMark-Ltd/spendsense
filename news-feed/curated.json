@@ -1,0 +1,8 @@
+{"announcements": [],
+ "notes": ["Curated subscription and allowance announcements, transcribed verbatim into the feed.",
+           "Every entry needs provider, summary and an https source_url the reader can check.",
+           "Optional: model, category (default subscription), previous/current rate blocks,",
+           "observed_at (default: generation time), effective_at, confidence (default curated),",
+           "provenance, conditions. Never invent a change: if the effective date or the new",
+           "allowance cannot be established from the source, leave it out and say so in conditions.",
+           "See curated.example.json for the entry shape."]}

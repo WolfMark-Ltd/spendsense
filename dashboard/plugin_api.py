@@ -3,10 +3,13 @@
 Mounted by Hermes at ``/api/plugins/spend-sense/`` through the
 supported dashboard plugin mechanism (``dashboard/manifest.json`` -> ``api``).
 The dashboard's own authentication gate covers these routes; this module adds
-no second credential and no network access.
+no second credential.
 
 Analytics reads Hermes state and the call store read-only. Membership and billing
 endpoints can write plugin-owned user data; the collector writes the call store.
+Model News is local-first: the snapshot diff never touches the network. Only the
+opt-in "Spend Sense Live Updates" setting allows one unauthenticated HTTPS GET
+of the public news feed, with no user data sent; see ``wolfmark_ledger.news``.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from wolfmark_ledger import digest  # noqa: E402
 from wolfmark_ledger import economics  # noqa: E402
 from wolfmark_ledger import user_data  # noqa: E402
 from wolfmark_ledger import membership_api as members  # noqa: E402
+from wolfmark_ledger import news as news_mod  # noqa: E402
 from wolfmark_ledger.membership import CatalogueError  # noqa: E402
 from wolfmark_ledger.membership_store import MembershipConflict, StoreUnreadable  # noqa: E402
 
@@ -39,7 +43,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 
 def _exists_for_health(path: Path) -> bool:
@@ -177,6 +181,41 @@ def rates(provider: str | None = Query(None), model: str | None = Query(None),
             "provisional": list(getattr(hit, "provisional", ())),
         }
     return payload
+
+
+@router.get("/news")
+def news() -> dict[str, Any]:
+    """Stored local news plus the cached central feed. Read-only; no network."""
+    try:
+        return news_mod.news_payload()
+    except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
+        log.error("spend-sense: news payload failed")
+        raise HTTPException(status_code=500, detail="news unavailable") from exc
+
+
+@router.post("/news/refresh")
+def news_refresh() -> dict[str, Any]:
+    """User-triggered refresh: local snapshot diff, then the central fetch if due.
+
+    The local diff never touches the network. The central feed is fetched only
+    when "Spend Sense Live Updates" is enabled and the cache is stale; any
+    fetch failure keeps the previous cache and is reported in the payload.
+    """
+    try:
+        return news_mod.refresh_payload()
+    except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
+        log.error("spend-sense: news refresh failed")
+        raise HTTPException(status_code=500, detail="news refresh failed") from exc
+
+
+@router.put("/news/settings")
+def news_settings(body: dict[str, Any]) -> dict[str, Any]:
+    """Opt the profile into or out of Spend Sense Live Updates (default off)."""
+    try:
+        result = news_mod.save_settings(body.get("live_updates"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"ok": True, **result}
 
 
 @router.get("/membership/plans")

@@ -255,7 +255,7 @@ test('a failed refresh keeps the cached report behind a stale warning', async ()
 test('the reports page keeps the shared tab navigation', async () => {
   const { container } = await bootReports()
   const tabs = [...container.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)
-  assert.deepEqual(tabs, ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Settings & About'])
+  assert.deepEqual(tabs, ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings & About'])
   // The tab bar is a top-level sibling of the content shell — never nested
   // inside it, which pushed it down the page. Compare booleans only: handing
   // live DOM nodes to assert hangs the runner while it serialises them.
