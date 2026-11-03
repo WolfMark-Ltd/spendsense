@@ -150,6 +150,7 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual(len(sleeps), 2)  # waited for quiet, not just once
         self.assertFalse(rotated.exists())
 
+    @unittest.skipUnless(counts._NOFOLLOW, "POSIX O_NOFOLLOW required")
     def test_run_refuses_symlinked_temp_log(self):
         root = self.scratch()
         tmp, totals = root / "count.tmp.log", root / "country-daily.json"

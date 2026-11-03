@@ -24,6 +24,10 @@ from typing import Any, Callable, Iterable, Mapping, Optional
 
 _LINE = re.compile(r"^([0-9]{4}-[0-9]{2}-[0-9]{2}) (GET|HEAD) ([1-5][0-9]{2}) ([A-Z]{2}|Unknown)$")
 
+# Symlink refusal for count-log writes. Unix-only; the shared www-data log
+# directory this protects exists solely on the Linux VPS.
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
 
 class CountsError(RuntimeError):
     """Aggregation failed; uncounted lines were left aside for retry."""
@@ -124,7 +128,7 @@ def _append_all(target: Path, lines: list[str]) -> None:
         return
     blob = "".join(line + "\n" for line in lines).encode("utf-8")
     try:
-        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o644)
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND | _NOFOLLOW, 0o644)
     except OSError as exc:
         raise CountsError(f"cannot stage leftover lines: {exc}") from exc
     try:
@@ -181,7 +185,7 @@ def run(temp_log: Path, totals_path: Path, reopener: Callable[[], None], *,
         rotated.unlink()
     if not temp_log.exists():
         try:
-            fd = os.open(temp_log, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+            fd = os.open(temp_log, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o644)
         except OSError as exc:
             raise CountsError(f"cannot create temp log: {exc}") from exc
         os.close(fd)
