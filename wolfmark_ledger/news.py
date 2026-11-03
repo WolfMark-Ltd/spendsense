@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import tempfile
 from contextlib import ExitStack
@@ -295,8 +296,11 @@ def _fee_text(price: Mapping[str, Any]) -> str:
     return f"${number:g}{per}"
 
 
-def _rate_direction(old: Mapping[str, Any], new: Mapping[str, Any]) -> str:
-    """Classify a rate change from base input+output totals, then any movement."""
+def rate_direction(old: Mapping[str, Any], new: Mapping[str, Any]) -> str:
+    """Classify a rate change from base input+output totals, then any movement.
+
+    Shared with the central feed generator so local and central news agree.
+    """
     try:
         before = float(old["input"]) + float(old["output"])
         after = float(new["input"]) + float(new["output"])
@@ -380,7 +384,7 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
                 continue
             if _slim(old_entry) == _slim(new_entry) and not _tiers_changed(old_entry, new_entry):
                 continue
-            category = _rate_direction(old_entry, new_entry)
+            category = rate_direction(old_entry, new_entry)
             old_sig = json.dumps({"r": _slim(old_entry), "t": old_entry.get("tiers") or []}, sort_keys=True)
             new_sig = json.dumps({"r": _slim(new_entry), "t": new_entry.get("tiers") or []}, sort_keys=True)
             conditions = "Tiered/context pricing changed; base rates compared." \
@@ -393,6 +397,7 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
                 "summary": (f"{model} ({provider}) {verb} "
                             f"{_money(new_entry.get('input'))}/{_money(new_entry.get('output'))} per MTok in/out."),
                 "previous": _slim(old_entry), "current": _slim(new_entry),
+                "has_tiers": bool(old_entry.get("tiers") or new_entry.get("tiers")),
                 "observed_at": observed_at, "effective_at": "",
                 "source_url": "", "confidence": "observed",
                 "provenance": "Hermes models.dev cache",
@@ -437,7 +442,8 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
         if terms_changed:
             bits.append("allowances/terms changed")
         items.append({
-            "id": _stable_id("plan-change", str(plan_id), fee_before + fee_after + str(terms_changed)),
+            "id": _stable_id("plan-change", str(plan_id), fee_before, fee_after,
+                             str(before.get("terms")), str(after.get("terms"))),
             "origin": "local", "category": "subscription",
             "provider": str(after.get("family") or before.get("family") or ""), "model": "",
             "summary": f"{after.get('name') or plan_id}: {'; '.join(bits)}.",
@@ -452,6 +458,10 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
     meta = {"removed_models": removed_models[:100], "removed_model_count": len(removed_models),
             "removed_plan_count": removed_plans}
     return items, meta
+
+
+def _is_cache_source(source: Any) -> bool:
+    return str(source or "").startswith("models.dev cache")
 
 
 def load_items(path: Optional[Path | str] = None) -> dict[str, Any]:
@@ -498,7 +508,20 @@ def refresh_local(*, data_dir: Optional[Path | str] = None,
             return {"items": stored["items"], "baseline": True, "snapshot_at": observed_at,
                     "catalogue": {"source": book.source, "as_of": book.as_of},
                     "removed_models": [], "removed_model_count": 0, "removed_plan_count": 0}
-        found, meta = diff_snapshots(previous, fresh, observed_at=observed_at, plans_doc=plans)
+        prev_source = previous.get("catalogue_source")
+        if prev_source != fresh["catalogue_source"]:
+            # Catalogue rows are comparable only within one source. A fallback
+            # load (bundled snapshot, or nothing usable) keeps the last good
+            # rows instead of reporting the source gap as news; a return to
+            # the cache re-baselines quietly. Plan terms always compare.
+            if not _is_cache_source(fresh["catalogue_source"]) and previous.get("providers"):
+                fresh["providers"] = previous.get("providers") or {}
+                fresh["catalogue_source"] = prev_source
+                fresh["catalogue_as_of"] = previous.get("catalogue_as_of", "")
+            compare_old: Mapping[str, Any] = {**previous, "providers": fresh["providers"]}
+        else:
+            compare_old = previous
+        found, meta = diff_snapshots(compare_old, fresh, observed_at=observed_at, plans_doc=plans)
         known = {str(item.get("id")) for item in stored["items"] if isinstance(item, dict)}
         merged = list(stored["items"])
         for item in found:
@@ -525,7 +548,7 @@ def _valid_rate_block(value: Any) -> Optional[dict[str, Any]]:
             out[key] = None
         elif isinstance(raw, bool) or not isinstance(raw, (int, float)):
             return None
-        elif raw < 0 or raw != raw:  # NaN guard
+        elif not math.isfinite(raw) or raw < 0:
             return None
         else:
             out[key] = float(raw)
@@ -554,7 +577,7 @@ def validate_feed(raw: Any) -> tuple[Optional[dict[str, Any]], list[str]]:
         return None, ["feed items entry is not a list"]
     seen: set[str] = set()
     items: list[dict[str, Any]] = []
-    for position, entry in enumerate(entries[:FEED_MAX_ITEMS]):
+    for position, entry in enumerate(entries):
         where = f"item {position}"
         if not isinstance(entry, dict):
             errors.append(f"{where}: not an object")
@@ -599,15 +622,17 @@ def validate_feed(raw: Any) -> tuple[Optional[dict[str, Any]], list[str]]:
             "summary": summary,
             "previous": _valid_rate_block(previous) if previous is not None else None,
             "current": _valid_rate_block(current) if current is not None else None,
+            "has_tiers": entry.get("has_tiers") is True,
             "observed_at": observed_at,
             "effective_at": _valid_text(entry.get("effective_at"), 64),
             "source_url": source_url, "confidence": confidence,
             "provenance": _valid_text(entry.get("provenance"), 256) or "Spend Sense central feed",
             "conditions": _valid_text(entry.get("conditions"), 500),
         })
-    if len(entries) > FEED_MAX_ITEMS:
-        errors.append(f"feed truncated to {FEED_MAX_ITEMS} items")
     items.sort(key=lambda item: (item["observed_at"], item["provider"], item["model"]), reverse=True)
+    if len(items) > FEED_MAX_ITEMS:
+        del items[FEED_MAX_ITEMS:]
+        errors.append(f"feed truncated to {FEED_MAX_ITEMS} items")
     return {"version": 1, "generated_at": generated_at, "items": items}, errors
 
 
@@ -785,8 +810,14 @@ def rank_items(items: list[dict[str, Any]], *,
 
 # ------------------------------------------------------------------ impact
 
-def _cost(tokens: Mapping[str, int], rates: Mapping[str, Any]) -> tuple[Optional[float], bool]:
-    """Price token buckets. Returns (usd, complete); incomplete if cache is unpriced."""
+def _cost(tokens: Mapping[str, int], rates: Mapping[str, Any],
+          other_rates: Mapping[str, Any]) -> tuple[Optional[float], bool]:
+    """Price the token buckets priced on BOTH sides of a comparison.
+
+    Returns (usd, complete). A used cache bucket with no rate on either side
+    is excluded from both totals and marks the comparison incomplete, so the
+    delta never compares different buckets.
+    """
     try:
         total = (tokens.get("input", 0) * float(rates["input"])
                  + tokens.get("output", 0) * float(rates["output"])) / 1_000_000
@@ -797,8 +828,8 @@ def _cost(tokens: Mapping[str, int], rates: Mapping[str, Any]) -> tuple[Optional
         count = tokens.get(key, 0)
         if not count:
             continue
-        rate = rates.get(key)
-        if rate is None:
+        rate, other = rates.get(key), other_rates.get(key)
+        if rate is None or other is None:
             complete = False
             continue
         try:
@@ -819,13 +850,18 @@ def estimate_impact(item: Mapping[str, Any], tokens: Mapping[str, int]) -> dict[
         return {"basis": "unavailable", "reason": "no recent usage of this model"}
     if not isinstance(previous, Mapping) or not isinstance(current, Mapping):
         return {"basis": "unavailable", "reason": "rate comparison unavailable"}
-    old_usd, old_complete = _cost(tokens, previous)
-    new_usd, new_complete = _cost(tokens, current)
+    old_usd, old_complete = _cost(tokens, previous, current)
+    new_usd, new_complete = _cost(tokens, current, previous)
     if old_usd is None or new_usd is None:
         return {"basis": "unavailable", "reason": "rate comparison unavailable"}
+    caveats = []
+    if not (old_complete and new_complete):
+        caveats.append("cache rates unavailable for comparison; cache tokens excluded")
+    if item.get("has_tiers") is True:
+        caveats.append("tiered pricing applies; base rates compared")
     return {
-        "basis": "full" if (old_complete and new_complete) else "partial",
-        "reason": "" if (old_complete and new_complete) else "cache rates unpublished; cache tokens excluded",
+        "basis": "full" if not caveats else "partial",
+        "reason": "; ".join(caveats),
         "window_days": IMPACT_DAYS,
         "tokens": {key: int(tokens.get(key, 0)) for key in ("input", "output", "cache_read", "cache_write")},
         "calls": int(tokens.get("calls", 0)),

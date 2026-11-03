@@ -124,6 +124,15 @@ test('newsImpactText labels API-equivalent estimates, never savings', () => {
     'newsImpactUnavailable(rate comparison unavailable)')
 })
 
+test('newsCentralAlert surfaces stale and first-fetch errors', () => {
+  assert.equal(S.newsCentralAlert({ state: 'ok' }, t), null)
+  assert.equal(S.newsCentralAlert({ state: 'disabled' }, t), null)
+  assert.equal(S.newsCentralAlert({ state: 'stale', error: 'boom' }, t), 'boom')
+  assert.equal(S.newsCentralAlert({ state: 'error', error: 'boom' }, t), 'boom')
+  assert.equal(S.newsCentralAlert({ state: 'error', error: '' }, t), 'newsCentralStale()')
+  assert.equal(S.newsCentralAlert(null, t), null)
+})
+
 test('newsAgeDays and newsFreshLabel describe freshness honestly', () => {
   const now = Date.parse('2026-11-03T12:00:00Z')
   assert.equal(S.newsAgeDays('2026-11-03T00:00:00+00:00', now), 0)

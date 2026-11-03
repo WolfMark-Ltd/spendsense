@@ -179,6 +179,49 @@ class LocalSnapshotTests(NewsTestCase):
         self.assertEqual([i["id"] for i in twice["items"]],
                          [i["id"] for i in once["items"]])
 
+    def test_source_switch_to_fallback_emits_no_model_news(self):
+        news = news_module()
+        cache = book([("acme", "alpha", Rate(1.0, 2.0))],
+                     source="models.dev cache (models_dev_cache.json)")
+        news.refresh_local(data_dir=self.data, catalogue=cache,
+                           plans_doc=plans_doc([]), now=NOW)
+        bundled = book([("acme", "alpha", Rate(9.0, 9.0)),
+                        ("acme", "beta", Rate(1.0, 1.0))],
+                       source="bundled models.dev snapshot")
+        result = news.refresh_local(data_dir=self.data, catalogue=bundled,
+                                    plans_doc=plans_doc([]), now=NOW + 10)
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["removed_model_count"], 0)
+
+    def test_return_to_cache_rebaselines_quietly(self):
+        news = news_module()
+        cache = book([("acme", "alpha", Rate(1.0, 2.0))],
+                     source="models.dev cache (models_dev_cache.json)")
+        bundled = book([("acme", "alpha", Rate(9.0, 9.0))],
+                       source="bundled models.dev snapshot")
+        news.refresh_local(data_dir=self.data, catalogue=cache,
+                           plans_doc=plans_doc([]), now=NOW)
+        news.refresh_local(data_dir=self.data, catalogue=bundled,
+                           plans_doc=plans_doc([]), now=NOW + 10)
+        result = news.refresh_local(data_dir=self.data, catalogue=cache,
+                                    plans_doc=plans_doc([]), now=NOW + 20)
+        self.assertEqual(result["items"], [])
+
+    def test_plans_still_diff_across_source_switch(self):
+        news = news_module()
+        cache = book([("acme", "alpha", Rate(1.0, 2.0))],
+                     source="models.dev cache (models_dev_cache.json)")
+        news.refresh_local(data_dir=self.data, catalogue=cache,
+                           plans_doc=plans_doc([plan("demo.basic", amount=10.0)]),
+                           now=NOW)
+        bundled = book([("acme", "alpha", Rate(9.0, 9.0))],
+                       source="bundled models.dev snapshot")
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=bundled, now=NOW + 10,
+            plans_doc=plans_doc([plan("demo.basic", amount=12.0)]))
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["items"][0]["category"], "subscription")
+
     def test_stored_items_survive_reload(self):
         news = news_module()
         news.refresh_local(data_dir=self.data,
@@ -237,6 +280,18 @@ class PlanCatalogueTests(NewsTestCase):
                                     now=NOW + 10)
         self.assertEqual(result["items"], [])
         self.assertEqual(result["removed_plan_count"], 1)
+
+    def test_repeated_allowance_changes_each_reported(self):
+        news = news_module()
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc([plan("demo.basic", windows=("a",))]),
+                           now=NOW)
+        news.refresh_local(data_dir=self.data, catalogue=book([]), now=NOW + 10,
+                           plans_doc=plans_doc([plan("demo.basic", windows=("a", "b"))]))
+        result = news.refresh_local(data_dir=self.data, catalogue=book([]), now=NOW + 20,
+                                    plans_doc=plans_doc([plan("demo.basic", windows=("a", "b", "c"))]))
+        self.assertEqual(len(result["items"]), 2)
+        self.assertEqual(len({item["id"] for item in result["items"]}), 2)
 
 
 # ------------------------------------------------------------------ settings
@@ -329,6 +384,33 @@ class FeedValidationTests(NewsTestCase):
         self.assertIsNotNone(feed)
         self.assertEqual(len(feed["items"]), news.FEED_MAX_ITEMS)
         self.assertTrue(any("truncated" in problem for problem in problems))
+
+    def test_client_truncation_keeps_newest(self):
+        news = news_module()
+        entries = [feed_item(f"c-{n:03d}",
+                             observed_at=f"2026-01-{n // 24 + 1:02d}T{n % 24:02d}:00:00+00:00")
+                   for n in range(news.FEED_MAX_ITEMS + 5)]
+        feed, _ = news.validate_feed(feed_doc(entries))
+        kept = {item["id"] for item in feed["items"]}
+        self.assertEqual(len(kept), news.FEED_MAX_ITEMS)
+        self.assertIn("c-204", kept)
+        self.assertNotIn("c-000", kept)
+
+    def test_non_finite_feed_rates_rejected(self):
+        news = news_module()
+        bad = feed_item("bad-inf", current={"input": float("inf"), "output": 1.0,
+                                            "cache_read": None, "cache_write": None})
+        feed, problems = news.validate_feed(feed_doc([feed_item("good"), bad]))
+        self.assertEqual([item["id"] for item in feed["items"]], ["good"])
+        self.assertTrue(problems)
+
+    def test_has_tiers_flag_survives_validation(self):
+        news = news_module()
+        entry = feed_item("tiered")
+        entry["has_tiers"] = True
+        feed, problems = news.validate_feed(feed_doc([entry]))
+        self.assertEqual(problems, [])
+        self.assertTrue(feed["items"][0]["has_tiers"])
 
 
 class CentralFetchTests(NewsTestCase):
@@ -492,6 +574,27 @@ class ImpactTests(NewsTestCase):
         self.assertEqual(result["basis"], "partial")
         self.assertIn("cache", result["reason"])
         self.assertAlmostEqual(result["old_usd"], 3.0)
+
+    def test_one_sided_cache_rate_excluded_from_both_totals(self):
+        news = news_module()
+        item = self.item(
+            previous={"input": 2.0, "output": 4.0, "cache_read": None, "cache_write": None},
+            current={"input": 2.0, "output": 4.0, "cache_read": 0.2, "cache_write": None})
+        tokens = {"input": 1_000_000, "output": 0, "cache_read": 1_000_000,
+                  "cache_write": 0, "calls": 3}
+        result = news.estimate_impact(item, tokens)
+        self.assertEqual(result["basis"], "partial")
+        self.assertAlmostEqual(result["old_usd"], result["new_usd"])
+        self.assertAlmostEqual(result["delta_usd"], 0.0)
+
+    def test_tiered_price_change_is_partial(self):
+        news = news_module()
+        item = self.item(has_tiers=True)
+        tokens = {"input": 1_000_000, "output": 100_000, "cache_read": 0,
+                  "cache_write": 0, "calls": 4}
+        result = news.estimate_impact(item, tokens)
+        self.assertEqual(result["basis"], "partial")
+        self.assertIn("tier", result["reason"])
 
     def test_no_usage_is_unavailable(self):
         news = news_module()

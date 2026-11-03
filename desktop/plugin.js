@@ -6602,6 +6602,11 @@ function newsFreshLabel(days, t) {
   return t('newsFreshDays', days)
 }
 
+function newsCentralAlert(central, t) {
+  if (!central || (central.state !== 'stale' && central.state !== 'error')) return null
+  return central.error || t('newsCentralStale')
+}
+
 const NEWS_CSS = `
 .wm-news-list{display:grid;gap:12px}
 .wm-news-card{border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-primary);padding:15px 17px;min-width:0}
@@ -6710,6 +6715,7 @@ function NewsPage() {
   const emptyText = scope === 'foryou' && category === 'all' ? t('newsEmptyForYou')
     : category !== 'all' ? t('newsEmptyCategory') : t('newsEmptyAll')
   const freshDays = newsAgeDays(central.fetched_at, Date.now())
+  const centralAlert = liveOn ? newsCentralAlert(central, t) : null
   return jsxs('div', { className: 'wm-analytics wm-product', children: [
     jsx('style', { children: [ANALYTICS_CSS, PRODUCT_CSS, NEWS_CSS] }),
     jsx(LedgerTabs, {}),
@@ -6726,8 +6732,8 @@ function NewsPage() {
       ] }) : null,
       liveOn && central.fetched_at ? jsx('p', { className: 'wm-news-note', role: 'status',
         children: t('newsCentralFresh', newsFreshLabel(freshDays, t)) }) : null,
-      liveOn && central.state === 'stale' ? jsx('div', { className: 'wm-alert', role: 'status',
-        children: central.error || t('newsCentralStale') }) : null,
+      centralAlert ? jsx('div', { className: 'wm-alert', role: 'status',
+        children: centralAlert }) : null,
       jsxs('div', { className: 'wm-news-controls', children: [
         jsx(SegmentedControl, {
           onChange: v => $newsScope.set(v === 'all' ? 'all' : 'foryou'),
@@ -7890,7 +7896,7 @@ export const __test = {
   digestQuery, uiLocale, digestCopy, digestDownload, DigestPreview, ReportsPage,
   REPORTS_CSS, $digestDays,
   newsQuery, newsSettingsQuery, newsSaveSettings, invalidateNewsFor, newsFilter, newsCategoryLabel,
-  newsImpactText, newsAgeDays, newsFreshLabel, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
+  newsImpactText, newsAgeDays, newsFreshLabel, newsCentralAlert, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   $fxDraft, $fxSaving, $fxNotice,

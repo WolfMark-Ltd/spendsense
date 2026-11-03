@@ -14,12 +14,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from .news import CATEGORIES, CONFIDENCES, FEED_MAX_ITEMS
+from .news import CATEGORIES, CONFIDENCES, FEED_MAX_ITEMS, rate_direction
 from .pricing import _parse_catalogue
 
 MODELS_DEV_URL = "https://models.dev"
@@ -28,8 +29,8 @@ MODELS_DEV_URL = "https://models.dev"
 def _table(raw: Any) -> dict[str, dict[str, dict[str, Any]]]:
     catalogue = _parse_catalogue(raw, source="models.dev", confidence="aggregator",
                                  as_of="", version="models.dev")
-    if catalogue is None:
-        return {}
+    if catalogue is None or not catalogue.providers:
+        raise ValueError("snapshot has no priced providers")
     table: dict[str, dict[str, dict[str, Any]]] = {}
     for provider, models in catalogue.providers.items():
         rows: dict[str, dict[str, Any]] = {}
@@ -46,15 +47,6 @@ def _table(raw: Any) -> dict[str, dict[str, dict[str, Any]]]:
 
 def _sig(entry: Mapping[str, Any]) -> str:
     return json.dumps(entry, sort_keys=True)
-
-
-def _direction(old: Mapping[str, Any], new: Mapping[str, Any]) -> str:
-    try:
-        before = float(old["input"]) + float(old["output"])
-        after = float(new["input"]) + float(new["output"])
-    except (KeyError, TypeError, ValueError):
-        return "price_increase"
-    return "price_reduction" if after < before else "price_increase"
 
 
 def _model_id(observed: str, category: str, provider: str, model: str,
@@ -103,7 +95,7 @@ def _model_diff(previous: Mapping[str, dict[str, dict[str, Any]]],
             old_entry, new_entry = before[model], after[model]
             if _sig(old_entry) == _sig(new_entry):
                 continue
-            category = _direction(old_entry, new_entry)
+            category = rate_direction(old_entry, new_entry)
             old_sig, new_sig = _sig(old_entry), _sig(new_entry)
             tier_note = "Tiered/context pricing changed; base rates compared." \
                 if old_entry.get("tiers") != new_entry.get("tiers") else ""
@@ -112,6 +104,7 @@ def _model_diff(previous: Mapping[str, dict[str, dict[str, Any]]],
                 "category": category, "provider": provider, "model": model,
                 "summary": f"{model} ({provider}) list price changed on models.dev.",
                 "previous": _slim(old_entry), "current": _slim(new_entry),
+                "has_tiers": bool(old_entry.get("tiers") or new_entry.get("tiers")),
                 "observed_at": observed_at, "effective_at": "",
                 "source_url": MODELS_DEV_URL, "confidence": "observed",
                 "provenance": "models.dev",
@@ -128,7 +121,9 @@ def _rate_block(value: Any) -> Optional[dict[str, Any]]:
         raw = value.get(key)
         if raw is None:
             out[key] = None
-        elif isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw < 0:
+        elif isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return None
+        elif not math.isfinite(raw) or raw < 0:
             return None
         else:
             out[key] = float(raw)
@@ -168,6 +163,9 @@ def _curated(entries: Any, observed_at: str) -> tuple[list[dict[str, Any]], list
         if current is not None and _rate_block(current) is None:
             problems.append(f"{where}: invalid current rates")
             continue
+        if category in ("price_reduction", "price_increase") and (previous is None or current is None):
+            problems.append(f"{where}: price changes need previous and current rates")
+            continue
         confidence = entry.get("confidence") or "curated"
         if confidence not in CONFIDENCES:
             problems.append(f"{where}: unknown confidence")
@@ -190,22 +188,51 @@ def _curated(entries: Any, observed_at: str) -> tuple[list[dict[str, Any]], list
     return items, problems
 
 
+def _sort_key(item: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
+    return (str(item.get("observed_at") or ""), str(item.get("provider") or ""),
+            str(item.get("model") or ""), str(item.get("category") or ""),
+            str(item.get("id") or ""))
+
+
 def build_feed(current: Any, previous: Any, curated_doc: Any, *,
                observed_at: str) -> tuple[dict[str, Any], list[str]]:
     """Diff two models.dev snapshots and merge validated curated notes."""
     problems: list[str] = []
+    model_items: list[dict[str, Any]] = []
     if previous is None:
-        model_items: list[dict[str, Any]] = []
+        try:
+            _table(current)
+        except ValueError as exc:
+            problems.append(f"current snapshot: {exc}")
     else:
-        model_items = _model_diff(_table(previous), _table(current), observed_at)
+        try:
+            prev_table = _table(previous)
+        except ValueError as exc:
+            problems.append(f"previous snapshot: {exc}")
+            prev_table = None
+        try:
+            cur_table = _table(current)
+        except ValueError as exc:
+            problems.append(f"current snapshot: {exc}")
+            cur_table = None
+        if prev_table is not None and cur_table is not None:
+            model_items = _model_diff(prev_table, cur_table, observed_at)
     announcements = curated_doc.get("announcements", []) if isinstance(curated_doc, dict) else None
     curated_items, curated_problems = _curated(announcements, observed_at)
     problems.extend(curated_problems)
-    items = model_items + curated_items
-    items.sort(key=lambda item: (item["observed_at"], item["provider"],
-                                 item["model"], item["category"], item["id"]))
-    return {"version": 1, "generated_at": observed_at,
-            "items": items[:FEED_MAX_ITEMS]}, problems
+    if len(curated_items) > FEED_MAX_ITEMS:
+        problems.append(f"curated announcements exceed the {FEED_MAX_ITEMS}-item feed limit")
+        curated_items = []
+    model_items.sort(key=_sort_key, reverse=True)
+    curated_items.sort(key=_sort_key, reverse=True)
+    room = FEED_MAX_ITEMS - len(curated_items)
+    kept_models = model_items[:room]
+    dropped = len(model_items) - len(kept_models)
+    items = sorted(kept_models + curated_items, key=_sort_key, reverse=True)
+    doc: dict[str, Any] = {"version": 1, "generated_at": observed_at, "items": items}
+    if dropped:
+        doc["truncated"] = {"model_items_dropped": dropped}
+    return doc, problems
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -233,7 +260,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         for problem in problems:
             print(f"news-feed: {problem}", file=sys.stderr)
         return 1
-    args.out.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    args.out.write_text(json.dumps(doc, indent=2, sort_keys=True, allow_nan=False) + "\n",
+                             encoding="utf-8")
     print(f"wrote {args.out}: {len(doc['items'])} items")
     return 0
 

@@ -21,8 +21,9 @@
           "provider": {"type": "string", "minLength": 1, "maxLength": 128},
           "model": {"type": "string", "maxLength": 256},
           "summary": {"type": "string", "minLength": 1, "maxLength": 500},
-          "previous": {"$ref": "#/$defs/rateBlock"},
-          "current": {"$ref": "#/$defs/rateBlock"},
+          "previous": {"anyOf": [{"$ref": "#/$defs/rateBlock"}, {"type": "null"}]},
+          "current": {"anyOf": [{"$ref": "#/$defs/rateBlock"}, {"type": "null"}]},
+          "has_tiers": {"type": "boolean"},
           "observed_at": {"type": "string", "minLength": 1, "maxLength": 64},
           "effective_at": {"type": "string", "maxLength": 64},
           "source_url": {"type": "string", "pattern": "^https?://", "maxLength": 500},
@@ -32,8 +33,14 @@
         },
         "allOf": [
           {
-            "if": {"properties": {"category": {"enum": ["price_reduction", "price_increase"]}}},
-            "then": {"required": ["previous", "current"]}
+            "if": {"properties": {"category": {"enum": ["price_reduction", "price_increase"]}}, "required": ["category"]},
+            "then": {
+              "required": ["previous", "current"],
+              "properties": {
+                "previous": {"$ref": "#/$defs/rateBlock"},
+                "current": {"$ref": "#/$defs/rateBlock"}
+              }
+            }
           }
         ]
       }
