@@ -16,11 +16,11 @@ import hashlib
 import json
 import math
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from .news import CATEGORIES, CONFIDENCES, FEED_MAX_ITEMS, rate_direction
+from .news import CATEGORIES, CONFIDENCES, FEED_MAX_ITEMS, rate_direction, validate_feed
 from .pricing import _parse_catalogue
 
 MODELS_DEV_URL = "https://models.dev"
@@ -194,9 +194,48 @@ def _sort_key(item: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
             str(item.get("id") or ""))
 
 
+def _carried_items(prior_feed: Any, fresh_ids: set[str], observed_at: str,
+                   retain_days: int) -> tuple[list[dict[str, Any]], list[str]]:
+    """Prior published items still within the retention window.
+
+    The prior feed is re-validated with the same client rules; anything
+    invalid fails the run rather than republishing bad data. Carried items
+    split into curated and model groups by this generator's own id scheme.
+    """
+    validated, prior_problems = validate_feed(prior_feed)
+    if validated is None:
+        return [], ["prior feed invalid: " + "; ".join(prior_problems)]
+    try:
+        now = datetime.fromisoformat(observed_at)
+    except ValueError:
+        now = datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    cutoff = now - timedelta(days=max(0, retain_days))
+    carried: list[dict[str, Any]] = []
+    for item in validated["items"]:
+        if item["id"] in fresh_ids:
+            continue
+        try:
+            seen = datetime.fromisoformat(item["observed_at"])
+        except ValueError:
+            continue
+        if seen.tzinfo is None:
+            seen = seen.replace(tzinfo=timezone.utc)
+        if seen < cutoff:
+            continue
+        carried.append(item)
+    return carried, []
+
+
 def build_feed(current: Any, previous: Any, curated_doc: Any, *,
-               observed_at: str) -> tuple[dict[str, Any], list[str]]:
-    """Diff two models.dev snapshots and merge validated curated notes."""
+               observed_at: str, prior_feed: Any = None,
+               retain_days: int = 90) -> tuple[dict[str, Any], list[str]]:
+    """Diff two models.dev snapshots and merge validated curated notes.
+
+    ``prior_feed`` carries the last published feed's recent items forward so
+    history survives across runs; items older than ``retain_days`` expire.
+    """
     problems: list[str] = []
     model_items: list[dict[str, Any]] = []
     if previous is None:
@@ -220,6 +259,15 @@ def build_feed(current: Any, previous: Any, curated_doc: Any, *,
     announcements = curated_doc.get("announcements", []) if isinstance(curated_doc, dict) else None
     curated_items, curated_problems = _curated(announcements, observed_at)
     problems.extend(curated_problems)
+    if prior_feed is not None:
+        fresh_ids = {item["id"] for item in model_items} | {item["id"] for item in curated_items}
+        carried, carry_problems = _carried_items(prior_feed, fresh_ids, observed_at, retain_days)
+        problems.extend(carry_problems)
+        for item in carried:
+            if item["id"].startswith("sub-"):
+                curated_items.append(item)
+            else:
+                model_items.append(item)
     if len(curated_items) > FEED_MAX_ITEMS:
         problems.append(f"curated announcements exceed the {FEED_MAX_ITEMS}-item feed limit")
         curated_items = []
@@ -245,17 +293,24 @@ def main(argv: Optional[list[str]] = None) -> int:
                         help="Curated announcements JSON")
     parser.add_argument("--observed-at", default="",
                         help="Observation timestamp (default: now, UTC)")
+    parser.add_argument("--prior-feed", type=Path,
+                        help="Last published feed; recent items carry forward")
+    parser.add_argument("--retain-days", type=int, default=90,
+                        help="Prior items older than this expire (default: 90)")
     parser.add_argument("--out", type=Path, required=True, help="Feed JSON to write")
     args = parser.parse_args(argv)
     try:
         current = json.loads(args.current.read_text(encoding="utf-8-sig"))
         previous = json.loads(args.previous.read_text(encoding="utf-8-sig")) if args.previous else None
         curated_doc = json.loads(args.curated.read_text(encoding="utf-8-sig"))
+        prior_feed = json.loads(args.prior_feed.read_text(encoding="utf-8-sig")) \
+            if args.prior_feed else None
     except (OSError, ValueError) as exc:
         print(f"news-feed: cannot read inputs: {exc}", file=sys.stderr)
         return 1
     observed_at = args.observed_at or datetime.now(timezone.utc).isoformat()
-    doc, problems = build_feed(current, previous, curated_doc, observed_at=observed_at)
+    doc, problems = build_feed(current, previous, curated_doc, observed_at=observed_at,
+                               prior_feed=prior_feed, retain_days=args.retain_days)
     if problems:
         for problem in problems:
             print(f"news-feed: {problem}", file=sys.stderr)
