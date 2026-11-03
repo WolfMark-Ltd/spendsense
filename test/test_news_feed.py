@@ -236,6 +236,106 @@ class BuildFeedTests(unittest.TestCase):
         self.assertTrue(problems)
         self.assertEqual(doc["items"], [])
 
+    def test_partly_invalid_prior_feed_is_rejected(self):
+        feed = feed_module()
+        good = {"id": "md-abc", "category": "new_model", "provider": "acme",
+                "model": "alpha", "summary": "Listed.",
+                "previous": None, "current": {"input": 1.0, "output": 2.0,
+                                              "cache_read": None, "cache_write": None},
+                "observed_at": "2026-11-01T00:00:00+00:00", "effective_at": "",
+                "source_url": "https://models.dev", "confidence": "observed",
+                "provenance": "models.dev", "conditions": ""}
+        prior = {"version": 1, "generated_at": "2026-11-01T00:00:00+00:00",
+                 "items": [good, {"bogus": "entry"}]}
+        snapshot = models([("acme", "alpha", {"input": 2.0, "output": 10.0})])
+        doc, problems = feed.build_feed(
+            snapshot, snapshot, {"announcements": []},
+            observed_at=self.OBSERVED, prior_feed=prior, retain_days=90)
+        self.assertTrue(any("prior feed invalid" in problem for problem in problems))
+        self.assertEqual(doc["items"], [])
+
+    def test_model_diff_ids_stable_across_runs(self):
+        feed = feed_module()
+        previous = models([("acme", "alpha", {"input": 3.0, "output": 15.0})])
+        current = models([("acme", "alpha", {"input": 2.0, "output": 10.0}),
+                          ("acme", "beta", {"input": 1.0, "output": 1.0})])
+        first, _ = feed.build_feed(current, previous, {"announcements": []},
+                                   observed_at="2026-11-03T00:00:00+00:00")
+        second, _ = feed.build_feed(current, previous, {"announcements": []},
+                                    observed_at="2026-11-10T00:00:00+00:00")
+        self.assertEqual([i["id"] for i in first["items"]],
+                         [i["id"] for i in second["items"]])
+
+    def test_curated_stable_id_survives_correction(self):
+        feed = feed_module()
+        snapshot = models([("acme", "alpha", {"input": 2.0, "output": 10.0})])
+        first, problems = feed.build_feed(
+            snapshot, None,
+            {"announcements": [{"id": "acme-note-1", "provider": "acme",
+                                "summary": "First wording.",
+                                "source_url": "https://example.com/pricing"}]},
+            observed_at="2026-11-03T00:00:00+00:00")
+        self.assertEqual(problems, [])
+        self.assertEqual(first["items"][0]["id"], "acme-note-1")
+        second, problems = feed.build_feed(
+            snapshot, snapshot,
+            {"announcements": [{"id": "acme-note-1", "provider": "acme",
+                                "summary": "Corrected wording.",
+                                "source_url": "https://example.com/pricing"}]},
+            observed_at="2026-11-10T00:00:00+00:00",
+            prior_feed=first, retain_days=90)
+        self.assertEqual(problems, [])
+        self.assertEqual(len(second["items"]), 1)
+        self.assertEqual(second["items"][0]["id"], "acme-note-1")
+        self.assertEqual(second["items"][0]["summary"], "Corrected wording.")
+
+    def test_curated_bad_and_duplicate_ids_rejected(self):
+        feed = feed_module()
+        snapshot = models([("acme", "alpha", {"input": 2.0, "output": 10.0})])
+        _, problems = feed.build_feed(
+            snapshot, None,
+            {"announcements": [{"id": "has spaces", "provider": "acme",
+                                "summary": "Bad id.",
+                                "source_url": "https://example.com/pricing"}]},
+            observed_at=self.OBSERVED)
+        self.assertTrue(problems)
+        _, problems = feed.build_feed(
+            snapshot, None,
+            {"announcements": [
+                {"id": "dup", "provider": "acme", "summary": "One.",
+                 "source_url": "https://example.com/a"},
+                {"id": "dup", "provider": "acme", "summary": "Two.",
+                 "source_url": "https://example.com/b"}]},
+            observed_at=self.OBSERVED)
+        self.assertTrue(any("duplicate" in problem for problem in problems))
+
+    def test_withdraw_removes_carried_announcement(self):
+        feed = feed_module()
+        snapshot = models([("acme", "alpha", {"input": 2.0, "output": 10.0})])
+        first, _ = feed.build_feed(
+            snapshot, None,
+            {"announcements": [
+                {"id": "keep-me", "provider": "acme", "summary": "Stays.",
+                 "source_url": "https://example.com/a"},
+                {"id": "drop-me", "provider": "acme", "summary": "Goes.",
+                 "source_url": "https://example.com/b"}]},
+            observed_at="2026-11-03T00:00:00+00:00")
+        self.assertEqual(len(first["items"]), 2)
+        second, problems = feed.build_feed(
+            snapshot, snapshot, {"announcements": [], "withdraw": ["drop-me"]},
+            observed_at="2026-11-10T00:00:00+00:00",
+            prior_feed=first, retain_days=90)
+        self.assertEqual(problems, [])
+        self.assertEqual([i["id"] for i in second["items"]], ["keep-me"])
+
+    def test_withdraw_must_be_a_list_of_ids(self):
+        feed = feed_module()
+        snapshot = models([("acme", "alpha", {"input": 2.0, "output": 10.0})])
+        _, problems = feed.build_feed(snapshot, snapshot,
+                                      {"announcements": [], "withdraw": "drop-me"},
+                                      observed_at=self.OBSERVED)
+        self.assertTrue(problems)
+
     def test_carried_curated_survive_truncation(self):
         feed = feed_module()
         previous = models([("acme", "seed", {"input": 1.0, "output": 1.0})])

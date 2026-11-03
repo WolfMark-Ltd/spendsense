@@ -3,7 +3,7 @@
 
 Usage:
     python news-feed/aggregate.py --counts /var/lib/spendsense-feed/count.tmp.log \
-        --totals /opt/wolfmark-spendsense-feed/state/country-daily.json [--date YYYY-MM-DD]
+        --totals /opt/wolfmark-spendsense-feed/state/country-daily.json [--no-reopen]
 """
 from __future__ import annotations
 

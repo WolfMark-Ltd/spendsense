@@ -42,9 +42,11 @@ covers it; `generate.py` only wires the repo path to the CLI.
    from the live feed (90-day retention, fresh items win duplicates).
 3. Rejects the run unless the output passes the plugin's own client
    validation with zero problems and fits the 256 KiB client fetch cap.
-4. Sets the feed world-readable, then atomically publishes by rename over
-   `feed/v1/news.json`, keeping the previous live feed outside the web root
-   as the rollback copy.
+4. Sets the feed world-readable, stages it beside the live file, then
+   atomically renames it over `feed/v1/news.json` (same directory, so the
+   rename can never cross filesystems), keeping the previous live feed
+   outside the web root as the rollback copy. A directory lock
+   serialises runs.
 5. Rotates the snapshot (`models-prev.json`) and appends one operational
    line to `state/collect.log` (kept to the last 200 lines).
 
@@ -71,23 +73,29 @@ host (seeded from the repo copy at activation). Every entry still needs a
 provider, a summary and an https `source_url` the reader can check. Never
 invent a change: if the effective date or the new allowance cannot be
 established from the source, leave that field out and say so in
-`conditions`. A malformed curated file fails the run without publishing.
+`conditions`. Give notes a stable `id` so corrections replace the earlier
+wording instead of duplicating it; list published ids under `withdraw` to
+remove carried notes early. A malformed curated file fails the run without
+publishing.
 
 ## Anonymous country counting
 
 Nginx resolves each feed request's country in-process from a locally
 installed GeoLite2 database (no per-request third-party lookup) and appends
-one temporary line — `METHOD STATUS COUNTRY`, e.g. `GET 200 GB` — to
-`/var/lib/spendsense-feed/count.tmp.log`. That is the entire per-request
-record: no IP addresses, no timestamps, no user agents, no cookies, no
-identifiers. Lookup misses become `Unknown`, counted like any other country.
+one temporary line — `DATE METHOD STATUS COUNTRY`, e.g.
+`2026-11-03 GET 200 GB` — to `/var/lib/spendsense-feed/count.tmp.log`. That
+is the entire per-request record: a day date only (never a full timestamp),
+no IP addresses, no user agents, no cookies, no identifiers. Lookup misses
+become `Unknown`, counted like any other country.
 
-Daily at 00:07 the aggregate timer folds the temp log into
-`state/country-daily.json` (`{date: {country: count}}`), counting
-successful GETs only, then truncates the temp log so the per-request lines
-are discarded. Monitoring checks must use HEAD, which keeps them out of the
-totals. Totals are keyed by the previous server-local date, matching the
-rollup boundary; a missed run folds its backlog into the next key.
+Daily at 00:07 the aggregate timer rotates the temp log aside, asks Nginx
+to reopen its logs (so no request is lost in the handover), folds the
+rotated lines into `state/country-daily.json`
+(`{date: {country: count}}`) keyed by each line's own date, then deletes
+the rotated file so the per-request lines are discarded. Only successful
+GETs count; monitoring checks must use HEAD, which keeps them out of the
+totals. A leftover rotated file from an interrupted run is folded first on
+the next run, so retries lose nothing; these stay approximate counts.
 
 The totals file is shaped for an optional later export to PostHog: one
 aggregate event per country per day, a single fixed identifier (never a
@@ -111,10 +119,12 @@ and the operator's own curated file.
 ### Logging, stated honestly
 
 - `access_log off;` covers the whole feed host except the feed path, which
-  writes temporary `METHOD STATUS COUNTRY` lines only — no IPs,
-  timestamps, user agents, cookies or identifiers — folded daily into
-  anonymous country totals, after which the per-request lines are
-  discarded. ACME validation hits leave no request log.
+  writes temporary `DATE METHOD STATUS COUNTRY` lines only — day date,
+  never a full timestamp; no IPs, user agents, cookies or identifiers.
+  These anonymous counting records are folded daily into country totals
+  and then discarded. This is not a visitor access log: it cannot identify
+  a visitor, a session, or when within a day a request arrived. ACME
+  validation hits leave no request log.
 - `error_log` stays at `warn` per house convention. It records failures
   only, but a failed request can include the client address in an error
   entry. There is no other routine visitor record on this host.
@@ -177,9 +187,15 @@ The previous live feed is kept at
 root). To restore it:
 
 ```sh
-cp /opt/wolfmark-spendsense-feed/state/news.json.prev /tmp/rollback-news.json
-mv /tmp/rollback-news.json /var/www/spendsense.wolfmark.co.uk/feed/v1/news.json
+cp /opt/wolfmark-spendsense-feed/state/news.json.prev \
+  /var/www/spendsense.wolfmark.co.uk/feed/v1/.news.json.rollback
+mv /var/www/spendsense.wolfmark.co.uk/feed/v1/.news.json.rollback \
+  /var/www/spendsense.wolfmark.co.uk/feed/v1/news.json
 ```
+
+Staging beside the live file (never shared `/tmp`) keeps the final rename
+on one filesystem, so it stays atomic and no other user on the machine can
+interfere with the rollback file.
 
 To pause publication without removing the endpoint: `systemctl disable
 --now wolfmark-spendsense-feed.timer`; the last good feed keeps serving.

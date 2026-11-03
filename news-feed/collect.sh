@@ -1,14 +1,16 @@
 #!/bin/sh
-# Spend Sense Model News — weekly collection and publication.
+# Spend Sense Model News — scheduled collection and publication.
 #
 # Fetches a models.dev snapshot, rebuilds the public feed (carrying recent
 # history forward), validates it with the same client rules the plugin uses,
 # and atomically publishes it. ANY failure exits non-zero WITHOUT touching
 # the live feed, so the prior good feed always survives a bad run.
 #
-# Silent on success (cron mails only failures when MAILTO is set). One
+# Silent on success (failures surface via the service journal). One
 # operational line per run goes to state/collect.log; no visitor data exists
-# anywhere in this pipeline.
+# anywhere in this pipeline. A directory lock serialises runs: systemd
+# already prevents overlapping timer starts, and the lock also covers
+# manual runs sharing the same staging files.
 #
 # Layout (all overridable for local validation):
 #   $FEED_ROOT/repo    checked-out spendsense repository (this script lives in repo/news-feed/)
@@ -22,7 +24,9 @@ STATE="$FEED_ROOT/state"
 STAGING="$STATE/staging"
 WEBROOT="${FEED_WEBROOT:-$HOME/spendsense.wolfmark.co.uk}"
 LIVE="$WEBROOT/feed/v1/news.json"
+LIVE_TMP="$WEBROOT/feed/v1/.news.json.new"
 ROLLBACK="$STATE/news.json.prev"
+LOCKDIR="$STATE/collect.lock"
 PYTHON="${FEED_PYTHON:-/usr/bin/python3}"
 MODELS_URL="${MODELS_DEV_URL:-https://models.dev/api.json}"
 RETAIN_DAYS="${FEED_RETAIN_DAYS:-90}"
@@ -34,6 +38,11 @@ fail() {
     echo "$(date -u +%FT%TZ) FAIL $1" >> "$STATE/collect.log"
     exit 1
 }
+
+mkdir -p "$STATE"
+mkdir "$LOCKDIR" 2>/dev/null || fail "another run holds the lock (remove $LOCKDIR if stale)"
+# Trap only after acquiring: a refused run must never touch the holder's lock.
+trap 'rmdir "$LOCKDIR" 2>/dev/null; rm -f "$LIVE_TMP" 2>/dev/null' EXIT INT TERM
 
 [ -x "$PYTHON" ] || fail "python not executable: $PYTHON"
 "$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 10))' \
@@ -84,8 +93,12 @@ EOF
     || fail "generated feed failed client validation"
 
 [ -f "$LIVE" ] && cp -p "$LIVE" "$ROLLBACK"
-chmod 0644 "$STAGING/feed.json"  # world-readable under restrictive umasks
-mv "$STAGING/feed.json" "$LIVE"
+# Stage beside LIVE so the final rename never crosses filesystems: a rename
+# within one directory is atomic, while a cross-device mv would copy (readers
+# could see partial JSON, and a failed copy could take the live feed with it).
+cp -p "$STAGING/feed.json" "$LIVE_TMP" || fail "staging to live directory failed"
+chmod 0644 "$LIVE_TMP"  # world-readable under restrictive umasks
+mv "$LIVE_TMP" "$LIVE"
 mv "$NEW_SNAPSHOT" "$STATE/models-prev.json"
 
 echo "$(date -u +%FT%TZ) OK $FEED_CHECK retain=${RETAIN_DAYS}d" >> "$STATE/collect.log"
