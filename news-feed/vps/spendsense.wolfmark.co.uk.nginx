@@ -6,10 +6,11 @@
 # sites-enabled, validate with `nginx -t` before reloading, and never reload
 # while another deploy is live.
 #
-# Privacy: access_log is OFF for this host, so routine feed requests leave no
-# request log. error_log stays at warn per house convention: failed requests
-# can record the client address in error entries. No upstream proxy or CDN
-# fronts this host.
+# Privacy: access_log is OFF for this host except the feed location, which
+# writes METHOD STATUS COUNTRY lines only (no IPs, timestamps, agents,
+# cookies or identifiers) for anonymous daily country totals. error_log stays
+# at warn per house convention: failed requests can record the client address
+# in error entries. No upstream proxy or CDN fronts this host.
 
 server {
     listen 80;
@@ -58,6 +59,9 @@ server {
     location = /feed/v1/news.json {
         default_type application/json;
         add_header Cache-Control "public, max-age=21600" always;
+        # Anonymous counting only: METHOD STATUS COUNTRY per request, no IPs,
+        # timestamps, agents, cookies or identifiers (see spendsense-feed-http.conf).
+        access_log /var/lib/spendsense-feed/count.tmp.log feed_count;
         try_files $uri =404;
     }
 

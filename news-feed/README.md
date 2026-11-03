@@ -16,10 +16,14 @@ request logging. Nothing here is deployed yet.
 | `schema.json` | Feed schema (version 1). The plugin validates every fetch against the same rules. |
 | `generate.py` | Operator wrapper. Deterministic: same inputs plus `--observed-at` give byte-identical output. |
 | `collect.sh` | Scheduled collection: download, generate, validate, atomic publish. Prepared, not scheduled. |
-| `vps/spendsense.wolfmark.co.uk.nginx` | Static HTTPS endpoint with access logging off. Prepared, not installed. |
+| `aggregate.py` | Daily country fold of the temp count log (logic in `wolfmark_ledger/feed_counts.py`). Prepared, not scheduled. |
+| `vps/spendsense.wolfmark.co.uk.nginx` | Static HTTPS endpoint, anonymous count log on the feed path only. Prepared, not installed. |
 | `vps/spendsense.wolfmark.co.uk.bootstrap.nginx` | HTTP-only ACME bootstrap vhost for first issuance. Prepared, not installed. |
+| `vps/spendsense-feed-http.conf` | GeoIP2 country lookup + minimal count format (http context). Prepared, not installed. |
 | `vps/wolfmark-spendsense-feed.service` | Hardened oneshot publisher (house systemd conventions). Prepared, not installed. |
 | `vps/wolfmark-spendsense-feed.timer` | Six-hourly monotonic schedule (timezone-independent). Prepared, not enabled. |
+| `vps/wolfmark-spendsense-feed-aggregate.service` | Offline daily fold (no IP networking at all). Prepared, not installed. |
+| `vps/wolfmark-spendsense-feed-aggregate.timer` | Daily 00:07 rollup. Prepared, not enabled. |
 | `curated.json` | Curated subscription/allowance announcements. Starts empty; entries are transcribed verbatim. |
 | `curated.example.json` | Entry shape example. Never read by the generator. |
 | `fixtures/sample-feed.json` | Sample feed for tests and docs. Invented examples, not real announcements. |
@@ -69,6 +73,28 @@ invent a change: if the effective date or the new allowance cannot be
 established from the source, leave that field out and say so in
 `conditions`. A malformed curated file fails the run without publishing.
 
+## Anonymous country counting
+
+Nginx resolves each feed request's country in-process from a locally
+installed GeoLite2 database (no per-request third-party lookup) and appends
+one temporary line — `METHOD STATUS COUNTRY`, e.g. `GET 200 GB` — to
+`/var/lib/spendsense-feed/count.tmp.log`. That is the entire per-request
+record: no IP addresses, no timestamps, no user agents, no cookies, no
+identifiers. Lookup misses become `Unknown`, counted like any other country.
+
+Daily at 00:07 the aggregate timer folds the temp log into
+`state/country-daily.json` (`{date: {country: count}}`), counting
+successful GETs only, then truncates the temp log so the per-request lines
+are discarded. Monitoring checks must use HEAD, which keeps them out of the
+totals. Totals are keyed by the previous server-local date, matching the
+rollup boundary; a missed run folds its backlog into the next key.
+
+The totals file is shaped for an optional later export to PostHog: one
+aggregate event per country per day, a single fixed identifier (never a
+visitor id), person profiles off (`$process_person_profile: false`), and
+PostHog GeoIP enrichment disabled. No export code ships now, no PostHog
+client SDK goes into Spend Sense, and per-visitor events are never sent.
+
 ## Serving configuration (Nginx, Contabo VPS)
 
 The feed host is a plain Nginx server block serving one static file, plus a
@@ -84,11 +110,14 @@ and the operator's own curated file.
 
 ### Logging, stated honestly
 
-- `access_log off;` covers the whole feed host: routine requests —
-  including feed fetches and ACME validation hits — leave no request log.
+- `access_log off;` covers the whole feed host except the feed path, which
+  writes temporary `METHOD STATUS COUNTRY` lines only — no IPs,
+  timestamps, user agents, cookies or identifiers — folded daily into
+  anonymous country totals, after which the per-request lines are
+  discarded. ACME validation hits leave no request log.
 - `error_log` stays at `warn` per house convention. It records failures
   only, but a failed request can include the client address in an error
-  entry. There is no routine visitor record anywhere else on this host.
+  entry. There is no other routine visitor record on this host.
 - No upstream proxy or CDN fronts this host (the Cloudflare fronting on
   this VPS applies to `qwiz.live` only), so there is no upstream request
   logging to account for. Transient TCP/TLS metadata remains visible while
@@ -99,8 +128,9 @@ and the operator's own curated file.
 ### Monitoring
 
 Reuse the running Uptime Kuma (Docker, healthy): at activation add an
-HTTPS check on the feed URL expecting 200 + JSON. Timer failures are also
-visible via `systemctl status` / the journal and `state/collect.log`.
+HTTPS check on the feed URL (HEAD method, expecting 200) so monitoring
+stays out of the GET totals. Timer failures are also visible via
+`systemctl status` / the journal and `state/collect.log`.
 
 ## Activation (requires explicit approval — do NOT run yet)
 
@@ -110,15 +140,21 @@ Remaining steps, in order — `nginx -t` must pass before every reload:
    /var/www/spendsense.wolfmark.co.uk/feed/v1`; clone the repo to
    `/opt/wolfmark-spendsense-feed/repo`; copy `news-feed/curated.json`
    to `.../state/curated.json`; set `root:root 0700` on state and
-   `root:www-data 0755` on the document root.
-3. Install the HTTP-only bootstrap vhost from
+   `root:www-data 0755` on the document root; create
+   `/var/lib/spendsense-feed` owned `www-data:www-data 0750` for the
+   temporary count log.
+2. Install the GeoIP2 module (`apt install libnginx-mod-http-geoip2`) and
+   download GeoLite2-Country.mmdb (free MaxMind licence) to
+   `/usr/share/GeoIP/`; confirm the module loads.
+3. Install `vps/spendsense-feed-http.conf` to `/etc/nginx/conf.d/` plus
+   the HTTP-only bootstrap vhost from
    `vps/spendsense.wolfmark.co.uk.bootstrap.nginx` (sites-available +
    symlink), run `nginx -t`, reload once.
 4. Issue TLS: `certbot certonly --webroot -w /var/www/certbot -d
    spendsense.wolfmark.co.uk`.
 5. Replace the bootstrap with the full HTTPS vhost from
    `vps/spendsense.wolfmark.co.uk.nginx`, run `nginx -t`, reload.
-6. Publish the first feed by hand (no timer yet):
+6. Publish the first feed by hand (no timers yet):
    `FEED_ROOT=/opt/wolfmark-spendsense-feed
    FEED_WEBROOT=/var/www/spendsense.wolfmark.co.uk
    FEED_PYTHON=/usr/bin/python3 sh
@@ -126,12 +162,14 @@ Remaining steps, in order — `nginx -t` must pass before every reload:
    (first run has no diff baseline; curated-only content is expected).
 7. Fetch `https://spendsense.wolfmark.co.uk/feed/v1/news.json` and confirm
    200, JSON content type, cache headers, and schema-valid content.
-8. Confirm no access log is written for the host
-   (`access_log off` + a test fetch + checking `/var/log/nginx/`).
-9. Install and enable the timer:
-   `systemctl enable --now wolfmark-spendsense-feed.timer`
-   (units from `vps/`, daemon-reload first).
-10. Add the Uptime Kuma HTTPS check for the feed URL.
+8. Fetch once more and confirm the temp count log holds exactly one
+   `METHOD STATUS COUNTRY` line per request — and nothing is written to
+   `/var/log/nginx/` for this host.
+9. Install and enable both timers (daemon-reload first):
+   `systemctl enable --now wolfmark-spendsense-feed.timer
+   wolfmark-spendsense-feed-aggregate.timer`.
+10. Add the Uptime Kuma HTTPS check for the feed URL, using the HEAD
+    method so monitoring stays out of the GET totals.
 
 ## Rollback
 
@@ -146,10 +184,12 @@ mv /tmp/rollback-news.json /var/www/spendsense.wolfmark.co.uk/feed/v1/news.json
 
 To pause publication without removing the endpoint: `systemctl disable
 --now wolfmark-spendsense-feed.timer`; the last good feed keeps serving.
-To withdraw the endpoint entirely, also remove the Nginx site + symlink
-(`nginx -t`, reload) and the `feed/` directory. Existing VPS services
-and Hermes are untouched by all of this: separate unit names, separate
-paths, no shared state.
+To pause counting too, disable the aggregate timer and comment out the
+feed location's `access_log` line (`nginx -t`, reload), then truncate the
+temp log. To withdraw the endpoint entirely, also remove the Nginx site +
+symlink (`nginx -t`, reload) and the `feed/` directory. Existing VPS
+services and Hermes are untouched by all of this: separate unit names,
+separate paths, no shared state.
 
 ## Privacy and connection metadata
 

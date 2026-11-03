@@ -1,0 +1,16 @@
+[Unit]
+Description=Aggregate Spend Sense feed country counts daily
+
+# Wall-clock daily boundary (server-local midnight, Europe/London): totals
+# are keyed by the previous local date, matching the boundary. The six-hour
+# publisher stays monotonic; only this daily rollup uses wall-clock time.
+
+[Timer]
+OnBootSec=15min
+OnCalendar=*-*-* 00:07:00
+Persistent=true
+AccuracySec=1min
+Unit=wolfmark-spendsense-feed-aggregate.service
+
+[Install]
+WantedBy=timers.target
