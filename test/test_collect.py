@@ -88,10 +88,11 @@ class CollectLockTests(unittest.TestCase):
         self.assertFalse(lock.exists())
 
     def test_concurrent_stale_recovery_serialises(self):
-        # Both runners usually collide inside recovery on the first attempt;
-        # retry with a fresh stale lock if scheduling ever separates them
-        # so far that both succeed alone. Every published feed must still
-        # be valid on every attempt.
+        # Both runners usually collide inside recovery on the first attempt.
+        # Retry only when both succeed alone (no contention observed); any
+        # failure outside the lock check fails immediately, never masked by
+        # a later lucky attempt. Every published feed must still be valid
+        # on every attempt.
         last_detail = ""
         for attempt in range(8):
             home, env = self.make_home()
@@ -116,12 +117,14 @@ class CollectLockTests(unittest.TestCase):
                 feed = json.loads(live.read_text())
                 self.assertEqual(feed["version"], 1)
                 self.assertTrue(feed["items"])
-            if sorted(r.returncode for r in results) == [0, 1]:
+            codes = sorted(r.returncode for r in results)
+            if codes == [0, 1]:
                 loser = next(r for r in results if r.returncode != 0)
-                if "lock" in loser.stderr:
-                    self.assertFalse(lock.exists())
-                    self.assertFalse((home / "state" / "collect.recovering").exists())
-                    return
+                self.assertIn("lock", loser.stderr, msg=detail)
+                self.assertFalse(lock.exists())
+                self.assertFalse((home / "state" / "collect.recovering").exists())
+                return
+            self.assertEqual(codes, [0, 0], msg=detail)
             last_detail = detail
             print(f"stale recovery not engaged on attempt {attempt + 1}, retrying: {detail}")
         self.fail(f"stale recovery did not engage in 8 attempts; last: {last_detail}")
@@ -186,12 +189,11 @@ class CollectLockTests(unittest.TestCase):
         self.assertFalse((self.home / "www" / "feed" / "v1" / "news.json").exists())
 
     def test_concurrent_runs_leave_a_valid_feed(self):
-        # The lock normally engages on the first attempt. CI has shown rare
-        # double-passes (both runs publishing concurrently; exact mkdir-level
-        # mechanism undetermined, never reproduced locally), so retry with
-        # fresh state until the lock engages. The invariant stands: the lock
-        # must engage under pressure, and every published feed must be valid
-        # (an invalid feed fails immediately, never retried).
+        # The lock normally engages on the first attempt. Retry only when
+        # both succeed alone (scheduling separated them past any overlap);
+        # any failure outside the lock check fails immediately, never masked
+        # by a later lucky attempt. Every published feed must still be valid
+        # on every attempt.
         last_detail = ""
         for attempt in range(8):
             home, env = self.make_home()
@@ -211,11 +213,13 @@ class CollectLockTests(unittest.TestCase):
                 feed = json.loads(live.read_text())
                 self.assertEqual(feed["version"], 1)
                 self.assertTrue(feed["items"])
-            if sorted(r.returncode for r in results) == [0, 1]:
+            codes = sorted(r.returncode for r in results)
+            if codes == [0, 1]:
                 loser = next(r for r in results if r.returncode != 0)
-                if "lock" in loser.stderr:
-                    self.assertFalse((home / "state" / "collect.lock").exists())
-                    return
+                self.assertIn("lock", loser.stderr, msg=detail)
+                self.assertFalse((home / "state" / "collect.lock").exists())
+                return
+            self.assertEqual(codes, [0, 0], msg=detail)
             last_detail = detail
             print(f"collect lock not engaged on attempt {attempt + 1}, retrying: {detail}")
         self.fail(f"lock did not engage in 8 attempts; last: {last_detail}")
