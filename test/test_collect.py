@@ -8,10 +8,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -57,6 +59,25 @@ class CollectLockTests(unittest.TestCase):
             (self.home / "state" / "collect.lock").rmdir()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("lock", result.stderr)
+        self.assertFalse((self.home / "www" / "feed" / "v1" / "news.json").exists())
+
+    def test_terminated_run_releases_lock_and_exits_nonzero(self):
+        proc = subprocess.Popen(["sh", str(COLLECT)], env=self.env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            lock = self.home / "state" / "collect.lock"
+            deadline = time.time() + 10
+            while not lock.exists():
+                self.assertLess(time.time(), deadline, "collector never took the lock")
+                time.sleep(0.01)
+            time.sleep(0.05)  # let the trap-arming line run
+            proc.send_signal(signal.SIGTERM)
+            self.assertNotEqual(proc.wait(timeout=30), 0)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+        self.assertFalse(lock.exists())
         self.assertFalse((self.home / "www" / "feed" / "v1" / "news.json").exists())
 
     def test_concurrent_runs_leave_a_valid_feed(self):
