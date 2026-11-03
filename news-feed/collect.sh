@@ -72,6 +72,13 @@ acquire_lock() {
         return 1
     fi
     lock_mkdir "$RECOVERING" || return 1
+    # Re-validate under the mutex: the holder may have been replaced between
+    # our first read and now. Only the same still-dead pid may be cleared.
+    fresh_pid="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
+    if [ "$fresh_pid" != "$lock_pid" ] || kill -0 "$fresh_pid" 2>/dev/null; then
+        rmdir "$RECOVERING" 2>/dev/null || :
+        return 1
+    fi
     rm -f "$LOCKDIR/pid" 2>/dev/null || :
     if ! rmdir "$LOCKDIR" 2>/dev/null; then
         rmdir "$RECOVERING" 2>/dev/null || :
