@@ -15,12 +15,13 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from .news import CATEGORIES, CONFIDENCES, FEED_MAX_ITEMS, rate_direction
+from .news import CATEGORIES, CONFIDENCES, FEED_MAX_ITEMS, rate_direction, validate_feed
 from .pricing import _parse_catalogue
 
 MODELS_DEV_URL = "https://models.dev"
@@ -49,9 +50,11 @@ def _sig(entry: Mapping[str, Any]) -> str:
     return json.dumps(entry, sort_keys=True)
 
 
-def _model_id(observed: str, category: str, provider: str, model: str,
-              old: str, new: str) -> str:
-    digest = hashlib.sha1("|".join([observed, category, provider, model, old, new])
+def _model_id(category: str, provider: str, model: str, old: str, new: str) -> str:
+    # Stable across runs by design: the same diff re-emitted after a partial
+    # failure must carry the same id, so carry-forward dedupes instead of
+    # duplicating. Observation dates stay on the item, not in the id.
+    digest = hashlib.sha1("|".join([category, provider, model, old, new])
                           .encode("utf-8")).hexdigest()[:12]
     return f"md-{digest}"
 
@@ -68,7 +71,7 @@ def _model_diff(previous: Mapping[str, dict[str, dict[str, Any]]],
     for provider in sorted(set(current) - set(previous)):
         models = current[provider]
         items.append({
-            "id": _model_id(observed_at, "new_model", provider, "", "", str(len(models))),
+            "id": _model_id("new_model", provider, "", "", str(len(models))),
             "category": "new_model", "provider": provider, "model": "",
             "summary": f"{provider} newly listed on models.dev with {len(models)} priced model(s).",
             "previous": None, "current": None,
@@ -82,7 +85,7 @@ def _model_diff(previous: Mapping[str, dict[str, dict[str, Any]]],
         for model in sorted(set(after) - set(before)):
             entry = after[model]
             items.append({
-                "id": _model_id(observed_at, "new_model", provider, model, "", _sig(entry)),
+                "id": _model_id("new_model", provider, model, "", _sig(entry)),
                 "category": "new_model", "provider": provider, "model": model,
                 "summary": f"{model} newly listed under {provider} on models.dev.",
                 "previous": None, "current": _slim(entry),
@@ -100,7 +103,7 @@ def _model_diff(previous: Mapping[str, dict[str, dict[str, Any]]],
             tier_note = "Tiered/context pricing changed; base rates compared." \
                 if old_entry.get("tiers") != new_entry.get("tiers") else ""
             items.append({
-                "id": _model_id(observed_at, category, provider, model, old_sig, new_sig),
+                "id": _model_id(category, provider, model, old_sig, new_sig),
                 "category": category, "provider": provider, "model": model,
                 "summary": f"{model} ({provider}) list price changed on models.dev.",
                 "previous": _slim(old_entry), "current": _slim(new_entry),
@@ -132,11 +135,15 @@ def _rate_block(value: Any) -> Optional[dict[str, Any]]:
     return out
 
 
+_STABLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}")
+
+
 def _curated(entries: Any, observed_at: str) -> tuple[list[dict[str, Any]], list[str]]:
     items: list[dict[str, Any]] = []
     problems: list[str] = []
     if not isinstance(entries, list):
         return items, ["curated announcements entry is not a list"]
+    seen: set[str] = set()
     for position, entry in enumerate(entries):
         where = f"curated announcement {position}"
         if not isinstance(entry, dict):
@@ -170,10 +177,25 @@ def _curated(entries: Any, observed_at: str) -> tuple[list[dict[str, Any]], list
         if confidence not in CONFIDENCES:
             problems.append(f"{where}: unknown confidence")
             continue
-        digest = hashlib.sha1("|".join([provider, str(entry.get("model") or ""),
-                                        summary, source_url]).encode("utf-8")).hexdigest()[:12]
+        raw_id = entry.get("id")
+        if raw_id is None:
+            digest = hashlib.sha1("|".join([provider, str(entry.get("model") or ""),
+                                            summary, source_url]).encode("utf-8")).hexdigest()[:12]
+            item_id = f"sub-{digest}"
+        else:
+            item_id = str(raw_id).strip()
+            if not _STABLE_ID.fullmatch(item_id):
+                problems.append(f"{where}: id must be 1-64 letters, digits, . _ : -")
+                continue
+            if item_id.startswith("md-"):
+                problems.append(f"{where}: id prefix 'md-' is reserved for model items")
+                continue
+        if item_id in seen:
+            problems.append(f"{where}: duplicate curated id {item_id}")
+            continue
+        seen.add(item_id)
         items.append({
-            "id": f"sub-{digest}",
+            "id": item_id,
             "category": category, "provider": provider,
             "model": str(entry.get("model") or "").strip()[:256],
             "summary": summary[:500],
@@ -194,9 +216,49 @@ def _sort_key(item: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
             str(item.get("id") or ""))
 
 
+def _carried_items(prior_feed: Any, fresh_ids: set[str], observed_at: str,
+                   retain_days: int) -> tuple[list[dict[str, Any]], list[str]]:
+    """Prior published items still within the retention window.
+
+    The prior feed is re-validated with the same client rules; anything
+    invalid fails the run rather than republishing bad data. Carried items
+    split into curated and model groups by this generator's own id scheme.
+    """
+    validated, prior_problems = validate_feed(prior_feed)
+    if validated is None or prior_problems:
+        detail = "; ".join(prior_problems) or "unreadable"
+        return [], [f"prior feed invalid: {detail}"]
+    try:
+        now = datetime.fromisoformat(observed_at)
+    except ValueError:
+        now = datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    cutoff = now - timedelta(days=max(0, retain_days))
+    carried: list[dict[str, Any]] = []
+    for item in validated["items"]:
+        if item["id"] in fresh_ids:
+            continue
+        try:
+            seen = datetime.fromisoformat(item["observed_at"])
+        except ValueError:
+            continue
+        if seen.tzinfo is None:
+            seen = seen.replace(tzinfo=timezone.utc)
+        if seen < cutoff:
+            continue
+        carried.append(item)
+    return carried, []
+
+
 def build_feed(current: Any, previous: Any, curated_doc: Any, *,
-               observed_at: str) -> tuple[dict[str, Any], list[str]]:
-    """Diff two models.dev snapshots and merge validated curated notes."""
+               observed_at: str, prior_feed: Any = None,
+               retain_days: int = 90) -> tuple[dict[str, Any], list[str]]:
+    """Diff two models.dev snapshots and merge validated curated notes.
+
+    ``prior_feed`` carries the last published feed's recent items forward so
+    history survives across runs; items older than ``retain_days`` expire.
+    """
     problems: list[str] = []
     model_items: list[dict[str, Any]] = []
     if previous is None:
@@ -220,6 +282,27 @@ def build_feed(current: Any, previous: Any, curated_doc: Any, *,
     announcements = curated_doc.get("announcements", []) if isinstance(curated_doc, dict) else None
     curated_items, curated_problems = _curated(announcements, observed_at)
     problems.extend(curated_problems)
+    raw_withdraw = curated_doc.get("withdraw", []) if isinstance(curated_doc, dict) else []
+    withdrawn: set[str] = set()
+    if raw_withdraw is None:
+        pass
+    elif not isinstance(raw_withdraw, list) or any(not isinstance(x, str) for x in raw_withdraw):
+        problems.append("curated withdraw entry must be a list of ids")
+    else:
+        withdrawn = set(raw_withdraw)
+    if prior_feed is not None:
+        fresh_ids = {item["id"] for item in model_items} | {item["id"] for item in curated_items}
+        carried, carry_problems = _carried_items(prior_feed, fresh_ids, observed_at, retain_days)
+        problems.extend(carry_problems)
+        for item in carried:
+            if item["id"] in withdrawn:
+                continue  # explicit withdrawal beats carry-forward
+            if item["id"].startswith("md-"):
+                model_items.append(item)
+            else:
+                # Curated notes (sub- hashes and operator stable ids) keep
+                # their reserved capacity; unknown ids fail that safe way too.
+                curated_items.append(item)
     if len(curated_items) > FEED_MAX_ITEMS:
         problems.append(f"curated announcements exceed the {FEED_MAX_ITEMS}-item feed limit")
         curated_items = []
@@ -245,17 +328,24 @@ def main(argv: Optional[list[str]] = None) -> int:
                         help="Curated announcements JSON")
     parser.add_argument("--observed-at", default="",
                         help="Observation timestamp (default: now, UTC)")
+    parser.add_argument("--prior-feed", type=Path,
+                        help="Last published feed; recent items carry forward")
+    parser.add_argument("--retain-days", type=int, default=90,
+                        help="Prior items older than this expire (default: 90)")
     parser.add_argument("--out", type=Path, required=True, help="Feed JSON to write")
     args = parser.parse_args(argv)
     try:
         current = json.loads(args.current.read_text(encoding="utf-8-sig"))
         previous = json.loads(args.previous.read_text(encoding="utf-8-sig")) if args.previous else None
         curated_doc = json.loads(args.curated.read_text(encoding="utf-8-sig"))
+        prior_feed = json.loads(args.prior_feed.read_text(encoding="utf-8-sig")) \
+            if args.prior_feed else None
     except (OSError, ValueError) as exc:
         print(f"news-feed: cannot read inputs: {exc}", file=sys.stderr)
         return 1
     observed_at = args.observed_at or datetime.now(timezone.utc).isoformat()
-    doc, problems = build_feed(current, previous, curated_doc, observed_at=observed_at)
+    doc, problems = build_feed(current, previous, curated_doc, observed_at=observed_at,
+                               prior_feed=prior_feed, retain_days=args.retain_days)
     if problems:
         for problem in problems:
             print(f"news-feed: {problem}", file=sys.stderr)

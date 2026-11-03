@@ -1,0 +1,24 @@
+[Unit]
+Description=WolfMark Spend Sense feed country aggregation
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# File aggregation only: Unix sockets alone, no IP networking at all.
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/opt/wolfmark-spendsense-feed/state /var/lib/spendsense-feed
+ExecStart=/usr/bin/python3 -B /opt/wolfmark-spendsense-feed/repo/news-feed/aggregate.py --counts /var/lib/spendsense-feed/count.tmp.log --totals /opt/wolfmark-spendsense-feed/state/country-daily.json
+TimeoutStartSec=120s
