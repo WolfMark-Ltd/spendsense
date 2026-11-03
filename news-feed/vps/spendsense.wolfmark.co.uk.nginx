@@ -1,8 +1,10 @@
-# Spend Sense Model News feed — PREPARED, NOT INSTALLED.
+# Spend Sense Model News feed (full HTTPS vhost) — PREPARED, NOT INSTALLED.
 #
-# At activation: place in /etc/nginx/sites-available/spendsense.wolfmark.co.uk
-# and symlink into sites-enabled (see news-feed/README.md). Validate with
-# `nginx -t` before reloading, and never reload while another deploy is live.
+# Install AFTER TLS issuance replaces the bootstrap vhost (see
+# spendsense.wolfmark.co.uk.bootstrap.nginx and news-feed/README.md):
+# place in /etc/nginx/sites-available/spendsense.wolfmark.co.uk, symlink into
+# sites-enabled, validate with `nginx -t` before reloading, and never reload
+# while another deploy is live.
 #
 # Privacy: access_log is OFF for this host, so routine feed requests leave no
 # request log. error_log stays at warn per house convention: failed requests

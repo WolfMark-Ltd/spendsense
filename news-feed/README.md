@@ -16,9 +16,10 @@ request logging. Nothing here is deployed yet.
 | `schema.json` | Feed schema (version 1). The plugin validates every fetch against the same rules. |
 | `generate.py` | Operator wrapper. Deterministic: same inputs plus `--observed-at` give byte-identical output. |
 | `collect.sh` | Scheduled collection: download, generate, validate, atomic publish. Prepared, not scheduled. |
-| `vps/spendsense.wolfmark.co.uk.nginx` | Static endpoint with access logging off. Prepared, not installed. |
+| `vps/spendsense.wolfmark.co.uk.nginx` | Static HTTPS endpoint with access logging off. Prepared, not installed. |
+| `vps/spendsense.wolfmark.co.uk.bootstrap.nginx` | HTTP-only ACME bootstrap vhost for first issuance. Prepared, not installed. |
 | `vps/wolfmark-spendsense-feed.service` | Hardened oneshot publisher (house systemd conventions). Prepared, not installed. |
-| `vps/wolfmark-spendsense-feed.timer` | Six-hourly schedule. Prepared, not enabled. |
+| `vps/wolfmark-spendsense-feed.timer` | Six-hourly monotonic schedule (timezone-independent). Prepared, not enabled. |
 | `curated.json` | Curated subscription/allowance announcements. Starts empty; entries are transcribed verbatim. |
 | `curated.example.json` | Entry shape example. Never read by the generator. |
 | `fixtures/sample-feed.json` | Sample feed for tests and docs. Invented examples, not real announcements. |
@@ -103,31 +104,34 @@ visible via `systemctl status` / the journal and `state/collect.log`.
 
 ## Activation (requires explicit approval — do NOT run yet)
 
-1. DNS (Spaceship): add `spendsense.wolfmark.co.uk` → `161.97.122.4` (A).
-   Wait for propagation; confirm the VPS is authoritative for nothing else.
-2. On the VPS: `mkdir -p /opt/wolfmark-spendsense-feed/state
+DNS is done (`spendsense.wolfmark.co.uk` → `161.97.122.4`, no AAAA).
+Remaining steps, in order — `nginx -t` must pass before every reload:
+1. On the VPS: `mkdir -p /opt/wolfmark-spendsense-feed/state
    /var/www/spendsense.wolfmark.co.uk/feed/v1`; clone the repo to
    `/opt/wolfmark-spendsense-feed/repo`; copy `news-feed/curated.json`
    to `.../state/curated.json`; set `root:root 0700` on state and
    `root:www-data 0755` on the document root.
-3. Install the Nginx site from `vps/spendsense.wolfmark.co.uk.nginx`
-   (sites-available + symlink), run `nginx -t`, reload once.
+3. Install the HTTP-only bootstrap vhost from
+   `vps/spendsense.wolfmark.co.uk.bootstrap.nginx` (sites-available +
+   symlink), run `nginx -t`, reload once.
 4. Issue TLS: `certbot certonly --webroot -w /var/www/certbot -d
-   spendsense.wolfmark.co.uk`; confirm `nginx -t` still passes, reload.
-5. Publish the first feed by hand (no timer yet):
+   spendsense.wolfmark.co.uk`.
+5. Replace the bootstrap with the full HTTPS vhost from
+   `vps/spendsense.wolfmark.co.uk.nginx`, run `nginx -t`, reload.
+6. Publish the first feed by hand (no timer yet):
    `FEED_ROOT=/opt/wolfmark-spendsense-feed
    FEED_WEBROOT=/var/www/spendsense.wolfmark.co.uk
    FEED_PYTHON=/usr/bin/python3 sh
    /opt/wolfmark-spendsense-feed/repo/news-feed/collect.sh`
    (first run has no diff baseline; curated-only content is expected).
-6. Fetch `https://spendsense.wolfmark.co.uk/feed/v1/news.json` and confirm
+7. Fetch `https://spendsense.wolfmark.co.uk/feed/v1/news.json` and confirm
    200, JSON content type, cache headers, and schema-valid content.
-7. Confirm no access log is written for the host
+8. Confirm no access log is written for the host
    (`access_log off` + a test fetch + checking `/var/log/nginx/`).
-8. Install and enable the timer:
+9. Install and enable the timer:
    `systemctl enable --now wolfmark-spendsense-feed.timer`
    (units from `vps/`, daemon-reload first).
-9. Add the Uptime Kuma HTTPS check for the feed URL.
+10. Add the Uptime Kuma HTTPS check for the feed URL.
 
 ## Rollback
 
