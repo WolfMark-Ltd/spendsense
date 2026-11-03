@@ -6581,10 +6581,28 @@ function newsCategoryLabel(category, t) {
   return t('newsCatAll')
 }
 
+/** Backend caveat strings the estimate can report; translated one by one. */
+const NEWS_CAVEATS = {
+  'cache rates unavailable for comparison; cache tokens excluded': 'newsCaveatCache',
+  'tiered pricing applies; base rates compared': 'newsCaveatTiers',
+}
+
+function newsReasonLabel(reason, t) {
+  const text = String(reason || '').trim()
+  if (!text) return ''
+  // Substring replacement: each known caveat is translated in place, so a
+  // combined reason localizes every part while unknown text passes through.
+  let out = text
+  for (const [caveat, key] of Object.entries(NEWS_CAVEATS)) {
+    if (out.includes(caveat)) out = out.split(caveat).join(t(key))
+  }
+  return out
+}
+
 function newsImpactText(impact, t) {
   if (!impact) return null
   if (impact.basis === 'unavailable') return t('newsImpactUnavailable', impact.reason || '')
-  if (impact.basis === 'partial') return t('newsImpactPartial', fmtUsd(impact.delta_usd), impact.window_days, impact.reason || '')
+  if (impact.basis === 'partial') return t('newsImpactPartial', fmtUsd(impact.delta_usd), impact.window_days, newsReasonLabel(impact.reason, t))
   return t('newsImpactFull', fmtUsd(impact.delta_usd), impact.window_days)
 }
 
@@ -7219,6 +7237,8 @@ const I18N = {
     newsImpactFull: (money, days) => `API-equivalent estimate: ${money} over your last ${days} days of usage. Not savings on a subscription.`,
     newsImpactPartial: (money, days, reason) => `Partial API-equivalent estimate: ${money} over your last ${days} days of usage${reason ? ` (${reason})` : ''}. Not savings on a subscription.`,
     newsImpactUnavailable: reason => `Personal estimate unavailable: ${reason}.`,
+    newsCaveatCache: 'cache rates unavailable for comparison; cache tokens excluded',
+    newsCaveatTiers: 'tiered pricing applies; base rates compared',
     newsRoutes: () => 'Your routes:',
     newsSource: 'Source',
     newsLiveTitle: 'Spend Sense Live Updates',
@@ -7639,6 +7659,8 @@ const I18N = {
     newsImpactFull: (money, days) => `API 等效估算：过去 ${days} 天用量对应 ${money}。并非订阅节省额。`,
     newsImpactPartial: (money, days, reason) => `部分 API 等效估算：过去 ${days} 天用量对应 ${money}${reason ? `（${reason}）` : ''}。并非订阅节省额。`,
     newsImpactUnavailable: reason => `无法给出个人估算：${reason}。`,
+    newsCaveatCache: '缓存价格无法对比；已排除缓存 Token',
+    newsCaveatTiers: '适用阶梯价格；按基准价格对比',
     newsRoutes: () => '您的路由：',
     newsSource: '来源',
     newsLiveTitle: 'Spend Sense 实时更新',
@@ -7896,7 +7918,7 @@ export const __test = {
   digestQuery, uiLocale, digestCopy, digestDownload, DigestPreview, ReportsPage,
   REPORTS_CSS, $digestDays,
   newsQuery, newsSettingsQuery, newsSaveSettings, invalidateNewsFor, newsFilter, newsCategoryLabel,
-  newsImpactText, newsAgeDays, newsFreshLabel, newsCentralAlert, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
+  newsImpactText, newsReasonLabel, newsAgeDays, newsFreshLabel, newsCentralAlert, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   $fxDraft, $fxSaving, $fxNotice,
