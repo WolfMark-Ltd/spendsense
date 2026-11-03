@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spendsense.wolfmark.co.uk/feed/v1/plans-schema.json",
+  "title": "Spend Sense membership-plan feed",
+  "description": "Public, user-agnostic membership plans with verification states. This feed must never contain user-specific information.",
+  "type": "object",
+  "required": ["version", "catalogue_version", "generated_at", "plans"],
+  "additionalProperties": true,
+  "properties": {
+    "version": {"const": 1},
+    "catalogue_version": {"type": "string", "minLength": 1, "maxLength": 64},
+    "generated_at": {"type": "string"},
+    "sources": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "plans": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["id", "provider_family", "price", "verification"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "name": {"type": "string", "maxLength": 256},
+          "provider_family": {"type": "string", "minLength": 1, "maxLength": 128},
+          "kind": {"type": "string", "maxLength": 64},
+          "billing_cycle": {"type": "string", "maxLength": 64},
+          "billing_arrangement": {"type": "string", "maxLength": 64},
+          "price": {
+            "type": "object",
+            "required": ["amount", "currency", "period"],
+            "properties": {
+              "amount": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+              "currency": {"type": "string"},
+              "period": {"type": "string"}
+            }
+          },
+          "entitlements": {"type": "object"},
+          "verification": {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {"enum": ["verified", "provisional", "unverified", "retired"]}
+            }
+          },
+          "route_slugs": {"type": "array", "items": {"type": "string"}},
+          "notes": {"type": "string"}
+        }
+      }
+    }
+  }
+}

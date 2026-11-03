@@ -4009,6 +4009,20 @@ function SettingsPage() {
     }
   }
 
+  const refreshPlansCatalogue = async () => {
+    const captured = identity
+    try {
+      const result = await rest('/membership/plans/refresh', { method: 'POST' })
+      if (!membershipIdentityCurrent(captured)) return
+      queryClient.setQueryData([ID, 'membership-plans', captured], { ...result, identity: captured })
+      $modelRefreshState.set({ origin: captured, tone: 'good',
+        text: 'Membership catalogue was refreshed. Stored memberships, fees and selections are unchanged.' })
+    } catch (error) {
+      if (membershipIdentityCurrent(captured)) $modelRefreshState.set({ origin: captured, tone: 'warn',
+        text: 'Membership catalogue could not be refreshed: ' + String(error.message || error) })
+    }
+  }
+
   const pricing = status.data
   const membershipBook = planCatalogue.data?.identity === identity && membershipIdentityCurrent(identity)
     ? planCatalogue.data : null
@@ -4074,16 +4088,25 @@ function SettingsPage() {
           jsxs('p', { children: [
             'Captured Desktop costs retain the rates applied when recorded. Backend API-equivalent values are estimates recalculated using the current available prices; they are not historical charges.'
           ] }),
-          jsx('p', { children: 'No WolfMark-hosted membership catalogue is published. A future optional, versioned feed would need schema validation, provenance, offline caching and rollback; this build uses the bundled plans.' }),
+          jsx('p', { children: 'WolfMark publishes an optional, versioned membership catalogue feed. When Spend Sense Live Updates is on, the pane fetches it — validating the schema, caching it for offline use and falling back to the bundled plans on any failure; otherwise this build uses the bundled plans. Stored memberships, fees and selections never change.' }),
           membershipBook ? jsxs('div', { className: 'wm-note', children: [
-            jsx('p', { children: 'Bundled membership catalogue ' + membershipBook.catalogue_version +
+            jsx('p', { children: (membershipBook.source === 'live' ? 'Live membership catalogue ' : 'Bundled membership catalogue ') + membershipBook.catalogue_version +
               (membershipBook.generated_at ? ' · generated ' + new Date(membershipBook.generated_at).toLocaleString() : '') }),
+            membershipBook.source === 'live' && membershipBook.central
+              ? jsx('p', { className: 'wm-subtle', children: 'Fetched ' + newsFreshLabel(newsAgeDays(membershipBook.central.fetched_at, Date.now()), t) +
+                  (membershipBook.central.fetched_at ? ' · ' + new Date(membershipBook.central.fetched_at).toLocaleString() : '') })
+              : null,
+            newsCentralAlert(membershipBook.central, t)
+              ? jsx('p', { className: 'wm-warn-note', role: 'status', children: 'Central catalogue: ' + newsCentralAlert(membershipBook.central, t) + ' The bundled plans are shown.' })
+              : null,
             jsxs('p', { children: [membershipBook.totals?.plans || 0, ' plans · ',
               membershipBook.totals?.verified || 0, ' verified prices · ',
               membershipBook.totals?.provisional || 0, ' provisional · ',
               membershipBook.totals?.placeholders || 0, ' without a published fee'] }),
+            jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: planCatalogue.isFetching,
+              onClick: refreshPlansCatalogue, children: planCatalogue.isFetching ? 'Checking…' : 'Refresh membership catalogue' }),
             jsx('details', { children: [
-              jsx('summary', { children: 'Bundled source register' }),
+              jsx('summary', { children: (membershipBook.source === 'live' ? 'Live' : 'Bundled') + ' source register' }),
               jsx('ul', { children: (membershipBook.sources || []).map(source => jsx('li', { children: [
                 source.id + ' · ' + source.evidence_kind + ' · ' + (source.retrieved_at || 'retrieval date not recorded') + ' · ',
                 jsx('a', { href: source.url, target: '_blank', rel: 'noreferrer', children: source.url })
@@ -6562,6 +6585,7 @@ async function invalidateNewsFor(identity) {
   try {
     await queryClient.invalidateQueries({ queryKey: [ID, 'model-news', identity] })
     await queryClient.invalidateQueries({ queryKey: [ID, 'news-settings', identity] })
+    await queryClient.invalidateQueries({ queryKey: [ID, 'membership-plans', identity] })
   } catch {
     /* the cached news simply stays until its stale time elapses */
   }

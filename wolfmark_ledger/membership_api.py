@@ -15,7 +15,9 @@ from typing import Any, Mapping, Optional
 
 from . import discovery
 from . import membership as mem
+from . import membership_live as live
 from . import membership_store as store
+from . import news as news_mod
 
 CATALOGUE_PATH = Path(__file__).resolve().parent.parent / "catalogue" / "plans.json"
 
@@ -173,18 +175,49 @@ def fee_summary_payload(*, path: Optional[Path | str] = None,
     }
 
 
-def plans_payload(catalogue: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
-    book = catalogue or load_plans()
+def plans_payload(catalogue: Optional[Mapping[str, Any]] = None, *,
+                  data_dir: Optional[Path | str] = None) -> dict[str, Any]:
+    """The sourced plan catalogue, grouped by provider family.
+
+    An explicitly supplied catalogue is always served. Otherwise the
+    bundled ``catalogue/plans.json`` is the default; when Live Updates is
+    enabled and a validated central catalogue is cached, that copy is
+    served instead. The ``source`` and ``central`` fields say which copy
+    this is and how fresh the central one is.
+    """
+    settings = news_mod.load_settings(news_mod.settings_path(data_dir))
+    central = live.load_cache(live.cache_path(data_dir))
+    central_book = central.get("book")
+    live_ready = (settings.get("live_updates") is True and
+                  isinstance(central_book, dict) and
+                  bool(central_book.get("plans")))
+    book = load_plans() if catalogue is None else catalogue
+    source = "bundled"
+    if catalogue is None and live_ready:
+        book = central_book
+        source = "live"
     families: dict[str, dict[str, Any]] = {}
     for plan in book.get("plans", []):
         family = str(plan.get("provider_family"))
         block = families.setdefault(family, {"family": family, "plans": []})
         block["plans"].append(plan)
+    central_version = central_book.get("catalogue_version") \
+        if isinstance(central_book, dict) else None
+    central_state = central.get("state")
+    if settings.get("live_updates") is not True:
+        central_state = "disabled_cached" if central_book else "disabled"
     return {
         "ok": True,
+        "source": source,
         "catalogue_version": book.get("catalogue_version"),
         "generated_at": book.get("generated_at"),
         "sources": book.get("sources") or [],
+        "central": {
+            "state": central_state,
+            "fetched_at": central.get("fetched_at") or "",
+            "error": central.get("error") or "",
+            "catalogue_version": central_version,
+        },
         "families": [families[k] for k in sorted(families)],
         # The values PUT/POST accept. The pane renders from this rather than
         # hard-coding a list that can drift from the model and 422 on save.
@@ -204,6 +237,22 @@ def plans_payload(catalogue: Optional[Mapping[str, Any]] = None) -> dict[str, An
             "placeholders": sum(1 for p in book.get("plans") or [] if p["price"]["amount"] is None),
         },
     }
+
+
+def refresh_plans_payload(*, data_dir: Optional[Path | str] = None,
+                          now: Optional[float] = None,
+                          fetch: bool = True) -> dict[str, Any]:
+    """User-triggered plans refresh: central fetch if due, then the payload.
+
+    The central feed is fetched only when "Spend Sense Live Updates" is
+    enabled and the cache is stale; any fetch failure keeps the previous
+    cache and is reported in the payload. Stored memberships, fees and
+    selections are never altered. Pass ``fetch=False`` for a read-only
+    re-render of the currently cached state.
+    """
+    if fetch:
+        live.fetch_central(data_dir=data_dir, now=now)
+    return plans_payload(data_dir=data_dir)
 
 
 def discover_payload(*, include_native: bool = False, path: Optional[Path | str] = None,

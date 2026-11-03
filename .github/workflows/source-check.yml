@@ -1,0 +1,26 @@
+name: Source check
+on:
+  schedule:
+    # Daily, 06:30 UTC. Runners are ephemeral: baselines come from the repo,
+    # and each run uploads its candidate report as an artefact.
+    - cron: '30 6 * * *'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 scripts/source-check.py --out source-check/report.json
+      - run: python3 -c "import json; r=json.load(open('source-check/report.json')); print('## Source check', r['generated_at']); print('changes:', len(r['changes']), '| blocking:', len(r['blocking'])); [print('-', c['key'], c['summary']) for c in r['changes']]" >> "$GITHUB_STEP_SUMMARY"
+      # Candidates are review artefacts. This workflow never commits,
+      # publishes, or touches the VPS: promotion is a reviewed commit.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: source-check-report
+          path: source-check/

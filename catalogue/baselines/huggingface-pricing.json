@@ -1,0 +1,31 @@
+{
+  "adapter": "huggingface_pricing",
+  "catalogue_version": "2026-10-31.1",
+  "complete": false,
+  "derived_at": "2026-11-03T18:55:26Z",
+  "family": "huggingface",
+  "note": "Reviewed baseline: family slice of catalogue/plans.json. Changes only in a reviewed commit.",
+  "plans": [
+    {
+      "billing_arrangement": "recurring_subscription",
+      "id": "huggingface.pro",
+      "kind": "subscription",
+      "name": "PRO",
+      "price": {
+        "amount": 9.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "huggingface",
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "huggingface-pricing",
+        "status": "verified"
+      }
+    }
+  ],
+  "source_id": "huggingface-pricing",
+  "source_retrieved_at": "2026-10-30T12:22:52Z",
+  "status": "reviewed"
+}

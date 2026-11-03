@@ -1,0 +1,67 @@
+{
+  "adapter": "opencode_go",
+  "catalogue_version": "2026-10-31.1",
+  "complete": true,
+  "derived_at": "2026-11-03T18:55:26Z",
+  "family": "opencode-go",
+  "note": "Reviewed baseline: family slice of catalogue/plans.json. Changes only in a reviewed commit.",
+  "plans": [
+    {
+      "billing_arrangement": "recurring_subscription",
+      "id": "opencode-go.go",
+      "kind": "subscription",
+      "name": "Go",
+      "price": {
+        "amount": 10.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "opencode-go",
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "opencode-go-plan",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "id": "opencode-go.go-plus",
+      "kind": "subscription",
+      "name": "Go Plus",
+      "price": {
+        "amount": 40.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "opencode-go",
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "opencode-go-plan",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "id": "opencode-go.go-teams",
+      "kind": "subscription",
+      "name": "Go Teams",
+      "price": {
+        "amount": 20.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "opencode-go",
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "opencode-go-plan",
+        "status": "verified"
+      }
+    }
+  ],
+  "source_id": "opencode-go-plan",
+  "source_retrieved_at": null,
+  "status": "reviewed"
+}

@@ -159,6 +159,52 @@ class KilocodeParserTests(unittest.TestCase):
         self.assertFalse(result["complete"])
 
 
+class CommandcodeWindowConflictTests(unittest.TestCase):
+    """The Go rolling windows appear twice on the page and have disagreed."""
+
+    def setUp(self):
+        self.page = body(FIX / "baseline" / "sources" / "commandcode-pricing.txt")
+
+    def test_a_limits_table_that_disagrees_with_the_go_answer_is_reported(self):
+        [conflict] = S.parse_commandcode(self.page)["conflicts"]
+        self.assertEqual(conflict["plan_id"], "commandcode.go")
+        self.assertEqual(conflict["field"], "rolling_windows")
+        self.assertEqual(conflict["table"], {"five_hour": "$2", "weekly": "$5"})
+        self.assertEqual(conflict["page_text"], {"five_hour": "$3", "weekly": "$6"})
+        self.assertIn("$2", conflict["note"])
+        self.assertIn("$6", conflict["note"])
+
+    def test_the_conflict_changes_no_plan_and_no_price(self):
+        result = S.parse_commandcode(self.page)
+        self.assertTrue(result["complete"])
+        self.assertEqual(len(result["plans"]), 8)
+        go = next(p for p in result["plans"] if p["id"] == "commandcode.go")
+        self.assertEqual(go["price"]["amount"], 1.0)
+
+    def test_matching_windows_stay_silent(self):
+        aligned = self.page.replace(
+            "| Go | $1 | $10 of usage | $2 | $5 |",
+            "| Go | $1 | $10 of usage | $3 | $6 |")
+        self.assertNotIn("conflicts", S.parse_commandcode(aligned))
+
+    def test_no_go_answer_means_no_conflict(self):
+        without_faq = self.page.split("## Go plan")[0]
+        self.assertNotIn("conflicts", S.parse_commandcode(without_faq))
+
+    def test_observe_carries_the_conflict(self):
+        source = {"id": "commandcode-pricing", "family": "commandcode",
+                  "adapter": "commandcode_pricing", "complete": True,
+                  "status": "fetched",
+                  "url": "https://commandcode.ai/docs/resources/pricing-limits"}
+        snapshot = {"source_id": source["id"], "url": source["url"], "status": "fixture",
+                    "retrieved_at": "2026-11-03T19:24:35Z", "http_status": 200,
+                    "sha256": "0" * 64, "body": self.page}
+        observation = S.observe(snapshot, source)
+        self.assertTrue(observation["usable"])
+        [conflict] = observation["conflicts"]
+        self.assertEqual(conflict["plan_id"], "commandcode.go")
+
+
 class AmbiguitySafetyTests(unittest.TestCase):
     """An unreadable source must never remove a plan or move a price."""
 

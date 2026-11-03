@@ -1,0 +1,31 @@
+{
+  "adapter": "kilocode_pricing",
+  "catalogue_version": "2026-10-31.1",
+  "complete": true,
+  "derived_at": "2026-11-03T18:55:26Z",
+  "family": "kilocode",
+  "note": "Reviewed baseline: family slice of catalogue/plans.json. Changes only in a reviewed commit.",
+  "plans": [
+    {
+      "billing_arrangement": "recurring_subscription",
+      "id": "kilocode.teams",
+      "kind": "subscription",
+      "name": "Kilo Teams",
+      "price": {
+        "amount": 15.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "kilocode",
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "Per user. Inference is billed separately, so this is a platform plan rather than a model allowance.",
+        "source_id": "kilocode-pricing",
+        "status": "verified"
+      }
+    }
+  ],
+  "source_id": "kilocode-pricing",
+  "source_retrieved_at": "2026-10-30T12:22:53Z",
+  "status": "reviewed"
+}

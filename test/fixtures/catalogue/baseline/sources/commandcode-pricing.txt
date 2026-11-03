@@ -10,3 +10,18 @@
 | Max 20× | $200 | $300 | ~370K requests | Open-source + premium models |
 | Team Pro | $40 | $40 | ~35K requests | Open-source + premium models |
 | Enterprise | $5,000+ | Custom | Custom pool |
+
+## Usage limits
+
+| Plan | Your cost | Monthly credits | 5-hour limit | Weekly limit |
+| --- | --- | --- | --- | --- |
+| Go | $1 | $10 of usage | $2 | $5 |
+| GOAT | $10 | Up to $100 of usage | Up to $20 | Up to $50 |
+| Pro | $20 | Up to $110 of usage | Up to $22 | Up to $55 |
+| Max 10× | $100 | $150 | $45 | $90 |
+| Max 20× | $200 | $300 | $90 | $180 |
+| Team Pro | $40 | $40 | $12 | $24 |
+
+## Go plan
+
+Your $1 Go plan moves from a flat $10 wallet to per-model monthly credits - one shared $10 pool, with a bigger allowance on the models we have negotiated capacity for - at your next billing cycle. It is automatic: same $1, same models, nothing to re-subscribe to. The rolling windows stay at $3 of usage in any 5 hours and $6 in any 7 days, and extra credits you have bought are untouched. Full details on the Go plan page.

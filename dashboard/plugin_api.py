@@ -9,7 +9,8 @@ Analytics reads Hermes state and the call store read-only. Membership and billin
 endpoints can write plugin-owned user data; the collector writes the call store.
 Model News is local-first: the snapshot diff never touches the network. Only the
 opt-in "Spend Sense Live Updates" setting allows one unauthenticated HTTPS GET
-of the public news feed, with no user data sent; see ``wolfmark_ledger.news``.
+each of the public news and membership-plan feeds, with no user data sent;
+see ``wolfmark_ledger.news`` and ``wolfmark_ledger.membership_live``.
 """
 
 from __future__ import annotations
@@ -220,11 +221,33 @@ def news_settings(body: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/membership/plans")
 def membership_plans() -> dict[str, Any]:
-    """The sourced plan catalogue, grouped by provider family."""
+    """The sourced plan catalogue, grouped by provider family.
+
+    Read-only; no network. Serves the bundled catalogue, or the cached
+    central catalogue when Live Updates is enabled and one is cached.
+    """
     try:
         return members.plans_payload()
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/membership/plans/refresh")
+def membership_plans_refresh() -> dict[str, Any]:
+    """User-triggered plans refresh: central catalogue fetch if due.
+
+    The central plans feed is fetched only when "Spend Sense Live
+    Updates" is enabled and the cache is stale; any fetch failure keeps
+    the previous cache and is reported in the payload. Stored
+    memberships, fees and selections are never altered.
+    """
+    try:
+        return members.refresh_plans_payload()
+    except CatalogueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
+        log.error("spend-sense: plans refresh failed")
+        raise HTTPException(status_code=500, detail="plans refresh failed") from exc
 
 
 def _store_unreadable(exc: StoreUnreadable) -> HTTPException:
