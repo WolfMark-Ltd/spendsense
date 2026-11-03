@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional
@@ -129,7 +130,8 @@ def _append_all(target: Path, lines: list[str]) -> None:
         os.close(fd)
 
 
-def run(temp_log: Path, totals_path: Path, reopener: Callable[[], None]) -> dict[str, dict[str, int]]:
+def run(temp_log: Path, totals_path: Path, reopener: Callable[[], None], *,
+        settle_delay: float = 2.0, settle_rounds: int = 3) -> dict[str, dict[str, int]]:
     """Rotate the temp log aside, fold it by line date, discard it.
 
     Any leftover rotated log from an interrupted run is folded first, so a
@@ -137,6 +139,11 @@ def run(temp_log: Path, totals_path: Path, reopener: Callable[[], None]) -> dict
     leaves the rotated file in place for the next run; only a crash between
     the totals write and the final delete can double-count, which is why
     these stay approximate counts.
+
+    Workers may still hold the old file briefly after the reopen, so the
+    rotated log is not folded until two consecutive reads agree (bounded by
+    ``settle_rounds``); without that wait, late lines would be deleted
+    uncounted.
     """
     rotated = temp_log.with_name(temp_log.name + ".1")
     backlog = _read_lines(rotated) if rotated.exists() else []
@@ -150,7 +157,14 @@ def run(temp_log: Path, totals_path: Path, reopener: Callable[[], None]) -> dict
         reopener()
     except Exception as exc:  # noqa: BLE001 - any reopen failure must fail the run
         raise CountsError(f"log reopen failed: {exc}") from exc
-    counts = aggregate_lines(_read_lines(rotated))
+    lines = _read_lines(rotated)
+    for _ in range(settle_rounds):
+        time.sleep(settle_delay)
+        again = _read_lines(rotated)
+        if len(again) == len(lines):
+            break
+        lines = again
+    counts = aggregate_lines(lines)
     existing = _load_totals(totals_path)
     _write_totals(totals_path, merge_totals(existing, counts))
     rotated.unlink()

@@ -10,6 +10,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from wolfmark_ledger import feed_counts as counts
 
@@ -62,7 +63,7 @@ class AggregateTests(unittest.TestCase):
         root = self.scratch()
         tmp, totals = root / "count.tmp.log", root / "country-daily.json"
         tmp.write_text("2026-11-02 GET 200 US\n2026-11-03 GET 200 GB\n")
-        summary = counts.run(tmp, totals, noop_reopen)
+        summary = counts.run(tmp, totals, noop_reopen, settle_delay=0)
         self.assertEqual(summary, {"2026-11-02": {"US": 1}, "2026-11-03": {"GB": 1}})
         self.assertEqual(json.loads(totals.read_text()), summary)
         self.assertFalse((tmp.parent / "count.tmp.log.1").exists())
@@ -73,7 +74,7 @@ class AggregateTests(unittest.TestCase):
         tmp, totals = root / "count.tmp.log", root / "country-daily.json"
         (tmp.parent / "count.tmp.log.1").write_text("2026-11-01 GET 200 GB\n")
         tmp.write_text("2026-11-02 GET 200 US\n")
-        summary = counts.run(tmp, totals, noop_reopen)
+        summary = counts.run(tmp, totals, noop_reopen, settle_delay=0)
         self.assertEqual(summary, {"2026-11-01": {"GB": 1}, "2026-11-02": {"US": 1}})
 
     def test_run_failure_keeps_rotated_log_for_retry(self):
@@ -82,11 +83,11 @@ class AggregateTests(unittest.TestCase):
         tmp.write_text("2026-11-02 GET 200 US\n")
         totals.write_text("{corrupt", encoding="utf-8")
         with self.assertRaises(counts.CountsError):
-            counts.run(tmp, totals, noop_reopen)
+            counts.run(tmp, totals, noop_reopen, settle_delay=0)
         rotated = tmp.parent / "count.tmp.log.1"
         self.assertIn("GET 200 US", rotated.read_text())
         totals.write_text("{}", encoding="utf-8")
-        summary = counts.run(tmp, totals, noop_reopen)
+        summary = counts.run(tmp, totals, noop_reopen, settle_delay=0)
         self.assertEqual(summary, {"2026-11-02": {"US": 1}})
 
     def test_run_reopen_failure_keeps_everything(self):
@@ -98,10 +99,30 @@ class AggregateTests(unittest.TestCase):
             raise OSError("nginx away")
 
         with self.assertRaises(counts.CountsError):
-            counts.run(tmp, totals, failing_reopen)
+            counts.run(tmp, totals, failing_reopen, settle_delay=0)
         self.assertIn("GET 200 US", (tmp.parent / "count.tmp.log.1").read_text())
-        summary = counts.run(tmp, totals, noop_reopen)
+        summary = counts.run(tmp, totals, noop_reopen, settle_delay=0)
         self.assertEqual(summary, {"2026-11-02": {"US": 1}})
+
+    def test_run_settle_captures_late_worker_lines(self):
+        root = self.scratch()
+        tmp, totals = root / "count.tmp.log", root / "country-daily.json"
+        tmp.write_text("2026-11-02 GET 200 US\n")
+        rotated = tmp.parent / "count.tmp.log.1"
+        sleeps = []
+
+        def fake_sleep(delay):
+            sleeps.append(delay)
+            if len(sleeps) == 1:
+                # a worker flushes one last line after reopen, before quiescence
+                with open(rotated, "a", encoding="utf-8") as handle:
+                    handle.write("2026-11-02 GET 200 FR\n")
+
+        with mock.patch("time.sleep", side_effect=fake_sleep):
+            summary = counts.run(tmp, totals, noop_reopen)
+        self.assertEqual(summary, {"2026-11-02": {"US": 1, "FR": 1}})
+        self.assertEqual(len(sleeps), 2)  # waited for quiet, not just once
+        self.assertFalse(rotated.exists())
 
     def test_main_aggregates_and_reports(self):
         root = self.scratch()
