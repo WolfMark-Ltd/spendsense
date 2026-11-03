@@ -1,0 +1,27 @@
+[Unit]
+Description=WolfMark Spend Sense Model News feed publication
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/opt/wolfmark-spendsense-feed /var/www/spendsense.wolfmark.co.uk
+Environment=FEED_ROOT=/opt/wolfmark-spendsense-feed
+Environment=FEED_WEBROOT=/var/www/spendsense.wolfmark.co.uk
+Environment=FEED_PYTHON=/usr/bin/python3
+Environment=FEED_RETAIN_DAYS=90
+ExecStart=/bin/sh /opt/wolfmark-spendsense-feed/repo/news-feed/collect.sh
+TimeoutStartSec=600s

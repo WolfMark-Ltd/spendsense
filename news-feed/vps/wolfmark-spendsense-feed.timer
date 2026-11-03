@@ -1,0 +1,12 @@
+[Unit]
+Description=Rebuild the Spend Sense Model News feed every six hours
+
+[Timer]
+OnBootSec=10min
+OnCalendar=*-*-* 02,08,14,20:17:00
+Persistent=true
+AccuracySec=1min
+Unit=wolfmark-spendsense-feed.service
+
+[Install]
+WantedBy=timers.target

@@ -23,7 +23,7 @@ STAGING="$STATE/staging"
 WEBROOT="${FEED_WEBROOT:-$HOME/spendsense.wolfmark.co.uk}"
 LIVE="$WEBROOT/feed/v1/news.json"
 ROLLBACK="$STATE/news.json.prev"
-PYTHON="${FEED_PYTHON:-/opt/alt/python312/bin/python3}"
+PYTHON="${FEED_PYTHON:-/usr/bin/python3}"
 MODELS_URL="${MODELS_DEV_URL:-https://models.dev/api.json}"
 RETAIN_DAYS="${FEED_RETAIN_DAYS:-90}"
 MIN_BYTES="${FEED_MIN_BYTES:-1000000}"
@@ -84,6 +84,7 @@ EOF
     || fail "generated feed failed client validation"
 
 [ -f "$LIVE" ] && cp -p "$LIVE" "$ROLLBACK"
+chmod 0644 "$STAGING/feed.json"  # world-readable under restrictive umasks
 mv "$STAGING/feed.json" "$LIVE"
 mv "$NEW_SNAPSHOT" "$STATE/models-prev.json"
 

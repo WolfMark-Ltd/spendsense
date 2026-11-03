@@ -1,0 +1,65 @@
+# Spend Sense Model News feed — PREPARED, NOT INSTALLED.
+#
+# At activation: place in /etc/nginx/sites-available/spendsense.wolfmark.co.uk
+# and symlink into sites-enabled (see news-feed/README.md). Validate with
+# `nginx -t` before reloading, and never reload while another deploy is live.
+#
+# Privacy: access_log is OFF for this host, so routine feed requests leave no
+# request log. error_log stays at warn per house convention: failed requests
+# can record the client address in error entries. No upstream proxy or CDN
+# fronts this host.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name spendsense.wolfmark.co.uk;
+
+    server_tokens off;
+
+    access_log off;
+    error_log /var/log/nginx/spendsense.wolfmark.co.uk.error.log warn;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://spendsense.wolfmark.co.uk$uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name spendsense.wolfmark.co.uk;
+
+    ssl_certificate /etc/letsencrypt/live/spendsense.wolfmark.co.uk/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/spendsense.wolfmark.co.uk/privkey.pem;
+
+    server_tokens off;
+    autoindex off;
+    charset utf-8;
+    client_max_body_size 1k;
+    absolute_redirect off;
+
+    access_log off;
+    error_log /var/log/nginx/spendsense.wolfmark.co.uk.error.log warn;
+
+    if ($request_method !~ ^(GET|HEAD)$) {
+        return 405;
+    }
+
+    root /var/www/spendsense.wolfmark.co.uk;
+
+    location = /feed/v1/news.json {
+        default_type application/json;
+        add_header Cache-Control "public, max-age=21600" always;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 404;
+    }
+}
