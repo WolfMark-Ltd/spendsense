@@ -5685,7 +5685,8 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     ] })
   ] }) : null
   const exhaustionAnchored = !exhaustionDraft
-    || (exhaustionDraft.scope_kind === 'window' && rows.some(row => row.id === exhaustionDraft.scope_id))
+    || (exhaustionDraft.scope_kind === 'window'
+      && rows.some(row => row.id === exhaustionDraft.scope_id && !row.accountMark))
     || (exhaustionDraft.scope_kind === 'account'
       && (!rows.length || !accountHolderMarked(account) || rows.some(row => row.accountMark)))
   const field = (label, key, options = {}) => jsxs('label', { className: 'wm-filter', children: [

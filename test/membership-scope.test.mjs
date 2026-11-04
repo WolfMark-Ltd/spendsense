@@ -2691,6 +2691,45 @@ test('PR26 review: re-marking an account row stays account-scoped and neutral', 
   assert.equal(post.body.label, null, 'no translated label is persisted')
 })
 
+test('PR26 review: a window draft orphaned onto an account row falls back, never vanishes', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const base = account('anthropic:default', {})
+  const providerAccountRow = { id: 'account', label: 'Provider Account', scope: 'account',
+    used_percent: 10, state: 'live', basis: ['provider_reported'], source: 'native' }
+  const syntheticRow = { id: 'account', label: 'Account', scope: 'account',
+    used_percent: 100, used_percent_from: 'manual', state: 'manual',
+    basis: ['manual'], source: 'you',
+    manual: { scope: { kind: 'account', id: 'account' }, status: 'active' } }
+  let phase = 1
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    const sub = phase === 1
+      ? { ...base, quota: { windows: [providerAccountRow] }, manual_exhaustions: [] }
+      : { ...base, quota: { windows: [syntheticRow] },
+        manual_exhaustions: [{ id: 'manual-1', scope: { kind: 'account', id: 'account' } }] }
+    return { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+  })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="anthropic:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'allowances')
+  // Open a window draft on the provider row, then re-read into a world
+  // where only the synthetic account row carries that ID.
+  await clickByText(card.querySelector('li[data-window="account"]'), 'Mark exhausted')
+  await flush(2)
+  phase = 2
+  await clickByText(container, 'Refresh provider usage')
+  await flush(6)
+  const forms = card.querySelectorAll('form.wm-exhaustion-form')
+  assert.equal(forms.length, 1, 'the orphaned draft still renders exactly once')
+  assert.equal(card.querySelector('li[data-window="account"] form.wm-exhaustion-form'), null,
+    'the window draft does not attach to the synthetic account row')
+})
+
 test('PR26 review: account-scope exhaustion rows follow the UI language', async () => {
   const enT = i18nBackend.t
   i18nBackend.t = (key, ...args) => {
