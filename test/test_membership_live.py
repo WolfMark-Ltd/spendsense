@@ -17,6 +17,7 @@ from unittest import mock
 from wolfmark_ledger import membership as mem
 from wolfmark_ledger import membership_api as api
 from wolfmark_ledger import membership_live as live
+from wolfmark_ledger import membership_store as store
 from wolfmark_ledger import news as news_mod
 
 NOW = 1798765432.0  # fixed clock for stable fetched_at values
@@ -362,6 +363,107 @@ class PlansPayloadTests(LiveTestCase):
         self.assertEqual(payload["source"], "bundled")
         self.assertEqual(payload["central"]["state"], "error")
         self.assertTrue(payload["central"]["error"])
+
+
+class ActiveCatalogueTests(LiveTestCase):
+    def live_book(self, plans):
+        return book_of(feed_doc(plans))
+
+    def save_member(self, family, plan_id, **extra):
+        account = {**mem.member_from_native({"provider": family}),
+                   "plan_id": plan_id, **extra}
+        store_path = Path(self.scratch.name) / "memberships.json"
+        store.save_account(account, store_path)
+        return store_path
+
+    def test_live_catalogue_served_when_enabled_and_cached(self):
+        self.enable()
+        self.write_cache(self.live_book(
+            [plan("live-plan", family="live", amount=99.0)]))
+        book, source = api.active_catalogue(data_dir=self.data)
+        self.assertEqual(source, "live")
+        self.assertEqual(book["plans"][0]["id"], "live-plan")
+        self.assertEqual(book["plans"][0]["price"]["amount"], 99.0)
+
+    def test_bundled_fallback_when_disabled(self):
+        self.write_cache(self.live_book([plan("live-plan", family="live")]))
+        book, source = api.active_catalogue(data_dir=self.data)
+        self.assertEqual(source, "bundled")
+        self.assertNotIn("live-plan", {p["id"] for p in book["plans"]})
+        self.assertEqual(book["catalogue_version"],
+                         api.load_plans()["catalogue_version"])
+
+    def test_bundled_fallback_without_cache(self):
+        self.enable()
+        book, source = api.active_catalogue(data_dir=self.data)
+        self.assertEqual(source, "bundled")
+        self.assertEqual(book["catalogue_version"],
+                         api.load_plans()["catalogue_version"])
+
+    def test_explicit_catalogue_wins(self):
+        self.enable()
+        self.write_cache(self.live_book([plan("live-plan", family="live")]))
+        explicit = book_of(feed_doc([plan("own-plan", family="own")]))
+        book, source = api.active_catalogue(explicit, data_dir=self.data)
+        self.assertIs(book, explicit)
+        self.assertEqual(source, "bundled")
+
+    def test_corrupt_cache_falls_back_to_bundled(self):
+        self.enable()
+        target = live.cache_path(self.data)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{not json", encoding="utf-8")
+        book, source = api.active_catalogue(data_dir=self.data)
+        self.assertEqual(source, "bundled")
+        self.assertNotIn("live-plan", {p["id"] for p in book["plans"]})
+
+    def test_account_cards_resolve_against_live_catalogue(self):
+        self.enable()
+        self.write_cache(self.live_book(
+            [plan("live-plan", family="live", amount=99.0)]))
+        store_path = self.save_member("live", "live-plan")
+        cards = api.accounts_payload(
+            path=store_path, data_dir=self.data)["accounts"]
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["plan"]["price"]["amount"], 99.0)
+        self.assertIn("live-plan",
+                      [p["id"] for p in cards[0]["plan_choices"]])
+        self.assertEqual(cards[0]["fee"]["published"]["amount"], 99.0)
+
+    def test_fee_summary_uses_live_prices(self):
+        self.enable()
+        self.write_cache(self.live_book(
+            [plan("live-plan", family="live", amount=99.0)]))
+        store_path = self.save_member("live", "live-plan")
+        summary = api.fee_summary_payload(path=store_path, data_dir=self.data,
+                                          at="2026-11-03T12:00:00Z")
+        self.assertEqual(summary["totals_by_currency_period"],
+                         {"USD/month": 99.0})
+        self.assertEqual(summary["fees"][0]["published"]["amount"], 99.0)
+
+    def test_personal_fee_override_survives_live_catalogue(self):
+        self.enable()
+        self.write_cache(self.live_book(
+            [plan("live-plan", family="live", amount=99.0)]))
+        store_path = self.save_member(
+            "live", "live-plan",
+            fee_overrides=[{"id": "mine", "amount": 15, "currency": "GBP",
+                            "period": "month", "reason": "legacy_pricing"}])
+        cards = api.accounts_payload(
+            path=store_path, data_dir=self.data)["accounts"]
+        self.assertEqual(cards[0]["fee"]["effective"]["amount"], 15)
+        self.assertEqual(cards[0]["fee"]["effective"]["currency"], "GBP")
+        self.assertEqual(cards[0]["fee"]["published"]["amount"], 99.0)
+
+    def test_unknown_plan_id_keeps_own_price(self):
+        self.enable()
+        self.write_cache(self.live_book(
+            [plan("live-plan", family="live", amount=99.0)]))
+        store_path = self.save_member("live", "ghost-plan")
+        cards = api.accounts_payload(
+            path=store_path, data_dir=self.data)["accounts"]
+        self.assertIsNone(cards[0]["plan"])
+        self.assertIsNone(cards[0]["fee"]["published"])
 
 
 if __name__ == "__main__":

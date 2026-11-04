@@ -4014,6 +4014,7 @@ function SettingsPage() {
     try {
       const result = await rest('/membership/plans/refresh', { method: 'POST' })
       if (!membershipIdentityCurrent(captured)) return
+      if (!result || result.ok === false) throw new Error(result?.error || 'The plan catalogue is unavailable.')
       queryClient.setQueryData([ID, 'membership-plans', captured], { ...result, identity: captured })
       const centralState = result?.central?.state
       const centralAlert = newsCentralAlert(result?.central, t)

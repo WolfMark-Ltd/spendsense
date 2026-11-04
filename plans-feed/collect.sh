@@ -88,8 +88,10 @@ cp -p "$STAGING/plans.json" "$LIVE_TMP" || fail "staging to live directory faile
 chmod 0644 "$LIVE_TMP" || fail "cannot set feed permissions"  # world-readable under restrictive umasks
 mv "$LIVE_TMP" "$LIVE" || fail "atomic feed publication failed"
 
+# Past publication: log failures are reported but never fail the run —
+# the new feed is already live, so exit 0 stands.
 echo "$(date -u +%FT%TZ) OK $FEED_CHECK" >> "$STATE/plans-collect.log" \
-    || fail "cannot write run log"
+    || echo "collect: cannot write run log" >&2
 tail -200 "$STATE/plans-collect.log" > "$STAGING/plans-collect.log" && mv "$STAGING/plans-collect.log" "$STATE/plans-collect.log" \
-    || fail "cannot rotate run log"
+    || echo "collect: cannot rotate run log" >&2
 exit 0

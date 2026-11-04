@@ -34,7 +34,19 @@ jobs:
           python3 scripts/source-check.py --out source-check/report.json $PRIOR
         # --prior and --out share one path safely: main() loads the prior
         # report into memory before the fresh report is written.
-      - run: python3 -c "import json; r=json.load(open('source-check/report.json')); print('## Source check', r['generated_at']); print('changes:', len(r['changes']), '| blocking:', len(r['blocking'])); [print('-', c['key'], c['summary']) for c in r['changes']]" >> "$GITHUB_STEP_SUMMARY"
+      - run: |
+          python3 - >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          r = json.load(open('source-check/report.json'))
+          print('## Source check', r['generated_at'])
+          print('changes:', len(r['changes']), '| blocking:', len(r['blocking']))
+          for c in r['changes']:
+              print('-', c['key'], c['summary'])
+          unreadable = [s['source_id'] + ' (' + str(s['snapshot_status']) + ')'
+                        for s in r['sources'] if not s['usable']]
+          if unreadable:
+              print('unreadable sources, not compared: ' + ', '.join(unreadable))
+          PY
       - uses: actions/cache/save@v4
         if: always() && hashFiles('source-check/report.json') != ''
         with:

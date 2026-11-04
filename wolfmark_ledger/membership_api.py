@@ -30,6 +30,36 @@ def load_plans(path: Optional[Path | str] = None) -> dict[str, Any]:
     return mem.load_plan_catalogue(Path(path) if path else plans_path())
 
 
+def _select_book(catalogue, settings: Mapping[str, Any],
+                 central: Mapping[str, Any]) -> tuple[dict[str, Any], str]:
+    """One catalogue-selection rule for every read path.
+
+    An explicitly supplied catalogue always wins. Otherwise the validated
+    live catalogue is used when Live Updates is enabled and cached; the
+    bundled catalogue is the fallback. Returns ``(book, source)``.
+    """
+    if catalogue is not None:
+        return catalogue, "bundled"
+    book = central.get("book")
+    if (settings.get("live_updates") is True and isinstance(book, dict)
+            and book.get("plans")):
+        return book, "live"
+    return load_plans(), "bundled"
+
+
+def active_catalogue(catalogue: Optional[Mapping[str, Any]] = None, *,
+                     data_dir: Optional[Path | str] = None) -> tuple[dict[str, Any], str]:
+    """The catalogue account cards, fees and plan choices resolve against.
+
+    Explicit catalogue wins; else the validated live catalogue when Live
+    Updates is enabled and cached; else the bundled catalogue. Corrupt or
+    missing settings and caches fall back to bundled, never raise.
+    """
+    settings = news_mod.load_settings(news_mod.settings_path(data_dir))
+    central = live.load_cache(live.cache_path(data_dir))
+    return _select_book(catalogue, settings, central)
+
+
 def _plan_for(account: Mapping[str, Any], catalogue: Mapping[str, Any]) -> Optional[dict[str, Any]]:
     plan_id = str(account.get("plan_id") or "").strip()
     if not plan_id:
@@ -84,9 +114,10 @@ def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
 def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
                      catalogue: Optional[Mapping[str, Any]] = None,
                      home: Optional[Path | str] = None, at: Any = None,
+                     data_dir: Optional[Path | str] = None,
                      native_snapshots: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     """Stored accounts with quota. ``native`` uses Hermes' own readings."""
-    book = catalogue or load_plans()
+    book, _source = active_catalogue(catalogue or None, data_dir=data_dir)
     data = store.load_store(path)
     if data.get("error"):
         # A corrupt store is not "no memberships": say so, and let the caller
@@ -120,8 +151,9 @@ def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
 
 def fee_summary_payload(*, path: Optional[Path | str] = None,
                         catalogue: Optional[Mapping[str, Any]] = None,
+                        data_dir: Optional[Path | str] = None,
                         at: Any = None) -> dict[str, Any]:
-    book = catalogue or load_plans()
+    book, _source = active_catalogue(catalogue or None, data_dir=data_dir)
     data = store.load_store(path)
     if data.get("error"):
         raise store.StoreUnreadable(str(data["error"]))
@@ -188,14 +220,7 @@ def plans_payload(catalogue: Optional[Mapping[str, Any]] = None, *,
     settings = news_mod.load_settings(news_mod.settings_path(data_dir))
     central = live.load_cache(live.cache_path(data_dir))
     central_book = central.get("book")
-    live_ready = (settings.get("live_updates") is True and
-                  isinstance(central_book, dict) and
-                  bool(central_book.get("plans")))
-    book = load_plans() if catalogue is None else catalogue
-    source = "bundled"
-    if catalogue is None and live_ready:
-        book = central_book
-        source = "live"
+    book, source = _select_book(catalogue, settings, central)
     families: dict[str, dict[str, Any]] = {}
     for plan in book.get("plans", []):
         family = str(plan.get("provider_family"))
@@ -257,9 +282,10 @@ def refresh_plans_payload(*, data_dir: Optional[Path | str] = None,
 
 def discover_payload(*, include_native: bool = False, path: Optional[Path | str] = None,
                      catalogue: Optional[Mapping[str, Any]] = None,
-                     home: Optional[Path | str] = None) -> dict[str, Any]:
+                     home: Optional[Path | str] = None,
+                     data_dir: Optional[Path | str] = None) -> dict[str, Any]:
     """Find configured accounts and merge them into the store."""
-    book = catalogue or load_plans()
+    book, _source = active_catalogue(catalogue or None, data_dir=data_dir)
     found = discovery.discover(book, include_native=include_native, home=home)
     merged = store.upsert_discovered(found["accounts"], path)
     shared_snapshots = (found or {}).get("snapshots") if include_native else None
