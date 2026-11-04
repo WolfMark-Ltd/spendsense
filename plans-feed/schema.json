@@ -25,14 +25,21 @@
           "name": {"type": "string", "maxLength": 256},
           "provider_family": {"type": "string", "minLength": 1, "maxLength": 128},
           "kind": {"type": "string", "maxLength": 64},
-          "billing_cycle": {"type": "string", "maxLength": 64},
+          "billing_cycle": {
+            "type": "object",
+            "properties": {
+              "period": {"type": "string"},
+              "anchor_day": {"anyOf": [{"type": "integer"}, {"type": "null"}]}
+            },
+            "additionalProperties": true
+          },
           "billing_arrangement": {"type": "string", "maxLength": 64},
           "price": {
             "type": "object",
             "required": ["amount", "currency", "period"],
             "properties": {
               "amount": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
-              "currency": {"type": "string"},
+              "currency": {"anyOf": [{"type": "string"}, {"type": "null"}]},
               "period": {"type": "string"}
             }
           },

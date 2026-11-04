@@ -1,5 +1,6 @@
 """Tests for the daily source checker. All offline: no network access."""
 
+import io
 import json
 import shutil
 import tempfile
@@ -153,6 +154,81 @@ class SourceCheckTests(unittest.TestCase):
             report = C.check(self.dir, offline_dir=self.offline)
         self.assertTrue(report["sources"])
         self.assertTrue(report["offline"])
+
+    def test_console_output_survives_a_narrow_windows_encoding(self):
+        class Cp1252Console(io.StringIO):
+            encoding = "cp1252"
+
+            def write(self, text):
+                text.encode(self.encoding)  # raise like the real console
+                return super().write(text)
+
+        out = Path(self.tmp.name) / "report" / "report.json"
+        console = Cp1252Console()
+        with mock.patch("sys.stdout", console):
+            code = C.main(["--catalogue-dir", str(self.dir),
+                           "--fixtures", str(FIX / "demo-change"),
+                           "--sources", "opencode-go-plan",
+                           "--out", str(out), "--no-candidates"])
+        self.assertEqual(code, 0)
+        printed = console.getvalue()
+        printed.encode("cp1252")  # must not raise
+        self.assertIn("->", printed)
+        self.assertNotIn("\u2192", printed)
+        kept = json.loads(out.read_text(encoding="utf-8"))
+        summaries = " ".join(c.get("summary", "") for c in kept["changes"])
+        self.assertIn("\u2192", summaries)  # report data keeps full Unicode
+
+    def test_an_unreadable_source_reports_no_fresh_changes(self):
+        empty = Path(self.tmp.name) / "empty" / "sources"
+        empty.mkdir(parents=True)
+        report = C.check(self.dir, offline_dir=empty.parent,
+                         source_ids=["opencode-go-plan"])
+        entry = next(e for e in report["sources"]
+                     if e["source_id"] == "opencode-go-plan")
+        self.assertFalse(entry["usable"])
+        self.assertEqual(entry["changes"], [])
+        self.assertEqual(report["changes"], [])
+        self.assertIn("unreadable", entry["note"])
+        self.assertFalse(report["requires_owner"])
+
+    def test_an_incomplete_observation_keeps_prior_rows_for_unseen_plans(self):
+        baseline = {
+            "catalogue_version": "test-1",
+            "plans": [
+                {"id": "fam.seen", "name": "Seen", "kind": "subscription",
+                 "provider_family": "fam",
+                 "price": {"amount": 10, "currency": "USD", "period": "month"},
+                 "verification": {"status": "verified", "source_id": "fam-src"}},
+                {"id": "fam.unseen", "name": "Unseen", "kind": "subscription",
+                 "provider_family": "fam",
+                 "price": {"amount": 20, "currency": "USD", "period": "month"},
+                 "verification": {"status": "verified", "source_id": "fam-src"}},
+            ],
+        }
+        source = {"id": "fam-src", "family": "fam", "adapter": "manual"}
+        observation = {"retrieved_at": "2026-11-03T00:00:00Z", "sha256": "abc",
+                       "complete": False, "usable": True,
+                       "plans": [{"id": "fam.seen", "name": "Seen",
+                                  "price": {"amount": 10, "currency": "USD",
+                                            "period": "month"}}]}
+        candidate = C.candidate_from_observation(observation, source,
+                                                 prior=baseline)
+        rows = {row["id"]: row for row in candidate["plans"]}
+        self.assertEqual(set(rows), {"fam.seen", "fam.unseen"})
+        self.assertEqual(rows["fam.unseen"]["price"]["amount"], 20)
+        self.assertFalse(candidate["complete"])
+
+    def test_candidates_apply_reported_verification_transitions(self):
+        report = C.check(self.dir, offline_dir=self.offline,
+                         families=["ollama-cloud"])
+        keys = {c["key"] for c in report["changes"]}
+        self.assertIn("verification_changed:ollama-cloud.team", keys)
+        candidate = report["candidates"]["ollama-pricing"]
+        team = next(row for row in candidate["plans"]
+                    if row["id"] == "ollama-cloud.team")
+        self.assertEqual(team["verification"]["status"], "verified")
+        self.assertEqual(team["verification"]["source_id"], "ollama-pricing")
 
     def test_the_checker_writes_nothing_into_the_catalogue(self):
         before = {}

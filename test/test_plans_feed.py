@@ -79,6 +79,33 @@ class BuildFeedTests(unittest.TestCase):
         self.assertEqual(check, [])
         self.assertEqual(len(book["plans"]), len(doc["plans"]))
 
+    def test_generated_plans_match_the_published_schema(self):
+        raw = json.loads((ROOT / "catalogue" / "plans.json").read_text(
+            encoding="utf-8-sig"))
+        doc, problems = plans_feed.build_feed(
+            raw, generated_at="2026-11-01T00:00:00Z")
+        self.assertEqual(problems, [])
+        schema = json.loads((ROOT / "plans-feed" / "schema.json").read_text(
+            encoding="utf-8"))
+        item = schema["properties"]["plans"]["items"]["properties"]
+        cycle = item["billing_cycle"]
+        self.assertEqual(cycle.get("type"), "object")
+        self.assertIn("period", cycle.get("properties", {}))
+        currency = item["price"]["properties"]["currency"]
+        variants = currency.get("anyOf", [])
+        self.assertIn({"type": "null"}, variants)
+        self.assertTrue(any(v.get("type") == "string" for v in variants))
+        seen_null_currency = False
+        for entry in doc["plans"]:
+            self.assertIsInstance(entry.get("billing_cycle"), dict,
+                                  entry["id"])
+            value = entry["price"]["currency"]
+            self.assertTrue(value is None or isinstance(value, str),
+                            entry["id"])
+            seen_null_currency = seen_null_currency or value is None
+        self.assertTrue(seen_null_currency,
+                        "the fixture catalogue must exercise null currencies")
+
 
 class MainTests(unittest.TestCase):
     def setUp(self):

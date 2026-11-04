@@ -126,32 +126,47 @@ def load_baseline(catalogue_dir, source: dict):
     return doc, validate_baseline(doc, source)
 
 
-def candidate_from_observation(observation: dict, source: dict, prior=None) -> dict:
+def candidate_from_observation(observation: dict, source: dict, prior=None,
+                             transitions=None) -> dict:
     """Propose a baseline from a live observation, for review only.
 
     Prices and the plan set come from the live page; review metadata (kind,
     verification) carries over from the prior baseline for plans that keep
     their id, so accepting a price move cannot silently reset review state.
-    Brand-new plans start provisional.
+    Brand-new plans start provisional. ``transitions`` maps plan ids to the
+    verification records the reported changes propose, so accepting a
+    candidate acknowledges verification upgrades instead of repeating them.
+    When the observation is incomplete, prior rows for unobserved ids are
+    kept: a partial page cannot establish a removal.
     """
     sid = source.get("id")
     prior_rows = {}
     if isinstance(prior, dict):
         prior_rows = {row.get("id"): row for row in prior.get("plans", [])
                       if isinstance(row, dict)}
+    upgrades = transitions if isinstance(transitions, dict) else {}
     plans = []
+    seen = set()
     for plan in observation.get("plans", []):
         row = {"id": plan.get("id"), "name": plan.get("name"),
                "provider_family": source.get("family"),
                "price": copy.deepcopy(plan.get("price"))}
+        seen.add(plan.get("id"))
         old = prior_rows.get(plan.get("id"), {})
         if "kind" in old:
             row["kind"] = old["kind"]
         if "billing_arrangement" in old:
             row["billing_arrangement"] = old["billing_arrangement"]
-        row["verification"] = copy.deepcopy(
-            old.get("verification") or {"status": "provisional", "source_id": sid})
+        if plan.get("id") in upgrades:
+            row["verification"] = copy.deepcopy(upgrades[plan.get("id")])
+        else:
+            row["verification"] = copy.deepcopy(
+                old.get("verification") or {"status": "provisional", "source_id": sid})
         plans.append(row)
+    if not observation.get("complete"):
+        for pid, old in prior_rows.items():
+            if pid not in seen and isinstance(old, dict):
+                plans.append(copy.deepcopy(old))
     return {
         "source_id": sid,
         "family": source.get("family"),
@@ -263,23 +278,27 @@ def check(catalogue_dir, *, offline_dir=None, families=None, source_ids=None,
             entry["baseline_catalogue_version"] = baseline.get("catalogue_version")
             entry["baseline_stale"] = (baseline.get("catalogue_version")
                                        != catalogue.get("catalogue_version"))
-            pseudo = {"plans": baseline.get("plans", [])}
-            changes = R.compare_family(observation, pseudo)
-            entry["changes"] = [c["key"] for c in changes]
-            fresh.extend(changes)
+            changes = []
+            if observation.get("usable"):
+                pseudo = {"plans": baseline.get("plans", [])}
+                changes = R.compare_family(observation, pseudo)
+                entry["changes"] = [c["key"] for c in changes]
+                fresh.extend(changes)
+            else:
+                entry["note"] = ("live source unreadable; fresh comparison "
+                                 f"skipped ({snapshot.get('status')})")
             if changes:
                 entry["status"] = "changed"
-                if observation.get("usable"):
-                    candidates[sid] = candidate_from_observation(
-                        observation, source, prior=baseline)
-                    entry["candidate"] = True
-                    entry["note"] = ("%d change(s); candidate offered for "
-                                     "review" % len(changes))
-                else:
-                    entry["note"] = ("%d change(s), all unproven: the live "
-                                     "source is unreadable (%s)"
-                                     % (len(changes), snapshot.get("status")))
-            else:
+                upgrades = {c["plan_id"]: c["after"] for c in changes
+                            if c.get("action") == "verification_changed"
+                            and isinstance(c.get("after"), dict)}
+                candidates[sid] = candidate_from_observation(
+                    observation, source, prior=baseline,
+                    transitions=upgrades)
+                entry["candidate"] = True
+                entry["note"] = ("%d change(s); candidate offered for "
+                                 "review" % len(changes))
+            elif observation.get("usable"):
                 entry["note"] = "matches the reviewed baseline"
         entries.append(entry)
 
@@ -361,6 +380,20 @@ def _summary(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _console_text(text: str) -> str:
+    """Render report text for the terminal without breaking narrow encodings.
+
+    The JSON report always keeps full Unicode; only console output is
+    downgraded, so a cp1252 Windows console cannot fail the run.
+    """
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return text.replace("\u2192", "->").encode(encoding, "replace").decode(encoding)
+    return text
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Diff live catalogue sources against reviewed baselines.")
@@ -399,7 +432,7 @@ def main(argv=None) -> int:
     except (OSError, ValueError) as exc:
         print(f"source-check: {exc}", file=sys.stderr)
         return 2
-    print(_summary(report))
+    print(_console_text(_summary(report)))
     return 0
 
 

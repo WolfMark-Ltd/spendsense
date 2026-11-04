@@ -96,6 +96,8 @@ def fetch_central(*, data_dir: Optional[Path | str] = None,
     vocabulary as the news central fetch: ``ok``, ``stale``, ``error``,
     ``disabled`` or ``disabled_cached``. Any failure keeps the previous
     cache and reports the error; the bundled catalogue is unaffected.
+    When another refresh lands newer data mid-flight, a failed fetch
+    adopts that cache instead of overwriting it with its older copy.
     """
     import time as _time
 
@@ -121,6 +123,7 @@ def fetch_central(*, data_dir: Optional[Path | str] = None,
                     "state": "ok", "error": ""}
     request = Request(FEED_URL, headers={"Accept": "application/json",
                                          "User-Agent": "SpendSense-Plans"})
+    fetched_ok = True
     try:
         with urlopen(request, timeout=FEED_TIMEOUT) as response:  # noqa: S310 - fixed https host
             body = response.read(FEED_MAX_BYTES + 1)
@@ -133,6 +136,7 @@ def fetch_central(*, data_dir: Optional[Path | str] = None,
                    "fetched_at": _now_iso(moment),
                    "state": "ok", "error": "; ".join(problems), "book": book}
     except Exception as exc:  # noqa: BLE001 - any fetch failure keeps bundled plans working
+        fetched_ok = False
         log.warning("spend-sense: plans feed fetch failed: %s", exc)
         payload = {"version": PLANS_FEED_VERSION,
                    "fetched_at": cached.get("fetched_at") or "",
@@ -140,6 +144,15 @@ def fetch_central(*, data_dir: Optional[Path | str] = None,
                    "error": f"central catalogue unavailable ({type(exc).__name__})",
                    "book": cached.get("book")}
     with _locked(target):
+        if not fetched_ok:
+            current = load_cache(target)
+            if (current.get("fetched_at") or "") != (cached.get("fetched_at") or "") \
+                    and current.get("fetched_at"):
+                # Only a success moves fetched_at, so a different stamp
+                # means newer data landed mid-flight: keep it.
+                return {"book": current["book"],
+                        "fetched_at": current["fetched_at"],
+                        "state": current["state"], "error": current["error"]}
         _atomic_write_json(target, payload)
     return {"book": payload["book"], "fetched_at": payload["fetched_at"],
             "state": payload["state"], "error": payload["error"]}

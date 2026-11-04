@@ -4015,8 +4015,14 @@ function SettingsPage() {
       const result = await rest('/membership/plans/refresh', { method: 'POST' })
       if (!membershipIdentityCurrent(captured)) return
       queryClient.setQueryData([ID, 'membership-plans', captured], { ...result, identity: captured })
-      $modelRefreshState.set({ origin: captured, tone: 'good',
+      const centralState = result?.central?.state
+      const centralAlert = newsCentralAlert(result?.central, t)
+      if (centralState === 'ok') $modelRefreshState.set({ origin: captured, tone: 'good',
         text: 'Membership catalogue was refreshed. Stored memberships, fees and selections are unchanged.' })
+      else if (centralAlert) $modelRefreshState.set({ origin: captured, tone: 'warn',
+        text: 'Membership catalogue could not be refreshed: ' + centralAlert })
+      else $modelRefreshState.set({ origin: captured, tone: 'warn',
+        text: 'Spend Sense Live Updates is off, so the bundled catalogue is shown. Stored memberships, fees and selections are unchanged.' })
     } catch (error) {
       if (membershipIdentityCurrent(captured)) $modelRefreshState.set({ origin: captured, tone: 'warn',
         text: 'Membership catalogue could not be refreshed: ' + String(error.message || error) })
@@ -4097,7 +4103,7 @@ function SettingsPage() {
                   (membershipBook.central.fetched_at ? ' · ' + new Date(membershipBook.central.fetched_at).toLocaleString() : '') })
               : null,
             newsCentralAlert(membershipBook.central, t)
-              ? jsx('p', { className: 'wm-warn-note', role: 'status', children: 'Central catalogue: ' + newsCentralAlert(membershipBook.central, t) + ' The bundled plans are shown.' })
+              ? jsx('p', { className: 'wm-warn-note', role: 'status', children: 'Central catalogue: ' + newsCentralAlert(membershipBook.central, t) + (membershipBook.source === 'live' ? ' The cached live catalogue is shown.' : ' The bundled plans are shown.') })
               : null,
             jsxs('p', { children: [membershipBook.totals?.plans || 0, ' plans · ',
               membershipBook.totals?.verified || 0, ' verified prices · ',

@@ -278,8 +278,11 @@ def match_relevance(item: Optional[Mapping[str, Any]],
     """Explain why one news item is (or is not) relevant locally.
 
     Returns ``{"relevant", "reasons"}``; ``reasons`` holds stable codes from
-    :data:`RELEVANCE_REASONS`. Matching is case-insensitive and uses only
-    the local signals — never the network.
+    :data:`RELEVANCE_REASONS`. Provider comparison reuses the news route
+    matching (:func:`news.canonical_route_provider`) so recorded routes
+    such as ``openai-codex`` match catalogue providers such as ``openai``,
+    exactly as For You ranking does. Matching uses only the local
+    signals — never the network.
     """
     entry = item if isinstance(item, Mapping) else {}
     provided = signals if isinstance(signals, Mapping) else {}
@@ -288,25 +291,30 @@ def match_relevance(item: Optional[Mapping[str, Any]],
     if not provider:
         return {"relevant": False, "reasons": []}
     family = _normalise_family(provider)
+    route = news.canonical_route_provider(provider)
     reasons: list[str] = []
     configured = {_normalise_family(family_name)
                   for family_name in provided.get("configured_families", [])}
-    if family in configured:
+    configured |= {news.canonical_route_provider(family_name)
+                   for family_name in provided.get("configured_families", [])}
+    if family in configured or route in configured:
         reasons.append("configured_provider")
-    used_providers = {str(name or "").strip().lower()
+    used_providers = {news.canonical_route_provider(str(name or ""))
                       for name in provided.get("used_providers", [])}
-    if provider.lower() in used_providers:
+    if route in used_providers:
         reasons.append("used_provider")
     if model:
-        pairs = {(str(pair.get("provider") or "").strip().lower(),
+        pairs = {(news.canonical_route_provider(str(pair.get("provider") or "")),
                   str(pair.get("model") or "").strip().lower())
                  for pair in provided.get("used_models", [])
                  if isinstance(pair, Mapping)}
-        if (provider.lower(), model.lower()) in pairs:
+        if (route, model.lower()) in pairs:
             reasons.append("used_model")
     planned = {_normalise_family(family_name)
                for family_name in provided.get("plan_families", [])}
-    if family in planned:
+    planned |= {news.canonical_route_provider(family_name)
+                for family_name in provided.get("plan_families", [])}
+    if family in planned or route in planned:
         reasons.append("selected_plan_family")
     return {"relevant": bool(reasons), "reasons": reasons}
 
@@ -414,5 +422,6 @@ def news_view(*, data_dir: Optional[Path | str] = None,
     return {"ok": True, "items": personalised, "signals": signals,
             "empty": state, "settings": payload.get("settings", {}),
             "catalogue": payload.get("catalogue", {}),
-            "for_you_count": payload.get("for_you_count", 0),
+            "for_you_count": sum(1 for item in personalised
+                                 if _is_relevant(item)),
             "sources": {kind: describe_source(kind) for kind in SOURCE_KINDS}}

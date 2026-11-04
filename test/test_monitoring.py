@@ -183,6 +183,20 @@ class RelevanceTests(MonitoringTestCase):
         self.assertTrue(match["relevant"])
         self.assertEqual(match["reasons"], ["selected_plan_family"])
 
+    def test_routed_usage_matches_through_route_alias(self):
+        match = monitoring.match_relevance(
+            {"provider": "openai", "model": ""},
+            {"used_providers": ["openai-codex"]})
+        self.assertTrue(match["relevant"])
+        self.assertEqual(match["reasons"], ["used_provider"])
+
+    def test_configured_family_matches_through_route_alias(self):
+        match = monitoring.match_relevance(
+            {"provider": "openai", "model": ""},
+            {"configured_families": ["openai-codex"]})
+        self.assertTrue(match["relevant"])
+        self.assertEqual(match["reasons"], ["configured_provider"])
+
     def test_unrelated_item_has_no_reasons(self):
         match = monitoring.match_relevance(
             {"provider": "stranger", "model": "x"},
@@ -270,6 +284,27 @@ class NewsViewTests(MonitoringTestCase):
                          ["configured_provider", "used_provider", "used_model"])
         self.assertEqual(view["empty"], {"state": "has_news", "message": ""})
         self.assertEqual(set(view["sources"]), set(monitoring.SOURCE_KINDS))
+
+    def test_count_matches_personalised_items_for_aliased_routes(self):
+        self.write_auth({"openai-codex": [{"id": "one"}]})
+        self.create_events([{"provider": "openai-codex", "model": "beta"}])
+        monitoring.maybe_refresh_local(
+            data_dir=self.data, catalogue=book([("openai", "alpha", Rate(1.0, 2.0))]),
+            plans_doc=plans_doc([]), now=NOW)
+        monitoring.maybe_refresh_local(
+            data_dir=self.data,
+            catalogue=book([("openai", "alpha", Rate(1.0, 2.0)),
+                            ("openai", "beta", Rate(0.5, 1.5))]),
+            plans_doc=plans_doc([]), now=NOW + monitoring.LOCAL_CHECK_INTERVAL_SECONDS)
+        view = monitoring.news_view(data_dir=self.data, event_db=self.events,
+                                    home=self.home, store_path=self.store_file,
+                                    plans_catalogue={"plans": []}, now=NOW + 10_000)
+        self.assertEqual(len(view["items"]), 1)
+        relevant = sum(1 for item in view["items"]
+                       if (item.get("relevance") or {}).get("relevant"))
+        self.assertEqual(relevant, 1)
+        self.assertEqual(view["for_you_count"], relevant)
+        self.assertEqual(view["empty"]["state"], "has_news")
 
     def test_view_is_read_only(self):
         before = {path.name for path in self.data.glob("*")} if self.data.exists() else set()

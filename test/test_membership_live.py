@@ -199,6 +199,24 @@ class CentralFetchTests(LiveTestCase):
         self.assertEqual(result["state"], "ok")
         self.assertEqual(result["book"]["plans"][0]["id"], "new")
 
+    def test_failed_fetch_keeps_a_newer_cache_written_mid_flight(self):
+        self.enable()
+        old = book_of(feed_doc([plan("old")]))
+        self.write_cache(old, fetched_at="2026-10-01T00:00:00+00:00")
+        newer = book_of(feed_doc([plan("newer")]))
+
+        def overlap(request, timeout=None):
+            # Another refresh succeeds while this request is in flight.
+            self.write_cache(newer, fetched_at="2026-11-03T00:00:00+00:00")
+            raise OSError("network down")
+
+        with mock.patch.object(live, "urlopen", side_effect=overlap):
+            result = live.fetch_central(data_dir=self.data, now=NOW)
+        self.assertEqual(result["book"]["plans"][0]["id"], "newer")
+        kept = live.load_cache(live.cache_path(self.data))
+        self.assertEqual(kept["book"]["plans"][0]["id"], "newer")
+        self.assertEqual(kept["fetched_at"], "2026-11-03T00:00:00+00:00")
+
     def test_force_bypasses_fresh_cache(self):
         from datetime import datetime, timezone
 
