@@ -349,9 +349,9 @@ class ActivationRoundTripTests(CatalogueCase):
     def test_activation_after_rollback_succeeds(self):
         raw_before = (self.catalogue_dir / "plans.json").read_bytes()
         self._activate_demo_change()
-        # History stores raw bytes: rewrite the archive the fixed writer leaves.
         archive = self.catalogue_dir / "history" / "plans-2026-11-04.3.json"
-        archive.write_bytes(raw_before)
+        self.assertEqual(archive.read_bytes(), raw_before,
+                         "activation archives the original plans.json bytes")
         R.rollback(self.catalogue_dir, "2026-11-04.3", by="reviewer")
         self.active = M.load_plan_catalogue(self.catalogue_dir / "plans.json")
         archive_before = archive.read_bytes()
