@@ -2650,6 +2650,41 @@ test('PR26 review: whole-account exhaustion posts a language-neutral label', asy
   assert.equal(post.body.note, 'Manually reported from Spend Sense; not provider-confirmed.')
 })
 
+test('PR26 review: re-marking an account row stays account-scoped and neutral', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const sub = account('anthropic:default', {
+    quota: { windows: [{ id: 'account', label: 'Account', scope: 'account',
+      used_percent: 100, used_percent_from: 'manual', state: 'manual',
+      basis: ['manual'], source: 'you',
+      manual: { scope: { kind: 'account', id: 'account' }, status: 'active' } }] },
+    manual_exhaustions: [{ id: 'manual-1',
+      scope: { kind: 'account', id: 'account', label: 'Account' } }],
+  })
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'POST' && call.path.endsWith('/exhaustion')) return { ok: true }
+    return { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+  })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="anthropic:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'allowances')
+  const row = card.querySelector('li[data-window="account"]')
+  await clickByText(row, 'Mark exhausted')
+  await flush(2)
+  await clickByText(card, 'Save manual status')
+  await flush(3)
+  const post = transportCtl.calls.find(c => c.method === 'POST' && c.path.endsWith('/exhaustion'))
+  assert.ok(post, 'the re-mark was posted')
+  assert.equal(post.body.scope_kind, 'account', 're-marking the account row stays account-scoped')
+  assert.equal(post.body.scope_id, 'account')
+  assert.equal(post.body.label, null, 'no translated label is persisted')
+})
+
 test('PR26 review: account-scope exhaustion rows follow the UI language', async () => {
   const enT = i18nBackend.t
   i18nBackend.t = (key, ...args) => {

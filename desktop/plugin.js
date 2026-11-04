@@ -4988,11 +4988,10 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
   const windows = Array.isArray(quota.windows) ? quota.windows : []
   return windows.map(window => {
     // Whole-account marks persist a language-neutral label; the translated
-    // scope name applies at display time from the row's own evaluated mark,
+    // scope name applies at display time from the synthetic row's own scope,
     // so switching languages never leaves the previous language on the row.
-    // A provider window keeps its own label even if its ID is account.
-    const manual = window.manual
-    const isAccountMark = manual?.scope?.kind === 'account' && window.source === 'you'
+    // Any other window keeps its own label even if its ID is account.
+    const isAccountMark = window.scope === 'account' && window.source === 'you'
     // `Number(null)` is 0, so an absent reading must be excluded before coercion
     // or every window without a percentage would render as "0% used".
     const raw = window.used_percent
@@ -5015,7 +5014,7 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
     const reset = window.reset_at ? t('memQuotaResets', fmtReset(window.reset_at), fmtCountdown(window.reset_at, now, t)) : ''
     return {
       id: window.id, label: isAccountMark ? t('memScopeAccount') : (window.label || window.id),
-      scope: window.scope || 'account',
+      scope: window.scope || 'account', accountMark: isAccountMark,
       reading, source, reset, state, conflict: !!window.conflict,
       manual: window.manual || null,
       stateLabel: state === 'live' ? t('memQuotaLive') : state === 'stale' ? t('memQuotaStale') : state === 'manual' ? t('memQuotaManual') : t('memQuotaUnrecorded')
@@ -5930,7 +5929,9 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
             jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'mark-exhausted',
               disabled: !!busy,
               'aria-expanded': exhaustionDraft?.scope_kind === 'window' && exhaustionDraft.scope_id === row.id,
-              onClick: event => openExhaustion(row.id, row.label, event.currentTarget),
+              onClick: event => row.accountMark
+                ? openExhaustion(ACCOUNT_SCOPE, t('memScopeAccount'), event.currentTarget)
+                : openExhaustion(row.id, row.label, event.currentTarget),
               children: t('memMarkExhausted') }),
             row.manual && row.manual.status !== 'cleared'
               ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'clear-mark',

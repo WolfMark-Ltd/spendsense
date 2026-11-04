@@ -426,6 +426,8 @@ test('whole-account exhaustion labels translate at display time', () => {
   const zhRows = T.quotaRows(marked, Date.now(), translator('zh'))
   assert.equal(enRows[0].label, 'Account')
   assert.equal(zhRows[0].label, '账户')
+  assert.equal(enRows[0].accountMark, true)
+  assert.equal(enRows[1].accountMark, false)
   // Window rows keep their stored provider labels in both languages.
   assert.equal(enRows[1].label, 'Nightly')
   assert.equal(zhRows[1].label, 'Nightly')
@@ -439,6 +441,7 @@ test('whole-account exhaustion labels translate at display time', () => {
   const rows = T.quotaRows({ ...marked, quota: { windows: [providerAccount] } },
     Date.now(), translator('zh'))
   assert.equal(rows[0].label, 'Provider Account')
+  assert.equal(rows[0].accountMark, false)
   // Without a translator the legacy neutral label renders as before.
   assert.equal(T.quotaRows(marked)[0].label, 'Account')
 })
