@@ -5686,7 +5686,8 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   ] }) : null
   const exhaustionAnchored = !exhaustionDraft
     || (exhaustionDraft.scope_kind === 'window' && rows.some(row => row.id === exhaustionDraft.scope_id))
-    || (exhaustionDraft.scope_kind === 'account' && (!rows.length || !accountHolderMarked(account)))
+    || (exhaustionDraft.scope_kind === 'account'
+      && (!rows.length || !accountHolderMarked(account) || rows.some(row => row.accountMark)))
   const field = (label, key, options = {}) => jsxs('label', { className: 'wm-filter', children: [
     jsx('span', { children: label }),
     options.choices
@@ -5928,7 +5929,9 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
           jsxs('div', { className: 'wm-quota-actions', children: [
             jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'mark-exhausted',
               disabled: !!busy,
-              'aria-expanded': exhaustionDraft?.scope_kind === 'window' && exhaustionDraft.scope_id === row.id,
+              'aria-expanded': row.accountMark
+                ? exhaustionDraft?.scope_kind === 'account'
+                : exhaustionDraft?.scope_kind === 'window' && exhaustionDraft.scope_id === row.id,
               onClick: event => row.accountMark
                 ? openExhaustion(ACCOUNT_SCOPE, t('memScopeAccount'), event.currentTarget)
                 : openExhaustion(row.id, row.label, event.currentTarget),
@@ -5939,7 +5942,10 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
                   onClick: () => onAction('clear', account, row.manual.id), children: t('memClearMark') })
               : null
           ] }),
-          exhaustionDraft?.scope_kind === 'window' && exhaustionDraft.scope_id === row.id ? exhaustionForm : null
+          (row.accountMark
+            ? exhaustionDraft?.scope_kind === 'account'
+            : exhaustionDraft?.scope_kind === 'window' && exhaustionDraft.scope_id === row.id)
+            ? exhaustionForm : null
         ] }, row.id)) })
       : jsxs('div', { className: 'wm-quota-empty', children: [
           jsx('p', { className: 'wm-note', children: t('memNoWindows') }),

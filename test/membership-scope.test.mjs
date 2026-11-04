@@ -2676,6 +2676,12 @@ test('PR26 review: re-marking an account row stays account-scoped and neutral', 
   const row = card.querySelector('li[data-window="account"]')
   await clickByText(row, 'Mark exhausted')
   await flush(2)
+  assert.ok(row.querySelector('form.wm-exhaustion-form'),
+    'the account draft opens inline on the account row')
+  assert.equal(card.querySelectorAll('form.wm-exhaustion-form').length, 1,
+    'the form renders once, not also at the group fallback')
+  assert.equal(row.querySelector('button[data-action="mark-exhausted"]').getAttribute('aria-expanded'),
+    'true', 'the row action announces the open form')
   await clickByText(card, 'Save manual status')
   await flush(3)
   const post = transportCtl.calls.find(c => c.method === 'POST' && c.path.endsWith('/exhaustion'))
