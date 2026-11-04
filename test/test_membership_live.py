@@ -487,7 +487,9 @@ class CatalogueVersionTests(unittest.TestCase):
     def test_parse_rejects_anything_not_date_then_counter(self):
         for value in ("", "  ", None, 7, "live-1", "mine",
                       "2026-11-04", "2026-11-04.x", "2026-13-01.1",
-                      "2026-11-40.1", "11-04-2026.1", "2026-11-04.1.2"):
+                      "2026-11-40.1", "11-04-2026.1", "2026-11-04.1.2",
+                      "2026-1-4.1", "2026-11-4.12", "v2026-11-04.1",
+                      "2026-11-04.²", "２０２６-11-04.1"):
             self.assertIsNone(live.parse_catalogue_version(value),
                               f"must not parse: {value!r}")
 
@@ -564,6 +566,14 @@ class StaleLiveHoldbackTests(LiveTestCase):
         book, source = self.select("live-1")
         self.assertEqual(source, "live")
         self.assertEqual(book["plans"][0]["id"], "live-plan")
+
+    def test_hostile_live_version_fails_open_without_crashing(self):
+        # Versions the loader accepts but the comparator must refuse
+        # (non-ASCII counters, short dates) keep serving live, never raise.
+        for hostile in ("2026-11-04.²", "2026-1-4.1", "２０２６-11-04.1"):
+            book, source = self.select(hostile)
+            self.assertEqual(source, "live", f"must fail open: {hostile!r}")
+            self.assertEqual(book["plans"][0]["id"], "live-plan")
 
     def test_unparseable_bundled_version_serves_live_fail_open(self):
         self.enable()
@@ -704,6 +714,64 @@ class StaleLiveHoldbackTests(LiveTestCase):
                                         force=True)
         self.assertEqual(result["state"], "ok")
         self.assertEqual(result["book"]["plans"][0]["id"], "same-plan")
+
+    def _overlap_fetch(self, feed_plans, feed_version, landed_book,
+                       landed_at):
+        """Fetch while another refresh lands ``landed_book`` mid-flight.
+
+        Deterministic overlap without threads: the network mock writes
+        the overlapping cache, then answers with the older feed bytes.
+        """
+        self.enable()
+        target = live.cache_path(self.data)
+        response = self.fake_response(feed_doc(
+            feed_plans, catalogue_version=feed_version))
+
+        def overlapping(url, timeout=None):
+            target.write_text(json.dumps(
+                {"version": 1, "fetched_at": landed_at, "state": "ok",
+                 "error": "", "book": landed_book}), encoding="utf-8")
+            return response
+
+        with mock.patch.object(live, "urlopen", side_effect=overlapping):
+            result = live.fetch_central(data_dir=self.data, now=NOW,
+                                        force=True)
+        return result, live.load_cache(target)
+
+    def test_overlapping_newer_refresh_is_kept(self):
+        result, kept = self._overlap_fetch(
+            [plan("older-plan", family="live")], "2026-10-31.1",
+            self.cached("2026-11-05.1"), "2026-11-05T00:00:00+00:00")
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["book"]["plans"][0]["id"], "live-plan")
+        self.assertEqual(result["book"]["catalogue_version"], "2026-11-05.1")
+        self.assertEqual(result["fetched_at"], "2026-11-05T00:00:00+00:00")
+        self.assertEqual(kept["book"]["catalogue_version"], "2026-11-05.1")
+
+    def test_overlapping_older_refresh_is_replaced(self):
+        result, kept = self._overlap_fetch(
+            [plan("newer-plan", family="live")], "2026-11-05.1",
+            self.cached("2026-10-31.1"), "2026-10-01T00:00:00+00:00")
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["book"]["plans"][0]["id"], "newer-plan")
+        self.assertEqual(result["book"]["catalogue_version"], "2026-11-05.1")
+        self.assertEqual(kept["book"]["plans"][0]["id"], "newer-plan")
+
+    def test_explicit_catalogue_never_reports_holdback(self):
+        self.enable()
+        self.write_cache(self.cached("2026-10-31.1"))
+        explicit = book_of({"catalogue_version": "explicit-1",
+                            "generated_at": "2026-11-04T00:00:00Z",
+                            "plans": [plan("explicit-plan", family="explicit")],
+                            "sources": []})
+        with mock.patch.object(api, "load_plans",
+                               return_value=self.bundled()):
+            payload = api.plans_payload(explicit, data_dir=self.data)
+        self.assertEqual(payload["source"], "bundled")
+        self.assertFalse(payload["central"]["held_back"])
+        served = {p["id"] for fam in payload["families"]
+                  for p in fam["plans"]}
+        self.assertIn("explicit-plan", served)
 
 
 if __name__ == "__main__":

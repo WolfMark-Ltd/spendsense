@@ -399,6 +399,39 @@ test('every membership string exists in English and Chinese', () => {
   assert.equal(zh.memAccounts, '账户')
   assert.equal(en.memEditFee, 'Edit fee')
   assert.equal(zh.memEditFee, '修改费用')
+  // Review corrections: period-neutral renewal day, defined (not remaining) allowance.
+  assert.equal(zh.memRenewsDay, '续费日')
+  assert.equal(zh.memWindowCredits, '额度数量（可选）')
+})
+
+test('whole-account exhaustion labels translate at display time', () => {
+  const translator = language => (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const marked = {
+    quota: { windows: [
+      { id: 'account', label: 'Account', scope: 'account', used_percent: 100,
+        used_percent_from: 'manual', state: 'manual', basis: ['manual'] },
+      { id: 'win-1', label: 'Nightly', scope: 'account', used_percent: 24,
+        state: 'live', basis: ['provider_reported'] },
+    ] },
+    manual_exhaustions: [{ id: 'manual-1',
+      scope: { kind: 'account', id: 'account', label: 'Account' } }],
+  }
+  const enRows = T.quotaRows(marked, Date.now(), translator('en'))
+  const zhRows = T.quotaRows(marked, Date.now(), translator('zh'))
+  assert.equal(enRows[0].label, 'Account')
+  assert.equal(zhRows[0].label, '账户')
+  // Window rows keep their stored provider labels in both languages.
+  assert.equal(enRows[1].label, 'Nightly')
+  assert.equal(zhRows[1].label, 'Nightly')
+  // A label persisted in the other language never leaks through a switch.
+  const legacyZh = { ...marked,
+    quota: { windows: [{ ...marked.quota.windows[0], label: '账户' }] } }
+  assert.equal(T.quotaRows(legacyZh, Date.now(), translator('en'))[0].label, 'Account')
+  // Without a translator the legacy neutral label renders as before.
+  assert.equal(T.quotaRows(marked)[0].label, 'Account')
 })
 
 test('membership helpers follow the chosen language', () => {

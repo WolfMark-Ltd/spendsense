@@ -2622,3 +2622,60 @@ test('PR-D review: the billing header anchors its info tooltip', () => {
   assert.match(T.MEMBERSHIP_CSS, /\.wm-billing-head\{[^}]*position:relative/,
     'the billing header establishes the positioned containing block')
 })
+
+test('PR26 review: whole-account exhaustion posts a language-neutral label', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const sub = account('openai-codex:default', { quota: { windows: [] } })
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'POST' && call.path.endsWith('/exhaustion')) return { ok: true }
+    return { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+  })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="openai-codex:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'allowances')
+  await clickByText(card, 'Mark account exhausted')
+  await flush(2)
+  await clickByText(card, 'Save manual status')
+  await flush(3)
+  const post = transportCtl.calls.find(c => c.method === 'POST' && c.path.endsWith('/exhaustion'))
+  assert.ok(post, 'the exhaustion mark was posted')
+  assert.equal(post.body.scope_kind, 'account')
+  assert.equal(post.body.label, null, 'no translated label is persisted')
+  assert.equal(post.body.note, 'Manually reported from Spend Sense; not provider-confirmed.')
+})
+
+test('PR26 review: account-scope exhaustion rows follow the UI language', async () => {
+  const enT = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  try {
+    queryClient.clear(); transportCtl.reset()
+    $testConnectionId.set('gateway-a'); $testProfile.set('default')
+    T.$membershipExpanded.set({ origin: null, ids: [] })
+    T.$ledgerTab.set('memberships')
+    const sub = account('anthropic:default', {
+      quota: { windows: [{ id: 'account', label: 'Account', scope: 'account',
+        used_percent: 100, used_percent_from: 'manual', state: 'manual', basis: ['manual'] }] },
+      manual_exhaustions: [{ id: 'manual-1',
+        scope: { kind: 'account', id: 'account', label: 'Account' } }],
+    })
+    transportCtl.respond(call => {
+      if (call.path.startsWith('/membership/plans')) return plansOk()
+      return { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+    })
+    const { container } = await boot()
+    await flush(4)
+    const label = container.querySelector('[data-account="anthropic:default"] .wm-quota-label')
+    assert.equal(label.textContent, '账户', 'the stored neutral label renders translated')
+  } finally {
+    i18nBackend.t = enT
+  }
+})

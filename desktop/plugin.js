@@ -4986,6 +4986,13 @@ function feeLabel(fee, t = needsAttentionEn) {
 function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
   const quota = account?.quota || {}
   const windows = Array.isArray(quota.windows) ? quota.windows : []
+  // Whole-account marks persist a language-neutral label; the translated
+  // scope name is applied here at display time, so switching languages
+  // never leaves the previous language on the row.
+  const accountMarked = new Set(
+    (account?.manual_exhaustions || [])
+      .filter(entry => entry?.scope?.kind === 'account')
+      .map(entry => entry.scope.id))
   return windows.map(window => {
     // `Number(null)` is 0, so an absent reading must be excluded before coercion
     // or every window without a percentage would render as "0% used".
@@ -5008,7 +5015,8 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
     const source = fromManual ? t('memQuotaSrcYou') : bases.includes('provider_reported') ? t('memQuotaSrcProvider') : t('memQuotaSrcNone')
     const reset = window.reset_at ? t('memQuotaResets', fmtReset(window.reset_at), fmtCountdown(window.reset_at, now, t)) : ''
     return {
-      id: window.id, label: window.label || window.id, scope: window.scope || 'account',
+      id: window.id, label: accountMarked.has(window.id) ? t('memScopeAccount') : (window.label || window.id),
+      scope: window.scope || 'account',
       reading, source, reset, state, conflict: !!window.conflict,
       manual: window.manual || null,
       stateLabel: state === 'live' ? t('memQuotaLive') : state === 'stale' ? t('memQuotaStale') : state === 'manual' ? t('memQuotaManual') : t('memQuotaUnrecorded')
@@ -6221,9 +6229,12 @@ function MembershipsPage() {
       const draft = $exhaustionDraft.get()
       if (!draft || draft.origin !== identity || draft.account_id !== account.id ||
           !membershipIdentityCurrent(draft.origin)) return refuse()
-      const body = { scope_id: draft.scope_id, scope_kind: draft.scope_kind, label: draft.label,
+      // Stored records stay language-neutral: the whole-account label is
+      // translated at display time (quotaRows), never persisted.
+      const body = { scope_id: draft.scope_id, scope_kind: draft.scope_kind,
+        label: draft.scope_kind === 'account' ? null : draft.label,
         reset_at: value?.reset_at || null,
-        note: t('memExhaustionNote') }
+        note: 'Manually reported from Spend Sense; not provider-confirmed.' }
       return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}/exhaustion`, body)
         .then(result => {
           if (result?.ok && $exhaustionDraft.get() === draft && membershipIdentityCurrent(identity)) {
@@ -7425,7 +7436,6 @@ const I18N = {
     // Exhaustion flow.
     memQuotaNoReset: 'No reset time supplied by you.',
     memExhaustionUserReported: label => `${label} · This is user-reported and is not provider-confirmed.`,
-    memExhaustionNote: 'Manually reported from Spend Sense; not provider-confirmed.',
     memSaveFee: 'Save fee',
     memSaveManualStatus: 'Save manual status',
     memSaveCustomPlan: 'Save user-defined plan',
@@ -7896,7 +7906,7 @@ const I18N = {
     memAmount: '金额',
     memCurrency: '币种',
     memPeriod: '周期',
-    memRenewsDay: '每月续费日',
+    memRenewsDay: '续费日',
     memEffectiveFrom: '生效日期',
     memReason: '原因',
     memRestoreCatalogue: '恢复目录价格',
@@ -7923,7 +7933,7 @@ const I18N = {
     memWindowName: '窗口名称',
     memWindowKind: '窗口类型',
     memWindowDuration: '滚动时长（分钟，可选）',
-    memWindowCredits: '剩余额度（可选）',
+    memWindowCredits: '额度数量（可选）',
     memAppliesTo: '适用范围',
     memWindowRemove: '删除窗口',
     // 实际费用行。
@@ -8031,7 +8041,6 @@ const I18N = {
     // 耗尽上报流程。
     memQuotaNoReset: '你没有提供重置时间。',
     memExhaustionUserReported: label => `${label} · 这是用户上报的，未经供应商确认。`,
-    memExhaustionNote: '由 Spend Sense 手动上报；未经供应商确认。',
     memSaveFee: '保存费用',
     memSaveManualStatus: '保存手动状态',
     memSaveCustomPlan: '保存自定义方案',

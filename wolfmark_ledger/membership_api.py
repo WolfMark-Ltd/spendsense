@@ -268,7 +268,10 @@ def plans_payload(catalogue: Optional[Mapping[str, Any]] = None, *,
             "fetched_at": central.get("fetched_at") or "",
             "error": central.get("error") or "",
             "catalogue_version": central_version,
-            "held_back": _live_held_back(settings, central),
+            # An explicitly supplied catalogue wins by caller choice, not
+            # by the staleness guard: only report a holdback when the
+            # selection actually weighed the live copy against bundled.
+            "held_back": catalogue is None and _live_held_back(settings, central),
         },
         "families": [families[k] for k in sorted(families)],
         # The values PUT/POST accept. The pane renders from this rather than
