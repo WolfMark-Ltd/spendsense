@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT))
 from wolfmark_ledger import catalogue_revisions as revisions  # noqa: E402
 from wolfmark_ledger import catalogue_sources as sources  # noqa: E402
 from wolfmark_ledger import membership as mem  # noqa: E402
+from wolfmark_ledger.filelock import LockUnavailable  # noqa: E402
 
 
 def _catalogue_dir(args) -> Path:
@@ -228,7 +229,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "activate":
         try:
             result = revisions.activate(cdir, args.revision_id, by=args.by, dry_run=args.dry_run)
-        except (ValueError, KeyError) as exc:
+        except (ValueError, KeyError, LockUnavailable) as exc:
             print(f"cannot activate: {exc}", file=sys.stderr)
             return 2
         verb = "would activate" if args.dry_run else "activated"
@@ -242,7 +243,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = revisions.rollback(cdir, args.version, by=args.by, dry_run=args.dry_run,
                                         reason=args.reason)
-        except KeyError as exc:
+        except (ValueError, KeyError, LockUnavailable) as exc:
             print(str(exc), file=sys.stderr)
             return 2
         verb = "would roll back" if args.dry_run else "rolled back"
