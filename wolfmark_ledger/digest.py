@@ -612,7 +612,7 @@ def _render_markdown(title: str, period_label: str, generated_label: str,
 def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
                  event_db_path=None, state_db_path=None, membership_path=None,
                  plans: Mapping[str, Any] | None = None,
-                 profiles_path=None, catalogue: Catalogue | None = None,
+                 profiles_path=None, data_dir=None, catalogue: Catalogue | None = None,
                  native_snapshots: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Assemble the local digest for a trailing window.
 
@@ -629,8 +629,8 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
     S = STRINGS[lang]
     book = catalogue if catalogue is not None else load_catalogue()
     if plans is None:
-        from .membership_api import load_plans
-        plans = load_plans()
+        from .membership_api import active_catalogue
+        plans, _plans_source = active_catalogue(data_dir=data_dir)
 
     report = analytics.build_analytics_report(
         event_db_path, state_db_path=state_db_path, days=days, now=moment,

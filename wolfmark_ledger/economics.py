@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from . import membership as mem
+from . import membership_api as membership_api
 from . import membership_store as mstore
 from . import store as ustore
 from .aggregate import _event_result
@@ -534,6 +535,7 @@ def build_economics_report(
     catalogue: Catalogue | None = None,
     plans: Mapping[str, Any] | None = None,
     profiles_path: Path | str | None = None,
+    data_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     """Subscription fees vs attributed API-equivalent usage for one window.
 
@@ -546,8 +548,12 @@ def build_economics_report(
     trend_months = max(0, min(int(trend_months), 6))
     book = catalogue if catalogue is not None else load_catalogue()
     if plans is None:
-        from .membership_api import load_plans
-        plans = load_plans()
+        plans, _plans_source = membership_api.active_catalogue(data_dir=data_dir)
+        # Completed months stay pinned to the bundled catalogue they were
+        # recorded against; only the in-progress month reads current terms.
+        history_plans: Mapping[str, Any] = membership_api.load_plans()
+    else:
+        history_plans = plans
 
     stored = mstore.load_store(membership_path)
     if stored.get("error"):
@@ -797,7 +803,8 @@ def build_economics_report(
     total_tokens = (analytics.get("totals") or {}).get("tokens") or 0
 
     trend = _build_trend(accounts, plans, book, moment, trend_months,
-                         recording_since, event_db_path, fx_by_currency)
+                         recording_since, event_db_path, fx_by_currency,
+                         history_plans=history_plans)
 
     return {
         "ok": True,
@@ -852,7 +859,8 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
                  book: Catalogue, moment: float, trend_months: int,
                  recording_since: float | None,
                  event_db_path: Path | str | None,
-                 fx_by_currency: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+                 fx_by_currency: Mapping[str, Mapping[str, Any]],
+                 history_plans: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Per-calendar-month fees vs usage, with partial-month flags.
 
     Attribution is rebuilt from the routes observed across the whole trend
@@ -910,12 +918,13 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
         recording_partial = bool(recording_since is not None
                                  and spec["start_ts"] < recording_since < spec["end_ts"])
         in_progress = spec["start_ts"] <= moment < spec["end_ts"]
+        month_plans = plans if in_progress else (history_plans or plans)
         fees_by_currency: dict[str, float] = {}
         unknown_fees = 0
         for account in accounts:
             if mem.billing_arrangement(account) not in SUBSCRIPTION_ARRANGEMENTS:
                 continue
-            fee = mem.resolve_fee(account, plans, midpoint)
+            fee = mem.resolve_fee(account, month_plans, midpoint)
             effective = fee.get("effective") or {}
             monthly = monthly_equivalent(effective.get("amount"), effective.get("period"))
             currency = str(effective.get("currency") or "").upper() or None
