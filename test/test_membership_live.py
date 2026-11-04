@@ -31,10 +31,17 @@ def plan(plan_id, family="demo", amount=10.0, status="verified"):
             "verification": {"status": status}}
 
 
-def feed_doc(plans, version=1):
-    return {"version": version, "catalogue_version": "2026-10-31.1",
+def feed_doc(plans, version=1, catalogue_version="2026-10-31.1"):
+    return {"version": version, "catalogue_version": catalogue_version,
             "generated_at": "2026-10-31T00:00:00Z",
             "plans": plans, "sources": []}
+
+
+def newer_than_bundled():
+    """A live version one revision ahead of the real bundled catalogue."""
+    from wolfmark_ledger.catalogue_revisions import next_catalogue_version
+
+    return next_catalogue_version(api.load_plans()["catalogue_version"])
 
 
 def book_of(catalogue):
@@ -367,7 +374,11 @@ class PlansPayloadTests(LiveTestCase):
 
 class ActiveCatalogueTests(LiveTestCase):
     def live_book(self, plans):
-        return book_of(feed_doc(plans))
+        # These tests pin enabled-and-cached selection, not the staleness
+        # rule: the cached copy stays ahead of the bundled catalogue so the
+        # newer-wins safeguard below does not hold it back.
+        return book_of(feed_doc(plans,
+                                catalogue_version=newer_than_bundled()))
 
     def save_member(self, family, plan_id, **extra):
         account = {**mem.member_from_native({"provider": family}),
@@ -464,6 +475,306 @@ class ActiveCatalogueTests(LiveTestCase):
             path=store_path, data_dir=self.data)["accounts"]
         self.assertIsNone(cards[0]["plan"])
         self.assertIsNone(cards[0]["fee"]["published"])
+
+
+class CatalogueVersionTests(unittest.TestCase):
+    def test_parse_valid_version(self):
+        self.assertEqual(live.parse_catalogue_version("2026-10-31.1"),
+                         (2026, 10, 31, 1))
+        self.assertEqual(live.parse_catalogue_version(" 2026-11-04.12 "),
+                         (2026, 11, 4, 12))
+
+    def test_parse_rejects_anything_not_date_then_counter(self):
+        for value in ("", "  ", None, 7, "live-1", "mine",
+                      "2026-11-04", "2026-11-04.x", "2026-13-01.1",
+                      "2026-11-40.1", "11-04-2026.1", "2026-11-04.1.2",
+                      "2026-1-4.1", "2026-11-4.12", "v2026-11-04.1",
+                      "2026-11-04.²", "２０２６-11-04.1",
+                      "2026-11-04." + "9" * 5000):
+            self.assertIsNone(live.parse_catalogue_version(value),
+                              f"must not parse: {value!r}"[:60])
+
+    def test_compare_orders_by_date_then_counter(self):
+        compare = live.compare_catalogue_versions
+        self.assertEqual(compare("2026-10-31.1", "2026-11-04.3"), -1)
+        self.assertEqual(compare("2026-11-04.3", "2026-10-31.1"), 1)
+        self.assertEqual(compare("2026-11-04.3", "2026-11-04.3"), 0)
+        self.assertEqual(compare("2026-11-04.9", "2026-11-05.1"), -1)
+        self.assertEqual(compare("2026-11-04.3", "2026-11-04.12"), -1)
+
+    def test_compare_is_unknown_when_either_side_does_not_parse(self):
+        compare = live.compare_catalogue_versions
+        self.assertIsNone(compare("live-1", "2026-11-04.3"))
+        self.assertIsNone(compare("2026-10-31.1", "dev"))
+        self.assertIsNone(compare(None, None))
+
+    def test_central_is_stale_only_when_proven_older(self):
+        stale = live.central_is_stale
+        older = {"catalogue_version": "2026-10-31.1"}
+        same = {"catalogue_version": "2026-11-04.3"}
+        newer = {"catalogue_version": "2026-11-05.1"}
+        bundled = {"catalogue_version": "2026-11-04.3"}
+        self.assertTrue(stale(older, bundled))
+        self.assertFalse(stale(same, bundled))
+        self.assertFalse(stale(newer, bundled))
+        self.assertFalse(stale({"catalogue_version": "live-1"}, bundled))
+        self.assertFalse(stale(older, {"catalogue_version": "dev"}))
+        self.assertFalse(stale({}, bundled))
+        self.assertFalse(stale(older, None))
+
+
+class StaleLiveHoldbackTests(LiveTestCase):
+    """Newer-wins: a stale live copy never replaces the bundled catalogue."""
+
+    BUNDLED_VERSION = "2026-11-04.3"
+
+    def bundled(self):
+        return book_of({"catalogue_version": self.BUNDLED_VERSION,
+                        "generated_at": "2026-11-04T00:00:00Z",
+                        "plans": [plan("bundled-plan", family="bundled",
+                                       amount=25.0)],
+                        "sources": []})
+
+    def cached(self, version):
+        return book_of(feed_doc([plan("live-plan", family="live",
+                                      amount=99.0)],
+                                catalogue_version=version))
+
+    def select(self, cached_version):
+        self.enable()
+        self.write_cache(self.cached(cached_version))
+        with mock.patch.object(api, "load_plans",
+                               return_value=self.bundled()):
+            return api.active_catalogue(data_dir=self.data)
+
+    def test_older_live_catalogue_held_back_to_bundled(self):
+        book, source = self.select("2026-10-31.1")
+        self.assertEqual(source, "bundled")
+        self.assertEqual(book["catalogue_version"], self.BUNDLED_VERSION)
+        self.assertNotIn("live-plan", {p["id"] for p in book["plans"]})
+
+    def test_equal_live_catalogue_served(self):
+        book, source = self.select(self.BUNDLED_VERSION)
+        self.assertEqual(source, "live")
+        self.assertEqual(book["plans"][0]["id"], "live-plan")
+
+    def test_newer_live_catalogue_served(self):
+        book, source = self.select("2026-11-05.1")
+        self.assertEqual(source, "live")
+        self.assertEqual(book["plans"][0]["id"], "live-plan")
+
+    def test_unparseable_live_version_served_fail_open(self):
+        book, source = self.select("live-1")
+        self.assertEqual(source, "live")
+        self.assertEqual(book["plans"][0]["id"], "live-plan")
+
+    def test_hostile_live_version_fails_open_without_crashing(self):
+        # Versions the loader accepts but the comparator must refuse
+        # (non-ASCII counters, short dates, absurd digit runs) keep
+        # serving live, never raise.
+        for hostile in ("2026-11-04.²", "2026-1-4.1", "２０２６-11-04.1",
+                        "2026-11-04." + "9" * 5000):
+            book, source = self.select(hostile)
+            self.assertEqual(source, "live", f"must fail open: {hostile!r}")
+            self.assertEqual(book["plans"][0]["id"], "live-plan")
+
+    def test_unparseable_bundled_version_serves_live_fail_open(self):
+        self.enable()
+        self.write_cache(self.cached("2026-10-31.1"))
+        dev = book_of({"catalogue_version": "dev",
+                       "generated_at": "2026-11-04T00:00:00Z",
+                       "plans": [plan("bundled-plan", family="bundled")],
+                       "sources": []})
+        with mock.patch.object(api, "load_plans", return_value=dev):
+            book, source = api.active_catalogue(data_dir=self.data)
+        self.assertEqual(source, "live")
+
+    def test_corrupt_bundled_file_still_serves_live(self):
+        self.enable()
+        self.write_cache(self.cached("2026-10-31.1"))
+        with mock.patch.object(api, "load_plans",
+                               side_effect=mem.CatalogueError("broken")):
+            book, source = api.active_catalogue(data_dir=self.data)
+        self.assertEqual(source, "live")
+        self.assertEqual(book["plans"][0]["id"], "live-plan")
+
+    def test_account_cards_resolve_against_bundled_when_held_back(self):
+        self.enable()
+        self.write_cache(self.cached("2026-10-31.1"))
+        store_path = Path(self.scratch.name) / "memberships.json"
+        account = {**mem.member_from_native({"provider": "bundled"}),
+                   "plan_id": "bundled-plan"}
+        store.save_account(account, store_path)
+        with mock.patch.object(api, "load_plans",
+                               return_value=self.bundled()):
+            cards = api.accounts_payload(
+                path=store_path, data_dir=self.data)["accounts"]
+        self.assertEqual(cards[0]["fee"]["published"]["amount"], 25.0)
+
+    def test_personal_fee_override_survives_holdback(self):
+        self.enable()
+        self.write_cache(self.cached("2026-10-31.1"))
+        store_path = Path(self.scratch.name) / "memberships.json"
+        account = {**mem.member_from_native({"provider": "bundled"}),
+                   "plan_id": "bundled-plan",
+                   "fee_overrides": [{"id": "mine", "amount": 15,
+                                      "currency": "GBP", "period": "month",
+                                      "reason": "legacy_pricing"}]}
+        store.save_account(account, store_path)
+        before = json.loads(store_path.read_text(encoding="utf-8"))
+        with mock.patch.object(api, "load_plans",
+                               return_value=self.bundled()):
+            cards = api.accounts_payload(
+                path=store_path, data_dir=self.data)["accounts"]
+        self.assertEqual(cards[0]["fee"]["effective"]["amount"], 15)
+        self.assertEqual(cards[0]["fee"]["effective"]["currency"], "GBP")
+        self.assertEqual(json.loads(store_path.read_text(encoding="utf-8")),
+                         before)
+
+    def test_held_back_flag_reported_in_plans_payload(self):
+        self.enable()
+        self.write_cache(self.cached("2026-10-31.1"))
+        with mock.patch.object(api, "load_plans",
+                               return_value=self.bundled()):
+            payload = api.plans_payload(data_dir=self.data)
+        self.assertEqual(payload["source"], "bundled")
+        self.assertTrue(payload["central"]["held_back"])
+        self.assertEqual(payload["central"]["catalogue_version"],
+                         "2026-10-31.1")
+
+    def test_held_back_flag_false_when_live_served(self):
+        self.enable()
+        self.write_cache(self.cached("2026-11-05.1"))
+        with mock.patch.object(api, "load_plans",
+                               return_value=self.bundled()):
+            payload = api.plans_payload(data_dir=self.data)
+        self.assertEqual(payload["source"], "live")
+        self.assertFalse(payload["central"]["held_back"])
+
+    def test_held_back_flag_false_when_disabled(self):
+        self.write_cache(self.cached("2026-10-31.1"))
+        with mock.patch.object(api, "load_plans",
+                               return_value=self.bundled()):
+            payload = api.plans_payload(data_dir=self.data)
+        self.assertEqual(payload["source"], "bundled")
+        self.assertFalse(payload["central"]["held_back"])
+
+    def test_refresh_with_older_feed_serves_bundled(self):
+        self.enable()
+        with mock.patch.object(
+                live, "urlopen",
+                return_value=self.fake_response(feed_doc(
+                    [plan("live-plan", family="live")]))):
+            with mock.patch.object(api, "load_plans",
+                                   return_value=self.bundled()):
+                payload = api.refresh_plans_payload(data_dir=self.data,
+                                                    now=NOW)
+        self.assertEqual(payload["source"], "bundled")
+        self.assertTrue(payload["central"]["held_back"])
+        self.assertEqual(payload["central"]["state"], "ok")
+
+    def test_fetch_regression_keeps_newer_cache(self):
+        self.enable()
+        self.write_cache(self.cached("2026-11-05.1"),
+                         fetched_at="2026-11-04T00:00:00+00:00")
+        with mock.patch.object(
+                live, "urlopen",
+                return_value=self.fake_response(feed_doc(
+                    [plan("older-plan", family="live")]))):
+            result = live.fetch_central(data_dir=self.data, now=NOW,
+                                        force=True)
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["book"]["plans"][0]["id"], "live-plan")
+        self.assertEqual(result["book"]["catalogue_version"], "2026-11-05.1")
+        self.assertEqual(result["fetched_at"], "2026-11-04T00:00:00+00:00")
+        kept = live.load_cache(live.cache_path(self.data))
+        self.assertEqual(kept["book"]["plans"][0]["id"], "live-plan")
+
+    def test_fetch_newer_replaces_older_cache(self):
+        self.enable()
+        self.write_cache(self.cached("2026-10-31.1"),
+                         fetched_at="2026-10-01T00:00:00+00:00")
+        with mock.patch.object(
+                live, "urlopen",
+                return_value=self.fake_response(feed_doc(
+                    [plan("newer-plan", family="live")],
+                    catalogue_version="2026-11-05.1"))):
+            result = live.fetch_central(data_dir=self.data, now=NOW,
+                                        force=True)
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["book"]["plans"][0]["id"], "newer-plan")
+        self.assertEqual(result["book"]["catalogue_version"], "2026-11-05.1")
+
+    def test_fetch_equal_version_refreshes_cache(self):
+        self.enable()
+        self.write_cache(self.cached("2026-10-31.1"),
+                         fetched_at="2026-10-01T00:00:00+00:00")
+        with mock.patch.object(
+                live, "urlopen",
+                return_value=self.fake_response(feed_doc(
+                    [plan("same-plan", family="live")]))):
+            result = live.fetch_central(data_dir=self.data, now=NOW,
+                                        force=True)
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["book"]["plans"][0]["id"], "same-plan")
+
+    def _overlap_fetch(self, feed_plans, feed_version, landed_book,
+                       landed_at):
+        """Fetch while another refresh lands ``landed_book`` mid-flight.
+
+        Deterministic overlap without threads: the network mock writes
+        the overlapping cache, then answers with the older feed bytes.
+        """
+        self.enable()
+        target = live.cache_path(self.data)
+        response = self.fake_response(feed_doc(
+            feed_plans, catalogue_version=feed_version))
+
+        def overlapping(url, timeout=None):
+            target.write_text(json.dumps(
+                {"version": 1, "fetched_at": landed_at, "state": "ok",
+                 "error": "", "book": landed_book}), encoding="utf-8")
+            return response
+
+        with mock.patch.object(live, "urlopen", side_effect=overlapping):
+            result = live.fetch_central(data_dir=self.data, now=NOW,
+                                        force=True)
+        return result, live.load_cache(target)
+
+    def test_overlapping_newer_refresh_is_kept(self):
+        result, kept = self._overlap_fetch(
+            [plan("older-plan", family="live")], "2026-10-31.1",
+            self.cached("2026-11-05.1"), "2026-11-05T00:00:00+00:00")
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["book"]["plans"][0]["id"], "live-plan")
+        self.assertEqual(result["book"]["catalogue_version"], "2026-11-05.1")
+        self.assertEqual(result["fetched_at"], "2026-11-05T00:00:00+00:00")
+        self.assertEqual(kept["book"]["catalogue_version"], "2026-11-05.1")
+
+    def test_overlapping_older_refresh_is_replaced(self):
+        result, kept = self._overlap_fetch(
+            [plan("newer-plan", family="live")], "2026-11-05.1",
+            self.cached("2026-10-31.1"), "2026-10-01T00:00:00+00:00")
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["book"]["plans"][0]["id"], "newer-plan")
+        self.assertEqual(result["book"]["catalogue_version"], "2026-11-05.1")
+        self.assertEqual(kept["book"]["plans"][0]["id"], "newer-plan")
+
+    def test_explicit_catalogue_never_reports_holdback(self):
+        self.enable()
+        self.write_cache(self.cached("2026-10-31.1"))
+        explicit = book_of({"catalogue_version": "explicit-1",
+                            "generated_at": "2026-11-04T00:00:00Z",
+                            "plans": [plan("explicit-plan", family="explicit")],
+                            "sources": []})
+        with mock.patch.object(api, "load_plans",
+                               return_value=self.bundled()):
+            payload = api.plans_payload(explicit, data_dir=self.data)
+        self.assertEqual(payload["source"], "bundled")
+        self.assertFalse(payload["central"]["held_back"])
+        served = {p["id"] for fam in payload["families"]
+                  for p in fam["plans"]}
+        self.assertIn("explicit-plan", served)
 
 
 if __name__ == "__main__":

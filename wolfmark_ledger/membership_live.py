@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -68,6 +69,62 @@ def validate_feed(raw: Any) -> tuple[Optional[dict[str, Any]], list[str]]:
     return book, problems
 
 
+# ASCII-only on purpose: ``str.isdigit`` and ``\\d`` accept non-ASCII digits
+# (such as superscripts) that ``int()`` then rejects, and ``strptime`` is
+# lenient about zero-padding. Catalogue versions are machine-written
+# ``YYYY-MM-DD.N``; anything else is uncomparable, never an error.
+_VERSION_RE = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})\.([0-9]+)$")
+
+
+def parse_catalogue_version(value: Any) -> Optional[tuple[int, int, int, int]]:
+    """Ordering key for a ``YYYY-MM-DD.N`` catalogue version.
+
+    Returns ``(year, month, day, counter)``, or ``None`` when the value
+    is not a strict ASCII calendar version. Anything unparseable is
+    uncomparable: callers fail open (keep the existing behaviour) and
+    never guess an order. Never raises.
+    """
+    match = _VERSION_RE.match(str(value or "").strip())
+    if not match:
+        return None
+    try:
+        year, month, day, counter = (int(part) for part in match.groups())
+        datetime(year, month, day)
+    except ValueError:
+        # The counter has no length cap, so absurd digit runs exceed
+        # int()'s conversion limit; uncomparable, never an error.
+        return None
+    return (year, month, day, counter)
+
+
+def compare_catalogue_versions(first: Any, second: Any) -> Optional[int]:
+    """Three-way catalogue order: -1, 0 or 1.
+
+    Returns ``None`` when either side does not parse: unknown means
+    unknown, and the caller decides the safe default.
+    """
+    left = parse_catalogue_version(first)
+    right = parse_catalogue_version(second)
+    if left is None or right is None:
+        return None
+    return (left > right) - (left < right)
+
+
+def central_is_stale(central_book: Optional[Mapping[str, Any]],
+                     bundled_book: Optional[Mapping[str, Any]]) -> bool:
+    """True only when the central copy is proven older than bundled.
+
+    Missing books, missing versions and unparseable versions all answer
+    False: the safeguard holds a live copy back only on proof, and every
+    other case keeps the long-standing selection behaviour.
+    """
+    central = central_book.get("catalogue_version") \
+        if isinstance(central_book, Mapping) else None
+    bundled = bundled_book.get("catalogue_version") \
+        if isinstance(bundled_book, Mapping) else None
+    return compare_catalogue_versions(central, bundled) == -1
+
+
 def load_cache(path: Optional[Path | str] = None) -> dict[str, Any]:
     """Read the cached central plans catalogue. Never raises."""
     target = Path(path) if path else cache_path()
@@ -96,8 +153,10 @@ def fetch_central(*, data_dir: Optional[Path | str] = None,
     vocabulary as the news central fetch: ``ok``, ``stale``, ``error``,
     ``disabled`` or ``disabled_cached``. Any failure keeps the previous
     cache and reports the error; the bundled catalogue is unaffected.
-    When another refresh lands newer data mid-flight, a failed fetch
-    adopts that cache instead of overwriting it with its older copy.
+    When another refresh lands newer data mid-flight, the write is
+    re-checked against the latest cache under the lock: a failed fetch
+    adopts that cache, and a successful fetch keeps it when the freshly
+    fetched catalogue is older.
     """
     import time as _time
 
@@ -124,6 +183,7 @@ def fetch_central(*, data_dir: Optional[Path | str] = None,
     request = Request(FEED_URL, headers={"Accept": "application/json",
                                          "User-Agent": "SpendSense-Plans"})
     fetched_ok = True
+    fetched: dict[str, Any] = {}
     try:
         with urlopen(request, timeout=FEED_TIMEOUT) as response:  # noqa: S310 - fixed https host
             body = response.read(FEED_MAX_BYTES + 1)
@@ -132,9 +192,7 @@ def fetch_central(*, data_dir: Optional[Path | str] = None,
         book, problems = validate_feed(json.loads(body.decode("utf-8-sig")))
         if book is None:
             raise ValueError("; ".join(problems) or "invalid feed")
-        payload = {"version": PLANS_FEED_VERSION,
-                   "fetched_at": _now_iso(moment),
-                   "state": "ok", "error": "; ".join(problems), "book": book}
+        fetched = {"book": book, "problems": problems}
     except Exception as exc:  # noqa: BLE001 - any fetch failure keeps bundled plans working
         fetched_ok = False
         log.warning("spend-sense: plans feed fetch failed: %s", exc)
@@ -153,6 +211,29 @@ def fetch_central(*, data_dir: Optional[Path | str] = None,
                 return {"book": current["book"],
                         "fetched_at": current["fetched_at"],
                         "state": current["state"], "error": current["error"]}
+        else:
+            # Re-check against the latest cache under the lock: an
+            # overlapping refresh may have landed newer data after this
+            # fetch read the cache. Newer-wins on proof, fail-open when
+            # either version is uncomparable.
+            current = load_cache(target)
+            current_book = current.get("book")
+            if (isinstance(current_book, dict) and current_book.get("plans")
+                    and compare_catalogue_versions(
+                        fetched["book"].get("catalogue_version"),
+                        current_book.get("catalogue_version")) == -1):
+                # The feed regressed, or an overlapping refresh already
+                # cached something newer: keep the newest known-good copy
+                # instead of writing older data. fetched_at stays put.
+                payload = {"version": PLANS_FEED_VERSION,
+                           "fetched_at": current.get("fetched_at") or "",
+                           "state": "ok", "error": "", "book": current_book}
+            else:
+                payload = {"version": PLANS_FEED_VERSION,
+                           "fetched_at": _now_iso(moment),
+                           "state": "ok",
+                           "error": "; ".join(fetched["problems"]),
+                           "book": fetched["book"]}
         _atomic_write_json(target, payload)
     return {"book": payload["book"], "fetched_at": payload["fetched_at"],
             "state": payload["state"], "error": payload["error"]}

@@ -378,6 +378,120 @@ test('every allowance-weather string exists in English and Chinese', () => {
   assert.match(zh.wxProjection('2026-11-20'), /2026-11-20/)
 })
 
+test('every membership string exists in English and Chinese', () => {
+  const keys = Object.keys(en).filter(key => key.startsWith('mem'))
+  assert.ok(keys.length > 100, `expected the mem family, found ${keys.length}`)
+  for (const key of keys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+    if (typeof en[key] === 'string') {
+      assert.match(en[key], /[A-Za-z]/, `${key} is English in en`)
+      assert.match(zh[key], /[぀-ヿ㐀-䶿一-鿿豈-﫿]/u, `${key} is translated in zh`)
+    }
+  }
+  const zhOnly = Object.keys(zh).filter(key => key.startsWith('mem') && !(key in en))
+  assert.deepEqual(zhOnly, [])
+  // The native-UAT findings, verbatim in both languages.
+  assert.equal(en.memDiscover, 'Discover accounts')
+  assert.equal(zh.memDiscover, '发现账户')
+  assert.equal(en.memAccounts, 'Accounts')
+  assert.equal(zh.memAccounts, '账户')
+  assert.equal(en.memEditFee, 'Edit fee')
+  assert.equal(zh.memEditFee, '修改费用')
+  // Review corrections: period-neutral renewal day, defined (not remaining) allowance.
+  assert.equal(zh.memRenewsDay, '续费日')
+  assert.equal(zh.memWindowCredits, '额度数量（可选）')
+})
+
+test('whole-account exhaustion labels translate at display time', () => {
+  const translator = language => (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const accountMark = { id: 'account', label: 'Account', scope: 'account',
+    used_percent: 100, used_percent_from: 'manual', state: 'manual',
+    basis: ['manual'], source: 'you',
+    manual: { scope: { kind: 'account', id: 'account' }, status: 'active' } }
+  const marked = {
+    quota: { windows: [
+      accountMark,
+      { id: 'win-1', label: 'Nightly', scope: 'account', used_percent: 24,
+        state: 'live', basis: ['provider_reported'] },
+    ] },
+    manual_exhaustions: [{ id: 'manual-1',
+      scope: { kind: 'account', id: 'account', label: 'Account' } }],
+  }
+  const enRows = T.quotaRows(marked, Date.now(), translator('en'))
+  const zhRows = T.quotaRows(marked, Date.now(), translator('zh'))
+  assert.equal(enRows[0].label, 'Account')
+  assert.equal(zhRows[0].label, '账户')
+  assert.equal(enRows[0].accountMark, true)
+  assert.equal(enRows[1].accountMark, false)
+  // Window rows keep their stored provider labels in both languages.
+  assert.equal(enRows[1].label, 'Nightly')
+  assert.equal(zhRows[1].label, 'Nightly')
+  // A label persisted in the other language never leaks through a switch.
+  const legacyZh = { ...marked,
+    quota: { windows: [{ ...accountMark, label: '账户' }] } }
+  assert.equal(T.quotaRows(legacyZh, Date.now(), translator('en'))[0].label, 'Account')
+  // A provider window keeps its own label even if its ID is account.
+  const providerAccount = { id: 'account', label: 'Provider Account', scope: 'account',
+    used_percent: 10, state: 'live', basis: ['provider_reported'], source: 'native' }
+  const rows = T.quotaRows({ ...marked, quota: { windows: [providerAccount] } },
+    Date.now(), translator('zh'))
+  assert.equal(rows[0].label, 'Provider Account')
+  assert.equal(rows[0].accountMark, false)
+  // Without a translator the legacy neutral label renders as before.
+  assert.equal(T.quotaRows(marked)[0].label, 'Account')
+})
+
+test('membership helpers follow the chosen language', () => {
+  const translator = language => (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const enT = translator('en')
+  const zhT = translator('zh')
+  const declared = { basis: 'declared', effective: { amount: 17, currency: 'GBP', period: 'month' },
+    published: { amount: 20, currency: 'USD' }, currency_comparable: true }
+  assert.equal(T.feeLabel(declared, enT), 'Your price: £17.00/mo (catalogue $20.00)')
+  assert.equal(T.feeLabel(declared, zhT), '你的价格：£17.00/月（目录 $20.00）')
+  assert.equal(T.feeLabel({ basis: 'catalogue', effective: { amount: 20, currency: 'USD', period: 'month' } }, zhT),
+    '目录价：$20.00/月')
+  assert.equal(T.feeLabel({ basis: 'api_only', effective: {} }, zhT), '按量 API · 无固定会员费')
+  const rows = T.quotaRows({ quota: { windows: [
+    { id: 'w', label: 'Weekly', used_percent: 24, state: 'live', basis: ['provider_reported'] },
+  ] } }, Date.now(), zhT)
+  assert.equal(rows[0].reading, '已用 24%')
+  assert.equal(rows[0].source, '供应商')
+  assert.equal(rows[0].stateLabel, '实时')
+  assert.equal(T.feesLabel({ byCurrencyPeriod: { 'USD/month': 20 } }, zhT), '$20.00/月')
+  assert.equal(T.planOptionLabel({ name: 'Plus', price: { amount: 20, currency: 'USD', period: 'month' },
+    verification: { status: 'verified' } }, zhT), 'Plus — $20.00/月')
+  assert.match(T.planOptionLabel({ name: 'Teams', price: { amount: 30, currency: 'USD' },
+    verification: { status: 'provisional' } }, zhT), /暂定/)
+  assert.match(T.membershipErrorText(new Error('409 conflict'), 'write', zhT), /重新加载/)
+  assert.match(T.feeDraftErrors({ amount: '', currency: 'USD', period: 'month', anchor_day: 1 }, zhT).join(' '),
+    /金额/)
+  assert.deepEqual(T.feeReasons({ vocabulary: { override_reasons: ['discount', 'other'] } }, zhT),
+    [['discount', '折扣'], ['other', '其他']])
+  // Unknown future reasons still fall back to the raw value.
+  assert.deepEqual(T.feeReasons({ vocabulary: { override_reasons: ['time_travel'] } }, zhT),
+    [['time_travel', 'time_travel']])
+})
+
+test('membership helpers default to the legacy English wording', () => {
+  // No translator: the exact strings the pane rendered before localisation.
+  assert.equal(T.feeLabel({ basis: 'catalogue', effective: { amount: 20, currency: 'USD', period: 'month' } }),
+    'Catalogue: $20.00/mo')
+  assert.equal(T.planOptionLabel({ name: 'Plus', price: { amount: 20, currency: 'USD' },
+    verification: { status: 'verified' } }), 'Plus — $20.00/month')
+  assert.equal(T.feesLabel({ byCurrencyPeriod: { 'USD/month': 20 } }), '$20.00/mo')
+  assert.equal(T.quotaRows({ quota: { windows: [{ id: 'w', used_percent: 24 }] } })[0].reading, '24% used')
+  assert.match(T.membershipErrorText(new Error('409 conflict'), 'write'), /changed since you loaded it/)
+})
+
 test('every digest string exists in English and Chinese', () => {
   const keys = ['reportsTitle', 'rpDays7', 'rpDays30', 'rpGenerate', 'rpGenerating',
     'rpCopy', 'rpCopied', 'rpSave', 'rpSaveFallback', 'rpFailed', 'rpError', 'rpRetry',

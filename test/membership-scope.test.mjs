@@ -2622,3 +2622,142 @@ test('PR-D review: the billing header anchors its info tooltip', () => {
   assert.match(T.MEMBERSHIP_CSS, /\.wm-billing-head\{[^}]*position:relative/,
     'the billing header establishes the positioned containing block')
 })
+
+test('PR26 review: whole-account exhaustion posts a language-neutral label', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const sub = account('openai-codex:default', { quota: { windows: [] } })
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'POST' && call.path.endsWith('/exhaustion')) return { ok: true }
+    return { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+  })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="openai-codex:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'allowances')
+  await clickByText(card, 'Mark account exhausted')
+  await flush(2)
+  await clickByText(card, 'Save manual status')
+  await flush(3)
+  const post = transportCtl.calls.find(c => c.method === 'POST' && c.path.endsWith('/exhaustion'))
+  assert.ok(post, 'the exhaustion mark was posted')
+  assert.equal(post.body.scope_kind, 'account')
+  assert.equal(post.body.label, null, 'no translated label is persisted')
+  assert.equal(post.body.note, 'Manually reported from Spend Sense; not provider-confirmed.')
+})
+
+test('PR26 review: re-marking an account row stays account-scoped and neutral', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const sub = account('anthropic:default', {
+    quota: { windows: [{ id: 'account', label: 'Account', scope: 'account',
+      used_percent: 100, used_percent_from: 'manual', state: 'manual',
+      basis: ['manual'], source: 'you',
+      manual: { scope: { kind: 'account', id: 'account' }, status: 'active' } }] },
+    manual_exhaustions: [{ id: 'manual-1',
+      scope: { kind: 'account', id: 'account', label: 'Account' } }],
+  })
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    if (call.method === 'POST' && call.path.endsWith('/exhaustion')) return { ok: true }
+    return { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+  })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="anthropic:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'allowances')
+  const row = card.querySelector('li[data-window="account"]')
+  await clickByText(row, 'Mark exhausted')
+  await flush(2)
+  assert.ok(row.querySelector('form.wm-exhaustion-form'),
+    'the account draft opens inline on the account row')
+  assert.equal(card.querySelectorAll('form.wm-exhaustion-form').length, 1,
+    'the form renders once, not also at the group fallback')
+  assert.equal(row.querySelector('button[data-action="mark-exhausted"]').getAttribute('aria-expanded'),
+    'true', 'the row action announces the open form')
+  await clickByText(card, 'Save manual status')
+  await flush(3)
+  const post = transportCtl.calls.find(c => c.method === 'POST' && c.path.endsWith('/exhaustion'))
+  assert.ok(post, 'the re-mark was posted')
+  assert.equal(post.body.scope_kind, 'account', 're-marking the account row stays account-scoped')
+  assert.equal(post.body.scope_id, 'account')
+  assert.equal(post.body.label, null, 'no translated label is persisted')
+})
+
+test('PR26 review: a window draft orphaned onto an account row falls back, never vanishes', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const base = account('anthropic:default', {})
+  const providerAccountRow = { id: 'account', label: 'Provider Account', scope: 'account',
+    used_percent: 10, state: 'live', basis: ['provider_reported'], source: 'native' }
+  const syntheticRow = { id: 'account', label: 'Account', scope: 'account',
+    used_percent: 100, used_percent_from: 'manual', state: 'manual',
+    basis: ['manual'], source: 'you',
+    manual: { scope: { kind: 'account', id: 'account' }, status: 'active' } }
+  let phase = 1
+  transportCtl.respond(call => {
+    if (call.path.startsWith('/membership/plans')) return plansOk()
+    const sub = phase === 1
+      ? { ...base, quota: { windows: [providerAccountRow] }, manual_exhaustions: [] }
+      : { ...base, quota: { windows: [syntheticRow] },
+        manual_exhaustions: [{ id: 'manual-1', scope: { kind: 'account', id: 'account' } }] }
+    return { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+  })
+  const { container } = await boot()
+  await flush(4)
+  const card = container.querySelector('[data-account="anthropic:default"]')
+  await openCard(card)
+  await toggleGroup(card, 'allowances')
+  // Open a window draft on the provider row, then re-read into a world
+  // where only the synthetic account row carries that ID.
+  await clickByText(card.querySelector('li[data-window="account"]'), 'Mark exhausted')
+  await flush(2)
+  phase = 2
+  await clickByText(container, 'Refresh provider usage')
+  await flush(6)
+  const forms = card.querySelectorAll('form.wm-exhaustion-form')
+  assert.equal(forms.length, 1, 'the orphaned draft still renders exactly once')
+  assert.equal(card.querySelector('li[data-window="account"] form.wm-exhaustion-form'), null,
+    'the window draft does not attach to the synthetic account row')
+})
+
+test('PR26 review: account-scope exhaustion rows follow the UI language', async () => {
+  const enT = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  try {
+    queryClient.clear(); transportCtl.reset()
+    $testConnectionId.set('gateway-a'); $testProfile.set('default')
+    T.$membershipExpanded.set({ origin: null, ids: [] })
+    T.$ledgerTab.set('memberships')
+    const sub = account('anthropic:default', {
+      quota: { windows: [{ id: 'account', label: 'Account', scope: 'account',
+        used_percent: 100, used_percent_from: 'manual', state: 'manual',
+        basis: ['manual'], source: 'you',
+        manual: { scope: { kind: 'account', id: 'account' }, status: 'active' } }] },
+      manual_exhaustions: [{ id: 'manual-1',
+        scope: { kind: 'account', id: 'account', label: 'Account' } }],
+    })
+    transportCtl.respond(call => {
+      if (call.path.startsWith('/membership/plans')) return plansOk()
+      return { ok: true, accounts: [sub], store: { loaded: true, error: '' }, notes: [] }
+    })
+    const { container } = await boot()
+    await flush(4)
+    const label = container.querySelector('[data-account="anthropic:default"] .wm-quota-label')
+    assert.equal(label.textContent, '账户', 'the stored neutral label renders translated')
+  } finally {
+    i18nBackend.t = enT
+  }
+})
