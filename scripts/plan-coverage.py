@@ -53,6 +53,7 @@ EXPECTED = [
     ("2", "anthropic"),
     ("3", "commandcode"),
     ("4", "xai-oauth"),
+    ("4", "x-subscription"),
     ("5", "github-copilot"),
     ("6", "nous"),
     ("7", "openrouter"),

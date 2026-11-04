@@ -220,6 +220,15 @@ class SourceCheckTests(unittest.TestCase):
         self.assertFalse(candidate["complete"])
 
     def test_candidates_apply_reported_verification_transitions(self):
+        # The committed baseline already accepts Team as verified; rewind the
+        # temp copy to the pre-acceptance state so the mechanism is exercised
+        # deterministically instead of depending on the live catalogue.
+        path = self.dir / "baselines" / "ollama-pricing.json"
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        for row in doc["plans"]:
+            if row["id"] == "ollama-cloud.team":
+                row["verification"]["status"] = "provisional"
+        path.write_text(json.dumps(doc), encoding="utf-8")
         report = C.check(self.dir, offline_dir=self.offline,
                          families=["ollama-cloud"])
         keys = {c["key"] for c in report["changes"]}
@@ -229,6 +238,14 @@ class SourceCheckTests(unittest.TestCase):
                     if row["id"] == "ollama-cloud.team")
         self.assertEqual(team["verification"]["status"], "verified")
         self.assertEqual(team["verification"]["source_id"], "ollama-pricing")
+
+    def test_an_accepted_verification_is_not_reported_again(self):
+        # Team was promoted to verified in the 2026-11-04.1 review: a clean
+        # read against the committed baseline must stay silent about it.
+        report = C.check(self.dir, offline_dir=self.offline,
+                         families=["ollama-cloud"])
+        keys = {c["key"] for c in report["changes"]}
+        self.assertNotIn("verification_changed:ollama-cloud.team", keys)
 
     def test_the_checker_writes_nothing_into_the_catalogue(self):
         before = {}
