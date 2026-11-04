@@ -476,7 +476,7 @@ def build_weather_report(
     *, now: float | None = None,
     event_db_path=None, state_db_path=None, membership_path=None,
     plans: Mapping[str, Any] | None = None,
-    profiles_path=None, catalogue: Catalogue | None = None,
+    profiles_path=None, data_dir=None, catalogue: Catalogue | None = None,
     native: bool = False, native_snapshots: Mapping[str, Any] | None = None,
     home=None,
 ) -> dict[str, Any]:
@@ -488,7 +488,7 @@ def build_weather_report(
     """
     moment = time.time() if now is None else float(now)
     if plans is None:
-        plans = members.load_plans()
+        plans, _plans_source = members.active_catalogue(data_dir=data_dir)
     cards = members.accounts_payload(
         native=native, path=membership_path, catalogue=plans, home=home, at=moment,
         native_snapshots=native_snapshots)["accounts"]

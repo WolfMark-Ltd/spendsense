@@ -2874,6 +2874,8 @@ const $digestDays = atom(30)
 /** Model News view state: audience scope plus one category filter. */
 const $newsScope = atom('foryou')
 const $newsCategory = atom('all')
+/** Explicit refresh status: the Refresh button bypasses the local-diff throttle. */
+const $newsRefreshState = atom(null)
 /** Live-updates opt-in flow: confirm box plus the last notice, per connection. */
 const $newsLiveState = atom(null)
 /**
@@ -6581,6 +6583,21 @@ function newsSettingsQuery(identity = membershipIdentityNow()) {
   }
 }
 
+async function newsForceRefresh(identity = membershipIdentityNow()) {
+  const captured = identity
+  $newsRefreshState.set({ origin: captured, status: 'pending' })
+  try {
+    if (typeof rest !== 'function') throw new Error('This desktop build has no plugin backend bridge.')
+    const result = await rest('/news/refresh', { method: 'POST', body: { force: true } })
+    if (!membershipIdentityCurrent(captured)) return
+    if (!result || result.ok === false) throw new Error(result?.detail || result?.error || 'Model news is unavailable.')
+    queryClient.setQueryData([ID, 'model-news', captured], { ...result, identity: captured })
+    $newsRefreshState.set({ origin: captured, status: 'idle' })
+  } catch {
+    if (membershipIdentityCurrent(captured)) $newsRefreshState.set({ origin: captured, status: 'error' })
+  }
+}
+
 async function newsSaveSettings(liveUpdates, transport = rest) {
   if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
   const result = await transport('/news/settings', { method: 'PUT', body: { live_updates: liveUpdates } })
@@ -6601,7 +6618,7 @@ async function invalidateNewsFor(identity) {
 function newsFilter(items, scope, category) {
   if (!Array.isArray(items)) return []
   return items.filter(item =>
-    (scope === 'all' || item.for_you) && (category === 'all' || item.category === category))
+    (scope === 'all' || newsIsRelevant(item)) && (category === 'all' || item.category === category))
 }
 
 function newsCategoryLabel(category, t) {
@@ -6656,6 +6673,67 @@ function newsCentralAlert(central, t) {
   return central.error || t('newsCentralStale')
 }
 
+/** Relevance reason codes from monitoring.match_relevance, in display order. */
+const NEWS_RELEVANCE_ORDER = ['configured_provider', 'used_provider', 'used_model', 'selected_plan_family']
+
+const NEWS_REASON_KEYS = {
+  configured_provider: 'newsReasonConfigured',
+  used_provider: 'newsReasonUsedProvider',
+  used_model: 'newsReasonUsedModel',
+  selected_plan_family: 'newsReasonSelectedPlan',
+}
+
+/** Mirror of monitoring._is_relevant: read-time relevance wins, the stored flag fills in. */
+function newsIsRelevant(item) {
+  if (!item || typeof item !== 'object') return false
+  const relevance = item.relevance
+  if (relevance && typeof relevance === 'object') return !!relevance.relevant
+  return !!item.for_you
+}
+
+/** Mirror of monitoring.has_signals. An empty list is no signal (unlike JS truthiness). */
+function newsHasSignals(signals) {
+  if (!signals || typeof signals !== 'object') return false
+  return ['configured_families', 'used_providers', 'used_models', 'plan_ids', 'plan_families']
+    .some(key => Array.isArray(signals[key]) ? signals[key].length > 0 : !!signals[key])
+}
+
+/** Localised relevance reasons for one item, in backend display order. Unknown codes are skipped. */
+function newsRelevanceReasons(item, t) {
+  if (!newsIsRelevant(item)) return []
+  const reasons = item.relevance && typeof item.relevance === 'object' && Array.isArray(item.relevance.reasons)
+    ? item.relevance.reasons : []
+  return NEWS_RELEVANCE_ORDER.filter(code => reasons.includes(code)).map(code => t(NEWS_REASON_KEYS[code]))
+}
+
+function newsRelevanceText(item, t) {
+  const labels = newsRelevanceReasons(item, t)
+  if (!labels.length) return null
+  return t('newsWhyRelevant', labels.join(' · '))
+}
+
+/**
+ * Mirror of monitoring.empty_state. When the backend sent no signals (an old
+ * cached payload), the legacy generic texts keep the previous wording.
+ */
+function newsEmptyText({ items, scope, category, baseline, signals }, t) {
+  const list = Array.isArray(items) ? items.filter(item => item && typeof item === 'object') : []
+  if (signals == null) {
+    if (scope === 'foryou' && category === 'all') return t('newsEmptyForYou')
+    if (category !== 'all') return t('newsEmptyCategory')
+    return t('newsEmptyAll')
+  }
+  let pool = scope === 'foryou' ? list.filter(newsIsRelevant) : list.slice()
+  if (category !== 'all') pool = pool.filter(item => String(item.category || '') === category)
+  if (pool.length) return null
+  if (baseline && !list.length) return t('newsEmptyBaseline')
+  if (category !== 'all') return t('newsEmptyCategory')
+  if (scope === 'foryou' && list.length) {
+    return newsHasSignals(signals) ? t('newsEmptyNoMatches') : t('newsEmptyNoConfig')
+  }
+  return t('newsEmptyNoChanges')
+}
+
 const NEWS_CSS = `
 .wm-news-list{display:grid;gap:12px}
 .wm-news-card{border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-primary);padding:15px 17px;min-width:0}
@@ -6678,6 +6756,8 @@ const NEWS_CSS = `
 .wm-news-impact[data-tone="warn"]{color:var(--ui-warning)}
 .wm-news-meta{margin:11px 0 0;font-size:11.5px;line-height:1.5;color:var(--ui-text-tertiary)}
 .wm-news-conditions{margin:7px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-secondary)}
+.wm-news-reasons{margin:9px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-secondary)}
+.wm-news-plan{margin:9px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-tertiary)}
 .wm-news-routes{display:flex;gap:6px;flex-wrap:wrap;margin:9px 0 0;font-size:11.5px;color:var(--ui-text-tertiary)}
 .wm-news-route{border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:2px 9px;color:var(--ui-text-secondary)}
 .wm-news-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
@@ -6713,6 +6793,7 @@ function NewsCard({ item, impact, t }) {
     : impact.delta_usd < 0 ? 'good' : impact.delta_usd > 0 ? 'warn' : null
   const dates = [t('newsObserved', fmtDay(item.observed_at))]
   if (item.effective_at) dates.push(t('newsEffective', fmtDay(item.effective_at)))
+  const reasons = newsRelevanceText(item, t)
   return jsxs('article', { className: 'wm-news-card', children: [
     jsxs('div', { className: 'wm-news-top', children: [
       jsxs('h3', { children: [title, subtitle ? jsx('small', { children: subtitle }) : null] }),
@@ -6721,9 +6802,12 @@ function NewsCard({ item, impact, t }) {
     ] }),
     jsx('p', { className: 'wm-news-dates', children: dates.join(' · ') }),
     jsx('p', { className: 'wm-news-summary', children: item.summary }),
+    reasons ? jsx('p', { className: 'wm-news-reasons', children: reasons }) : null,
     jsx(NewsRateTable, { previous: item.previous, current: item.current, t }),
     impactText ? jsx('p', { className: 'wm-news-impact', 'data-tone': tone, children: impactText }) : null,
     item.conditions ? jsx('p', { className: 'wm-news-conditions', children: item.conditions }) : null,
+    item.category === 'subscription'
+      ? jsx('p', { className: 'wm-news-plan', children: t('newsPlanInfoNote') }) : null,
     (item.related_routes && item.related_routes.length)
       ? jsx('div', { className: 'wm-news-routes', children: [
           jsx('span', { children: t('newsRoutes', '') }),
@@ -6758,11 +6842,14 @@ function NewsPage() {
   const combined = [...localItems, ...centralItems].sort((a, b) =>
     String(b.observed_at || '').localeCompare(String(a.observed_at || '')) ||
     String(a.id || '').localeCompare(String(b.id || '')))
-  const forYouCount = combined.filter(item => item.for_you).length
+  const forYouCount = combined.filter(newsIsRelevant).length
   const visible = newsFilter(combined, scope, category)
   const impacts = current?.impacts || {}
-  const emptyText = scope === 'foryou' && category === 'all' ? t('newsEmptyForYou')
-    : category !== 'all' ? t('newsEmptyCategory') : t('newsEmptyAll')
+  const refreshState = useValue($newsRefreshState)
+  const refreshOurs = refreshState?.origin === identity
+  const refreshPending = (refreshOurs && refreshState?.status === 'pending') || query.isFetching
+  const emptyText = newsEmptyText({ items: combined, scope, category,
+    baseline: !!current?.local?.baseline, signals: current?.signals ?? null }, t)
   const freshDays = newsAgeDays(central.fetched_at, Date.now())
   const centralAlert = liveOn ? newsCentralAlert(central, t) : null
   return jsxs('div', { className: 'wm-analytics wm-product', children: [
@@ -6771,8 +6858,11 @@ function NewsPage() {
     jsxs('main', { className: 'wm-shell', children: [
       jsx(ProductHeader, { title: t('newsTitle'), subtitle: t('newsSubtitle'),
         actions: jsx(AsyncButton, { type: 'button', className: 'wm-button',
-          status: query.isFetching ? 'pending' : 'idle', pendingLabel: t('newsRefreshing'),
-          onClick: () => query.refetch?.(), children: t('newsRefresh') }) }),
+          status: refreshPending ? 'pending' : 'idle', pendingLabel: t('newsRefreshing'),
+          onClick: () => newsForceRefresh(identity), children: t('newsRefresh') }) }),
+      refreshOurs && refreshState?.status === 'error'
+        ? jsx('p', { className: 'wm-warn-note', role: 'alert', children: t('newsError') })
+        : null,
       !liveOn ? jsxs('section', { className: 'wm-product-section', children: [
         jsx('p', { className: 'wm-news-note', children: t('newsLiveOffText') }),
         jsx('div', { className: 'wm-setting-action', children:
@@ -6806,7 +6896,7 @@ function NewsPage() {
         ? jsxs('div', { className: 'wm-product-section', children: [
             jsx('p', { role: 'alert', children: t('newsError') }),
             jsx(ProductButton, { type: 'button', className: 'wm-button',
-              onClick: () => query.refetch?.(), children: t('newsRetry') }),
+              onClick: () => newsForceRefresh(identity), children: t('newsRetry') }),
           ] })
         : failed && current
           ? jsxs('div', { className: 'wm-news-list', children: [
@@ -7250,6 +7340,16 @@ const I18N = {
     newsEmptyForYou: 'No updates for your providers or models yet. New catalogue changes will appear here.',
     newsEmptyAll: 'No news yet. The first snapshot is a baseline; later catalogue changes will appear here.',
     newsEmptyCategory: 'Nothing in this category yet.',
+    newsEmptyBaseline: 'First snapshot recorded. Later catalogue changes will appear here as news.',
+    newsEmptyNoChanges: 'Catalogues unchanged since the last check. New models, prices and plans will appear here.',
+    newsEmptyNoMatches: 'There is news, but none of it mentions your configured providers, recorded usage or selected plans.',
+    newsEmptyNoConfig: 'Nothing to personalise yet: no providers are configured, no usage is recorded, and no plans are selected.',
+    newsWhyRelevant: reasons => `For you because it ${reasons}.`,
+    newsReasonConfigured: 'matches a configured provider',
+    newsReasonUsedProvider: 'matches a provider you used',
+    newsReasonUsedModel: 'matches a model you used',
+    newsReasonSelectedPlan: 'matches your selected plan',
+    newsPlanInfoNote: 'Plan information: current published terms, not a catalogue change.',
     newsBaseline: date => `Catalogue baseline taken ${date}. Changes observed from the next refresh will appear here.`,
     newsRemoved: n => `${n} model(s) are no longer listed.`,
     newsLiveOffText: 'Local catalogue news is shown. Turn on Spend Sense Live Updates in Settings for public announcements from Spend Sense.',
@@ -7672,6 +7772,16 @@ const I18N = {
     newsEmptyForYou: '暂无与您的供应商或模型相关的动态。目录有新的变化时会显示在这里。',
     newsEmptyAll: '暂无动态。首次快照仅为基线；之后的目录变化会显示在这里。',
     newsEmptyCategory: '此分类暂无内容。',
+    newsEmptyBaseline: '已记录首次快照。之后的目录变化将作为动态显示在这里。',
+    newsEmptyNoChanges: '自上次检查以来目录没有变化。新的模型、价格和套餐会出现在这里。',
+    newsEmptyNoMatches: '已有动态，但均未涉及您配置的供应商、已记录的用量或已选的套餐。',
+    newsEmptyNoConfig: '暂无可个性化的内容：未配置供应商、未记录用量，也未选择套餐。',
+    newsWhyRelevant: reasons => `与您相关：${reasons}。`,
+    newsReasonConfigured: '匹配已配置的供应商',
+    newsReasonUsedProvider: '匹配您用过的供应商',
+    newsReasonUsedModel: '匹配您用过的模型',
+    newsReasonSelectedPlan: '匹配您选择的套餐',
+    newsPlanInfoNote: '套餐信息：当前公布的条款，而非目录变化。',
     newsBaseline: date => `目录基线已于${date}建立。从下次刷新起观察到的变化将显示在这里。`,
     newsRemoved: n => `${n} 个模型已不再收录。`,
     newsLiveOffText: '当前显示本地目录动态。在“设置”中开启 Spend Sense 实时更新，可获取 Spend Sense 的公开公告。',
@@ -7949,7 +8059,7 @@ export const __test = {
   digestQuery, uiLocale, digestCopy, digestDownload, DigestPreview, ReportsPage,
   REPORTS_CSS, $digestDays,
   newsQuery, newsSettingsQuery, newsSaveSettings, invalidateNewsFor, newsFilter, newsCategoryLabel,
-  newsImpactText, newsReasonLabel, newsAgeDays, newsFreshLabel, newsCentralAlert, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
+  newsImpactText, newsReasonLabel, newsAgeDays, newsFreshLabel, newsCentralAlert, newsIsRelevant, newsHasSignals, newsRelevanceReasons, newsRelevanceText, newsEmptyText, NEWS_RELEVANCE_ORDER, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   $fxDraft, $fxSaving, $fxNotice,

@@ -36,7 +36,7 @@ from wolfmark_ledger import digest  # noqa: E402
 from wolfmark_ledger import economics  # noqa: E402
 from wolfmark_ledger import user_data  # noqa: E402
 from wolfmark_ledger import membership_api as members  # noqa: E402
-from wolfmark_ledger import news as news_mod  # noqa: E402
+from wolfmark_ledger import monitoring, news as news_mod  # noqa: E402
 from wolfmark_ledger.membership import CatalogueError  # noqa: E402
 from wolfmark_ledger.membership_store import MembershipConflict, StoreUnreadable  # noqa: E402
 
@@ -185,25 +185,33 @@ def rates(provider: str | None = Query(None), model: str | None = Query(None),
 
 
 @router.get("/news")
-def news() -> dict[str, Any]:
+def news(scope: str = "foryou", category: str = "all") -> dict[str, Any]:
     """Stored local news plus the cached central feed. Read-only; no network."""
     try:
-        return news_mod.news_payload()
+        payload = news_mod.news_payload()
+        return monitoring.personalise_payload(
+            payload, scope=scope, category=category)
     except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
         log.error("spend-sense: news payload failed")
         raise HTTPException(status_code=500, detail="news unavailable") from exc
 
 
 @router.post("/news/refresh")
-def news_refresh() -> dict[str, Any]:
+def news_refresh(body: dict[str, Any] | None = None) -> dict[str, Any]:
     """User-triggered refresh: local snapshot diff, then the central fetch if due.
 
     The local diff never touches the network. The central feed is fetched only
     when "Spend Sense Live Updates" is enabled and the cache is stale; any
     fetch failure keeps the previous cache and is reported in the payload.
+    The local diff is throttled to one check per interval unless the body
+    passes ``{"force": true}`` for an explicit user refresh.
     """
+    options = body or {}
     try:
-        return news_mod.refresh_payload()
+        payload = news_mod.refresh_payload(
+            throttle=bool(options.get("throttled", True)),
+            force=bool(options.get("force", False)))
+        return monitoring.personalise_payload(payload)
     except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
         log.error("spend-sense: news refresh failed")
         raise HTTPException(status_code=500, detail="news refresh failed") from exc

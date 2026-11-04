@@ -42,6 +42,22 @@ class NewsApiTests(unittest.TestCase):
         self.assertTrue(response.json()["ok"])
         self.assertEqual(response.json()["central"]["state"], "disabled")
 
+    def test_get_news_personalises_with_scope_and_category(self):
+        fixture = {"ok": True, "settings": {"live_updates": False},
+                   "local": {"items": [], "baseline": True},
+                   "central": {"state": "disabled", "items": []},
+                   "impacts": {}}
+        with patch.object(plugin_api.news_mod, "news_payload",
+                          return_value=fixture), \
+                patch.object(plugin_api.monitoring, "personalise_payload",
+                             side_effect=lambda payload, **kwargs: payload) as enriched:
+            response = self.client.get(self.base() + "/news",
+                                       params={"scope": "all", "category": "plans"})
+        self.assertEqual(response.status_code, 200)
+        enriched.assert_called_once()
+        self.assertEqual(enriched.call_args.kwargs["scope"], "all")
+        self.assertEqual(enriched.call_args.kwargs["category"], "plans")
+
     def test_get_news_failure_hides_details(self):
         with patch.object(plugin_api.news_mod, "news_payload",
                           side_effect=RuntimeError("private sentinel")):
@@ -58,6 +74,27 @@ class NewsApiTests(unittest.TestCase):
             response = self.client.post(self.base() + "/news/refresh")
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["ok"])
+
+    def test_post_refresh_is_throttled_unless_forced(self):
+        fixture = {"ok": True, "settings": {"live_updates": False},
+                   "local": {"items": [], "baseline": True},
+                   "central": {"state": "disabled", "items": []},
+                   "impacts": {}}
+        with patch.object(plugin_api.news_mod, "refresh_payload",
+                          return_value=fixture) as refreshed, \
+                patch.object(plugin_api.monitoring, "personalise_payload",
+                             side_effect=lambda payload, **kwargs: payload):
+            response = self.client.post(self.base() + "/news/refresh")
+        self.assertEqual(response.status_code, 200)
+        refreshed.assert_called_once_with(throttle=True, force=False)
+        with patch.object(plugin_api.news_mod, "refresh_payload",
+                          return_value=fixture) as refreshed, \
+                patch.object(plugin_api.monitoring, "personalise_payload",
+                             side_effect=lambda payload, **kwargs: payload):
+            response = self.client.post(self.base() + "/news/refresh",
+                                        json={"force": True})
+        self.assertEqual(response.status_code, 200)
+        refreshed.assert_called_once_with(throttle=True, force=True)
 
     def test_put_settings_enables_and_disables(self):
         with patch.object(plugin_api.news_mod, "save_settings",

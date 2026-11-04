@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from . import discovery
+from . import membership_api
 from . import membership_store
 from . import news
 from .membership import PLAN_FAMILY_ALIASES, plan_index
@@ -202,6 +203,7 @@ def local_signals(*, home: Optional[Path | str] = None,
                   event_db: Optional[Path | str] = None,
                   store_path: Optional[Path | str] = None,
                   plans_catalogue: Optional[Mapping[str, Any]] = None,
+                  data_dir: Optional[Path | str] = None,
                   now: Optional[float] = None) -> dict[str, Any]:
     """Everything on this machine a news item can be relevant to.
 
@@ -232,7 +234,8 @@ def local_signals(*, home: Optional[Path | str] = None,
 
     if plans_catalogue is None:
         try:
-            plans_catalogue = news.load_plans_doc()
+            plans_catalogue, _plans_source = membership_api.active_catalogue(
+                data_dir=data_dir)
         except Exception:  # noqa: BLE001 - without a catalogue, plan ids carry no family
             plans_catalogue = {}
     try:
@@ -412,7 +415,8 @@ def news_view(*, data_dir: Optional[Path | str] = None,
                                 home=home, now=now)
     signals = local_signals(home=home, event_db=event_db,
                             store_path=store_path,
-                            plans_catalogue=plans_catalogue, now=now)
+                            plans_catalogue=plans_catalogue,
+                            data_dir=data_dir, now=now)
     combined = [*(payload.get("local", {}) or {}).get("items", []),
                 *(payload.get("central", {}) or {}).get("items", [])]
     personalised = personalise_items(combined, signals)
@@ -425,3 +429,46 @@ def news_view(*, data_dir: Optional[Path | str] = None,
             "for_you_count": sum(1 for item in personalised
                                  if _is_relevant(item)),
             "sources": {kind: describe_source(kind) for kind in SOURCE_KINDS}}
+
+
+def personalise_payload(payload: dict[str, Any], *,
+                        scope: str = "foryou",
+                        category: str = "all",
+                        signals: Optional[Mapping[str, Any]] = None,
+                        home: Optional[Path | str] = None,
+                        event_db: Optional[Path | str] = None,
+                        store_path: Optional[Path | str] = None,
+                        plans_catalogue: Optional[Mapping[str, Any]] = None,
+                        data_dir: Optional[Path | str] = None,
+                        now: Optional[float] = None) -> dict[str, Any]:
+    """Annotate a news API payload with relevance reasons and an empty state.
+
+    Additive only: each item in ``local``/``central`` gains a ``relevance``
+    entry, and the payload gains ``signals``, ``sources`` and ``empty``.
+    Stored ``for_you`` flags and ``for_you_count`` are left untouched as the
+    ranking source of truth. Reads config and usage for signals; writes
+    nothing and fetches nothing, so ``GET``-side enrichment stays read-only.
+    """
+    if signals is None:
+        signals = local_signals(home=home, event_db=event_db,
+                                store_path=store_path,
+                                plans_catalogue=plans_catalogue,
+                                data_dir=data_dir, now=now)
+    local = payload.get("local", {}) or {}
+    central = payload.get("central", {}) or {}
+    combined = [*(local.get("items", []) or []),
+                *(central.get("items", []) or [])]
+    personalised = personalise_items(combined, signals)
+    if isinstance(local, dict):
+        local["items"] = [item for item in personalised
+                          if item.get("origin") == "local"]
+    if isinstance(central, dict):
+        central["items"] = [item for item in personalised
+                            if item.get("origin") == "central"]
+    payload["signals"] = signals
+    payload["sources"] = {kind: describe_source(kind) for kind in SOURCE_KINDS}
+    payload["empty"] = empty_state(
+        items=personalised, scope=scope, category=category,
+        baseline=bool(local.get("baseline")) if isinstance(local, dict) else False,
+        signals=signals)
+    return payload

@@ -490,7 +490,12 @@ def refresh_local(*, data_dir: Optional[Path | str] = None,
     snapshot_target = snapshot_path(data_dir)
     items_target = items_path(data_dir)
     book = catalogue if catalogue is not None else load_catalogue()
-    plans = dict(plans_doc) if plans_doc is not None else load_plans_doc()
+    if plans_doc is not None:
+        plans = dict(plans_doc)
+    else:
+        from .membership_api import active_catalogue
+        plans, _plans_source = active_catalogue(data_dir=data_dir)
+        plans = dict(plans)
     observed_at = _now_iso(now)
     fresh = snapshot_catalogue(book, plans)
     fresh["captured_at"] = observed_at
@@ -939,10 +944,38 @@ def refresh_payload(*, data_dir: Optional[Path | str] = None,
                     catalogue: Optional[Catalogue] = None,
                     plans_doc: Optional[Mapping[str, Any]] = None,
                     now: Optional[float] = None,
-                    fetch: bool = True) -> dict[str, Any]:
-    """User-triggered refresh: local snapshot diff, then the central fetch if due."""
-    local = refresh_local(data_dir=data_dir, catalogue=catalogue,
-                          plans_doc=plans_doc, now=now)
+                    fetch: bool = True,
+                    throttle: bool = False,
+                    force: bool = False) -> dict[str, Any]:
+    """User-triggered refresh: local snapshot diff, then the central fetch if due.
+
+    With ``throttle`` the local diff runs through the monitoring throttle,
+    so page-view refreshes diff at most once per interval and a skipped
+    check reports ``local_refresh`` with reason ``fresh`` instead of
+    re-diffing. ``force`` bypasses the throttle for explicit refreshes.
+    """
+    local_refresh: Optional[dict[str, Any]] = None
+    if throttle:
+        # Deferred: monitoring imports this module, so a top-level import
+        # would be circular.
+        from wolfmark_ledger import monitoring
+
+        check = monitoring.maybe_refresh_local(
+            data_dir=data_dir, catalogue=catalogue, plans_doc=plans_doc,
+            now=now, force=force)
+        local_refresh = {"checked": check["checked"], "reason": check["reason"],
+                         "checked_at": check["checked_at"]}
+        if check["checked"] and isinstance(check["result"], dict):
+            local = check["result"]
+        else:
+            snapshot, _ = _read_json(snapshot_path(data_dir))
+            local = {"baseline": snapshot is None,
+                     "snapshot_at": (snapshot or {}).get("captured_at", ""),
+                     "removed_models": [], "removed_model_count": 0,
+                     "removed_plan_count": 0}
+    else:
+        local = refresh_local(data_dir=data_dir, catalogue=catalogue,
+                              plans_doc=plans_doc, now=now)
     if fetch:
         fetch_central(data_dir=data_dir, now=now)
     payload = news_payload(data_dir=data_dir, event_db=event_db, home=home, now=now)
@@ -951,4 +984,6 @@ def refresh_payload(*, data_dir: Optional[Path | str] = None,
     payload["local"]["removed_models"] = local.get("removed_models", [])
     payload["local"]["removed_model_count"] = local.get("removed_model_count", 0)
     payload["local"]["removed_plan_count"] = local.get("removed_plan_count", 0)
+    if local_refresh is not None:
+        payload["local_refresh"] = local_refresh
     return payload

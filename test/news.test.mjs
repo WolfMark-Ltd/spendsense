@@ -156,3 +156,71 @@ test('newsAgeDays and newsFreshLabel describe freshness honestly', () => {
   assert.equal(S.newsFreshLabel(3, t), 'newsFreshDays(3)')
   assert.equal(S.newsFreshLabel(null, t), 'newsFreshUnknown()')
 })
+
+test('newsIsRelevant prefers read-time relevance, keeps the stored flag', () => {
+  assert.equal(S.newsIsRelevant({ relevance: { relevant: true }, for_you: false }), true)
+  assert.equal(S.newsIsRelevant({ relevance: { relevant: false }, for_you: true }), false)
+  assert.equal(S.newsIsRelevant({ for_you: true }), true)
+  assert.equal(S.newsIsRelevant({ for_you: false }), false)
+  assert.equal(S.newsIsRelevant({}), false)
+  assert.equal(S.newsIsRelevant(null), false)
+})
+
+test('newsFilter honours read-time relevance for the For You scope', () => {
+  const items = [
+    { id: 'a', category: 'new_model', for_you: false, relevance: { relevant: true, reasons: ['used_model'] } },
+    { id: 'b', category: 'new_model', for_you: true, relevance: { relevant: false, reasons: [] } },
+    { id: 'c', category: 'new_model', for_you: true },
+  ]
+  assert.deepEqual(S.newsFilter(items, 'foryou', 'all').map(i => i.id), ['a', 'c'])
+  assert.deepEqual(S.newsFilter(items, 'all', 'all').map(i => i.id), ['a', 'b', 'c'])
+})
+
+test('newsHasSignals mirrors the backend signal check', () => {
+  assert.equal(S.newsHasSignals(null), false)
+  assert.equal(S.newsHasSignals({}), false)
+  assert.equal(S.newsHasSignals({ configured_families: [] }), false)
+  assert.equal(S.newsHasSignals({ used_models: ['gpt-x'] }), true)
+  assert.equal(S.newsHasSignals({ configured_families: ['openai'] }), true)
+})
+
+test('newsRelevanceReasons localises reasons in backend order', () => {
+  assert.deepEqual(S.NEWS_RELEVANCE_ORDER,
+    ['configured_provider', 'used_provider', 'used_model', 'selected_plan_family'])
+  const item = { for_you: true, relevance: { relevant: true,
+    reasons: ['selected_plan_family', 'used_model', 'unknown_future_code'] } }
+  assert.deepEqual(S.newsRelevanceReasons(item, t),
+    ['newsReasonUsedModel()', 'newsReasonSelectedPlan()'])
+  assert.equal(S.newsRelevanceText(item, t),
+    'newsWhyRelevant(newsReasonUsedModel() · newsReasonSelectedPlan())')
+  assert.deepEqual(S.newsRelevanceReasons({ for_you: true }, t), [])
+  assert.equal(S.newsRelevanceText({ for_you: true }, t), null)
+  assert.deepEqual(S.newsRelevanceReasons({ for_you: false }, t), [])
+})
+
+test('newsEmptyText mirrors backend empty states, with a legacy fallback', () => {
+  const signals = { configured_families: ['openai'] }
+  const newsy = [{ id: 'a', category: 'new_model', relevance: { relevant: true, reasons: [] } }]
+  const other = [{ id: 'b', category: 'price_reduction', relevance: { relevant: false, reasons: [] } }]
+  assert.equal(S.newsEmptyText({ items: newsy, scope: 'foryou', category: 'all', baseline: false, signals }, t), null)
+  assert.equal(S.newsEmptyText({ items: [], scope: 'foryou', category: 'all', baseline: true, signals }, t), 'newsEmptyBaseline()')
+  assert.equal(S.newsEmptyText({ items: [], scope: 'all', category: 'all', baseline: false, signals }, t), 'newsEmptyNoChanges()')
+  assert.equal(S.newsEmptyText({ items: other, scope: 'foryou', category: 'all', baseline: false, signals }, t), 'newsEmptyNoMatches()')
+  assert.equal(S.newsEmptyText({ items: other, scope: 'foryou', category: 'all', baseline: false, signals: {} }, t), 'newsEmptyNoConfig()')
+  assert.equal(S.newsEmptyText({ items: newsy, scope: 'foryou', category: 'subscription', baseline: false, signals }, t), 'newsEmptyCategory()')
+  assert.equal(S.newsEmptyText({ items: [], scope: 'foryou', category: 'all', baseline: false, signals: null }, t), 'newsEmptyForYou()')
+  assert.equal(S.newsEmptyText({ items: [], scope: 'all', category: 'all', baseline: false, signals: null }, t), 'newsEmptyAll()')
+  assert.equal(S.newsEmptyText({ items: newsy, scope: 'all', category: 'subscription', baseline: false, signals: null }, t), 'newsEmptyCategory()')
+})
+
+test('new news labels exist in English and Chinese', () => {
+  const keys = ['newsEmptyBaseline', 'newsEmptyNoChanges', 'newsEmptyNoMatches',
+    'newsEmptyNoConfig', 'newsWhyRelevant', 'newsReasonConfigured',
+    'newsReasonUsedProvider', 'newsReasonUsedModel', 'newsReasonSelectedPlan',
+    'newsPlanInfoNote']
+  for (const [locale, table] of Object.entries(S.I18N)) {
+    for (const key of keys) assert.ok(table[key] !== undefined, `${locale} is missing ${key}`)
+  }
+  assert.equal(S.I18N.en.newsWhyRelevant('x'), 'For you because it x.')
+  assert.ok(String(S.I18N.zh.newsWhyRelevant('x')).includes('x'))
+})
