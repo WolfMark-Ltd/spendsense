@@ -216,8 +216,7 @@ test('newsEmptyText mirrors backend empty states, with a legacy fallback', () =>
 test('new news labels exist in English and Chinese', () => {
   const keys = ['newsEmptyBaseline', 'newsEmptyNoChanges', 'newsEmptyNoMatches',
     'newsEmptyNoConfig', 'newsWhyRelevant', 'newsReasonConfigured',
-    'newsReasonUsedProvider', 'newsReasonUsedModel', 'newsReasonSelectedPlan',
-    'newsPlanInfoNote']
+    'newsReasonUsedProvider', 'newsReasonUsedModel', 'newsReasonSelectedPlan']
   for (const [locale, table] of Object.entries(S.I18N)) {
     for (const key of keys) assert.ok(table[key] !== undefined, `${locale} is missing ${key}`)
   }

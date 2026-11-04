@@ -208,6 +208,69 @@ def _cycle(anchor_day: Any, period: Any) -> Optional[dict[str, Any]]:
     return {"anchor_day": day, "period": cycle_period}
 
 
+def normalise_price(price_raw: Any, plan_id: str) -> dict[str, Any]:
+    """Normalised fee block: float amount, upper-case currency, lower period.
+
+    Raises :class:`CatalogueError` exactly as a catalogue load, so stored
+    snapshots can be migrated through the same rules the live book uses.
+    """
+    price: dict[str, Any] = price_raw if isinstance(price_raw, dict) else {}
+    amount = _money(price.get("amount"))
+    currency = str(price.get("currency") or "").strip().upper() or None
+    if amount is not None and currency not in CURRENCIES:
+        raise CatalogueError(f"plan {plan_id} has an unsupported currency")
+    if amount is not None and amount < 0:
+        raise CatalogueError(f"plan {plan_id} has a negative price")
+    period = str(price.get("period") or "month").strip().lower()
+    if period not in PERIODS:
+        raise CatalogueError(f"plan {plan_id} has an unsupported price period")
+    return {"amount": amount, "currency": currency, "period": period}
+
+
+def normalise_windows(windows_raw: Any) -> list[dict[str, Any]]:
+    """Normalised allowance windows: defaulted fields, slug ids, id-sorted."""
+    windows: list[Any] = windows_raw if isinstance(windows_raw, list) else []
+    normalised: list[dict[str, Any]] = []
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        wid = _slug(window.get("id") or window.get("label") or "")
+        if not wid:
+            continue
+        normalised.append({
+            "id": wid,
+            "label": str(window.get("label") or wid.replace("-", " ").title()),
+            "kind": str(window.get("kind") or "rolling"),
+            "duration_minutes": (int(window["duration_minutes"])
+                                 if isinstance(window.get("duration_minutes"), (int, float)) else None),
+            "limit": window.get("limit"),
+            "scope": str(window.get("scope") or "account"),
+            # A credit-value window carries an amount, not a percentage. Kept
+            # so the pane can say "$20 of credit, not 20% used".
+            "amount": (float(window["amount"])
+                       if isinstance(window.get("amount"), (int, float))
+                       and not isinstance(window.get("amount"), bool) else None),
+            "currency": str(window.get("currency") or "").upper() or None,
+            "detail": str(window.get("detail") or ""),
+        })
+    normalised.sort(key=lambda w: w["id"])
+    return normalised
+
+
+def normalise_entitlements(entitlements_raw: Any) -> dict[str, Any]:
+    """Normalised entitlement block: windows plus pass-through sections."""
+    entitlements: dict[str, Any] = entitlements_raw if isinstance(entitlements_raw, dict) else {}
+    models_raw = entitlements.get("models")
+    policy_raw = entitlements.get("reset_policy")
+    verification_raw = entitlements.get("verification")
+    return {
+        "windows": normalise_windows(entitlements.get("windows")),
+        "models": models_raw if isinstance(models_raw, dict) else {},
+        "reset_policy": policy_raw if isinstance(policy_raw, dict) else {},
+        "verification": verification_raw if isinstance(verification_raw, dict) else {},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Plan catalogue
 # ---------------------------------------------------------------------------
@@ -255,53 +318,14 @@ def load_plan_catalogue(source: Mapping[str, Any] | str | Path | None = None) ->
         family = str(entry.get("provider_family") or "").strip()
         if not family:
             raise CatalogueError(f"plan {plan_id} needs provider_family")
-        price_raw = entry.get("price")
-        price: dict[str, Any] = price_raw if isinstance(price_raw, dict) else {}
-        amount = _money(price.get("amount"))
-        currency = str(price.get("currency") or "").strip().upper() or None
-        if amount is not None and currency not in CURRENCIES:
-            raise CatalogueError(f"plan {plan_id} has an unsupported currency")
-        if amount is not None and amount < 0:
-            raise CatalogueError(f"plan {plan_id} has a negative price")
-        period = str(price.get("period") or "month").strip().lower()
-        if period not in PERIODS:
-            raise CatalogueError(f"plan {plan_id} has an unsupported price period")
+        price = normalise_price(entry.get("price"), plan_id)
+        amount = price["amount"]
         verification_raw = entry.get("verification")
         verification: dict[str, Any] = verification_raw if isinstance(verification_raw, dict) else {}
         status = str(verification.get("status") or "unverified").strip().lower()
         if status not in ("verified", "provisional", "unverified", "retired"):
             raise CatalogueError(f"plan {plan_id} has an unknown verification status")
-        entitlements_raw = entry.get("entitlements")
-        entitlements: dict[str, Any] = entitlements_raw if isinstance(entitlements_raw, dict) else {}
-        windows_raw = entitlements.get("windows")
-        windows: list[Any] = windows_raw if isinstance(windows_raw, list) else []
-        normalised_windows = []
-        for window in windows:
-            if not isinstance(window, dict):
-                continue
-            wid = _slug(window.get("id") or window.get("label") or "")
-            if not wid:
-                continue
-            normalised_windows.append({
-                "id": wid,
-                "label": str(window.get("label") or wid.replace("-", " ").title()),
-                "kind": str(window.get("kind") or "rolling"),
-                "duration_minutes": (int(window["duration_minutes"])
-                                     if isinstance(window.get("duration_minutes"), (int, float)) else None),
-                "limit": window.get("limit"),
-                "scope": str(window.get("scope") or "account"),
-                # A credit-value window carries an amount, not a percentage. Kept
-                # so the pane can say "$20 of credit, not 20% used".
-                "amount": (float(window["amount"])
-                           if isinstance(window.get("amount"), (int, float))
-                           and not isinstance(window.get("amount"), bool) else None),
-                "currency": str(window.get("currency") or "").upper() or None,
-                "detail": str(window.get("detail") or ""),
-            })
-        normalised_windows.sort(key=lambda w: w["id"])
-        models_raw = entitlements.get("models")
-        policy_raw = entitlements.get("reset_policy")
-        entitlement_verification_raw = entitlements.get("verification")
+        entitlements = normalise_entitlements(entry.get("entitlements"))
         kind = str(entry.get("kind") or "subscription").strip().lower()
         arrangement = str(entry.get("billing_arrangement") or "").strip().lower() or \
             _ARRANGEMENT_BY_KIND.get(kind, "")
@@ -321,16 +345,10 @@ def load_plan_catalogue(source: Mapping[str, Any] | str | Path | None = None) ->
             "name": str(entry.get("name") or plan_id),
             "kind": kind,
             "billing_arrangement": arrangement,
-            "price": {"amount": amount, "currency": currency, "period": period},
+            "price": price,
             "billing_cycle": _cycle((entry.get("billing_cycle") or {}).get("anchor_day"),
-                                    (entry.get("billing_cycle") or {}).get("period") or period),
-            "entitlements": {
-                "windows": normalised_windows,
-                "models": models_raw if isinstance(models_raw, dict) else {},
-                "reset_policy": policy_raw if isinstance(policy_raw, dict) else {},
-                "verification": (entitlement_verification_raw
-                                 if isinstance(entitlement_verification_raw, dict) else {}),
-            },
+                                    (entry.get("billing_cycle") or {}).get("period") or price["period"]),
+            "entitlements": entitlements,
             "verification": {
                 "status": status,
                 "checked_at": verification.get("checked_at"),

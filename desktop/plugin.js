@@ -6583,18 +6583,21 @@ function newsSettingsQuery(identity = membershipIdentityNow()) {
   }
 }
 
+let newsRefreshSeq = 0
 async function newsForceRefresh(identity = membershipIdentityNow()) {
   const captured = identity
+  const seq = ++newsRefreshSeq
+  const current = () => seq === newsRefreshSeq && membershipIdentityCurrent(captured)
   $newsRefreshState.set({ origin: captured, status: 'pending' })
   try {
     if (typeof rest !== 'function') throw new Error('This desktop build has no plugin backend bridge.')
     const result = await rest('/news/refresh', { method: 'POST', body: { force: true } })
-    if (!membershipIdentityCurrent(captured)) return
+    if (!current()) return
     if (!result || result.ok === false) throw new Error(result?.detail || result?.error || 'Model news is unavailable.')
     queryClient.setQueryData([ID, 'model-news', captured], { ...result, identity: captured })
     $newsRefreshState.set({ origin: captured, status: 'idle' })
   } catch {
-    if (membershipIdentityCurrent(captured)) $newsRefreshState.set({ origin: captured, status: 'error' })
+    if (current()) $newsRefreshState.set({ origin: captured, status: 'error' })
   }
 }
 
@@ -6757,7 +6760,6 @@ const NEWS_CSS = `
 .wm-news-meta{margin:11px 0 0;font-size:11.5px;line-height:1.5;color:var(--ui-text-tertiary)}
 .wm-news-conditions{margin:7px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-secondary)}
 .wm-news-reasons{margin:9px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-secondary)}
-.wm-news-plan{margin:9px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-tertiary)}
 .wm-news-routes{display:flex;gap:6px;flex-wrap:wrap;margin:9px 0 0;font-size:11.5px;color:var(--ui-text-tertiary)}
 .wm-news-route{border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:2px 9px;color:var(--ui-text-secondary)}
 .wm-news-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
@@ -6806,8 +6808,6 @@ function NewsCard({ item, impact, t }) {
     jsx(NewsRateTable, { previous: item.previous, current: item.current, t }),
     impactText ? jsx('p', { className: 'wm-news-impact', 'data-tone': tone, children: impactText }) : null,
     item.conditions ? jsx('p', { className: 'wm-news-conditions', children: item.conditions }) : null,
-    item.category === 'subscription'
-      ? jsx('p', { className: 'wm-news-plan', children: t('newsPlanInfoNote') }) : null,
     (item.related_routes && item.related_routes.length)
       ? jsx('div', { className: 'wm-news-routes', children: [
           jsx('span', { children: t('newsRoutes', '') }),
@@ -6896,6 +6896,7 @@ function NewsPage() {
         ? jsxs('div', { className: 'wm-product-section', children: [
             jsx('p', { role: 'alert', children: t('newsError') }),
             jsx(ProductButton, { type: 'button', className: 'wm-button',
+              disabled: refreshOurs && refreshState?.status === 'pending',
               onClick: () => newsForceRefresh(identity), children: t('newsRetry') }),
           ] })
         : failed && current
@@ -7349,7 +7350,6 @@ const I18N = {
     newsReasonUsedProvider: 'matches a provider you used',
     newsReasonUsedModel: 'matches a model you used',
     newsReasonSelectedPlan: 'matches your selected plan',
-    newsPlanInfoNote: 'Plan information: current published terms, not a catalogue change.',
     newsBaseline: date => `Catalogue baseline taken ${date}. Changes observed from the next refresh will appear here.`,
     newsRemoved: n => `${n} model(s) are no longer listed.`,
     newsLiveOffText: 'Local catalogue news is shown. Turn on Spend Sense Live Updates in Settings for public announcements from Spend Sense.',
@@ -7781,7 +7781,6 @@ const I18N = {
     newsReasonUsedProvider: '匹配您用过的供应商',
     newsReasonUsedModel: '匹配您用过的模型',
     newsReasonSelectedPlan: '匹配您选择的套餐',
-    newsPlanInfoNote: '套餐信息：当前公布的条款，而非目录变化。',
     newsBaseline: date => `目录基线已于${date}建立。从下次刷新起观察到的变化将显示在这里。`,
     newsRemoved: n => `${n} 个模型已不再收录。`,
     newsLiveOffText: '当前显示本地目录动态。在“设置”中开启 Spend Sense 实时更新，可获取 Spend Sense 的公开公告。',

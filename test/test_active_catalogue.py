@@ -300,11 +300,15 @@ class MonitoringActiveCatalogueTests(ActiveCatalogueCase):
         self.write_store([account("a", "test", plan_id="test.plus")])
         write_live_book(self.live_dir, [live_plan()])
         result = monitoring.local_signals(store_path=self.memberships,
-                                          data_dir=self.live_dir)
+                                          data_dir=self.live_dir,
+                                          home=self.dir / "hermes-home",
+                                          event_db=self.events)
         self.assertEqual(result["plan_ids"], ["test.plus"])
         self.assertEqual(result["plan_families"], ["test"])
         bundled = monitoring.local_signals(store_path=self.memberships,
-                                           data_dir=self.plain_dir)
+                                           data_dir=self.plain_dir,
+                                           home=self.dir / "hermes-home",
+                                           event_db=self.events)
         self.assertEqual(bundled["plan_ids"], ["test.plus"])
         self.assertEqual(bundled["plan_families"], [])
 
@@ -315,7 +319,9 @@ class MonitoringActiveCatalogueTests(ActiveCatalogueCase):
                     "plans": [{"id": "test.plus", "provider_family": "explicit"}]}
         result = monitoring.local_signals(store_path=self.memberships,
                                           plans_catalogue=explicit,
-                                          data_dir=self.live_dir)
+                                          data_dir=self.live_dir,
+                                          home=self.dir / "hermes-home",
+                                          event_db=self.events)
         self.assertEqual(result["plan_families"], ["explicit"])
 
 

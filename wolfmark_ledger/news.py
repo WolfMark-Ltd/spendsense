@@ -30,6 +30,7 @@ from typing import Any, Mapping, Optional
 from urllib.request import Request, urlopen
 
 from . import discovery
+from . import membership as mem
 from . import store as usage_store
 from .filelock import locked as _locked
 from .pricing import PROVIDER_ALIASES, Catalogue
@@ -250,7 +251,43 @@ def snapshot_catalogue(book: Catalogue, plans_doc: Optional[Mapping[str, Any]]) 
         "catalogue_as_of": book.as_of,
         "providers": providers,
         "plans": _plans_table(plans_doc or {}),
+        "plans_normalised": True,
     }
+
+
+def _migrate_snapshot_plans(old_plans: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalise pre-shared-catalogue snapshot plan rows for comparison.
+
+    Snapshots written before the shared active catalogue stored raw plan
+    terms; the loader now adds defaults (window amount/currency/detail,
+    float amounts, upper-case currencies), so a raw-vs-normalised diff
+    reports the representation change as news. Migrating the stored side
+    through the same normalisation drops that noise while genuine fee
+    and entitlement changes still compare unequal. Idempotent:
+    already-normalised rows migrate to themselves. Rows that fail to
+    parse or validate are kept as-is so a corrupt snapshot can never
+    break a refresh.
+    """
+    migrated: dict[str, Any] = {}
+    for plan_id, row in old_plans.items():
+        if not isinstance(row, dict):
+            migrated[plan_id] = row
+            continue
+        try:
+            terms = json.loads(row.get("terms") or "null")
+            if not isinstance(terms, dict):
+                raise ValueError("stored terms are not an object")
+            price = mem.normalise_price(row.get("price"), str(plan_id))
+            entitlements = mem.normalise_entitlements(terms)
+        except (ValueError, TypeError, mem.CatalogueError):
+            migrated[plan_id] = row
+            continue
+        migrated[plan_id] = {
+            **row,
+            "price": price,
+            "terms": json.dumps(entitlements, sort_keys=True, default=str),
+        }
+    return migrated
 
 
 def load_plans_doc(path: Optional[Path] = None) -> dict[str, Any]:
@@ -404,7 +441,7 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
                 "conditions": conditions,
             })
 
-    # Bundled plan catalogue: fees and allowance terms change with plugin updates.
+    # Plan catalogue: fees and allowance terms change with catalogue updates.
     old_plans = old.get("plans") if isinstance(old.get("plans"), dict) else {}
     new_plans = new.get("plans") if isinstance(new.get("plans"), dict) else {}
     old_plans, new_plans = old_plans or {}, new_plans or {}
@@ -506,6 +543,12 @@ def refresh_local(*, data_dir: Optional[Path | str] = None,
             stack.enter_context(_locked(target))
         previous, _ = _read_json(snapshot_target)
         stored = load_items(items_target)
+        if isinstance(previous, dict) and isinstance(previous.get("plans"), dict) \
+                and not previous.get("plans_normalised"):
+            # Pre-shared-catalogue snapshots stored raw plan terms; migrate
+            # them so the upgrade itself is not reported as news. Runs once:
+            # the fresh snapshot stored below carries the stamp.
+            previous = {**previous, "plans": _migrate_snapshot_plans(previous["plans"])}
         if previous is None:
             _atomic_write_json(snapshot_target, fresh)
             if not stored["loaded"]:

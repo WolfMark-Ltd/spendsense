@@ -18,6 +18,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
+from wolfmark_ledger import membership as mem
 from wolfmark_ledger import store
 from wolfmark_ledger.pricing import Catalogue, Rate, Tier
 
@@ -292,6 +293,38 @@ class PlanCatalogueTests(NewsTestCase):
                                     plans_doc=plans_doc([plan("demo.basic", windows=("a", "b", "c"))]))
         self.assertEqual(len(result["items"]), 2)
         self.assertEqual(len({item["id"] for item in result["items"]}), 2)
+
+    def test_upgrade_from_raw_snapshot_reports_no_false_plan_news(self):
+        news = news_module()
+        catalogue_path = (Path(__file__).resolve().parents[1]
+                          / "catalogue" / "plans.json")
+        raw = json.loads(catalogue_path.read_text(encoding="utf-8-sig"))
+        # Actual pre-PR24 snapshot shape: the raw doc straight into the
+        # table, with no normalisation stamp.
+        legacy = news.snapshot_catalogue(book([]), raw)
+        legacy.pop("plans_normalised", None)
+        target = news.snapshot_path(self.data)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(legacy), encoding="utf-8")
+        news.save_settings(False, news.settings_path(self.data))
+        result = news.refresh_local(data_dir=self.data, catalogue=book([]))
+        self.assertFalse(result["baseline"])
+        self.assertEqual(result["items"], [])
+        stored = json.loads(target.read_text(encoding="utf-8"))
+        self.assertTrue(stored.get("plans_normalised"))
+        # Migration is idempotent and preserves genuine changes.
+        migrated = news._migrate_snapshot_plans(legacy["plans"])
+        self.assertEqual(news._migrate_snapshot_plans(migrated), migrated)
+        changed = json.loads(json.dumps(mem.load_plan_catalogue(raw)))
+        priced = next(p for p in changed["plans"]
+                      if p["price"]["amount"] is not None)
+        priced["price"]["amount"] += 1
+        items, _ = news.diff_snapshots(
+            {"providers": {}, "plans": migrated},
+            {"providers": {}, "plans": news._plans_table(changed)},
+            observed_at="2026-11-04T00:00:00Z", plans_doc=changed)
+        self.assertEqual(len(items), 1)
+        self.assertIn("fee", items[0]["summary"])
 
 
 # ------------------------------------------------------------------ settings
