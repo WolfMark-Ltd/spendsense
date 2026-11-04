@@ -23,6 +23,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 from . import catalogue_sources as sources_mod
 from . import membership as mem
+from .filelock import locked as _locked
 
 REVISIONS_DIR = "revisions"
 HISTORY_DIR = "history"
@@ -375,6 +376,7 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     handle = tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, suffix=".tmp")
     try:
         json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
         handle.flush()
         os.fsync(handle.fileno())
         handle.close()
@@ -382,6 +384,57 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     finally:
         if not handle.closed:
             handle.close()
+
+
+def _read_raw(path: Path | str) -> tuple[bytes, dict[str, Any]]:
+    """Read a persisted catalogue file as stored bytes plus parsed content.
+
+    The loader normalises (drops top-level notes, fills plan defaults), so
+    anything the workflow persists must start from these raw bytes — never
+    from a loaded catalogue — or activation would corrupt what it saves.
+    """
+    raw_bytes = Path(path).read_bytes()
+    return raw_bytes, json.loads(raw_bytes.decode("utf-8-sig"))
+
+
+def _write_bytes_atomic(path: Path, data: bytes) -> None:
+    """Write bytes atomically: temp file in the destination directory, then replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False, suffix=".tmp")
+    try:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+        handle.close()
+        os.replace(handle.name, path)
+    finally:
+        if not handle.closed:
+            handle.close()
+
+
+def _ensure_archive(hist: Path | str, version: str, raw_bytes: bytes) -> Path:
+    """Store raw bytes as the archive for ``version``, byte for byte.
+
+    An archive that already holds the same content is reused untouched, so a
+    rollback followed by another activation does not trip over its own
+    history. An archive with different content is a genuine conflict and is
+    never overwritten. Comparison is on parsed content so formatting alone
+    never counts as a difference.
+    """
+    hist = Path(hist)
+    hist.mkdir(parents=True, exist_ok=True)
+    archive = hist / f"plans-{version}.json"
+    if archive.exists():
+        try:
+            existing = json.loads(archive.read_bytes().decode("utf-8-sig"))
+        except (OSError, ValueError):
+            existing = None
+        if existing != json.loads(raw_bytes.decode("utf-8-sig")):
+            raise ValueError(
+                f"history archive already exists with different content: {archive.name}")
+        return archive
+    _write_bytes_atomic(archive, raw_bytes)
+    return archive
 
 
 def correction_report(catalogue: Mapping[str, Any], corrections: list[dict[str, Any]]) -> dict[str, Any]:
@@ -655,43 +708,50 @@ def _load_active(catalogue_dir: Path | str) -> dict[str, Any]:
     return mem.load_plan_catalogue(Path(catalogue_dir) / "plans.json")
 
 
-def activate(catalogue_dir: Path | str, revision_id: str, *, by: str, dry_run: bool = False,
-             catalogue: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
+def activate(catalogue_dir: Path | str, revision_id: str, *, by: str,
+             dry_run: bool = False) -> dict[str, Any]:
     """Promote a revision to the active catalogue.
 
     Refuses unless the revision validated cleanly and every blocking change has a
     decision. Archives the outgoing catalogue under ``history/`` first.
+
+    Validation and the candidate build both start from the catalogue on disk,
+    and the disk version must still match the revision's base: decisions
+    recorded against an older catalogue never apply to a newer one.
     """
     revision = load_revision(catalogue_dir, revision_id)
-    active = catalogue if catalogue is not None else _load_active(catalogue_dir)
-    problems = validate(revision, active)
-    if problems:
-        raise ValueError("revision cannot be activated: " + "; ".join(problems[:6]))
-    if str(revision.get("status")) not in ("approved", "staged"):
-        raise ValueError(f"revision status is {revision.get('status')!r}")
-    candidate = build_candidate(active, revision.get("observations") or [], revision.get("diff") or {},
-                                revision.get("decisions") or {},
-                                version=str(revision.get("proposed_version")))
-    mem.load_plan_catalogue(candidate)  # last gate: the loader accepts it
-    result = {"revision_id": revision_id, "from_version": active.get("catalogue_version"),
-              "to_version": candidate.get("catalogue_version"),
-              "changes": len((revision.get("diff") or {}).get("changes") or []),
-              "dry_run": bool(dry_run), "activated": False}
-    if dry_run:
-        result["candidate"] = candidate
-        return result
     target = Path(catalogue_dir) / "plans.json"
-    archive = history_dir(catalogue_dir) / f"plans-{active.get('catalogue_version') or 'unknown'}.json"
-    if archive.exists():
-        try:
-            existing_archive = json.loads(archive.read_text())
-        except (OSError, ValueError):
-            existing_archive = None
-        if existing_archive != dict(active):
+    # The whole read-modify-write cycle runs under the store lock, so two
+    # overlapping activations cannot both read one version and overwrite
+    # each other's candidate.
+    with _locked(target):
+        raw_bytes, raw = _read_raw(target)
+        active = mem.load_plan_catalogue(raw)
+        base = str(revision.get("base_version") or "")
+        current = str(raw.get("catalogue_version") or "")
+        if current != base:
             raise ValueError(
-                f"history archive already exists with different content: {archive.name}")
-    _write_json(archive, active)
-    _write_json(target, candidate)
+                f"revision base {base or 'unknown'} does not match the active catalogue "
+                f"{current or 'unknown'}; re-stage against the current version")
+        problems = validate(revision, active)
+        if problems:
+            raise ValueError("revision cannot be activated: " + "; ".join(problems[:6]))
+        if str(revision.get("status")) not in ("approved", "staged"):
+            raise ValueError(f"revision status is {revision.get('status')!r}")
+        candidate = build_candidate(raw, revision.get("observations") or [], revision.get("diff") or {},
+                                    revision.get("decisions") or {},
+                                    version=str(revision.get("proposed_version")))
+        mem.load_plan_catalogue(candidate)  # last gate: the loader accepts it
+        result = {"revision_id": revision_id, "from_version": raw.get("catalogue_version"),
+                  "to_version": candidate.get("catalogue_version"),
+                  "changes": len((revision.get("diff") or {}).get("changes") or []),
+                  "dry_run": bool(dry_run), "activated": False}
+        if dry_run:
+            result["candidate"] = candidate
+            return result
+        archive = _ensure_archive(history_dir(catalogue_dir),
+                                  str(raw.get("catalogue_version") or "unknown"), raw_bytes)
+        _write_json(target, candidate)
     revision = {**revision, "status": "activated", "applied_version": candidate.get("catalogue_version"),
                 "activated_at": now_iso(), "activated_by": by,
                 "history": [*(revision.get("history") or []),
@@ -708,34 +768,31 @@ def rollback(catalogue_dir: Path | str, version: str, *, by: str, dry_run: bool 
     source = history_dir(catalogue_dir) / f"plans-{version}.json"
     if not source.exists():
         raise KeyError(f"no archived catalogue for version {version}")
-    restored = mem.load_plan_catalogue(source)
-    current = _load_active(catalogue_dir)
-    record = {
-        "revision_id": f"rev-rollback-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
-        "created_at": now_iso(), "status": "rollback", "note": reason or f"restore {version}",
-        "base_version": current.get("catalogue_version"), "proposed_version": restored.get("catalogue_version"),
-        "sources": [], "observations": [], "diff": {"changes": [], "counts": {}, "blocking": []},
-        "decisions": {}, "approvals": [{"by": by, "at": now_iso(), "note": reason, "complete": True,
-                                        "outstanding": []}],
-        "applied_version": None, "history": [{"action": "rollback", "at": now_iso(), "by": by,
-                                              "from": current.get("catalogue_version"), "to": version}],
-    }
-    result = {"from_version": current.get("catalogue_version"), "to_version": restored.get("catalogue_version"),
-              "dry_run": bool(dry_run), "rolled_back": False, "revision_id": record["revision_id"]}
-    if dry_run:
-        return result
+    restored_bytes, restored_raw = _read_raw(source)
+    restored = mem.load_plan_catalogue(restored_raw)
     target = Path(catalogue_dir) / "plans.json"
-    archive = history_dir(catalogue_dir) / f"plans-{current.get('catalogue_version') or 'unknown'}.json"
-    if archive.exists():
-        try:
-            existing_archive = json.loads(archive.read_text())
-        except (OSError, ValueError):
-            existing_archive = None
-        if existing_archive != dict(current):
-            raise ValueError(
-                f"history archive already exists with different content: {archive.name}")
-    _write_json(archive, current)
-    _write_json(target, restored)
+    # Same protection as activation: the current-catalogue read, the archive
+    # guard and the restore run as one locked cycle.
+    with _locked(target):
+        current_bytes, current_raw = _read_raw(target)
+        current = mem.load_plan_catalogue(current_raw)
+        record = {
+            "revision_id": f"rev-rollback-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+            "created_at": now_iso(), "status": "rollback", "note": reason or f"restore {version}",
+            "base_version": current.get("catalogue_version"), "proposed_version": restored.get("catalogue_version"),
+            "sources": [], "observations": [], "diff": {"changes": [], "counts": {}, "blocking": []},
+            "decisions": {}, "approvals": [{"by": by, "at": now_iso(), "note": reason, "complete": True,
+                                            "outstanding": []}],
+            "applied_version": None, "history": [{"action": "rollback", "at": now_iso(), "by": by,
+                                                  "from": current.get("catalogue_version"), "to": version}],
+        }
+        result = {"from_version": current.get("catalogue_version"), "to_version": restored.get("catalogue_version"),
+                  "dry_run": bool(dry_run), "rolled_back": False, "revision_id": record["revision_id"]}
+        if dry_run:
+            return result
+        _ensure_archive(history_dir(catalogue_dir),
+                        str(current.get("catalogue_version") or "unknown"), current_bytes)
+        _write_bytes_atomic(target, restored_bytes)
     record["applied_version"] = restored.get("catalogue_version")
     _write_json(revisions_dir(catalogue_dir) / f"{record['revision_id']}.json", record)
     result["rolled_back"] = True

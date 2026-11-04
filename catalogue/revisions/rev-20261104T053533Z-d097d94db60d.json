@@ -1,0 +1,148 @@
+{
+  "activated_at": "2026-11-04T05:35:33+00:00",
+  "activated_by": "owner",
+  "applied_version": "2026-11-04.3",
+  "approvals": [
+    {
+      "at": "2026-11-04T05:35:33+00:00",
+      "by": "owner",
+      "complete": true,
+      "note": "",
+      "outstanding": []
+    }
+  ],
+  "base_version": "2026-11-04.2",
+  "corrections": [
+    {
+      "evidence": {
+        "retrieved_at": null,
+        "source_id": "umans-ai",
+        "url": "https://umans.ai/pricing"
+      },
+      "field": "billing_arrangement",
+      "plan_id": "umans-ai-coding-plan.standard",
+      "value": "prepaid_metered_wallet",
+      "why": "umans.ai/pricing is a top-up wallet: 'Pay per token ... Top up, create a key, and go.' There is no recurring fee, seat or quota window, so it is neither a subscription nor a recurring credit allowance."
+    },
+    {
+      "evidence": {
+        "retrieved_at": null,
+        "source_id": "umans-ai",
+        "url": "https://umans.ai/pricing"
+      },
+      "field": "kind",
+      "plan_id": "umans-ai-coding-plan.standard",
+      "value": "prepaid",
+      "why": "Keep kind consistent with the arrangement; the loader also derives one from the other."
+    },
+    {
+      "evidence": {
+        "retrieved_at": null,
+        "source_id": "umans-ai",
+        "url": "https://umans.ai/pricing"
+      },
+      "field": "name",
+      "plan_id": "umans-ai-coding-plan.standard",
+      "value": "Umans AI (pay per token)",
+      "why": "The vendor sells tokens, not a coding plan; the name should not imply a plan that does not exist."
+    }
+  ],
+  "created_at": "2026-11-04T05:35:33+00:00",
+  "decisions": {
+    "billing_arrangement_changed:umans-ai-coding-plan.standard": "accept",
+    "kind_changed:umans-ai-coding-plan.standard": "accept",
+    "name_changed:umans-ai-coding-plan.standard": "accept"
+  },
+  "diff": {
+    "blocking": [
+      "billing_arrangement_changed:umans-ai-coding-plan.standard",
+      "kind_changed:umans-ai-coding-plan.standard"
+    ],
+    "changes": [
+      {
+        "action": "billing_arrangement_changed",
+        "after": "prepaid_metered_wallet",
+        "authored": true,
+        "before": "recurring_subscription",
+        "evidence": {
+          "retrieved_at": null,
+          "source_id": "umans-ai",
+          "url": "https://umans.ai/pricing"
+        },
+        "family": "umans-ai-coding-plan",
+        "key": "billing_arrangement_changed:umans-ai-coding-plan.standard",
+        "materiality": "material",
+        "plan_id": "umans-ai-coding-plan.standard",
+        "summary": "Umans Coding Plan: billing_arrangement 'recurring_subscription' \u2192 'prepaid_metered_wallet' \u2014 umans.ai/pricing is a top-up wallet: 'Pay per token ... Top up, create a key, and go.' There is no recurring fee, seat or quota window, so it is neither a subscription nor a recurring credit allowance."
+      },
+      {
+        "action": "kind_changed",
+        "after": "prepaid",
+        "authored": true,
+        "before": "subscription",
+        "evidence": {
+          "retrieved_at": null,
+          "source_id": "umans-ai",
+          "url": "https://umans.ai/pricing"
+        },
+        "family": "umans-ai-coding-plan",
+        "key": "kind_changed:umans-ai-coding-plan.standard",
+        "materiality": "material",
+        "plan_id": "umans-ai-coding-plan.standard",
+        "summary": "Umans Coding Plan: kind 'subscription' \u2192 'prepaid' \u2014 Keep kind consistent with the arrangement; the loader also derives one from the other."
+      },
+      {
+        "action": "name_changed",
+        "after": "Umans AI (pay per token)",
+        "authored": true,
+        "before": "Umans Coding Plan",
+        "evidence": {
+          "retrieved_at": null,
+          "source_id": "umans-ai",
+          "url": "https://umans.ai/pricing"
+        },
+        "family": "umans-ai-coding-plan",
+        "key": "name_changed:umans-ai-coding-plan.standard",
+        "materiality": "cosmetic",
+        "plan_id": "umans-ai-coding-plan.standard",
+        "summary": "Umans Coding Plan: name 'Umans Coding Plan' \u2192 'Umans AI (pay per token)' \u2014 The vendor sells tokens, not a coding plan; the name should not imply a plan that does not exist."
+      }
+    ],
+    "counts": {
+      "ambiguous": 0,
+      "cosmetic": 1,
+      "material": 2,
+      "review": 0
+    },
+    "requires_owner": true
+  },
+  "history": [
+    {
+      "action": "decided",
+      "at": "2026-11-04T05:35:33+00:00",
+      "by": "owner",
+      "decisions": {
+        "billing_arrangement_changed:umans-ai-coding-plan.standard": "accept",
+        "kind_changed:umans-ai-coding-plan.standard": "accept",
+        "name_changed:umans-ai-coding-plan.standard": "accept"
+      },
+      "note": ""
+    },
+    {
+      "action": "activated",
+      "at": "2026-11-04T05:35:33+00:00",
+      "by": "owner",
+      "version": "2026-11-04.3"
+    }
+  ],
+  "note": "Owner decision 2026-11-04: approve the staged prepaid-wallet reclassification.",
+  "observations": [],
+  "proposed_version": "2026-11-04.3",
+  "revision_id": "rev-20261104T053533Z-d097d94db60d",
+  "sources": [],
+  "status": "activated",
+  "validation": {
+    "ok": true,
+    "problems": []
+  }
+}

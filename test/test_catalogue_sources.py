@@ -352,7 +352,23 @@ class CorrectionTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def _rewind_umans_to_subscription(self):
+        # The live catalogue already carries the approved wallet
+        # reclassification; rewind the temp copy so the mechanism is exercised
+        # deterministically instead of depending on the live catalogue.
+        path = self.dir / "plans.json"
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        for plan in doc["plans"]:
+            if plan["id"] != "umans-ai-coding-plan.standard":
+                continue
+            plan["kind"] = "subscription"
+            plan["billing_arrangement"] = "recurring_subscription"
+            plan["name"] = "Umans Coding Plan"
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        self.active = M.load_plan_catalogue(path)
+
     def test_umans_becomes_a_prepaid_wallet(self):
+        self._rewind_umans_to_subscription()
         report = R.correction_report(self.active, self.umans)
         keys = {c["key"] for c in report["changes"]}
         self.assertEqual(keys, {"billing_arrangement_changed:umans-ai-coding-plan.standard",
@@ -397,20 +413,22 @@ class CorrectionTests(unittest.TestCase):
         self.assertTrue(revision["corrections"])
 
     def test_activation_requires_a_decision_on_the_reclassification(self):
+        self._rewind_umans_to_subscription()
         revision = R.stage(self.dir, self.active, [], [], corrections=self.umans)
         problems = R.validate(revision, self.active)
         self.assertTrue(any("no decision recorded" in p for p in problems))
         with self.assertRaises(ValueError):
-            R.activate(self.dir, revision["revision_id"], by="reviewer", catalogue=self.active)
+            R.activate(self.dir, revision["revision_id"], by="reviewer")
 
     def test_accepted_and_rejected_corrections_are_applied_independently(self):
+        self._rewind_umans_to_subscription()
         revision = R.stage(self.dir, self.active, [], [], corrections=self.umans)
         R.approve(self.dir, revision["revision_id"], {
             "billing_arrangement_changed:umans-ai-coding-plan.standard": "accept",
             "kind_changed:umans-ai-coding-plan.standard": "accept",
             "name_changed:umans-ai-coding-plan.standard": "reject",
-        }, by="reviewer", catalogue=self.active)
-        R.activate(self.dir, revision["revision_id"], by="reviewer", catalogue=self.active)
+        }, by="reviewer")
+        R.activate(self.dir, revision["revision_id"], by="reviewer")
         updated = M.load_plan_catalogue(self.dir / "plans.json")
         umans = next(p for p in updated["plans"] if p["id"] == "umans-ai-coding-plan.standard")
         self.assertEqual(umans["billing_arrangement"], "prepaid_metered_wallet")
@@ -426,7 +444,7 @@ class CorrectionTests(unittest.TestCase):
         R.approve(self.dir, revision["revision_id"],
                   {c["key"]: "accept" for c in revision["diff"]["changes"]}, by="reviewer",
                   catalogue=self.active)
-        R.activate(self.dir, revision["revision_id"], by="reviewer", catalogue=self.active)
+        R.activate(self.dir, revision["revision_id"], by="reviewer")
         updated = M.load_plan_catalogue(self.dir / "plans.json")
         plan = next(p for p in updated["plans"] if p["id"] == "commandcode.team-pro")
         self.assertEqual(plan["verification"]["source_id"], "commandcode-go")
@@ -490,12 +508,14 @@ class BillingArrangementTests(unittest.TestCase):
 
 class CurrencyStorageTests(unittest.TestCase):
     def test_the_catalogue_accepts_cny_without_converting(self):
+        # Uses the Kimi placeholder: Umans can no longer carry a recurring
+        # price since the approved wallet reclassification.
         doc = json.loads((CATALOGUE / "plans.json").read_text())
         for plan in doc["plans"]:
-            if plan["id"] == "umans-ai-coding-plan.standard":
+            if plan["id"] == "kimi-code-plan-global.standard":
                 plan["price"] = {"amount": 68.0, "currency": "CNY", "period": "month"}
         loaded = M.load_plan_catalogue(doc)
-        plan = next(p for p in loaded["plans"] if p["id"] == "umans-ai-coding-plan.standard")
+        plan = next(p for p in loaded["plans"] if p["id"] == "kimi-code-plan-global.standard")
         self.assertEqual(plan["price"]["currency"], "CNY")
         self.assertEqual(plan["price"]["amount"], 68.0)
 

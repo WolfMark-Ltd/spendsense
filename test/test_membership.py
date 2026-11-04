@@ -136,7 +136,7 @@ def override(amount=16.0, currency="GBP", reason="legacy_pricing",
 class CatalogueLoadingTests(unittest.TestCase):
     def test_seed_catalogue_loads_with_families_and_kinds(self):
         catalogue_data = catalogue()
-        self.assertEqual(catalogue_data["catalogue_version"], "2026-10-31.1")
+        self.assertEqual(catalogue_data["catalogue_version"], "2026-11-04.3")
         families = {p["provider_family"] for p in catalogue_data["plans"]}
         for expected in ("openai-codex", "anthropic", "commandcode", "xai-oauth",
                          "github-copilot", "nous", "openrouter", "zai-coding-plan"):
@@ -700,6 +700,53 @@ class MigrationTests(unittest.TestCase):
                                                 "monthly_fee_usd": 10})
         self.assertIsNone(member["plan_id"])
         self.assertEqual(member["fee_overrides"][0]["amount"], 10.0)
+
+
+class TierSplitPreservationTests(unittest.TestCase):
+    """Splits and renames keep stored accounts, fees and plan ownership."""
+
+    def test_legacy_tencent_selection_keeps_its_declared_fee(self):
+        account = membership(plan_id="tencent-coding-plan.standard",
+                             family="tencent-coding-plan",
+                             fee_overrides=[override(amount=12.0)])
+        resolved = M.resolve_fee(account, catalogue(), at=NOW)
+        self.assertEqual(resolved["basis"], "declared")
+        self.assertEqual(resolved["effective"]["amount"], 12.0)
+        self.assertIsNone(resolved["published"]["amount"])
+
+    def test_legacy_supergrok_selection_is_untouched(self):
+        account = membership(plan_id="xai-oauth.supergrok", family="xai-oauth",
+                             fee_overrides=[override(amount=30.0,
+                                                     currency="USD")])
+        resolved = M.resolve_fee(account, catalogue(), at=NOW)
+        self.assertEqual(resolved["basis"], "declared")
+        self.assertEqual(resolved["effective"]["amount"], 30.0)
+        self.assertEqual(resolved["published"]["plan_id"],
+                         "xai-oauth.supergrok")
+
+    def test_business_rename_keeps_plan_id_and_fee(self):
+        account = membership(plan_id="openai-codex.chatgpt-business",
+                             fee_overrides=[override(amount=25.0,
+                                                     currency="USD")])
+        resolved = M.resolve_fee(account, catalogue(), at=NOW)
+        self.assertEqual(resolved["basis"], "declared")
+        self.assertEqual(resolved["published"]["plan_name"],
+                         "ChatGPT Business Standard")
+        plain = membership(plan_id="openai-codex.chatgpt-business")
+        catalogue_price = M.resolve_fee(plain, catalogue(), at=NOW)
+        self.assertEqual(catalogue_price["basis"], "catalogue")
+        self.assertEqual(catalogue_price["effective"]["amount"], 25.0)
+
+    def test_umans_wallet_keeps_account_without_a_price(self):
+        account = membership(plan_id="umans-ai-coding-plan.standard",
+                             family="umans-ai-coding-plan",
+                             fee_overrides=[override(amount=5.0,
+                                                     currency="USD")])
+        resolved = M.resolve_fee(account, catalogue(), at=NOW)
+        self.assertEqual(resolved["basis"], "declared")
+        self.assertIsNone(resolved["published"]["amount"])
+        self.assertEqual(resolved["published"]["plan_name"],
+                         "Umans AI (pay per token)")
 
 
 if __name__ == "__main__":

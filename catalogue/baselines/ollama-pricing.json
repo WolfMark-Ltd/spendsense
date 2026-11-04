@@ -1,8 +1,8 @@
 {
   "adapter": "ollama_pricing",
-  "catalogue_version": "2026-10-31.1",
+  "catalogue_version": "2026-11-04.3",
   "complete": true,
-  "derived_at": "2026-11-03T18:55:26Z",
+  "derived_at": "2026-11-04T04:20:20Z",
   "family": "ollama-cloud",
   "note": "Reviewed baseline: family slice of catalogue/plans.json. Changes only in a reviewed commit.",
   "plans": [
@@ -54,14 +54,14 @@
       },
       "provider_family": "ollama-cloud",
       "verification": {
-        "checked_at": "2026-10-31",
-        "notes": "",
+        "checked_at": "2026-11-04",
+        "notes": "Official page checked on 2026-11-04. $500/month with a shared $1,000 credit pool and unlimited users; still marked early access.",
         "source_id": "ollama-pricing",
-        "status": "provisional"
+        "status": "verified"
       }
     }
   ],
   "source_id": "ollama-pricing",
-  "source_retrieved_at": "2026-10-30T12:22:52Z",
+  "source_retrieved_at": "2026-11-04T04:20:20Z",
   "status": "reviewed"
 }
