@@ -1,0 +1,157 @@
+{
+  "adapter": "commandcode_pricing",
+  "catalogue_version": "2026-10-31.1",
+  "complete": true,
+  "derived_at": "2026-11-03T18:55:26Z",
+  "family": "commandcode",
+  "note": "Reviewed baseline: family slice of catalogue/plans.json. Changes only in a reviewed commit.",
+  "plans": [
+    {
+      "billing_arrangement": "recurring_subscription",
+      "id": "commandcode.enterprise",
+      "kind": "subscription",
+      "name": "Enterprise",
+      "price": {
+        "amount": null,
+        "currency": null,
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Published as custom pricing from $5,000; no fixed figure.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_credit_allowance",
+      "id": "commandcode.go",
+      "kind": "subscription",
+      "name": "Go",
+      "price": {
+        "amount": 1.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Price is $1/month. The plan page describes per-model monthly allocations for new subscribers within a shared $10 pool. Pricing & Limits lists $2/$5 rolling limits but its FAQ says $3/$6; actual usage remains Unknown unless Hermes reports it.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_credit_allowance",
+      "id": "commandcode.goat",
+      "kind": "subscription",
+      "name": "GOAT",
+      "price": {
+        "amount": 10.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official pricing page confirms $10/month, up to $100 monthly credits, $20 per five hours, $50 per week, and $100 per month. The dedicated GOAT page confirms API access against GOAT credits.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_credit_allowance",
+      "id": "commandcode.max-10x",
+      "kind": "subscription",
+      "name": "Max 10x",
+      "price": {
+        "amount": 100.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_credit_allowance",
+      "id": "commandcode.max-20x",
+      "kind": "subscription",
+      "name": "Max 20x",
+      "price": {
+        "amount": 200.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_credit_allowance",
+      "id": "commandcode.pro",
+      "kind": "subscription",
+      "name": "Pro",
+      "price": {
+        "amount": 20.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "id": "commandcode.provider",
+      "kind": "subscription",
+      "name": "Provider",
+      "price": {
+        "amount": 15.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official Provider documentation states $15/month plus a $1.01 processing fee, with pay-as-you-go usage at underlying model rates.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_credit_allowance",
+      "id": "commandcode.team-pro",
+      "kind": "subscription",
+      "name": "Team Pro",
+      "price": {
+        "amount": 40.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "commandcode",
+      "verification": {
+        "checked_at": "2026-10-30",
+        "notes": "Official page checked on 2026-10-30.",
+        "source_id": "commandcode-pricing",
+        "status": "verified"
+      }
+    }
+  ],
+  "source_id": "commandcode-pricing",
+  "source_retrieved_at": "2026-10-30T21:02:11Z",
+  "status": "reviewed"
+}

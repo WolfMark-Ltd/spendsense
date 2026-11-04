@@ -163,8 +163,10 @@ chmod 0644 "$LIVE_TMP" || fail "cannot set feed permissions"  # world-readable u
 mv "$LIVE_TMP" "$LIVE" || fail "atomic feed publication failed"
 mv "$NEW_SNAPSHOT" "$STATE/models-prev.json" || fail "cannot rotate snapshot"
 
+# Past publication: log failures are reported but never fail the run —
+# the new feed is already live, so exit 0 stands.
 echo "$(date -u +%FT%TZ) OK $FEED_CHECK retain=${RETAIN_DAYS}d" >> "$STATE/collect.log" \
-    || fail "cannot write run log"
+    || echo "collect: cannot write run log" >&2
 tail -200 "$STATE/collect.log" > "$STAGING/collect.log" && mv "$STAGING/collect.log" "$STATE/collect.log" \
-    || fail "cannot rotate run log"
+    || echo "collect: cannot rotate run log" >&2
 exit 0

@@ -1,0 +1,67 @@
+{
+  "adapter": "ollama_pricing",
+  "catalogue_version": "2026-10-31.1",
+  "complete": true,
+  "derived_at": "2026-11-03T18:55:26Z",
+  "family": "ollama-cloud",
+  "note": "Reviewed baseline: family slice of catalogue/plans.json. Changes only in a reviewed commit.",
+  "plans": [
+    {
+      "billing_arrangement": "recurring_subscription",
+      "id": "ollama-cloud.max",
+      "kind": "subscription",
+      "name": "Max",
+      "price": {
+        "amount": 100.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "ollama-cloud",
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "ollama-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "id": "ollama-cloud.pro",
+      "kind": "subscription",
+      "name": "Pro",
+      "price": {
+        "amount": 20.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "ollama-cloud",
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "ollama-pricing",
+        "status": "verified"
+      }
+    },
+    {
+      "billing_arrangement": "recurring_subscription",
+      "id": "ollama-cloud.team",
+      "kind": "subscription",
+      "name": "Team",
+      "price": {
+        "amount": 500.0,
+        "currency": "USD",
+        "period": "month"
+      },
+      "provider_family": "ollama-cloud",
+      "verification": {
+        "checked_at": "2026-10-31",
+        "notes": "",
+        "source_id": "ollama-pricing",
+        "status": "provisional"
+      }
+    }
+  ],
+  "source_id": "ollama-pricing",
+  "source_retrieved_at": "2026-10-30T12:22:52Z",
+  "status": "reviewed"
+}

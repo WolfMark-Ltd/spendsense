@@ -217,6 +217,75 @@ def parse_opencode_go(body: str) -> dict[str, Any]:
             "complete": bool(plans), "note": "Parsed from the Go plan table."}
 
 
+# The pricing page states the Go plan's rolling windows twice: once in the
+# usage-limits table ("5-hour limit" / "Weekly limit" columns) and once in the
+# Go plan answer ("The rolling windows stay at $X of usage in any 5 hours and
+# $Y in any 7 days"). The figures have disagreed, so the parser reports the
+# disagreement for a human to resolve and never picks a winner. Silence -- no
+# statement, no table, or matching figures -- means there is nothing to raise.
+_COMMANDCODE_FAQ_WINDOWS = re.compile(
+    r"rolling windows stay at \$\s*(?P<five>[0-9][0-9,]*(?:\.[0-9]+)?)"
+    r"\s+of usage in any 5[ -]?hours?\s+and \$\s*"
+    r"(?P<weekly>[0-9][0-9,]*(?:\.[0-9]+)?)\s+in any 7[ -]?days?",
+    re.IGNORECASE)
+
+
+def _commandcode_limits(body: str) -> dict[str, tuple[str, str]]:
+    """Plan name (lower-cased) to (5-hour cell, weekly cell), from the page."""
+    rows = _table_rows(body)
+    for index, row in enumerate(rows):
+        cells = [str(cell).lower() for cell in row]
+        five = next((i for i, cell in enumerate(cells)
+                     if "5-hour" in cell or "5 hour" in cell), None)
+        weekly = next((i for i, cell in enumerate(cells)
+                       if "weekly" in cell or "7-day" in cell or "7 day" in cell),
+                      None)
+        if five is None or weekly is None:
+            continue
+        found: dict[str, tuple[str, str]] = {}
+        for rest in rows[index + 1:]:
+            if len(rest) <= max(five, weekly) or not str(rest[0]).strip():
+                break
+            found[str(rest[0]).strip().lower()] = (str(rest[five]).strip(),
+                                                  str(rest[weekly]).strip())
+        if found:
+            return found
+    return {}
+
+
+def _commandcode_window_conflicts(body: str, plan_ids: set[str]) -> list[dict[str, Any]]:
+    if "commandcode.go" not in plan_ids:
+        return []
+    text = text_of(body)
+    match = _COMMANDCODE_FAQ_WINDOWS.search(text)
+    if not match:
+        return []
+    # The statement must sit in the Go plan's own answer, not in a paragraph
+    # about some other plan.
+    if not re.search(r"\bgo\b", text[max(0, match.start() - 400):match.start()],
+                     re.IGNORECASE):
+        return []
+    limits = _commandcode_limits(body).get("go")
+    if not limits:
+        return []
+    table_five, table_weekly = _money(limits[0]), _money(limits[1])
+    if table_five is None or table_weekly is None:
+        return []
+    faq_five = float(match.group("five").replace(",", ""))
+    faq_weekly = float(match.group("weekly").replace(",", ""))
+    if table_five == faq_five and table_weekly == faq_weekly:
+        return []
+    return [{"plan_id": "commandcode.go", "field": "rolling_windows",
+             "table": {"five_hour": limits[0], "weekly": limits[1]},
+             "page_text": {"five_hour": "$" + match.group("five"),
+                           "weekly": "$" + match.group("weekly")},
+             "note": ("The usage-limits table gives Go %s in any 5 hours "
+                      "and %s in any 7 days, but the Go plan answer on the "
+                      "same page says $%s and $%s."
+                      % (limits[0], limits[1], match.group("five"),
+                         match.group("weekly")))}]
+
+
 def parse_commandcode(body: str) -> dict[str, Any]:
     """CommandCode pricing table: | Go | $1 | $10 | ~9K requests | … |"""
     known = {"go", "goat", "pro", "provider", "max 10×", "max 10x", "max 20×", "max 20x",
@@ -241,8 +310,14 @@ def parse_commandcode(body: str) -> dict[str, Any]:
     # first description of a plan wins.
     seen: set[str] = set()
     plans = [row for row in plans if not (row["id"] in seen or seen.add(row["id"]))]
-    return {"family": "commandcode", "plans": plans, "complete": bool(plans),
-            "note": "Parsed from the pricing table; a custom price stays None."}
+    result: dict[str, Any] = {"family": "commandcode", "plans": plans,
+                              "complete": bool(plans),
+                              "note": "Parsed from the pricing table; "
+                                      "a custom price stays None."}
+    conflicts = _commandcode_window_conflicts(body, seen)
+    if conflicts:
+        result["conflicts"] = conflicts
+    return result
 
 
 # --- Ollama -----------------------------------------------------------------
@@ -374,6 +449,8 @@ def observe(snapshot: Mapping[str, Any], source: Mapping[str, Any]) -> dict[str,
     base.update({"plans": parsed.get("plans") or [], "complete": complete,
                  "note": parsed.get("note") or "",
                  "custom_quote_plans": [str(x) for x in (source.get("custom_quote_plans") or [])]})
+    if parsed.get("conflicts"):
+        base["conflicts"] = [dict(item) for item in parsed["conflicts"]]
     base["usable"] = bool(base["plans"])
     if base["custom_quote_plans"]:
         base["notes"].append("custom-quoted plans are not in the table: "

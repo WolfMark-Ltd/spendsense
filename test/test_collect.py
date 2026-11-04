@@ -240,6 +240,14 @@ class CollectLockTests(unittest.TestCase):
         self.assertEqual(feed["version"], 1)
         self.assertTrue(feed["items"])
 
+    def test_post_publication_log_failure_keeps_exit_zero(self):
+        (self.home / "state" / "collect.log").mkdir()
+        result = self.run_collect()
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        live = self.home / "www" / "feed" / "v1" / "news.json"
+        self.assertEqual(json.loads(live.read_text())["version"], 1)
+        self.assertIn("run log", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
