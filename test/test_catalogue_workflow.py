@@ -259,9 +259,10 @@ class Activation(CatalogueCase):
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "accept"})
         R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer", catalogue=self.active)
-        current = dict(M.load_plan_catalogue(self.catalogue_dir / "plans.json"))
-        (self.catalogue_dir / "history" / "plans-2026-11-04.4.json").write_text(
-            json.dumps(current, indent=2, sort_keys=True))
+        # Archives store the raw persisted bytes, so an identical archive is a
+        # byte copy of the active catalogue — not the loader-normalised form.
+        current = (self.catalogue_dir / "plans.json").read_bytes()
+        (self.catalogue_dir / "history" / "plans-2026-11-04.4.json").write_bytes(current)
         result = R.rollback(self.catalogue_dir, "2026-11-04.3", by="reviewer")
         self.assertTrue(result["rolled_back"])
 
@@ -288,6 +289,112 @@ class Activation(CatalogueCase):
                             M.load_plan_catalogue(self.catalogue_dir / "plans.json"))
         self.assertEqual(fee["basis"], "declared")
         self.assertEqual(fee["effective"]["amount"], 8.5)
+
+
+class ActivationRoundTripTests(CatalogueCase):
+    """Activation and rollback preserve the catalogue they were given."""
+
+    def _activate_demo_change(self, catalogue=None):
+        revision = self.stage("demo-change")
+        R.approve(self.catalogue_dir, revision["revision_id"],
+                  {"price_changed:opencode-go.go": "accept",
+                   "price_changed:opencode-go.go-plus": "accept"},
+                  by="reviewer", catalogue=catalogue or self.active)
+        return R.activate(self.catalogue_dir, revision["revision_id"],
+                          by="reviewer", catalogue=catalogue or self.active)
+
+    def _account(self, plan_id, family, amount=None):
+        overrides = []
+        if amount is not None:
+            overrides.append({"id": "o1", "amount": amount, "currency": "USD",
+                              "period": "month", "reason": "custom",
+                              "effective_from": "2026-01-01T00:00:00Z",
+                              "recorded_at": "2026-11-01T00:00:00Z"})
+        return {"id": f"{family}:demo", "family": family, "label": "Demo",
+                "route_slugs": [family], "credential_present": True,
+                "identity": None, "identity_source": "provider_default_slot",
+                "discovered_at": "2026-10-30T00:00:00Z", "plan_id": plan_id,
+                "plan_hint": None, "fee_overrides": overrides,
+                "manual_exhaustions": [],
+                "advanced": {"model_mapping": {}, "rate_override": {}}}
+
+    def test_activation_preserves_existing_notes(self):
+        before = json.loads(
+            (self.catalogue_dir / "plans.json").read_text())["notes"]
+        self.assertTrue(before, "the fixture catalogue carries notes")
+        self._activate_demo_change()
+        after = json.loads(
+            (self.catalogue_dir / "plans.json").read_text())["notes"]
+        self.assertEqual(after[:len(before)], before)
+        self.assertIn("accepted change(s)", after[-1])
+
+    def test_activation_introduces_no_unexpected_plan_fields(self):
+        before = {p["id"]: set(p) for p in json.loads(
+            (self.catalogue_dir / "plans.json").read_text())["plans"]}
+        self._activate_demo_change()
+        after = json.loads(
+            (self.catalogue_dir / "plans.json").read_text())["plans"]
+        self.assertEqual({p["id"] for p in after}, set(before))
+        for plan in after:
+            self.assertEqual(set(plan) - before[plan["id"]], set(), plan["id"])
+
+    def test_rollback_restores_the_archived_bytes(self):
+        self._activate_demo_change()
+        archive = self.catalogue_dir / "history" / "plans-2026-11-04.3.json"
+        result = R.rollback(self.catalogue_dir, "2026-11-04.3", by="reviewer",
+                            reason="revert the trial price")
+        self.assertTrue(result["rolled_back"])
+        self.assertEqual((self.catalogue_dir / "plans.json").read_bytes(),
+                         archive.read_bytes())
+
+    def test_activation_after_rollback_succeeds(self):
+        raw_before = (self.catalogue_dir / "plans.json").read_bytes()
+        self._activate_demo_change()
+        # History stores raw bytes: rewrite the archive the fixed writer leaves.
+        archive = self.catalogue_dir / "history" / "plans-2026-11-04.3.json"
+        archive.write_bytes(raw_before)
+        R.rollback(self.catalogue_dir, "2026-11-04.3", by="reviewer")
+        self.active = M.load_plan_catalogue(self.catalogue_dir / "plans.json")
+        archive_before = archive.read_bytes()
+        result = self._activate_demo_change()
+        self.assertTrue(result["activated"])
+        self.assertEqual(result["to_version"], "2026-11-04.5")
+        self.assertEqual(archive.read_bytes(), archive_before,
+                         "a matching archive is reused, not rewritten")
+
+    def test_a_conflicting_archive_still_blocks_activation(self):
+        forged = json.loads((self.catalogue_dir / "plans.json").read_text())
+        forged["plans"][0]["price"]["amount"] = 999.0
+        history = self.catalogue_dir / "history"
+        history.mkdir(parents=True, exist_ok=True)
+        (history / "plans-2026-11-04.3.json").write_text(json.dumps(forged))
+        revision = self.stage("demo-change")
+        R.approve(self.catalogue_dir, revision["revision_id"],
+                  {"price_changed:opencode-go.go": "accept",
+                   "price_changed:opencode-go.go-plus": "accept"},
+                  by="reviewer", catalogue=self.active)
+        with self.assertRaises(ValueError) as ctx:
+            R.activate(self.catalogue_dir, revision["revision_id"],
+                       by="reviewer", catalogue=self.active)
+        self.assertIn("history archive already exists with different content",
+                      str(ctx.exception))
+
+    def test_catalogue_moves_do_not_rewrite_personal_fees(self):
+        catalogue = M.load_plan_catalogue(self.catalogue_dir / "plans.json")
+        overridden = self._account("opencode-go.go", "opencode-go", amount=9.0)
+        tracking = self._account("opencode-go.go", "opencode-go")
+        untouched = self._account("openai-codex.chatgpt-plus", "openai-codex")
+        before = [M.resolve_fee(a, catalogue) for a in
+                  (overridden, tracking, untouched)]
+        self._activate_demo_change()
+        updated = M.load_plan_catalogue(self.catalogue_dir / "plans.json")
+        after = [M.resolve_fee(a, updated) for a in
+                 (overridden, tracking, untouched)]
+        self.assertEqual(after[0]["basis"], "declared")
+        self.assertEqual(after[0]["effective"], before[0]["effective"])
+        self.assertEqual(after[1]["effective"]["amount"], 12.0)
+        self.assertEqual(after[1]["published"]["plan_id"], "opencode-go.go")
+        self.assertEqual(after[2]["effective"], before[2]["effective"])
 
 
 class RouteEligibility(CatalogueCase):

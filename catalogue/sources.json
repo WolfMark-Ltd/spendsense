@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-04T05:29:18Z",
+  "generated_at": "2026-11-04T10:59:31Z",
   "notes": [
     "One row per source the catalogue cites. A row is evidence provenance, not coverage: 'parsed' is true only where an adapter exists.",
     "evidence_kind is closed: price_page, token_price_page, product_page, docs_only, balance_api, aggregator, cannot_price.",
@@ -62,9 +62,7 @@
     },
     {
       "adapter": "manual",
-      "cited_by": [
-        "commandcode.go"
-      ],
+      "cited_by": [],
       "complete": false,
       "evidence_kind": "product_page",
       "family": "commandcode",
@@ -79,18 +77,16 @@
     },
     {
       "adapter": "manual",
-      "cited_by": [
-        "commandcode.goat"
-      ],
+      "cited_by": [],
       "complete": false,
       "evidence_kind": "product_page",
       "family": "commandcode",
       "fetched_url": "https://commandcode.ai/docs/plans/goat",
       "http_status": 200,
       "id": "commandcode-goat-plan",
-      "notes": "GOAT plan page confirms Provider API access is metered against GOAT credits, and states up to $20 per 5 hours, $50 per 7 days, and $100 per month. Checked 30 October 2026.",
+      "notes": "GOAT plan page confirms Provider API access is metered against GOAT credits, and states up to $20 per 5 hours, $50 per 7 days, and $100 per month. Re-read 4 Nov 2026.",
       "parsed": false,
-      "retrieved_at": "2026-10-30T21:02:11Z",
+      "retrieved_at": "2026-11-04T10:38:27Z",
       "status": "fetched",
       "url": "https://commandcode.ai/docs/plans/goat"
     },
@@ -120,9 +116,7 @@
     },
     {
       "adapter": "manual",
-      "cited_by": [
-        "commandcode.provider"
-      ],
+      "cited_by": [],
       "complete": false,
       "evidence_kind": "docs_only",
       "family": "commandcode",
@@ -131,7 +125,7 @@
       "id": "commandcode-provider-api",
       "notes": "The Provider API page describes $15/month plus a $1.01 processing fee and identifies Provider as a separate pay-as-you-go plan.",
       "parsed": false,
-      "retrieved_at": "2026-10-30T21:02:11Z",
+      "retrieved_at": null,
       "status": "fetched",
       "url": "https://commandcode.ai/docs/provider"
     },
@@ -242,7 +236,6 @@
     {
       "adapter": "manual",
       "cited_by": [
-        "alibaba-coding-plan.standard",
         "cline-pass.standard",
         "kimi-code-plan-global.standard",
         "minimax-coding-plan.standard",
@@ -297,11 +290,10 @@
     },
     {
       "adapter": "manual",
-      "alias_of": "nous-portal",
       "cited_by": [
-        "nous.portal",
         "nous.free",
         "nous.plus",
+        "nous.portal",
         "nous.super",
         "nous.ultra"
       ],
@@ -448,7 +440,11 @@
     {
       "adapter": "manual",
       "cited_by": [
-        "tencent-coding-plan.standard"
+        "tencent-coding-plan.standard",
+        "tencent-coding-plan.token-lite",
+        "tencent-coding-plan.token-max",
+        "tencent-coding-plan.token-pro",
+        "tencent-coding-plan.token-standard"
       ],
       "complete": true,
       "evidence_kind": "price_page",
@@ -456,7 +452,7 @@
       "fetched_url": "https://intl.cloud.tencent.com/document/product/1300/81315",
       "http_status": 200,
       "id": "tencent-coding-plan",
-      "notes": "Token Plan Personal Edition (Singapore): Lite $7, Standard $17, Pro $51, Max $103/month with monthly credit pools. The catalogue carries one generic entry pending a tier split. Page updated 4 Nov 2026; tiers unchanged.",
+      "notes": "Token Plan Personal Edition (Singapore): Lite $7, Standard $17, Pro $51, Max $103/month with monthly credit pools. Four tier plans verified; the generic entry is kept unpriced for existing selections.",
       "parsed": false,
       "retrieved_at": "2026-11-04T05:29:18Z",
       "status": "fetched",
@@ -473,7 +469,7 @@
       "fetched_url": "https://app.umans.ai/pricing",
       "http_status": 200,
       "id": "umans-ai",
-      "notes": "Publishes per-token rates for open models; the page sells a top-up wallet ('Pay per token'), with no subscription, seat or quota window. Reclassification staged.",
+      "notes": "Publishes per-token rates for open models; the page sells a top-up wallet ('Pay per token'), with no subscription, seat or quota window. Reclassified to a prepaid wallet in catalogue 2026-11-04.3.",
       "parsed": false,
       "retrieved_at": "2026-11-04T04:20:20Z",
       "status": "fetched",

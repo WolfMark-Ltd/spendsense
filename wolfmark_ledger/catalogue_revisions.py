@@ -375,6 +375,7 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     handle = tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, suffix=".tmp")
     try:
         json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
         handle.flush()
         os.fsync(handle.fileno())
         handle.close()
@@ -382,6 +383,42 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     finally:
         if not handle.closed:
             handle.close()
+
+
+def _read_raw(path: Path | str) -> tuple[bytes, dict[str, Any]]:
+    """Read a persisted catalogue file as stored bytes plus parsed content.
+
+    The loader normalises (drops top-level notes, fills plan defaults), so
+    anything the workflow persists must start from these raw bytes — never
+    from a loaded catalogue — or activation would corrupt what it saves.
+    """
+    raw_bytes = Path(path).read_bytes()
+    return raw_bytes, json.loads(raw_bytes.decode("utf-8-sig"))
+
+
+def _ensure_archive(hist: Path | str, version: str, raw_bytes: bytes) -> Path:
+    """Store raw bytes as the archive for ``version``, byte for byte.
+
+    An archive that already holds the same content is reused untouched, so a
+    rollback followed by another activation does not trip over its own
+    history. An archive with different content is a genuine conflict and is
+    never overwritten. Comparison is on parsed content so formatting alone
+    never counts as a difference.
+    """
+    hist = Path(hist)
+    hist.mkdir(parents=True, exist_ok=True)
+    archive = hist / f"plans-{version}.json"
+    if archive.exists():
+        try:
+            existing = json.loads(archive.read_bytes().decode("utf-8-sig"))
+        except (OSError, ValueError):
+            existing = None
+        if existing != json.loads(raw_bytes.decode("utf-8-sig")):
+            raise ValueError(
+                f"history archive already exists with different content: {archive.name}")
+        return archive
+    archive.write_bytes(raw_bytes)
+    return archive
 
 
 def correction_report(catalogue: Mapping[str, Any], corrections: list[dict[str, Any]]) -> dict[str, Any]:
@@ -663,34 +700,27 @@ def activate(catalogue_dir: Path | str, revision_id: str, *, by: str, dry_run: b
     decision. Archives the outgoing catalogue under ``history/`` first.
     """
     revision = load_revision(catalogue_dir, revision_id)
-    active = catalogue if catalogue is not None else _load_active(catalogue_dir)
+    target = Path(catalogue_dir) / "plans.json"
+    raw_bytes, raw = _read_raw(target)
+    active = catalogue if catalogue is not None else mem.load_plan_catalogue(raw)
     problems = validate(revision, active)
     if problems:
         raise ValueError("revision cannot be activated: " + "; ".join(problems[:6]))
     if str(revision.get("status")) not in ("approved", "staged"):
         raise ValueError(f"revision status is {revision.get('status')!r}")
-    candidate = build_candidate(active, revision.get("observations") or [], revision.get("diff") or {},
+    candidate = build_candidate(raw, revision.get("observations") or [], revision.get("diff") or {},
                                 revision.get("decisions") or {},
                                 version=str(revision.get("proposed_version")))
     mem.load_plan_catalogue(candidate)  # last gate: the loader accepts it
-    result = {"revision_id": revision_id, "from_version": active.get("catalogue_version"),
+    result = {"revision_id": revision_id, "from_version": raw.get("catalogue_version"),
               "to_version": candidate.get("catalogue_version"),
               "changes": len((revision.get("diff") or {}).get("changes") or []),
               "dry_run": bool(dry_run), "activated": False}
     if dry_run:
         result["candidate"] = candidate
         return result
-    target = Path(catalogue_dir) / "plans.json"
-    archive = history_dir(catalogue_dir) / f"plans-{active.get('catalogue_version') or 'unknown'}.json"
-    if archive.exists():
-        try:
-            existing_archive = json.loads(archive.read_text())
-        except (OSError, ValueError):
-            existing_archive = None
-        if existing_archive != dict(active):
-            raise ValueError(
-                f"history archive already exists with different content: {archive.name}")
-    _write_json(archive, active)
+    archive = _ensure_archive(history_dir(catalogue_dir),
+                              str(raw.get("catalogue_version") or "unknown"), raw_bytes)
     _write_json(target, candidate)
     revision = {**revision, "status": "activated", "applied_version": candidate.get("catalogue_version"),
                 "activated_at": now_iso(), "activated_by": by,
@@ -708,8 +738,11 @@ def rollback(catalogue_dir: Path | str, version: str, *, by: str, dry_run: bool 
     source = history_dir(catalogue_dir) / f"plans-{version}.json"
     if not source.exists():
         raise KeyError(f"no archived catalogue for version {version}")
-    restored = mem.load_plan_catalogue(source)
-    current = _load_active(catalogue_dir)
+    restored_bytes, restored_raw = _read_raw(source)
+    restored = mem.load_plan_catalogue(restored_raw)
+    target = Path(catalogue_dir) / "plans.json"
+    current_bytes, current_raw = _read_raw(target)
+    current = mem.load_plan_catalogue(current_raw)
     record = {
         "revision_id": f"rev-rollback-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
         "created_at": now_iso(), "status": "rollback", "note": reason or f"restore {version}",
@@ -724,18 +757,9 @@ def rollback(catalogue_dir: Path | str, version: str, *, by: str, dry_run: bool 
               "dry_run": bool(dry_run), "rolled_back": False, "revision_id": record["revision_id"]}
     if dry_run:
         return result
-    target = Path(catalogue_dir) / "plans.json"
-    archive = history_dir(catalogue_dir) / f"plans-{current.get('catalogue_version') or 'unknown'}.json"
-    if archive.exists():
-        try:
-            existing_archive = json.loads(archive.read_text())
-        except (OSError, ValueError):
-            existing_archive = None
-        if existing_archive != dict(current):
-            raise ValueError(
-                f"history archive already exists with different content: {archive.name}")
-    _write_json(archive, current)
-    _write_json(target, restored)
+    _ensure_archive(history_dir(catalogue_dir),
+                    str(current.get("catalogue_version") or "unknown"), current_bytes)
+    target.write_bytes(restored_bytes)
     record["applied_version"] = restored.get("catalogue_version")
     _write_json(revisions_dir(catalogue_dir) / f"{record['revision_id']}.json", record)
     result["rolled_back"] = True

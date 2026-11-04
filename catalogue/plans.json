@@ -3066,6 +3066,15 @@
       "url": "https://commandcode.ai/docs/plans/go"
     },
     {
+      "complete": false,
+      "http_status": 200,
+      "id": "commandcode-goat-plan",
+      "notes": "GOAT plan page: $10/month with up to $100 of credits; $20/5h, $50/7d, $100/month windows; Provider API access metered against GOAT credits. Read 4 Nov 2026.",
+      "retrieved_at": "2026-11-04T10:38:27Z",
+      "status": "fetched",
+      "url": "https://commandcode.ai/docs/plans/goat"
+    },
+    {
       "complete": true,
       "http_status": 200,
       "id": "commandcode-pricing",
@@ -3188,6 +3197,7 @@
       "url": "https://help.openai.com/en/articles/8542115-chatgpt-business-general-faq"
     },
     {
+      "http_status": 200,
       "id": "openai-chatgpt-pricing",
       "notes": "Plan list and feature matrix render server-side; the per-plan price is injected client-side, so figures were confirmed from two independent secondary trackers. Re-checked 4 Nov 2026: still zero prices in static HTML; Business page adds unpriced Standard/Premium seats.",
       "retrieved_at": "2026-11-04T04:20:20Z",
