@@ -489,9 +489,10 @@ class CatalogueVersionTests(unittest.TestCase):
                       "2026-11-04", "2026-11-04.x", "2026-13-01.1",
                       "2026-11-40.1", "11-04-2026.1", "2026-11-04.1.2",
                       "2026-1-4.1", "2026-11-4.12", "v2026-11-04.1",
-                      "2026-11-04.²", "２０２６-11-04.1"):
+                      "2026-11-04.²", "２０２６-11-04.1",
+                      "2026-11-04." + "9" * 5000):
             self.assertIsNone(live.parse_catalogue_version(value),
-                              f"must not parse: {value!r}")
+                              f"must not parse: {value!r}"[:60])
 
     def test_compare_orders_by_date_then_counter(self):
         compare = live.compare_catalogue_versions
@@ -569,8 +570,10 @@ class StaleLiveHoldbackTests(LiveTestCase):
 
     def test_hostile_live_version_fails_open_without_crashing(self):
         # Versions the loader accepts but the comparator must refuse
-        # (non-ASCII counters, short dates) keep serving live, never raise.
-        for hostile in ("2026-11-04.²", "2026-1-4.1", "２０２６-11-04.1"):
+        # (non-ASCII counters, short dates, absurd digit runs) keep
+        # serving live, never raise.
+        for hostile in ("2026-11-04.²", "2026-1-4.1", "２０２６-11-04.1",
+                        "2026-11-04." + "9" * 5000):
             book, source = self.select(hostile)
             self.assertEqual(source, "live", f"must fail open: {hostile!r}")
             self.assertEqual(book["plans"][0]["id"], "live-plan")

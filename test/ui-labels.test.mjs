@@ -409,10 +409,13 @@ test('whole-account exhaustion labels translate at display time', () => {
     const entry = T.I18N[language][key]
     return typeof entry === 'function' ? entry(...args) : entry ?? key
   }
+  const accountMark = { id: 'account', label: 'Account', scope: 'account',
+    used_percent: 100, used_percent_from: 'manual', state: 'manual',
+    basis: ['manual'], source: 'you',
+    manual: { scope: { kind: 'account', id: 'account' }, status: 'active' } }
   const marked = {
     quota: { windows: [
-      { id: 'account', label: 'Account', scope: 'account', used_percent: 100,
-        used_percent_from: 'manual', state: 'manual', basis: ['manual'] },
+      accountMark,
       { id: 'win-1', label: 'Nightly', scope: 'account', used_percent: 24,
         state: 'live', basis: ['provider_reported'] },
     ] },
@@ -428,8 +431,14 @@ test('whole-account exhaustion labels translate at display time', () => {
   assert.equal(zhRows[1].label, 'Nightly')
   // A label persisted in the other language never leaks through a switch.
   const legacyZh = { ...marked,
-    quota: { windows: [{ ...marked.quota.windows[0], label: '账户' }] } }
+    quota: { windows: [{ ...accountMark, label: '账户' }] } }
   assert.equal(T.quotaRows(legacyZh, Date.now(), translator('en'))[0].label, 'Account')
+  // A provider window keeps its own label even if its ID is account.
+  const providerAccount = { id: 'account', label: 'Provider Account', scope: 'account',
+    used_percent: 10, state: 'live', basis: ['provider_reported'], source: 'native' }
+  const rows = T.quotaRows({ ...marked, quota: { windows: [providerAccount] } },
+    Date.now(), translator('zh'))
+  assert.equal(rows[0].label, 'Provider Account')
   // Without a translator the legacy neutral label renders as before.
   assert.equal(T.quotaRows(marked)[0].label, 'Account')
 })

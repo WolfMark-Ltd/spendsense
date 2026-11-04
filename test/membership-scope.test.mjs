@@ -2663,7 +2663,9 @@ test('PR26 review: account-scope exhaustion rows follow the UI language', async 
     T.$ledgerTab.set('memberships')
     const sub = account('anthropic:default', {
       quota: { windows: [{ id: 'account', label: 'Account', scope: 'account',
-        used_percent: 100, used_percent_from: 'manual', state: 'manual', basis: ['manual'] }] },
+        used_percent: 100, used_percent_from: 'manual', state: 'manual',
+        basis: ['manual'], source: 'you',
+        manual: { scope: { kind: 'account', id: 'account' }, status: 'active' } }] },
       manual_exhaustions: [{ id: 'manual-1',
         scope: { kind: 'account', id: 'account', label: 'Account' } }],
     })

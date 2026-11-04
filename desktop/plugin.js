@@ -4986,14 +4986,13 @@ function feeLabel(fee, t = needsAttentionEn) {
 function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
   const quota = account?.quota || {}
   const windows = Array.isArray(quota.windows) ? quota.windows : []
-  // Whole-account marks persist a language-neutral label; the translated
-  // scope name is applied here at display time, so switching languages
-  // never leaves the previous language on the row.
-  const accountMarked = new Set(
-    (account?.manual_exhaustions || [])
-      .filter(entry => entry?.scope?.kind === 'account')
-      .map(entry => entry.scope.id))
   return windows.map(window => {
+    // Whole-account marks persist a language-neutral label; the translated
+    // scope name applies at display time from the row's own evaluated mark,
+    // so switching languages never leaves the previous language on the row.
+    // A provider window keeps its own label even if its ID is account.
+    const manual = window.manual
+    const isAccountMark = manual?.scope?.kind === 'account' && window.source === 'you'
     // `Number(null)` is 0, so an absent reading must be excluded before coercion
     // or every window without a percentage would render as "0% used".
     const raw = window.used_percent
@@ -5015,7 +5014,7 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
     const source = fromManual ? t('memQuotaSrcYou') : bases.includes('provider_reported') ? t('memQuotaSrcProvider') : t('memQuotaSrcNone')
     const reset = window.reset_at ? t('memQuotaResets', fmtReset(window.reset_at), fmtCountdown(window.reset_at, now, t)) : ''
     return {
-      id: window.id, label: accountMarked.has(window.id) ? t('memScopeAccount') : (window.label || window.id),
+      id: window.id, label: isAccountMark ? t('memScopeAccount') : (window.label || window.id),
       scope: window.scope || 'account',
       reading, source, reset, state, conflict: !!window.conflict,
       manual: window.manual || null,

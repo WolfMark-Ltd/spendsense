@@ -87,10 +87,12 @@ def parse_catalogue_version(value: Any) -> Optional[tuple[int, int, int, int]]:
     match = _VERSION_RE.match(str(value or "").strip())
     if not match:
         return None
-    year, month, day, counter = (int(part) for part in match.groups())
     try:
+        year, month, day, counter = (int(part) for part in match.groups())
         datetime(year, month, day)
     except ValueError:
+        # The counter has no length cap, so absurd digit runs exceed
+        # int()'s conversion limit; uncomparable, never an error.
         return None
     return (year, month, day, counter)
 
