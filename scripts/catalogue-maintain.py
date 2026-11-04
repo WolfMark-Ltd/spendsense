@@ -227,8 +227,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "activate":
         try:
-            result = revisions.activate(cdir, args.revision_id, by=args.by, dry_run=args.dry_run,
-                                        catalogue=active)
+            result = revisions.activate(cdir, args.revision_id, by=args.by, dry_run=args.dry_run)
         except (ValueError, KeyError) as exc:
             print(f"cannot activate: {exc}", file=sys.stderr)
             return 2

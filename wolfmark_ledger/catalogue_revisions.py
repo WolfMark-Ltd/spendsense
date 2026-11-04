@@ -707,17 +707,27 @@ def _load_active(catalogue_dir: Path | str) -> dict[str, Any]:
     return mem.load_plan_catalogue(Path(catalogue_dir) / "plans.json")
 
 
-def activate(catalogue_dir: Path | str, revision_id: str, *, by: str, dry_run: bool = False,
-             catalogue: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
+def activate(catalogue_dir: Path | str, revision_id: str, *, by: str,
+             dry_run: bool = False) -> dict[str, Any]:
     """Promote a revision to the active catalogue.
 
     Refuses unless the revision validated cleanly and every blocking change has a
     decision. Archives the outgoing catalogue under ``history/`` first.
+
+    Validation and the candidate build both start from the catalogue on disk,
+    and the disk version must still match the revision's base: decisions
+    recorded against an older catalogue never apply to a newer one.
     """
     revision = load_revision(catalogue_dir, revision_id)
     target = Path(catalogue_dir) / "plans.json"
     raw_bytes, raw = _read_raw(target)
-    active = catalogue if catalogue is not None else mem.load_plan_catalogue(raw)
+    active = mem.load_plan_catalogue(raw)
+    base = str(revision.get("base_version") or "")
+    current = str(raw.get("catalogue_version") or "")
+    if current != base:
+        raise ValueError(
+            f"revision base {base or 'unknown'} does not match the active catalogue "
+            f"{current or 'unknown'}; re-stage against the current version")
     problems = validate(revision, active)
     if problems:
         raise ValueError("revision cannot be activated: " + "; ".join(problems[:6]))

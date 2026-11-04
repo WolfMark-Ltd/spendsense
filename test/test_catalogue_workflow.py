@@ -158,7 +158,7 @@ class StagingAndApproval(CatalogueCase):
         approved = R.approve(self.catalogue_dir, revision["revision_id"],
                              {"price_changed:opencode-go.go": "accept",
                               "price_changed:opencode-go.go-plus": "accept"},
-                             by="reviewer", catalogue=self.active)
+                             by="reviewer")
         self.assertEqual(approved["status"], "approved")
         self.assertTrue(approved["validation"]["ok"], approved["validation"]["problems"])
         self.assertEqual(approved["approvals"][0]["by"], "reviewer")
@@ -167,17 +167,17 @@ class StagingAndApproval(CatalogueCase):
         revision = self.stage("demo-change")
         with self.assertRaises(ValueError):
             R.approve(self.catalogue_dir, revision["revision_id"], {"price_changed:nope": "accept"},
-                      by="reviewer", catalogue=self.active)
+                      by="reviewer")
 
     def test_an_approval_needs_a_named_approver(self):
         revision = self.stage("demo-change")
         with self.assertRaises(ValueError):
-            R.approve(self.catalogue_dir, revision["revision_id"], {}, by="", catalogue=self.active)
+            R.approve(self.catalogue_dir, revision["revision_id"], {}, by="")
 
     def test_activation_refuses_while_a_material_change_is_undecided(self):
         revision = self.stage("demo-change")
         with self.assertRaises(ValueError) as ctx:
-            R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer", catalogue=self.active)
+            R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")
         self.assertIn("no decision recorded", str(ctx.exception))
 
 
@@ -190,7 +190,7 @@ class Activation(CatalogueCase):
     def test_activation_applies_accepted_changes_and_keeps_rejected_ones(self):
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "reject"})
-        result = R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer", catalogue=self.active)
+        result = R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")
         self.assertTrue(result["activated"])
         self.assertEqual(result["to_version"], "2026-11-04.4")
         updated = M.load_plan_catalogue(self.catalogue_dir / "plans.json")
@@ -202,7 +202,7 @@ class Activation(CatalogueCase):
     def test_activation_archives_the_outgoing_version(self):
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "accept"})
-        R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer", catalogue=self.active)
+        R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")
         archived = list((self.catalogue_dir / "history").glob("plans-*.json"))
         self.assertEqual(len(archived), 1)
         restored = M.load_plan_catalogue(archived[0])
@@ -213,8 +213,7 @@ class Activation(CatalogueCase):
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "accept"})
         before = (self.catalogue_dir / "plans.json").read_bytes()
-        result = R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer", dry_run=True,
-                            catalogue=self.active)
+        result = R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer", dry_run=True)
         self.assertFalse(result["activated"])
         self.assertIn("candidate", result)
         self.assertEqual((self.catalogue_dir / "plans.json").read_bytes(), before)
@@ -222,7 +221,7 @@ class Activation(CatalogueCase):
     def test_rollback_restores_the_archive(self):
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "accept"})
-        R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer", catalogue=self.active)
+        R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")
         rolled = M.load_plan_catalogue(self.catalogue_dir / "plans.json")
         self.assertEqual(self.plan(rolled, "opencode-go.go")["price"]["amount"], 12.0)
         result = R.rollback(self.catalogue_dir, "2026-11-04.3", by="reviewer", reason="revert the trial price")
@@ -242,7 +241,7 @@ class Activation(CatalogueCase):
     def test_rollback_refuses_to_overwrite_a_conflicting_archive(self):
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "accept"})
-        R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer", catalogue=self.active)
+        R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")
         planted = dict(M.load_plan_catalogue(self.catalogue_dir / "plans.json"))
         planted["plans"] = [{**p, "price": {**p["price"], "amount": 999.0}}
                             if p["id"] == "opencode-go.go" else p for p in planted["plans"]]
@@ -258,7 +257,7 @@ class Activation(CatalogueCase):
     def test_rollback_reuses_an_identical_archive(self):
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "accept"})
-        R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer", catalogue=self.active)
+        R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")
         # Archives store the raw persisted bytes, so an identical archive is a
         # byte copy of the active catalogue — not the loader-normalised form.
         current = (self.catalogue_dir / "plans.json").read_bytes()
@@ -281,7 +280,7 @@ class Activation(CatalogueCase):
         before = memberships.read_bytes()
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "accept"})
-        R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer", catalogue=self.active)
+        R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")
         R.rollback(self.catalogue_dir, "2026-11-04.3", by="reviewer")
         self.assertEqual(memberships.read_bytes(), before,
                          "a catalogue change must never rewrite a personal fee override")
@@ -299,9 +298,9 @@ class ActivationRoundTripTests(CatalogueCase):
         R.approve(self.catalogue_dir, revision["revision_id"],
                   {"price_changed:opencode-go.go": "accept",
                    "price_changed:opencode-go.go-plus": "accept"},
-                  by="reviewer", catalogue=catalogue or self.active)
+                  by="reviewer")
         return R.activate(self.catalogue_dir, revision["revision_id"],
-                          by="reviewer", catalogue=catalogue or self.active)
+                          by="reviewer")
 
     def _account(self, plan_id, family, amount=None):
         overrides = []
@@ -362,6 +361,25 @@ class ActivationRoundTripTests(CatalogueCase):
         self.assertEqual(archive.read_bytes(), archive_before,
                          "a matching archive is reused, not rewritten")
 
+    def test_activation_rejects_a_stale_base_version(self):
+        stale = self.stage("demo-change")
+        mover = R.stage(self.catalogue_dir, self.active, [], [], corrections=[{
+            "plan_id": "openai-codex.chatgpt-plus", "field": "verification_note",
+            "value": "mover probe", "why": "advance the disk version",
+            "evidence": {"source_id": "openai-chatgpt-pricing"}}])
+        R.approve(self.catalogue_dir, mover["revision_id"], {}, by="reviewer")
+        R.activate(self.catalogue_dir, mover["revision_id"], by="reviewer")
+        R.approve(self.catalogue_dir, stale["revision_id"],
+                  {"price_changed:opencode-go.go": "accept",
+                   "price_changed:opencode-go.go-plus": "accept"},
+                  by="reviewer")
+        before = (self.catalogue_dir / "plans.json").read_bytes()
+        with self.assertRaises(ValueError) as ctx:
+            R.activate(self.catalogue_dir, stale["revision_id"], by="reviewer")
+        self.assertIn("does not match the active catalogue", str(ctx.exception))
+        self.assertEqual((self.catalogue_dir / "plans.json").read_bytes(), before,
+                         "a rejected activation must not touch the catalogue")
+
     def test_a_conflicting_archive_still_blocks_activation(self):
         forged = json.loads((self.catalogue_dir / "plans.json").read_text())
         forged["plans"][0]["price"]["amount"] = 999.0
@@ -372,10 +390,10 @@ class ActivationRoundTripTests(CatalogueCase):
         R.approve(self.catalogue_dir, revision["revision_id"],
                   {"price_changed:opencode-go.go": "accept",
                    "price_changed:opencode-go.go-plus": "accept"},
-                  by="reviewer", catalogue=self.active)
+                  by="reviewer")
         with self.assertRaises(ValueError) as ctx:
             R.activate(self.catalogue_dir, revision["revision_id"],
-                       by="reviewer", catalogue=self.active)
+                       by="reviewer")
         self.assertIn("history archive already exists with different content",
                       str(ctx.exception))
 
