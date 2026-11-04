@@ -268,7 +268,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write", action="store_true", help="write catalogue/sources.json")
     args = parser.parse_args()
-    plans_doc = json.loads((CATALOGUE / "plans.json").read_text())
+    plans_doc = json.loads((CATALOGUE / "plans.json").read_text(encoding="utf-8"))
     register = build(plans_doc)
     rows = register["sources"]
     cited = set()
@@ -287,7 +287,8 @@ def main() -> int:
         return 1
     if args.write:
         (CATALOGUE / "sources.json").write_text(
-            json.dumps(register, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+            json.dumps(register, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+            encoding="utf-8")
         print("written catalogue/sources.json")
     return 0
 

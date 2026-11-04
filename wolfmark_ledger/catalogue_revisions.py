@@ -396,6 +396,21 @@ def _read_raw(path: Path | str) -> tuple[bytes, dict[str, Any]]:
     return raw_bytes, json.loads(raw_bytes.decode("utf-8-sig"))
 
 
+def _write_bytes_atomic(path: Path, data: bytes) -> None:
+    """Write bytes atomically: temp file in the destination directory, then replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False, suffix=".tmp")
+    try:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+        handle.close()
+        os.replace(handle.name, path)
+    finally:
+        if not handle.closed:
+            handle.close()
+
+
 def _ensure_archive(hist: Path | str, version: str, raw_bytes: bytes) -> Path:
     """Store raw bytes as the archive for ``version``, byte for byte.
 
@@ -417,7 +432,7 @@ def _ensure_archive(hist: Path | str, version: str, raw_bytes: bytes) -> Path:
             raise ValueError(
                 f"history archive already exists with different content: {archive.name}")
         return archive
-    archive.write_bytes(raw_bytes)
+    _write_bytes_atomic(archive, raw_bytes)
     return archive
 
 
@@ -759,7 +774,7 @@ def rollback(catalogue_dir: Path | str, version: str, *, by: str, dry_run: bool 
         return result
     _ensure_archive(history_dir(catalogue_dir),
                     str(current.get("catalogue_version") or "unknown"), current_bytes)
-    target.write_bytes(restored_bytes)
+    _write_bytes_atomic(target, restored_bytes)
     record["applied_version"] = restored.get("catalogue_version")
     _write_json(revisions_dir(catalogue_dir) / f"{record['revision_id']}.json", record)
     result["rolled_back"] = True
