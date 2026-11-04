@@ -319,20 +319,20 @@ class ActivationRoundTripTests(CatalogueCase):
 
     def test_activation_preserves_existing_notes(self):
         before = json.loads(
-            (self.catalogue_dir / "plans.json").read_text())["notes"]
+            (self.catalogue_dir / "plans.json").read_text(encoding="utf-8"))["notes"]
         self.assertTrue(before, "the fixture catalogue carries notes")
         self._activate_demo_change()
         after = json.loads(
-            (self.catalogue_dir / "plans.json").read_text())["notes"]
+            (self.catalogue_dir / "plans.json").read_text(encoding="utf-8"))["notes"]
         self.assertEqual(after[:len(before)], before)
         self.assertIn("accepted change(s)", after[-1])
 
     def test_activation_introduces_no_unexpected_plan_fields(self):
         before = {p["id"]: set(p) for p in json.loads(
-            (self.catalogue_dir / "plans.json").read_text())["plans"]}
+            (self.catalogue_dir / "plans.json").read_text(encoding="utf-8"))["plans"]}
         self._activate_demo_change()
         after = json.loads(
-            (self.catalogue_dir / "plans.json").read_text())["plans"]
+            (self.catalogue_dir / "plans.json").read_text(encoding="utf-8"))["plans"]
         self.assertEqual({p["id"] for p in after}, set(before))
         for plan in after:
             self.assertEqual(set(plan) - before[plan["id"]], set(), plan["id"])
@@ -381,7 +381,7 @@ class ActivationRoundTripTests(CatalogueCase):
                          "a rejected activation must not touch the catalogue")
 
     def test_a_conflicting_archive_still_blocks_activation(self):
-        forged = json.loads((self.catalogue_dir / "plans.json").read_text())
+        forged = json.loads((self.catalogue_dir / "plans.json").read_text(encoding="utf-8"))
         forged["plans"][0]["price"]["amount"] = 999.0
         history = self.catalogue_dir / "history"
         history.mkdir(parents=True, exist_ok=True)
