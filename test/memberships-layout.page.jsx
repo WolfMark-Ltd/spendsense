@@ -69,7 +69,11 @@ try {
         await step(150, () => click(card.querySelector('[data-group="allowances"] > summary')))
         await step(150, () => {
           const li = card.querySelector('li[data-window="win-2"]')
-          click([...li.querySelectorAll('button')].find(b => b.textContent === 'Mark exhausted'))
+          // Key-tolerant: the harness translator echoes i18n keys, so the
+          // button reads memMarkExhausted there and Mark exhausted in English.
+          const markLabel = b => (b.textContent || '').replace(/\s+/g, '').toLowerCase()
+          click([...li.querySelectorAll('button')]
+            .find(b => ['markexhausted', 'memmarkexhausted'].includes(markLabel(b))))
         })
         await step(150, () => {
           const form = card.querySelector('form.wm-exhaustion-form')

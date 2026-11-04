@@ -68,6 +68,53 @@ def validate_feed(raw: Any) -> tuple[Optional[dict[str, Any]], list[str]]:
     return book, problems
 
 
+def parse_catalogue_version(value: Any) -> Optional[tuple[int, int, int, int]]:
+    """Ordering key for a ``YYYY-MM-DD.N`` catalogue version.
+
+    Returns ``(year, month, day, counter)``, or ``None`` when the value
+    is not a strict calendar version. Anything unparseable is
+    uncomparable: callers fail open (keep the existing behaviour) and
+    never guess an order.
+    """
+    text = str(value or "").strip()
+    head, dot, tail = text.rpartition(".")
+    if not dot or not tail.isdigit():
+        return None
+    try:
+        day = datetime.strptime(head, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return (day.year, day.month, day.day, int(tail))
+
+
+def compare_catalogue_versions(first: Any, second: Any) -> Optional[int]:
+    """Three-way catalogue order: -1, 0 or 1.
+
+    Returns ``None`` when either side does not parse: unknown means
+    unknown, and the caller decides the safe default.
+    """
+    left = parse_catalogue_version(first)
+    right = parse_catalogue_version(second)
+    if left is None or right is None:
+        return None
+    return (left > right) - (left < right)
+
+
+def central_is_stale(central_book: Optional[Mapping[str, Any]],
+                     bundled_book: Optional[Mapping[str, Any]]) -> bool:
+    """True only when the central copy is proven older than bundled.
+
+    Missing books, missing versions and unparseable versions all answer
+    False: the safeguard holds a live copy back only on proof, and every
+    other case keeps the long-standing selection behaviour.
+    """
+    central = central_book.get("catalogue_version") \
+        if isinstance(central_book, Mapping) else None
+    bundled = bundled_book.get("catalogue_version") \
+        if isinstance(bundled_book, Mapping) else None
+    return compare_catalogue_versions(central, bundled) == -1
+
+
 def load_cache(path: Optional[Path | str] = None) -> dict[str, Any]:
     """Read the cached central plans catalogue. Never raises."""
     target = Path(path) if path else cache_path()
@@ -132,9 +179,22 @@ def fetch_central(*, data_dir: Optional[Path | str] = None,
         book, problems = validate_feed(json.loads(body.decode("utf-8-sig")))
         if book is None:
             raise ValueError("; ".join(problems) or "invalid feed")
-        payload = {"version": PLANS_FEED_VERSION,
-                   "fetched_at": _now_iso(moment),
-                   "state": "ok", "error": "; ".join(problems), "book": book}
+        previous = cached.get("book")
+        if (isinstance(previous, dict) and previous.get("plans")
+                and compare_catalogue_versions(
+                    book.get("catalogue_version"),
+                    previous.get("catalogue_version")) == -1):
+            # The feed regressed (a stale publish after a newer one): keep
+            # the newest known-good copy instead of caching older data.
+            # fetched_at stays put: this data was not adopted now.
+            payload = {"version": PLANS_FEED_VERSION,
+                       "fetched_at": cached.get("fetched_at") or "",
+                       "state": "ok", "error": "", "book": previous}
+        else:
+            payload = {"version": PLANS_FEED_VERSION,
+                       "fetched_at": _now_iso(moment),
+                       "state": "ok", "error": "; ".join(problems),
+                       "book": book}
     except Exception as exc:  # noqa: BLE001 - any fetch failure keeps bundled plans working
         fetched_ok = False
         log.warning("spend-sense: plans feed fetch failed: %s", exc)

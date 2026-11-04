@@ -3793,7 +3793,7 @@ function OverviewPage() {
         jsxs('article', { className: 'wm-product-stat wm-kpi', children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovFeesLabel') }),
           jsx('div', { className: 'wm-kpi-figure', children: !accountsReady ? t('ovUnknown')
-            : feeEntries ? feesLabel(fees)
+            : feeEntries ? feesLabel(fees, t)
             : unknownFeeCount ? t('ovUnknown') : t('ovNoFees') }),
           jsx('p', { className: 'wm-kpi-prov', children: !accountsReady
             ? accounts.error ? t('ovFeesError') : t('ovFeesLoading')
@@ -4107,6 +4107,9 @@ function SettingsPage() {
               : null,
             newsCentralAlert(membershipBook.central, t)
               ? jsx('p', { className: 'wm-warn-note', role: 'status', children: 'Central catalogue: ' + newsCentralAlert(membershipBook.central, t) + (membershipBook.source === 'live' ? ' The cached live catalogue is shown.' : ' The bundled plans are shown.') })
+              : null,
+            membershipBook.source === 'bundled' && membershipBook.central?.held_back
+              ? jsx('p', { className: 'wm-warn-note', role: 'status', children: 'Central catalogue ' + (membershipBook.central.catalogue_version || 'update') + ' is older than the bundled copy; the bundled plans are shown.' })
               : null,
             jsxs('p', { children: [membershipBook.totals?.plans || 0, ' plans · ',
               membershipBook.totals?.verified || 0, ' verified prices · ',
@@ -4904,24 +4907,22 @@ function membershipErrorKind(error) {
 }
 
 /** Short, operation-specific text. Never a raw FastAPI/Pydantic payload. */
-function membershipErrorText(error, operation = 'read') {
+function membershipErrorText(error, operation = 'read', t = needsAttentionEn) {
   const { kind } = membershipErrorKind(error)
-  if (kind === 'storage') return 'The membership store could not be read, so nothing was changed. The file is preserved; fix or restore it before saving.'
-  if (kind === 'auth') return 'Your Desktop session has expired. Sign in again, then retry.'
-  if (kind === 'namespace') return 'The membership plugin is not available on this connection and profile. Choose the right connection, or check that the plugin is enabled here.'
-  if (kind === 'conflict') return 'This membership changed since you loaded it. Reload, then save again.'
-  if (kind === 'validation') return 'Some details are not valid. Check the amount, currency and dates.'
+  if (kind === 'storage') return t('memErrStorage')
+  if (kind === 'auth') return t('memErrAuth')
+  if (kind === 'namespace') return t('memErrNamespace')
+  if (kind === 'conflict') return t('memErrConflict')
+  if (kind === 'validation') return t('memErrValidation')
   if (kind === 'missing') {
-    if (operation === 'clear') return 'That mark is no longer there — it may have been cleared in another window.'
-    if (operation === 'write') return 'This account is no longer in the store for this connection. Reload the pane.'
-    return 'No memberships were recorded for this connection yet.'
+    if (operation === 'clear') return t('memErrMissingClear')
+    if (operation === 'write') return t('memErrMissingWrite')
+    return t('memErrMissingNone')
   }
-  if (kind === 'backend') return 'The backend answered with an error. Nothing was changed; retry once, then check its log.'
-  if (kind === 'timeout') return 'The backend did not answer in time. Nothing was changed; retry when the connection settles.'
-  if (kind === 'bridge') return 'This Desktop build has no plugin backend bridge, so memberships cannot be read.'
-  return operation === 'refresh'
-    ? 'Readings could not be refreshed. The previous reading is still shown.'
-    : 'That did not complete. Please retry; if it persists, check the backend log.'
+  if (kind === 'backend') return t('memErrBackend')
+  if (kind === 'timeout') return t('memErrTimeout')
+  if (kind === 'bridge') return t('memErrBridge')
+  return operation === 'refresh' ? t('memErrRefresh') : t('memErrGeneric')
 }
 
 /** Kept for older call sites: a read error is the common case. */
@@ -4960,29 +4961,29 @@ function fmtMoney(amount, currency) {
 }
 
 /** One sentence for the fee, always naming its basis. */
-function feeLabel(fee) {
-  if (!fee || typeof fee !== 'object') return 'No fee information'
+function feeLabel(fee, t = needsAttentionEn) {
+  if (!fee || typeof fee !== 'object') return t('memFeeNoInfo')
   const effective = fee.effective || {}
   const amount = fmtMoney(effective.amount, effective.currency)
-  const period = effective.period ? `/${String(effective.period).replace('month', 'mo').replace('year', 'yr')}` : ''
-  if (fee.basis === 'api_only') return 'Metered API · no recurring membership fee'
-  if (fee.basis === 'prepaid') return 'Prepaid credits · no recurring membership fee'
-  if (fee.basis === 'unconfirmed') return 'No confirmed billing arrangement'
+  const period = effective.period ? `/${t('memPeriodAbbr', String(effective.period))}` : ''
+  if (fee.basis === 'api_only') return t('memFeeMetered')
+  if (fee.basis === 'prepaid') return t('memFeePrepaid')
+  if (fee.basis === 'unconfirmed') return t('memFeeUnconfirmed')
   if (fee.basis === 'declared') {
     const published = fee.published ? fmtMoney(fee.published.amount, fee.published.currency) : null
     const comparable = fee.currency_comparable !== false
     const tail = published && comparable
-      ? ` (${fee.published.source === 'user_defined' ? 'plan default' : 'catalogue'} ${published})` : ''
-    return `Your price: ${amount}${period}${tail}`
+      ? t('memFeeTail', fee.published.source === 'user_defined' ? t('memFeeSrcCustom') : t('memFeeSrcCatalogue'), published) : ''
+    return t('memFeeYourPrice', amount, period, tail)
   }
-  if (fee.basis === 'custom') return `User-defined plan: ${amount}${period}`
-  if (fee.basis === 'catalogue') return `Catalogue: ${amount}${period}`
-  if (fee.basis === 'unpriced') return 'Plan chosen, but no published price — set your own fee'
-  return 'No plan selected'
+  if (fee.basis === 'custom') return t('memFeeCustom', amount, period)
+  if (fee.basis === 'catalogue') return t('memFeeCatalogue', amount, period)
+  if (fee.basis === 'unpriced') return t('memFeeUnpriced')
+  return t('memFeeNoPlan')
 }
 
 /** A quota row rendered from the backend contract, never a guess. */
-function quotaRows(account, now = Date.now()) {
+function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
   const quota = account?.quota || {}
   const windows = Array.isArray(quota.windows) ? quota.windows : []
   return windows.map(window => {
@@ -4996,21 +4997,21 @@ function quotaRows(account, now = Date.now()) {
     const bases = Array.isArray(window.basis) ? window.basis : []
     let reading
     if (used !== null) {
-      reading = `${Math.round(used)}% used${fromManual ? ' (you reported)' : ''}`
+      reading = t('memQuotaUsed', Math.round(used), fromManual)
     } else if (window.amount !== null && window.amount !== undefined) {
       // A count of credits is not money; monetary allowances carry currency.
-      reading = window.limit === 'credits' ? `${window.amount} credits` :
-        window.currency ? `${fmtMoney(window.amount, window.currency)} allowance` : `${window.amount} allowance`
+      reading = window.limit === 'credits' ? t('memQuotaCredits', window.amount) :
+        window.currency ? t('memQuotaAllowance', fmtMoney(window.amount, window.currency)) : t('memQuotaAllowance', window.amount)
     } else {
-      reading = 'No reading'
+      reading = t('memQuotaNoReading')
     }
-    const source = fromManual ? 'You reported' : bases.includes('provider_reported') ? 'Provider' : 'No data'
-    const reset = window.reset_at ? `resets ${fmtReset(window.reset_at)} · ${fmtCountdown(window.reset_at, now)}` : ''
+    const source = fromManual ? t('memQuotaSrcYou') : bases.includes('provider_reported') ? t('memQuotaSrcProvider') : t('memQuotaSrcNone')
+    const reset = window.reset_at ? t('memQuotaResets', fmtReset(window.reset_at), fmtCountdown(window.reset_at, now, t)) : ''
     return {
       id: window.id, label: window.label || window.id, scope: window.scope || 'account',
       reading, source, reset, state, conflict: !!window.conflict,
       manual: window.manual || null,
-      stateLabel: state === 'live' ? 'live' : state === 'stale' ? 'stale' : state === 'manual' ? 'manual' : 'not recorded'
+      stateLabel: state === 'live' ? t('memQuotaLive') : state === 'stale' ? t('memQuotaStale') : state === 'manual' ? t('memQuotaManual') : t('memQuotaUnrecorded')
     }
   })
 }
@@ -5021,7 +5022,7 @@ function fmtReset(value) {
   return when.toISOString().replace('T', ' ').replace(':00.000Z', '').replace('.000Z', '') + ' UTC'
 }
 
-function fmtCountdown(value, now = Date.now()) {
+function fmtCountdown(value, now = Date.now(), t = needsAttentionEn) {
   const target = new Date(value).getTime()
   if (!Number.isFinite(target)) return ''
   const seconds = Math.floor(Math.abs(target - now) / 1000)
@@ -5029,7 +5030,7 @@ function fmtCountdown(value, now = Date.now()) {
   const hours = Math.floor((seconds % 86400) / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
   const span = days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes}m` : `${minutes}m`
-  return target >= now ? `in ${span}` : `${span} ago`
+  return target >= now ? t('memCountdownIn', span) : t('memCountdownAgo', span)
 }
 
 /** Short human label for a weather verdict; anything unknown stays unknown. */
@@ -5196,7 +5197,7 @@ function needsAttention(accounts, weatherById, t = needsAttentionEn) {
       out.push({ account, tone: 'warn', text: t('attnExhausted'),
         issue: 'exhausted', target: { group: 'allowances', focus: 'allowances' } })
     }
-    for (const row of quotaRows(account)) {
+    for (const row of quotaRows(account, Date.now(), t)) {
       if (row.manual && row.manual.status === 'reconfirm_due') {
         out.push({ account, tone: 'info', text: t('attnReconfirm', row.label),
           issue: 'reconfirm', target: { group: 'allowances', focus: 'window', windowId: row.id } })
@@ -5376,13 +5377,12 @@ function membershipSummary(accounts) {
     monthlyUsd: byCurrencyPeriod['USD/month'] || 0 }
 }
 
-function feesLabel(summary) {
-  const periodLabel = { month: '/mo', year: '/yr', quarter: '/quarter', week: '/wk' }
+function feesLabel(summary, t = needsAttentionEn) {
   const entries = Object.entries(summary?.byCurrencyPeriod || {})
   if (!entries.length) return '—'
   return entries.map(([key, amount]) => {
     const [code, period = 'month'] = key.split('/')
-    return `${fmtMoney(amount, code) || `${amount} ${code}`}${periodLabel[period] || `/${period}`}`
+    return `${fmtMoney(amount, code) || `${amount} ${code}`}/${t('memFeesPeriod', period)}`
   }).join(' + ')
 }
 
@@ -5405,30 +5405,30 @@ function customPlanDraftFor(account, identity = membershipIdentityNow()) {
   }
 }
 
-function customPlanDraftErrors(draft) {
+function customPlanDraftErrors(draft, t = needsAttentionEn) {
   const errors = []
-  if (!draft || !String(draft.name || '').trim()) errors.push('A plan name is required.')
+  if (!draft || !String(draft.name || '').trim()) errors.push(t('memPlanErrName'))
   if (draft?.amount !== '' && draft?.amount != null &&
-      (!Number.isFinite(Number(draft.amount)) || Number(draft.amount) < 0)) errors.push('Plan fee must be zero or more.')
-  if (draft?.amount !== '' && draft?.amount != null && !String(draft.currency || '').trim()) errors.push('Choose a fee currency.')
-  if (!['month', 'year', 'quarter', 'week'].includes(String(draft?.period || 'month'))) errors.push('Choose a billing period.')
+      (!Number.isFinite(Number(draft.amount)) || Number(draft.amount) < 0)) errors.push(t('memPlanErrAmount'))
+  if (draft?.amount !== '' && draft?.amount != null && !String(draft.currency || '').trim()) errors.push(t('memPlanErrCurrency'))
+  if (!['month', 'year', 'quarter', 'week'].includes(String(draft?.period || 'month'))) errors.push(t('memPlanErrPeriod'))
   if (draft?.anchor_day !== '' && draft?.anchor_day != null &&
       (!Number.isInteger(Number(draft.anchor_day)) || Number(draft.anchor_day) < 1 || Number(draft.anchor_day) > 31)) {
-    errors.push('Billing cycle day must be between 1 and 31.')
+    errors.push(t('memPlanErrDay'))
   }
   if (draft?.effective_from && draft?.effective_to && new Date(draft.effective_to) <= new Date(draft.effective_from)) {
-    errors.push('End date must be after the start date.')
+    errors.push(t('memPlanErrDates'))
   }
   for (const window of draft?.allowances || []) {
     if (!String(window.label || '').trim()) {
-      if (window.duration_minutes || window.amount !== '') errors.push('Name each allowance window you define.')
+      if (window.duration_minutes || window.amount !== '') errors.push(t('memPlanErrAllowanceName'))
       continue
     }
     if (window.duration_minutes !== '' && (!Number.isInteger(Number(window.duration_minutes)) || Number(window.duration_minutes) <= 0)) {
-      errors.push('Allowance duration must be positive minutes.')
+      errors.push(t('memPlanErrAllowanceDuration'))
     }
     if (window.amount !== '' && (!Number.isFinite(Number(window.amount)) || Number(window.amount) < 0)) {
-      errors.push('Allowance amount must be zero or more.')
+      errors.push(t('memPlanErrAllowanceAmount'))
     }
   }
   return [...new Set(errors)]
@@ -5464,21 +5464,20 @@ function accountPlanChoices(account) {
 }
 
 /** A short sentence naming plans that exist but cannot serve this route. */
-function excludedPlansNote(account) {
+function excludedPlansNote(account, t = needsAttentionEn) {
   const excluded = Array.isArray(account?.excluded_plans) ? account.excluded_plans : []
   if (!excluded.length) return ''
   const names = excluded.map(p => p.name || p.id)
-  return `${names.length === 1 ? names[0] + ' is a real plan but does' : 'Some plans exist but do'} not cover this route, so ${names.length === 1 ? 'it is' : 'they are'} not offered here.`
+  return names.length === 1 ? t('memExcludedOne', names[0]) : t('memExcludedMany')
 }
 
-function planOptionLabel(plan) {
+function planOptionLabel(plan, t = needsAttentionEn) {
   const amount = fmtMoney(plan?.price?.amount, plan?.price?.currency)
-  const state = plan?.source === 'user_defined' ? ' (user-defined)' :
+  const state = plan?.source === 'user_defined' ? t('memPlanUserDefined') :
     plan?.verification?.status === 'verified' ? '' :
-    plan?.verification?.status === 'provisional' ? ' (provisional)' : ' (unpriced)'
-  const periods = { month: '/month', year: '/year', quarter: '/quarter', week: '/week' }
+    plan?.verification?.status === 'provisional' ? t('memPlanProvisional') : t('memPlanUnpriced')
   const price = plan?.price?.amount === null || plan?.price?.amount === undefined
-    ? 'no fee set' : `${amount}${periods[plan.price.period || 'month'] || '/' + plan.price.period}`
+    ? t('memPlanNoFee') : `${amount}${t('memPlanPeriod', plan.price.period || 'month')}`
   return `${plan?.name || plan?.id} — ${price}${state}`
 }
 
@@ -5496,10 +5495,16 @@ const REASON_LABELS = {
   annual_prepay: 'Annual prepay', other: 'Other'
 }
 
-function feeReasons(catalogue) {
+const REASON_KEYS = {
+  discount: 'memReasonDiscount', legacy_pricing: 'memReasonLegacyPricing', promotion: 'memReasonPromotion',
+  regional: 'memReasonRegional', catalogue_behind: 'memReasonCatalogueBehind',
+  annual_prepay: 'memReasonAnnualPrepay', other: 'memReasonOther'
+}
+
+function feeReasons(catalogue, t = needsAttentionEn) {
   const served = catalogue?.vocabulary?.override_reasons
   const list = Array.isArray(served) && served.length ? served : OVERRIDE_REASON_FALLBACK
-  return list.map(value => [value, REASON_LABELS[value] || value])
+  return list.map(value => [value, REASON_KEYS[value] ? t(REASON_KEYS[value]) : value])
 }
 
 function feeCurrencies(catalogue) {
@@ -5508,20 +5513,20 @@ function feeCurrencies(catalogue) {
 }
 
 /** Saved plan the provider no longer reports: ask, never auto-change. */
-function reconfirmationText(account) {
+function reconfirmationText(account, t = needsAttentionEn) {
   const flag = account?.plan_reconfirmation
   if (!flag?.required) return ''
-  return `Hermes reports "${flag.reported_label}" but this account is saved as ${flag.saved_plan_name || flag.saved_plan_id}. Reconfirm the plan below — nothing has been changed.`
+  return t('memReconfirm', flag.reported_label, flag.saved_plan_name || flag.saved_plan_id)
 }
 
 /** The plan Hermes itself suggests, as a non-preselected proposal. */
-function proposalText(account) {
+function proposalText(account, t = needsAttentionEn) {
   // Once a plan is confirmed the suggestion is stale and must not ask again.
   if (account?.plan_id) return ''
   const proposal = account?.plan_proposal
   if (!proposal || !proposal.label) return ''
   if (proposal.confidence === 'none') return ''
-  return `Hermes reports "${proposal.label}" — confirm the matching plan below.`
+  return t('memProposal', proposal.label)
 }
 
 function feeDraft(account) {
@@ -5539,15 +5544,15 @@ function feeDraft(account) {
   }
 }
 
-function feeDraftErrors(draft) {
+function feeDraftErrors(draft, t = needsAttentionEn) {
   const errors = []
-  if (!draft) return ['no draft']
+  if (!draft) return [t('memFeeErrNoDraft')]
   const amount = Number(draft.amount)
-  if (draft.amount === '' || Number.isNaN(amount) || amount < 0) errors.push('Enter an amount of 0 or more.')
-  if (!/^[A-Z]{3}$/.test(String(draft.currency || ''))) errors.push('Pick a currency.')
-  if (!['month', 'year', 'quarter', 'week'].includes(String(draft.period))) errors.push('Pick a billing period.')
+  if (draft.amount === '' || Number.isNaN(amount) || amount < 0) errors.push(t('memFeeErrAmount'))
+  if (!/^[A-Z]{3}$/.test(String(draft.currency || ''))) errors.push(t('memFeeErrCurrency'))
+  if (!['month', 'year', 'quarter', 'week'].includes(String(draft.period))) errors.push(t('memFeeErrPeriod'))
   const day = Number(draft.anchor_day)
-  if (!Number.isInteger(day) || day < 1 || day > 31) errors.push('Billing day must be between 1 and 31.')
+  if (!Number.isInteger(day) || day < 1 || day > 31) errors.push(t('memFeeErrDay'))
   return errors
 }
 
@@ -5606,18 +5611,18 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   const now = useValue($membershipClock)
   const rawPlanDraft = useValue($customPlanDraft)
   const rawExhaustionDraft = useValue($exhaustionDraft)
-  const rows = quotaRows(account, now)
+  const rows = quotaRows(account, now, t)
   const fee = account.fee || {}
-  const proposal = proposalText(account)
-  const reconfirmation = reconfirmationText(account)
-  const excluded = excludedPlansNote(account)
+  const proposal = proposalText(account, t)
+  const reconfirmation = reconfirmationText(account, t)
+  const excluded = excludedPlansNote(account, t)
   const planSaved = !!account.plan_id
   const arrangement = account.effective_arrangement || (account.api_only ? 'api_only' : account.billing_arrangement || (planSaved ? 'subscription' : 'unconfirmed'))
   const apiOnly = arrangement === 'api_only'
   const subscription = arrangement === 'subscription'
   const customDraft = rawPlanDraft?.origin === identity && rawPlanDraft.account_id === account.id
     ? rawPlanDraft : null
-  const customErrors = customPlanDraftErrors(customDraft)
+  const customErrors = customPlanDraftErrors(customDraft, t)
   const setPlanField = (key, value) => $customPlanDraft.set({ ...customDraft, [key]: value })
   const setAllowance = (index, key, value) => {
     const allowances = (customDraft.allowances || []).map((item, i) => i === index ? { ...item, [key]: value } : item)
@@ -5657,20 +5662,20 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   // Cancel returns focus to the opener. Submit mirrors the fee form: the
   // label switches while saving and a scoped failure renders in place.
   const exhaustionForm = exhaustionDraft ? jsxs('form', { className: 'wm-exhaustion-form', onSubmit: submitExhaustion, children: [
-    jsx('h3', { children: 'Record your exhaustion report' }),
+    jsx('h3', { children: t('memExhaustionTitle') }),
     notice?.tone === 'warn' && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
-    jsx('p', { className: 'wm-note', children: `${exhaustionDraft.label} · This is user-reported and is not provider-confirmed.` }),
+    jsx('p', { className: 'wm-note', children: t('memExhaustionUserReported', exhaustionDraft.label) }),
     jsx('label', { className: 'wm-filter', children: [
-      jsx('span', { children: 'Expected reset date and time (optional)' }),
+      jsx('span', { children: t('memExhaustionResetLabel') }),
       jsx('input', { type: 'datetime-local', autoFocus: true, value: exhaustionDraft.reset_local || '',
         onChange: event => $exhaustionDraft.set({ ...exhaustionDraft, reset_local: event.target.value }) })
     ] }),
-    jsx('p', { className: 'wm-note', children: 'No reset time is inferred from when you mark it. A countdown appears only when you supply a time.' }),
+    jsx('p', { className: 'wm-note', children: t('memExhaustionResetHint') }),
     jsx('div', { className: 'wm-setting-action', children: [
       jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy,
-        children: busy === account.id ? 'Saving…' : 'Save manual status' }),
+        children: busy === account.id ? t('memSaving') : t('memSaveManualStatus') }),
       jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
-        onClick: () => cancelDraft('exhaustion', () => $exhaustionDraft.set(null)), children: 'Cancel' })
+        onClick: () => cancelDraft('exhaustion', () => $exhaustionDraft.set(null)), children: t('memCancel') })
     ] })
   ] }) : null
   const exhaustionAnchored = !exhaustionDraft
@@ -5690,79 +5695,79 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy,
         'aria-expanded': !!customDraft,
         onClick: event => { draftOpener.current.custom = event.currentTarget; onAction('edit-custom-plan', account) },
-        children: account.custom_plan ? 'Edit user-defined plan' : 'Create user-defined plan' })
+        children: account.custom_plan ? t('memCustomPlanEdit') : t('memCustomPlanCreate') })
     ] })
 
   const customPlanForm = subscription && customDraft ? jsxs('form', { className: 'wm-custom-form', noValidate: !account.rev, onSubmit: event => {
       event.preventDefault()
       onAction('save-custom-plan', account, customDraft)
     }, children: [
-      jsx('h3', { children: 'User-defined plan for this credential' }),
+      jsx('h3', { children: t('memCustomPlanTitle') }),
       notice?.tone === 'warn' && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
-      jsx('p', { className: 'wm-note', children: 'Provider and account are taken from this discovered card. This plan stays attached to this account and outside the bundled catalogue.' }),
+      jsx('p', { className: 'wm-note', children: t('memCustomPlanNote') }),
       jsx('div', { className: 'wm-custom-grid', children: [
-        field('Plan name', 'name'),
-        field('Fee (optional)', 'amount', { type: 'number' }),
-        field('Currency', 'currency', { choices: feeCurrencies({ vocabulary: { currencies: ['USD', 'GBP', 'EUR', 'AUD', 'CAD', 'JPY', 'CNY', 'CHF', 'SEK', 'PLN', 'INR'] } }).map(code => [code, code]) }),
-        field('Billing frequency', 'period', { choices: [['month', 'Monthly'], ['year', 'Yearly'], ['quarter', 'Quarterly'], ['week', 'Weekly']] }),
-        field('Billing-cycle anchor day', 'anchor_day', { type: 'number' }),
-        field('Effective from', 'effective_from', { type: 'date' }),
-        field('Effective to', 'effective_to', { type: 'date' }),
-        field('Model restrictions (comma-separated)', 'model_restrictions')
+        field(t('memPlanName'), 'name'),
+        field(t('memFeeOptional'), 'amount', { type: 'number' }),
+        field(t('memCurrency'), 'currency', { choices: feeCurrencies({ vocabulary: { currencies: ['USD', 'GBP', 'EUR', 'AUD', 'CAD', 'JPY', 'CNY', 'CHF', 'SEK', 'PLN', 'INR'] } }).map(code => [code, code]) }),
+        field(t('memBillingFrequency'), 'period', { choices: [['month', t('memPeriodMonthly')], ['year', t('memPeriodYearly')], ['quarter', t('memPeriodQuarterly')], ['week', t('memPeriodWeekly')]] }),
+        field(t('memAnchorDay'), 'anchor_day', { type: 'number' }),
+        field(t('memEffectiveFrom'), 'effective_from', { type: 'date' }),
+        field(t('memEffectiveTo'), 'effective_to', { type: 'date' }),
+        field(t('memModelRestrictions'), 'model_restrictions')
       ] }),
       jsx('div', { className: 'wm-allowances', children: [
         jsxs('div', { className: 'wm-card-head', children: [
-          jsx('strong', { children: 'Optional allowance definitions' }),
+          jsx('strong', { children: t('memAllowancesTitle') }),
           jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () =>
             $customPlanDraft.set({ ...customDraft, allowances: [...(customDraft.allowances || []),
               { label: '', kind: 'rolling', duration_minutes: '', amount: '', currency: 'USD', scope: 'account' }] }),
-            children: 'Add allowance' })
+            children: t('memAllowanceAdd') })
         ] }),
         ...(customDraft.allowances || []).map((window, index) => jsxs('div', { className: 'wm-allowance-editor',
           'data-custom-allowance': String(index), children: [
             jsx('label', { className: 'wm-filter', children: [
-              jsx('span', { children: 'Window name' }),
+              jsx('span', { children: t('memWindowName') }),
               jsx('input', { value: window.label, onChange: event => setAllowance(index, 'label', event.target.value) })
             ] }),
             jsx('label', { className: 'wm-filter', children: [
-              jsx('span', { children: 'Window kind' }),
+              jsx('span', { children: t('memWindowKind') }),
               jsx('select', { value: window.kind, onChange: event => setAllowance(index, 'kind', event.target.value),
-                children: [['rolling', 'Rolling'], ['billing_cycle', 'Billing cycle'], ['monthly_credit', 'Monthly credit']]
+                children: [['rolling', t('memKindRolling')], ['billing_cycle', t('memKindBillingCycle')], ['monthly_credit', t('memKindMonthlyCredit')]]
                   .map(([value, text]) => jsx('option', { value, children: text }, value)) })
             ] }),
             jsx('label', { className: 'wm-filter', children: [
-              jsx('span', { children: 'Rolling duration (minutes, optional)' }),
+              jsx('span', { children: t('memWindowDuration') }),
               jsx('input', { type: 'number', min: '1', value: window.duration_minutes,
                 onChange: event => setAllowance(index, 'duration_minutes', event.target.value) })
             ] }),
             jsx('label', { className: 'wm-filter', children: [
-              jsx('span', { children: 'Credit amount (optional)' }),
+              jsx('span', { children: t('memWindowCredits') }),
               jsx('input', { type: 'number', min: '0', value: window.amount,
                 onChange: event => setAllowance(index, 'amount', event.target.value) })
             ] }),
             jsx('label', { className: 'wm-filter', children: [
-              jsx('span', { children: 'Currency' }),
+              jsx('span', { children: t('memCurrency') }),
               jsx('select', { value: window.currency, onChange: event => setAllowance(index, 'currency', event.target.value),
                 children: ['USD', 'GBP', 'EUR', 'AUD', 'CAD', 'JPY', 'CNY', 'CHF', 'SEK', 'PLN', 'INR']
                   .map(code => jsx('option', { value: code, children: code }, code)) })
             ] }),
             jsx('label', { className: 'wm-filter', children: [
-              jsx('span', { children: 'Applies to' }),
+              jsx('span', { children: t('memAppliesTo') }),
               jsx('select', { value: window.scope, onChange: event => setAllowance(index, 'scope', event.target.value),
-                children: [['account', 'Account'], ['model', 'Model']].map(([value, text]) =>
+                children: [['account', t('memScopeAccount')], ['model', t('memScopeModel')]].map(([value, text]) =>
                   jsx('option', { value, children: text }, value)) })
             ] }),
             jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () =>
               $customPlanDraft.set({ ...customDraft,
                 allowances: customDraft.allowances.filter((_, i) => i !== index) }),
-              children: 'Remove window' })
+              children: t('memWindowRemove') })
           ]
         }, index))
       ] }),
       customErrors.length ? jsx('p', { className: 'wm-warn-note', role: 'alert', children: customErrors.join(' ') }) : null,
       jsx('div', { className: 'wm-setting-action', children: [
-        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy || customErrors.length > 0, children: busy === account.id ? 'Saving…' : 'Save user-defined plan' }),
-        jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy, onClick: () => cancelDraft('custom', () => $customPlanDraft.set(null)), children: 'Cancel' })
+        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy || customErrors.length > 0, children: busy === account.id ? t('memSaving') : t('memSaveCustomPlan') }),
+        jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy, onClick: () => cancelDraft('custom', () => $customPlanDraft.set(null)), children: t('memCancel') })
       ] })
     ] }) : null
 
@@ -5788,7 +5793,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
         jsx('span', { children: `${arrangementLabel(arrangement, t)} · ${planName}` })
       ] }),
       jsxs('div', { className: 'wm-row-mid', children: [
-        jsx('span', { className: 'wm-row-fee', children: feeLabel(fee) }),
+        jsx('span', { className: 'wm-row-fee', children: feeLabel(fee, t) }),
         hasAttention ? jsx('span', { className: 'wm-certainty', 'data-certainty': 'partial', children: t('memNeedsAttention') }) : null,
         busy === account.id ? jsx('span', { className: 'wm-note', role: 'status', children: t('memSaving') }) : null,
         jsx(ProductButton, { type: 'button', className: 'wm-button', 'aria-expanded': expanded, 'aria-controls': bodyId,
@@ -5813,90 +5818,91 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
             onClick: () => { if (value !== arrangement) onAction('arrangement', account, value) },
             children: label }, value)) }),
     jsx('p', { className: 'wm-note', children: apiOnly
-      ? 'Metered API: no recurring membership fee. Usage and API cost estimates remain available.'
-      : arrangement === 'prepaid' ? 'Prepaid credit account. Top-ups are not recurring membership fees; configure cost rules separately in Costs.'
-      : arrangement === 'subscription' ? 'Subscription account.' : 'No confirmed billing arrangement.' }),
-    busy === account.id ? jsx('p', { role: 'status', className: 'wm-note', children: 'Saving changes…' }) : null,
+      ? t('memArrNoteMetered')
+      : arrangement === 'prepaid' ? t('memArrNotePrepaid')
+      : arrangement === 'subscription' ? t('memArrNoteSubscription') : t('memArrNoteUnconfirmed') }),
+    busy === account.id ? jsx('p', { role: 'status', className: 'wm-note', children: t('memSavingChanges') }) : null,
     notice?.accountId === account.id && notice.tone === 'good'
       ? jsx('p', { role: 'status', className: 'wm-note', children: notice.text }) : null,
     notice?.accountId === account.id && notice.tone === 'warn'
       ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
     subscription && ['xai', 'grok'].includes(account.family)
-      ? jsx('p', { className: 'wm-note', children: 'Grok consumer subscriptions and xAI API billing are separate. Select a subscription only if it applies to this account.' }) : null,
+      ? jsx('p', { className: 'wm-note', children: t('memGrokNote') }) : null,
     subscription && proposal ? jsx('p', { className: 'wm-note wm-accent-note', children: proposal }) : null,
     subscription && reconfirmation ? jsx('p', { className: 'wm-note wm-accent-note', 'data-plan-reconfirmation': 'true', children: reconfirmation }) : null,
     subscription && excluded ? jsx('p', { className: 'wm-note', 'data-excluded': 'true', children: excluded }) : null,
     subscription && account.plan?.notes ? jsx('p', { className: 'wm-note', children: account.plan.notes }) : null,
     subscription || apiOnly ? jsxs('label', { className: 'wm-filter', children: [
-      jsx('span', { children: 'Plan for this provider account' }),
+      jsx('span', { children: t('memPlanForAccount') }),
       jsxs('select', {
         value: account.plan_id || '', disabled: !subscription || !!busy, 'data-nav': 'plan',
         onChange: event => onAction('plan', account, event.target.value),
         children: [
-          jsx('option', { value: '', children: planSaved ? '— clear selection —' : '— confirm a plan —' }, 'unselected'),
-          ...plans.map(plan => jsx('option', { value: plan.id, children: planOptionLabel(plan) }, plan.id))
+          jsx('option', { value: '', children: planSaved ? t('memPlanClear') : t('memPlanConfirm') }, 'unselected'),
+          ...plans.map(plan => jsx('option', { value: plan.id, children: planOptionLabel(plan, t) }, plan.id))
         ]
       })
     ] }) : null,
     subscription || apiOnly ? jsxs('div', { className: 'wm-fee-row', children: [
-      jsx('span', { className: 'wm-fee', children: feeLabel(fee) }),
+      jsx('span', { className: 'wm-fee', children: feeLabel(fee, t) }),
       jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'edit-fee',
         disabled: !subscription || !!busy, 'aria-expanded': draft?.account_id === account.id,
-        onClick: event => { draftOpener.current.fee = event.currentTarget; onAction('fee', account) }, children: 'Edit fee' })
+        onClick: event => { draftOpener.current.fee = event.currentTarget; onAction('fee', account) }, children: t('memEditFee') })
     ] }) : null,
     subscription && draft && draft.account_id === account.id
         // Without a revision no correction can ever save, so native bubbles
         // must not block submit before the revision check runs in saveFee().
         ? jsxs('form', { className: 'wm-fee-form', noValidate: !account.rev,
             onSubmit: event => { event.preventDefault(); saveFee() }, children: [
-            jsx('h3', { children: `Membership fee · ${account.label || account.family}` }),
+            jsx('h3', { children: t('memFeeTitle', account.label || account.family) }),
             notice?.tone === 'warn' && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
-            jsx('p', { className: 'wm-note', children: 'The published catalogue price is kept separately; this becomes your own revision.' }),
+            jsx('p', { className: 'wm-note', children: t('memFeeRevisionNote') }),
             jsxs('fieldset', { disabled: !!busy, className: 'wm-controls wm-fee-fields', children: [
               jsxs('label', { className: 'wm-filter', children: [
-                jsx('span', { children: 'Amount' }),
+                jsx('span', { children: t('memAmount') }),
                 jsx('input', { type: 'number', step: '0.01', min: '0', value: draft.amount, autoFocus: true,
                   onChange: event => $membershipDraft.set({ ...draft, amount: event.target.value }) })
               ] }),
               jsxs('label', { className: 'wm-filter', children: [
-                jsx('span', { children: 'Currency' }),
+                jsx('span', { children: t('memCurrency') }),
                 jsx('select', { value: draft.currency, onChange: event => $membershipDraft.set({ ...draft, currency: event.target.value }),
                   children: feeCurrencies(catalogue).map(code => jsx('option', { value: code, children: code }, code)) })
               ] }),
               jsxs('label', { className: 'wm-filter', children: [
-                jsx('span', { children: 'Period' }),
+                jsx('span', { children: t('memPeriod') }),
                 jsx('select', { value: draft.period, onChange: event => $membershipDraft.set({ ...draft, period: event.target.value }),
-                  children: ['month', 'year', 'quarter', 'week'].map(code => jsx('option', { value: code, children: code }, code)) })
+                  children: [['month', t('memPeriodMonthly')], ['year', t('memPeriodYearly')], ['quarter', t('memPeriodQuarterly')], ['week', t('memPeriodWeekly')]]
+                    .map(([value, text]) => jsx('option', { value, children: text }, value)) })
               ] }),
               jsxs('label', { className: 'wm-filter', children: [
-                jsx('span', { children: 'Renews on day' }),
+                jsx('span', { children: t('memRenewsDay') }),
                 jsx('input', { type: 'number', min: '1', max: '31', value: draft.anchor_day,
                   onChange: event => $membershipDraft.set({ ...draft, anchor_day: event.target.value }) })
               ] }),
               jsxs('label', { className: 'wm-filter', children: [
-                jsx('span', { children: 'Effective from' }),
+                jsx('span', { children: t('memEffectiveFrom') }),
                 jsx('input', { type: 'date', value: draft.effective_from,
                   onChange: event => $membershipDraft.set({ ...draft, effective_from: event.target.value }) })
               ] }),
               jsxs('label', { className: 'wm-filter', children: [
-                jsx('span', { children: 'Reason' }),
+                jsx('span', { children: t('memReason') }),
                 jsx('select', { value: draft.reason, onChange: event => $membershipDraft.set({ ...draft, reason: event.target.value }),
-                  children: feeReasons(catalogue).map(([value, text]) => jsx('option', { value, children: text }, value)) })
+                  children: feeReasons(catalogue, t).map(([value, text]) => jsx('option', { value, children: text }, value)) })
               ] })
             ] }),
             jsxs('div', { className: 'wm-controls', children: [
-              jsx(ProductButton, { type: 'submit', className: cn('wm-button', 'wm-accent'), disabled: !!busy, children: busy === account.id ? 'Saving…' : 'Save fee' }),
-              jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy, onClick: () => cancelDraft('fee', () => $membershipDraft.set(null)), children: 'Cancel' })
+              jsx(ProductButton, { type: 'submit', className: cn('wm-button', 'wm-accent'), disabled: !!busy, children: busy === account.id ? t('memSaving') : t('memSaveFee') }),
+              jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !!busy, onClick: () => cancelDraft('fee', () => $membershipDraft.set(null)), children: t('memCancel') })
             ] })
           ] })
         : null,
     subscription && fee.basis === 'declared' && fee.published?.source === 'catalogue'
       ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'restore-catalogue-price',
           disabled: !!busy, onClick: () => onAction('restore-fee', account),
-          children: 'Restore catalogue price' })
+          children: t('memRestoreCatalogue') })
       : null,
     subscription && fee.basis === 'declared' && fee.published?.source === 'user_defined'
-      ? jsx('p', { className: 'wm-note', children: 'Your fee override is shown separately from the user-defined plan price.' })
+      ? jsx('p', { className: 'wm-note', children: t('memOverrideNote') })
       : null,
     ] }) ] }),
     jsxs('details', { className: 'wm-group', 'data-group': 'allowances',
@@ -5912,28 +5918,28 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
           ] }),
           jsx('div', { className: 'wm-quota-reading', children: row.reading }),
           jsx('div', { className: 'wm-note', children: [row.source, row.reset,
-            row.manual && !row.reset ? 'No reset time supplied by you.' : ''].filter(Boolean).join(' · ') }),
+            row.manual && !row.reset ? t('memQuotaNoReset') : ''].filter(Boolean).join(' · ') }),
           jsxs('div', { className: 'wm-quota-actions', children: [
             jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'mark-exhausted',
               disabled: !!busy,
               'aria-expanded': exhaustionDraft?.scope_kind === 'window' && exhaustionDraft.scope_id === row.id,
               onClick: event => openExhaustion(row.id, row.label, event.currentTarget),
-              children: 'Mark exhausted' }),
+              children: t('memMarkExhausted') }),
             row.manual && row.manual.status !== 'cleared'
               ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'clear-mark',
                   disabled: !!busy,
-                  onClick: () => onAction('clear', account, row.manual.id), children: 'Clear mark' })
+                  onClick: () => onAction('clear', account, row.manual.id), children: t('memClearMark') })
               : null
           ] }),
           exhaustionDraft?.scope_kind === 'window' && exhaustionDraft.scope_id === row.id ? exhaustionForm : null
         ] }, row.id)) })
       : jsxs('div', { className: 'wm-quota-empty', children: [
-          jsx('p', { className: 'wm-note', children: 'No quota windows are published for this account. You can still record that it is used up.' }),
+          jsx('p', { className: 'wm-note', children: t('memNoWindows') }),
           jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'exhaust-account',
             disabled: !!busy,
             'aria-expanded': exhaustionDraft?.scope_kind === 'account',
-            onClick: event => openExhaustion(ACCOUNT_SCOPE, 'Account', event.currentTarget),
-            children: 'Mark account exhausted' }),
+            onClick: event => openExhaustion(ACCOUNT_SCOPE, t('memScopeAccount'), event.currentTarget),
+            children: t('memMarkAccountExhausted') }),
           exhaustionDraft?.scope_kind === 'account' ? exhaustionForm : null
         ] }),
     jsx(AllowanceWeather, { entry: weather || null, error: !!weatherError }),
@@ -5941,8 +5947,8 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'exhaust-account-footer',
           disabled: !!busy,
           'aria-expanded': exhaustionDraft?.scope_kind === 'account',
-          onClick: event => openExhaustion(ACCOUNT_SCOPE, 'Account', event.currentTarget),
-          children: 'Mark account exhausted' })
+          onClick: event => openExhaustion(ACCOUNT_SCOPE, t('memScopeAccount'), event.currentTarget),
+          children: t('memMarkAccountExhausted') })
       : null,
     rows.length && !accountHolderMarked(account) && exhaustionDraft?.scope_kind === 'account' ? exhaustionForm : null,
     exhaustionDraft && !exhaustionAnchored ? exhaustionForm : null,
@@ -5953,9 +5959,9 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
       jsx('summary', { children: t('memGroupAdvanced') }),
       jsxs('div', { className: 'wm-group-body', children: [
         jsx('span', { className: 'wm-chip', 'data-state': account.credential_present ? 'live' : 'no_data',
-          children: account.credential_present ? 'configured credential' : 'credential not found' }),
+          children: account.credential_present ? t('memCredConfigured') : t('memCredMissing') }),
         jsx('p', { className: 'wm-note', children:
-          account.identity_source === 'native' ? 'Account identified by Hermes.' : 'Provider account slot; credential values are never shown.' }),
+          account.identity_source === 'native' ? t('memIdentityNative') : t('memIdentitySlot') }),
         jsx('p', { className: 'wm-note', children: t('memAccountId', account.id) }),
         subscription ? customPlanButton : null,
         subscription && customDraft ? customPlanForm : null
@@ -6077,16 +6083,15 @@ function MembershipsPage() {
   const summary = membershipSummary(list)
   const storeError = current?.store?.error || ''
   const storeNotes = Array.isArray(current?.notes) ? current.notes : []
-  const plansError = plans.error ? membershipErrorText(plans.error, 'plans') : ''
+  const plansError = plans.error ? membershipErrorText(plans.error, 'plans', t) : ''
 
   const refuse = () => {
-    setMembershipNotice(membershipIdentityNow(), 'warn',
-      'That action belongs to a different connection. Reload the pane before changing anything.')
+    setMembershipNotice(membershipIdentityNow(), 'warn', t('memRefuseStale'))
     return { ok: false, stale: true }
   }
 
   const refuseBusy = () => {
-    setMembershipNotice(identity, 'warn', 'Another membership action is still processing. Please wait and try again.')
+    setMembershipNotice(identity, 'warn', t('memRefuseBusy'))
     return { ok: false, busy: true }
   }
 
@@ -6096,9 +6101,7 @@ function MembershipsPage() {
   // The account id scopes the warning to its card (including the open fee
   // form); the page-level notice renders regardless.
   const refuseUnversioned = (accountId = null) => {
-    setMembershipNotice(membershipIdentityNow(), 'warn',
-      'This record has no revision and cannot be saved safely. It was probably written outside Spend Sense — restore the membership store before editing.',
-      null, accountId)
+    setMembershipNotice(membershipIdentityNow(), 'warn', t('memRefuseUnversioned'), null, accountId)
     return { ok: false, unversioned: true }
   }
 
@@ -6130,17 +6133,17 @@ function MembershipsPage() {
             $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
                                       store: payload.store, notes: payload.notes })
           }
-          setMembershipNotice(captured, 'good', 'Saved.', operation, key)
+          setMembershipNotice(captured, 'good', t('memSaved'), operation, key)
         }
       } catch (readError) {
         setMembershipNotice(captured, 'warn',
-          `Saved, but the list could not be re-read. ${membershipErrorText(readError, 'read')}`, operation)
+          t('memSavedRereadFailed', membershipErrorText(readError, 'read', t)), operation)
       }
       await invalidateEconomicsFor(captured)
       await invalidateWeatherFor(captured)
       return { ok: membershipOperationCurrent(captured, operation), identity: captured }
     } catch (error) {
-      setMembershipNotice(captured, 'warn', membershipErrorText(error, 'write'), operation, key)
+      setMembershipNotice(captured, 'warn', membershipErrorText(error, 'write', t), operation, key)
       return { ok: false, error }
     } finally {
       // Only the identity that holds the flag may clear it.
@@ -6191,7 +6194,7 @@ function MembershipsPage() {
     if (kind === 'save-custom-plan') {
       if (!value || value.origin !== identity || !membershipIdentityCurrent(value.origin) ||
           value.account_id !== account.id) return refuse()
-      const errors = customPlanDraftErrors(value)
+      const errors = customPlanDraftErrors(value, t)
       if (errors.length) {
         setMembershipNotice(identity, 'warn', errors.join(' '))
         return { ok: false, invalid: true }
@@ -6211,7 +6214,7 @@ function MembershipsPage() {
       $exhaustionDraft.set({ origin: identity, account_id: account.id,
         scope_id: wholeAccount ? 'account' : value,
         scope_kind: wholeAccount ? 'account' : 'window',
-        label: label || (wholeAccount ? 'Account' : value), reset_local: '' })
+        label: label || (wholeAccount ? t('memScopeAccount') : value), reset_local: '' })
       return { ok: true }
     }
     if (kind === 'confirm-exhaust') {
@@ -6220,7 +6223,7 @@ function MembershipsPage() {
           !membershipIdentityCurrent(draft.origin)) return refuse()
       const body = { scope_id: draft.scope_id, scope_kind: draft.scope_kind, label: draft.label,
         reset_at: value?.reset_at || null,
-        note: 'Manually reported from Spend Sense; not provider-confirmed.' }
+        note: t('memExhaustionNote') }
       return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}/exhaustion`, body)
         .then(result => {
           if (result?.ok && $exhaustionDraft.get() === draft && membershipIdentityCurrent(identity)) {
@@ -6251,7 +6254,7 @@ function MembershipsPage() {
         $membershipSnapshot.set({ identity: captured, accounts: result.accounts,
                                   store: result.store || null, notes: result.notes || [] })
       }
-      const summary = `Discovered ${result.discovered ?? 0} account(s): ${result.added?.length ?? 0} new, ${result.updated?.length ?? 0} updated.`
+      const summary = t('memDiscovered', result.discovered ?? 0, result.added?.length ?? 0, result.updated?.length ?? 0)
       $membershipNative.set(true)
       try {
         const payload = await queryClient.fetchQuery({ ...membershipQuery(true, captured, generation, operation), staleTime: 0 })
@@ -6261,12 +6264,12 @@ function MembershipsPage() {
         setMembershipNotice(captured, 'good', summary, operation)
       } catch (readError) {
         setMembershipNotice(captured, 'warn',
-          `${summary} The refreshed list could not be read. ${membershipErrorText(readError, 'read')}`, operation)
+          t('memRefreshedUnreadable', summary, membershipErrorText(readError, 'read', t)), operation)
       }
       await invalidateEconomicsFor(captured)
       await invalidateWeatherFor(captured)
     } catch (error) {
-      setMembershipNotice(captured, 'warn', membershipErrorText(error, 'discover'), operation)
+      setMembershipNotice(captured, 'warn', membershipErrorText(error, 'discover', t), operation)
     } finally {
       releaseMembershipBusy(captured, operation)
     }
@@ -6292,9 +6295,9 @@ function MembershipsPage() {
       $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
                                 store: payload.store, notes: payload.notes })
       await invalidateWeatherFor(captured)
-      setMembershipNotice(captured, 'good', 'Readings refreshed from Hermes.', operation)
+      setMembershipNotice(captured, 'good', t('memReadingsRefreshed'), operation)
     } catch (error) {
-      setMembershipNotice(captured, 'warn', membershipErrorText(error, 'refresh'), operation)
+      setMembershipNotice(captured, 'warn', membershipErrorText(error, 'refresh', t), operation)
     } finally {
       releaseMembershipBusy(captured, operation)
     }
@@ -6311,7 +6314,7 @@ function MembershipsPage() {
     // Before draft validation: on an unversioned record the form can never
     // save, so say that first instead of asking for corrections.
     if (!account.rev) return refuseUnversioned(account.id)
-    const errors = feeDraftErrors(draft)
+    const errors = feeDraftErrors(draft, t)
     if (errors.length) {
       setMembershipNotice(origin, 'warn', errors.join(' '), null, draft.account_id)
       return { ok: false, invalid: true }
@@ -6336,10 +6339,10 @@ function MembershipsPage() {
       jsx(ProductHeader, { title: t('memTitle'), subtitle: t('memSubtitle') }),
       jsxs('div', { className: 'wm-controls', children: [
         jsx(AsyncButton, { type: 'button', className: cn('wm-button', 'wm-accent'), disabled: !!busy,
-          status: busy === 'discover' ? 'pending' : 'idle', pendingLabel: 'Discovering…',
-          onClick: discover, children: 'Discover accounts' }),
+          status: busy === 'discover' ? 'pending' : 'idle', pendingLabel: t('memDiscovering'),
+          onClick: discover, children: t('memDiscover') }),
         jsx(AsyncButton, { type: 'button', className: 'wm-button', disabled: !!busy,
-          status: busy === 'refresh' ? 'pending' : 'idle', pendingLabel: 'Refreshing…',
+          status: busy === 'refresh' ? 'pending' : 'idle', pendingLabel: t('memRefreshing'),
           onClick: refreshReadings, children: t('memRefresh') })
       ] }),
       jsx('p', { className: 'wm-note',
@@ -6348,27 +6351,27 @@ function MembershipsPage() {
         role: 'status', children: notice.text }) : null,
       storeError
         ? jsx('div', { className: 'wm-alert', role: 'alert', 'data-tone': 'warn',
-            children: 'The membership store on this backend could not be read, so nothing can be saved until it is repaired. Your file has not been changed.' })
+            children: t('memStoreUnreadable') })
         : null,
       plansError
         ? jsx('div', { className: 'wm-alert', role: 'status', 'data-tone': 'warn',
-            children: `Plan catalogue unavailable on this connection. ${plansError}` })
+            children: t('memPlansUnavailable', plansError) })
         : null,
       jsxs('div', { className: 'wm-stats', children: [
-        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: 'Accounts' }),
+        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: t('memAccounts') }),
           jsx('div', { className: 'wm-statvalue', children: accountsReady ? String(summary.total) : '—' })] }),
-        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: 'Plans confirmed' }),
-          jsx('div', { className: 'wm-statvalue', children: accountsReady ? `${summary.withPlan} of ${summary.total}` : '—' })] }),
-        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: 'Marked exhausted' }),
+        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: t('memPlansConfirmed') }),
+          jsx('div', { className: 'wm-statvalue', children: accountsReady ? t('memPlansOf', summary.withPlan, summary.total) : '—' })] }),
+        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: t('memMarkedExhausted') }),
           jsx('div', { className: 'wm-statvalue', children: accountsReady ? String(summary.exhausted) : '—' })] }),
         jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: t('memFeesLabel') }),
-          jsx('div', { className: 'wm-statvalue', children: accountsReady ? feesLabel(summary) : '—' })] })
+          jsx('div', { className: 'wm-statvalue', children: accountsReady ? feesLabel(summary, t) : '—' })] })
       ] }),
       jsx('p', { className: 'wm-note',
         children: t('memFeesNote') }),
       attention.length
-        ? jsxs('section', { className: 'wm-attention', 'aria-label': 'Needs attention', children: [
-            jsx('h3', { children: 'Needs attention' }),
+        ? jsxs('section', { className: 'wm-attention', 'aria-label': t('memNeedsAttention'), children: [
+            jsx('h3', { children: t('memNeedsAttention') }),
             jsxs('ul', { children: attention.slice(0, 6).map((item, index) =>
               jsxs('li', { 'data-tone': item.tone, children: [
                 jsx('span', { children: `${item.account.label || item.account.family}: ${item.text}` }),
@@ -6379,28 +6382,28 @@ function MembershipsPage() {
           ] })
         : null,
       storeNotes.length
-        ? jsxs('section', { className: 'wm-attention', 'aria-label': 'Backend notes', children: [
-            jsx('h3', { children: 'Backend notes' }),
+        ? jsxs('section', { className: 'wm-attention', 'aria-label': t('memBackendNotes'), children: [
+            jsx('h3', { children: t('memBackendNotes') }),
             jsxs('ul', { children: storeNotes.slice(0, 6).map((note, index) => jsx('li', { children: note }, index)) })
           ] })
         : null,
       accounts.error
-        ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read') })
+        ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read', t) })
         : null,
       accountsReady && list.length > 1
-        ? jsxs('nav', { className: 'wm-account-jump', 'aria-label': 'Jump to an account', children: [
+        ? jsxs('nav', { className: 'wm-account-jump', 'aria-label': t('memJumpToAccount'), children: [
             jsx('button', { type: 'button', className: 'wm-account-chip', 'aria-pressed': attentionOnly,
               onClick: () => $membershipAttentionOnly.set(!attentionOnly),
-              children: attentionOnly ? `Showing needs attention (${attentionIds.size}) — show all` : `Needs attention only (${attentionIds.size})` }),
+              children: attentionOnly ? t('memShowingAttention', attentionIds.size) : t('memAttentionOnly', attentionIds.size) }),
             ...list.map(account => jsx('button', { type: 'button', className: 'wm-account-chip',
               'data-attention': attentionIds.has(account.id) ? 'true' : undefined,
               onClick: () => jumpToAccount(account),
-              children: (account.label || account.family) + (attentionIds.has(account.id) ? ' · check' : '') }, account.id))
+              children: (account.label || account.family) + (attentionIds.has(account.id) ? t('memJumpCheck') : '') }, account.id))
           ] })
         : null,
       jsxs('div', { className: 'wm-cards', children:
         !accountsReady && !accounts.error
-          ? [jsx('p', { className: 'wm-empty', role: 'status', children: 'Reading memberships for this connection…' })]
+          ? [jsx('p', { className: 'wm-empty', role: 'status', children: t('memReading') })]
           : accountsReady && displayed.length
             ? displayed.map(account => jsx(MembershipCard, {
                 account,
@@ -6410,12 +6413,12 @@ function MembershipsPage() {
                 hasAttention: attentionIds.has(account.id)
               }, account.id))
             : [jsx('p', { className: 'wm-empty', children: accounts.error
-                ? 'Memberships could not be read for this connection.'
-                : attentionOnly ? 'Nothing needs attention. Show all accounts to see every membership.'
-                : 'No memberships yet. Use "Discover accounts" to find the providers configured in this Hermes profile.' })] }),
+                ? t('memReadFailed')
+                : attentionOnly ? t('memAllClear')
+                : t('memEmptyHint') })] }),
       membershipDiagnostics.length
         ? jsxs('details', { className: 'wm-note', children: [
-            jsx('summary', { children: 'Request diagnostics (this session)' }),
+            jsx('summary', { children: t('memDiagnostics') }),
             jsx('ul', { children: membershipDiagnostics.map((entry, index) =>
               jsx('li', { children: `${entry.at} ${entry.method} ${entry.path} → ${entry.status ?? entry.outcome} · ${entry.scope}` }, index)) })
           ] })
@@ -7260,6 +7263,181 @@ const I18N = {
     memFeesLabel: 'Membership fees',
     memFeesNote: 'Membership fees are the effective amounts by currency and period. Provider percentages are limits, not money, and are never added to them.',
     memAccountId: id => `Account ID: ${id}`,
+    // Memberships labels (previously literal English, never translated).
+    memDiscover: 'Discover accounts',
+    memAccounts: 'Accounts',
+    memPlansConfirmed: 'Plans confirmed',
+    memPlansOf: (withPlan, total) => `${withPlan} of ${total}`,
+    memMarkedExhausted: 'Marked exhausted',
+    memReading: 'Reading memberships for this connection…',
+    memBackendNotes: 'Backend notes',
+    memJumpToAccount: 'Jump to an account',
+    memShowingAttention: n => `Showing needs attention (${n}) — show all`,
+    memAttentionOnly: n => `Needs attention only (${n})`,
+    memJumpCheck: ' · check',
+    memDiagnostics: 'Request diagnostics (this session)',
+    memSaved: 'Saved.',
+    memSavedRereadFailed: error => `Saved, but the list could not be re-read. ${error}`,
+    memDiscovered: (found, added, updated) => `Discovered ${found} account(s): ${added} new, ${updated} updated.`,
+    memRefreshedUnreadable: (summary, error) => `${summary} The refreshed list could not be read. ${error}`,
+    memReadingsRefreshed: 'Readings refreshed from Hermes.',
+    memStoreUnreadable: 'The membership store on this backend could not be read, so nothing can be saved until it is repaired. Your file has not been changed.',
+    memPlansUnavailable: error => `Plan catalogue unavailable on this connection. ${error}`,
+    // Membership card.
+    memEditFee: 'Edit fee',
+    memFeeTitle: label => `Membership fee · ${label}`,
+    memFeeRevisionNote: 'The published catalogue price is kept separately; this becomes your own revision.',
+    memAmount: 'Amount',
+    memCurrency: 'Currency',
+    memPeriod: 'Period',
+    memRenewsDay: 'Renews on day',
+    memEffectiveFrom: 'Effective from',
+    memReason: 'Reason',
+    memRestoreCatalogue: 'Restore catalogue price',
+    memOverrideNote: 'Your fee override is shown separately from the user-defined plan price.',
+    memCancel: 'Cancel',
+    memSavingChanges: 'Saving changes…',
+    memGrokNote: 'Grok consumer subscriptions and xAI API billing are separate. Select a subscription only if it applies to this account.',
+    memPlanForAccount: 'Plan for this provider account',
+    memPlanClear: '— clear selection —',
+    memPlanConfirm: '— confirm a plan —',
+    memMarkExhausted: 'Mark exhausted',
+    memClearMark: 'Clear mark',
+    memNoWindows: 'No quota windows are published for this account. You can still record that it is used up.',
+    memMarkAccountExhausted: 'Mark account exhausted',
+    memExhaustionTitle: 'Record your exhaustion report',
+    memExhaustionResetLabel: 'Expected reset date and time (optional)',
+    memExhaustionResetHint: 'No reset time is inferred from when you mark it. A countdown appears only when you supply a time.',
+    memCustomPlanTitle: 'User-defined plan for this credential',
+    memCustomPlanNote: 'Provider and account are taken from this discovered card. This plan stays attached to this account and outside the bundled catalogue.',
+    memCustomPlanEdit: 'Edit user-defined plan',
+    memCustomPlanCreate: 'Create user-defined plan',
+    memAllowancesTitle: 'Optional allowance definitions',
+    memAllowanceAdd: 'Add allowance',
+    memWindowName: 'Window name',
+    memWindowKind: 'Window kind',
+    memWindowDuration: 'Rolling duration (minutes, optional)',
+    memWindowCredits: 'Credit amount (optional)',
+    memAppliesTo: 'Applies to',
+    memWindowRemove: 'Remove window',
+    // Effective-fee line.
+    memFeeNoInfo: 'No fee information',
+    memPeriodAbbr: p => p === 'month' ? 'mo' : p === 'year' ? 'yr' : p,
+    memFeesPeriod: p => p === 'month' ? 'mo' : p === 'year' ? 'yr' : p === 'week' ? 'wk' : p,
+    memFeeMetered: 'Metered API · no recurring membership fee',
+    memFeePrepaid: 'Prepaid credits · no recurring membership fee',
+    memFeeUnconfirmed: 'No confirmed billing arrangement',
+    memFeeYourPrice: (amount, period, tail) => `Your price: ${amount}${period}${tail}`,
+    memFeeTail: (source, money) => ` (${source} ${money})`,
+    memFeeSrcCustom: 'plan default',
+    memFeeSrcCatalogue: 'catalogue',
+    memFeeCustom: (amount, period) => `User-defined plan: ${amount}${period}`,
+    memFeeCatalogue: (amount, period) => `Catalogue: ${amount}${period}`,
+    memFeeUnpriced: 'Plan chosen, but no published price — set your own fee',
+    memFeeNoPlan: 'No plan selected',
+    // Quota readings.
+    memQuotaUsed: (pct, manual) => `${pct}% used${manual ? ' (you reported)' : ''}`,
+    memQuotaCredits: n => `${n} credits`,
+    memQuotaAllowance: value => `${value} allowance`,
+    memQuotaNoReading: 'No reading',
+    memQuotaSrcYou: 'You reported',
+    memQuotaSrcProvider: 'Provider',
+    memQuotaSrcNone: 'No data',
+    memQuotaResets: (date, countdown) => `resets ${date} · ${countdown}`,
+    memQuotaLive: 'live',
+    memQuotaStale: 'stale',
+    memQuotaManual: 'manual',
+    memQuotaUnrecorded: 'not recorded',
+    memCountdownIn: span => `in ${span}`,
+    memCountdownAgo: span => `${span} ago`,
+    // Plan proposal, reconfirmation and tier options.
+    memProposal: label => `Hermes reports "${label}" — confirm the matching plan below.`,
+    memReconfirm: (label, saved) => `Hermes reports "${label}" but this account is saved as ${saved}. Reconfirm the plan below — nothing has been changed.`,
+    memExcludedOne: name => `${name} is a real plan but does not cover this route, so it is not offered here.`,
+    memExcludedMany: 'Some plans exist but do not cover this route, so they are not offered here.',
+    memPlanUserDefined: ' (user-defined)',
+    memPlanProvisional: ' (provisional)',
+    memPlanUnpriced: ' (unpriced)',
+    memPlanNoFee: 'no fee set',
+    memPlanPeriod: p => `/${p}`,
+    // Form validation.
+    memFeeErrNoDraft: 'no draft',
+    memFeeErrAmount: 'Enter an amount of 0 or more.',
+    memFeeErrCurrency: 'Pick a currency.',
+    memFeeErrPeriod: 'Pick a billing period.',
+    memFeeErrDay: 'Billing day must be between 1 and 31.',
+    memPlanErrName: 'A plan name is required.',
+    memPlanErrAmount: 'Plan fee must be zero or more.',
+    memPlanErrCurrency: 'Choose a fee currency.',
+    memPlanErrPeriod: 'Choose a billing period.',
+    memPlanErrDay: 'Billing cycle day must be between 1 and 31.',
+    memPlanErrDates: 'End date must be after the start date.',
+    memPlanErrAllowanceName: 'Name each allowance window you define.',
+    memPlanErrAllowanceDuration: 'Allowance duration must be positive minutes.',
+    memPlanErrAllowanceAmount: 'Allowance amount must be zero or more.',
+    // Backend failures.
+    memErrStorage: 'The membership store could not be read, so nothing was changed. The file is preserved; fix or restore it before saving.',
+    memErrAuth: 'Your Desktop session has expired. Sign in again, then retry.',
+    memErrNamespace: 'The membership plugin is not available on this connection and profile. Choose the right connection, or check that the plugin is enabled here.',
+    memErrConflict: 'This membership changed since you loaded it. Reload, then save again.',
+    memErrValidation: 'Some details are not valid. Check the amount, currency and dates.',
+    memErrMissingClear: 'That mark is no longer there — it may have been cleared in another window.',
+    memErrMissingWrite: 'This account is no longer in the store for this connection. Reload the pane.',
+    memErrMissingNone: 'No memberships were recorded for this connection yet.',
+    memErrBackend: 'The backend answered with an error. Nothing was changed; retry once, then check its log.',
+    memErrTimeout: 'The backend did not answer in time. Nothing was changed; retry when the connection settles.',
+    memErrBridge: 'This Desktop build has no plugin backend bridge, so memberships cannot be read.',
+    memErrRefresh: 'Readings could not be refreshed. The previous reading is still shown.',
+    memErrGeneric: 'That did not complete. Please retry; if it persists, check the backend log.',
+    // Fee-override reasons (mirrors REASON_LABELS).
+    memReasonDiscount: 'Discount',
+    memReasonLegacyPricing: 'Legacy price',
+    memReasonPromotion: 'Promotion',
+    memReasonRegional: 'Regional price',
+    memReasonCatalogueBehind: 'Catalogue is behind',
+    memReasonAnnualPrepay: 'Annual prepay',
+    memReasonOther: 'Other',
+    // Custom-plan form.
+    memPlanName: 'Plan name',
+    memFeeOptional: 'Fee (optional)',
+    memBillingFrequency: 'Billing frequency',
+    memPeriodMonthly: 'Monthly',
+    memPeriodYearly: 'Yearly',
+    memPeriodQuarterly: 'Quarterly',
+    memPeriodWeekly: 'Weekly',
+    memAnchorDay: 'Billing-cycle anchor day',
+    memEffectiveTo: 'Effective to',
+    memModelRestrictions: 'Model restrictions (comma-separated)',
+    memKindRolling: 'Rolling',
+    memKindBillingCycle: 'Billing cycle',
+    memKindMonthlyCredit: 'Monthly credit',
+    memScopeAccount: 'Account',
+    memScopeModel: 'Model',
+    // Arrangement notes and credential state.
+    memArrNoteMetered: 'Metered API: no recurring membership fee. Usage and API cost estimates remain available.',
+    memArrNotePrepaid: 'Prepaid credit account. Top-ups are not recurring membership fees; configure cost rules separately in Costs.',
+    memArrNoteSubscription: 'Subscription account.',
+    memArrNoteUnconfirmed: 'No confirmed billing arrangement.',
+    memCredConfigured: 'configured credential',
+    memCredMissing: 'credential not found',
+    memIdentityNative: 'Account identified by Hermes.',
+    memIdentitySlot: 'Provider account slot; credential values are never shown.',
+    // Exhaustion flow.
+    memQuotaNoReset: 'No reset time supplied by you.',
+    memExhaustionUserReported: label => `${label} · This is user-reported and is not provider-confirmed.`,
+    memExhaustionNote: 'Manually reported from Spend Sense; not provider-confirmed.',
+    memSaveFee: 'Save fee',
+    memSaveManualStatus: 'Save manual status',
+    memSaveCustomPlan: 'Save user-defined plan',
+    // Page notices and states.
+    memRefuseStale: 'That action belongs to a different connection. Reload the pane before changing anything.',
+    memRefuseBusy: 'Another membership action is still processing. Please wait and try again.',
+    memRefuseUnversioned: 'This record has no revision and cannot be saved safely. It was probably written outside Spend Sense — restore the membership store before editing.',
+    memDiscovering: 'Discovering…',
+    memRefreshing: 'Refreshing…',
+    memReadFailed: 'Memberships could not be read for this connection.',
+    memAllClear: 'Nothing needs attention. Show all accounts to see every membership.',
+    memEmptyHint: 'No memberships yet. Use "Discover accounts" to find the providers configured in this Hermes profile.',
     ovCertDeclared: 'Declared',
     ovCertCatalogue: 'Catalogue',
     ovCertCustom: 'Custom plan',
@@ -7691,6 +7869,181 @@ const I18N = {
     memFeesLabel: '会员费用',
     memFeesNote: '会员费用是按币种与账单周期的有效金额。服务商百分比是额度而非金额，绝不会计入其中。',
     memAccountId: id => `账户 ID：${id}`,
+    // 会员标签（之前是英文原文，从不翻译）。
+    memDiscover: '发现账户',
+    memAccounts: '账户',
+    memPlansConfirmed: '已确认方案',
+    memPlansOf: (withPlan, total) => `${withPlan}/${total}`,
+    memMarkedExhausted: '已标记用完',
+    memReading: '正在读取该连接的会员……',
+    memBackendNotes: '后端备注',
+    memJumpToAccount: '跳转到账户',
+    memShowingAttention: n => `仅显示需关注（${n}）——显示全部`,
+    memAttentionOnly: n => `仅需关注（${n}）`,
+    memJumpCheck: ' · 待看',
+    memDiagnostics: '请求诊断信息（本次会话）',
+    memSaved: '已保存。',
+    memSavedRereadFailed: error => `已保存，但列表无法重新读取。${error}`,
+    memDiscovered: (found, added, updated) => `发现 ${found} 个账户：新增 ${added}，更新 ${updated}。`,
+    memRefreshedUnreadable: (summary, error) => `${summary} 刷新后的列表无法读取。${error}`,
+    memReadingsRefreshed: '已从 Hermes 刷新读数。',
+    memStoreUnreadable: '该后端的会员数据无法读取，在修复之前不能保存。你的文件没有被改动。',
+    memPlansUnavailable: error => `该连接的方案目录不可用。${error}`,
+    // 会员卡片。
+    memEditFee: '修改费用',
+    memFeeTitle: label => `会员费用 · ${label}`,
+    memFeeRevisionNote: '已发布的目录价格会单独保留；这里会成为你自己的修订版本。',
+    memAmount: '金额',
+    memCurrency: '币种',
+    memPeriod: '周期',
+    memRenewsDay: '每月续费日',
+    memEffectiveFrom: '生效日期',
+    memReason: '原因',
+    memRestoreCatalogue: '恢复目录价格',
+    memOverrideNote: '你的费用覆盖与自定义方案价格分开显示。',
+    memCancel: '取消',
+    memSavingChanges: '正在保存更改……',
+    memGrokNote: 'Grok 消费订阅与 xAI API 计费是分开的。只有适用于此账户时才选择订阅。',
+    memPlanForAccount: '该供应商账户的方案',
+    memPlanClear: '——清除选择——',
+    memPlanConfirm: '——确认方案——',
+    memMarkExhausted: '标记已用完',
+    memClearMark: '清除标记',
+    memNoWindows: '该账户没有公布配额窗口，你仍然可以手动记录已用完。',
+    memMarkAccountExhausted: '标记账户已用完',
+    memExhaustionTitle: '记录耗尽上报',
+    memExhaustionResetLabel: '预计重置日期和时间（可选）',
+    memExhaustionResetHint: '标记时间不会推断重置时间；只有填写时间后才会显示倒计时。',
+    memCustomPlanTitle: '该凭证的自定义方案',
+    memCustomPlanNote: '供应商和账户取自这张发现卡片。该方案只属于此账户，不进入内置目录。',
+    memCustomPlanEdit: '编辑自定义方案',
+    memCustomPlanCreate: '创建自定义方案',
+    memAllowancesTitle: '可选的额度定义',
+    memAllowanceAdd: '添加额度',
+    memWindowName: '窗口名称',
+    memWindowKind: '窗口类型',
+    memWindowDuration: '滚动时长（分钟，可选）',
+    memWindowCredits: '剩余额度（可选）',
+    memAppliesTo: '适用范围',
+    memWindowRemove: '删除窗口',
+    // 实际费用行。
+    memFeeNoInfo: '无费用信息',
+    memPeriodAbbr: p => p === 'month' ? '月' : p === 'year' ? '年' : p === 'quarter' ? '季' : p === 'week' ? '周' : p,
+    memFeesPeriod: p => p === 'month' ? '月' : p === 'year' ? '年' : p === 'quarter' ? '季' : p === 'week' ? '周' : p,
+    memFeeMetered: '按量 API · 无固定会员费',
+    memFeePrepaid: '预付额度 · 无固定会员费',
+    memFeeUnconfirmed: '未确认计费方式',
+    memFeeYourPrice: (amount, period, tail) => `你的价格：${amount}${period}${tail}`,
+    memFeeTail: (source, money) => `（${source} ${money}）`,
+    memFeeSrcCustom: '方案默认',
+    memFeeSrcCatalogue: '目录',
+    memFeeCustom: (amount, period) => `自定义方案：${amount}${period}`,
+    memFeeCatalogue: (amount, period) => `目录价：${amount}${period}`,
+    memFeeUnpriced: '已选方案，但没有公布价格——请自行设置费用',
+    memFeeNoPlan: '未选择方案',
+    // 配额读数。
+    memQuotaUsed: (pct, manual) => `已用 ${pct}%${manual ? '（你上报的）' : ''}`,
+    memQuotaCredits: n => `${n} 额度`,
+    memQuotaAllowance: value => `${value} 额度`,
+    memQuotaNoReading: '无读数',
+    memQuotaSrcYou: '你上报的',
+    memQuotaSrcProvider: '供应商',
+    memQuotaSrcNone: '无数据',
+    memQuotaResets: (date, countdown) => `${date} 重置 · ${countdown}`,
+    memQuotaLive: '实时',
+    memQuotaStale: '过期',
+    memQuotaManual: '手动',
+    memQuotaUnrecorded: '未记录',
+    memCountdownIn: span => `${span}后`,
+    memCountdownAgo: span => `${span}前`,
+    // 方案建议、重新确认与档位选项。
+    memProposal: label => `Hermes 上报为“${label}”——请在下方确认对应的方案。`,
+    memReconfirm: (label, saved) => `Hermes 上报为“${label}”，但此账户保存的是 ${saved}。请在下方重新确认方案——没有任何内容被更改。`,
+    memExcludedOne: name => `${name} 是真实存在的方案，但不覆盖这条线路，因此这里不提供。`,
+    memExcludedMany: '有些方案真实存在，但不覆盖这条线路，因此这里不提供。',
+    memPlanUserDefined: '（自定义）',
+    memPlanProvisional: '（暂定）',
+    memPlanUnpriced: '（未定价）',
+    memPlanNoFee: '未设置费用',
+    memPlanPeriod: p => p === 'month' ? '/月' : p === 'year' ? '/年' : p === 'quarter' ? '/季' : p === 'week' ? '/周' : `/${p}`,
+    // 表单校验。
+    memFeeErrNoDraft: '草稿缺失',
+    memFeeErrAmount: '请输入 0 或更大的金额。',
+    memFeeErrCurrency: '请选择币种。',
+    memFeeErrPeriod: '请选择计费周期。',
+    memFeeErrDay: '账单日必须在 1 到 31 之间。',
+    memPlanErrName: '方案名称必填。',
+    memPlanErrAmount: '方案费用必须为 0 或更大。',
+    memPlanErrCurrency: '请选择费用币种。',
+    memPlanErrPeriod: '请选择计费周期。',
+    memPlanErrDay: '账单周期日必须在 1 到 31 之间。',
+    memPlanErrDates: '结束日期必须晚于开始日期。',
+    memPlanErrAllowanceName: '给定义的每个额度窗口命名。',
+    memPlanErrAllowanceDuration: '额度时长必须为正数分钟。',
+    memPlanErrAllowanceAmount: '额度数量必须为 0 或更大。',
+    // 后端失败。
+    memErrStorage: '会员数据无法读取，没有任何内容被更改。文件已保留；保存前请先修复或恢复。',
+    memErrAuth: 'Desktop 会话已过期，请重新登录后再试。',
+    memErrNamespace: '该连接和档案下没有会员插件。请选择正确的连接，或检查插件是否已启用。',
+    memErrConflict: '该会员在你加载后发生了变化，请重新加载再保存。',
+    memErrValidation: '有些资料无效，请检查金额、币种和日期。',
+    memErrMissingClear: '那个标记已经不在了——可能已在另一个窗口清除。',
+    memErrMissingWrite: '该连接的会员库里已经没有这个账户，请重新加载面板。',
+    memErrMissingNone: '该连接还没有记录任何会员。',
+    memErrBackend: '后端返回了错误。没有任何内容被更改；请重试一次，再查看它的日志。',
+    memErrTimeout: '后端没有及时响应。没有任何内容被更改；等连接稳定后重试。',
+    memErrBridge: '该 Desktop 版本没有插件后端桥，会员无法读取。',
+    memErrRefresh: '读数无法刷新，仍显示之前的读数。',
+    memErrGeneric: '没有完成。请重试；如果仍然不行，请查看后端日志。',
+    // 费用覆盖原因（与 REASON_LABELS 对应）。
+    memReasonDiscount: '折扣',
+    memReasonLegacyPricing: '历史价格',
+    memReasonPromotion: '促销',
+    memReasonRegional: '区域价格',
+    memReasonCatalogueBehind: '目录滞后',
+    memReasonAnnualPrepay: '年预付',
+    memReasonOther: '其他',
+    // 自定义方案表单。
+    memPlanName: '方案名称',
+    memFeeOptional: '费用（可选）',
+    memBillingFrequency: '计费频率',
+    memPeriodMonthly: '每月',
+    memPeriodYearly: '每年',
+    memPeriodQuarterly: '每季',
+    memPeriodWeekly: '每周',
+    memAnchorDay: '账单周期锚定日',
+    memEffectiveTo: '结束日期',
+    memModelRestrictions: '模型限制（逗号分隔）',
+    memKindRolling: '滚动',
+    memKindBillingCycle: '账单周期',
+    memKindMonthlyCredit: '每月额度',
+    memScopeAccount: '账户',
+    memScopeModel: '模型',
+    // 账单安排说明与凭证状态。
+    memArrNoteMetered: '按量 API：无固定会员费。用量与 API 费用估算仍然可用。',
+    memArrNotePrepaid: '预付额度账户。充值不是固定会员费；请在“费用”中单独配置成本规则。',
+    memArrNoteSubscription: '订阅账户。',
+    memArrNoteUnconfirmed: '未确认计费方式。',
+    memCredConfigured: '凭证已配置',
+    memCredMissing: '未找到凭证',
+    memIdentityNative: '账户由 Hermes 识别。',
+    memIdentitySlot: '供应商账户槽位；绝不显示凭证值。',
+    // 耗尽上报流程。
+    memQuotaNoReset: '你没有提供重置时间。',
+    memExhaustionUserReported: label => `${label} · 这是用户上报的，未经供应商确认。`,
+    memExhaustionNote: '由 Spend Sense 手动上报；未经供应商确认。',
+    memSaveFee: '保存费用',
+    memSaveManualStatus: '保存手动状态',
+    memSaveCustomPlan: '保存自定义方案',
+    // 页面通知与状态。
+    memRefuseStale: '该操作属于另一个连接，更改前请重新加载面板。',
+    memRefuseBusy: '另一个会员操作仍在处理中，请稍候再试。',
+    memRefuseUnversioned: '该记录没有版本号，无法安全保存。它可能是在 Spend Sense 之外写入的——编辑前请先恢复会员数据。',
+    memDiscovering: '发现中……',
+    memRefreshing: '刷新中……',
+    memReadFailed: '该连接的会员无法读取。',
+    memAllClear: '没有需要注意的事项。显示全部账户可查看所有会员。',
+    memEmptyHint: '还没有会员。用“发现账户”查找该 Hermes 档案中配置的供应商。',
     ovCertDeclared: '已申报',
     ovCertCatalogue: '目录价格',
     ovCertCustom: '自定义方案',

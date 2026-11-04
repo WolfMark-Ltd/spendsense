@@ -35,16 +35,39 @@ def _select_book(catalogue, settings: Mapping[str, Any],
     """One catalogue-selection rule for every read path.
 
     An explicitly supplied catalogue always wins. Otherwise the validated
-    live catalogue is used when Live Updates is enabled and cached; the
-    bundled catalogue is the fallback. Returns ``(book, source)``.
+    live catalogue is used when Live Updates is enabled and cached —
+    unless it is proven older than the bundled copy, in which case the
+    bundled catalogue is served so Live Updates can never downgrade the
+    plans. Returns ``(book, source)``.
     """
     if catalogue is not None:
         return catalogue, "bundled"
     book = central.get("book")
     if (settings.get("live_updates") is True and isinstance(book, dict)
             and book.get("plans")):
+        try:
+            bundled = load_plans()
+        except Exception:
+            # A broken bundled file must not take Live Updates down with
+            # it: serve the validated live copy, as before the guard.
+            return book, "live"
+        if live.central_is_stale(book, bundled):
+            return bundled, "bundled"
         return book, "live"
     return load_plans(), "bundled"
+
+
+def _live_held_back(settings: Mapping[str, Any],
+                    central: Mapping[str, Any]) -> bool:
+    """Whether the staleness guard held a live copy back for this read."""
+    book = central.get("book")
+    if not (settings.get("live_updates") is True
+            and isinstance(book, dict) and book.get("plans")):
+        return False
+    try:
+        return live.central_is_stale(book, load_plans())
+    except Exception:
+        return False
 
 
 def active_catalogue(catalogue: Optional[Mapping[str, Any]] = None, *,
@@ -52,8 +75,9 @@ def active_catalogue(catalogue: Optional[Mapping[str, Any]] = None, *,
     """The catalogue account cards, fees and plan choices resolve against.
 
     Explicit catalogue wins; else the validated live catalogue when Live
-    Updates is enabled and cached; else the bundled catalogue. Corrupt or
-    missing settings and caches fall back to bundled, never raise.
+    Updates is enabled and cached, unless it is proven older than the
+    bundled copy; else the bundled catalogue. Corrupt or missing settings
+    and caches fall back to bundled, never raise.
     """
     settings = news_mod.load_settings(news_mod.settings_path(data_dir))
     central = live.load_cache(live.cache_path(data_dir))
@@ -214,8 +238,10 @@ def plans_payload(catalogue: Optional[Mapping[str, Any]] = None, *,
     An explicitly supplied catalogue is always served. Otherwise the
     bundled ``catalogue/plans.json`` is the default; when Live Updates is
     enabled and a validated central catalogue is cached, that copy is
-    served instead. The ``source`` and ``central`` fields say which copy
-    this is and how fresh the central one is.
+    served instead — unless it is proven older than the bundled copy, in
+    which case the bundled copy is served and ``central.held_back`` is
+    true. The ``source`` and ``central`` fields say which copy this is
+    and how fresh the central one is.
     """
     settings = news_mod.load_settings(news_mod.settings_path(data_dir))
     central = live.load_cache(live.cache_path(data_dir))
@@ -242,6 +268,7 @@ def plans_payload(catalogue: Optional[Mapping[str, Any]] = None, *,
             "fetched_at": central.get("fetched_at") or "",
             "error": central.get("error") or "",
             "catalogue_version": central_version,
+            "held_back": _live_held_back(settings, central),
         },
         "families": [families[k] for k in sorted(families)],
         # The values PUT/POST accept. The pane renders from this rather than
