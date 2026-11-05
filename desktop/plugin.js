@@ -1046,7 +1046,7 @@ function saveLedger(next) {
     const message = String((err && err.message) || err)
     if (!$storageError.get()) {
       try {
-        host.notify({ kind: 'warning', message: `Spend Sense could not save its Desktop ledger (${message})` })
+        host.notify({ kind: 'warning', message: `SpendSense could not save its Desktop ledger (${message})` })
       } catch {
         /* notify is best-effort */
       }
@@ -1644,7 +1644,7 @@ function MeterHeader({ presence, t, view }) {
   return jsxs('header', { className: 'wm-meter-head', children: [
     jsxs('div', { className: 'wm-meter-brandrow', children: [
       jsx('span', { className: 'wm-meter-mark', children: jsx(BrandMark, { size: 18, id: 'pane' }) }, 'mark'),
-      jsx('span', { className: 'wm-meter-name', children: 'Spend Sense' }, 'name'),
+      jsx('span', { className: 'wm-meter-name', children: 'SpendSense' }, 'name'),
       jsxs('span', { className: 'wm-meter-presence', children: [
         jsx('span', { className: 'wm-dot', 'data-state': presence, 'aria-hidden': true }, 'dot'),
         jsx('span', { children: stateLabel }, 'label')
@@ -1858,7 +1858,7 @@ function MeterEmpty({ t }) {
   return jsxs('div', { className: 'wm-meter-empty', children: [
     jsxs('div', { className: 'wm-meter-brandrow', children: [
       jsx('span', { className: 'wm-meter-mark', children: jsx(BrandMark, { size: 18, id: 'pane' }) }, 'mark'),
-      jsx('span', { className: 'wm-meter-name', children: 'Spend Sense' }, 'name')
+      jsx('span', { className: 'wm-meter-name', children: 'SpendSense' }, 'name')
     ] }, 'brand'),
     jsx(Note, { children: t('empty') }, 'note')
   ] })
@@ -1925,8 +1925,10 @@ const SHARED_CSS = [
   '.wm-async-status[data-status="success"]{color:var(--ui-success,#2dd4bf)}',
   '.wm-async-status[data-status="error"]{color:var(--ui-error)}',
   '.wm-info{position:static;display:inline-flex;flex-shrink:0}',
-  '.wm-info-btn{width:24px;height:24px;border-radius:50%;border:1px solid var(--ui-text-quaternary);background:none;color:var(--ui-text-quaternary);font-size:10px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;cursor:pointer;display:inline-grid;place-items:center}',
-  '.wm-info-btn:hover,.wm-info-btn:focus-visible{border-color:var(--ui-accent);color:var(--ui-accent)}',
+  '.wm-info-btn{position:relative;width:24px;height:24px;border-radius:50%;border:1px solid transparent;background:none;color:var(--ui-text-quaternary);font-size:10px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;cursor:pointer;display:inline-grid;place-items:center}',
+  '.wm-info-btn::after{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;transform:translate(-50%,-50%);border-radius:50%;border:1px solid var(--ui-text-quaternary);pointer-events:none}',
+  '.wm-info-btn:hover,.wm-info-btn:focus-visible{color:var(--ui-accent)}',
+  '.wm-info-btn:hover::after,.wm-info-btn:focus-visible::after{border-color:var(--ui-accent)}',
   '.wm-info-btn:focus-visible{outline:2px solid var(--ui-accent);outline-offset:1px}',
   '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:20;background:var(--ui-fill-secondary,#1a1d26);border:1px solid var(--ui-stroke-secondary);border-radius:7px;padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;white-space:normal;color:var(--ui-text-secondary);box-shadow:0 6px 20px rgba(0,0,0,.35)}',
   '.wm-info-pop.wm-info-up{top:auto;bottom:calc(100% + 6px)}',
@@ -2056,18 +2058,18 @@ function rowBasis(t, r) {
 /** A true price gap stays null; a known free price stays zero. */
 const finiteValue = v => typeof v === 'number' && Number.isFinite(v) ? v : null
 const analyticsId = r => JSON.stringify([r.provider || '', r.model || ''])
-function analyticsDistribution(rows, metric = 'cost', grouping = 'model', limit = 6) {
+function analyticsDistribution(rows, metric = 'cost', grouping = 'model', limit = 6, t = needsAttentionEn) {
   const valueKey = metric === 'cost' ? 'list_usd' : 'tokens'
   const entries = rows.map(row => ({
     ...row, id: grouping === 'provider' ? row.provider : analyticsId(row),
-    label: grouping === 'provider' ? row.provider || 'Unknown provider' : row.model || 'Unknown model',
+    label: grouping === 'provider' ? row.provider || t('usageUnknownProviderCap') : row.model || t('usageUnknownModel'),
     value: finiteValue(row[valueKey])
   })).filter(row => row.value != null && row.value > 0)
     .sort((a, b) => b.value - a.value || String(a.id).localeCompare(String(b.id)))
   const total = entries.reduce((sum, row) => sum + row.value, 0)
   const remainder = entries.slice(limit).map(row=>({...row,share:total ? row.value / total : 0}))
   const items = entries.slice(0, limit)
-  if (remainder.length) items.push({id:'__other__',label:'Other',other:true,value:remainder.reduce((s,r)=>s+r.value,0)})
+  if (remainder.length) items.push({id:'__other__',label:t('usageOther'),other:true,value:remainder.reduce((s,r)=>s+r.value,0)})
   return {total, remainder, items: items.map(r => ({...r,share:total ? r.value / total : 0})),
     unpricedTokens: rows.reduce((s,r)=>s+num(r.unpriced_tokens),0)}
 }
@@ -2078,9 +2080,16 @@ const TOKEN_STREAMS = [
   ['cache_read_tokens','Cache read','var(--ui-warning)'],
   ['cache_write_tokens','Cache write','color-mix(in srgb, var(--ui-accent) 45%, var(--ui-text-primary))']
 ]
-function analyticsComposition(totals = {}) {
+/** Token-stream ids to their I18N labels. TOKEN_STREAMS keeps the canonical English. */
+const STREAM_LABEL_KEYS = {
+  input_tokens: 'usageStreamInput',
+  output_tokens: 'usageStreamOutput',
+  cache_read_tokens: 'usageStreamCacheRead',
+  cache_write_tokens: 'usageStreamCacheWrite',
+}
+function analyticsComposition(totals = {}, t = needsAttentionEn) {
   const total = TOKEN_STREAMS.reduce((s,[key])=>s+num(totals[key]),0)
-  return TOKEN_STREAMS.map(([key,label,color])=>({id:key,label,color,value:num(totals[key]),share:total?num(totals[key])/total:0}))
+  return TOKEN_STREAMS.map(([key,,color])=>({id:key,label:t(STREAM_LABEL_KEYS[key]),color,value:num(totals[key]),share:total?num(totals[key])/total:0}))
 }
 /** Never infer category-dollar costs from token proportions or current prices. */
 function analyticsTrend(buckets, metric = 'tokens') {
@@ -2097,13 +2106,13 @@ function analyticsTrend(buckets, metric = 'tokens') {
   return {points,max:Math.max(0,...points.map(p=>p.total || 0)),stacked:metric==='tokens'||points.every(p=>p.values!=null)}
 }
 
-function analyticsPricing(row) {
-  if (!num(row.tokens)) return 'No usage'
-  if (finiteValue(row.list_usd) == null || !num(row.priced_tokens)) return 'Unpriced'
+function analyticsPricing(row, t = needsAttentionEn) {
+  if (!num(row.tokens)) return t('usagePricingNone')
+  if (finiteValue(row.list_usd) == null || !num(row.priced_tokens)) return t('usagePricingUnpriced')
   const fallback = num(row.fallback_calls)
-  if (num(row.unpriced_tokens)) return `Partial · ${((num(row.priced_tokens) / num(row.tokens)) * 100).toFixed(1)}%${fallback ? ' · fallback rates' : ''}`
-  if (fallback) return `Fallback rates · ${fallback} calls`
-  return 'Complete'
+  if (num(row.unpriced_tokens)) return t('usagePricingPartial', ((num(row.priced_tokens) / num(row.tokens)) * 100).toFixed(1), fallback)
+  if (fallback) return t('usagePricingFallback', fallback)
+  return t('usagePricingComplete')
 }
 function analyticsSort(rows, key, direction = 'desc') {
   const value = row => key === 'savings' ? finiteValue(row.economics?.savings_usd)
@@ -2119,27 +2128,29 @@ function analyticsSort(rows, key, direction = 'desc') {
 }
 
 /** Three plain conclusions from data already on the page; no new claims. */
-function analyticsInsights(data) {
+function analyticsInsights(data, t = needsAttentionEn) {
   const totals = data?.totals || {}
   const insights = []
   const priced = (data?.by_model || []).filter(r => finiteValue(r.list_usd) != null && num(r.list_usd) > 0)
     .sort((a, b) => num(b.list_usd) - num(a.list_usd))
   if (priced.length && num(totals.list_usd)) {
     const top = priced[0]
-    insights.push({label: 'Biggest driver', text: `${top.model || 'Unknown model'} via ${top.provider || 'unknown'} is ${percent(num(top.list_usd) / num(totals.list_usd))} of priced API-equivalent cost.`})
+    insights.push({label: t('usageInsightDriver'), text: t('usageInsightDriverText',
+      top.model || t('usageUnknownModel'), top.provider || t('unknown'), percent(num(top.list_usd) / num(totals.list_usd)))})
   }
   const e = data?.economics || totals.economics || {}
-  if (finiteValue(e.savings_usd) != null) insights.push({label: 'Cache verdict', text: e.savings_usd < 0
-    ? `Cache writes cost ${analyticMoney(-e.savings_usd)} more than reads save on covered calls. See Cache economics.`
-    : `Caching saves a theoretical ${analyticMoney(e.savings_usd)} on covered calls (${percent(e.coverage)} covered).`})
+  if (finiteValue(e.savings_usd) != null) insights.push({label: t('usageInsightVerdict'), text: e.savings_usd < 0
+    ? t('usageInsightVerdictLoss', analyticMoney(-e.savings_usd))
+    : t('usageInsightVerdictSave', analyticMoney(e.savings_usd), percent(e.coverage))})
   const scopes = Object.fromEntries((data?.by_scope || []).map(r => [r.scope, r]))
   const sub = scopes.subagent
-  if (sub && num(totals.tokens)) insights.push({label: 'Delegated work', text: `Subagents used ${percent(num(sub.tokens) / num(totals.tokens))} of tokens across ${exactTokens(sub.calls)} calls.`})
+  if (sub && num(totals.tokens)) insights.push({label: t('usageInsightDelegated'),
+    text: t('usageInsightDelegatedText', percent(num(sub.tokens) / num(totals.tokens)), exactTokens(sub.calls))})
   return insights
 }
-function deltaText(value) {
+function deltaText(value, t = needsAttentionEn) {
   if (finiteValue(value) == null) return null
-  return `${value >= 0 ? '▲' : '▼'} ${Math.abs(value * 100).toFixed(1)}% vs previous period`
+  return t('usageDelta', value >= 0 ? '▲' : '▼', Math.abs(value * 100).toFixed(1))
 }
 
 /* -------------------------------------------------------- analytics state */
@@ -2306,7 +2317,7 @@ function AnalyticsPanel({number,title,subtitle,controls,children,footer}) {
 function AnalyticsStat({label,value,hint,extra,tone}) {
   return jsxs('div',{className:'wm-stat',children:[jsx('div',{className:'wm-statlabel',children:label}),jsx('div',{className:cn('wm-statvalue wm-mono',tone),children:value}),jsx('div',{className:'wm-subtle',children:hint}),extra?jsx('div',{className:'wm-subtle',style:{marginTop:5},children:extra}):null]})
 }
-function AnalyticsDonut({items,total,label,format,onSelect,chart='distribution'}) {
+function AnalyticsDonut({items,total,label,format,onSelect,chart='distribution',t}) {
   const radius=72,circumference=2*Math.PI*radius
   let offset=0
   return jsxs('svg',{className:'wm-donut',viewBox:'0 0 200 200','data-chart':chart,role:'img','aria-label':`${label}: ${format(total)}`,children:[
@@ -2317,30 +2328,32 @@ function AnalyticsDonut({items,total,label,format,onSelect,chart='distribution'}
       const select=()=>onSelect(item)
       return jsx('circle',{className:'wm-ring',cx:100,cy:100,r:radius,fill:'none',stroke:item.color || CHART_COLORS[i%CHART_COLORS.length],strokeWidth:22,
         strokeDasharray:`${item.share*circumference} ${circumference}`,strokeDashoffset:-start,
-        role:'button',tabIndex:0,'aria-label':`${item.other?'Inspect':'Select'} ${item.label}: ${format(item.value)}, ${percent(item.share)}`,
+        role:'button',tabIndex:0,'aria-label':t('usageDonutAction', item.other, item.label, format(item.value), percent(item.share)),
         onClick:select,onKeyDown:event=>keyActivate(event,select),style:{cursor:'pointer'},children:jsx('title',{children:`${item.label} · ${format(item.value)} · ${percent(item.share)}`})},item.id)
     }),jsx('text',{x:100,y:97,textAnchor:'middle',className:'wm-svgtext',children:format(total)}),jsx('text',{x:100,y:116,textAnchor:'middle',className:'wm-svghint',children:label})]})
 }
 function AnalyticsDistribution({data,state,dispatch}) {
+  const t = usePluginI18n(ID)
   const grouped=state.grouping==='provider'
-  const dist=analyticsDistribution((grouped?data.by_route:data.by_model) || [],state.distributionMetric,state.grouping)
+  const dist=analyticsDistribution((grouped?data.by_route:data.by_model) || [],state.distributionMetric,state.grouping,6,t)
   const format=state.distributionMetric==='cost'?analyticMoney:fmtTokens
   const select=row=>row.other ? dispatch({type:'toggle',key:'otherOpen'}) : dispatch({type:'select',group:state.grouping,row})
   const legend=(row,i)=>jsxs('button',{type:'button',className:'wm-legendrow',
-    'aria-label':row.other?`Inspect Other ${grouped?'providers':'models'}`:`Filter ${grouped?row.provider:row.model} via ${row.provider}`,
-    'aria-expanded':row.other?state.otherOpen:undefined,onClick:()=>select(row),title:row.other?'Inspect the exact remainder without changing filters':`Apply exact ${state.grouping} filter`,children:[
+    'aria-label':row.other?t('usageLegendInspectOther', grouped?t('usageLegendProviders'):t('usageLegendModels')):t('usageLegendFilter', grouped?row.provider:row.model, row.provider),
+    'aria-expanded':row.other?state.otherOpen:undefined,onClick:()=>select(row),title:row.other?t('usageLegendInspectTitle'):t('usageLegendApplyTitle', state.grouping),children:[
       jsx('span',{className:'wm-dot',style:{background:CHART_COLORS[i%CHART_COLORS.length]}}),
-      jsxs('span',{className:'wm-label',children:[row.label,!grouped&&!row.other?jsx('small',{children:row.provider || 'Unknown provider'}):null]}),
+      jsxs('span',{className:'wm-label',children:[row.label,!grouped&&!row.other?jsx('small',{children:row.provider || t('usageUnknownProviderCap')}):null]}),
       jsx('span',{className:'wm-bartrack','aria-hidden':'true',children:jsx('span',{className:'wm-barfill',style:{width:`${Math.max(0,Math.min(100,row.share*100))}%`,background:CHART_COLORS[i%CHART_COLORS.length]}})}),
       jsxs('span',{className:'wm-value wm-mono',children:[format(row.value),jsx('small',{children:percent(row.share)})]})]},row.id)
-  return jsx(AnalyticsPanel,{number:'01',title:'Usage distribution',subtitle:'Where your usage goes',controls:jsxs('div',{className:'wm-controls',children:[
-    jsx(AnalyticsSegments,{label:'Distribution',value:state.distributionMetric,options:[['cost','Cost'],['tokens','Tokens']],onChange:value=>dispatch({type:'set',key:'distributionMetric',value})}),
-    jsx(AnalyticsSegments,{label:'Distribution by',value:state.grouping,options:[['model','Model'],['provider','Provider']],onChange:value=>dispatch({type:'set',key:'grouping',value})})]}),
-    children:jsxs('div',{children:[jsx('div',{className:'wm-legend',children:dist.items.length?dist.items.map(legend):jsx('p',{className:'wm-subtle',children:state.distributionMetric==='cost'?'No priced cost to distribute. Known free usage has zero cost; unpriced usage is not zero.':'No tokens to distribute.'})}),
-      state.otherOpen?jsxs('div',{className:'wm-remainder',children:[jsx('h2',{children:`Remainder · ${dist.remainder.length} ${grouped?'providers':'models'}`}),...dist.remainder.map((r,i)=>legend(r,i+6))]}):null]}),
-    footer:jsxs('span',{children:[state.distributionMetric==='cost'?'Shares of the PRICED subtotal only. ':'Shares of all recorded tokens. ',num(dist.unpricedTokens)?jsx('span',{className:'wm-warn',children:`${fmtTokens(dist.unpricedTokens)} unpriced tokens are excluded from cost shares. `}):null,'Top 6 + Other conserves the total. Click a legend to filter; Other only inspects.']})})
+  return jsx(AnalyticsPanel,{number:'01',title:t('usageDistTitle'),subtitle:t('usageDistSubtitle'),controls:jsxs('div',{className:'wm-controls',children:[
+    jsx(AnalyticsSegments,{label:t('usageSegDistribution'),value:state.distributionMetric,options:[['cost',t('usageSegCost')],['tokens',t('usageSegTokens')]],onChange:value=>dispatch({type:'set',key:'distributionMetric',value})}),
+    jsx(AnalyticsSegments,{label:t('usageSegDistBy'),value:state.grouping,options:[['model',t('usageSegModel')],['provider',t('usageSegProvider')]],onChange:value=>dispatch({type:'set',key:'grouping',value})})]}),
+    children:jsxs('div',{children:[jsx('div',{className:'wm-legend',children:dist.items.length?dist.items.map(legend):jsx('p',{className:'wm-subtle',children:state.distributionMetric==='cost'?t('usageDistEmptyCost'):t('usageDistEmptyTokens')})}),
+      state.otherOpen?jsxs('div',{className:'wm-remainder',children:[jsx('h2',{children:t('usageDistRemainder', dist.remainder.length, grouped?t('usageLegendProviders'):t('usageLegendModels'))}),...dist.remainder.map((r,i)=>legend(r,i+6))]}):null]}),
+    footer:jsxs('span',{children:[state.distributionMetric==='cost'?t('usageDistFooterCost'):t('usageDistFooterTokens'),num(dist.unpricedTokens)?jsx('span',{className:'wm-warn',children:t('usageDistFooterWarn', fmtTokens(dist.unpricedTokens))}):null,t('usageDistFooterNote')]})})
 }
 function AnalyticsTrendChart({data,state,dispatch}) {
+  const t = usePluginI18n(ID)
   const metric=state.trendMetric
   const trend=analyticsTrend(data.trend?.buckets || [],metric)
   const format=metric==='cost'?analyticMoney:fmtTokens
@@ -2355,12 +2368,12 @@ function AnalyticsTrendChart({data,state,dispatch}) {
     const d=`M ${trend.points.map(p=>`${x(p)},${y(upper(p))}`).join(' L ')} L ${trend.points.slice().reverse().map(p=>`${x(p)},${y(lower(p))}`).join(' L ')} Z`
     layers.push(jsx('path',{d,fill:TOKEN_STREAMS[i][2],fillOpacity:.68,stroke:TOKEN_STREAMS[i][2],strokeWidth:.8},`layer${i}`))
   }
-  const markers=trend.points.map((p,index)=>jsxs('g',{'data-trend-point':index,role:'button',tabIndex:0,'aria-label':`${p.ts}: ${format(p.total)}${num(p.row.unpriced_tokens)?' partial priced subtotal':''}`,
+  const markers=trend.points.map((p,index)=>jsxs('g',{'data-trend-point':index,role:'button',tabIndex:0,'aria-label':t('usageTrendPoint', p.ts, format(p.total), num(p.row.unpriced_tokens)),
     onClick:()=>select(index),onFocus:()=>select(index),onMouseEnter:()=>select(index),onKeyDown:event=>{
       if(event.key==='ArrowRight'||event.key==='ArrowLeft'){event.preventDefault();dispatch({type:'trend-step',index,total:trend.points.length,direction:event.key==='ArrowRight'?1:-1})}
       else keyActivate(event,()=>select(index))
     },style:{cursor:'crosshair'},children:[
-      jsx('title',{children:`${p.ts} · ${format(p.total)} · ${exactTokens(p.row.calls)} calls`}),
+      jsx('title',{children:t('usageTrendTitle', p.ts, format(p.total), exactTokens(p.row.calls))}),
       trend.stacked&&trend.points.length===1?TOKEN_STREAMS.map(([, ,color],i)=>jsx('rect',{x:x(p)-15,width:30,y:y(p.values.slice(0,i+1).reduce((a,b)=>a+b,0)),height:(p.values[i]/(trend.max||1))*(bottom-top),fill:color},i)):null,
       jsx('line',{x1:x(p),x2:x(p),y1:top,y2:bottom,stroke:'var(--ui-accent)',strokeOpacity:active===p?.45:0}),
       jsx('rect',{x:x(p)-Math.min(18,(right-left)/Math.max(1,trend.points.length)/2),y:top,width:Math.min(36,(right-left)/Math.max(1,trend.points.length)),height:bottom-top,fill:'transparent'}),
@@ -2373,75 +2386,78 @@ function AnalyticsTrendChart({data,state,dispatch}) {
     for(const p of trend.points){if(p.total==null)flush();else run.push(p)}flush()
   }
   const axisLabel=row=>data.trend?.granularity==='hour' ? `${String(row.ts_local || row.ts).slice(11,16)} ${row.ts_local ? String(row.ts_local).slice(-6) : 'UTC'}` : String(row.ts_local || row.ts).slice(5,10)
-  return jsx(AnalyticsPanel,{number:'02',title:'Usage over time',subtitle:`Timestamped calls · ${data.trend?.granularity || 'day'} buckets · ${data.window?.timezone || 'UTC'}`,controls:jsx(AnalyticsSegments,{label:'Trend',value:metric,options:[['tokens','Tokens'],['cost','Cost']],onChange:value=>dispatch({type:'set',key:'trendMetric',value})}),children:jsxs('div',{children:[
-    jsxs('svg',{className:'wm-trend',viewBox:`0 0 ${width} ${height}`,'data-chart':'trend',role:'img','aria-label':`${metric} over true timestamps`,children:[
-      jsx('title',{children:'True elapsed-time positions. Focus or hover a timestamp for exact values.'}),
+  return jsx(AnalyticsPanel,{number:'02',title:t('usageTrendPanelTitle'),subtitle:t('usageTrendSubtitle', t(data.trend?.granularity === 'hour' ? 'usageGranHour' : 'usageGranDay'), data.window?.timezone || 'UTC'),controls:jsx(AnalyticsSegments,{label:t('usageSegTrend'),value:metric,options:[['tokens',t('usageSegTokens')],['cost',t('usageSegCost')]],onChange:value=>dispatch({type:'set',key:'trendMetric',value})}),children:jsxs('div',{children:[
+    jsxs('svg',{className:'wm-trend',viewBox:`0 0 ${width} ${height}`,'data-chart':'trend',role:'img','aria-label':t('usageTrendAria', metric),children:[
+      jsx('title',{children:t('usageTrendHint')}),
       ...[0,.25,.5,.75,1].flatMap(r=>[jsx('line',{className:'wm-gridline',x1:left,x2:right,y1:y(r*trend.max),y2:y(r*trend.max)},`grid${r}`),jsx('text',{className:'wm-axis',x:left-9,y:y(r*trend.max)+3,textAnchor:'end',children:format(r*trend.max)},`axis${r}`)]),
       ...layers,...costLines,...markers,
       ...trend.points.filter((_,i)=>i===0||i===trend.points.length-1||i===Math.floor(trend.points.length/2)).map(p=>jsx('text',{x:x(p),y:bottom+24,textAnchor:'middle',className:'wm-axis',children:axisLabel(p.row)},`date${p.ts}`))]}),
-    jsx('div',{className:'wm-chartkey',children:trend.stacked?TOKEN_STREAMS.map(([key,label,color])=>jsxs('span',{children:[jsx('i',{className:'wm-dot',style:{background:color}}),label]},key)):jsx('span',{children:'Priced API-equivalent subtotal · category-dollar streams unavailable'})}),
+    jsx('div',{className:'wm-chartkey',children:trend.stacked?TOKEN_STREAMS.map(([key,,color])=>jsxs('span',{children:[jsx('i',{className:'wm-dot',style:{background:color}}),t(STREAM_LABEL_KEYS[key])]},key)):jsx('span',{children:t('usageTrendUnstacked')})}),
     jsx('div',{className:'wm-chartdetail','aria-live':'polite',children:active?[
       jsx('span',{className:'wm-mono',children:(active.row.ts_local || active.ts).replace('T',' ').replace('Z',' UTC')},'ts'),
-      jsx('strong',{className:'wm-mono',children:`${format(active.total)}${num(active.row.unpriced_tokens)?' · partial':''}`},'total'),
-      ...TOKEN_STREAMS.map(([key,label])=>jsx('span',{children:`${label} ${exactTokens(active.row[key])}`},key))
-    ]:'Hover or keyboard-focus a point to inspect exact usage. ← → selects adjacent timestamps.'})]}),
-    footer:metric==='cost'?'API-equivalent cost, not recorded billing. Unknown prices leave gaps; unpriced tokens are never counted as $0.':'Stacked fresh input + output + cache read + cache write. X positions reflect real elapsed time, not array indices.'})
+      jsx('strong',{className:'wm-mono',children:t('usageTrendTotal', format(active.total), num(active.row.unpriced_tokens))},'total'),
+      ...TOKEN_STREAMS.map(([key])=>jsx('span',{children:t('usageTrendStream', t(STREAM_LABEL_KEYS[key]), exactTokens(active.row[key]))},key))
+    ]:t('usageTrendEmpty')})]}),
+    footer:metric==='cost'?t('usageTrendFooterCost'):t('usageTrendFooterTokens')})
 }
 function AnalyticsDelegation({data,state,dispatch}) {
+  const t = usePluginI18n(ID)
   const scopes=Object.fromEntries((data.by_scope || []).map(row=>[row.scope,row]))
   const direct=scopes.direct || null, sub=scopes.subagent || null, aux=scopes.auxiliary || null, un=scopes.unattributed || null
   const attribution=data.attribution || {}
   const max=Math.max(num(direct?.list_usd),num(sub?.list_usd)) || 1
   const bar=(row,label,color)=>jsxs('div',{className:'wm-comparerow',children:[
-    jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:`${analyticMoney(row?.list_usd)} · ${fmtTokens(row?.tokens)} tok · ${exactTokens(row?.calls)} calls`})]}),
-    jsx('div',{className:'wm-comparetrack',role:'img','aria-label':`${label}: ${analyticMoney(row?.list_usd)}`,children:row&&num(row.list_usd)?jsx('span',{style:{width:`${num(row.list_usd)/max*100}%`,background:color}}):null})]},label)
-  return jsx(AnalyticsPanel,{number:'03',title:'Delegated operations',subtitle:'Parent inference versus delegated workers',controls:jsx(AnalyticsSegments,{label:'Delegation scope',value:state.filters.scope || 'all',options:[['all','All'],['direct','Parent'],['subagent','Subagents']],onChange:value=>dispatch({type:'filter',key:'scope',value:value==='all'?'':value})}),children:jsxs('div',{children:[
-    jsx('div',{className:'wm-comparison',children:[bar(direct,'Parent (direct)','var(--ui-accent)'),bar(sub,'Subagents','var(--ui-success)')]}),
+    jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:t('usageDelegBar', analyticMoney(row?.list_usd), fmtTokens(row?.tokens), exactTokens(row?.calls))})]}),
+    jsx('div',{className:'wm-comparetrack',role:'img','aria-label':t('usageDelegBarAria', label, analyticMoney(row?.list_usd)),children:row&&num(row.list_usd)?jsx('span',{style:{width:`${num(row.list_usd)/max*100}%`,background:color}}):null})]},label)
+  return jsx(AnalyticsPanel,{number:'03',title:t('usageDelegTitle'),subtitle:t('usageDelegSubtitle'),controls:jsx(AnalyticsSegments,{label:t('usageSegDelegScope'),value:state.filters.scope || 'all',options:[['all',t('usageSegAll')],['direct',t('usageSegParent')],['subagent',t('usageSegSubagents')]],onChange:value=>dispatch({type:'filter',key:'scope',value:value==='all'?'':value})}),children:jsxs('div',{children:[
+    jsx('div',{className:'wm-comparison',children:[bar(direct,t('usageDelegParent'),'var(--ui-accent)'),bar(sub,t('usageDelegSubagents'),'var(--ui-success)')]}),
     jsxs('div',{className:'wm-subtle',style:{marginTop:14},children:[
-      jsx('p',{children:`${exactTokens(attribution.child_sessions)} child sessions known · ${exactTokens(sub?.calls || 0)} delegated calls captured`}),
-      jsx('p',{children:`Cache: parent ${percent(direct?.cache_hit_rate)} · workers ${percent(sub?.cache_hit_rate)} · auxiliary ${percent(aux?.cache_hit_rate)}`}),
-      (data.options?.operations || []).length?jsx('p',{children:`Busiest operations: ${(data.options.operations || []).slice(0,5).map(o=>`${String(o.parent).length>24?`${String(o.parent).slice(0,23)}…`:o.parent} (${exactTokens(o.subagent_calls)} worker calls)`).join(' · ')}`}):null,
-      num(attribution.unattributed_calls)?jsx('p',{className:'wm-warn',children:`${exactTokens(attribution.unattributed_calls)} calls could not be attributed to a session; they stay in totals as unattributed.`}):null,
-      jsx('p',{children:'Combined totals include parent, delegated and auxiliary calls exactly once. Child sessions are matched read-only through state.db parent_session_id; nested delegations roll up to the operation root.'})].filter(Boolean)})]}),
-    footer:'A subagent is a persisted child session, not a separate invoice. Where Hermes cannot establish a parent, usage is reported as unattributed rather than assigned.'})
+      jsx('p',{children:t('usageDelegKnown', exactTokens(attribution.child_sessions), exactTokens(sub?.calls || 0))}),
+      jsx('p',{children:t('usageDelegCache', percent(direct?.cache_hit_rate), percent(sub?.cache_hit_rate), percent(aux?.cache_hit_rate))}),
+      (data.options?.operations || []).length?jsx('p',{children:t('usageDelegBusiest', (data.options.operations || []).slice(0,5).map(o=>t('usageDelegOpWorkers', String(o.parent).length>24?`${String(o.parent).slice(0,23)}…`:o.parent, exactTokens(o.subagent_calls))).join(' · '))}):null,
+      num(attribution.unattributed_calls)?jsx('p',{className:'wm-warn',children:t('usageDelegUnattributed', exactTokens(attribution.unattributed_calls))}):null,
+      jsx('p',{children:t('usageDelegNote')})].filter(Boolean)})]}),
+    footer:t('usageDelegFooter')})
 }
 function AnalyticsRanking({data,state,dispatch}) {
+  const t = usePluginI18n(ID)
   const ranked=analyticsSort(data.by_model || [],state.ranking,'desc').slice(0,8)
   const numeric=row=>state.ranking==='savings'?finiteValue(row.economics?.savings_usd):finiteValue(row[state.ranking])
   const maximum=Math.max(0,...ranked.map(r=>Math.abs(numeric(r)||0))) || 1
   const format=state.ranking==='savings'?analyticMoney:state.ranking==='cache_read_tokens'?fmtTokens:percent
   const signed=state.ranking==='savings'
   const start=signed?333:225,end=535,range=signed?100:end-start
-  return jsx(AnalyticsPanel,{number:'04',title:'Cache performance',subtitle:'Weighted prompt-cache rate · model × route',controls:jsx(AnalyticsSegments,{label:'Rank by',value:state.ranking,options:[['cache_hit_rate','Hit rate'],['cache_read_tokens','Volume']],onChange:value=>dispatch({type:'set',key:'ranking',value})}),
-    children:jsxs('svg',{className:'wm-rank',viewBox:`0 0 620 ${Math.max(170,ranked.length*42+8)}`,'data-chart':'ranking',role:'img','aria-label':'Cache ranking. Exact model filters available on every row.',children:[jsx('title',{children:'Ranked models. Rates are weighted on known-cache calls only. Volume is cache-read tokens. Savings can be negative.'}),
+  return jsx(AnalyticsPanel,{number:'04',title:t('usageRankTitle'),subtitle:t('usageRankSubtitle'),controls:jsx(AnalyticsSegments,{label:t('usageSegRankBy'),value:state.ranking,options:[['cache_hit_rate',t('usageSegHitRate')],['cache_read_tokens',t('usageSegVolume')]],onChange:value=>dispatch({type:'set',key:'ranking',value})}),
+    children:jsxs('svg',{className:'wm-rank',viewBox:`0 0 620 ${Math.max(170,ranked.length*42+8)}`,'data-chart':'ranking',role:'img','aria-label':t('usageRankAria'),children:[jsx('title',{children:t('usageRankHint')}),
       ...ranked.map((row,i)=>{
         const value=numeric(row),barWidth=Math.abs(value || 0)/(state.ranking==='cache_hit_rate'?1:maximum)*range
         const action=()=>dispatch({type:'select',group:'model',row})
-        return jsxs('g',{transform:`translate(0,${i*42+5})`,role:'button',tabIndex:0,'aria-label':`Filter ${row.model} via ${row.provider}; hit ${percent(row.cache_hit_rate)}, ${fmtTokens(row.cache_read_tokens)} read tokens, net savings ${analyticMoney(row.economics?.savings_usd)}`,onClick:action,onKeyDown:event=>keyActivate(event,action),style:{cursor:'pointer'},children:[
-          jsx('title',{children:`${row.model} · ${row.provider}\nKnown-cache calls: ${row.cache_known_calls || 0}; unknown: ${row.cache_unknown_calls || 0}\nRead tokens: ${exactTokens(row.cache_read_tokens)}; theoretical net savings: ${analyticMoney(row.economics?.savings_usd)}`}),
-          jsx('text',{x:0,y:12,fill:'var(--ui-text-primary)',fontSize:11,children:row.model?.length>31?`${row.model.slice(0,29)}…`:row.model}),jsx('text',{x:0,y:26,className:'wm-axis',children:`${row.provider || 'unknown'} · ${fmtTokens(row.cache_read_tokens)} read · ${analyticMoney(row.economics?.savings_usd)} net`}),
+        return jsxs('g',{transform:`translate(0,${i*42+5})`,role:'button',tabIndex:0,'aria-label':t('usageRankRowAria', row.model, row.provider, percent(row.cache_hit_rate), fmtTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd)),onClick:action,onKeyDown:event=>keyActivate(event,action),style:{cursor:'pointer'},children:[
+          jsx('title',{children:t('usageRankRowTitle', row.model, row.provider, row.cache_known_calls || 0, row.cache_unknown_calls || 0, exactTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
+          jsx('text',{x:0,y:12,fill:'var(--ui-text-primary)',fontSize:11,children:row.model?.length>31?`${row.model.slice(0,29)}…`:row.model}),jsx('text',{x:0,y:26,className:'wm-axis',children:t('usageRankRowSub', row.provider || t('unknown'), fmtTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
           jsx('rect',{x:signed?233:start,y:5,width:signed?200:range,height:8,rx:3,fill:'var(--ui-fill-tertiary)'}),
           value!=null?jsx('rect',{x:value<0?start-barWidth:start,y:5,width:barWidth,height:8,rx:3,fill:value<0?'var(--ui-warning)':'var(--ui-success)'}):null,
           signed?jsx('line',{x1:start,x2:start,y1:1,y2:18,stroke:'var(--ui-text-quaternary)'}):null,
-          jsx('text',{x:609,y:13,textAnchor:'end',className:'wm-axis',children:value==null?'unknown':format(value)})]},analyticsId(row))})]}),
-    footer:`Top ${ranked.length} by ${state.ranking==='savings'?'theoretical net savings':state.ranking==='cache_read_tokens'?'cache-read volume':'weighted rate'}. Zero-cache older rows are ambiguous, not confirmed misses. Unknown is not zero. All models remain in the explorer.`})
+          jsx('text',{x:609,y:13,textAnchor:'end',className:'wm-axis',children:value==null?t('unknown'):format(value)})]},analyticsId(row))})]}),
+    footer:t('usageRankFooter', ranked.length, state.ranking==='savings'?t('usageRankModeSavings'):state.ranking==='cache_read_tokens'?t('usageRankModeVolume'):t('usageRankModeRate'))})
 }
 function AnalyticsComposition({data,state,dispatch}) {
-  const parts=analyticsComposition(data.totals)
+  const t = usePluginI18n(ID)
+  const parts=analyticsComposition(data.totals, t)
   const total=parts.reduce((s,r)=>s+r.value,0)
   const focus=parts.find(r=>r.id===state.compositionFocus)
   const select=row=>dispatch({type:'set',key:'compositionFocus',value:row.id})
   let x=0
-  return jsx(AnalyticsPanel,{number:'05',title:'Token composition',subtitle:'Four disjoint streams · no prompt double-counting',controls:jsx(AnalyticsSegments,{label:'Composition',value:state.compositionMode,options:[['stacked','Stacked'],['doughnut','Doughnut']],onChange:value=>dispatch({type:'set',key:'compositionMode',value})}),
+  return jsx(AnalyticsPanel,{number:'05',title:t('usageCompTitle'),subtitle:t('usageCompSubtitle'),controls:jsx(AnalyticsSegments,{label:t('usageSegComposition'),value:state.compositionMode,options:[['stacked',t('usageSegStacked')],['doughnut',t('usageSegDoughnut')]],onChange:value=>dispatch({type:'set',key:'compositionMode',value})}),
     children:jsxs('div',{className:'wm-composition',children:[state.compositionMode==='doughnut'?
-      jsx(AnalyticsDonut,{items:parts,total,label:'all token streams',format:fmtTokens,onSelect:select,chart:'composition'}):
-      jsxs('div',{children:[jsx('div',{className:'wm-compositiontotal wm-mono',children:fmtTokens(total)}),jsx('p',{className:'wm-subtle',children:'tokens across all recorded calls'}),
-        jsxs('svg',{viewBox:'0 0 600 44',style:{width:'100%',marginTop:18},'data-chart':'composition',role:'img','aria-label':`Token composition: ${exactTokens(total)} total`,children:[jsx('title',{children:parts.map(r=>`${r.label}: ${exactTokens(r.value)} (${percent(r.share)})`).join('; ')}),jsx('rect',{x:0,y:4,width:600,height:28,rx:4,fill:'var(--ui-fill-tertiary)'}),...parts.map(row=>{
+      jsx(AnalyticsDonut,{items:parts,total,label:t('usageDonutAllStreams'),format:fmtTokens,onSelect:select,chart:'composition',t}):
+      jsxs('div',{children:[jsx('div',{className:'wm-compositiontotal wm-mono',children:fmtTokens(total)}),jsx('p',{className:'wm-subtle',children:t('usageCompTokensTotal')}),
+        jsxs('svg',{viewBox:'0 0 600 44',style:{width:'100%',marginTop:18},'data-chart':'composition',role:'img','aria-label':t('usageCompAria', exactTokens(total)),children:[jsx('title',{children:parts.map(r=>t('usageCompSvgPart', r.label, exactTokens(r.value), percent(r.share))).join('; ')}),jsx('rect',{x:0,y:4,width:600,height:28,rx:4,fill:'var(--ui-fill-tertiary)'}),...parts.map(row=>{
           const start=x;x+=row.share*600
-          return jsx('rect',{x:start,y:4,width:row.share*600,height:28,fill:row.color,role:'button',tabIndex:0,'aria-label':`Select ${row.label} composition`,onClick:()=>select(row),onKeyDown:event=>keyActivate(event,()=>select(row)),children:jsx('title',{children:`${row.label}: ${exactTokens(row.value)} · ${percent(row.share)}`})},row.id)
+          return jsx('rect',{x:start,y:4,width:row.share*600,height:28,fill:row.color,role:'button',tabIndex:0,'aria-label':t('usageCompSelect', row.label),onClick:()=>select(row),onKeyDown:event=>keyActivate(event,()=>select(row)),children:jsx('title',{children:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share))})},row.id)
         })]})]}),
-      jsx('div',{className:'wm-compositionkey',children:parts.map(row=>jsxs('button',{type:'button',className:'wm-legendrow','aria-label':`Select ${row.label} composition`,'aria-pressed':state.compositionFocus===row.id,onClick:()=>select(row),children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsxs('span',{className:'wm-value wm-mono',children:[fmtTokens(row.value),jsx('small',{children:percent(row.share)})]})]},row.id))})]}),
-    footer:jsx('div',{'aria-live':'polite',children:focus?`${focus.label}: ${exactTokens(focus.value)} tokens · ${percent(focus.share)} of all tokens. ${focus.id==='cache_read_tokens'?'Reused prompt tokens; billed at the cache-read rate when known.':focus.id==='cache_write_tokens'?'New cache writes; write premiums are included in net savings when rates are known.':focus.id==='input_tokens'?'Fresh, uncached input only.':'Generated output tokens.'}`:'Select a stream for its exact count. This is a composition inspection, not a hidden model filter.'})})
+      jsx('div',{className:'wm-compositionkey',children:parts.map(row=>jsxs('button',{type:'button',className:'wm-legendrow','aria-label':t('usageCompSelect', row.label),'aria-pressed':state.compositionFocus===row.id,onClick:()=>select(row),children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsxs('span',{className:'wm-value wm-mono',children:[fmtTokens(row.value),jsx('small',{children:percent(row.share)})]})]},row.id))})]}),
+    footer:jsx('div',{'aria-live':'polite',children:focus?t('usageCompFocus', focus.label, exactTokens(focus.value), percent(focus.share), focus.id==='cache_read_tokens'?t('usageCompNoteCacheRead'):focus.id==='cache_write_tokens'?t('usageCompNoteCacheWrite'):focus.id==='input_tokens'?t('usageCompNoteInput'):t('usageCompNoteOutput')):t('usageCompEmpty')})})
 }
 const ANALYTICS_COLUMNS = [['model','Model'],['provider','Provider'],['calls','Calls'],['tokens','Tokens'],['input_tokens','Input'],['output_tokens','Output'],['reasoning_tokens','Reasoning'],['cache_read_tokens','Read'],['cache_write_tokens','Write'],['cache_hit_rate','Cache %'],['savings','Net savings'],['list_usd','API cost'],['per_call','$/call'],['per_million','$/1M tokens'],['pricing','Pricing'],['billing','Billing']]
 const ANALYTICS_CORE_COLUMNS = ['model','provider','calls','tokens','input_tokens','output_tokens','list_usd','per_call','per_million','pricing','billing']
@@ -2472,69 +2488,121 @@ function downloadAnalyticsCsv(rows) {
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 10_000)
   } catch { /* host without download: table remains visible */ }
 }
+/** Explorer column ids to their I18N header labels. ANALYTICS_COLUMNS keeps the canonical English. */
+const EXPLORER_COLUMN_KEYS = {
+  model: 'usageColModel',
+  provider: 'usageColProvider',
+  calls: 'usageColCalls',
+  tokens: 'usageColTokens',
+  input_tokens: 'usageColInput',
+  output_tokens: 'usageColOutput',
+  reasoning_tokens: 'usageColReasoning',
+  cache_read_tokens: 'usageColRead',
+  cache_write_tokens: 'usageColWrite',
+  cache_hit_rate: 'usageColCacheRate',
+  savings: 'usageColSavings',
+  list_usd: 'usageColApiCost',
+  per_call: 'usageColPerCall',
+  per_million: 'usageColPerMillion',
+  pricing: 'usageColPricing',
+  billing: 'usageColBilling',
+}
 function AnalyticsExplorer({data,state,dispatch}) {
+  const t = usePluginI18n(ID)
   const enriched=(data.by_model || []).map(r=>({...r, ...explorerUnitCosts(r)}))
   const rows=analyticsSort(enriched,state.sortKey,state.sortDirection)
   const columns=state.columnMode==='all'?ANALYTICS_COLUMNS:ANALYTICS_COLUMNS.filter(([key])=>ANALYTICS_CORE_COLUMNS.includes(key))
   const visible=state.showAllModels?rows:rows.slice(0,25)
-  return jsx(AnalyticsPanel,{title:'Model Explorer',subtitle:`${rows.length} model × route pairs · every column sortable`,controls:jsxs('div',{className:'wm-controls',children:[
-    jsx(AnalyticsSegments,{label:'Columns',value:state.columnMode,options:[['core','Core'],['all','All']],onChange:value=>dispatch({type:'set',key:'columnMode',value})}),
-    rows.length>25?jsx(AnalyticsButton,{label:state.showAllModels?'Show top 25 only':'Show all models',onClick:()=>dispatch({type:'toggle',key:'showAllModels'}),children:state.showAllModels?'Top 25':'Show all'}):null,
-    jsx(AnalyticsButton,{label:'Export filtered models as CSV',onClick:()=>downloadAnalyticsCsv(rows),children:'Export CSV'}),
-    jsx('span',{className:'wm-badge',children:'EXACT ROUTE FILTERS'})]}),
-    children:jsxs('div',{children:[jsx('div',{className:'wm-tablewrap',children:jsxs('table',{children:[jsx('caption',{children:'Models for the selected period and exact AND filters. Unknown prices, cache rates and savings sort last.'}),
-      jsx('thead',{children:jsx('tr',{children:columns.map(([key,label])=>jsx('th',{scope:'col','aria-sort':state.sortKey===key?(state.sortDirection==='asc'?'ascending':'descending'):'none',children:jsx('button',{type:'button','aria-label':`Sort by ${label}`,onClick:()=>dispatch({type:'sort',key}),children:`${label}${state.sortKey===key?(state.sortDirection==='desc'?' ↓':' ↑'):''}`})},key))})}),
+  return jsx(AnalyticsPanel,{title:t('usageExplorerTitle'),subtitle:t('usageExplorerSubtitle', rows.length),controls:jsxs('div',{className:'wm-controls',children:[
+    jsx(AnalyticsSegments,{label:t('usageSegColumns'),value:state.columnMode,options:[['core',t('usageSegCore')],['all',t('usageSegAll')]],onChange:value=>dispatch({type:'set',key:'columnMode',value})}),
+    rows.length>25?jsx(AnalyticsButton,{label:state.showAllModels?t('usageExplorerTop25Tip'):t('usageExplorerShowAllTip'),onClick:()=>dispatch({type:'toggle',key:'showAllModels'}),children:state.showAllModels?t('usageExplorerTop25'):t('usageExplorerShowAll')}):null,
+    jsx(AnalyticsButton,{label:t('usageExplorerExportTip'),onClick:()=>downloadAnalyticsCsv(rows),children:t('usageExplorerExport')}),
+    jsx('span',{className:'wm-badge',children:t('usageExplorerBadge')})]}),
+    children:jsxs('div',{children:[jsx('div',{className:'wm-tablewrap',children:jsxs('table',{children:[jsx('caption',{children:t('usageExplorerCaption')}),
+      jsx('thead',{children:jsx('tr',{children:columns.map(([key])=>jsx('th',{scope:'col','aria-sort':state.sortKey===key?(state.sortDirection==='asc'?'ascending':'descending'):'none',children:jsx('button',{type:'button','aria-label':t('usageExplorerSortBy', t(EXPLORER_COLUMN_KEYS[key])),onClick:()=>dispatch({type:'sort',key}),children:t('usageExplorerSortLabel', t(EXPLORER_COLUMN_KEYS[key]), state.sortKey===key?(state.sortDirection==='desc'?' ↓':' ↑'):'')})},key))})}),
       jsx('tbody',{children:visible.map(row=>jsx('tr',{children:columns.map(([key])=>{
         let content
-        if(key==='model') content=jsx('button',{type:'button',className:'wm-modelbutton',title:row.model,'aria-label':`Filter ${row.model} via ${row.provider}`,onClick:()=>dispatch({type:'select',group:'model',row}),children:row.model || 'Unknown model'})
-        else if(key==='provider') content=jsx('span',{className:'wm-subtle',children:row.provider || 'Unknown'})
-        else if(key==='billing') content=jsx('span',{className:'wm-badge',title:'Latest route/model billing classification, not a per-call invoice',children:Object.keys(row.billing_mix || {}).filter(kind=>row.billing_mix[kind]>0).sort().join(' + ') || 'unknown'})
-        else if(key==='cache_hit_rate') content=jsxs('div',{title:`${row.cache_known_calls || 0} known-cache calls; ${row.cache_unknown_calls || 0} unknown`,children:[percent(row.cache_hit_rate),row.cache_hit_rate!=null?jsx('div',{className:'wm-meter',children:jsx('span',{style:{width:`${Math.max(0,Math.min(1,row.cache_hit_rate))*100}%`}})}):null]})
+        if(key==='model') content=jsx('button',{type:'button',className:'wm-modelbutton',title:row.model,'aria-label':t('usageLegendFilter', row.model, row.provider),onClick:()=>dispatch({type:'select',group:'model',row}),children:row.model || t('usageUnknownModel')})
+        else if(key==='provider') content=jsx('span',{className:'wm-subtle',children:row.provider || t('usageUnknown')})
+        else if(key==='billing') content=jsx('span',{className:'wm-badge',title:t('usageExplorerBillingTitle'),children:Object.keys(row.billing_mix || {}).filter(kind=>row.billing_mix[kind]>0).sort().join(' + ') || t('unknown')})
+        else if(key==='cache_hit_rate') content=jsxs('div',{title:t('usageExplorerCacheTitle', row.cache_known_calls || 0, row.cache_unknown_calls || 0),children:[percent(row.cache_hit_rate),row.cache_hit_rate!=null?jsx('div',{className:'wm-meter',children:jsx('span',{style:{width:`${Math.max(0,Math.min(1,row.cache_hit_rate))*100}%`}})}):null]})
         else if(key==='savings') content=jsx('span',{className:row.economics?.savings_usd<0?'wm-warn':row.economics?.savings_usd>0?'wm-good':'wm-dim',children:analyticMoney(row.economics?.savings_usd)})
-        else if(key==='list_usd') content=jsxs('span',{className:num(row.unpriced_tokens)?'wm-warn':'',children:[analyticMoney(row.list_usd),num(row.unpriced_tokens)&&row.list_usd!=null?jsx('small',{children:' partial'}):null]})
-        else if(key==='per_call'||key==='per_million') content=jsx('span',{title:num(row.unpriced_tokens)?'Unknown: pricing coverage is partial':undefined,children:row[key]==null?'—':`$${num(row[key]).toFixed(num(row[key])<1?4:2)}`})
-        else if(key==='pricing') content=jsx('span',{className:cn('wm-badge',num(row.unpriced_tokens)&&'wm-warn'),title:`${exactTokens(row.priced_tokens)} priced / ${exactTokens(row.tokens)} total tokens`,children:analyticsPricing(row)})
+        else if(key==='list_usd') content=jsxs('span',{className:num(row.unpriced_tokens)?'wm-warn':'',children:[analyticMoney(row.list_usd),num(row.unpriced_tokens)&&row.list_usd!=null?jsx('small',{children:t('usageExplorerPartial')}):null]})
+        else if(key==='per_call'||key==='per_million') content=jsx('span',{title:num(row.unpriced_tokens)?t('usageExplorerUnitUnknown'):undefined,children:row[key]==null?'—':`$${num(row[key]).toFixed(num(row[key])<1?4:2)}`})
+        else if(key==='pricing') content=jsx('span',{className:cn('wm-badge',num(row.unpriced_tokens)&&'wm-warn'),title:t('usageExplorerPricingTitle', exactTokens(row.priced_tokens), exactTokens(row.tokens)),children:analyticsPricing(row, t)})
         else content=jsx('span',{title:exactTokens(row[key]),children:key==='calls'?exactTokens(row[key]):fmtTokens(row[key])})
         return jsx('td',{className:['model','provider','pricing'].includes(key)?'':'wm-mono',children:content},key)
-      })},analyticsId(row)))})]})}),rows.length>25?jsx('p',{className:'wm-subtle',style:{marginTop:10},children:state.showAllModels?`Showing all ${rows.length} pairs.`:`Showing top 25 of ${rows.length} pairs by the current sort. Use Show all for the full table.`}):null]}),
-    footer:'$/call and $/1M tokens are API-equivalent averages, not recorded billing. They stay unknown while any tokens are unpriced. Reasoning is included in output, never added again to the four-stream total. Billing is the latest route classification, not an allocated per-call invoice. API cost is the priced subtotal when coverage is partial. Cache % is a weighted rate on calls with known cache activity; it is not an average of model percentages. Click a model to apply its exact model + provider pair.'})
+      })},analyticsId(row)))})]})}),rows.length>25?jsx('p',{className:'wm-subtle',style:{marginTop:10},children:state.showAllModels?t('usageExplorerShowingAll', rows.length):t('usageExplorerShowingTop', rows.length)}):null]}),
+    footer:t('usageExplorerFooter')})
 }
 function AnalyticsEconomics({data}) {
+  const t = usePluginI18n(ID)
   const e=data.economics || data.totals?.economics || {}
   const max=Math.max(num(e.uncached_usd),num(e.cached_usd)) || 1
-  return jsx(AnalyticsPanel,{title:'Cache economics',subtitle:'A theoretical counterfactual, not a billing credit',controls:jsx('span',{className:cn('wm-badge',e.savings_usd<0?'wm-warn':'wm-good'),children:e.savings_usd==null?'INSUFFICIENT PRICING':e.savings_usd<0?'NET WRITE PREMIUM':'NET CACHE BENEFIT'}),children:jsxs('div',{className:'wm-economics',children:[
-    jsxs('div',{children:[jsx('div',{className:cn('wm-compositiontotal wm-mono',e.savings_usd<0?'wm-warn':'wm-good'),children:analyticMoney(e.savings_usd)}),jsx('div',{className:'wm-subtle',children:'theoretical net savings'}),
-      jsx('div',{className:'wm-comparison',children:[['Without cache',e.uncached_usd,'var(--ui-text-quaternary)'],['With cache',e.cached_usd,'var(--ui-success)']].map(([label,value,color])=>jsxs('div',{className:'wm-comparerow',children:[jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:analyticMoney(value)})]}),jsx('div',{className:'wm-comparetrack',role:'img','aria-label':`${label}: ${analyticMoney(value)}`,children:finiteValue(value)!=null?jsx('span',{style:{width:`${num(value)/max*100}%`,background:color}}):null})]},label))})]}),
-    jsxs('div',{className:'wm-explanation',children:[jsx('p',{children:'Without cache: the same prompt tokens at uncached input rates. With cache: fresh input + cache reads + cache writes at their effective per-call catalogue rates. Both include the same output cost, which cancels out of net savings.'}),
-      jsx('p',{children:'Net = uncached prompt cost − cached prompt cost. Write premiums may outweigh read discounts, so savings can be negative. This does not represent money returned on subscription or included routes.'}),
-      jsx('p',{className:'wm-mono',children:`${percent(e.coverage)} token coverage · ${exactTokens(e.covered_tokens)} covered tokens · ${exactTokens(e.covered_calls)} covered calls · ${exactTokens(e.excluded_calls)} excluded calls`}),
-      jsx('p',{children:'Calls with unknown input/read/write prices or ambiguous cache splits are excluded, not assumed free. All comparisons use the same period and exact scope filters.'})]})]})})
+  return jsx(AnalyticsPanel,{title:t('usageEconTitle'),subtitle:t('usageEconSubtitle'),controls:jsx('span',{className:cn('wm-badge',e.savings_usd<0?'wm-warn':'wm-good'),children:e.savings_usd==null?t('usageEconNoPricing'):e.savings_usd<0?t('usageEconWritePremium'):t('usageEconBenefit')}),children:jsxs('div',{className:'wm-economics',children:[
+    jsxs('div',{children:[jsx('div',{className:cn('wm-compositiontotal wm-mono',e.savings_usd<0?'wm-warn':'wm-good'),children:analyticMoney(e.savings_usd)}),jsx('div',{className:'wm-subtle',children:t('usageEconNetSavings')}),
+      jsx('div',{className:'wm-comparison',children:[[t('usageEconWithoutCache'),e.uncached_usd,'var(--ui-text-quaternary)'],[t('usageEconWithCache'),e.cached_usd,'var(--ui-success)']].map(([label,value,color])=>jsxs('div',{className:'wm-comparerow',children:[jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:analyticMoney(value)})]}),jsx('div',{className:'wm-comparetrack',role:'img','aria-label':t('usageEconBarAria', label, analyticMoney(value)),children:finiteValue(value)!=null?jsx('span',{style:{width:`${num(value)/max*100}%`,background:color}}):null})]},label))})]}),
+    jsxs('div',{className:'wm-explanation',children:[jsx('p',{children:t('usageEconExplainRates')}),
+      jsx('p',{children:t('usageEconExplainNet')}),
+      jsx('p',{className:'wm-mono',children:t('usageEconCoverage', percent(e.coverage), exactTokens(e.covered_tokens), exactTokens(e.covered_calls), exactTokens(e.excluded_calls))}),
+      jsx('p',{children:t('usageEconExplainScope')})]})]})})
 }
+/** Display names for active-filter chips; unknown future keys pass through raw. */
+const USAGE_FILTER_CHIP_KEYS = {
+  model: 'usageFilterChipModel',
+  provider: 'usageFilterChipProvider',
+  surface: 'usageFilterChipSurface',
+  task: 'usageFilterChipTask',
+  parent: 'usageFilterChipParent',
+  scope: 'usageFilterChipScope',
+}
+
+function usageFilterChipName(key, t) {
+  const mapped = USAGE_FILTER_CHIP_KEYS[key]
+  return mapped ? t(mapped) : key
+}
+
+/** Scope filter values (wolfmark_ledger SCOPES); the only closed chip vocabulary. */
+const USAGE_FILTER_SCOPE_KEYS = {
+  direct: 'usageFilterScopeDirect',
+  subagent: 'usageFilterScopeSubagent',
+  auxiliary: 'usageFilterScopeAuxiliary',
+  unattributed: 'usageFilterScopeUnattributed',
+}
+
+/** Display text for a chip value. Only scope values are translated; user data passes through. */
+function usageFilterChipValue(key, value, t) {
+  if (key !== 'scope') return value
+  const mapped = USAGE_FILTER_SCOPE_KEYS[value]
+  return mapped ? t(mapped) : value
+}
+
 function AnalyticsFilters({data,state,dispatch}) {
+  const t = usePluginI18n(ID)
   const filter=(key,value)=>dispatch({type:'filter',key,value})
   const opts=data?.options || {}
   return jsxs('div',{children:[jsxs('div',{className:'wm-filters',children:[
-    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:'Period'}),jsx('select',{'aria-label':'Period filter',value:state.days,onChange:event=>dispatch({type:'set',key:'days',value:Number(event.target.value)}),children:[[1,'Today'],[7,'Last 7 days'],[30,'Last 30 days'],[90,'Last 90 days'],[365,'Last 365 days']].map(([days,label])=>jsx('option',{value:days,children:label},days))})]}),
-    ...[['model','Model (any provider)',opts.models || [],'Model'],['provider','Provider route',opts.providers || [],'Provider'],['surface','Where it ran',opts.surfaces || [],'Surface'],['task','Kind of work',opts.tasks || [],'Task']].map(([key,label,raw,ariaName])=>{
+    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterPeriod')}),jsx('select',{'aria-label':t('usageFilterPeriodTip'),value:state.days,onChange:event=>dispatch({type:'set',key:'days',value:Number(event.target.value)}),children:[[1,t('usagePeriodToday')],[7,t('usagePeriodWeek')],[30,t('usagePeriodMonth')],[90,t('usagePeriodQuarter')],[365,t('usagePeriodYear')]].map(([days,label])=>jsx('option',{value:days,children:label},days))})]}),
+    ...[['model',t('usageFilterModel'),opts.models || [],t('usageFilterModelName')],['provider',t('usageFilterProvider'),opts.providers || [],t('usageFilterProviderName')],['surface',t('usageFilterSurface'),opts.surfaces || [],t('usageFilterSurfaceName')],['task',t('usageFilterTask'),opts.tasks || [],t('usageFilterTaskName')]].map(([key,label,raw,ariaName])=>{
       const options=key==='model'?[...new Set(raw.map(r=>typeof r==='string'?r:r.model))]:[...raw]
       if(state.filters[key]&&!options.includes(state.filters[key]))options.unshift(state.filters[key])
-      return jsxs('label',{className:'wm-filter',children:[jsx('span',{children:label}),jsx('select',{'aria-label':`${ariaName} filter`,value:state.filters[key],onChange:event=>filter(key,event.target.value),children:[jsx('option',{value:'',children:`All ${key==='surface'?'surfaces':key==='task'?'tasks':key==='model'?'models':'providers'}`},'all'),...options.map(value=>jsx('option',{value,children:value || 'Unknown'},value))]})]},key)
+      return jsxs('label',{className:'wm-filter',children:[jsx('span',{children:label}),jsx('select',{'aria-label':t('usageFilterTip', ariaName),value:state.filters[key],onChange:event=>filter(key,event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAll', key)},'all'),...options.map(value=>jsx('option',{value,children:value || t('usageUnknown')},value))]})]},key)
     }),
-    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:'Parent operation'}),jsx('select',{'aria-label':'Operation filter',value:state.filters.parent,onChange:event=>filter('parent',event.target.value),children:[jsx('option',{value:'',children:'All operations'},'all'),...(opts.operations || []).map(o=>jsx('option',{value:o.parent,children:`${o.parent} (${o.subagent_calls} worker calls)`},o.parent))]})]}),
-    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:'Who did the work'}),jsx('select',{'aria-label':'Delegation filter',value:state.filters.scope,onChange:event=>filter('scope',event.target.value),children:[jsx('option',{value:'',children:'Everyone combined'},'all'),jsx('option',{value:'direct',children:'Parent direct only'},'direct'),jsx('option',{value:'subagent',children:'Subagents only'},'subagent'),jsx('option',{value:'auxiliary',children:'Auxiliary only'},'auxiliary'),jsx('option',{value:'unattributed',children:'Unattributed only'},'unattributed')]})]}),
-    jsx(AnalyticsButton,{label:'Clear filters',onClick:()=>dispatch({type:'clear'})})]}),
-    Object.values(state.filters).some(Boolean)?jsxs('div',{style:{marginTop:10},children:[jsx('p',{className:'wm-subtle',children:'Filtered view — only calls matching all of these are included. Remove one to widen the scope.'}),jsx('div',{className:'wm-scopechips',children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':`Remove ${key} filter`,onClick:()=>filter(key,''),children:`${key}: ${value} ×`},key))})]}):null]})
+    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterParentOp')}),jsx('select',{'aria-label':t('usageFilterOpTip'),value:state.filters.parent,onChange:event=>filter('parent',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAllOps')},'all'),...(opts.operations || []).map(o=>jsx('option',{value:o.parent,children:t('usageDelegOpWorkers', o.parent, o.subagent_calls)},o.parent))]})]}),
+    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterWho')}),jsx('select',{'aria-label':t('usageFilterDelegTip'),value:state.filters.scope,onChange:event=>filter('scope',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterEveryone')},'all'),jsx('option',{value:'direct',children:t('usageFilterDirectOnly')},'direct'),jsx('option',{value:'subagent',children:t('usageFilterSubagentsOnly')},'subagent'),jsx('option',{value:'auxiliary',children:t('usageFilterAuxOnly')},'auxiliary'),jsx('option',{value:'unattributed',children:t('usageFilterUnattributedOnly')},'unattributed')]})]}),
+    jsx(AnalyticsButton,{label:t('usageFilterClear'),onClick:()=>dispatch({type:'clear'})})]}),
+    Object.values(state.filters).some(Boolean)?jsxs('div',{style:{marginTop:10},children:[jsx('p',{className:'wm-subtle',children:t('usageFilterActiveNote')}),jsx('div',{className:'wm-scopechips',children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':t('usageFilterRemove', usageFilterChipName(key, t)),onClick:()=>filter(key,''),children:t('usageFilterChip', usageFilterChipName(key, t), usageFilterChipValue(key, value, t))},key))})]}):null]})
 }
 function AnalyticsBaseline({days,scope}) {
+  const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const {data,error,isLoading}=useQuery({...backendQuery(days,'hybrid',identity),queryKey:[ID,'historical-baseline',identity,scope,days],refetchInterval:false})
-  if(error)return jsx('p',{className:'wm-warn',children:`Historical report unavailable: ${String(error.message || error)}`})
-  if(isLoading&&!data)return jsx('p',{className:'wm-subtle',children:'Reading historical baseline…'})
+  if(error)return jsx('p',{className:'wm-warn',children:t('usageBaselineUnavailable', String(error.message || error))})
+  if(isLoading&&!data)return jsx('p',{className:'wm-subtle',children:t('usageBaselineLoading')})
   const baseline=data?.baseline
-  const t=(key,...args)=>typeof I18N.en[key]==='function'?I18N.en[key](...args):I18N.en[key] || key
   return jsxs('div',{className:'wm-subtle',style:{paddingTop:12},children:[
-    jsx('p',{children:'Historical cumulative estimate — NOT included in period analytics or filters.'}),
-    jsx('p',{children:baseline?.totals?`${fmtTokens(baseline.totals.tokens)} tokens · API-equivalent ${analyticMoney(baseline.totals.list_usd)} · recorded billing ${analyticMoney(baseline.totals.billed_usd)}`:'No historical baseline captured.'}),
+    jsx('p',{children:t('usageBaselineEstimateNote')}),
+    jsx('p',{children:baseline?.totals?t('usageBaselineTotals', fmtTokens(baseline.totals.tokens), analyticMoney(baseline.totals.list_usd), analyticMoney(baseline.totals.billed_usd)):t('usageBaselineEmpty')}),
     baseline?.note?jsx('p',{children:baseline.note}):null,jsx('p',{children:reconciliationText(t,data?.reconciliation)})]})
 }
 function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',productPage=false}) {
@@ -2543,26 +2611,26 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const economics=data?.economics || totals?.economics || {}
   const refresh=()=>query.refetch?.()
   const billingMix=totals?.billing_mix ? Object.entries(totals.billing_mix).map(([kind,value])=>`${kind}: ${typeof value==='number'?fmtTokens(value):String(value)}`).join(' · ') : ''
-  const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('div',{className:'wm-eyebrow',children:'WolfMark / Spend Sense'}),jsx('h1',{children:'Usage analytics'}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:`Recorded calls · ${profile || 'current profile'} · all Hermes surfaces`})]}),
-    jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:'NERD MODE'}),jsx(AnalyticsButton,{label:'Refresh analytics',disabled:query.isFetching,onClick:refresh,children:query.isFetching?'Refreshing…':'↻ Refresh'}),jsx(AnalyticsButton,{label:'Use this desktop’s ledger',onClick:()=>$view.set(VIEW_DESKTOP),children:'This desktop'}),jsx(AnalyticsButton,{label:'Close analytics',onClick:closeLedger,children:'× Close'})]})]})
+  const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('div',{className:'wm-eyebrow',children:'WolfMark / SpendSense'}),jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
+    jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')}),jsx(AnalyticsButton,{label:t('usageCloseTip'),onClick:closeLedger,children:t('usageClose')})]})]})
   return jsxs('div',{className:cn('wm-analytics',productPage&&'wm-product'),children:[jsx('style',{children:productPage?ANALYTICS_CSS+PRODUCT_CSS:ANALYTICS_CSS}),productPage?jsx(LedgerTabs,{}):null,jsxs('div',{className:'wm-shell',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
-    query.error?jsxs('div',{className:'wm-alert',role:'alert',children:[jsx('h2',{children:'Analytics unavailable'}),jsx('p',{children:String(query.error.message || query.error)}),jsx('p',{children:data?'The visible snapshot is stale. Retry before using these values.':'The live chip and this desktop’s ledger are still available.'}),jsx(AnalyticsButton,{label:'Retry analytics',onClick:refresh})]}):null,
-    query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:'Reading timestamped calls…'}):null,
+    query.error?jsxs('div',{className:'wm-alert',role:'alert',children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:String(query.error.message || query.error)}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
+    query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
     totals?jsxs('div',{className:'wm-stats',children:[
-      jsx(AnalyticsStat,{label:'API-equivalent',value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',num(totals.unpriced_tokens)&&'wm-warn'),children:analyticsPricing(totals)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd)) || 'Priced per-call estimate · not an invoice'}),
+      jsx(AnalyticsStat,{label:t('usageStatApiEquiv'),value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',num(totals.unpriced_tokens)&&'wm-warn'),children:analyticsPricing(totals, t)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd, t)) || t('usageStatApiExtra')}),
       jsx(AnalyticsStat,{label:t('weightedCacheHit'),value:percent(totals.cache_hit_rate),tone:'wm-good',hint: totals.cache_prompt_coverage == null ? t('cacheCoverageUnavailable') : t('cacheCoveragePrompt', percent(totals.cache_prompt_coverage)),extra:t('cacheCoverageBasis')}),
-      jsx(AnalyticsStat,{label:'Theoretical net savings',value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:'Read discounts − write premiums',extra:`${percent(economics.coverage)} economics coverage · detail below`}),
-      jsx(AnalyticsStat,{label:'Tokens / calls',value:fmtTokens(totals.tokens),hint:`${exactTokens(totals.calls)} recorded calls`,extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens)) || `${fmtTokens(totals.input_tokens)} in · ${fmtTokens(totals.output_tokens)} out`}),
-      jsx(AnalyticsStat,{label:'Pricing coverage',value:percent(data.pricing_coverage?.coverage),hint:`${exactTokens(totals.unpriced_tokens)} unpriced tokens`,extra:analyticsPricing(totals)})]}):null,
-    totals&&analyticsInsights(data).length?jsx('div',{className:'wm-insights','aria-label':'What matters in this period',children:analyticsInsights(data).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{children:item.text})]},item.label))}):null,
-    totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:billingMix || 'Only explicit per-call charges are shown; unknown is not zero.',children:[jsx('strong',{children:'Recorded billing ' }),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),' ',jsx('span',{className:cn('wm-badge',!totals.billed_complete&&'wm-warn'),children:totals.billed_complete?'Complete':totals.billed_usd==null?'Unknown':'Partial'}),' · includes only recorded charges; unknown routes are not $0.']}),jsx('span',{className:'wm-mono',children:data.window?`${String(data.window.since_local || data.window.since || '').slice(0,10)} → ${String(data.window.until_local || data.window.until || '').slice(0,10)} · ${data.window.since_local ? data.window.timezone || 'local' : 'UTC'}`:'Timestamped window'})]}):null,
-    totals&&num(totals.unpriced_tokens)?jsx('div',{className:'wm-alert',children:`${exactTokens(totals.unpriced_tokens)} unpriced tokens. API-equivalent cost is a partial priced subtotal; unknown prices are excluded, not counted as zero.`}):null,
-    totals&&!num(totals.calls)?jsxs('div',{className:'wm-empty',role:'status',children:[jsx('h2',{children:'No backend calls recorded for this period'}),jsx('p',{children:'This report covers backend analytics. Desktop-recorded usage shown on Overview is separate; open the local ledger to view calls captured by this Desktop. Try a longer period or clear filters to check this report. The historical baseline remains separate below.'}),jsx(AnalyticsButton,{label:'Show Desktop-recorded usage',onClick:()=>$view.set(VIEW_DESKTOP),children:'Show Desktop-recorded usage'}),jsx(AnalyticsButton,{label:'Clear empty scope',onClick:()=>dispatch({type:'clear'})})]}):null,
-    !totals&&!query.isLoading&&!query.error?jsx('div',{className:'wm-empty',role:'status',children:'Usage data is not available for this profile yet.'}):null,
+      jsx(AnalyticsStat,{label:t('usageStatSavings'),value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:t('usageStatSavingsHint'),extra:t('usageStatSavingsExtra', percent(economics.coverage))}),
+      jsx(AnalyticsStat,{label:t('usageStatTokens'),value:fmtTokens(totals.tokens),hint:t('usageStatTokensHint', exactTokens(totals.calls)),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens, t)) || t('usageStatTokensExtra', fmtTokens(totals.input_tokens), fmtTokens(totals.output_tokens))}),
+      jsx(AnalyticsStat,{label:t('usageStatCoverage'),value:percent(data.pricing_coverage?.coverage),hint:t('usageStatCoverageHint', exactTokens(totals.unpriced_tokens)),extra:analyticsPricing(totals, t)})]}):null,
+    totals&&analyticsInsights(data, t).length?jsx('div',{className:'wm-insights','aria-label':t('usageInsightsAria'),children:analyticsInsights(data, t).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{children:item.text})]},item.label))}):null,
+    totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:billingMix || t('usageBillingTitle'),children:[jsx('strong',{children:t('usageBillingLabel')}),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),' ',jsx('span',{className:cn('wm-badge',!totals.billed_complete&&'wm-warn'),children:totals.billed_complete?t('usageBillingComplete'):totals.billed_usd==null?t('usageUnknown'):t('usageBillingPartial')}),t('usageBillingNote')]}),jsx('span',{className:'wm-mono',children:data.window?t('usageWindowDash', String(data.window.since_local || data.window.since || '').slice(0,10), String(data.window.until_local || data.window.until || '').slice(0,10), data.window.since_local ? data.window.timezone || 'local' : 'UTC'):t('usageWindowPending')})]}):null,
+    totals&&num(totals.unpriced_tokens)?jsx('div',{className:'wm-alert',children:t('usageUnpricedAlert', exactTokens(totals.unpriced_tokens))}):null,
+    totals&&!num(totals.calls)?jsxs('div',{className:'wm-empty',role:'status',children:[jsx('h2',{children:t('usageEmptyTitle')}),jsx('p',{children:t('usageEmptyBody')}),jsx(AnalyticsButton,{label:t('usageEmptyShowDesktop'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageEmptyShowDesktop')}),jsx(AnalyticsButton,{label:t('usageEmptyClear'),onClick:()=>dispatch({type:'clear'})})]}):null,
+    !totals&&!query.isLoading&&!query.error?jsx('div',{className:'wm-empty',role:'status',children:t('usageNoData')}):null,
     totals?jsxs('div',{className:'wm-charts',children:[jsx(AnalyticsDistribution,{data,state,dispatch}),jsx(AnalyticsTrendChart,{data,state,dispatch}),jsx(AnalyticsDelegation,{data,state,dispatch}),jsx(AnalyticsRanking,{data,state,dispatch}),jsx(AnalyticsComposition,{data,state,dispatch})]}):null,
     totals?jsx(AnalyticsExplorer,{data,state,dispatch}):null,totals?jsx(AnalyticsEconomics,{data}):null,
-    totals?jsxs('div',{className:'wm-subtle',children:[jsx('p',{children:`Recording since ${data.recording?.since || 'not yet available'} · latest ${data.recording?.last || '—'}. Only timestamped captured calls enter this period.`}),jsx('p',{children:'Cache hit = read tokens ÷ (fresh input + read + write tokens), weighted on calls with known cache activity. Legacy zero-cache rows are ambiguous and excluded from the known denominator.'}),jsxs('details',{style:{marginTop:10},children:[jsx('summary',{children:'Methodology & coverage details'}),...(data.notes || []).map((note,i)=>jsx('p',{style:{marginTop:7},children:note},i))]})]}):null,
-    jsxs('details',{className:'wm-baseline',open:state.baselineOpen,onToggle:event=>dispatch({type:'set',key:'baselineOpen',value:event.currentTarget.open}),children:[jsx('summary',{children:'Historical baseline & reconciliation — separate cumulative estimate'}),state.baselineOpen?jsx(AnalyticsBaseline,{days:state.days,scope}):null]})]})]})
+    totals?jsxs('div',{className:'wm-subtle',children:[jsx('p',{children:t('usageRecordingLine', data.recording?.since || t('usageRecordingPending'), data.recording?.last || '—')}),jsx('p',{children:t('usageCacheFormula')}),jsxs('details',{style:{marginTop:10},children:[jsx('summary',{children:t('usageMethodologyTitle')}),...(data.notes || []).map((note,i)=>jsx('p',{style:{marginTop:7},children:note},i))]})]}):null,
+    jsxs('details',{className:'wm-baseline',open:state.baselineOpen,onToggle:event=>dispatch({type:'set',key:'baselineOpen',value:event.currentTarget.open}),children:[jsx('summary',{children:t('usageBaselineSummaryTitle')}),state.baselineOpen?jsx(AnalyticsBaseline,{days:state.days,scope}):null]})]})]})
 }
 function AnalyticsPage({productPage=false}={}) {
   const profile=useValue(host.state.profile)
@@ -2581,14 +2649,14 @@ function AnalyticsPage({productPage=false}={}) {
 /* ------------------------------------------------- billing & pricing settings */
 
 /** Evidence rows, each carrying its own basis so nothing looks confirmed. */
-function billingEvidence(billing) {
+function billingEvidence(billing, t = needsAttentionEn) {
   const ev = billing?.evidence || {}
   const rows = [
-    ['provider_reported', 'Provider-reported use', 'Confirmed by the provider’s own request history.', 'Not recorded'],
-    ['api_equivalent', 'API-equivalent value', 'Published rates applied to these tokens. Theoretical, not an invoice.', 'Not priced'],
-    ['credits_consumed', 'Credits consumed', 'Inferred from your membership profile — not a provider-confirmed deduction.', 'No plan set'],
-    ['incremental_cash', 'Additional cash', 'Inferred overage after allowances; never asserted as a confirmed charge.', 'No plan set'],
-    ['subscription_fee', 'Membership fee', 'Declared by you in a billing profile; charged once per cycle, not per call.', 'No membership']
+    ['provider_reported', t('billEvProviderLabel'), t('billEvProviderExplain'), t('billEvProviderEmpty')],
+    ['api_equivalent', t('billEvApiLabel'), t('billEvApiExplain'), t('billEvApiEmpty')],
+    ['credits_consumed', t('billEvCreditsLabel'), t('billEvCreditsExplain'), t('billEvCreditsEmpty')],
+    ['incremental_cash', t('billEvCashLabel'), t('billEvCashExplain'), t('billEvCashEmpty')],
+    ['subscription_fee', t('billEvFeeLabel'), t('billEvFeeExplain'), t('billEvFeeEmpty')]
   ]
   return rows.map(([key, label, explanation, empty]) => ({
     key, label, explanation, empty,
@@ -2598,15 +2666,15 @@ function billingEvidence(billing) {
   }))
 }
 
-function profileDraftErrors(draft) {
+function profileDraftErrors(draft, t = needsAttentionEn) {
   const errors = []
-  if (!draft) return ['no draft']
-  if (!String(draft.id || '').trim()) errors.push('A short name is required.')
-  if (!String(draft.provider || '').trim()) errors.push('A provider route is required.')
-  if (!String(draft.kind || '')) errors.push('Choose how this route is paid for.')
-  if (draft.kind === 'unknown' && draft.monthly_fee_usd) errors.push('An unknown arrangement cannot assert a fee.')
-  if (draft.monthly_fee_usd != null && draft.monthly_fee_usd !== '' && !Number.isFinite(Number(draft.monthly_fee_usd))) errors.push('Fee must be a number.')
-  if (draft.allowance_usd != null && draft.allowance_usd !== '' && !Number.isFinite(Number(draft.allowance_usd))) errors.push('Allowance must be a number.')
+  if (!draft) return [t('advRulesErrNoDraft')]
+  if (!String(draft.id || '').trim()) errors.push(t('advRulesErrName'))
+  if (!String(draft.provider || '').trim()) errors.push(t('advRulesErrProvider'))
+  if (!String(draft.kind || '')) errors.push(t('advRulesErrKind'))
+  if (draft.kind === 'unknown' && draft.monthly_fee_usd) errors.push(t('advRulesErrUnknownFee'))
+  if (draft.monthly_fee_usd != null && draft.monthly_fee_usd !== '' && !Number.isFinite(Number(draft.monthly_fee_usd))) errors.push(t('advRulesErrFeeNumber'))
+  if (draft.allowance_usd != null && draft.allowance_usd !== '' && !Number.isFinite(Number(draft.allowance_usd))) errors.push(t('advRulesErrAllowanceNumber'))
   return errors
 }
 
@@ -2656,6 +2724,13 @@ const KIND_CHOICES = [
   ['custom', 'Custom token rates'],
   ['unknown', 'Unknown']
 ]
+/** Billing-rule kinds to their I18N choice labels. KIND_CHOICES keeps the canonical English. */
+const KIND_LABEL_KEYS = {
+  api: 'billKindApi',
+  prepaid: 'billKindPrepaid',
+  custom: 'billKindCustom',
+  unknown: 'billKindUnknown',
+}
 
 const $billingDraft = atom(null)
 const $billingPresentation = atom('both')
@@ -2704,13 +2779,13 @@ async function billingWrite(method, path, body, transport = rest) {
 }
 
 /** Concise, non-technical messages — never a raw FastAPI/Pydantic payload. */
-function billingErrorMessage(error) {
+function billingErrorMessage(error, t = needsAttentionEn) {
   const raw = typeof error?.message === 'string' ? error.message : ''
-  if (/conflict|409/i.test(raw)) return 'This arrangement changed since you loaded it. Reload, then save again.'
-  if (/valid dictionary|422|validation/i.test(raw)) return 'Some details are not valid. Check the name, arrangement and any amounts.'
-  if (/401|unauthori/i.test(raw)) return 'Your Desktop session has expired. Sign in again, then retry.'
-  if (/404/i.test(raw)) return 'Billing is not available in the running backend. Reload the plugin and check its health.'
-  return 'The arrangement could not be saved. Please retry; if it persists, check the backend log.'
+  if (/conflict|409/i.test(raw)) return t('billErrConflict')
+  if (/valid dictionary|422|validation/i.test(raw)) return t('billErrValidation')
+  if (/401|unauthori/i.test(raw)) return t('billErrAuth')
+  if (/404/i.test(raw)) return t('billErrUnavailable')
+  return t('billErrSave')
 }
 
 function billingSummaryQuery(identity = membershipIdentityNow()) {
@@ -2870,6 +2945,16 @@ function econFeeLines(t, fees) {
 const LEDGER_TABS = [['overview', 'Overview'], ['usage', 'Usage'], ['costs', 'Costs'],
   ['memberships', 'Memberships'], ['reports', 'Reports'], ['news', 'Model News'],
   ['settings', 'Settings & About']]
+/** Tab ids to their I18N label keys. LEDGER_TABS keeps the canonical English labels. */
+const TAB_LABEL_KEYS = {
+  overview: 'tabOverview',
+  usage: 'tabUsage',
+  costs: 'tabCosts',
+  memberships: 'tabMemberships',
+  reports: 'tabReports',
+  news: 'tabNews',
+  settings: 'tabSettings',
+}
 const $digestDays = atom(30)
 /** Model News view state: audience scope plus one category filter. */
 const $newsScope = atom('foryou')
@@ -2887,6 +2972,7 @@ const $newsLiveState = atom(null)
  */
 let ledgerTabKeyboardNav = false
 function LedgerTabs() {
+  const t = usePluginI18n(ID)
   const tab = useValue($ledgerTab)
   useEffect(() => {
     if (typeof window === 'undefined' || typeof location === 'undefined') return undefined
@@ -2917,14 +3003,14 @@ function LedgerTabs() {
     goLedgerTab(LEDGER_TABS[next][0])
   }
   return jsx('div', { className: 'wm-shell', style: { paddingBottom: 0 }, children:
-    jsx('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': 'Spend Sense sections', onKeyDown, children:
+    jsx('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': t('tabListLabel'), onKeyDown, children:
       [jsx('span', { className: 'wm-product-brand', 'aria-hidden': true,
         children: jsx(BrandMark, { size: 16, id: 'tabs' }) }, 'brand'),
-      ...LEDGER_TABS.map(([id, label]) =>
+      ...LEDGER_TABS.map(([id]) =>
         jsx(ProductButton, { role: 'tab', variant: 'ghost', 'aria-selected': tab === id, 'aria-pressed': tab === id,
           tabIndex: tab === id ? 0 : -1,
           className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
-          onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) }, children: label }, id))] }) })
+          onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) }, children: t(TAB_LABEL_KEYS[id]) }, id))] }) })
 }
 
 function goLedgerTab(next) {
@@ -2943,6 +3029,7 @@ function profileDraft(profile, identity) {
 }
 
 function AdvancedBillingRules() {
+  const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const profilesQuery = useQuery(billingQuery(identity))
   const rawDraft = useValue($billingDraft)
@@ -2952,7 +3039,7 @@ function AdvancedBillingRules() {
     ? profilesQuery.data.profiles || [] : []
   const advanced = loaded.filter(profile => !['subscription_included', 'subscription_credits', 'free'].includes(profile.kind))
   const legacy = loaded.length - advanced.length
-  const errors = profileDraftErrors(draft)
+  const errors = profileDraftErrors(draft, t)
   const startEdit = profile => $billingDraft.set(profileDraft(profile, identity))
   const update = (key, value) => $billingDraft.set({ ...draft, [key]: value })
   const save = async event => {
@@ -2967,11 +3054,11 @@ function AdvancedBillingRules() {
       await invalidateBillingDependentsFor(captured)
       if (!membershipIdentityCurrent(captured)) return
       if ($billingDraft.get() !== draft) return
-      $billingNotice.set({ tone: 'good', origin: captured, text: 'Saved. Recorded usage was not changed.' })
+      $billingNotice.set({ tone: 'good', origin: captured, text: t('advRulesSaved') })
       $billingDraft.set(null)
       await profilesQuery.refetch?.()
     } catch (error) {
-      if (membershipIdentityCurrent(captured)) $billingNotice.set({ tone: 'warn', origin: captured, text: billingErrorMessage(error) })
+      if (membershipIdentityCurrent(captured)) $billingNotice.set({ tone: 'warn', origin: captured, text: billingErrorMessage(error, t) })
     }
   }
   const remove = async profile => {
@@ -2983,10 +3070,10 @@ function AdvancedBillingRules() {
       // connection switched while it was pending; the check below guards UI only.
       await invalidateBillingDependentsFor(captured)
       if (!membershipIdentityCurrent(captured)) return
-      $billingNotice.set({ tone: 'good', origin: captured, text: 'Removed. Recorded usage was not changed.' })
+      $billingNotice.set({ tone: 'good', origin: captured, text: t('advRulesRemoved') })
       await profilesQuery.refetch?.()
     } catch (error) {
-      if (membershipIdentityCurrent(captured)) $billingNotice.set({ tone: 'warn', origin: captured, text: billingErrorMessage(error) })
+      if (membershipIdentityCurrent(captured)) $billingNotice.set({ tone: 'warn', origin: captured, text: billingErrorMessage(error, t) })
     }
   }
   const field = (label, key, options = {}) => jsxs('label', { className: 'wm-filter', children: [
@@ -2998,10 +3085,9 @@ function AdvancedBillingRules() {
         onChange: event => update(key, event.target.value) })
   ] }, key)
   return jsxs('section', { className: 'wm-product-section', children: keyedElementChildren([
-    jsx('h2', { children: 'Advanced billing rules' }),
-    jsx('p', { children: 'Optional prepaid wallets, route-specific allowances and custom token rates. Membership plans and recurring fees are managed in Memberships.' }),
-    legacy ? jsx('p', { className: 'wm-subtle', children:
-      `${legacy} legacy subscription arrangement(s) are retained for reference and excluded from all fee totals. Choose those plans in Memberships.` }) : null,
+    jsx('h2', { children: t('advRulesTitle') }),
+    jsx('p', { children: t('advRulesIntro') }),
+    legacy ? jsx('p', { className: 'wm-subtle', children: t('advRulesLegacy', legacy) }) : null,
     notice?.origin === identity ? jsx('div', { className: 'wm-alert', role: 'status', children: notice.text }) : null,
     profilesQuery.error ? jsx('div', { className: 'wm-alert', role: 'alert',
       children: String(profilesQuery.error.message || profilesQuery.error) }) : null,
@@ -3009,49 +3095,48 @@ function AdvancedBillingRules() {
       jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () =>
         $billingDraft.set({ id: '', kind: 'prepaid', provider: '', model: '', monthly_fee_usd: '',
           allowance_usd: '', allowance_model: '', cycle_day: 1, overage_paid: false,
-          origin: identity }), children: 'Add advanced rule' }),
+          origin: identity }), children: t('advRulesAdd') }),
       jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => profilesQuery.refetch?.(),
-        disabled: profilesQuery.isFetching, children: profilesQuery.isFetching ? 'Refreshing…' : 'Refresh rules' })
+        disabled: profilesQuery.isFetching, children: profilesQuery.isFetching ? t('advRulesRefreshing') : t('advRulesRefresh') })
     ] }),
-    profilesQuery.isPending ? jsx('p', { className: 'wm-subtle', children: 'Reading advanced rules…' }) : null,
+    profilesQuery.isPending ? jsx('p', { className: 'wm-subtle', children: t('advRulesLoading') }) : null,
     advanced.length ? jsx('div', { className: 'wm-cost-list', children: advanced.map(profile => jsxs('div', {
       className: 'wm-cost-row', children: [
         jsxs('div', { children: [
           jsx('strong', { children: profile.label || profile.id }),
           jsx('small', { children: [profile.provider, profile.model, profile.kind].filter(Boolean).join(' · ') }),
           jsx('small', { children: profile.kind === 'custom' && profile.rate_override
-            ? `Custom input ${fmtUsd(profile.rate_override.input)} / output ${fmtUsd(profile.rate_override.output)} per million tokens`
-            : profile.allowances ? Object.entries(profile.allowances).map(([model, value]) => `${model}: ${fmtUsd(value)} allowance`).join(' · ')
-              : profile.allowance_usd != null ? `${fmtUsd(profile.allowance_usd)} allowance` : 'No allowance reported' })
+            ? t('advRulesCustomRate', fmtUsd(profile.rate_override.input), fmtUsd(profile.rate_override.output))
+            : profile.allowances ? Object.entries(profile.allowances).map(([model, value]) => t('advRulesModelAllowance', model, fmtUsd(value))).join(' · ')
+              : profile.allowance_usd != null ? t('advRulesAllowance', fmtUsd(profile.allowance_usd)) : t('advRulesNoAllowance') })
         ] }),
         jsx('div', { className: 'wm-setting-action', children: [
-          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => startEdit(profile), children: 'Edit' }),
-          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => remove(profile), children: 'Delete' })
+          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => startEdit(profile), children: t('advRulesEdit') }),
+          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => remove(profile), children: t('advRulesDelete') })
         ] })
       ]
-    }, profile.id)) }) : !profilesQuery.isPending ? jsx('p', { className: 'wm-subtle', children:
-      'No advanced rules are saved. This is optional; Costs and Memberships work without them.' }) : null,
+    }, profile.id)) }) : !profilesQuery.isPending ? jsx('p', { className: 'wm-subtle', children: t('advRulesEmpty') }) : null,
     draft ? jsxs('form', { className: 'wm-custom-form', onSubmit: save, children: [
-      jsx('h3', { children: draft.id ? 'Edit advanced rule' : 'New advanced rule' }),
+      jsx('h3', { children: draft.id ? t('advRulesEditTitle') : t('advRulesNewTitle') }),
       jsx('div', { className: 'wm-custom-grid', children: [
-        field('Rule name', 'id', { placeholder: 'e.g. OpenRouter prepaid' }),
-        field('Display label', 'label', { placeholder: 'Optional' }),
-        field('Provider route', 'provider', { placeholder: 'openai-codex' }),
-        field('Model (optional)', 'model', { placeholder: 'provider/model' }),
-        field('Rule type', 'kind', { choices: KIND_CHOICES }),
-        field('Prepaid balance / allowance (USD)', 'allowance_usd', { type: 'number' }),
-        field('Allowance model (optional)', 'allowance_model', { placeholder: 'provider/model' }),
-        field('Cycle day', 'cycle_day', { type: 'number', step: '1' }),
-        field('Effective from', 'effective_from', { type: 'date' }),
-        field('Effective to', 'effective_to', { type: 'date' }),
-        field('Custom input rate per million (USD)', 'rate_input', { type: 'number' }),
-        field('Custom output rate per million (USD)', 'rate_output', { type: 'number' }),
-        field('Custom cache-read rate per million (USD)', 'rate_cache', { type: 'number' })
+        field(t('advRulesFieldName'), 'id', { placeholder: t('advRulesPhName') }),
+        field(t('advRulesFieldLabel'), 'label', { placeholder: t('advRulesPhOptional') }),
+        field(t('advRulesFieldProvider'), 'provider', { placeholder: 'openai-codex' }),
+        field(t('advRulesFieldModel'), 'model', { placeholder: 'provider/model' }),
+        field(t('advRulesFieldKind'), 'kind', { choices: KIND_CHOICES.map(([value]) => [value, t(KIND_LABEL_KEYS[value])]) }),
+        field(t('advRulesFieldAllowance'), 'allowance_usd', { type: 'number' }),
+        field(t('advRulesFieldAllowanceModel'), 'allowance_model', { placeholder: 'provider/model' }),
+        field(t('advRulesFieldCycleDay'), 'cycle_day', { type: 'number', step: '1' }),
+        field(t('advRulesFieldFrom'), 'effective_from', { type: 'date' }),
+        field(t('advRulesFieldTo'), 'effective_to', { type: 'date' }),
+        field(t('advRulesFieldRateInput'), 'rate_input', { type: 'number' }),
+        field(t('advRulesFieldRateOutput'), 'rate_output', { type: 'number' }),
+        field(t('advRulesFieldRateCache'), 'rate_cache', { type: 'number' })
       ] }),
-      jsx('p', { className: 'wm-subtle', children: 'Prepaid and custom-rate rules affect estimates only. They do not change settled Desktop records or represent provider invoices.' }),
+      jsx('p', { className: 'wm-subtle', children: t('advRulesEstimatesNote') }),
       jsx('div', { className: 'wm-setting-action', children: [
-        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: errors.length > 0, children: 'Save rule' }),
-        jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $billingDraft.set(null), children: 'Cancel' })
+        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: errors.length > 0, children: t('advRulesSave') }),
+        jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $billingDraft.set(null), children: t('advRulesCancel') })
       ] }),
       errors.length ? jsx('p', { className: 'wm-warn-note', role: 'alert', children: errors.join(' ') }) : null
     ] }) : null
@@ -3144,23 +3229,25 @@ function pricingStatusQuery(identity = membershipIdentityNow()) {
   }
 }
 
-function membershipEntitlementSummary(account) {
+function membershipEntitlementSummary(account, t = needsAttentionEn) {
   const windows = account?.plan?.entitlements?.windows || []
   const names = windows.map(window => {
-    const amount = window.amount == null ? '' : ` · ${fmtMoney(window.amount, window.currency || 'USD')} allowance`
+    const amount = window.amount == null ? '' : t('costsEntAllowance', fmtMoney(window.amount, window.currency || 'USD'))
     return `${window.label || window.id}${amount}`
   })
   const restrictions = account?.plan?.model_restrictions || []
   const parts = []
-  if (names.length) parts.push(`plan allowances: ${names.join(', ')} (usage in Memberships)`)
-  if (restrictions.length) parts.push(`restricted models: ${restrictions.join(', ')}`)
+  if (names.length) parts.push(t('costsEntAllowances', names.join(', ')))
+  if (restrictions.length) parts.push(t('costsEntRestricted', restrictions.join(', ')))
   if (account?.plan?.effective?.effective_from || account?.plan?.effective?.effective_to) {
-    parts.push(`effective ${account.plan.effective.effective_from || 'any time'} to ${account.plan.effective.effective_to || 'ongoing'}`)
+    parts.push(t('costsEntEffective', account.plan.effective.effective_from || t('costsEntAnyTime'),
+      account.plan.effective.effective_to || t('costsEntOngoing')))
   }
   return parts.join(' · ')
 }
 
 function CostsPage() {
+  const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const summary = useQuery(billingSummaryQuery(identity))
   const accounts = useQuery(membershipQuery(false, identity))
@@ -3171,44 +3258,44 @@ function CostsPage() {
   const list = current ? membershipAccounts(current) : []
   const fees = membershipSummary(list)
   const billing = summary.data?.billing || {}
-  const evidence = billingEvidence(billing).filter(row => row.key !== 'subscription_fee')
+  const evidence = billingEvidence(billing, t).filter(row => row.key !== 'subscription_fee')
   const ignored = Number(billing.legacy_membership_arrangements_ignored || 0)
   const status = pricing.data
   const sourceText = status
-    ? 'Pricing: ' + (status.source || 'source unavailable') +
-      (status.age_seconds != null ? ' · ' + Math.round(status.age_seconds / 3600) + ' h old' : ' · date unknown') +
-      (status.stale ? ' · stale' : '') + ' · sources and privacy'
-    : 'Pricing sources and privacy'
+    ? t('costsPricing', status.source || t('costsPricingNoSource'),
+      status.age_seconds != null ? t('costsPricingAge', Math.round(status.age_seconds / 3600)) : t('costsPricingNoDate'),
+      status.stale ? t('costsPricingStale') : '')
+    : t('costsPricingTitle')
   return jsxs('div', { className: 'wm-analytics wm-product', children: [
     jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + ECONOMICS_CSS }),
     jsx(LedgerTabs, {}),
     jsxs('main', { className: 'wm-shell', children: [
-      jsx(ProductHeader, { title: 'Costs',
-        subtitle: 'Recorded usage, current price estimates and the memberships you have declared.',
+      jsx(ProductHeader, { title: t('costsTitle'),
+        subtitle: t('costsSubtitle'),
         actions: jsx('button', { type: 'button', className: 'wm-source-link',
           onClick: () => goLedgerTab('settings'), children: sourceText }) }),
       summary.error
         ? jsx('div', { className: 'wm-alert', role: 'alert', children: String(summary.error.message || summary.error) })
         : null,
       accounts.error
-        ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read') })
+        ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read', t) })
         : null,
       jsx(EconomicsPanel, { identity }),
       jsxs('section', { className: 'wm-product-section', children: [
-        jsx('h2', { children: 'Membership costs' }),
-        jsx('p', { children: 'Each account appears once. Totals keep currencies and billing periods separate.' }),
+        jsx('h2', { children: t('costsMembershipTitle') }),
+        jsx('p', { children: t('costsMembershipIntro') }),
         jsxs('div', { className: 'wm-product-summary', children: [
           jsxs('div', { className: 'wm-product-stat', children: [
-            jsx('label', { children: 'Saved memberships' }),
-            jsx('strong', { children: accountsReady ? fees.withPlan + ' of ' + fees.total : '—' })
+            jsx('label', { children: t('costsSavedMemberships') }),
+            jsx('strong', { children: accountsReady ? t('costsMembershipCount', fees.withPlan, fees.total) : '—' })
           ] }),
           jsxs('div', { className: 'wm-product-stat', children: [
-            jsx('label', { children: 'Combined membership fees' }),
-            jsx('strong', { children: accountsReady ? feesLabel(fees) : '—' })
+            jsx('label', { children: t('costsCombinedFees') }),
+            jsx('strong', { children: accountsReady ? feesLabel(fees, t) : '—' })
           ] })
         ] }),
         !accountsReady && !accounts.error
-          ? jsx('p', { className: 'wm-subtle', children: 'Reading memberships for this connection…' })
+          ? jsx('p', { className: 'wm-subtle', children: t('costsLoading') })
           : null,
         list.length
           ? jsx('div', { className: 'wm-cost-list', children: list.map(account => jsxs('div', {
@@ -3217,26 +3304,25 @@ function CostsPage() {
                   jsx('strong', { children: account.plan?.name || account.label || account.family }),
                   jsx('small', { children:
                     (account.label !== account.family ? account.label + ' · ' : '') +
-                    (account.fee?.basis === 'catalogue' ? 'Bundled catalogue price'
-                      : account.fee?.basis === 'custom' ? 'User-defined plan price'
-                      : account.fee?.basis === 'declared' ? 'Your fee; plan price kept separately'
-                      : account.fee?.basis === 'unpriced' ? 'No published price' : account.family)
-                    + (membershipEntitlementSummary(account) ? ' · ' + membershipEntitlementSummary(account) : '')
+                    (account.fee?.basis === 'catalogue' ? t('costsBasisCatalogue')
+                      : account.fee?.basis === 'custom' ? t('costsBasisCustom')
+                      : account.fee?.basis === 'declared' ? t('costsBasisDeclared')
+                      : account.fee?.basis === 'unpriced' ? t('costsBasisUnpriced') : account.family)
+                    + (membershipEntitlementSummary(account, t) ? ' · ' + membershipEntitlementSummary(account, t) : '')
                   })
                 ] }),
-                jsx('strong', { children: feeLabel(account.fee) })
+                jsx('strong', { children: feeLabel(account.fee, t) })
               ]
             }, account.id)) })
-          : accountsReady ? jsx('p', { className: 'wm-subtle', children:
-              'No saved memberships yet. Discover accounts and confirm their plans in Memberships.' }) : null,
+          : accountsReady ? jsx('p', { className: 'wm-subtle', children: t('costsEmpty') }) : null,
         ignored
-          ? jsx('p', { className: 'wm-subtle', children: ignored + ' old subscription arrangement(s) remain stored but are excluded. Choose each plan in Memberships to keep one authoritative record.' })
+          ? jsx('p', { className: 'wm-subtle', children: t('costsLegacyIgnored', ignored) })
           : null
       ] }),
       jsxs('section', { className: 'wm-product-section', children: [
-        jsx('h2', { children: 'Usage evidence' }),
-        jsx('p', { children: 'Provider-reported values and price estimates are different kinds of evidence; neither is a payment receipt.' }),
-        summary.isPending ? jsx('p', { className: 'wm-subtle', children: 'Reading usage evidence…' }) : null,
+        jsx('h2', { children: t('costsEvidenceTitle') }),
+        jsx('p', { children: t('costsEvidenceIntro') }),
+        summary.isPending ? jsx('p', { className: 'wm-subtle', children: t('costsEvidenceLoading') }) : null,
         jsx('div', { className: 'wm-product-summary', children: evidence.map(row => jsx('div', {
           className: 'wm-product-stat', children: [
             jsx('label', { children: row.label }),
@@ -3245,8 +3331,7 @@ function CostsPage() {
           ]
         }, row.key)) })
       ] }),
-      jsx('p', { className: 'wm-subtle', children:
-        'Desktop-recorded values keep the rates captured at the time. Backend API-equivalent estimates use the current available catalogue and can change; they are not historical charges.' })
+      jsx('p', { className: 'wm-subtle', children: t('costsFooterNote') })
     ] })
   ] })
 }
@@ -3955,11 +4040,9 @@ function SettingsPage() {
       $basis.set('hybrid')
       $automaticModelOptions.set(false)
       $settingsConfirmation.set(null)
-      $modelRefreshState.set({ origin: identity, tone: 'good',
-        text: 'Spend Sense display preferences were reset. Hermes saved pane placement is unchanged.' })
+      $modelRefreshState.set({ origin: identity, tone: 'good', text: t('settingsNotifyPrefsReset') })
     } catch (error) {
-      $modelRefreshState.set({ origin: identity, tone: 'warn',
-        text: 'Preferences could not be reset: ' + String(error.message || error) })
+      $modelRefreshState.set({ origin: identity, tone: 'warn', text: t('settingsNotifyPrefsFailed', String(error.message || error)) })
     }
   }
 
@@ -3978,11 +4061,10 @@ function SettingsPage() {
       await queryClient.invalidateQueries({ queryKey: [ID, 'billing-profiles', captured] })
       await invalidateEconomicsFor(captured)
       await invalidateWeatherFor(captured)
-      $modelRefreshState.set({ origin: captured, tone: 'good',
-        text: 'Memberships and advanced billing rules were cleared for this profile. Captured usage records were retained.' })
+      $modelRefreshState.set({ origin: captured, tone: 'good', text: t('settingsNotifyDataCleared') })
     } catch (error) {
       if (membershipIdentityCurrent(captured)) $modelRefreshState.set({
-        origin: captured, tone: 'warn', text: 'User-entered data was not reset: ' + String(error.message || error)
+        origin: captured, tone: 'warn', text: t('settingsNotifyDataFailed', String(error.message || error))
       })
     }
   }
@@ -4002,12 +4084,11 @@ function SettingsPage() {
       const query = catalogQuery(sessionId, model)
       queryClient.setQueryData(query.queryKey, result)
       if (!sessionId) queryClient.setQueryData(catalogQuery(null).queryKey, result)
-      $modelRefreshState.set({ origin: captured, tone: 'good',
-        text: 'Hermes model availability was refreshed. This does not force a pricing catalogue refresh.' })
+      $modelRefreshState.set({ origin: captured, tone: 'good', text: t('settingsNotifyModelsOk') })
       $settingsConfirmation.set(null)
     } catch (error) {
       if (membershipIdentityCurrent(captured)) $modelRefreshState.set({ origin: captured, tone: 'warn',
-        text: 'Hermes could not refresh model availability: ' + String(error.message || error) })
+        text: t('settingsNotifyModelsFailed', String(error.message || error)) })
     }
   }
 
@@ -4020,15 +4101,13 @@ function SettingsPage() {
       queryClient.setQueryData([ID, 'membership-plans', captured], { ...result, identity: captured })
       const centralState = result?.central?.state
       const centralAlert = newsCentralAlert(result?.central, t)
-      if (centralState === 'ok') $modelRefreshState.set({ origin: captured, tone: 'good',
-        text: 'Membership catalogue was refreshed. Stored memberships, fees and selections are unchanged.' })
+      if (centralState === 'ok') $modelRefreshState.set({ origin: captured, tone: 'good', text: t('settingsNotifyCatalogueOk') })
       else if (centralAlert) $modelRefreshState.set({ origin: captured, tone: 'warn',
-        text: 'Membership catalogue could not be refreshed: ' + centralAlert })
-      else $modelRefreshState.set({ origin: captured, tone: 'warn',
-        text: 'Spend Sense Live Updates is off, so the bundled catalogue is shown. Stored memberships, fees and selections are unchanged.' })
+        text: t('settingsNotifyCatalogueFailed', centralAlert) })
+      else $modelRefreshState.set({ origin: captured, tone: 'warn', text: t('settingsNotifyLiveOff') })
     } catch (error) {
       if (membershipIdentityCurrent(captured)) $modelRefreshState.set({ origin: captured, tone: 'warn',
-        text: 'Membership catalogue could not be refreshed: ' + String(error.message || error) })
+        text: t('settingsNotifyCatalogueFailed', String(error.message || error)) })
     }
   }
 
@@ -4040,15 +4119,15 @@ function SettingsPage() {
     jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS }),
     jsx(LedgerTabs, {}),
     jsxs('main', { className: 'wm-shell', children: [
-      jsx(ProductHeader, { title: 'Settings & About',
-        subtitle: 'Privacy, pricing provenance, diagnostics and recovery.' }),
+      jsx(ProductHeader, { title: t('settingsTitle'),
+        subtitle: t('settingsSubtitle') }),
       jsxs('div', { className: 'wm-settings-grid', children: keyedElementChildren([
         jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: 'External data and privacy' }),
-          jsx('p', { children: 'Spend Sense makes no direct HTTP pricing requests. It reads Hermes model-pricing metadata when available and falls back to its bundled offline rate snapshot. Membership plans are bundled; user-defined plans stay in your plugin data.' }),
-          jsx('p', { children: 'Automatic Hermes model-options refresh is off by default. When enabled, the live pane asks Hermes for current options on session/model changes and every 15 minutes. Hermes may refresh public models.dev metadata or make authenticated requests to configured provider endpoints using credentials it manages. Membership discovery parses Hermes authentication storage to count configured credential slots; it does not return or log credential values.' }),
-          jsx('p', { children: 'Spend Sense stores accounting metadata, membership choices, fee history, custom plan details, and optional user-reported exhaustion marks. It does not collect prompts, responses or telemetry. The plugin backend uses its existing profile-specific plugin data.' }),
-          jsx('p', { children: 'With automatic refresh off, the plugin uses options already cached in this Desktop session and bundled rates. If a route is uncertain, it may use a clearly labelled fallback estimate or remain unpriced; it is never presented as a confirmed provider price. Account discovery and account readings remain user-triggered.' })
+          jsx('h2', { children: t('settingsPrivacyHeading') }),
+          jsx('p', { children: t('settingsPrivacyP1') }),
+          jsx('p', { children: t('settingsPrivacyP2') }),
+          jsx('p', { children: t('settingsPrivacyP3') }),
+          jsx('p', { children: t('settingsPrivacyP4') })
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
           jsx('h2', { children: t('newsLiveTitle') }),
@@ -4083,121 +4162,127 @@ function SettingsPage() {
               : null,
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: 'Pricing provenance and freshness' }),
-          status.error ? jsx('p', { className: 'wm-warn-note', children: 'Pricing status is unavailable. Hermes’ cache or the bundled offline snapshot can still be used.' }) : null,
+          jsx('h2', { children: t('settingsPricingHeading') }),
+          status.error ? jsx('p', { className: 'wm-warn-note', children: t('settingsPricingUnavailable') }) : null,
           pricing ? jsxs('p', { children: [
-            'Source: ', jsx('strong', { children: pricing.source || 'unavailable' }),
-            pricing.as_of ? ' · snapshot/cache date: ' + new Date(pricing.as_of).toLocaleString() : ' · date unavailable',
-            pricing.age_seconds != null ? ' · ' + Math.round(pricing.age_seconds / 3600) + ' h old' : '',
-            pricing.stale ? ' · stale' : ''
+            t('settingsPricingSourceLabel'), jsx('strong', { children: pricing.source || t('settingsPricingNoSource') }),
+            pricing.as_of ? t('settingsPricingDate', new Date(pricing.as_of).toLocaleString()) : t('settingsPricingNoDate'),
+            pricing.age_seconds != null ? t('settingsPricingAge', Math.round(pricing.age_seconds / 3600)) : '',
+            pricing.stale ? t('settingsPricingStale') : ''
           ] }) : null,
-          jsx('p', { className: 'wm-subtle', children: 'Refreshing this status only rereads the backend metadata. It does not trigger an external pricing fetch.' }),
+          jsx('p', { className: 'wm-subtle', children: t('settingsPricingRefreshNote') }),
           jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: status.isFetching,
-            onClick: () => status.refetch?.(), children: status.isFetching ? 'Checking…' : 'Refresh pricing status' }),
+            onClick: () => status.refetch?.(), children: status.isFetching ? t('settingsChecking') : t('settingsRefreshPricing') }),
           jsxs('p', { children: [
-            'Captured Desktop costs retain the rates applied when recorded. Backend API-equivalent values are estimates recalculated using the current available prices; they are not historical charges.'
+            t('settingsCapturedCosts')
           ] }),
-          jsx('p', { children: 'WolfMark publishes an optional, versioned membership catalogue feed. When Spend Sense Live Updates is on, the pane fetches it — validating the schema, caching it for offline use and falling back to the bundled plans on any failure; otherwise this build uses the bundled plans. Stored memberships, fees and selections never change.' }),
+          jsx('p', { children: t('settingsCatalogueFeed') }),
           membershipBook ? jsxs('div', { className: 'wm-note', children: [
-            jsx('p', { children: (membershipBook.source === 'live' ? 'Live membership catalogue ' : 'Bundled membership catalogue ') + membershipBook.catalogue_version +
-              (membershipBook.generated_at ? ' · generated ' + new Date(membershipBook.generated_at).toLocaleString() : '') }),
+            jsx('p', { children: t('settingsCatalogueVersion',
+              membershipBook.source === 'live' ? t('settingsCatalogueLive') : t('settingsCatalogueBundled'),
+              membershipBook.catalogue_version,
+              membershipBook.generated_at ? t('settingsCatalogueGenerated', new Date(membershipBook.generated_at).toLocaleString()) : '') }),
             membershipBook.source === 'live' && membershipBook.central
-              ? jsx('p', { className: 'wm-subtle', children: 'Fetched ' + newsFreshLabel(newsAgeDays(membershipBook.central.fetched_at, Date.now()), t) +
-                  (membershipBook.central.fetched_at ? ' · ' + new Date(membershipBook.central.fetched_at).toLocaleString() : '') })
+              ? jsx('p', { className: 'wm-subtle', children: t('settingsCatalogueFetched',
+                  newsFreshLabel(newsAgeDays(membershipBook.central.fetched_at, Date.now()), t),
+                  membershipBook.central.fetched_at ? t('settingsCatalogueFetchedAt', new Date(membershipBook.central.fetched_at).toLocaleString()) : '') })
               : null,
             newsCentralAlert(membershipBook.central, t)
-              ? jsx('p', { className: 'wm-warn-note', role: 'status', children: 'Central catalogue: ' + newsCentralAlert(membershipBook.central, t) + (membershipBook.source === 'live' ? ' The cached live catalogue is shown.' : ' The bundled plans are shown.') })
+              ? jsx('p', { className: 'wm-warn-note', role: 'status', children: t('settingsCentralAlert',
+                  newsCentralAlert(membershipBook.central, t), membershipBook.source === 'live') })
               : null,
             membershipBook.source === 'bundled' && membershipBook.central?.held_back
-              ? jsx('p', { className: 'wm-warn-note', role: 'status', children: 'Central catalogue ' + (membershipBook.central.catalogue_version || 'update') + ' is older than the bundled copy; the bundled plans are shown.' })
+              ? jsx('p', { className: 'wm-warn-note', role: 'status', children: t('settingsCentralHeldBack',
+                  membershipBook.central.catalogue_version || t('settingsCentralUpdate')) })
               : null,
-            jsxs('p', { children: [membershipBook.totals?.plans || 0, ' plans · ',
-              membershipBook.totals?.verified || 0, ' verified prices · ',
-              membershipBook.totals?.provisional || 0, ' provisional · ',
-              membershipBook.totals?.placeholders || 0, ' without a published fee'] }),
+            jsx('p', { children: t('settingsCatalogueTotals', membershipBook.totals?.plans || 0,
+              membershipBook.totals?.verified || 0, membershipBook.totals?.provisional || 0,
+              membershipBook.totals?.placeholders || 0) }),
             jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: planCatalogue.isFetching,
-              onClick: refreshPlansCatalogue, children: planCatalogue.isFetching ? 'Checking…' : 'Refresh membership catalogue' }),
+              onClick: refreshPlansCatalogue, children: planCatalogue.isFetching ? t('settingsChecking') : t('settingsRefreshCatalogue') }),
             jsx('details', { children: [
-              jsx('summary', { children: (membershipBook.source === 'live' ? 'Live' : 'Bundled') + ' source register' }),
+              jsx('summary', { children: t('settingsSourceRegister',
+                membershipBook.source === 'live' ? t('settingsCatalogueLive') : t('settingsCatalogueBundled')) }),
               jsx('ul', { children: (membershipBook.sources || []).map(source => jsx('li', { children: [
-                source.id + ' · ' + source.evidence_kind + ' · ' + (source.retrieved_at || 'retrieval date not recorded') + ' · ',
+                source.id + ' · ' + source.evidence_kind + ' · ' + (source.retrieved_at || t('settingsSourceNoDate')) + ' · ',
                 jsx('a', { href: source.url, target: '_blank', rel: 'noreferrer', children: source.url })
               ] }, source.id)) })
             ] })
-          ] }) : planCatalogue.error ? jsx('p', { className: 'wm-warn-note', children: 'Bundled membership catalogue provenance is unavailable.' }) : null
+          ] }) : planCatalogue.error ? jsx('p', { className: 'wm-warn-note', children: t('settingsCatalogueProvenanceUnavailable') }) : null
         ] }),
         jsx(AdvancedBillingRules, {}),
         jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: 'Hermes model availability' }),
-          jsx('p', { children: 'This refresh asks Hermes to refresh the current profile’s model list. Hermes may probe configured provider endpoints using credentials managed by Hermes.' }),
+          jsx('h2', { children: t('settingsModelsHeading') }),
+          jsx('p', { children: t('settingsModelsExplain') }),
           jsx('label', { className: 'wm-setting-toggle', children: [
             jsx('input', { type: 'checkbox', checked: automaticModelOptions,
               onChange: event => $automaticModelOptions.set(Boolean(event.target.checked)) }),
-            jsx('span', { children: 'Allow automatic Hermes model-options refresh for live pricing. Off by default; when off, cached options and bundled/offline rates are used, with uncertain routes labelled or left unpriced.' })
+            jsx('span', { children: t('settingsAutoRefreshToggle') })
           ] }),
           liveRefresh?.stage === 'confirm-models'
             ? jsx('div', { className: 'wm-confirm-box', children: [
-                jsx('p', { role: 'alert', children: 'This can make authenticated requests to configured providers. Continue with the current Hermes profile?' }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: refreshModels, children: 'Confirm model refresh' }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $modelRefreshState.set(null), children: 'Cancel' })
+                jsx('p', { role: 'alert', children: t('settingsModelsConfirmText') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: refreshModels, children: t('settingsModelsConfirm') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $modelRefreshState.set(null), children: t('settingsCancel') })
               ] })
-            : jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: refreshModels, children: 'Refresh Hermes models' }),
+            : jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: refreshModels, children: t('settingsRefreshModels') }),
           liveRefresh?.text ? jsx('p', { className: liveRefresh.tone === 'warn' ? 'wm-warn-note' : 'wm-subtle',
             role: 'status', children: liveRefresh.text }) : null
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: 'Diagnostics' }),
-          jsx('p', { children: 'Plugin version ' + PLUGIN_VERSION + ' · ' +
-            (last?.version ? 'backend version ' + last.version : health.isPending ? 'checking backend…' : 'backend status unavailable') }),
+          jsx('h2', { children: t('settingsDiagnosticsHeading') }),
+          jsx('p', { children: t('settingsDiagnosticsVersions', PLUGIN_VERSION,
+            last?.version ? t('settingsDiagnosticsBackend', last.version)
+              : health.isPending ? t('settingsDiagnosticsChecking') : t('settingsDiagnosticsNoBackend')) }),
           health.error ? jsx('p', { className: 'wm-warn-note', role: 'status',
-            children: 'Backend health check failed: ' + String(health.error.message || health.error) }) : null,
-          last ? jsx('p', { children: last.ok ? 'Backend health: ready' : 'Backend health: usage database unavailable' }) : null,
+            children: t('settingsHealthFailed', String(health.error.message || health.error)) }) : null,
+          last ? jsx('p', { children: last.ok ? t('settingsHealthReady') : t('settingsHealthUnavailable') }) : null,
           jsx('details', { className: 'wm-note', children: [
-            jsx('summary', { children: 'Recent request diagnostics' }),
+            jsx('summary', { children: t('settingsDiagnosticsRecent') }),
             membershipDiagnostics.length
               ? jsx('ul', { children: membershipDiagnostics.map((entry, index) => jsx('li', {
                   children: `${entry.at} · ${entry.method} ${entry.path} · ${entry.status ?? entry.outcome} · ${entry.scope}`
                 }, index)) })
-              : jsx('p', { children: 'No membership requests recorded in this session.' })
+              : jsx('p', { children: t('settingsDiagnosticsEmpty') })
           ] }),
-          jsx('p', { className: 'wm-subtle', children: 'Diagnostics contain only method, relative path, status, profile scope and time. They do not include tokens, headers, credential values, or request bodies.' })
+          jsx('p', { className: 'wm-subtle', children: t('settingsDiagnosticsNote') })
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: 'Display and recovery' }),
-          jsx('p', { children: 'Resetting display preferences affects only Spend Sense filters and view mode. Hermes pane placement is stored by Hermes and remains as you set it.' }),
+          jsx('h2', { children: t('settingsRecoveryHeading') }),
+          jsx('p', { children: t('settingsRecoveryPrefsExplain') }),
           liveConfirmation?.stage === 'reset-preferences'
             ? jsx('div', { className: 'wm-confirm-box', children: [
-                jsx('p', { role: 'alert', children: 'Reset the Spend Sense display preferences to their defaults?' }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetPreferences, children: 'Confirm preference reset' }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: 'Cancel' })
+                jsx('p', { role: 'alert', children: t('settingsRecoveryPrefsConfirmText') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetPreferences, children: t('settingsRecoveryPrefsConfirm') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: t('settingsCancel') })
               ] })
             : jsx(ProductButton, { type: 'button', className: 'wm-button',
                 onClick: () => $settingsConfirmation.set({ origin: identity, stage: 'reset-preferences' }),
-                children: 'Reset display preferences' }),
-          jsx('p', { children: 'User-data recovery covers Memberships and advanced billing rules only. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.' }),
+                children: t('settingsResetPrefs') }),
+          jsx('p', { children: t('settingsRecoveryDataExplain') }),
           liveConfirmation?.stage === 'data-copied'
             ? jsx('div', { className: 'wm-confirm-box', children: [
-                jsx('p', { role: 'alert', children: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership and advanced-rule data.' }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetUserData, children: 'Confirm and clear user-entered data' }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: 'Cancel' })
+                jsx('p', { role: 'alert', children: t('settingsRecoveryBackupText') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetUserData, children: t('settingsRecoveryDataConfirm') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: t('settingsCancel') })
               ] })
             : jsx(ProductButton, { type: 'button', className: 'wm-button',
-                onClick: copyRecovery, children: 'Copy recovery backup before reset' })
+                onClick: copyRecovery, children: t('settingsCopyBackup') })
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: 'About and support' }),
+          jsx('h2', { children: t('settingsAboutHeading') }),
           jsx(BrandMark, { size: 32, id: 'about' }),
-          jsx('p', { children: 'Spend Sense ' + PLUGIN_VERSION }),
-          jsx('p', { children: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.' }),
-          jsx('p', { children: 'Support and product information are available from WolfMark.' }),
+          jsx('p', { children: t('settingsAboutVersion', PLUGIN_VERSION) }),
+          jsx('p', { children: t('settingsAboutCredit') }),
+          jsx('p', { children: t('settingsAboutSupport') }),
           jsx('a', { href: 'https://wolfmark.co.uk/contact', target: '_blank', rel: 'noreferrer',
-            className: 'wm-source-link', children: 'Contact WolfMark support' }),
-          jsx('p', { className: 'wm-subtle', children: 'The bundled pricing and membership catalogue is maintained through normal reviewed plugin releases. No user-defined plan is overwritten by a catalogue update.' })
+            className: 'wm-source-link', children: t('settingsAboutContact') }),
+          jsx('p', { className: 'wm-subtle', children: t('settingsAboutCatalogueNote') })
         ] })
       ], 'settings-grid') }),
       liveRefresh?.tone === 'warn' && !liveRefresh.stage
         ? jsx('div', { className: 'wm-alert', role: 'status', children: liveRefresh.text }) : null,
-          jsx('p', { className: 'wm-subtle', children: 'The Spend Sense pane can be dragged to the left or right using Hermes’ supported layout controls. Hermes remembers your placement across reloads.' })
+          jsx('p', { className: 'wm-subtle', children: t('settingsPanePlacement') })
     ] })
   ] })
 }
@@ -7113,7 +7198,7 @@ const I18N = {
     calls: 'Calls',
     chipTip: (model, source, today, hit, saved) =>
       `${model} — cost ${source}. Today ${today}. Cache hit ${hit}; theoretical net cache savings ${saved}. Click for details.`,
-  chipTipIdle: 'Spend Sense — click for details',
+  chipTipIdle: 'SpendSense — click for details',
     context: 'Context',
     copied: 'Ledger JSON copied to the clipboard.',
     copyJson: 'Copy JSON',
@@ -7136,7 +7221,7 @@ const I18N = {
     legacyNote: n => `${n} tokens come from the pre-1.0 ledger, which stored no provider or price; they are estimated at current rates and may change.`,
     loadingPrice: 'Loading pricing…',
     modelCol: 'Model',
-    navLabel: 'Spend Sense',
+    navLabel: 'SpendSense',
     noLedger: 'Nothing recorded in this range. Usage is folded in as turns complete.',
     noPrice: 'n/a',
     noPriceLong: 'No rate for this model in the provider catalog or the bundled models.dev table. Run scripts/gen-rates.py to refresh it.',
@@ -7144,7 +7229,7 @@ const I18N = {
     meterRecorded: 'Recorded',
     meterUpdating: 'Updating…',
     apiEquivalent: 'API equivalent',
-    costSourceInfo: 'Spend Sense prices this conversation from Hermes backend estimates or catalogue $/Mtok rates, depending on what is available. A provider invoice may differ by route, peak pricing or rounding.',
+    costSourceInfo: 'SpendSense prices this conversation from Hermes backend estimates or catalogue $/Mtok rates, depending on what is available. A provider invoice may differ by route, peak pricing or rounding.',
     totalTokens: 'Total tokens',
     sinceDate: d => `since ${d}`,
     promptMix: 'Prompt mix',
@@ -7449,7 +7534,7 @@ const I18N = {
     // Page notices and states.
     memRefuseStale: 'That action belongs to a different connection. Reload the pane before changing anything.',
     memRefuseBusy: 'Another membership action is still processing. Please wait and try again.',
-    memRefuseUnversioned: 'This record has no revision and cannot be saved safely. It was probably written outside Spend Sense — restore the membership store before editing.',
+    memRefuseUnversioned: 'This record has no revision and cannot be saved safely. It was probably written outside SpendSense — restore the membership store before editing.',
     memDiscovering: 'Discovering…',
     memRefreshing: 'Refreshing…',
     memReadFailed: 'Memberships could not be read for this connection.',
@@ -7547,10 +7632,10 @@ const I18N = {
     newsReasonSelectedPlan: 'matches your selected plan',
     newsBaseline: date => `Catalogue baseline taken ${date}. Changes observed from the next refresh will appear here.`,
     newsRemoved: n => `${n} model(s) are no longer listed.`,
-    newsLiveOffText: 'Local catalogue news is shown. Turn on Spend Sense Live Updates in Settings for public announcements from Spend Sense.',
+    newsLiveOffText: 'Local catalogue news is shown. Turn on SpendSense Live Updates in Settings for public announcements from SpendSense.',
     newsOpenSettings: 'Open Settings',
-    newsCentralFresh: label => `Spend Sense announcements · updated ${label}.`,
-    newsCentralStale: 'Spend Sense announcements could not be refreshed — showing the last fetch.',
+    newsCentralFresh: label => `SpendSense announcements · updated ${label}.`,
+    newsCentralStale: 'SpendSense announcements could not be refreshed — showing the last fetch.',
     newsObserved: date => `Observed ${date}`,
     newsEffective: date => `Effective ${date}`,
     newsRateWas: 'Was',
@@ -7567,11 +7652,11 @@ const I18N = {
     newsCaveatTiers: 'tiered pricing applies; base rates compared',
     newsRoutes: () => 'Your routes:',
     newsSource: 'Source',
-    newsLiveTitle: 'Spend Sense Live Updates',
-    newsLiveExplain: 'Download public model and subscription updates from Spend Sense. No personal usage, accounts, credentials, model selections or telemetry are uploaded.',
+    newsLiveTitle: 'SpendSense Live Updates',
+    newsLiveExplain: 'Download public model and subscription updates from SpendSense. No personal usage, accounts, credentials, model selections or telemetry are uploaded.',
     newsLiveIp: 'Enabling involves an HTTPS request whose source IP is visible to the server. On a remote Hermes host, that host makes the request.',
-    newsLiveToggle: 'Download public updates from Spend Sense (off by default).',
-    newsLiveConfirmText: 'Turn on Spend Sense Live Updates for this profile?',
+    newsLiveToggle: 'Download public updates from SpendSense (off by default).',
+    newsLiveConfirmText: 'Turn on SpendSense Live Updates for this profile?',
     newsLiveConfirm: 'Enable live updates',
     newsLiveCancel: 'Cancel',
     newsLiveOn: 'Live updates are on for this profile.',
@@ -7604,15 +7689,15 @@ const I18N = {
     fxErrRejected: 'The rates were rejected. Check each rate and retry.',
     fxErrSave: 'The rates could not be saved. Please retry; if it persists, check the backend log.',
     output: 'Output',
-  pageTitle: 'Spend Sense',
-    pageTitleDesktop: 'Spend Sense — this desktop',
-    allHermesTitle: 'Spend Sense',
+  pageTitle: 'SpendSense',
+    pageTitleDesktop: 'SpendSense — this desktop',
+    allHermesTitle: 'SpendSense',
     viewAll: 'All Hermes',
     viewDesktop: 'This desktop',
     allHermesHint:
       'Timestamped calls captured since this plugin was enabled. The historical baseline is read separately from state.db and is never added to the period.',
     allHermesEmpty: 'No usage recorded in this window.',
-    backendUnavailable: 'The Spend Sense backend is not reachable.',
+    backendUnavailable: 'The SpendSense backend is not reachable.',
     backendLoading: 'Reading the timestamped ledger…',
     backendRetry: 'Retry',
     backendUseDesktop: 'Use this desktop’s ledger',
@@ -7697,7 +7782,445 @@ const I18N = {
     storageError: msg => `⚠ The ledger could not be saved (${msg}). New usage is kept only until Hermes restarts.`,
     today: 'today',
     total: 'Total',
-    unpricedNote: n => `${n} tokens had no known rate and are not in the total (shown as ≥).`
+    unpricedNote: n => `${n} tokens had no known rate and are not in the total (shown as ≥).`,
+    // Ledger tabs.
+    tabOverview: 'Overview',
+    tabUsage: 'Usage',
+    tabCosts: 'Costs',
+    tabMemberships: 'Memberships',
+    tabReports: 'Reports',
+    tabNews: 'Model News',
+    tabSettings: 'Settings & About',
+    // Usage header.
+    usageTitle: 'Usage analytics',
+    usageSubtitle: profile => `Recorded calls · ${profile} · all Hermes surfaces`,
+    usageCurrentProfile: 'current profile',
+    usageNerdMode: 'NERD MODE',
+    usageRefreshTip: 'Refresh analytics',
+    usageRefreshing: 'Refreshing…',
+    usageRefresh: '↻ Refresh',
+    usageThisDesktopTip: 'Use this desktop’s ledger',
+    usageThisDesktop: 'This desktop',
+    usageCloseTip: 'Close analytics',
+    usageClose: '× Close',
+    // Costs page.
+    costsPricing: (source, age, stale) => `Pricing: ${source} · ${age}${stale} · sources and privacy`,
+    costsPricingNoSource: 'source unavailable',
+    costsPricingAge: h => `${h} h old`,
+    costsPricingNoDate: 'date unknown',
+    costsPricingStale: ' · stale',
+    costsPricingTitle: 'Pricing sources and privacy',
+    costsTitle: 'Costs',
+    costsSubtitle: 'Recorded usage, current price estimates and the memberships you have declared.',
+    costsMembershipTitle: 'Membership costs',
+    costsMembershipIntro: 'Each account appears once. Totals keep currencies and billing periods separate.',
+    costsSavedMemberships: 'Saved memberships',
+    costsMembershipCount: (withPlan, total) => `${withPlan} of ${total}`,
+    costsCombinedFees: 'Combined membership fees',
+    costsLoading: 'Reading memberships for this connection…',
+    costsBasisCatalogue: 'Bundled catalogue price',
+    costsBasisCustom: 'User-defined plan price',
+    costsBasisDeclared: 'Your fee; plan price kept separately',
+    costsBasisUnpriced: 'No published price',
+    costsEmpty: 'No saved memberships yet. Discover accounts and confirm their plans in Memberships.',
+    costsLegacyIgnored: ignored => `${ignored} old subscription arrangement(s) remain stored but are excluded. Choose each plan in Memberships to keep one authoritative record.`,
+    costsEvidenceTitle: 'Usage evidence',
+    costsEvidenceIntro: 'Provider-reported values and price estimates are different kinds of evidence; neither is a payment receipt.',
+    costsEvidenceLoading: 'Reading usage evidence…',
+    costsFooterNote: 'Desktop-recorded values keep the rates captured at the time. Backend API-equivalent estimates use the current available catalogue and can change; they are not historical charges.',
+    costsEntAllowance: money => ` · ${money} allowance`,
+    costsEntAllowances: names => `plan allowances: ${names} (usage in Memberships)`,
+    costsEntRestricted: list => `restricted models: ${list}`,
+    costsEntEffective: (from, to) => `effective ${from} to ${to}`,
+    costsEntAnyTime: 'any time',
+    costsEntOngoing: 'ongoing',
+    billEvProviderLabel: 'Provider-reported use',
+    billEvProviderExplain: 'Confirmed by the provider’s own request history.',
+    billEvProviderEmpty: 'Not recorded',
+    billEvApiLabel: 'API-equivalent value',
+    billEvApiExplain: 'Published rates applied to these tokens. Theoretical, not an invoice.',
+    billEvApiEmpty: 'Not priced',
+    billEvCreditsLabel: 'Credits consumed',
+    billEvCreditsExplain: 'Inferred from your membership profile — not a provider-confirmed deduction.',
+    billEvCreditsEmpty: 'No plan set',
+    billEvCashLabel: 'Additional cash',
+    billEvCashExplain: 'Inferred overage after allowances; never asserted as a confirmed charge.',
+    billEvCashEmpty: 'No plan set',
+    billEvFeeLabel: 'Membership fee',
+    billEvFeeExplain: 'Declared by you in a billing profile; charged once per cycle, not per call.',
+    billEvFeeEmpty: 'No membership',
+    // Advanced billing rules.
+    advRulesErrNoDraft: 'no draft',
+    advRulesErrName: 'A short name is required.',
+    advRulesErrProvider: 'A provider route is required.',
+    advRulesErrKind: 'Choose how this route is paid for.',
+    advRulesErrUnknownFee: 'An unknown arrangement cannot assert a fee.',
+    advRulesErrFeeNumber: 'Fee must be a number.',
+    advRulesErrAllowanceNumber: 'Allowance must be a number.',
+    billErrConflict: 'This arrangement changed since you loaded it. Reload, then save again.',
+    billErrValidation: 'Some details are not valid. Check the name, arrangement and any amounts.',
+    billErrAuth: 'Your Desktop session has expired. Sign in again, then retry.',
+    billErrUnavailable: 'Billing is not available in the running backend. Reload the plugin and check its health.',
+    billErrSave: 'The arrangement could not be saved. Please retry; if it persists, check the backend log.',
+    billKindApi: 'Pay as you go',
+    billKindPrepaid: 'Prepaid wallet',
+    billKindCustom: 'Custom token rates',
+    billKindUnknown: 'Unknown',
+    advRulesSaved: 'Saved. Recorded usage was not changed.',
+    advRulesRemoved: 'Removed. Recorded usage was not changed.',
+    advRulesTitle: 'Advanced billing rules',
+    advRulesIntro: 'Optional prepaid wallets, route-specific allowances and custom token rates. Membership plans and recurring fees are managed in Memberships.',
+    advRulesLegacy: legacy => `${legacy} legacy subscription arrangement(s) are retained for reference and excluded from all fee totals. Choose those plans in Memberships.`,
+    advRulesAdd: 'Add advanced rule',
+    advRulesRefreshing: 'Refreshing…',
+    advRulesRefresh: 'Refresh rules',
+    advRulesLoading: 'Reading advanced rules…',
+    advRulesCustomRate: (input, output) => `Custom input ${input} / output ${output} per million tokens`,
+    advRulesModelAllowance: (model, value) => `${model}: ${value} allowance`,
+    advRulesAllowance: value => `${value} allowance`,
+    advRulesNoAllowance: 'No allowance reported',
+    advRulesEdit: 'Edit',
+    advRulesDelete: 'Delete',
+    advRulesEmpty: 'No advanced rules are saved. This is optional; Costs and Memberships work without them.',
+    advRulesEditTitle: 'Edit advanced rule',
+    advRulesNewTitle: 'New advanced rule',
+    advRulesFieldName: 'Rule name',
+    advRulesPhName: 'e.g. OpenRouter prepaid',
+    advRulesFieldLabel: 'Display label',
+    advRulesPhOptional: 'Optional',
+    advRulesFieldProvider: 'Provider route',
+    advRulesFieldModel: 'Model (optional)',
+    advRulesFieldKind: 'Rule type',
+    advRulesFieldAllowance: 'Prepaid balance / allowance (USD)',
+    advRulesFieldAllowanceModel: 'Allowance model (optional)',
+    advRulesFieldCycleDay: 'Cycle day',
+    advRulesFieldFrom: 'Effective from',
+    advRulesFieldTo: 'Effective to',
+    advRulesFieldRateInput: 'Custom input rate per million (USD)',
+    advRulesFieldRateOutput: 'Custom output rate per million (USD)',
+    advRulesFieldRateCache: 'Custom cache-read rate per million (USD)',
+    advRulesEstimatesNote: 'Prepaid and custom-rate rules affect estimates only. They do not change settled Desktop records or represent provider invoices.',
+    advRulesSave: 'Save rule',
+    advRulesCancel: 'Cancel',
+    // Settings & About.
+    tabListLabel: 'SpendSense sections',
+    settingsNotifyPrefsReset: 'SpendSense display preferences were reset. Hermes saved pane placement is unchanged.',
+    settingsNotifyPrefsFailed: f => `Preferences could not be reset: ${f}`,
+    settingsNotifyDataCleared: 'Memberships and advanced billing rules were cleared for this profile. Captured usage records were retained.',
+    settingsNotifyDataFailed: f => `User-entered data was not reset: ${f}`,
+    settingsNotifyModelsOk: 'Hermes model availability was refreshed. This does not force a pricing catalogue refresh.',
+    settingsNotifyModelsFailed: f => `Hermes could not refresh model availability: ${f}`,
+    settingsNotifyCatalogueOk: 'Membership catalogue was refreshed. Stored memberships, fees and selections are unchanged.',
+    settingsNotifyCatalogueFailed: f => `Membership catalogue could not be refreshed: ${f}`,
+    settingsNotifyLiveOff: 'SpendSense Live Updates is off, so the bundled catalogue is shown. Stored memberships, fees and selections are unchanged.',
+    settingsTitle: 'Settings & About',
+    settingsSubtitle: 'Privacy, pricing provenance, diagnostics and recovery.',
+    settingsPrivacyHeading: 'External data and privacy',
+    settingsPrivacyP1: 'SpendSense makes no direct HTTP pricing requests. It reads Hermes model-pricing metadata when available and falls back to its bundled offline rate snapshot. Membership plans are bundled; user-defined plans stay in your plugin data.',
+    settingsPrivacyP2: 'Automatic Hermes model-options refresh is off by default. When enabled, the live pane asks Hermes for current options on session/model changes and every 15 minutes. Hermes may refresh public models.dev metadata or make authenticated requests to configured provider endpoints using credentials it manages. Membership discovery parses Hermes authentication storage to count configured credential slots; it does not return or log credential values.',
+    settingsPrivacyP3: 'SpendSense stores accounting metadata, membership choices, fee history, custom plan details, and optional user-reported exhaustion marks. It does not collect prompts, responses or telemetry. The plugin backend uses its existing profile-specific plugin data.',
+    settingsPrivacyP4: 'With automatic refresh off, the plugin uses options already cached in this Desktop session and bundled rates. If a route is uncertain, it may use a clearly labelled fallback estimate or remain unpriced; it is never presented as a confirmed provider price. Account discovery and account readings remain user-triggered.',
+    settingsPricingHeading: 'Pricing provenance and freshness',
+    settingsPricingUnavailable: 'Pricing status is unavailable. Hermes’ cache or the bundled offline snapshot can still be used.',
+    settingsPricingSourceLabel: 'Source: ',
+    settingsPricingNoSource: 'unavailable',
+    settingsPricingDate: d => ` · snapshot/cache date: ${d}`,
+    settingsPricingNoDate: ' · date unavailable',
+    settingsPricingAge: h => ` · ${h} h old`,
+    settingsPricingStale: ' · stale',
+    settingsPricingRefreshNote: 'Refreshing this status only rereads the backend metadata. It does not trigger an external pricing fetch.',
+    settingsChecking: 'Checking…',
+    settingsRefreshPricing: 'Refresh pricing status',
+    settingsCapturedCosts: 'Captured Desktop costs retain the rates applied when recorded. Backend API-equivalent values are estimates recalculated using the current available prices; they are not historical charges.',
+    settingsCatalogueFeed: 'WolfMark publishes an optional, versioned membership catalogue feed. When SpendSense Live Updates is on, the pane fetches it — validating the schema, caching it for offline use and falling back to the bundled plans on any failure; otherwise this build uses the bundled plans. Stored memberships, fees and selections never change.',
+    settingsCatalogueLive: 'Live',
+    settingsCatalogueBundled: 'Bundled',
+    settingsCatalogueVersion: (source, version, generated) => `${source} membership catalogue ${version}${generated}`,
+    settingsCatalogueGenerated: d => ` · generated ${d}`,
+    settingsCatalogueFetched: (fresh, at) => `Fetched ${fresh}${at}`,
+    settingsCatalogueFetchedAt: d => ` · ${d}`,
+    settingsCentralAlert: (alert, live) => `Central catalogue: ${alert}${live ? ' The cached live catalogue is shown.' : ' The bundled plans are shown.'}`,
+    settingsCentralUpdate: 'update',
+    settingsCentralHeldBack: v => `Central catalogue ${v} is older than the bundled copy; the bundled plans are shown.`,
+    settingsCatalogueTotals: (p, v, prov, ph) => `${p} plans · ${v} verified prices · ${prov} provisional · ${ph} without a published fee`,
+    settingsRefreshCatalogue: 'Refresh membership catalogue',
+    settingsSourceRegister: source => `${source} source register`,
+    settingsSourceNoDate: 'retrieval date not recorded',
+    settingsCatalogueProvenanceUnavailable: 'Bundled membership catalogue provenance is unavailable.',
+    settingsModelsHeading: 'Hermes model availability',
+    settingsModelsExplain: 'This refresh asks Hermes to refresh the current profile’s model list. Hermes may probe configured provider endpoints using credentials managed by Hermes.',
+    settingsAutoRefreshToggle: 'Allow automatic Hermes model-options refresh for live pricing. Off by default; when off, cached options and bundled/offline rates are used, with uncertain routes labelled or left unpriced.',
+    settingsModelsConfirmText: 'This can make authenticated requests to configured providers. Continue with the current Hermes profile?',
+    settingsModelsConfirm: 'Confirm model refresh',
+    settingsCancel: 'Cancel',
+    settingsRefreshModels: 'Refresh Hermes models',
+    settingsDiagnosticsHeading: 'Diagnostics',
+    settingsDiagnosticsVersions: (plugin, backend) => `Plugin version ${plugin} · ${backend}`,
+    settingsDiagnosticsBackend: v => `backend version ${v}`,
+    settingsDiagnosticsChecking: 'checking backend…',
+    settingsDiagnosticsNoBackend: 'backend status unavailable',
+    settingsHealthFailed: f => `Backend health check failed: ${f}`,
+    settingsHealthReady: 'Backend health: ready',
+    settingsHealthUnavailable: 'Backend health: usage database unavailable',
+    settingsDiagnosticsRecent: 'Recent request diagnostics',
+    settingsDiagnosticsEmpty: 'No membership requests recorded in this session.',
+    settingsDiagnosticsNote: 'Diagnostics contain only method, relative path, status, profile scope and time. They do not include tokens, headers, credential values, or request bodies.',
+    settingsRecoveryHeading: 'Display and recovery',
+    settingsRecoveryPrefsExplain: 'Resetting display preferences affects only SpendSense filters and view mode. Hermes pane placement is stored by Hermes and remains as you set it.',
+    settingsRecoveryPrefsConfirmText: 'Reset the SpendSense display preferences to their defaults?',
+    settingsRecoveryPrefsConfirm: 'Confirm preference reset',
+    settingsResetPrefs: 'Reset display preferences',
+    settingsRecoveryDataExplain: 'User-data recovery covers Memberships and advanced billing rules only. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.',
+    settingsRecoveryBackupText: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership and advanced-rule data.',
+    settingsRecoveryDataConfirm: 'Confirm and clear user-entered data',
+    settingsCopyBackup: 'Copy recovery backup before reset',
+    settingsAboutHeading: 'About and support',
+    settingsAboutVersion: v => `SpendSense ${v}`,
+    settingsAboutCredit: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.',
+    settingsAboutSupport: 'Support and product information are available from WolfMark.',
+    settingsAboutContact: 'Contact WolfMark support',
+    settingsAboutCatalogueNote: 'The bundled pricing and membership catalogue is maintained through normal reviewed plugin releases. No user-defined plan is overwritten by a catalogue update.',
+    settingsPanePlacement: 'The SpendSense pane can be dragged to the left or right using Hermes’ supported layout controls. Hermes remembers your placement across reloads.',
+    // Usage analytics helpers.
+    usagePricingNone: 'No usage',
+    usagePricingUnpriced: 'Unpriced',
+    usagePricingPartial: (pct, fallback) => `Partial · ${pct}%${fallback ? ' · fallback rates' : ''}`,
+    usagePricingFallback: n => `Fallback rates · ${n} calls`,
+    usagePricingComplete: 'Complete',
+    usageInsightDriver: 'Biggest driver',
+    usageInsightDriverText: (model, provider, share) => `${model} via ${provider} is ${share} of priced API-equivalent cost.`,
+    usageInsightVerdict: 'Cache verdict',
+    usageInsightVerdictLoss: money => `Cache writes cost ${money} more than reads save on covered calls. See Cache economics.`,
+    usageInsightVerdictSave: (money, coverage) => `Caching saves a theoretical ${money} on covered calls (${coverage} covered).`,
+    usageInsightDelegated: 'Delegated work',
+    usageInsightDelegatedText: (share, calls) => `Subagents used ${share} of tokens across ${calls} calls.`,
+    usageDelta: (arrow, pct) => `${arrow} ${pct}% vs previous period`,
+    usageStreamInput: 'Input',
+    usageStreamOutput: 'Output',
+    usageStreamCacheRead: 'Cache read',
+    usageStreamCacheWrite: 'Cache write',
+    usageOther: 'Other',
+    usageUnknown: 'Unknown',
+    usageUnknownModel: 'Unknown model',
+    usageUnknownProviderCap: 'Unknown provider',
+    // Usage chart panels.
+    usageDonutAction: (other, label, value, share) => `${other ? 'Inspect' : 'Select'} ${label}: ${value}, ${share}`,
+    usageLegendInspectOther: grouped => `Inspect Other ${grouped}`,
+    usageLegendProviders: 'providers',
+    usageLegendModels: 'models',
+    usageLegendFilter: (target, provider) => `Filter ${target} via ${provider}`,
+    usageLegendInspectTitle: 'Inspect the exact remainder without changing filters',
+    usageLegendApplyTitle: grouping => `Apply exact ${grouping} filter`,
+    usageDistTitle: 'Usage distribution',
+    usageDistSubtitle: 'Where your usage goes',
+    usageSegDistribution: 'Distribution',
+    usageSegCost: 'Cost',
+    usageSegTokens: 'Tokens',
+    usageSegDistBy: 'Distribution by',
+    usageSegModel: 'Model',
+    usageSegProvider: 'Provider',
+    usageDistEmptyCost: 'No priced cost to distribute. Known free usage has zero cost; unpriced usage is not zero.',
+    usageDistEmptyTokens: 'No tokens to distribute.',
+    usageDistRemainder: (n, grouped) => `Remainder · ${n} ${grouped}`,
+    usageDistFooterCost: 'Shares of the PRICED subtotal only. ',
+    usageDistFooterTokens: 'Shares of all recorded tokens. ',
+    usageDistFooterWarn: tokens => `${tokens} unpriced tokens are excluded from cost shares. `,
+    usageDistFooterNote: 'Top 6 + Other conserves the total. Click a legend to filter; Other only inspects.',
+    usageTrendPoint: (ts, value, partial) => `${ts}: ${value}${partial ? ' partial priced subtotal' : ''}`,
+    usageTrendTitle: (ts, value, calls) => `${ts} · ${value} · ${calls} calls`,
+    usageTrendPanelTitle: 'Usage over time',
+    usageTrendSubtitle: (gran, tz) => `Timestamped calls · ${gran} buckets · ${tz}`,
+    usageGranDay: 'day',
+    usageGranHour: 'hour',
+    usageSegTrend: 'Trend',
+    usageTrendAria: metric => `${metric} over true timestamps`,
+    usageTrendHint: 'True elapsed-time positions. Focus or hover a timestamp for exact values.',
+    usageTrendUnstacked: 'Priced API-equivalent subtotal · category-dollar streams unavailable',
+    usageTrendTotal: (value, partial) => `${value}${partial ? ' · partial' : ''}`,
+    usageTrendStream: (label, count) => `${label} ${count}`,
+    usageTrendEmpty: 'Hover or keyboard-focus a point to inspect exact usage. ← → selects adjacent timestamps.',
+    usageTrendFooterCost: 'API-equivalent cost, not recorded billing. Unknown prices leave gaps; unpriced tokens are never counted as $0.',
+    usageTrendFooterTokens: 'Stacked fresh input + output + cache read + cache write. X positions reflect real elapsed time, not array indices.',
+    usageDelegBar: (money, tokens, calls) => `${money} · ${tokens} tok · ${calls} calls`,
+    usageDelegBarAria: (label, money) => `${label}: ${money}`,
+    usageDelegTitle: 'Delegated operations',
+    usageDelegSubtitle: 'Parent inference versus delegated workers',
+    usageSegDelegScope: 'Delegation scope',
+    usageSegAll: 'All',
+    usageSegParent: 'Parent',
+    usageSegSubagents: 'Subagents',
+    usageDelegParent: 'Parent (direct)',
+    usageDelegSubagents: 'Subagents',
+    usageDelegKnown: (sessions, calls) => `${sessions} child sessions known · ${calls} delegated calls captured`,
+    usageDelegCache: (parent, workers, aux) => `Cache: parent ${parent} · workers ${workers} · auxiliary ${aux}`,
+    usageDelegBusiest: list => `Busiest operations: ${list}`,
+    usageDelegOpWorkers: (parent, n) => `${parent} (${n} worker calls)`,
+    usageDelegUnattributed: calls => `${calls} calls could not be attributed to a session; they stay in totals as unattributed.`,
+    usageDelegNote: 'Combined totals include parent, delegated and auxiliary calls exactly once. Child sessions are matched read-only through state.db parent_session_id; nested delegations roll up to the operation root.',
+    usageDelegFooter: 'A subagent is a persisted child session, not a separate invoice. Where Hermes cannot establish a parent, usage is reported as unattributed rather than assigned.',
+    usageRankTitle: 'Cache performance',
+    usageRankSubtitle: 'Weighted prompt-cache rate · model × route',
+    usageSegRankBy: 'Rank by',
+    usageSegHitRate: 'Hit rate',
+    usageSegVolume: 'Volume',
+    usageRankAria: 'Cache ranking. Exact model filters available on every row.',
+    usageRankHint: 'Ranked models. Rates are weighted on known-cache calls only. Volume is cache-read tokens. Savings can be negative.',
+    usageRankRowAria: (model, provider, hit, read, savings) => `Filter ${model} via ${provider}; hit ${hit}, ${read} read tokens, net savings ${savings}`,
+    usageRankRowTitle: (model, provider, known, unknown, read, savings) => `${model} · ${provider}\nKnown-cache calls: ${known}; unknown: ${unknown}\nRead tokens: ${read}; theoretical net savings: ${savings}`,
+    usageRankRowSub: (provider, read, savings) => `${provider} · ${read} read · ${savings} net`,
+    usageRankFooter: (n, mode) => `Top ${n} by ${mode}. Zero-cache older rows are ambiguous, not confirmed misses. Unknown is not zero. All models remain in the explorer.`,
+    usageRankModeSavings: 'theoretical net savings',
+    usageRankModeVolume: 'cache-read volume',
+    usageRankModeRate: 'weighted rate',
+    usageCompTitle: 'Token composition',
+    usageCompSubtitle: 'Four disjoint streams · no prompt double-counting',
+    usageSegComposition: 'Composition',
+    usageSegStacked: 'Stacked',
+    usageSegDoughnut: 'Doughnut',
+    usageDonutAllStreams: 'all token streams',
+    usageCompTokensTotal: 'tokens across all recorded calls',
+    usageCompAria: total => `Token composition: ${total} total`,
+    usageCompSvgPart: (label, value, share) => `${label}: ${value} (${share})`,
+    usageCompPartTitle: (label, value, share) => `${label}: ${value} · ${share}`,
+    usageCompSelect: label => `Select ${label} composition`,
+    usageCompFocus: (label, value, share, note) => `${label}: ${value} tokens · ${share} of all tokens. ${note}`,
+    usageCompNoteCacheRead: 'Reused prompt tokens; billed at the cache-read rate when known.',
+    usageCompNoteCacheWrite: 'New cache writes; write premiums are included in net savings when rates are known.',
+    usageCompNoteInput: 'Fresh, uncached input only.',
+    usageCompNoteOutput: 'Generated output tokens.',
+    usageCompEmpty: 'Select a stream for its exact count. This is a composition inspection, not a hidden model filter.',
+    // Usage explorer, economics, filters and states.
+    usageSegColumns: 'Columns',
+    usageSegCore: 'Core',
+    usageExplorerTitle: 'Model Explorer',
+    usageExplorerSubtitle: n => `${n} model × route pairs · every column sortable`,
+    usageExplorerTop25Tip: 'Show top 25 only',
+    usageExplorerShowAllTip: 'Show all models',
+    usageExplorerTop25: 'Top 25',
+    usageExplorerShowAll: 'Show all',
+    usageExplorerExportTip: 'Export filtered models as CSV',
+    usageExplorerExport: 'Export CSV',
+    usageExplorerBadge: 'EXACT ROUTE FILTERS',
+    usageExplorerCaption: 'Models for the selected period and exact AND filters. Unknown prices, cache rates and savings sort last.',
+    usageExplorerSortBy: label => `Sort by ${label}`,
+    usageExplorerSortLabel: (label, arrow) => `${label}${arrow}`,
+    usageColModel: 'Model',
+    usageColProvider: 'Provider',
+    usageColCalls: 'Calls',
+    usageColTokens: 'Tokens',
+    usageColInput: 'Input',
+    usageColOutput: 'Output',
+    usageColReasoning: 'Reasoning',
+    usageColRead: 'Read',
+    usageColWrite: 'Write',
+    usageColCacheRate: 'Cache %',
+    usageColSavings: 'Net savings',
+    usageColApiCost: 'API cost',
+    usageColPerCall: '$/call',
+    usageColPerMillion: '$/1M tokens',
+    usageColPricing: 'Pricing',
+    usageColBilling: 'Billing',
+    usageExplorerBillingTitle: 'Latest route/model billing classification, not a per-call invoice',
+    usageExplorerCacheTitle: (known, unknown) => `${known} known-cache calls; ${unknown} unknown`,
+    usageExplorerPartial: ' partial',
+    usageExplorerUnitUnknown: 'Unknown: pricing coverage is partial',
+    usageExplorerPricingTitle: (priced, total) => `${priced} priced / ${total} total tokens`,
+    usageExplorerShowingAll: n => `Showing all ${n} pairs.`,
+    usageExplorerShowingTop: n => `Showing top 25 of ${n} pairs by the current sort. Use Show all for the full table.`,
+    usageExplorerFooter: '$/call and $/1M tokens are API-equivalent averages, not recorded billing. They stay unknown while any tokens are unpriced. Reasoning is included in output, never added again to the four-stream total. Billing is the latest route classification, not an allocated per-call invoice. API cost is the priced subtotal when coverage is partial. Cache % is a weighted rate on calls with known cache activity; it is not an average of model percentages. Click a model to apply its exact model + provider pair.',
+    usageEconTitle: 'Cache economics',
+    usageEconSubtitle: 'A theoretical counterfactual, not a billing credit',
+    usageEconNoPricing: 'INSUFFICIENT PRICING',
+    usageEconWritePremium: 'NET WRITE PREMIUM',
+    usageEconBenefit: 'NET CACHE BENEFIT',
+    usageEconNetSavings: 'theoretical net savings',
+    usageEconWithoutCache: 'Without cache',
+    usageEconWithCache: 'With cache',
+    usageEconBarAria: (label, money) => `${label}: ${money}`,
+    usageEconExplainRates: 'Without cache: the same prompt tokens at uncached input rates. With cache: fresh input + cache reads + cache writes at their effective per-call catalogue rates. Both include the same output cost, which cancels out of net savings.',
+    usageEconExplainNet: 'Net = uncached prompt cost − cached prompt cost. Write premiums may outweigh read discounts, so savings can be negative. This does not represent money returned on subscription or included routes.',
+    usageEconCoverage: (coverage, tokens, calls, excluded) => `${coverage} token coverage · ${tokens} covered tokens · ${calls} covered calls · ${excluded} excluded calls`,
+    usageEconExplainScope: 'Calls with unknown input/read/write prices or ambiguous cache splits are excluded, not assumed free. All comparisons use the same period and exact scope filters.',
+    usageFilterPeriod: 'Period',
+    usageFilterPeriodTip: 'Period filter',
+    usagePeriodToday: 'Today',
+    usagePeriodWeek: 'Last 7 days',
+    usagePeriodMonth: 'Last 30 days',
+    usagePeriodQuarter: 'Last 90 days',
+    usagePeriodYear: 'Last 365 days',
+    usageFilterModel: 'Model (any provider)',
+    usageFilterModelName: 'Model',
+    usageFilterProvider: 'Provider route',
+    usageFilterProviderName: 'Provider',
+    usageFilterSurface: 'Where it ran',
+    usageFilterSurfaceName: 'Surface',
+    usageFilterTask: 'Kind of work',
+    usageFilterTaskName: 'Task',
+    usageFilterTip: name => `${name} filter`,
+    usageFilterAll: key => `All ${key === 'surface' ? 'surfaces' : key === 'task' ? 'tasks' : key === 'model' ? 'models' : 'providers'}`,
+    usageFilterParentOp: 'Parent operation',
+    usageFilterOpTip: 'Operation filter',
+    usageFilterAllOps: 'All operations',
+    usageFilterWho: 'Who did the work',
+    usageFilterDelegTip: 'Delegation filter',
+    usageFilterEveryone: 'Everyone combined',
+    usageFilterDirectOnly: 'Parent direct only',
+    usageFilterSubagentsOnly: 'Subagents only',
+    usageFilterAuxOnly: 'Auxiliary only',
+    usageFilterUnattributedOnly: 'Unattributed only',
+    usageFilterClear: 'Clear filters',
+    usageFilterActiveNote: 'Filtered view — only calls matching all of these are included. Remove one to widen the scope.',
+    usageFilterRemove: key => `Remove ${key} filter`,
+    usageFilterChip: (key, value) => `${key}: ${value} ×`,
+    usageFilterChipModel: 'model',
+    usageFilterChipProvider: 'provider',
+    usageFilterChipSurface: 'surface',
+    usageFilterChipTask: 'task',
+    usageFilterChipParent: 'parent',
+    usageFilterChipScope: 'scope',
+    usageFilterScopeDirect: 'direct',
+    usageFilterScopeSubagent: 'subagent',
+    usageFilterScopeAuxiliary: 'auxiliary',
+    usageFilterScopeUnattributed: 'unattributed',
+    usageBaselineUnavailable: why => `Historical report unavailable: ${why}`,
+    usageBaselineLoading: 'Reading historical baseline…',
+    usageBaselineEstimateNote: 'Historical cumulative estimate — NOT included in period analytics or filters.',
+    usageBaselineTotals: (tokens, api, billed) => `${tokens} tokens · API-equivalent ${api} · recorded billing ${billed}`,
+    usageBaselineEmpty: 'No historical baseline captured.',
+    usageLoadTitle: 'Analytics unavailable',
+    usageLoadStale: 'The visible snapshot is stale. Retry before using these values.',
+    usageLoadFallback: 'The live chip and this desktop’s ledger are still available.',
+    usageRetryTip: 'Retry analytics',
+    usageLoading: 'Reading timestamped calls…',
+    usageStatApiEquiv: 'API-equivalent',
+    usageStatApiExtra: 'Priced per-call estimate · not an invoice',
+    usageStatSavings: 'Theoretical net savings',
+    usageStatSavingsHint: 'Read discounts − write premiums',
+    usageStatSavingsExtra: coverage => `${coverage} economics coverage · detail below`,
+    usageStatTokens: 'Tokens / calls',
+    usageStatTokensHint: calls => `${calls} recorded calls`,
+    usageStatTokensExtra: (input, output) => `${input} in · ${output} out`,
+    usageStatCoverage: 'Pricing coverage',
+    usageStatCoverageHint: tokens => `${tokens} unpriced tokens`,
+    usageInsightsAria: 'What matters in this period',
+    usageBillingTitle: 'Only explicit per-call charges are shown; unknown is not zero.',
+    usageBillingLabel: 'Recorded billing ',
+    usageBillingComplete: 'Complete',
+    usageBillingPartial: 'Partial',
+    usageBillingNote: ' · includes only recorded charges; unknown routes are not $0.',
+    usageWindowDash: (since, until, tz) => `${since} → ${until} · ${tz}`,
+    usageWindowPending: 'Timestamped window',
+    usageUnpricedAlert: tokens => `${tokens} unpriced tokens. API-equivalent cost is a partial priced subtotal; unknown prices are excluded, not counted as zero.`,
+    usageEmptyTitle: 'No backend calls recorded for this period',
+    usageEmptyBody: 'This report covers backend analytics. Desktop-recorded usage shown on Overview is separate; open the local ledger to view calls captured by this Desktop. Try a longer period or clear filters to check this report. The historical baseline remains separate below.',
+    usageEmptyShowDesktop: 'Show Desktop-recorded usage',
+    usageEmptyClear: 'Clear empty scope',
+    usageNoData: 'Usage data is not available for this profile yet.',
+    usageRecordingLine: (since, last) => `Recording since ${since} · latest ${last}. Only timestamped captured calls enter this period.`,
+    usageRecordingPending: 'not yet available',
+    usageCacheFormula: 'Cache hit = read tokens ÷ (fresh input + read + write tokens), weighted on calls with known cache activity. Legacy zero-cache rows are ambiguous and excluded from the known denominator.',
+    usageMethodologyTitle: 'Methodology & coverage details',
+    usageBaselineSummaryTitle: 'Historical baseline & reconciliation — separate cumulative estimate',
   },
   zh: {
     basisLegacy: '1.0 前旧数据 · 按现价估算',
@@ -7749,7 +8272,7 @@ const I18N = {
     meterRecorded: '已记录',
     meterUpdating: '更新中…',
     apiEquivalent: 'API 等值',
-    costSourceInfo: 'Spend Sense 按 Hermes 后端估算或目录单价（$/百万令牌）为本次对话计价，具体取决于可用数据。实际账单可能因线路、峰谷价或取整而不同。',
+    costSourceInfo: 'SpendSense 按 Hermes 后端估算或目录单价（$/百万令牌）为本次对话计价，具体取决于可用数据。实际账单可能因线路、峰谷价或取整而不同。',
     totalTokens: '总令牌',
     sinceDate: d => `自 ${d} 起`,
     promptMix: '提示词构成',
@@ -8054,7 +8577,7 @@ const I18N = {
     // 页面通知与状态。
     memRefuseStale: '该操作属于另一个连接，更改前请重新加载面板。',
     memRefuseBusy: '另一个会员操作仍在处理中，请稍候再试。',
-    memRefuseUnversioned: '该记录没有版本号，无法安全保存。它可能是在 Spend Sense 之外写入的——编辑前请先恢复会员数据。',
+    memRefuseUnversioned: '该记录没有版本号，无法安全保存。它可能是在 SpendSense 之外写入的——编辑前请先恢复会员数据。',
     memDiscovering: '发现中……',
     memRefreshing: '刷新中……',
     memReadFailed: '该连接的会员无法读取。',
@@ -8152,10 +8675,10 @@ const I18N = {
     newsReasonSelectedPlan: '匹配您选择的套餐',
     newsBaseline: date => `目录基线已于${date}建立。从下次刷新起观察到的变化将显示在这里。`,
     newsRemoved: n => `${n} 个模型已不再收录。`,
-    newsLiveOffText: '当前显示本地目录动态。在“设置”中开启 Spend Sense 实时更新，可获取 Spend Sense 的公开公告。',
+    newsLiveOffText: '当前显示本地目录动态。在“设置”中开启 SpendSense 实时更新，可获取 SpendSense 的公开公告。',
     newsOpenSettings: '打开设置',
-    newsCentralFresh: label => `Spend Sense 公告 · 更新于${label}。`,
-    newsCentralStale: '无法刷新 Spend Sense 公告——显示上次获取的数据。',
+    newsCentralFresh: label => `SpendSense 公告 · 更新于${label}。`,
+    newsCentralStale: '无法刷新 SpendSense 公告——显示上次获取的数据。',
     newsObserved: date => `观察于${date}`,
     newsEffective: date => `生效于${date}`,
     newsRateWas: '原价',
@@ -8172,11 +8695,11 @@ const I18N = {
     newsCaveatTiers: '适用阶梯价格；按基准价格对比',
     newsRoutes: () => '您的路由：',
     newsSource: '来源',
-    newsLiveTitle: 'Spend Sense 实时更新',
-    newsLiveExplain: '从 Spend Sense 下载公开的模型与订阅更新。不会上传个人用量、帐户、凭据、模型选择或遥测数据。',
+    newsLiveTitle: 'SpendSense 实时更新',
+    newsLiveExplain: '从 SpendSense 下载公开的模型与订阅更新。不会上传个人用量、帐户、凭据、模型选择或遥测数据。',
     newsLiveIp: '开启后会发出 HTTPS 请求，其来源 IP 对服务器可见。在远程 Hermes 主机上，由该主机发出请求。',
-    newsLiveToggle: '从 Spend Sense 下载公开更新（默认关闭）。',
-    newsLiveConfirmText: '要为此配置文件开启 Spend Sense 实时更新吗？',
+    newsLiveToggle: '从 SpendSense 下载公开更新（默认关闭）。',
+    newsLiveConfirmText: '要为此配置文件开启 SpendSense 实时更新吗？',
     newsLiveConfirm: '开启实时更新',
     newsLiveCancel: '取消',
     newsLiveOn: '此配置文件已开启实时更新。',
@@ -8244,13 +8767,13 @@ const I18N = {
     total: '合计',
     unpricedNote: n => `有 ${n} 令牌没有可用单价，未计入总额（显示为 ≥）。`,
     // Ledger header, record stats, baseline reconciliation and grouping.
-    pageTitleDesktop: 'Spend Sense — 本机',
-    allHermesTitle: 'Spend Sense',
+    pageTitleDesktop: 'SpendSense — 本机',
+    allHermesTitle: 'SpendSense',
     viewAll: '所有 Hermes',
     viewDesktop: '本机',
     allHermesHint: '自插件启用以来捕获的带时间戳调用。历史基线从 state.db 单独读取，从不计入本期。',
     allHermesEmpty: '本窗口内没有记录用量。',
-    backendUnavailable: 'Spend Sense 后端无法访问。',
+    backendUnavailable: 'SpendSense 后端无法访问。',
     backendLoading: '正在读取带时间戳的账本…',
     backendRetry: '重试',
     backendUseDesktop: '使用本机账本',
@@ -8302,7 +8825,445 @@ const I18N = {
     status_partial: '部分',
     status_unpriced: '未定价',
     status_empty: '空',
-    src_fallback: slug => `按 ${slug} 单价估算——该线路无精确单价`
+    src_fallback: slug => `按 ${slug} 单价估算——该线路无精确单价`,
+    // 标签页。
+    tabOverview: '总览',
+    tabUsage: '用量',
+    tabCosts: '费用',
+    tabMemberships: '会员',
+    tabReports: '报告',
+    tabNews: '模型动态',
+    tabSettings: '设置与关于',
+    // 用量页眉。
+    usageTitle: '用量分析',
+    usageSubtitle: profile => `已记录调用 · ${profile} · 所有 Hermes 来源`,
+    usageCurrentProfile: '当前配置文件',
+    usageNerdMode: '极客模式',
+    usageRefreshTip: '刷新分析数据',
+    usageRefreshing: '正在刷新…',
+    usageRefresh: '↻ 刷新',
+    usageThisDesktopTip: '使用此桌面的账本',
+    usageThisDesktop: '此桌面',
+    usageCloseTip: '关闭分析',
+    usageClose: '× 关闭',
+    // 费用页面。
+    costsPricing: (source, age, stale) => `价格：${source} · ${age}${stale} · 来源与隐私`,
+    costsPricingNoSource: '来源不可用',
+    costsPricingAge: h => `${h} 小时前`,
+    costsPricingNoDate: '日期未知',
+    costsPricingStale: ' · 已过期',
+    costsPricingTitle: '价格来源与隐私',
+    costsTitle: '费用',
+    costsSubtitle: '已记录用量、当前价格估算，以及您申报的会员。',
+    costsMembershipTitle: '会员费用',
+    costsMembershipIntro: '每个账户只出现一次。合计按币种与账单周期分开。',
+    costsSavedMemberships: '已保存会员',
+    costsMembershipCount: (withPlan, total) => `${withPlan} / ${total}`,
+    costsCombinedFees: '会员费合计',
+    costsLoading: '正在读取此连接的会员…',
+    costsBasisCatalogue: '内置目录价格',
+    costsBasisCustom: '自定义方案价格',
+    costsBasisDeclared: '您的费用；方案价格另记',
+    costsBasisUnpriced: '无公开价格',
+    costsEmpty: '尚未保存会员。请在“会员”中发现账户并确认其方案。',
+    costsLegacyIgnored: ignored => `${ignored} 个旧订阅安排仍在存储中，但已排除。请在“会员”中为每个安排选择方案，以保留一条权威记录。`,
+    costsEvidenceTitle: '用量证据',
+    costsEvidenceIntro: '供应商上报值与价格估算属于不同种类的证据；两者都不是付款凭证。',
+    costsEvidenceLoading: '正在读取用量证据…',
+    costsFooterNote: '桌面记录值保留记录时的单价。后端 API 等值估算使用当前可用目录，可能变化；并非历史费用。',
+    costsEntAllowance: money => ` · ${money} 额度`,
+    costsEntAllowances: names => `方案额度：${names}（用量见“会员”）`,
+    costsEntRestricted: list => `受限模型：${list}`,
+    costsEntEffective: (from, to) => `有效期 ${from} 至 ${to}`,
+    costsEntAnyTime: '任何时间',
+    costsEntOngoing: '持续有效',
+    billEvProviderLabel: '供应商上报用量',
+    billEvProviderExplain: '经供应商自有请求历史确认。',
+    billEvProviderEmpty: '未记录',
+    billEvApiLabel: 'API 等值价值',
+    billEvApiExplain: '按公开单价对这些令牌计价。理论值，非账单。',
+    billEvApiEmpty: '未定价',
+    billEvCreditsLabel: '已消耗额度',
+    billEvCreditsExplain: '根据您的会员资料推断——未经供应商确认扣减。',
+    billEvCreditsEmpty: '未设置方案',
+    billEvCashLabel: '额外现金支出',
+    billEvCashExplain: '额度之外的推断超额部分；从不断言为已确认费用。',
+    billEvCashEmpty: '未设置方案',
+    billEvFeeLabel: '会员费',
+    billEvFeeExplain: '您在计费资料中申报；每周期收取一次，不按调用收取。',
+    billEvFeeEmpty: '无会员',
+    // 高级计费规则。
+    advRulesErrNoDraft: '无草稿',
+    advRulesErrName: '需要填写简称。',
+    advRulesErrProvider: '需要填写供应商线路。',
+    advRulesErrKind: '请选择该线路的付费方式。',
+    advRulesErrUnknownFee: '未知安排不能断言费用。',
+    advRulesErrFeeNumber: '费用必须是数字。',
+    advRulesErrAllowanceNumber: '额度必须是数字。',
+    billErrConflict: '该安排在您加载后发生了变化。请重新加载后再保存。',
+    billErrValidation: '部分信息无效。请检查名称、安排及金额。',
+    billErrAuth: '桌面会话已过期。请重新登录后重试。',
+    billErrUnavailable: '运行中的后端不支持计费。请重新加载插件并检查其状态。',
+    billErrSave: '该安排未能保存。请重试；如问题持续，请检查后端日志。',
+    billKindApi: '按量付费',
+    billKindPrepaid: '预付钱包',
+    billKindCustom: '自定义令牌单价',
+    billKindUnknown: '未知',
+    advRulesSaved: '已保存。已记录用量未更改。',
+    advRulesRemoved: '已删除。已记录用量未更改。',
+    advRulesTitle: '高级计费规则',
+    advRulesIntro: '可选的预付钱包、线路专属额度与自定义令牌单价。会员方案与周期性费用在“会员”中管理。',
+    advRulesLegacy: legacy => `${legacy} 个旧订阅安排仅保留备查，不计入任何费用合计。请在“会员”中选择这些方案。`,
+    advRulesAdd: '添加高级规则',
+    advRulesRefreshing: '正在刷新…',
+    advRulesRefresh: '刷新规则',
+    advRulesLoading: '正在读取高级规则…',
+    advRulesCustomRate: (input, output) => `自定义输入 ${input} / 输出 ${output} 每百万令牌`,
+    advRulesModelAllowance: (model, value) => `${model}：${value} 额度`,
+    advRulesAllowance: value => `${value} 额度`,
+    advRulesNoAllowance: '未上报额度',
+    advRulesEdit: '修改',
+    advRulesDelete: '删除',
+    advRulesEmpty: '尚未保存高级规则。此为可选项；“费用”与“会员”无需它们即可工作。',
+    advRulesEditTitle: '修改高级规则',
+    advRulesNewTitle: '新建高级规则',
+    advRulesFieldName: '规则名称',
+    advRulesPhName: '例如：OpenRouter 预付',
+    advRulesFieldLabel: '显示标签',
+    advRulesPhOptional: '选填',
+    advRulesFieldProvider: '供应商线路',
+    advRulesFieldModel: '模型（可选）',
+    advRulesFieldKind: '规则类型',
+    advRulesFieldAllowance: '预付余额 / 额度（美元）',
+    advRulesFieldAllowanceModel: '额度模型（可选）',
+    advRulesFieldCycleDay: '账单日',
+    advRulesFieldFrom: '生效自',
+    advRulesFieldTo: '生效至',
+    advRulesFieldRateInput: '自定义输入单价（美元/百万）',
+    advRulesFieldRateOutput: '自定义输出单价（美元/百万）',
+    advRulesFieldRateCache: '自定义缓存读取单价（美元/百万）',
+    advRulesEstimatesNote: '预付与自定义单价规则仅影响估算。它们不改变已结算的桌面记录，也不代表供应商账单。',
+    advRulesSave: '保存规则',
+    advRulesCancel: '取消',
+    // 设置与关于。
+    tabListLabel: 'SpendSense 选项卡',
+    settingsNotifyPrefsReset: 'SpendSense 显示偏好已重置。Hermes 已保存的面板位置不变。',
+    settingsNotifyPrefsFailed: f => `偏好设置未能重置：${f}`,
+    settingsNotifyDataCleared: '已清除此配置文件的会员与高级计费规则。已捕获的用量记录予以保留。',
+    settingsNotifyDataFailed: f => `用户数据未能重置：${f}`,
+    settingsNotifyModelsOk: 'Hermes 模型可用性已刷新。这不会强制刷新价格目录。',
+    settingsNotifyModelsFailed: f => `Hermes 未能刷新模型可用性：${f}`,
+    settingsNotifyCatalogueOk: '会员目录已刷新。已存储的会员、费用与选择不变。',
+    settingsNotifyCatalogueFailed: f => `会员目录未能刷新：${f}`,
+    settingsNotifyLiveOff: 'SpendSense 实时更新已关闭，当前显示内置目录。已存储的会员、费用与选择不变。',
+    settingsTitle: '设置与关于',
+    settingsSubtitle: '隐私、价格溯源、诊断与恢复。',
+    settingsPrivacyHeading: '外部数据与隐私',
+    settingsPrivacyP1: 'SpendSense 不直接发起 HTTP 价格请求。它在可用时读取 Hermes 模型价格元数据，并回退到内置离线单价快照。会员方案为内置方案；自定义方案保留在您的插件数据中。',
+    settingsPrivacyP2: 'Hermes 模型选项自动刷新默认关闭。开启后，实时面板将在会话/模型变化时及每 15 分钟向 Hermes 请求当前选项。Hermes 可能刷新公开 models.dev 元数据，或使用其管理的凭据向已配置的供应商端点发起认证请求。会员发现会解析 Hermes 认证存储以统计已配置的凭据槽位；不会返回或记录凭据值。',
+    settingsPrivacyP3: 'SpendSense 存储记账元数据、会员选择、费用历史、自定义方案详情，以及可选的用户上报耗尽标记。不收集提示词、回复或遥测数据。插件后端使用其现有的按配置文件隔离的插件数据。',
+    settingsPrivacyP4: '关闭自动刷新后，插件使用此桌面会话中已缓存的选项与内置单价。若某线路不确定，可能使用明确标注的回退估算或保持未定价；绝不会将其呈现为已确认的供应商价格。账户发现与账户读取仍由用户触发。',
+    settingsPricingHeading: '价格溯源与新鲜度',
+    settingsPricingUnavailable: '价格状态不可用。仍可使用 Hermes 缓存或内置离线快照。',
+    settingsPricingSourceLabel: '来源：',
+    settingsPricingNoSource: '不可用',
+    settingsPricingDate: d => ` · 快照/缓存日期：${d}`,
+    settingsPricingNoDate: ' · 日期不可用',
+    settingsPricingAge: h => ` · ${h} 小时前`,
+    settingsPricingStale: ' · 已过期',
+    settingsPricingRefreshNote: '刷新此状态仅重读后端元数据，不会触发外部价格获取。',
+    settingsChecking: '正在检查…',
+    settingsRefreshPricing: '刷新价格状态',
+    settingsCapturedCosts: '已捕获的桌面成本保留记录时的单价。后端 API 等值按当前可用价格重算估算，并非历史费用。',
+    settingsCatalogueFeed: 'WolfMark 发布可选的、带版本的会员目录源。开启 SpendSense 实时更新后，面板会获取该源——校验结构、缓存以供离线使用，并在任何失败时回退到内置方案；否则此构建使用内置方案。已存储的会员、费用与选择永不改变。',
+    settingsCatalogueLive: '实时',
+    settingsCatalogueBundled: '内置',
+    settingsCatalogueVersion: (source, version, generated) => `${source}会员目录 ${version}${generated}`,
+    settingsCatalogueGenerated: d => ` · 生成于${d}`,
+    settingsCatalogueFetched: (fresh, at) => `获取于${fresh}${at}`,
+    settingsCatalogueFetchedAt: d => ` · ${d}`,
+    settingsCentralAlert: (alert, live) => `中央目录：${alert}${live ? '当前显示缓存的实时目录。' : '当前显示内置方案。'}`,
+    settingsCentralUpdate: '更新',
+    settingsCentralHeldBack: v => `中央目录${v}旧于内置副本；当前显示内置方案。`,
+    settingsCatalogueTotals: (p, v, prov, ph) => `${p} 个方案 · ${v} 个已核验价格 · ${prov} 个暂定 · ${ph} 个无公开费用`,
+    settingsRefreshCatalogue: '刷新会员目录',
+    settingsSourceRegister: source => `${source}来源登记`,
+    settingsSourceNoDate: '未记录获取日期',
+    settingsCatalogueProvenanceUnavailable: '内置会员目录溯源不可用。',
+    settingsModelsHeading: 'Hermes 模型可用性',
+    settingsModelsExplain: '此刷新会请求 Hermes 刷新当前配置文件的模型列表。Hermes 可能使用其管理的凭据探测已配置的供应商端点。',
+    settingsAutoRefreshToggle: '允许自动刷新 Hermes 模型选项以支持实时计价。默认关闭；关闭时使用缓存选项与内置/离线单价，不确定的线路会明确标注或保持未定价。',
+    settingsModelsConfirmText: '这可能向已配置的供应商发起认证请求。继续使用当前 Hermes 配置文件吗？',
+    settingsModelsConfirm: '确认刷新模型',
+    settingsCancel: '取消',
+    settingsRefreshModels: '刷新 Hermes 模型',
+    settingsDiagnosticsHeading: '诊断',
+    settingsDiagnosticsVersions: (plugin, backend) => `插件版本 ${plugin} · ${backend}`,
+    settingsDiagnosticsBackend: v => `后端版本 ${v}`,
+    settingsDiagnosticsChecking: '正在检查后端…',
+    settingsDiagnosticsNoBackend: '后端状态不可用',
+    settingsHealthFailed: f => `后端健康检查失败：${f}`,
+    settingsHealthReady: '后端健康：就绪',
+    settingsHealthUnavailable: '后端健康：用量数据库不可用',
+    settingsDiagnosticsRecent: '近期请求诊断',
+    settingsDiagnosticsEmpty: '此会话中未记录会员请求。',
+    settingsDiagnosticsNote: '诊断仅包含方法、相对路径、状态、配置文件作用域与时间。不包含令牌、标头、凭据值或请求体。',
+    settingsRecoveryHeading: '显示与恢复',
+    settingsRecoveryPrefsExplain: '重置显示偏好仅影响 SpendSense 筛选与视图模式。Hermes 面板位置由 Hermes 存储，保持您的设置不变。',
+    settingsRecoveryPrefsConfirmText: '将 SpendSense 显示偏好重置为默认值吗？',
+    settingsRecoveryPrefsConfirm: '确认重置偏好',
+    settingsResetPrefs: '重置显示偏好',
+    settingsRecoveryDataExplain: '用户数据恢复仅涵盖会员与高级计费规则。已捕获的桌面用量账本、Hermes 数据与供应商凭据不受影响。',
+    settingsRecoveryBackupText: '备份已复制到剪贴板。在清除配置文件会员与高级规则数据前，请将其保存到安全位置。',
+    settingsRecoveryDataConfirm: '确认并清除用户输入的数据',
+    settingsCopyBackup: '重置前复制恢复备份',
+    settingsAboutHeading: '关于与支持',
+    settingsAboutVersion: v => `SpendSense ${v}`,
+    settingsAboutCredit: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.',
+    settingsAboutSupport: '可从 WolfMark 获取支持与产品信息。',
+    settingsAboutContact: '联系 WolfMark 支持',
+    settingsAboutCatalogueNote: '内置价格与会员目录通过常规评审插件版本维护。目录更新不会覆盖任何用户自定义方案。',
+    settingsPanePlacement: '可使用 Hermes 支持的布局控件将 SpendSense 面板拖到左侧或右侧。Hermes 会在重新加载后记住您的位置。',
+    // 用量分析助手。
+    usagePricingNone: '无用量',
+    usagePricingUnpriced: '未定价',
+    usagePricingPartial: (pct, fallback) => `部分 · ${pct}%${fallback ? ' · 回退单价' : ''}`,
+    usagePricingFallback: n => `回退单价 · ${n} 次调用`,
+    usagePricingComplete: '完成',
+    usageInsightDriver: '最大驱动',
+    usageInsightDriverText: (model, provider, share) => `${model} 经 ${provider} 占已定价 API 等值成本的 ${share}。`,
+    usageInsightVerdict: '缓存结论',
+    usageInsightVerdictLoss: money => `在覆盖调用上，缓存写入成本比读取节省多 ${money}。见“缓存经济”。`,
+    usageInsightVerdictSave: (money, coverage) => `在覆盖调用上，缓存理论上节省 ${money}（覆盖率 ${coverage}）。`,
+    usageInsightDelegated: '委派工作',
+    usageInsightDelegatedText: (share, calls) => `子代理在 ${calls} 次调用中使用了 ${share} 的令牌。`,
+    usageDelta: (arrow, pct) => `${arrow} ${pct}%（较上一周期）`,
+    usageStreamInput: '输入',
+    usageStreamOutput: '输出',
+    usageStreamCacheRead: '缓存读取',
+    usageStreamCacheWrite: '缓存写入',
+    usageOther: '其他',
+    usageUnknown: '未知',
+    usageUnknownModel: '未知模型',
+    usageUnknownProviderCap: '未知供应商',
+    // 用量图表。
+    usageDonutAction: (other, label, value, share) => `${other ? '查看' : '选择'}${label}：${value}，${share}`,
+    usageLegendInspectOther: grouped => `查看其余${grouped}`,
+    usageLegendProviders: '供应商',
+    usageLegendModels: '模型',
+    usageLegendFilter: (target, provider) => `按 ${target}（经 ${provider}）筛选`,
+    usageLegendInspectTitle: '查看确切余项，不更改筛选',
+    usageLegendApplyTitle: grouping => `应用确切 ${grouping} 筛选`,
+    usageDistTitle: '用量分布',
+    usageDistSubtitle: '用量去向',
+    usageSegDistribution: '分布',
+    usageSegCost: '成本',
+    usageSegTokens: '令牌',
+    usageSegDistBy: '分布维度',
+    usageSegModel: '模型',
+    usageSegProvider: '供应商',
+    usageDistEmptyCost: '无已定价成本可分布。已知免费用量成本为零；未定价用量不是零。',
+    usageDistEmptyTokens: '无令牌可分布。',
+    usageDistRemainder: (n, grouped) => `余项 · ${n} 个${grouped}`,
+    usageDistFooterCost: '仅为已定价小计的份额。',
+    usageDistFooterTokens: '为全部已记录令牌的份额。',
+    usageDistFooterWarn: tokens => `${tokens} 未定价令牌不计入成本份额。`,
+    usageDistFooterNote: '前 6 名 + 其他保持总数守恒。点击图例筛选；“其他”仅供查看。',
+    usageTrendPoint: (ts, value, partial) => `${ts}：${value}${partial ? '（部分已定价小计）' : ''}`,
+    usageTrendTitle: (ts, value, calls) => `${ts} · ${value} · ${calls} 次调用`,
+    usageTrendPanelTitle: '用量趋势',
+    usageTrendSubtitle: (gran, tz) => `带时间戳调用 · ${gran}分桶 · ${tz}`,
+    usageGranDay: '日',
+    usageGranHour: '小时',
+    usageSegTrend: '趋势',
+    usageTrendAria: metric => `${metric} 真实时间戳趋势`,
+    usageTrendHint: '真实流逝时间位置。将焦点移到时间戳或悬停以查看确切值。',
+    usageTrendUnstacked: '已定价 API 等值小计 · 无分类美元流',
+    usageTrendTotal: (value, partial) => `${value}${partial ? ' · 部分' : ''}`,
+    usageTrendStream: (label, count) => `${label} ${count}`,
+    usageTrendEmpty: '悬停或用键盘聚焦数据点以查看确切用量。← → 选择相邻时间戳。',
+    usageTrendFooterCost: 'API 等值成本，非已记录账单。未知价格留空；未定价令牌永不计为 $0。',
+    usageTrendFooterTokens: '堆叠的新输入 + 输出 + 缓存读取 + 缓存写入。X 位置反映真实流逝时间，而非数组下标。',
+    usageDelegBar: (money, tokens, calls) => `${money} · ${tokens} 令牌 · ${calls} 次调用`,
+    usageDelegBarAria: (label, money) => `${label}：${money}`,
+    usageDelegTitle: '委派操作',
+    usageDelegSubtitle: '父推理与委派工作线程对比',
+    usageSegDelegScope: '委派范围',
+    usageSegAll: '全部',
+    usageSegParent: '父级',
+    usageSegSubagents: '子代理',
+    usageDelegParent: '父级（直接）',
+    usageDelegSubagents: '子代理',
+    usageDelegKnown: (sessions, calls) => `已知 ${sessions} 个子会话 · 捕获 ${calls} 次委派调用`,
+    usageDelegCache: (parent, workers, aux) => `缓存：父级 ${parent} · 工作线程 ${workers} · 辅助 ${aux}`,
+    usageDelegBusiest: list => `最繁忙操作：${list}`,
+    usageDelegOpWorkers: (parent, n) => `${parent}（${n} 次工作线程调用）`,
+    usageDelegUnattributed: calls => `${calls} 次调用无法归属到会话；作为未归属保留在合计中。`,
+    usageDelegNote: '合并合计将父级、委派与辅助调用各计一次。子会话通过 state.db parent_session_id 只读匹配；嵌套委派汇总到操作根。',
+    usageDelegFooter: '子代理是持久化的子会话，而非单独账单。Hermes 无法确定父级时，用量报告为未归属，而非指派。',
+    usageRankTitle: '缓存性能',
+    usageRankSubtitle: '加权提示词缓存命中率 · 模型 × 线路',
+    usageSegRankBy: '排序依据',
+    usageSegHitRate: '命中率',
+    usageSegVolume: '量',
+    usageRankAria: '缓存排名。每行均可使用确切模型筛选。',
+    usageRankHint: '模型排名。命中率仅按已知缓存调用加权。量为缓存读取令牌。节省可为负。',
+    usageRankRowAria: (model, provider, hit, read, savings) => `按 ${model}（经 ${provider}）筛选；命中 ${hit}，${read} 读取令牌，净节省 ${savings}`,
+    usageRankRowTitle: (model, provider, known, unknown, read, savings) => `${model} · ${provider}\n已知缓存调用：${known}；未知：${unknown}\n读取令牌：${read}；理论净节省：${savings}`,
+    usageRankRowSub: (provider, read, savings) => `${provider} · ${read} 读取 · ${savings} 净额`,
+    usageRankFooter: (n, mode) => `按${mode}排列的前 ${n} 名。零缓存旧行含义不明，并非确认未命中。未知不是零。所有模型保留在浏览器中。`,
+    usageRankModeSavings: '理论净节省',
+    usageRankModeVolume: '缓存读取量',
+    usageRankModeRate: '加权命中率',
+    usageCompTitle: '令牌构成',
+    usageCompSubtitle: '四个不相交流 · 提示词不重复计数',
+    usageSegComposition: '构成',
+    usageSegStacked: '堆叠',
+    usageSegDoughnut: '环形',
+    usageDonutAllStreams: '全部令牌流',
+    usageCompTokensTotal: '全部已记录调用的令牌',
+    usageCompAria: total => `令牌构成：共 ${total}`,
+    usageCompSvgPart: (label, value, share) => `${label}：${value}（${share}）`,
+    usageCompPartTitle: (label, value, share) => `${label}：${value} · ${share}`,
+    usageCompSelect: label => `选择${label}构成`,
+    usageCompFocus: (label, value, share, note) => `${label}：${value} 令牌 · 占全部令牌的 ${share}。${note}`,
+    usageCompNoteCacheRead: '复用的提示词令牌；已知时按缓存读取单价计费。',
+    usageCompNoteCacheWrite: '新增缓存写入；已知单价时，写入溢价计入净节省。',
+    usageCompNoteInput: '仅新鲜未缓存输入。',
+    usageCompNoteOutput: '生成的输出令牌。',
+    usageCompEmpty: '选择一个流以查看确切计数。这是构成查看，不是隐藏的模型筛选。',
+    // 用量浏览器、经济、筛选与状态。
+    usageSegColumns: '列',
+    usageSegCore: '核心',
+    usageExplorerTitle: '模型浏览器',
+    usageExplorerSubtitle: n => `${n} 个模型 × 线路对 · 每列可排序`,
+    usageExplorerTop25Tip: '仅显示前 25 名',
+    usageExplorerShowAllTip: '显示全部模型',
+    usageExplorerTop25: '前 25',
+    usageExplorerShowAll: '显示全部',
+    usageExplorerExportTip: '将筛选后的模型导出为 CSV',
+    usageExplorerExport: '导出 CSV',
+    usageExplorerBadge: '精确线路筛选',
+    usageExplorerCaption: '所选周期与精确 AND 筛选下的模型。未知价格、缓存命中率与节省排在最后。',
+    usageExplorerSortBy: label => `按${label}排序`,
+    usageExplorerSortLabel: (label, arrow) => `${label}${arrow}`,
+    usageColModel: '模型',
+    usageColProvider: '供应商',
+    usageColCalls: '调用',
+    usageColTokens: '令牌',
+    usageColInput: '输入',
+    usageColOutput: '输出',
+    usageColReasoning: '推理',
+    usageColRead: '读取',
+    usageColWrite: '写入',
+    usageColCacheRate: '缓存 %',
+    usageColSavings: '净节省',
+    usageColApiCost: 'API 成本',
+    usageColPerCall: '美元/次',
+    usageColPerMillion: '美元/百万令牌',
+    usageColPricing: '定价',
+    usageColBilling: '账单',
+    usageExplorerBillingTitle: '最新线路/模型账单分类，非按次账单',
+    usageExplorerCacheTitle: (known, unknown) => `${known} 次已知缓存调用；${unknown} 次未知`,
+    usageExplorerPartial: ' 部分',
+    usageExplorerUnitUnknown: '未知：定价覆盖不完整',
+    usageExplorerPricingTitle: (priced, total) => `${priced} 已定价 / ${total} 令牌总数`,
+    usageExplorerShowingAll: n => `显示全部 ${n} 对。`,
+    usageExplorerShowingTop: n => `按当前排序显示前 25 对，共 ${n} 对。使用“显示全部”查看完整表格。`,
+    usageExplorerFooter: '美元/次与美元/百万令牌为 API 等值均值，非已记录账单。只要有令牌未定价即保持未知。推理计入输出，永不重复计入四流合计。账单为最新线路分类，非分摊的按次账单。覆盖不完整时 API 成本为已定价小计。缓存 % 为已知缓存活动调用的加权命中率，非模型百分比均值。点击模型以应用其确切模型 + 供应商对。',
+    usageEconTitle: '缓存经济',
+    usageEconSubtitle: '理论反事实，非账单抵扣',
+    usageEconNoPricing: '定价不足',
+    usageEconWritePremium: '净写入溢价',
+    usageEconBenefit: '净缓存收益',
+    usageEconNetSavings: '理论净节省',
+    usageEconWithoutCache: '无缓存',
+    usageEconWithCache: '有缓存',
+    usageEconBarAria: (label, money) => `${label}：${money}`,
+    usageEconExplainRates: '无缓存：相同提示词令牌按未缓存输入单价。有缓存：新鲜输入 + 缓存读取 + 缓存写入按其有效按次目录单价。两者包含相同的输出成本，在净节省中抵消。',
+    usageEconExplainNet: '净额 = 未缓存提示词成本 − 已缓存提示词成本。写入溢价可能超过读取折扣，因此节省可为负。这不代表订阅或包含线路上的退款。',
+    usageEconCoverage: (coverage, tokens, calls, excluded) => `${coverage} 令牌覆盖率 · ${tokens} 已覆盖令牌 · ${calls} 已覆盖调用 · ${excluded} 已排除调用`,
+    usageEconExplainScope: '输入/读取/写入价格未知或缓存拆分不明确的调用予以排除，不视为免费。所有比较使用相同时期与确切范围筛选。',
+    usageFilterPeriod: '周期',
+    usageFilterPeriodTip: '周期筛选',
+    usagePeriodToday: '今天',
+    usagePeriodWeek: '近 7 天',
+    usagePeriodMonth: '近 30 天',
+    usagePeriodQuarter: '近 90 天',
+    usagePeriodYear: '近 365 天',
+    usageFilterModel: '模型（任意供应商）',
+    usageFilterModelName: '模型',
+    usageFilterProvider: '供应商线路',
+    usageFilterProviderName: '供应商',
+    usageFilterSurface: '运行位置',
+    usageFilterSurfaceName: '位置',
+    usageFilterTask: '工作类型',
+    usageFilterTaskName: '任务',
+    usageFilterTip: name => `${name}筛选`,
+    usageFilterAll: key => `全部${key === 'surface' ? '位置' : key === 'task' ? '任务' : key === 'model' ? '模型' : '供应商'}`,
+    usageFilterParentOp: '父操作',
+    usageFilterOpTip: '操作筛选',
+    usageFilterAllOps: '全部操作',
+    usageFilterWho: '执行者',
+    usageFilterDelegTip: '委派筛选',
+    usageFilterEveryone: '全部合并',
+    usageFilterDirectOnly: '仅父级直接',
+    usageFilterSubagentsOnly: '仅子代理',
+    usageFilterAuxOnly: '仅辅助',
+    usageFilterUnattributedOnly: '仅未归属',
+    usageFilterClear: '清除筛选',
+    usageFilterActiveNote: '已筛选视图——仅包含符合全部条件的调用。移除一项以扩大范围。',
+    usageFilterRemove: key => `移除 ${key} 筛选`,
+    usageFilterChip: (key, value) => `${key}：${value} ×`,
+    usageFilterChipModel: '模型',
+    usageFilterChipProvider: '供应商',
+    usageFilterChipSurface: '位置',
+    usageFilterChipTask: '任务',
+    usageFilterChipParent: '父操作',
+    usageFilterChipScope: '范围',
+    usageFilterScopeDirect: '直接',
+    usageFilterScopeSubagent: '子代理',
+    usageFilterScopeAuxiliary: '辅助',
+    usageFilterScopeUnattributed: '未归属',
+    usageBaselineUnavailable: why => `历史报告不可用：${why}`,
+    usageBaselineLoading: '正在读取历史基线…',
+    usageBaselineEstimateNote: '历史累计估算——不计入周期分析或筛选。',
+    usageBaselineTotals: (tokens, api, billed) => `${tokens} 令牌 · API 等值 ${api} · 已记录账单 ${billed}`,
+    usageBaselineEmpty: '未捕获历史基线。',
+    usageLoadTitle: '分析不可用',
+    usageLoadStale: '可见快照已过期。使用这些值之前请重试。',
+    usageLoadFallback: '实时芯片与此桌面的账本仍可用。',
+    usageRetryTip: '重试分析',
+    usageLoading: '正在读取带时间戳调用…',
+    usageStatApiEquiv: 'API 等值',
+    usageStatApiExtra: '已定价按次估算 · 非账单',
+    usageStatSavings: '理论净节省',
+    usageStatSavingsHint: '读取折扣 − 写入溢价',
+    usageStatSavingsExtra: coverage => `${coverage} 经济覆盖率 · 详情见下`,
+    usageStatTokens: '令牌 / 调用',
+    usageStatTokensHint: calls => `${calls} 已记录调用`,
+    usageStatTokensExtra: (input, output) => `${input} 输入 · ${output} 输出`,
+    usageStatCoverage: '定价覆盖率',
+    usageStatCoverageHint: tokens => `${tokens} 未定价令牌`,
+    usageInsightsAria: '本期要点',
+    usageBillingTitle: '仅显示明确的按次费用；未知不是零。',
+    usageBillingLabel: '已记录账单 ',
+    usageBillingComplete: '完成',
+    usageBillingPartial: '部分',
+    usageBillingNote: ' · 仅包含已记录费用；未知线路不是 $0。',
+    usageWindowDash: (since, until, tz) => `${since} → ${until} · ${tz}`,
+    usageWindowPending: '带时间戳窗口',
+    usageUnpricedAlert: tokens => `${tokens} 未定价令牌。API 等值成本为部分已定价小计；未知价格予以排除，不计为零。`,
+    usageEmptyTitle: '本期未记录后端调用',
+    usageEmptyBody: '本报告涵盖后端分析。概览中显示的桌面记录用量是独立的；打开本地账本以查看此桌面捕获的调用。尝试更长周期或清除筛选以检查本报告。历史基线仍在下方独立列出。',
+    usageEmptyShowDesktop: '显示桌面记录用量',
+    usageEmptyClear: '清除空范围',
+    usageNoData: '此配置文件暂无用量数据。',
+    usageRecordingLine: (since, last) => `记录始于 ${since} · 最新 ${last}。仅带时间戳的已捕获调用计入本期。`,
+    usageRecordingPending: '暂不可用',
+    usageCacheFormula: '缓存命中 = 读取令牌 ÷（新鲜输入 + 读取 + 写入令牌），按已知缓存活动的调用加权。旧零缓存行含义不明，从已知分母中排除。',
+    usageMethodologyTitle: '方法与覆盖详情',
+    usageBaselineSummaryTitle: '历史基线与对账——独立累计估算',
   }
 }
 
@@ -8310,7 +9271,7 @@ const I18N = {
 
 export default {
   id: ID,
-  name: 'Spend Sense',
+  name: 'SpendSense',
   description: 'Hermes usage accounting, provider-aware cost estimates, memberships, and live session usage.',
   register(ctx) {
     pluginLifetime++
@@ -8377,7 +9338,7 @@ export default {
     ctx.register({
       id: 'pane',
       area: 'panes',
-      title: 'Spend Sense',
+      title: 'SpendSense',
       data: PANE_DATA,
       render: () => jsx(Meter, {})
     })
@@ -8385,14 +9346,14 @@ export default {
     ctx.register({
       id: 'page',
       area: 'routes',
-      title: 'Spend Sense',
+      title: 'SpendSense',
       data: { path: LEDGER_ROUTE },
       render: () => jsx(LedgerPage, {})
     })
     ctx.register({
       id: 'nav',
       area: 'sidebar.nav',
-      data: { codicon: 'graph', label: 'Spend Sense', path: LEDGER_ROUTE }
+      data: { codicon: 'graph', label: 'SpendSense', path: LEDGER_ROUTE }
     })
   }
 }
@@ -8402,6 +9363,7 @@ export const __test = {
   analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText,
   AnalyticsPage, AnalyticsDashboard, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
   AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS,
+  usageFilterChipName, USAGE_FILTER_CHIP_KEYS, usageFilterChipValue, USAGE_FILTER_SCOPE_KEYS,
   backendQuery, catalogQuery, liveProvider, sameModel, getCatalog, ensureBackendRate, $view, $automaticModelOptions,
   // Memberships: page, scope, error classification and diagnostics are exported
   // so the real-React harness can drive them without a live Desktop.
@@ -8418,6 +9380,7 @@ export const __test = {
   $membershipExpanded, $membershipTarget, arrangementLabel, attentionActionLabel, queueMembershipTarget,
   membershipTargetDom, weatherReadingLi,
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
+  membershipEntitlementSummary,
   billingNumberStep, $billingDraft, $billingNotice,
   economicsQuery, fxQuery, fxWrite, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
   econWindowLines, windowSpanLabel, invalidateEconomicsFor,
@@ -8433,6 +9396,7 @@ export const __test = {
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
   CostsPage, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark, PRODUCT_CSS,
+  $settingsConfirmation, $modelRefreshState,
   SHARED_CSS, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,

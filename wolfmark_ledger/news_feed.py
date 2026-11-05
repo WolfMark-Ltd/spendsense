@@ -204,7 +204,7 @@ def _curated(entries: Any, observed_at: str) -> tuple[list[dict[str, Any]], list
             "observed_at": str(entry.get("observed_at") or observed_at).strip()[:64],
             "effective_at": str(entry.get("effective_at") or "").strip()[:64],
             "source_url": source_url[:500], "confidence": confidence,
-            "provenance": str(entry.get("provenance") or "Spend Sense curation").strip()[:256],
+            "provenance": str(entry.get("provenance") or "SpendSense curation").strip()[:256],
             "conditions": str(entry.get("conditions") or "").strip()[:500],
         })
     return items, problems

@@ -956,7 +956,7 @@ test('Settings disclose catalogue provenance and Hermes-owned network refreshes 
   assert.match(container.textContent, /stale/)
   assert.match(container.textContent, /2026-10-30.5/)
   assert.match(container.textContent, /Refresh Hermes models/)
-  assert.match(container.textContent, /Spend Sense makes no direct HTTP pricing requests/)
+  assert.match(container.textContent, /SpendSense makes no direct HTTP pricing requests/)
   assert.match(container.textContent, /authenticated requests to configured provider endpoints using credentials it manages/)
   assert.match(container.textContent, /Automatic Hermes model-options refresh is off by default/)
   assert.equal(container.querySelector('input[type="checkbox"]')?.checked, false,

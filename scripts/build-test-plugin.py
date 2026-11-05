@@ -39,10 +39,10 @@ CONTRIBUTIONS = ("pane", "chip", "page", "nav")
 #: calls its own namespace against the test backend and gets 404. Name, route,
 #: page title, nav label and pane title must all differ.
 IDENTITY = (
-    ("name: 'Spend Sense',", "name: 'Spend Sense (test)',"),
-    ("title: 'Spend Sense',", "title: 'Spend Sense (test)',"),
-    ("label: 'Spend Sense',", "label: 'Spend Sense (test)',"),
-    ("title: 'Spend Sense',", "title: 'Spend Sense (test)',"),
+    ("name: 'SpendSense',", "name: 'SpendSense (test)',"),
+    ("title: 'SpendSense',", "title: 'SpendSense (test)',"),
+    ("label: 'SpendSense',", "label: 'SpendSense (test)',"),
+    ("title: 'SpendSense',", "title: 'SpendSense (test)',"),
 )
 
 COPY = ("plugin.yaml", "__init__.py", "dashboard", "desktop", "wolfmark_ledger", "catalogue",
@@ -133,7 +133,7 @@ def main() -> int:
     manifest_path = out / "dashboard" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["name"] = args.test_id
-    manifest["label"] = "Spend Sense (test)"
+    manifest["label"] = "SpendSense (test)"
     manifest["version"] = TEST_VERSION
     manifest["description"] = ("Phase A test build — isolated backend, synthetic data. "
                                "Not the installed release.")
@@ -153,7 +153,7 @@ def main() -> int:
         elif line.startswith("version:"):
             lines[index] = f'version: "{TEST_VERSION}"'
         elif line.startswith("description:"):
-            lines[index] = ('description: "Phase A test build of the Spend Sense — '
+            lines[index] = ('description: "Phase A test build of SpendSense — '
                             'isolated backend, synthetic data, not the installed release."')
     yaml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     report.append({"file": "plugin.yaml", "change": f"name -> {args.test_id}, version -> {TEST_VERSION}", "count": 1})

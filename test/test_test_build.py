@@ -109,14 +109,14 @@ class TestBuildIdentity(unittest.TestCase):
         self.assertNotEqual(declared_route(self.source), declared_route(self.release))
 
     def test_every_visible_label_differs(self):
-        for needle in ("name: 'Spend Sense (test)',",
-                       "title: 'Spend Sense (test)',",
-                       "label: 'Spend Sense (test)',",
-                       "title: 'Spend Sense (test)',"):
+        for needle in ("name: 'SpendSense (test)',",
+                       "title: 'SpendSense (test)',",
+                       "label: 'SpendSense (test)',",
+                       "title: 'SpendSense (test)',"):
             self.assertIn(needle, self.source)
         # and none of the release's unqualified labels survive
-        for stale in ("name: 'Spend Sense',", "title: 'Spend Sense',",
-                      "label: 'Spend Sense',", "title: 'Spend Sense',"):
+        for stale in ("name: 'SpendSense',", "title: 'SpendSense',",
+                      "label: 'SpendSense',", "title: 'SpendSense',"):
             self.assertNotIn(stale, self.source)
 
     def test_contribution_ids_are_distinct(self):

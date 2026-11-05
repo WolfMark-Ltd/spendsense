@@ -1,6 +1,6 @@
 {
   "name": "spend-sense",
-  "label": "Spend Sense",
+  "label": "SpendSense",
   "description": "All Hermes usage accounting, declared membership fees, provider-aware estimates and user-managed membership plans.",
   "version": "0.6.0",
   "api": "plugin_api.py",

@@ -166,6 +166,27 @@ test('analytics cache coverage uses the selected language', () => {
  assert.match(text(english), /75\.0% of prompt tokens covered/)
 })
 
+test('usage header follows the selected language', () => {
+  globalThis.analyticsLanguage = 'zh'
+  try {
+    const view = text(page())
+    assert.match(view, /用量分析/)
+    assert.match(view, /已记录调用 · default · 所有 Hermes 来源/)
+    assert.match(view, /极客模式/)
+    assert.match(view, /↻ 刷新/)
+    assert.match(view, /此桌面/)
+    assert.match(view, /× 关闭/)
+  } finally {
+    globalThis.analyticsLanguage = 'en'
+  }
+  const english = text(page())
+  assert.match(english, /Usage analytics/)
+  assert.match(english, /Recorded calls · default · all Hermes surfaces/)
+  assert.match(english, /NERD MODE/)
+  assert.equal(T.I18N.en.usageCurrentProfile, 'current profile')
+  assert.equal(T.I18N.zh.usageCurrentProfile, '当前配置文件')
+})
+
 test('/rates unavailability falls back to the bundled snapshot', () => {
  const hit = T.resolveRates({model: 'deepseek/deepseek-v4.1-flash', provider: 'commandcode', payload: null, remembered: {}})
  assert.ok(hit.rates, 'bundled rates still price the call when the backend is down')
@@ -227,6 +248,46 @@ test('insights name the driver, cache verdict and delegated share from existing 
  assert.equal(T.deltaText(.125),'▲ 12.5% vs previous period')
  assert.equal(T.deltaText(null),null)
  assert.match(T.analyticsExplorerCsv([{model:'=m',provider:'p',calls:2,tokens:100,list_usd:4,per_call:2,per_million:40000,cache_hit_rate:.5}]),/usd_per_call/)
+})
+
+test('usage dashboard panels follow the selected language', () => {
+  globalThis.analyticsLanguage = 'zh'
+  try {
+    const view = text(page({...fixture, totals: {...fixture.totals, calls: 0}}))
+    assert.match(view, /用量分布/)
+    assert.match(view, /用量趋势/)
+    assert.match(view, /委派操作/)
+    assert.match(view, /缓存性能/)
+    assert.match(view, /令牌构成/)
+    assert.match(view, /模型浏览器/)
+    assert.match(view, /缓存经济/)
+    assert.match(view, /本期未记录后端调用/)
+    assert.match(view, /历史基线与对账/)
+  } finally {
+    globalThis.analyticsLanguage = 'en'
+  }
+})
+
+test('analytics pricing, insights and deltas follow the chosen language', () => {
+  const translator = language => (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const zhT = translator('zh')
+  assert.equal(T.analyticsPricing({ tokens: 10, priced_tokens: 5, unpriced_tokens: 5, list_usd: 1 }, zhT), '部分 · 50.0%')
+  assert.equal(T.analyticsPricing({ tokens: 10, priced_tokens: 10, unpriced_tokens: 0, list_usd: 1, fallback_calls: 2 }, zhT),
+    '回退单价 · 2 次调用')
+  assert.equal(T.deltaText(.125, zhT), '▲ 12.5%（较上一周期）')
+  assert.equal(T.deltaText(null, zhT), null)
+  const data = { totals: { list_usd: 10, tokens: 100 }, by_model: [{ model: 'm1', provider: 'p1', list_usd: 6 }],
+    economics: { savings_usd: -1, coverage: .5 }, by_scope: [{ scope: 'subagent', tokens: 40, calls: 3 }] }
+  const found = T.analyticsInsights(data, zhT)
+  assert.deepEqual(found.map(i => i.label), ['最大驱动', '缓存结论', '委派工作'])
+  assert.match(found[0].text, /m1 经 p1/)
+  const parts = T.analyticsComposition({ input_tokens: 1, output_tokens: 2, cache_read_tokens: 3, cache_write_tokens: 4 }, zhT)
+  assert.deepEqual(parts.map(p => p.label), ['输入', '输出', '缓存读取', '缓存写入'])
+  const dist = T.analyticsDistribution([{ model: '', provider: '', tokens: 10, list_usd: 1 }], 'cost', 'model', 6, zhT)
+  assert.equal(dist.items[0].label, '未知模型')
 })
 
 test('dashboard renders three SVG analytics, honest pricing/billing/cache coverage and a sortable explorer', () => {
@@ -315,7 +376,7 @@ test('product Usage keeps one aligned shell and explains an empty period', () =>
  const roots=nodes(empty,n=>n.type==='div' && String(n.props?.className || '').split(/\s+/).includes('wm-analytics'))
  assert.equal(roots.length,1,'product Usage has one full-height scroll root')
  assert.ok(String(roots[0].props.className).split(/\s+/).includes('wm-product'))
- assert.equal(nodes(empty,n=>n.props?.role==='tablist' && n.props?.['aria-label']==='Spend Sense sections').length,1)
+ assert.equal(nodes(empty,n=>n.props?.role==='tablist' && n.props?.['aria-label']==='SpendSense sections').length,1)
  assert.ok(text(empty).includes('This report covers backend analytics'))
  button(empty,'Show Desktop-recorded usage').props.onClick()
  assert.equal(T.$view.get(),'desktop','the empty-state action opens the separate local ledger')

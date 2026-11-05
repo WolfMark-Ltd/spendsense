@@ -287,6 +287,272 @@ test('every sidebar string exists in English and Chinese', () => {
   assert.match(en.costSourceInfo, /may differ/)
 })
 
+test('every ledger tab string exists in English and Chinese', () => {
+  const keys = ['tabOverview', 'tabUsage', 'tabCosts', 'tabMemberships', 'tabReports', 'tabNews', 'tabSettings']
+  for (const key of keys) {
+    assert.ok(en[key] && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] && zh[key] !== key, `zh has ${key}`)
+  }
+  // The English labels keep their exact pre-localisation wording.
+  assert.deepEqual(keys.map(key => en[key]),
+    ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings & About'])
+  assert.deepEqual(keys.map(key => zh[key]),
+    ['总览', '用量', '费用', '会员', '报告', '模型动态', '设置与关于'])
+})
+
+test('every costs string exists in English and Chinese', () => {
+  const keys = ['costsPricing', 'costsPricingNoSource', 'costsPricingAge', 'costsPricingNoDate',
+    'costsPricingStale', 'costsPricingTitle', 'costsTitle', 'costsSubtitle', 'costsMembershipTitle',
+    'costsMembershipIntro', 'costsSavedMemberships', 'costsMembershipCount', 'costsCombinedFees',
+    'costsLoading', 'costsBasisCatalogue', 'costsBasisCustom', 'costsBasisDeclared', 'costsBasisUnpriced',
+    'costsEmpty', 'costsLegacyIgnored', 'costsEvidenceTitle', 'costsEvidenceIntro', 'costsEvidenceLoading',
+    'costsFooterNote', 'costsEntAllowance', 'costsEntAllowances', 'costsEntRestricted', 'costsEntEffective',
+    'costsEntAnyTime', 'costsEntOngoing', 'billEvProviderLabel', 'billEvProviderExplain', 'billEvProviderEmpty',
+    'billEvApiLabel', 'billEvApiExplain', 'billEvApiEmpty', 'billEvCreditsLabel', 'billEvCreditsExplain',
+    'billEvCreditsEmpty', 'billEvCashLabel', 'billEvCashExplain', 'billEvCashEmpty', 'billEvFeeLabel',
+    'billEvFeeExplain', 'billEvFeeEmpty']
+  for (const key of keys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  // The English composites keep their exact pre-localisation wording.
+  assert.equal(en.costsPricing('WolfMark catalogue', '3 h old', ' · stale'),
+    'Pricing: WolfMark catalogue · 3 h old · stale · sources and privacy')
+  assert.equal(en.costsPricingAge(3), '3 h old')
+  assert.equal(en.costsMembershipCount(2, 3), '2 of 3')
+  assert.equal(en.costsLegacyIgnored(1),
+    '1 old subscription arrangement(s) remain stored but are excluded. Choose each plan in Memberships to keep one authoritative record.')
+  assert.equal(en.costsEntAllowances('Nightly $5.00'), 'plan allowances: Nightly $5.00 (usage in Memberships)')
+  // The Chinese composites interpolate every argument.
+  assert.match(zh.costsPricing('WolfMark 目录', '3 小时前', ' · 已过期'), /价格：/)
+  assert.equal(zh.costsMembershipCount(2, 3), '2 / 3')
+  assert.match(zh.costsEntEffective('2026-01-01', '持续有效'), /有效期/)
+})
+
+test('billing evidence and entitlement summaries follow the chosen language', () => {
+  const translator = language => (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const rows = T.billingEvidence({ evidence: { provider_reported: { usd: 1 } } }, translator('zh'))
+  assert.equal(rows[0].label, '供应商上报用量')
+  assert.equal(rows[0].empty, '未记录')
+  assert.equal(rows[0].usd, 1)
+  assert.equal(rows[0].basis, 'none')
+  const account = { plan: { entitlements: { windows: [{ id: 'w', label: 'Nightly', amount: 5, currency: 'USD' }] },
+    model_restrictions: ['m1'], effective: { effective_from: '2026-01-01' } } }
+  assert.equal(T.membershipEntitlementSummary(account),
+    'plan allowances: Nightly · $5.00 allowance (usage in Memberships) · restricted models: m1 · effective 2026-01-01 to ongoing')
+  assert.equal(T.membershipEntitlementSummary(account, translator('zh')),
+    '方案额度：Nightly · $5.00 额度（用量见“会员”） · 受限模型：m1 · 有效期 2026-01-01 至 持续有效')
+})
+
+test('every advanced-rule string exists in English and Chinese', () => {
+  const keys = ['advRulesErrNoDraft', 'advRulesErrName', 'advRulesErrProvider', 'advRulesErrKind',
+    'advRulesErrUnknownFee', 'advRulesErrFeeNumber', 'advRulesErrAllowanceNumber', 'billErrConflict',
+    'billErrValidation', 'billErrAuth', 'billErrUnavailable', 'billErrSave', 'billKindApi', 'billKindPrepaid',
+    'billKindCustom', 'billKindUnknown', 'advRulesSaved', 'advRulesRemoved', 'advRulesTitle', 'advRulesIntro',
+    'advRulesLegacy', 'advRulesAdd', 'advRulesRefreshing', 'advRulesRefresh', 'advRulesLoading',
+    'advRulesCustomRate', 'advRulesModelAllowance', 'advRulesAllowance', 'advRulesNoAllowance', 'advRulesEdit',
+    'advRulesDelete', 'advRulesEmpty', 'advRulesEditTitle', 'advRulesNewTitle', 'advRulesFieldName',
+    'advRulesPhName', 'advRulesFieldLabel', 'advRulesPhOptional', 'advRulesFieldProvider', 'advRulesFieldModel',
+    'advRulesFieldKind', 'advRulesFieldAllowance', 'advRulesFieldAllowanceModel', 'advRulesFieldCycleDay',
+    'advRulesFieldFrom', 'advRulesFieldTo', 'advRulesFieldRateInput', 'advRulesFieldRateOutput',
+    'advRulesFieldRateCache', 'advRulesEstimatesNote', 'advRulesSave', 'advRulesCancel']
+  for (const key of keys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  // The English composites keep their exact pre-localisation wording.
+  assert.equal(en.advRulesLegacy(2),
+    '2 legacy subscription arrangement(s) are retained for reference and excluded from all fee totals. Choose those plans in Memberships.')
+  assert.equal(en.advRulesCustomRate('$1.50', '$3.00'), 'Custom input $1.50 / output $3.00 per million tokens')
+  assert.equal(en.advRulesModelAllowance('m', '$5.00'), 'm: $5.00 allowance')
+  assert.equal(en.advRulesAllowance('$5.00'), '$5.00 allowance')
+  // The Chinese composites interpolate every argument.
+  assert.match(zh.advRulesLegacy(2), /2 个旧订阅安排/)
+  assert.match(zh.advRulesCustomRate('$1.50', '$3.00'), /每百万令牌/)
+  assert.match(zh.advRulesModelAllowance('m', '$5.00'), /额度/)
+})
+
+test('billing validators and errors follow the chosen language', () => {
+  const translator = language => (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  assert.deepEqual(T.profileDraftErrors({}, translator('zh')),
+    ['需要填写简称。', '需要填写供应商线路。', '请选择该线路的付费方式。'])
+  assert.deepEqual(T.profileDraftErrors(null, translator('zh')), ['无草稿'])
+  assert.deepEqual(T.profileDraftErrors({}),
+    ['A short name is required.', 'A provider route is required.', 'Choose how this route is paid for.'])
+  assert.match(T.billingErrorMessage(new Error('conflict: stale'), translator('zh')), /重新加载/)
+  assert.match(T.billingErrorMessage(new Error('boom'), translator('zh')), /后端日志/)
+  assert.match(T.billingErrorMessage(new Error('conflict: stale')), /Reload, then save again/)
+})
+
+test('every settings string exists in English and Chinese', () => {
+  const keys = ['tabListLabel', 'settingsNotifyPrefsReset', 'settingsNotifyPrefsFailed',
+    'settingsNotifyDataCleared', 'settingsNotifyDataFailed', 'settingsNotifyModelsOk',
+    'settingsNotifyModelsFailed', 'settingsNotifyCatalogueOk', 'settingsNotifyCatalogueFailed',
+    'settingsNotifyLiveOff', 'settingsTitle', 'settingsSubtitle', 'settingsPrivacyHeading',
+    'settingsPrivacyP1', 'settingsPrivacyP2', 'settingsPrivacyP3', 'settingsPrivacyP4',
+    'settingsPricingHeading', 'settingsPricingUnavailable', 'settingsPricingSourceLabel',
+    'settingsPricingNoSource', 'settingsPricingDate', 'settingsPricingNoDate', 'settingsPricingAge',
+    'settingsPricingStale', 'settingsPricingRefreshNote', 'settingsChecking', 'settingsRefreshPricing',
+    'settingsCapturedCosts', 'settingsCatalogueFeed', 'settingsCatalogueLive', 'settingsCatalogueBundled',
+    'settingsCatalogueVersion', 'settingsCatalogueGenerated', 'settingsCatalogueFetched',
+    'settingsCatalogueFetchedAt', 'settingsCentralAlert', 'settingsCentralUpdate', 'settingsCentralHeldBack',
+    'settingsCatalogueTotals', 'settingsRefreshCatalogue', 'settingsSourceRegister', 'settingsSourceNoDate',
+    'settingsCatalogueProvenanceUnavailable', 'settingsModelsHeading', 'settingsModelsExplain',
+    'settingsAutoRefreshToggle', 'settingsModelsConfirmText', 'settingsModelsConfirm', 'settingsCancel',
+    'settingsRefreshModels', 'settingsDiagnosticsHeading', 'settingsDiagnosticsVersions',
+    'settingsDiagnosticsBackend', 'settingsDiagnosticsChecking', 'settingsDiagnosticsNoBackend',
+    'settingsHealthFailed', 'settingsHealthReady', 'settingsHealthUnavailable', 'settingsDiagnosticsRecent',
+    'settingsDiagnosticsEmpty', 'settingsDiagnosticsNote', 'settingsRecoveryHeading',
+    'settingsRecoveryPrefsExplain', 'settingsRecoveryPrefsConfirmText', 'settingsRecoveryPrefsConfirm',
+    'settingsResetPrefs', 'settingsRecoveryDataExplain', 'settingsRecoveryBackupText',
+    'settingsRecoveryDataConfirm', 'settingsCopyBackup', 'settingsAboutHeading', 'settingsAboutVersion',
+    'settingsAboutCredit', 'settingsAboutSupport', 'settingsAboutContact', 'settingsAboutCatalogueNote',
+    'settingsPanePlacement']
+  for (const key of keys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  // The English composites keep their exact pre-localisation wording.
+  assert.equal(en.settingsCatalogueVersion('Live', '2026-11-04.3', ' · generated X'),
+    'Live membership catalogue 2026-11-04.3 · generated X')
+  assert.equal(en.settingsCentralAlert('stale', true),
+    'Central catalogue: stale The cached live catalogue is shown.')
+  assert.equal(en.settingsCatalogueTotals(58, 50, 5, 3),
+    '58 plans · 50 verified prices · 5 provisional · 3 without a published fee')
+  assert.equal(en.settingsAboutVersion('0.6.0'), 'SpendSense 0.6.0')
+  // Proper names survive in both languages; the legal credit is identical.
+  assert.match(en.settingsPrivacyP2, /models\.dev/)
+  assert.match(zh.settingsPrivacyP2, /models\.dev/)
+  assert.match(en.settingsAboutCredit, /WolfMark Ltd/)
+  assert.match(en.settingsAboutCredit, /AFei/)
+  assert.equal(zh.settingsAboutCredit, en.settingsAboutCredit)
+  // The Chinese composites interpolate every argument.
+  assert.match(zh.settingsCatalogueVersion('实时', '2026-11-04.3', ' · 生成于X'), /实时会员目录/)
+  assert.match(zh.settingsCatalogueTotals(58, 50, 5, 3), /58 个方案/)
+  assert.equal(zh.settingsAboutVersion('0.6.0'), 'SpendSense 0.6.0')
+})
+
+test('every usage panel string exists in English and Chinese', () => {
+  const panelKeys = ['usageDonutAction', 'usageLegendInspectOther', 'usageLegendProviders',
+    'usageLegendModels', 'usageLegendFilter', 'usageLegendInspectTitle', 'usageLegendApplyTitle',
+    'usageDistTitle', 'usageDistSubtitle', 'usageSegDistribution', 'usageSegCost', 'usageSegTokens',
+    'usageSegDistBy', 'usageSegModel', 'usageSegProvider', 'usageDistEmptyCost', 'usageDistEmptyTokens',
+    'usageDistRemainder', 'usageDistFooterCost', 'usageDistFooterTokens', 'usageDistFooterWarn',
+    'usageDistFooterNote', 'usageTrendPoint', 'usageTrendTitle', 'usageTrendPanelTitle', 'usageTrendSubtitle',
+    'usageSegTrend', 'usageTrendAria', 'usageTrendHint', 'usageTrendUnstacked', 'usageTrendTotal',
+    'usageTrendStream', 'usageTrendEmpty', 'usageTrendFooterCost', 'usageTrendFooterTokens', 'usageDelegBar',
+    'usageDelegBarAria', 'usageDelegTitle', 'usageDelegSubtitle', 'usageSegDelegScope', 'usageSegAll',
+    'usageSegParent', 'usageSegSubagents', 'usageDelegParent', 'usageDelegSubagents', 'usageDelegKnown',
+    'usageDelegCache', 'usageDelegBusiest', 'usageDelegOpWorkers', 'usageDelegUnattributed', 'usageDelegNote',
+    'usageDelegFooter', 'usageRankTitle', 'usageRankSubtitle', 'usageSegRankBy', 'usageSegHitRate',
+    'usageSegVolume', 'usageRankAria', 'usageRankHint', 'usageRankRowAria', 'usageRankRowTitle',
+    'usageRankRowSub', 'usageRankFooter', 'usageRankModeSavings', 'usageRankModeVolume', 'usageRankModeRate',
+    'usageCompTitle', 'usageCompSubtitle', 'usageSegComposition', 'usageSegStacked', 'usageSegDoughnut',
+    'usageDonutAllStreams', 'usageCompTokensTotal', 'usageCompAria', 'usageCompSvgPart', 'usageCompPartTitle',
+    'usageCompSelect', 'usageCompFocus', 'usageCompNoteCacheRead', 'usageCompNoteCacheWrite',
+    'usageCompNoteInput', 'usageCompNoteOutput', 'usageCompEmpty', 'usagePricingNone', 'usagePricingUnpriced',
+    'usagePricingPartial', 'usagePricingFallback', 'usagePricingComplete', 'usageInsightDriver',
+    'usageInsightDriverText', 'usageInsightVerdict', 'usageInsightVerdictLoss', 'usageInsightVerdictSave',
+    'usageInsightDelegated', 'usageInsightDelegatedText', 'usageDelta', 'usageStreamInput', 'usageStreamOutput',
+    'usageStreamCacheRead', 'usageStreamCacheWrite', 'usageOther', 'usageUnknown', 'usageUnknownModel',
+    'usageUnknownProviderCap', 'usageSegColumns', 'usageSegCore', 'usageExplorerTitle', 'usageExplorerSubtitle',
+    'usageExplorerTop25Tip', 'usageExplorerShowAllTip', 'usageExplorerTop25', 'usageExplorerShowAll',
+    'usageExplorerExportTip', 'usageExplorerExport', 'usageExplorerBadge', 'usageExplorerCaption',
+    'usageExplorerSortBy', 'usageExplorerSortLabel', 'usageColModel', 'usageColProvider', 'usageColCalls',
+    'usageColTokens', 'usageColInput', 'usageColOutput', 'usageColReasoning', 'usageColRead', 'usageColWrite',
+    'usageColCacheRate', 'usageColSavings', 'usageColApiCost', 'usageColPerCall', 'usageColPerMillion',
+    'usageColPricing', 'usageColBilling', 'usageExplorerBillingTitle', 'usageExplorerCacheTitle',
+    'usageExplorerPartial', 'usageExplorerUnitUnknown', 'usageExplorerPricingTitle', 'usageExplorerShowingAll',
+    'usageExplorerShowingTop', 'usageExplorerFooter', 'usageEconTitle', 'usageEconSubtitle',
+    'usageEconNoPricing', 'usageEconWritePremium', 'usageEconBenefit', 'usageEconNetSavings',
+    'usageEconWithoutCache', 'usageEconWithCache', 'usageEconBarAria', 'usageEconExplainRates',
+    'usageEconExplainNet', 'usageEconCoverage', 'usageEconExplainScope', 'usageFilterPeriod',
+    'usageFilterPeriodTip', 'usagePeriodToday', 'usagePeriodWeek', 'usagePeriodMonth', 'usagePeriodQuarter',
+    'usagePeriodYear', 'usageFilterModel', 'usageFilterModelName', 'usageFilterProvider',
+    'usageFilterProviderName', 'usageFilterSurface', 'usageFilterSurfaceName', 'usageFilterTask',
+    'usageFilterTaskName', 'usageFilterTip', 'usageFilterAll', 'usageFilterParentOp', 'usageFilterOpTip',
+    'usageFilterAllOps', 'usageFilterWho', 'usageFilterDelegTip', 'usageFilterEveryone',
+    'usageFilterDirectOnly', 'usageFilterSubagentsOnly', 'usageFilterAuxOnly', 'usageFilterUnattributedOnly',
+    'usageFilterClear', 'usageFilterActiveNote', 'usageFilterRemove', 'usageFilterChip',
+    'usageFilterChipModel', 'usageFilterChipProvider', 'usageFilterChipSurface',
+    'usageFilterChipTask', 'usageFilterChipParent', 'usageFilterChipScope',
+    'usageFilterScopeDirect', 'usageFilterScopeSubagent', 'usageFilterScopeAuxiliary',
+    'usageFilterScopeUnattributed',
+    'usageGranDay', 'usageGranHour',
+    'usageBaselineUnavailable', 'usageBaselineLoading', 'usageBaselineEstimateNote', 'usageBaselineTotals',
+    'usageBaselineEmpty', 'usageLoadTitle', 'usageLoadStale', 'usageLoadFallback', 'usageRetryTip',
+    'usageLoading', 'usageStatApiEquiv', 'usageStatApiExtra', 'usageStatSavings', 'usageStatSavingsHint',
+    'usageStatSavingsExtra', 'usageStatTokens', 'usageStatTokensHint', 'usageStatTokensExtra',
+    'usageStatCoverage', 'usageStatCoverageHint', 'usageInsightsAria', 'usageBillingTitle',
+    'usageBillingLabel', 'usageBillingComplete', 'usageBillingPartial', 'usageBillingNote', 'usageWindowDash',
+    'usageWindowPending', 'usageUnpricedAlert', 'usageEmptyTitle', 'usageEmptyBody',
+    'usageEmptyShowDesktop', 'usageEmptyClear', 'usageNoData', 'usageRecordingLine', 'usageRecordingPending',
+    'usageCacheFormula', 'usageMethodologyTitle', 'usageBaselineSummaryTitle']
+  for (const key of panelKeys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  assert.equal(en.usageDonutAction(true, 'Input', '1K', '50%'), 'Inspect Input: 1K, 50%')
+  assert.equal(en.usageTrendPoint('t', '$1', 0), 't: $1')
+  assert.equal(en.usageRankFooter(8, 'weighted rate'),
+    'Top 8 by weighted rate. Zero-cache older rows are ambiguous, not confirmed misses. Unknown is not zero. All models remain in the explorer.')
+  assert.match(zh.usageCompFocus('输入', '1K', '50%', '注'), /占全部令牌的/)
+})
+
+test('granularity and filter-chip labels translate while English stays identical', () => {
+  const t = language => (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  assert.equal(en.usageTrendSubtitle(en.usageGranDay, 'UTC'), 'Timestamped calls · day buckets · UTC')
+  assert.equal(en.usageTrendSubtitle(en.usageGranHour, 'UTC'), 'Timestamped calls · hour buckets · UTC')
+  assert.equal(zh.usageTrendSubtitle(zh.usageGranDay, 'UTC'), '带时间戳调用 · 日分桶 · UTC')
+  assert.equal(zh.usageTrendSubtitle(zh.usageGranHour, 'UTC'), '带时间戳调用 · 小时分桶 · UTC')
+  for (const [key, english, chinese] of [['model', 'model', '模型'], ['provider', 'provider', '供应商'],
+      ['surface', 'surface', '位置'], ['task', 'task', '任务'], ['parent', 'parent', '父操作'],
+      ['scope', 'scope', '范围']]) {
+    assert.equal(T.usageFilterChipName(key, t('en')), english)
+    assert.equal(T.usageFilterChipName(key, t('zh')), chinese)
+  }
+  assert.equal(T.usageFilterChipName('future', t('zh')), 'future')
+  assert.equal(en.usageFilterChip(en.usageFilterChipModel, 'm1'), 'model: m1 ×')
+  assert.equal(zh.usageFilterChip(zh.usageFilterChipModel, 'm1'), '模型：m1 ×')
+  for (const [value, english, chinese] of [['direct', 'direct', '直接'], ['subagent', 'subagent', '子代理'],
+      ['auxiliary', 'auxiliary', '辅助'], ['unattributed', 'unattributed', '未归属']]) {
+    assert.equal(T.usageFilterChipValue('scope', value, t('en')), english)
+    assert.equal(T.usageFilterChipValue('scope', value, t('zh')), chinese)
+  }
+  // Non-scope values are user data and pass through untouched.
+  assert.equal(T.usageFilterChipValue('model', 'm1', t('zh')), 'm1')
+  assert.equal(T.usageFilterChipValue('scope', 'future', t('zh')), 'future')
+})
+
+test('the unpriced note has no stray brace', () => {
+  assert.equal(en.unpricedNote(5), '5 tokens had no known rate and are not in the total (shown as ≥).')
+  assert.ok(!en.unpricedNote(5).includes('}'))
+})
+
+test('the InfoTip indicator is compact while its hit area stays accessible', () => {
+  // The interactive box keeps its full size for pointer and keyboard users.
+  assert.match(T.METER_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)
+  // The visible ring is drawn smaller via a centred pseudo-element.
+  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*width:16px;height:16px/)
+  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*pointer-events:none/)
+  // Hover and focus still recolour the ring; focus keeps its outline.
+  assert.match(T.METER_CSS, /\.wm-info-btn:hover::after,\.wm-info-btn:focus-visible::after\{[^}]*border-color:var\(--ui-accent\)/)
+  assert.match(T.METER_CSS, /\.wm-info-btn:focus-visible\{[^}]*outline:2px solid var\(--ui-accent\)/)
+})
+
 test('the meter stylesheet keeps popovers, ring and reduced-motion support', () => {
   assert.match(T.METER_CSS, /wm-info-pop/)
   assert.match(T.METER_CSS, /wm-info-pop-wide/)
