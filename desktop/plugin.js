@@ -2058,18 +2058,18 @@ function rowBasis(t, r) {
 /** A true price gap stays null; a known free price stays zero. */
 const finiteValue = v => typeof v === 'number' && Number.isFinite(v) ? v : null
 const analyticsId = r => JSON.stringify([r.provider || '', r.model || ''])
-function analyticsDistribution(rows, metric = 'cost', grouping = 'model', limit = 6) {
+function analyticsDistribution(rows, metric = 'cost', grouping = 'model', limit = 6, t = needsAttentionEn) {
   const valueKey = metric === 'cost' ? 'list_usd' : 'tokens'
   const entries = rows.map(row => ({
     ...row, id: grouping === 'provider' ? row.provider : analyticsId(row),
-    label: grouping === 'provider' ? row.provider || 'Unknown provider' : row.model || 'Unknown model',
+    label: grouping === 'provider' ? row.provider || t('usageUnknownProviderCap') : row.model || t('usageUnknownModel'),
     value: finiteValue(row[valueKey])
   })).filter(row => row.value != null && row.value > 0)
     .sort((a, b) => b.value - a.value || String(a.id).localeCompare(String(b.id)))
   const total = entries.reduce((sum, row) => sum + row.value, 0)
   const remainder = entries.slice(limit).map(row=>({...row,share:total ? row.value / total : 0}))
   const items = entries.slice(0, limit)
-  if (remainder.length) items.push({id:'__other__',label:'Other',other:true,value:remainder.reduce((s,r)=>s+r.value,0)})
+  if (remainder.length) items.push({id:'__other__',label:t('usageOther'),other:true,value:remainder.reduce((s,r)=>s+r.value,0)})
   return {total, remainder, items: items.map(r => ({...r,share:total ? r.value / total : 0})),
     unpricedTokens: rows.reduce((s,r)=>s+num(r.unpriced_tokens),0)}
 }
@@ -2080,9 +2080,16 @@ const TOKEN_STREAMS = [
   ['cache_read_tokens','Cache read','var(--ui-warning)'],
   ['cache_write_tokens','Cache write','color-mix(in srgb, var(--ui-accent) 45%, var(--ui-text-primary))']
 ]
-function analyticsComposition(totals = {}) {
+/** Token-stream ids to their I18N labels. TOKEN_STREAMS keeps the canonical English. */
+const STREAM_LABEL_KEYS = {
+  input_tokens: 'usageStreamInput',
+  output_tokens: 'usageStreamOutput',
+  cache_read_tokens: 'usageStreamCacheRead',
+  cache_write_tokens: 'usageStreamCacheWrite',
+}
+function analyticsComposition(totals = {}, t = needsAttentionEn) {
   const total = TOKEN_STREAMS.reduce((s,[key])=>s+num(totals[key]),0)
-  return TOKEN_STREAMS.map(([key,label,color])=>({id:key,label,color,value:num(totals[key]),share:total?num(totals[key])/total:0}))
+  return TOKEN_STREAMS.map(([key,,color])=>({id:key,label:t(STREAM_LABEL_KEYS[key]),color,value:num(totals[key]),share:total?num(totals[key])/total:0}))
 }
 /** Never infer category-dollar costs from token proportions or current prices. */
 function analyticsTrend(buckets, metric = 'tokens') {
@@ -2099,13 +2106,13 @@ function analyticsTrend(buckets, metric = 'tokens') {
   return {points,max:Math.max(0,...points.map(p=>p.total || 0)),stacked:metric==='tokens'||points.every(p=>p.values!=null)}
 }
 
-function analyticsPricing(row) {
-  if (!num(row.tokens)) return 'No usage'
-  if (finiteValue(row.list_usd) == null || !num(row.priced_tokens)) return 'Unpriced'
+function analyticsPricing(row, t = needsAttentionEn) {
+  if (!num(row.tokens)) return t('usagePricingNone')
+  if (finiteValue(row.list_usd) == null || !num(row.priced_tokens)) return t('usagePricingUnpriced')
   const fallback = num(row.fallback_calls)
-  if (num(row.unpriced_tokens)) return `Partial · ${((num(row.priced_tokens) / num(row.tokens)) * 100).toFixed(1)}%${fallback ? ' · fallback rates' : ''}`
-  if (fallback) return `Fallback rates · ${fallback} calls`
-  return 'Complete'
+  if (num(row.unpriced_tokens)) return t('usagePricingPartial', ((num(row.priced_tokens) / num(row.tokens)) * 100).toFixed(1), fallback)
+  if (fallback) return t('usagePricingFallback', fallback)
+  return t('usagePricingComplete')
 }
 function analyticsSort(rows, key, direction = 'desc') {
   const value = row => key === 'savings' ? finiteValue(row.economics?.savings_usd)
@@ -2121,27 +2128,29 @@ function analyticsSort(rows, key, direction = 'desc') {
 }
 
 /** Three plain conclusions from data already on the page; no new claims. */
-function analyticsInsights(data) {
+function analyticsInsights(data, t = needsAttentionEn) {
   const totals = data?.totals || {}
   const insights = []
   const priced = (data?.by_model || []).filter(r => finiteValue(r.list_usd) != null && num(r.list_usd) > 0)
     .sort((a, b) => num(b.list_usd) - num(a.list_usd))
   if (priced.length && num(totals.list_usd)) {
     const top = priced[0]
-    insights.push({label: 'Biggest driver', text: `${top.model || 'Unknown model'} via ${top.provider || 'unknown'} is ${percent(num(top.list_usd) / num(totals.list_usd))} of priced API-equivalent cost.`})
+    insights.push({label: t('usageInsightDriver'), text: t('usageInsightDriverText',
+      top.model || t('usageUnknownModel'), top.provider || t('unknown'), percent(num(top.list_usd) / num(totals.list_usd)))})
   }
   const e = data?.economics || totals.economics || {}
-  if (finiteValue(e.savings_usd) != null) insights.push({label: 'Cache verdict', text: e.savings_usd < 0
-    ? `Cache writes cost ${analyticMoney(-e.savings_usd)} more than reads save on covered calls. See Cache economics.`
-    : `Caching saves a theoretical ${analyticMoney(e.savings_usd)} on covered calls (${percent(e.coverage)} covered).`})
+  if (finiteValue(e.savings_usd) != null) insights.push({label: t('usageInsightVerdict'), text: e.savings_usd < 0
+    ? t('usageInsightVerdictLoss', analyticMoney(-e.savings_usd))
+    : t('usageInsightVerdictSave', analyticMoney(e.savings_usd), percent(e.coverage))})
   const scopes = Object.fromEntries((data?.by_scope || []).map(r => [r.scope, r]))
   const sub = scopes.subagent
-  if (sub && num(totals.tokens)) insights.push({label: 'Delegated work', text: `Subagents used ${percent(num(sub.tokens) / num(totals.tokens))} of tokens across ${exactTokens(sub.calls)} calls.`})
+  if (sub && num(totals.tokens)) insights.push({label: t('usageInsightDelegated'),
+    text: t('usageInsightDelegatedText', percent(num(sub.tokens) / num(totals.tokens)), exactTokens(sub.calls))})
   return insights
 }
-function deltaText(value) {
+function deltaText(value, t = needsAttentionEn) {
   if (finiteValue(value) == null) return null
-  return `${value >= 0 ? '▲' : '▼'} ${Math.abs(value * 100).toFixed(1)}% vs previous period`
+  return t('usageDelta', value >= 0 ? '▲' : '▼', Math.abs(value * 100).toFixed(1))
 }
 
 /* -------------------------------------------------------- analytics state */
@@ -7915,6 +7924,28 @@ const I18N = {
     settingsAboutContact: 'Contact WolfMark support',
     settingsAboutCatalogueNote: 'The bundled pricing and membership catalogue is maintained through normal reviewed plugin releases. No user-defined plan is overwritten by a catalogue update.',
     settingsPanePlacement: 'The SpendSense pane can be dragged to the left or right using Hermes’ supported layout controls. Hermes remembers your placement across reloads.',
+    // Usage analytics helpers.
+    usagePricingNone: 'No usage',
+    usagePricingUnpriced: 'Unpriced',
+    usagePricingPartial: (pct, fallback) => `Partial · ${pct}%${fallback ? ' · fallback rates' : ''}`,
+    usagePricingFallback: n => `Fallback rates · ${n} calls`,
+    usagePricingComplete: 'Complete',
+    usageInsightDriver: 'Biggest driver',
+    usageInsightDriverText: (model, provider, share) => `${model} via ${provider} is ${share} of priced API-equivalent cost.`,
+    usageInsightVerdict: 'Cache verdict',
+    usageInsightVerdictLoss: money => `Cache writes cost ${money} more than reads save on covered calls. See Cache economics.`,
+    usageInsightVerdictSave: (money, coverage) => `Caching saves a theoretical ${money} on covered calls (${coverage} covered).`,
+    usageInsightDelegated: 'Delegated work',
+    usageInsightDelegatedText: (share, calls) => `Subagents used ${share} of tokens across ${calls} calls.`,
+    usageDelta: (arrow, pct) => `${arrow} ${pct}% vs previous period`,
+    usageStreamInput: 'Input',
+    usageStreamOutput: 'Output',
+    usageStreamCacheRead: 'Cache read',
+    usageStreamCacheWrite: 'Cache write',
+    usageOther: 'Other',
+    usageUnknown: 'Unknown',
+    usageUnknownModel: 'Unknown model',
+    usageUnknownProviderCap: 'Unknown provider',
   },
   zh: {
     basisLegacy: '1.0 前旧数据 · 按现价估算',
@@ -8718,6 +8749,28 @@ const I18N = {
     settingsAboutContact: '联系 WolfMark 支持',
     settingsAboutCatalogueNote: '内置价格与会员目录通过常规评审插件版本维护。目录更新不会覆盖任何用户自定义方案。',
     settingsPanePlacement: '可使用 Hermes 支持的布局控件将 SpendSense 面板拖到左侧或右侧。Hermes 会在重新加载后记住您的位置。',
+    // 用量分析助手。
+    usagePricingNone: '无用量',
+    usagePricingUnpriced: '未定价',
+    usagePricingPartial: (pct, fallback) => `部分 · ${pct}%${fallback ? ' · 回退单价' : ''}`,
+    usagePricingFallback: n => `回退单价 · ${n} 次调用`,
+    usagePricingComplete: '完成',
+    usageInsightDriver: '最大驱动',
+    usageInsightDriverText: (model, provider, share) => `${model} 经 ${provider} 占已定价 API 等值成本的 ${share}。`,
+    usageInsightVerdict: '缓存结论',
+    usageInsightVerdictLoss: money => `在覆盖调用上，缓存写入成本比读取节省多 ${money}。见“缓存经济”。`,
+    usageInsightVerdictSave: (money, coverage) => `在覆盖调用上，缓存理论上节省 ${money}（覆盖率 ${coverage}）。`,
+    usageInsightDelegated: '委派工作',
+    usageInsightDelegatedText: (share, calls) => `子代理在 ${calls} 次调用中使用了 ${share} 的令牌。`,
+    usageDelta: (arrow, pct) => `${arrow} ${pct}%（较上一周期）`,
+    usageStreamInput: '输入',
+    usageStreamOutput: '输出',
+    usageStreamCacheRead: '缓存读取',
+    usageStreamCacheWrite: '缓存写入',
+    usageOther: '其他',
+    usageUnknown: '未知',
+    usageUnknownModel: '未知模型',
+    usageUnknownProviderCap: '未知供应商',
   }
 }
 
