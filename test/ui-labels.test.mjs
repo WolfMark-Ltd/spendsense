@@ -485,6 +485,8 @@ test('every usage panel string exists in English and Chinese', () => {
     'usageFilterClear', 'usageFilterActiveNote', 'usageFilterRemove', 'usageFilterChip',
     'usageFilterChipModel', 'usageFilterChipProvider', 'usageFilterChipSurface',
     'usageFilterChipTask', 'usageFilterChipParent', 'usageFilterChipScope',
+    'usageFilterScopeDirect', 'usageFilterScopeSubagent', 'usageFilterScopeAuxiliary',
+    'usageFilterScopeUnattributed',
     'usageGranDay', 'usageGranHour',
     'usageBaselineUnavailable', 'usageBaselineLoading', 'usageBaselineEstimateNote', 'usageBaselineTotals',
     'usageBaselineEmpty', 'usageLoadTitle', 'usageLoadStale', 'usageLoadFallback', 'usageRetryTip',
@@ -525,6 +527,14 @@ test('granularity and filter-chip labels translate while English stays identical
   assert.equal(T.usageFilterChipName('future', t('zh')), 'future')
   assert.equal(en.usageFilterChip(en.usageFilterChipModel, 'm1'), 'model: m1 ×')
   assert.equal(zh.usageFilterChip(zh.usageFilterChipModel, 'm1'), '模型：m1 ×')
+  for (const [value, english, chinese] of [['direct', 'direct', '直接'], ['subagent', 'subagent', '子代理'],
+      ['auxiliary', 'auxiliary', '辅助'], ['unattributed', 'unattributed', '未归属']]) {
+    assert.equal(T.usageFilterChipValue('scope', value, t('en')), english)
+    assert.equal(T.usageFilterChipValue('scope', value, t('zh')), chinese)
+  }
+  // Non-scope values are user data and pass through untouched.
+  assert.equal(T.usageFilterChipValue('model', 'm1', t('zh')), 'm1')
+  assert.equal(T.usageFilterChipValue('scope', 'future', t('zh')), 'future')
 })
 
 test('the unpriced note has no stray brace', () => {

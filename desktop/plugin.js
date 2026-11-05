@@ -2562,6 +2562,21 @@ function usageFilterChipName(key, t) {
   return mapped ? t(mapped) : key
 }
 
+/** Scope filter values (wolfmark_ledger SCOPES); the only closed chip vocabulary. */
+const USAGE_FILTER_SCOPE_KEYS = {
+  direct: 'usageFilterScopeDirect',
+  subagent: 'usageFilterScopeSubagent',
+  auxiliary: 'usageFilterScopeAuxiliary',
+  unattributed: 'usageFilterScopeUnattributed',
+}
+
+/** Display text for a chip value. Only scope values are translated; user data passes through. */
+function usageFilterChipValue(key, value, t) {
+  if (key !== 'scope') return value
+  const mapped = USAGE_FILTER_SCOPE_KEYS[value]
+  return mapped ? t(mapped) : value
+}
+
 function AnalyticsFilters({data,state,dispatch}) {
   const t = usePluginI18n(ID)
   const filter=(key,value)=>dispatch({type:'filter',key,value})
@@ -2576,7 +2591,7 @@ function AnalyticsFilters({data,state,dispatch}) {
     jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterParentOp')}),jsx('select',{'aria-label':t('usageFilterOpTip'),value:state.filters.parent,onChange:event=>filter('parent',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAllOps')},'all'),...(opts.operations || []).map(o=>jsx('option',{value:o.parent,children:t('usageDelegOpWorkers', o.parent, o.subagent_calls)},o.parent))]})]}),
     jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterWho')}),jsx('select',{'aria-label':t('usageFilterDelegTip'),value:state.filters.scope,onChange:event=>filter('scope',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterEveryone')},'all'),jsx('option',{value:'direct',children:t('usageFilterDirectOnly')},'direct'),jsx('option',{value:'subagent',children:t('usageFilterSubagentsOnly')},'subagent'),jsx('option',{value:'auxiliary',children:t('usageFilterAuxOnly')},'auxiliary'),jsx('option',{value:'unattributed',children:t('usageFilterUnattributedOnly')},'unattributed')]})]}),
     jsx(AnalyticsButton,{label:t('usageFilterClear'),onClick:()=>dispatch({type:'clear'})})]}),
-    Object.values(state.filters).some(Boolean)?jsxs('div',{style:{marginTop:10},children:[jsx('p',{className:'wm-subtle',children:t('usageFilterActiveNote')}),jsx('div',{className:'wm-scopechips',children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':t('usageFilterRemove', usageFilterChipName(key, t)),onClick:()=>filter(key,''),children:t('usageFilterChip', usageFilterChipName(key, t), value)},key))})]}):null]})
+    Object.values(state.filters).some(Boolean)?jsxs('div',{style:{marginTop:10},children:[jsx('p',{className:'wm-subtle',children:t('usageFilterActiveNote')}),jsx('div',{className:'wm-scopechips',children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':t('usageFilterRemove', usageFilterChipName(key, t)),onClick:()=>filter(key,''),children:t('usageFilterChip', usageFilterChipName(key, t), usageFilterChipValue(key, value, t))},key))})]}):null]})
 }
 function AnalyticsBaseline({days,scope}) {
   const t = usePluginI18n(ID)
@@ -8163,6 +8178,10 @@ const I18N = {
     usageFilterChipTask: 'task',
     usageFilterChipParent: 'parent',
     usageFilterChipScope: 'scope',
+    usageFilterScopeDirect: 'direct',
+    usageFilterScopeSubagent: 'subagent',
+    usageFilterScopeAuxiliary: 'auxiliary',
+    usageFilterScopeUnattributed: 'unattributed',
     usageBaselineUnavailable: why => `Historical report unavailable: ${why}`,
     usageBaselineLoading: 'Reading historical baseline…',
     usageBaselineEstimateNote: 'Historical cumulative estimate — NOT included in period analytics or filters.',
@@ -9202,6 +9221,10 @@ const I18N = {
     usageFilterChipTask: '任务',
     usageFilterChipParent: '父操作',
     usageFilterChipScope: '范围',
+    usageFilterScopeDirect: '直接',
+    usageFilterScopeSubagent: '子代理',
+    usageFilterScopeAuxiliary: '辅助',
+    usageFilterScopeUnattributed: '未归属',
     usageBaselineUnavailable: why => `历史报告不可用：${why}`,
     usageBaselineLoading: '正在读取历史基线…',
     usageBaselineEstimateNote: '历史累计估算——不计入周期分析或筛选。',
@@ -9340,7 +9363,7 @@ export const __test = {
   analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText,
   AnalyticsPage, AnalyticsDashboard, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
   AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS,
-  usageFilterChipName, USAGE_FILTER_CHIP_KEYS,
+  usageFilterChipName, USAGE_FILTER_CHIP_KEYS, usageFilterChipValue, USAGE_FILTER_SCOPE_KEYS,
   backendQuery, catalogQuery, liveProvider, sameModel, getCatalog, ensureBackendRate, $view, $automaticModelOptions,
   // Memberships: page, scope, error classification and diagnostics are exported
   // so the real-React harness can drive them without a live Desktop.
