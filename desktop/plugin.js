@@ -2386,7 +2386,7 @@ function AnalyticsTrendChart({data,state,dispatch}) {
     for(const p of trend.points){if(p.total==null)flush();else run.push(p)}flush()
   }
   const axisLabel=row=>data.trend?.granularity==='hour' ? `${String(row.ts_local || row.ts).slice(11,16)} ${row.ts_local ? String(row.ts_local).slice(-6) : 'UTC'}` : String(row.ts_local || row.ts).slice(5,10)
-  return jsx(AnalyticsPanel,{number:'02',title:t('usageTrendPanelTitle'),subtitle:t('usageTrendSubtitle', data.trend?.granularity || 'day', data.window?.timezone || 'UTC'),controls:jsx(AnalyticsSegments,{label:t('usageSegTrend'),value:metric,options:[['tokens',t('usageSegTokens')],['cost',t('usageSegCost')]],onChange:value=>dispatch({type:'set',key:'trendMetric',value})}),children:jsxs('div',{children:[
+  return jsx(AnalyticsPanel,{number:'02',title:t('usageTrendPanelTitle'),subtitle:t('usageTrendSubtitle', t(data.trend?.granularity === 'hour' ? 'usageGranHour' : 'usageGranDay'), data.window?.timezone || 'UTC'),controls:jsx(AnalyticsSegments,{label:t('usageSegTrend'),value:metric,options:[['tokens',t('usageSegTokens')],['cost',t('usageSegCost')]],onChange:value=>dispatch({type:'set',key:'trendMetric',value})}),children:jsxs('div',{children:[
     jsxs('svg',{className:'wm-trend',viewBox:`0 0 ${width} ${height}`,'data-chart':'trend',role:'img','aria-label':t('usageTrendAria', metric),children:[
       jsx('title',{children:t('usageTrendHint')}),
       ...[0,.25,.5,.75,1].flatMap(r=>[jsx('line',{className:'wm-gridline',x1:left,x2:right,y1:y(r*trend.max),y2:y(r*trend.max)},`grid${r}`),jsx('text',{className:'wm-axis',x:left-9,y:y(r*trend.max)+3,textAnchor:'end',children:format(r*trend.max)},`axis${r}`)]),
@@ -2547,6 +2547,21 @@ function AnalyticsEconomics({data}) {
       jsx('p',{className:'wm-mono',children:t('usageEconCoverage', percent(e.coverage), exactTokens(e.covered_tokens), exactTokens(e.covered_calls), exactTokens(e.excluded_calls))}),
       jsx('p',{children:t('usageEconExplainScope')})]})]})})
 }
+/** Display names for active-filter chips; unknown future keys pass through raw. */
+const USAGE_FILTER_CHIP_KEYS = {
+  model: 'usageFilterChipModel',
+  provider: 'usageFilterChipProvider',
+  surface: 'usageFilterChipSurface',
+  task: 'usageFilterChipTask',
+  parent: 'usageFilterChipParent',
+  scope: 'usageFilterChipScope',
+}
+
+function usageFilterChipName(key, t) {
+  const mapped = USAGE_FILTER_CHIP_KEYS[key]
+  return mapped ? t(mapped) : key
+}
+
 function AnalyticsFilters({data,state,dispatch}) {
   const t = usePluginI18n(ID)
   const filter=(key,value)=>dispatch({type:'filter',key,value})
@@ -2561,7 +2576,7 @@ function AnalyticsFilters({data,state,dispatch}) {
     jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterParentOp')}),jsx('select',{'aria-label':t('usageFilterOpTip'),value:state.filters.parent,onChange:event=>filter('parent',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAllOps')},'all'),...(opts.operations || []).map(o=>jsx('option',{value:o.parent,children:t('usageDelegOpWorkers', o.parent, o.subagent_calls)},o.parent))]})]}),
     jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterWho')}),jsx('select',{'aria-label':t('usageFilterDelegTip'),value:state.filters.scope,onChange:event=>filter('scope',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterEveryone')},'all'),jsx('option',{value:'direct',children:t('usageFilterDirectOnly')},'direct'),jsx('option',{value:'subagent',children:t('usageFilterSubagentsOnly')},'subagent'),jsx('option',{value:'auxiliary',children:t('usageFilterAuxOnly')},'auxiliary'),jsx('option',{value:'unattributed',children:t('usageFilterUnattributedOnly')},'unattributed')]})]}),
     jsx(AnalyticsButton,{label:t('usageFilterClear'),onClick:()=>dispatch({type:'clear'})})]}),
-    Object.values(state.filters).some(Boolean)?jsxs('div',{style:{marginTop:10},children:[jsx('p',{className:'wm-subtle',children:t('usageFilterActiveNote')}),jsx('div',{className:'wm-scopechips',children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':t('usageFilterRemove', key),onClick:()=>filter(key,''),children:t('usageFilterChip', key, value)},key))})]}):null]})
+    Object.values(state.filters).some(Boolean)?jsxs('div',{style:{marginTop:10},children:[jsx('p',{className:'wm-subtle',children:t('usageFilterActiveNote')}),jsx('div',{className:'wm-scopechips',children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':t('usageFilterRemove', usageFilterChipName(key, t)),onClick:()=>filter(key,''),children:t('usageFilterChip', usageFilterChipName(key, t), value)},key))})]}):null]})
 }
 function AnalyticsBaseline({days,scope}) {
   const t = usePluginI18n(ID)
@@ -7752,7 +7767,7 @@ const I18N = {
     storageError: msg => `⚠ The ledger could not be saved (${msg}). New usage is kept only until Hermes restarts.`,
     today: 'today',
     total: 'Total',
-    unpricedNote: n => `${n} tokens had no known rate and are not in the total (shown as ≥).}`,
+    unpricedNote: n => `${n} tokens had no known rate and are not in the total (shown as ≥).`,
     // Ledger tabs.
     tabOverview: 'Overview',
     tabUsage: 'Usage',
@@ -8000,6 +8015,8 @@ const I18N = {
     usageTrendTitle: (ts, value, calls) => `${ts} · ${value} · ${calls} calls`,
     usageTrendPanelTitle: 'Usage over time',
     usageTrendSubtitle: (gran, tz) => `Timestamped calls · ${gran} buckets · ${tz}`,
+    usageGranDay: 'day',
+    usageGranHour: 'hour',
     usageSegTrend: 'Trend',
     usageTrendAria: metric => `${metric} over true timestamps`,
     usageTrendHint: 'True elapsed-time positions. Focus or hover a timestamp for exact values.',
@@ -8140,6 +8157,12 @@ const I18N = {
     usageFilterActiveNote: 'Filtered view — only calls matching all of these are included. Remove one to widen the scope.',
     usageFilterRemove: key => `Remove ${key} filter`,
     usageFilterChip: (key, value) => `${key}: ${value} ×`,
+    usageFilterChipModel: 'model',
+    usageFilterChipProvider: 'provider',
+    usageFilterChipSurface: 'surface',
+    usageFilterChipTask: 'task',
+    usageFilterChipParent: 'parent',
+    usageFilterChipScope: 'scope',
     usageBaselineUnavailable: why => `Historical report unavailable: ${why}`,
     usageBaselineLoading: 'Reading historical baseline…',
     usageBaselineEstimateNote: 'Historical cumulative estimate — NOT included in period analytics or filters.',
@@ -9030,7 +9053,9 @@ const I18N = {
     usageTrendPoint: (ts, value, partial) => `${ts}：${value}${partial ? '（部分已定价小计）' : ''}`,
     usageTrendTitle: (ts, value, calls) => `${ts} · ${value} · ${calls} 次调用`,
     usageTrendPanelTitle: '用量趋势',
-    usageTrendSubtitle: (gran, tz) => `带时间戳调用 · ${gran} 分桶 · ${tz}`,
+    usageTrendSubtitle: (gran, tz) => `带时间戳调用 · ${gran}分桶 · ${tz}`,
+    usageGranDay: '日',
+    usageGranHour: '小时',
     usageSegTrend: '趋势',
     usageTrendAria: metric => `${metric} 真实时间戳趋势`,
     usageTrendHint: '真实流逝时间位置。将焦点移到时间戳或悬停以查看确切值。',
@@ -9171,6 +9196,12 @@ const I18N = {
     usageFilterActiveNote: '已筛选视图——仅包含符合全部条件的调用。移除一项以扩大范围。',
     usageFilterRemove: key => `移除 ${key} 筛选`,
     usageFilterChip: (key, value) => `${key}：${value} ×`,
+    usageFilterChipModel: '模型',
+    usageFilterChipProvider: '供应商',
+    usageFilterChipSurface: '位置',
+    usageFilterChipTask: '任务',
+    usageFilterChipParent: '父操作',
+    usageFilterChipScope: '范围',
     usageBaselineUnavailable: why => `历史报告不可用：${why}`,
     usageBaselineLoading: '正在读取历史基线…',
     usageBaselineEstimateNote: '历史累计估算——不计入周期分析或筛选。',
@@ -9309,6 +9340,7 @@ export const __test = {
   analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText,
   AnalyticsPage, AnalyticsDashboard, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
   AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS,
+  usageFilterChipName, USAGE_FILTER_CHIP_KEYS,
   backendQuery, catalogQuery, liveProvider, sameModel, getCatalog, ensureBackendRate, $view, $automaticModelOptions,
   // Memberships: page, scope, error classification and diagnostics are exported
   // so the real-React harness can drive them without a live Desktop.

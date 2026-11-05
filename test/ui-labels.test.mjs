@@ -483,6 +483,9 @@ test('every usage panel string exists in English and Chinese', () => {
     'usageFilterAllOps', 'usageFilterWho', 'usageFilterDelegTip', 'usageFilterEveryone',
     'usageFilterDirectOnly', 'usageFilterSubagentsOnly', 'usageFilterAuxOnly', 'usageFilterUnattributedOnly',
     'usageFilterClear', 'usageFilterActiveNote', 'usageFilterRemove', 'usageFilterChip',
+    'usageFilterChipModel', 'usageFilterChipProvider', 'usageFilterChipSurface',
+    'usageFilterChipTask', 'usageFilterChipParent', 'usageFilterChipScope',
+    'usageGranDay', 'usageGranHour',
     'usageBaselineUnavailable', 'usageBaselineLoading', 'usageBaselineEstimateNote', 'usageBaselineTotals',
     'usageBaselineEmpty', 'usageLoadTitle', 'usageLoadStale', 'usageLoadFallback', 'usageRetryTip',
     'usageLoading', 'usageStatApiEquiv', 'usageStatApiExtra', 'usageStatSavings', 'usageStatSavingsHint',
@@ -502,6 +505,31 @@ test('every usage panel string exists in English and Chinese', () => {
   assert.equal(en.usageRankFooter(8, 'weighted rate'),
     'Top 8 by weighted rate. Zero-cache older rows are ambiguous, not confirmed misses. Unknown is not zero. All models remain in the explorer.')
   assert.match(zh.usageCompFocus('输入', '1K', '50%', '注'), /占全部令牌的/)
+})
+
+test('granularity and filter-chip labels translate while English stays identical', () => {
+  const t = language => (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  assert.equal(en.usageTrendSubtitle(en.usageGranDay, 'UTC'), 'Timestamped calls · day buckets · UTC')
+  assert.equal(en.usageTrendSubtitle(en.usageGranHour, 'UTC'), 'Timestamped calls · hour buckets · UTC')
+  assert.equal(zh.usageTrendSubtitle(zh.usageGranDay, 'UTC'), '带时间戳调用 · 日分桶 · UTC')
+  assert.equal(zh.usageTrendSubtitle(zh.usageGranHour, 'UTC'), '带时间戳调用 · 小时分桶 · UTC')
+  for (const [key, english, chinese] of [['model', 'model', '模型'], ['provider', 'provider', '供应商'],
+      ['surface', 'surface', '位置'], ['task', 'task', '任务'], ['parent', 'parent', '父操作'],
+      ['scope', 'scope', '范围']]) {
+    assert.equal(T.usageFilterChipName(key, t('en')), english)
+    assert.equal(T.usageFilterChipName(key, t('zh')), chinese)
+  }
+  assert.equal(T.usageFilterChipName('future', t('zh')), 'future')
+  assert.equal(en.usageFilterChip(en.usageFilterChipModel, 'm1'), 'model: m1 ×')
+  assert.equal(zh.usageFilterChip(zh.usageFilterChipModel, 'm1'), '模型：m1 ×')
+})
+
+test('the unpriced note has no stray brace', () => {
+  assert.equal(en.unpricedNote(5), '5 tokens had no known rate and are not in the total (shown as ≥).')
+  assert.ok(!en.unpricedNote(5).includes('}'))
 })
 
 test('the InfoTip indicator is compact while its hit area stays accessible', () => {
