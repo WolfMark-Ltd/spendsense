@@ -287,6 +287,17 @@ test('every sidebar string exists in English and Chinese', () => {
   assert.match(en.costSourceInfo, /may differ/)
 })
 
+test('the idle status-chip tooltip names SpendSense in both locales', () => {
+  assert.equal(en.chipTipIdle, 'SpendSense — click for details')
+  assert.equal(zh.chipTipIdle, 'SpendSense — 点击查看详情')
+  for (const [language, dict] of [['en', en], ['zh', zh]]) {
+    for (const key of ['chipTipIdle', 'navLabel', 'pageTitle']) {
+      assert.doesNotMatch(String(dict[key]), /成本账本|Cost Ledger/,
+        `${language} ${key} keeps the current brand`)
+    }
+  }
+})
+
 test('every ledger tab string exists in English and Chinese', () => {
   const keys = ['tabOverview', 'tabUsage', 'tabCosts', 'tabMemberships', 'tabReports', 'tabNews', 'tabSettings']
   for (const key of keys) {
