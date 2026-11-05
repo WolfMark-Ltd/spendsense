@@ -2488,69 +2488,91 @@ function downloadAnalyticsCsv(rows) {
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 10_000)
   } catch { /* host without download: table remains visible */ }
 }
+/** Explorer column ids to their I18N header labels. ANALYTICS_COLUMNS keeps the canonical English. */
+const EXPLORER_COLUMN_KEYS = {
+  model: 'usageColModel',
+  provider: 'usageColProvider',
+  calls: 'usageColCalls',
+  tokens: 'usageColTokens',
+  input_tokens: 'usageColInput',
+  output_tokens: 'usageColOutput',
+  reasoning_tokens: 'usageColReasoning',
+  cache_read_tokens: 'usageColRead',
+  cache_write_tokens: 'usageColWrite',
+  cache_hit_rate: 'usageColCacheRate',
+  savings: 'usageColSavings',
+  list_usd: 'usageColApiCost',
+  per_call: 'usageColPerCall',
+  per_million: 'usageColPerMillion',
+  pricing: 'usageColPricing',
+  billing: 'usageColBilling',
+}
 function AnalyticsExplorer({data,state,dispatch}) {
+  const t = usePluginI18n(ID)
   const enriched=(data.by_model || []).map(r=>({...r, ...explorerUnitCosts(r)}))
   const rows=analyticsSort(enriched,state.sortKey,state.sortDirection)
   const columns=state.columnMode==='all'?ANALYTICS_COLUMNS:ANALYTICS_COLUMNS.filter(([key])=>ANALYTICS_CORE_COLUMNS.includes(key))
   const visible=state.showAllModels?rows:rows.slice(0,25)
-  return jsx(AnalyticsPanel,{title:'Model Explorer',subtitle:`${rows.length} model × route pairs · every column sortable`,controls:jsxs('div',{className:'wm-controls',children:[
-    jsx(AnalyticsSegments,{label:'Columns',value:state.columnMode,options:[['core','Core'],['all','All']],onChange:value=>dispatch({type:'set',key:'columnMode',value})}),
-    rows.length>25?jsx(AnalyticsButton,{label:state.showAllModels?'Show top 25 only':'Show all models',onClick:()=>dispatch({type:'toggle',key:'showAllModels'}),children:state.showAllModels?'Top 25':'Show all'}):null,
-    jsx(AnalyticsButton,{label:'Export filtered models as CSV',onClick:()=>downloadAnalyticsCsv(rows),children:'Export CSV'}),
-    jsx('span',{className:'wm-badge',children:'EXACT ROUTE FILTERS'})]}),
-    children:jsxs('div',{children:[jsx('div',{className:'wm-tablewrap',children:jsxs('table',{children:[jsx('caption',{children:'Models for the selected period and exact AND filters. Unknown prices, cache rates and savings sort last.'}),
-      jsx('thead',{children:jsx('tr',{children:columns.map(([key,label])=>jsx('th',{scope:'col','aria-sort':state.sortKey===key?(state.sortDirection==='asc'?'ascending':'descending'):'none',children:jsx('button',{type:'button','aria-label':`Sort by ${label}`,onClick:()=>dispatch({type:'sort',key}),children:`${label}${state.sortKey===key?(state.sortDirection==='desc'?' ↓':' ↑'):''}`})},key))})}),
+  return jsx(AnalyticsPanel,{title:t('usageExplorerTitle'),subtitle:t('usageExplorerSubtitle', rows.length),controls:jsxs('div',{className:'wm-controls',children:[
+    jsx(AnalyticsSegments,{label:t('usageSegColumns'),value:state.columnMode,options:[['core',t('usageSegCore')],['all',t('usageSegAll')]],onChange:value=>dispatch({type:'set',key:'columnMode',value})}),
+    rows.length>25?jsx(AnalyticsButton,{label:state.showAllModels?t('usageExplorerTop25Tip'):t('usageExplorerShowAllTip'),onClick:()=>dispatch({type:'toggle',key:'showAllModels'}),children:state.showAllModels?t('usageExplorerTop25'):t('usageExplorerShowAll')}):null,
+    jsx(AnalyticsButton,{label:t('usageExplorerExportTip'),onClick:()=>downloadAnalyticsCsv(rows),children:t('usageExplorerExport')}),
+    jsx('span',{className:'wm-badge',children:t('usageExplorerBadge')})]}),
+    children:jsxs('div',{children:[jsx('div',{className:'wm-tablewrap',children:jsxs('table',{children:[jsx('caption',{children:t('usageExplorerCaption')}),
+      jsx('thead',{children:jsx('tr',{children:columns.map(([key])=>jsx('th',{scope:'col','aria-sort':state.sortKey===key?(state.sortDirection==='asc'?'ascending':'descending'):'none',children:jsx('button',{type:'button','aria-label':t('usageExplorerSortBy', t(EXPLORER_COLUMN_KEYS[key])),onClick:()=>dispatch({type:'sort',key}),children:t('usageExplorerSortLabel', t(EXPLORER_COLUMN_KEYS[key]), state.sortKey===key?(state.sortDirection==='desc'?' ↓':' ↑'):'')})},key))})}),
       jsx('tbody',{children:visible.map(row=>jsx('tr',{children:columns.map(([key])=>{
         let content
-        if(key==='model') content=jsx('button',{type:'button',className:'wm-modelbutton',title:row.model,'aria-label':`Filter ${row.model} via ${row.provider}`,onClick:()=>dispatch({type:'select',group:'model',row}),children:row.model || 'Unknown model'})
-        else if(key==='provider') content=jsx('span',{className:'wm-subtle',children:row.provider || 'Unknown'})
-        else if(key==='billing') content=jsx('span',{className:'wm-badge',title:'Latest route/model billing classification, not a per-call invoice',children:Object.keys(row.billing_mix || {}).filter(kind=>row.billing_mix[kind]>0).sort().join(' + ') || 'unknown'})
-        else if(key==='cache_hit_rate') content=jsxs('div',{title:`${row.cache_known_calls || 0} known-cache calls; ${row.cache_unknown_calls || 0} unknown`,children:[percent(row.cache_hit_rate),row.cache_hit_rate!=null?jsx('div',{className:'wm-meter',children:jsx('span',{style:{width:`${Math.max(0,Math.min(1,row.cache_hit_rate))*100}%`}})}):null]})
+        if(key==='model') content=jsx('button',{type:'button',className:'wm-modelbutton',title:row.model,'aria-label':t('usageLegendFilter', row.model, row.provider),onClick:()=>dispatch({type:'select',group:'model',row}),children:row.model || t('usageUnknownModel')})
+        else if(key==='provider') content=jsx('span',{className:'wm-subtle',children:row.provider || t('usageUnknown')})
+        else if(key==='billing') content=jsx('span',{className:'wm-badge',title:t('usageExplorerBillingTitle'),children:Object.keys(row.billing_mix || {}).filter(kind=>row.billing_mix[kind]>0).sort().join(' + ') || t('unknown')})
+        else if(key==='cache_hit_rate') content=jsxs('div',{title:t('usageExplorerCacheTitle', row.cache_known_calls || 0, row.cache_unknown_calls || 0),children:[percent(row.cache_hit_rate),row.cache_hit_rate!=null?jsx('div',{className:'wm-meter',children:jsx('span',{style:{width:`${Math.max(0,Math.min(1,row.cache_hit_rate))*100}%`}})}):null]})
         else if(key==='savings') content=jsx('span',{className:row.economics?.savings_usd<0?'wm-warn':row.economics?.savings_usd>0?'wm-good':'wm-dim',children:analyticMoney(row.economics?.savings_usd)})
-        else if(key==='list_usd') content=jsxs('span',{className:num(row.unpriced_tokens)?'wm-warn':'',children:[analyticMoney(row.list_usd),num(row.unpriced_tokens)&&row.list_usd!=null?jsx('small',{children:' partial'}):null]})
-        else if(key==='per_call'||key==='per_million') content=jsx('span',{title:num(row.unpriced_tokens)?'Unknown: pricing coverage is partial':undefined,children:row[key]==null?'—':`$${num(row[key]).toFixed(num(row[key])<1?4:2)}`})
-        else if(key==='pricing') content=jsx('span',{className:cn('wm-badge',num(row.unpriced_tokens)&&'wm-warn'),title:`${exactTokens(row.priced_tokens)} priced / ${exactTokens(row.tokens)} total tokens`,children:analyticsPricing(row)})
+        else if(key==='list_usd') content=jsxs('span',{className:num(row.unpriced_tokens)?'wm-warn':'',children:[analyticMoney(row.list_usd),num(row.unpriced_tokens)&&row.list_usd!=null?jsx('small',{children:t('usageExplorerPartial')}):null]})
+        else if(key==='per_call'||key==='per_million') content=jsx('span',{title:num(row.unpriced_tokens)?t('usageExplorerUnitUnknown'):undefined,children:row[key]==null?'—':`$${num(row[key]).toFixed(num(row[key])<1?4:2)}`})
+        else if(key==='pricing') content=jsx('span',{className:cn('wm-badge',num(row.unpriced_tokens)&&'wm-warn'),title:t('usageExplorerPricingTitle', exactTokens(row.priced_tokens), exactTokens(row.tokens)),children:analyticsPricing(row, t)})
         else content=jsx('span',{title:exactTokens(row[key]),children:key==='calls'?exactTokens(row[key]):fmtTokens(row[key])})
         return jsx('td',{className:['model','provider','pricing'].includes(key)?'':'wm-mono',children:content},key)
-      })},analyticsId(row)))})]})}),rows.length>25?jsx('p',{className:'wm-subtle',style:{marginTop:10},children:state.showAllModels?`Showing all ${rows.length} pairs.`:`Showing top 25 of ${rows.length} pairs by the current sort. Use Show all for the full table.`}):null]}),
-    footer:'$/call and $/1M tokens are API-equivalent averages, not recorded billing. They stay unknown while any tokens are unpriced. Reasoning is included in output, never added again to the four-stream total. Billing is the latest route classification, not an allocated per-call invoice. API cost is the priced subtotal when coverage is partial. Cache % is a weighted rate on calls with known cache activity; it is not an average of model percentages. Click a model to apply its exact model + provider pair.'})
+      })},analyticsId(row)))})]})}),rows.length>25?jsx('p',{className:'wm-subtle',style:{marginTop:10},children:state.showAllModels?t('usageExplorerShowingAll', rows.length):t('usageExplorerShowingTop', rows.length)}):null]}),
+    footer:t('usageExplorerFooter')})
 }
 function AnalyticsEconomics({data}) {
+  const t = usePluginI18n(ID)
   const e=data.economics || data.totals?.economics || {}
   const max=Math.max(num(e.uncached_usd),num(e.cached_usd)) || 1
-  return jsx(AnalyticsPanel,{title:'Cache economics',subtitle:'A theoretical counterfactual, not a billing credit',controls:jsx('span',{className:cn('wm-badge',e.savings_usd<0?'wm-warn':'wm-good'),children:e.savings_usd==null?'INSUFFICIENT PRICING':e.savings_usd<0?'NET WRITE PREMIUM':'NET CACHE BENEFIT'}),children:jsxs('div',{className:'wm-economics',children:[
-    jsxs('div',{children:[jsx('div',{className:cn('wm-compositiontotal wm-mono',e.savings_usd<0?'wm-warn':'wm-good'),children:analyticMoney(e.savings_usd)}),jsx('div',{className:'wm-subtle',children:'theoretical net savings'}),
-      jsx('div',{className:'wm-comparison',children:[['Without cache',e.uncached_usd,'var(--ui-text-quaternary)'],['With cache',e.cached_usd,'var(--ui-success)']].map(([label,value,color])=>jsxs('div',{className:'wm-comparerow',children:[jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:analyticMoney(value)})]}),jsx('div',{className:'wm-comparetrack',role:'img','aria-label':`${label}: ${analyticMoney(value)}`,children:finiteValue(value)!=null?jsx('span',{style:{width:`${num(value)/max*100}%`,background:color}}):null})]},label))})]}),
-    jsxs('div',{className:'wm-explanation',children:[jsx('p',{children:'Without cache: the same prompt tokens at uncached input rates. With cache: fresh input + cache reads + cache writes at their effective per-call catalogue rates. Both include the same output cost, which cancels out of net savings.'}),
-      jsx('p',{children:'Net = uncached prompt cost − cached prompt cost. Write premiums may outweigh read discounts, so savings can be negative. This does not represent money returned on subscription or included routes.'}),
-      jsx('p',{className:'wm-mono',children:`${percent(e.coverage)} token coverage · ${exactTokens(e.covered_tokens)} covered tokens · ${exactTokens(e.covered_calls)} covered calls · ${exactTokens(e.excluded_calls)} excluded calls`}),
-      jsx('p',{children:'Calls with unknown input/read/write prices or ambiguous cache splits are excluded, not assumed free. All comparisons use the same period and exact scope filters.'})]})]})})
+  return jsx(AnalyticsPanel,{title:t('usageEconTitle'),subtitle:t('usageEconSubtitle'),controls:jsx('span',{className:cn('wm-badge',e.savings_usd<0?'wm-warn':'wm-good'),children:e.savings_usd==null?t('usageEconNoPricing'):e.savings_usd<0?t('usageEconWritePremium'):t('usageEconBenefit')}),children:jsxs('div',{className:'wm-economics',children:[
+    jsxs('div',{children:[jsx('div',{className:cn('wm-compositiontotal wm-mono',e.savings_usd<0?'wm-warn':'wm-good'),children:analyticMoney(e.savings_usd)}),jsx('div',{className:'wm-subtle',children:t('usageEconNetSavings')}),
+      jsx('div',{className:'wm-comparison',children:[[t('usageEconWithoutCache'),e.uncached_usd,'var(--ui-text-quaternary)'],[t('usageEconWithCache'),e.cached_usd,'var(--ui-success)']].map(([label,value,color])=>jsxs('div',{className:'wm-comparerow',children:[jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:analyticMoney(value)})]}),jsx('div',{className:'wm-comparetrack',role:'img','aria-label':t('usageEconBarAria', label, analyticMoney(value)),children:finiteValue(value)!=null?jsx('span',{style:{width:`${num(value)/max*100}%`,background:color}}):null})]},label))})]}),
+    jsxs('div',{className:'wm-explanation',children:[jsx('p',{children:t('usageEconExplainRates')}),
+      jsx('p',{children:t('usageEconExplainNet')}),
+      jsx('p',{className:'wm-mono',children:t('usageEconCoverage', percent(e.coverage), exactTokens(e.covered_tokens), exactTokens(e.covered_calls), exactTokens(e.excluded_calls))}),
+      jsx('p',{children:t('usageEconExplainScope')})]})]})})
 }
 function AnalyticsFilters({data,state,dispatch}) {
+  const t = usePluginI18n(ID)
   const filter=(key,value)=>dispatch({type:'filter',key,value})
   const opts=data?.options || {}
   return jsxs('div',{children:[jsxs('div',{className:'wm-filters',children:[
-    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:'Period'}),jsx('select',{'aria-label':'Period filter',value:state.days,onChange:event=>dispatch({type:'set',key:'days',value:Number(event.target.value)}),children:[[1,'Today'],[7,'Last 7 days'],[30,'Last 30 days'],[90,'Last 90 days'],[365,'Last 365 days']].map(([days,label])=>jsx('option',{value:days,children:label},days))})]}),
-    ...[['model','Model (any provider)',opts.models || [],'Model'],['provider','Provider route',opts.providers || [],'Provider'],['surface','Where it ran',opts.surfaces || [],'Surface'],['task','Kind of work',opts.tasks || [],'Task']].map(([key,label,raw,ariaName])=>{
+    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterPeriod')}),jsx('select',{'aria-label':t('usageFilterPeriodTip'),value:state.days,onChange:event=>dispatch({type:'set',key:'days',value:Number(event.target.value)}),children:[[1,t('usagePeriodToday')],[7,t('usagePeriodWeek')],[30,t('usagePeriodMonth')],[90,t('usagePeriodQuarter')],[365,t('usagePeriodYear')]].map(([days,label])=>jsx('option',{value:days,children:label},days))})]}),
+    ...[['model',t('usageFilterModel'),opts.models || [],t('usageFilterModelName')],['provider',t('usageFilterProvider'),opts.providers || [],t('usageFilterProviderName')],['surface',t('usageFilterSurface'),opts.surfaces || [],t('usageFilterSurfaceName')],['task',t('usageFilterTask'),opts.tasks || [],t('usageFilterTaskName')]].map(([key,label,raw,ariaName])=>{
       const options=key==='model'?[...new Set(raw.map(r=>typeof r==='string'?r:r.model))]:[...raw]
       if(state.filters[key]&&!options.includes(state.filters[key]))options.unshift(state.filters[key])
-      return jsxs('label',{className:'wm-filter',children:[jsx('span',{children:label}),jsx('select',{'aria-label':`${ariaName} filter`,value:state.filters[key],onChange:event=>filter(key,event.target.value),children:[jsx('option',{value:'',children:`All ${key==='surface'?'surfaces':key==='task'?'tasks':key==='model'?'models':'providers'}`},'all'),...options.map(value=>jsx('option',{value,children:value || 'Unknown'},value))]})]},key)
+      return jsxs('label',{className:'wm-filter',children:[jsx('span',{children:label}),jsx('select',{'aria-label':t('usageFilterTip', ariaName),value:state.filters[key],onChange:event=>filter(key,event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAll', key)},'all'),...options.map(value=>jsx('option',{value,children:value || t('usageUnknown')},value))]})]},key)
     }),
-    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:'Parent operation'}),jsx('select',{'aria-label':'Operation filter',value:state.filters.parent,onChange:event=>filter('parent',event.target.value),children:[jsx('option',{value:'',children:'All operations'},'all'),...(opts.operations || []).map(o=>jsx('option',{value:o.parent,children:`${o.parent} (${o.subagent_calls} worker calls)`},o.parent))]})]}),
-    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:'Who did the work'}),jsx('select',{'aria-label':'Delegation filter',value:state.filters.scope,onChange:event=>filter('scope',event.target.value),children:[jsx('option',{value:'',children:'Everyone combined'},'all'),jsx('option',{value:'direct',children:'Parent direct only'},'direct'),jsx('option',{value:'subagent',children:'Subagents only'},'subagent'),jsx('option',{value:'auxiliary',children:'Auxiliary only'},'auxiliary'),jsx('option',{value:'unattributed',children:'Unattributed only'},'unattributed')]})]}),
-    jsx(AnalyticsButton,{label:'Clear filters',onClick:()=>dispatch({type:'clear'})})]}),
-    Object.values(state.filters).some(Boolean)?jsxs('div',{style:{marginTop:10},children:[jsx('p',{className:'wm-subtle',children:'Filtered view — only calls matching all of these are included. Remove one to widen the scope.'}),jsx('div',{className:'wm-scopechips',children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':`Remove ${key} filter`,onClick:()=>filter(key,''),children:`${key}: ${value} ×`},key))})]}):null]})
+    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterParentOp')}),jsx('select',{'aria-label':t('usageFilterOpTip'),value:state.filters.parent,onChange:event=>filter('parent',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAllOps')},'all'),...(opts.operations || []).map(o=>jsx('option',{value:o.parent,children:t('usageDelegOpWorkers', o.parent, o.subagent_calls)},o.parent))]})]}),
+    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterWho')}),jsx('select',{'aria-label':t('usageFilterDelegTip'),value:state.filters.scope,onChange:event=>filter('scope',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterEveryone')},'all'),jsx('option',{value:'direct',children:t('usageFilterDirectOnly')},'direct'),jsx('option',{value:'subagent',children:t('usageFilterSubagentsOnly')},'subagent'),jsx('option',{value:'auxiliary',children:t('usageFilterAuxOnly')},'auxiliary'),jsx('option',{value:'unattributed',children:t('usageFilterUnattributedOnly')},'unattributed')]})]}),
+    jsx(AnalyticsButton,{label:t('usageFilterClear'),onClick:()=>dispatch({type:'clear'})})]}),
+    Object.values(state.filters).some(Boolean)?jsxs('div',{style:{marginTop:10},children:[jsx('p',{className:'wm-subtle',children:t('usageFilterActiveNote')}),jsx('div',{className:'wm-scopechips',children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':t('usageFilterRemove', key),onClick:()=>filter(key,''),children:t('usageFilterChip', key, value)},key))})]}):null]})
 }
 function AnalyticsBaseline({days,scope}) {
+  const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const {data,error,isLoading}=useQuery({...backendQuery(days,'hybrid',identity),queryKey:[ID,'historical-baseline',identity,scope,days],refetchInterval:false})
-  if(error)return jsx('p',{className:'wm-warn',children:`Historical report unavailable: ${String(error.message || error)}`})
-  if(isLoading&&!data)return jsx('p',{className:'wm-subtle',children:'Reading historical baseline…'})
+  if(error)return jsx('p',{className:'wm-warn',children:t('usageBaselineUnavailable', String(error.message || error))})
+  if(isLoading&&!data)return jsx('p',{className:'wm-subtle',children:t('usageBaselineLoading')})
   const baseline=data?.baseline
-  const t=(key,...args)=>typeof I18N.en[key]==='function'?I18N.en[key](...args):I18N.en[key] || key
   return jsxs('div',{className:'wm-subtle',style:{paddingTop:12},children:[
-    jsx('p',{children:'Historical cumulative estimate — NOT included in period analytics or filters.'}),
-    jsx('p',{children:baseline?.totals?`${fmtTokens(baseline.totals.tokens)} tokens · API-equivalent ${analyticMoney(baseline.totals.list_usd)} · recorded billing ${analyticMoney(baseline.totals.billed_usd)}`:'No historical baseline captured.'}),
+    jsx('p',{children:t('usageBaselineEstimateNote')}),
+    jsx('p',{children:baseline?.totals?t('usageBaselineTotals', fmtTokens(baseline.totals.tokens), analyticMoney(baseline.totals.list_usd), analyticMoney(baseline.totals.billed_usd)):t('usageBaselineEmpty')}),
     baseline?.note?jsx('p',{children:baseline.note}):null,jsx('p',{children:reconciliationText(t,data?.reconciliation)})]})
 }
 function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',productPage=false}) {
@@ -2562,23 +2584,23 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('div',{className:'wm-eyebrow',children:'WolfMark / SpendSense'}),jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
     jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')}),jsx(AnalyticsButton,{label:t('usageCloseTip'),onClick:closeLedger,children:t('usageClose')})]})]})
   return jsxs('div',{className:cn('wm-analytics',productPage&&'wm-product'),children:[jsx('style',{children:productPage?ANALYTICS_CSS+PRODUCT_CSS:ANALYTICS_CSS}),productPage?jsx(LedgerTabs,{}):null,jsxs('div',{className:'wm-shell',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
-    query.error?jsxs('div',{className:'wm-alert',role:'alert',children:[jsx('h2',{children:'Analytics unavailable'}),jsx('p',{children:String(query.error.message || query.error)}),jsx('p',{children:data?'The visible snapshot is stale. Retry before using these values.':'The live chip and this desktop’s ledger are still available.'}),jsx(AnalyticsButton,{label:'Retry analytics',onClick:refresh})]}):null,
-    query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:'Reading timestamped calls…'}):null,
+    query.error?jsxs('div',{className:'wm-alert',role:'alert',children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:String(query.error.message || query.error)}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
+    query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
     totals?jsxs('div',{className:'wm-stats',children:[
-      jsx(AnalyticsStat,{label:'API-equivalent',value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',num(totals.unpriced_tokens)&&'wm-warn'),children:analyticsPricing(totals)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd)) || 'Priced per-call estimate · not an invoice'}),
+      jsx(AnalyticsStat,{label:t('usageStatApiEquiv'),value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',num(totals.unpriced_tokens)&&'wm-warn'),children:analyticsPricing(totals, t)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd, t)) || t('usageStatApiExtra')}),
       jsx(AnalyticsStat,{label:t('weightedCacheHit'),value:percent(totals.cache_hit_rate),tone:'wm-good',hint: totals.cache_prompt_coverage == null ? t('cacheCoverageUnavailable') : t('cacheCoveragePrompt', percent(totals.cache_prompt_coverage)),extra:t('cacheCoverageBasis')}),
-      jsx(AnalyticsStat,{label:'Theoretical net savings',value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:'Read discounts − write premiums',extra:`${percent(economics.coverage)} economics coverage · detail below`}),
-      jsx(AnalyticsStat,{label:'Tokens / calls',value:fmtTokens(totals.tokens),hint:`${exactTokens(totals.calls)} recorded calls`,extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens)) || `${fmtTokens(totals.input_tokens)} in · ${fmtTokens(totals.output_tokens)} out`}),
-      jsx(AnalyticsStat,{label:'Pricing coverage',value:percent(data.pricing_coverage?.coverage),hint:`${exactTokens(totals.unpriced_tokens)} unpriced tokens`,extra:analyticsPricing(totals)})]}):null,
-    totals&&analyticsInsights(data).length?jsx('div',{className:'wm-insights','aria-label':'What matters in this period',children:analyticsInsights(data).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{children:item.text})]},item.label))}):null,
-    totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:billingMix || 'Only explicit per-call charges are shown; unknown is not zero.',children:[jsx('strong',{children:'Recorded billing ' }),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),' ',jsx('span',{className:cn('wm-badge',!totals.billed_complete&&'wm-warn'),children:totals.billed_complete?'Complete':totals.billed_usd==null?'Unknown':'Partial'}),' · includes only recorded charges; unknown routes are not $0.']}),jsx('span',{className:'wm-mono',children:data.window?`${String(data.window.since_local || data.window.since || '').slice(0,10)} → ${String(data.window.until_local || data.window.until || '').slice(0,10)} · ${data.window.since_local ? data.window.timezone || 'local' : 'UTC'}`:'Timestamped window'})]}):null,
-    totals&&num(totals.unpriced_tokens)?jsx('div',{className:'wm-alert',children:`${exactTokens(totals.unpriced_tokens)} unpriced tokens. API-equivalent cost is a partial priced subtotal; unknown prices are excluded, not counted as zero.`}):null,
-    totals&&!num(totals.calls)?jsxs('div',{className:'wm-empty',role:'status',children:[jsx('h2',{children:'No backend calls recorded for this period'}),jsx('p',{children:'This report covers backend analytics. Desktop-recorded usage shown on Overview is separate; open the local ledger to view calls captured by this Desktop. Try a longer period or clear filters to check this report. The historical baseline remains separate below.'}),jsx(AnalyticsButton,{label:'Show Desktop-recorded usage',onClick:()=>$view.set(VIEW_DESKTOP),children:'Show Desktop-recorded usage'}),jsx(AnalyticsButton,{label:'Clear empty scope',onClick:()=>dispatch({type:'clear'})})]}):null,
-    !totals&&!query.isLoading&&!query.error?jsx('div',{className:'wm-empty',role:'status',children:'Usage data is not available for this profile yet.'}):null,
+      jsx(AnalyticsStat,{label:t('usageStatSavings'),value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:t('usageStatSavingsHint'),extra:t('usageStatSavingsExtra', percent(economics.coverage))}),
+      jsx(AnalyticsStat,{label:t('usageStatTokens'),value:fmtTokens(totals.tokens),hint:t('usageStatTokensHint', exactTokens(totals.calls)),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens, t)) || t('usageStatTokensExtra', fmtTokens(totals.input_tokens), fmtTokens(totals.output_tokens))}),
+      jsx(AnalyticsStat,{label:t('usageStatCoverage'),value:percent(data.pricing_coverage?.coverage),hint:t('usageStatCoverageHint', exactTokens(totals.unpriced_tokens)),extra:analyticsPricing(totals, t)})]}):null,
+    totals&&analyticsInsights(data, t).length?jsx('div',{className:'wm-insights','aria-label':t('usageInsightsAria'),children:analyticsInsights(data, t).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{children:item.text})]},item.label))}):null,
+    totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:billingMix || t('usageBillingTitle'),children:[jsx('strong',{children:t('usageBillingLabel')}),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),' ',jsx('span',{className:cn('wm-badge',!totals.billed_complete&&'wm-warn'),children:totals.billed_complete?t('usageBillingComplete'):totals.billed_usd==null?t('usageUnknown'):t('usageBillingPartial')}),t('usageBillingNote')]}),jsx('span',{className:'wm-mono',children:data.window?t('usageWindowDash', String(data.window.since_local || data.window.since || '').slice(0,10), String(data.window.until_local || data.window.until || '').slice(0,10), data.window.since_local ? data.window.timezone || 'local' : 'UTC'):t('usageWindowPending')})]}):null,
+    totals&&num(totals.unpriced_tokens)?jsx('div',{className:'wm-alert',children:t('usageUnpricedAlert', exactTokens(totals.unpriced_tokens))}):null,
+    totals&&!num(totals.calls)?jsxs('div',{className:'wm-empty',role:'status',children:[jsx('h2',{children:t('usageEmptyTitle')}),jsx('p',{children:t('usageEmptyBody')}),jsx(AnalyticsButton,{label:t('usageEmptyShowDesktop'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageEmptyShowDesktop')}),jsx(AnalyticsButton,{label:t('usageEmptyClear'),onClick:()=>dispatch({type:'clear'})})]}):null,
+    !totals&&!query.isLoading&&!query.error?jsx('div',{className:'wm-empty',role:'status',children:t('usageNoData')}):null,
     totals?jsxs('div',{className:'wm-charts',children:[jsx(AnalyticsDistribution,{data,state,dispatch}),jsx(AnalyticsTrendChart,{data,state,dispatch}),jsx(AnalyticsDelegation,{data,state,dispatch}),jsx(AnalyticsRanking,{data,state,dispatch}),jsx(AnalyticsComposition,{data,state,dispatch})]}):null,
     totals?jsx(AnalyticsExplorer,{data,state,dispatch}):null,totals?jsx(AnalyticsEconomics,{data}):null,
-    totals?jsxs('div',{className:'wm-subtle',children:[jsx('p',{children:`Recording since ${data.recording?.since || 'not yet available'} · latest ${data.recording?.last || '—'}. Only timestamped captured calls enter this period.`}),jsx('p',{children:'Cache hit = read tokens ÷ (fresh input + read + write tokens), weighted on calls with known cache activity. Legacy zero-cache rows are ambiguous and excluded from the known denominator.'}),jsxs('details',{style:{marginTop:10},children:[jsx('summary',{children:'Methodology & coverage details'}),...(data.notes || []).map((note,i)=>jsx('p',{style:{marginTop:7},children:note},i))]})]}):null,
-    jsxs('details',{className:'wm-baseline',open:state.baselineOpen,onToggle:event=>dispatch({type:'set',key:'baselineOpen',value:event.currentTarget.open}),children:[jsx('summary',{children:'Historical baseline & reconciliation — separate cumulative estimate'}),state.baselineOpen?jsx(AnalyticsBaseline,{days:state.days,scope}):null]})]})]})
+    totals?jsxs('div',{className:'wm-subtle',children:[jsx('p',{children:t('usageRecordingLine', data.recording?.since || t('usageRecordingPending'), data.recording?.last || '—')}),jsx('p',{children:t('usageCacheFormula')}),jsxs('details',{style:{marginTop:10},children:[jsx('summary',{children:t('usageMethodologyTitle')}),...(data.notes || []).map((note,i)=>jsx('p',{style:{marginTop:7},children:note},i))]})]}):null,
+    jsxs('details',{className:'wm-baseline',open:state.baselineOpen,onToggle:event=>dispatch({type:'set',key:'baselineOpen',value:event.currentTarget.open}),children:[jsx('summary',{children:t('usageBaselineSummaryTitle')}),state.baselineOpen?jsx(AnalyticsBaseline,{days:state.days,scope}):null]})]})]})
 }
 function AnalyticsPage({productPage=false}={}) {
   const profile=useValue(host.state.profile)
@@ -8035,6 +8057,128 @@ const I18N = {
     usageCompNoteInput: 'Fresh, uncached input only.',
     usageCompNoteOutput: 'Generated output tokens.',
     usageCompEmpty: 'Select a stream for its exact count. This is a composition inspection, not a hidden model filter.',
+    // Usage explorer, economics, filters and states.
+    usageSegColumns: 'Columns',
+    usageSegCore: 'Core',
+    usageExplorerTitle: 'Model Explorer',
+    usageExplorerSubtitle: n => `${n} model × route pairs · every column sortable`,
+    usageExplorerTop25Tip: 'Show top 25 only',
+    usageExplorerShowAllTip: 'Show all models',
+    usageExplorerTop25: 'Top 25',
+    usageExplorerShowAll: 'Show all',
+    usageExplorerExportTip: 'Export filtered models as CSV',
+    usageExplorerExport: 'Export CSV',
+    usageExplorerBadge: 'EXACT ROUTE FILTERS',
+    usageExplorerCaption: 'Models for the selected period and exact AND filters. Unknown prices, cache rates and savings sort last.',
+    usageExplorerSortBy: label => `Sort by ${label}`,
+    usageExplorerSortLabel: (label, arrow) => `${label}${arrow}`,
+    usageColModel: 'Model',
+    usageColProvider: 'Provider',
+    usageColCalls: 'Calls',
+    usageColTokens: 'Tokens',
+    usageColInput: 'Input',
+    usageColOutput: 'Output',
+    usageColReasoning: 'Reasoning',
+    usageColRead: 'Read',
+    usageColWrite: 'Write',
+    usageColCacheRate: 'Cache %',
+    usageColSavings: 'Net savings',
+    usageColApiCost: 'API cost',
+    usageColPerCall: '$/call',
+    usageColPerMillion: '$/1M tokens',
+    usageColPricing: 'Pricing',
+    usageColBilling: 'Billing',
+    usageExplorerBillingTitle: 'Latest route/model billing classification, not a per-call invoice',
+    usageExplorerCacheTitle: (known, unknown) => `${known} known-cache calls; ${unknown} unknown`,
+    usageExplorerPartial: ' partial',
+    usageExplorerUnitUnknown: 'Unknown: pricing coverage is partial',
+    usageExplorerPricingTitle: (priced, total) => `${priced} priced / ${total} total tokens`,
+    usageExplorerShowingAll: n => `Showing all ${n} pairs.`,
+    usageExplorerShowingTop: n => `Showing top 25 of ${n} pairs by the current sort. Use Show all for the full table.`,
+    usageExplorerFooter: '$/call and $/1M tokens are API-equivalent averages, not recorded billing. They stay unknown while any tokens are unpriced. Reasoning is included in output, never added again to the four-stream total. Billing is the latest route classification, not an allocated per-call invoice. API cost is the priced subtotal when coverage is partial. Cache % is a weighted rate on calls with known cache activity; it is not an average of model percentages. Click a model to apply its exact model + provider pair.',
+    usageEconTitle: 'Cache economics',
+    usageEconSubtitle: 'A theoretical counterfactual, not a billing credit',
+    usageEconNoPricing: 'INSUFFICIENT PRICING',
+    usageEconWritePremium: 'NET WRITE PREMIUM',
+    usageEconBenefit: 'NET CACHE BENEFIT',
+    usageEconNetSavings: 'theoretical net savings',
+    usageEconWithoutCache: 'Without cache',
+    usageEconWithCache: 'With cache',
+    usageEconBarAria: (label, money) => `${label}: ${money}`,
+    usageEconExplainRates: 'Without cache: the same prompt tokens at uncached input rates. With cache: fresh input + cache reads + cache writes at their effective per-call catalogue rates. Both include the same output cost, which cancels out of net savings.',
+    usageEconExplainNet: 'Net = uncached prompt cost − cached prompt cost. Write premiums may outweigh read discounts, so savings can be negative. This does not represent money returned on subscription or included routes.',
+    usageEconCoverage: (coverage, tokens, calls, excluded) => `${coverage} token coverage · ${tokens} covered tokens · ${calls} covered calls · ${excluded} excluded calls`,
+    usageEconExplainScope: 'Calls with unknown input/read/write prices or ambiguous cache splits are excluded, not assumed free. All comparisons use the same period and exact scope filters.',
+    usageFilterPeriod: 'Period',
+    usageFilterPeriodTip: 'Period filter',
+    usagePeriodToday: 'Today',
+    usagePeriodWeek: 'Last 7 days',
+    usagePeriodMonth: 'Last 30 days',
+    usagePeriodQuarter: 'Last 90 days',
+    usagePeriodYear: 'Last 365 days',
+    usageFilterModel: 'Model (any provider)',
+    usageFilterModelName: 'Model',
+    usageFilterProvider: 'Provider route',
+    usageFilterProviderName: 'Provider',
+    usageFilterSurface: 'Where it ran',
+    usageFilterSurfaceName: 'Surface',
+    usageFilterTask: 'Kind of work',
+    usageFilterTaskName: 'Task',
+    usageFilterTip: name => `${name} filter`,
+    usageFilterAll: key => `All ${key === 'surface' ? 'surfaces' : key === 'task' ? 'tasks' : key === 'model' ? 'models' : 'providers'}`,
+    usageFilterParentOp: 'Parent operation',
+    usageFilterOpTip: 'Operation filter',
+    usageFilterAllOps: 'All operations',
+    usageFilterWho: 'Who did the work',
+    usageFilterDelegTip: 'Delegation filter',
+    usageFilterEveryone: 'Everyone combined',
+    usageFilterDirectOnly: 'Parent direct only',
+    usageFilterSubagentsOnly: 'Subagents only',
+    usageFilterAuxOnly: 'Auxiliary only',
+    usageFilterUnattributedOnly: 'Unattributed only',
+    usageFilterClear: 'Clear filters',
+    usageFilterActiveNote: 'Filtered view — only calls matching all of these are included. Remove one to widen the scope.',
+    usageFilterRemove: key => `Remove ${key} filter`,
+    usageFilterChip: (key, value) => `${key}: ${value} ×`,
+    usageBaselineUnavailable: why => `Historical report unavailable: ${why}`,
+    usageBaselineLoading: 'Reading historical baseline…',
+    usageBaselineEstimateNote: 'Historical cumulative estimate — NOT included in period analytics or filters.',
+    usageBaselineTotals: (tokens, api, billed) => `${tokens} tokens · API-equivalent ${api} · recorded billing ${billed}`,
+    usageBaselineEmpty: 'No historical baseline captured.',
+    usageLoadTitle: 'Analytics unavailable',
+    usageLoadStale: 'The visible snapshot is stale. Retry before using these values.',
+    usageLoadFallback: 'The live chip and this desktop’s ledger are still available.',
+    usageRetryTip: 'Retry analytics',
+    usageLoading: 'Reading timestamped calls…',
+    usageStatApiEquiv: 'API-equivalent',
+    usageStatApiExtra: 'Priced per-call estimate · not an invoice',
+    usageStatSavings: 'Theoretical net savings',
+    usageStatSavingsHint: 'Read discounts − write premiums',
+    usageStatSavingsExtra: coverage => `${coverage} economics coverage · detail below`,
+    usageStatTokens: 'Tokens / calls',
+    usageStatTokensHint: calls => `${calls} recorded calls`,
+    usageStatTokensExtra: (input, output) => `${input} in · ${output} out`,
+    usageStatCoverage: 'Pricing coverage',
+    usageStatCoverageHint: tokens => `${tokens} unpriced tokens`,
+    usageInsightsAria: 'What matters in this period',
+    usageBillingTitle: 'Only explicit per-call charges are shown; unknown is not zero.',
+    usageBillingLabel: 'Recorded billing ',
+    usageBillingComplete: 'Complete',
+    usageBillingPartial: 'Partial',
+    usageBillingNote: ' · includes only recorded charges; unknown routes are not $0.',
+    usageWindowDash: (since, until, tz) => `${since} → ${until} · ${tz}`,
+    usageWindowPending: 'Timestamped window',
+    usageUnpricedAlert: tokens => `${tokens} unpriced tokens. API-equivalent cost is a partial priced subtotal; unknown prices are excluded, not counted as zero.`,
+    usageEmptyTitle: 'No backend calls recorded for this period',
+    usageEmptyBody: 'This report covers backend analytics. Desktop-recorded usage shown on Overview is separate; open the local ledger to view calls captured by this Desktop. Try a longer period or clear filters to check this report. The historical baseline remains separate below.',
+    usageEmptyShowDesktop: 'Show Desktop-recorded usage',
+    usageEmptyClear: 'Clear empty scope',
+    usageNoData: 'Usage data is not available for this profile yet.',
+    usageRecordingLine: (since, last) => `Recording since ${since} · latest ${last}. Only timestamped captured calls enter this period.`,
+    usageRecordingPending: 'not yet available',
+    usageCacheFormula: 'Cache hit = read tokens ÷ (fresh input + read + write tokens), weighted on calls with known cache activity. Legacy zero-cache rows are ambiguous and excluded from the known denominator.',
+    usageMethodologyTitle: 'Methodology & coverage details',
+    usageBaselineSummaryTitle: 'Historical baseline & reconciliation — separate cumulative estimate',
   },
   zh: {
     basisLegacy: '1.0 前旧数据 · 按现价估算',
@@ -8944,6 +9088,128 @@ const I18N = {
     usageCompNoteInput: '仅新鲜未缓存输入。',
     usageCompNoteOutput: '生成的输出令牌。',
     usageCompEmpty: '选择一个流以查看确切计数。这是构成查看，不是隐藏的模型筛选。',
+    // 用量浏览器、经济、筛选与状态。
+    usageSegColumns: '列',
+    usageSegCore: '核心',
+    usageExplorerTitle: '模型浏览器',
+    usageExplorerSubtitle: n => `${n} 个模型 × 线路对 · 每列可排序`,
+    usageExplorerTop25Tip: '仅显示前 25 名',
+    usageExplorerShowAllTip: '显示全部模型',
+    usageExplorerTop25: '前 25',
+    usageExplorerShowAll: '显示全部',
+    usageExplorerExportTip: '将筛选后的模型导出为 CSV',
+    usageExplorerExport: '导出 CSV',
+    usageExplorerBadge: '精确线路筛选',
+    usageExplorerCaption: '所选周期与精确 AND 筛选下的模型。未知价格、缓存命中率与节省排在最后。',
+    usageExplorerSortBy: label => `按${label}排序`,
+    usageExplorerSortLabel: (label, arrow) => `${label}${arrow}`,
+    usageColModel: '模型',
+    usageColProvider: '供应商',
+    usageColCalls: '调用',
+    usageColTokens: '令牌',
+    usageColInput: '输入',
+    usageColOutput: '输出',
+    usageColReasoning: '推理',
+    usageColRead: '读取',
+    usageColWrite: '写入',
+    usageColCacheRate: '缓存 %',
+    usageColSavings: '净节省',
+    usageColApiCost: 'API 成本',
+    usageColPerCall: '美元/次',
+    usageColPerMillion: '美元/百万令牌',
+    usageColPricing: '定价',
+    usageColBilling: '账单',
+    usageExplorerBillingTitle: '最新线路/模型账单分类，非按次账单',
+    usageExplorerCacheTitle: (known, unknown) => `${known} 次已知缓存调用；${unknown} 次未知`,
+    usageExplorerPartial: ' 部分',
+    usageExplorerUnitUnknown: '未知：定价覆盖不完整',
+    usageExplorerPricingTitle: (priced, total) => `${priced} 已定价 / ${total} 令牌总数`,
+    usageExplorerShowingAll: n => `显示全部 ${n} 对。`,
+    usageExplorerShowingTop: n => `按当前排序显示前 25 对，共 ${n} 对。使用“显示全部”查看完整表格。`,
+    usageExplorerFooter: '美元/次与美元/百万令牌为 API 等值均值，非已记录账单。只要有令牌未定价即保持未知。推理计入输出，永不重复计入四流合计。账单为最新线路分类，非分摊的按次账单。覆盖不完整时 API 成本为已定价小计。缓存 % 为已知缓存活动调用的加权命中率，非模型百分比均值。点击模型以应用其确切模型 + 供应商对。',
+    usageEconTitle: '缓存经济',
+    usageEconSubtitle: '理论反事实，非账单抵扣',
+    usageEconNoPricing: '定价不足',
+    usageEconWritePremium: '净写入溢价',
+    usageEconBenefit: '净缓存收益',
+    usageEconNetSavings: '理论净节省',
+    usageEconWithoutCache: '无缓存',
+    usageEconWithCache: '有缓存',
+    usageEconBarAria: (label, money) => `${label}：${money}`,
+    usageEconExplainRates: '无缓存：相同提示词令牌按未缓存输入单价。有缓存：新鲜输入 + 缓存读取 + 缓存写入按其有效按次目录单价。两者包含相同的输出成本，在净节省中抵消。',
+    usageEconExplainNet: '净额 = 未缓存提示词成本 − 已缓存提示词成本。写入溢价可能超过读取折扣，因此节省可为负。这不代表订阅或包含线路上的退款。',
+    usageEconCoverage: (coverage, tokens, calls, excluded) => `${coverage} 令牌覆盖率 · ${tokens} 已覆盖令牌 · ${calls} 已覆盖调用 · ${excluded} 已排除调用`,
+    usageEconExplainScope: '输入/读取/写入价格未知或缓存拆分不明确的调用予以排除，不视为免费。所有比较使用相同时期与确切范围筛选。',
+    usageFilterPeriod: '周期',
+    usageFilterPeriodTip: '周期筛选',
+    usagePeriodToday: '今天',
+    usagePeriodWeek: '近 7 天',
+    usagePeriodMonth: '近 30 天',
+    usagePeriodQuarter: '近 90 天',
+    usagePeriodYear: '近 365 天',
+    usageFilterModel: '模型（任意供应商）',
+    usageFilterModelName: '模型',
+    usageFilterProvider: '供应商线路',
+    usageFilterProviderName: '供应商',
+    usageFilterSurface: '运行位置',
+    usageFilterSurfaceName: '位置',
+    usageFilterTask: '工作类型',
+    usageFilterTaskName: '任务',
+    usageFilterTip: name => `${name}筛选`,
+    usageFilterAll: key => `全部${key === 'surface' ? '位置' : key === 'task' ? '任务' : key === 'model' ? '模型' : '供应商'}`,
+    usageFilterParentOp: '父操作',
+    usageFilterOpTip: '操作筛选',
+    usageFilterAllOps: '全部操作',
+    usageFilterWho: '执行者',
+    usageFilterDelegTip: '委派筛选',
+    usageFilterEveryone: '全部合并',
+    usageFilterDirectOnly: '仅父级直接',
+    usageFilterSubagentsOnly: '仅子代理',
+    usageFilterAuxOnly: '仅辅助',
+    usageFilterUnattributedOnly: '仅未归属',
+    usageFilterClear: '清除筛选',
+    usageFilterActiveNote: '已筛选视图——仅包含符合全部条件的调用。移除一项以扩大范围。',
+    usageFilterRemove: key => `移除 ${key} 筛选`,
+    usageFilterChip: (key, value) => `${key}：${value} ×`,
+    usageBaselineUnavailable: why => `历史报告不可用：${why}`,
+    usageBaselineLoading: '正在读取历史基线…',
+    usageBaselineEstimateNote: '历史累计估算——不计入周期分析或筛选。',
+    usageBaselineTotals: (tokens, api, billed) => `${tokens} 令牌 · API 等值 ${api} · 已记录账单 ${billed}`,
+    usageBaselineEmpty: '未捕获历史基线。',
+    usageLoadTitle: '分析不可用',
+    usageLoadStale: '可见快照已过期。使用这些值之前请重试。',
+    usageLoadFallback: '实时芯片与此桌面的账本仍可用。',
+    usageRetryTip: '重试分析',
+    usageLoading: '正在读取带时间戳调用…',
+    usageStatApiEquiv: 'API 等值',
+    usageStatApiExtra: '已定价按次估算 · 非账单',
+    usageStatSavings: '理论净节省',
+    usageStatSavingsHint: '读取折扣 − 写入溢价',
+    usageStatSavingsExtra: coverage => `${coverage} 经济覆盖率 · 详情见下`,
+    usageStatTokens: '令牌 / 调用',
+    usageStatTokensHint: calls => `${calls} 已记录调用`,
+    usageStatTokensExtra: (input, output) => `${input} 输入 · ${output} 输出`,
+    usageStatCoverage: '定价覆盖率',
+    usageStatCoverageHint: tokens => `${tokens} 未定价令牌`,
+    usageInsightsAria: '本期要点',
+    usageBillingTitle: '仅显示明确的按次费用；未知不是零。',
+    usageBillingLabel: '已记录账单 ',
+    usageBillingComplete: '完成',
+    usageBillingPartial: '部分',
+    usageBillingNote: ' · 仅包含已记录费用；未知线路不是 $0。',
+    usageWindowDash: (since, until, tz) => `${since} → ${until} · ${tz}`,
+    usageWindowPending: '带时间戳窗口',
+    usageUnpricedAlert: tokens => `${tokens} 未定价令牌。API 等值成本为部分已定价小计；未知价格予以排除，不计为零。`,
+    usageEmptyTitle: '本期未记录后端调用',
+    usageEmptyBody: '本报告涵盖后端分析。概览中显示的桌面记录用量是独立的；打开本地账本以查看此桌面捕获的调用。尝试更长周期或清除筛选以检查本报告。历史基线仍在下方独立列出。',
+    usageEmptyShowDesktop: '显示桌面记录用量',
+    usageEmptyClear: '清除空范围',
+    usageNoData: '此配置文件暂无用量数据。',
+    usageRecordingLine: (since, last) => `记录始于 ${since} · 最新 ${last}。仅带时间戳的已捕获调用计入本期。`,
+    usageRecordingPending: '暂不可用',
+    usageCacheFormula: '缓存命中 = 读取令牌 ÷（新鲜输入 + 读取 + 写入令牌），按已知缓存活动的调用加权。旧零缓存行含义不明，从已知分母中排除。',
+    usageMethodologyTitle: '方法与覆盖详情',
+    usageBaselineSummaryTitle: '历史基线与对账——独立累计估算',
   }
 }
 

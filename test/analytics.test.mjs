@@ -250,6 +250,24 @@ test('insights name the driver, cache verdict and delegated share from existing 
  assert.match(T.analyticsExplorerCsv([{model:'=m',provider:'p',calls:2,tokens:100,list_usd:4,per_call:2,per_million:40000,cache_hit_rate:.5}]),/usd_per_call/)
 })
 
+test('usage dashboard panels follow the selected language', () => {
+  globalThis.analyticsLanguage = 'zh'
+  try {
+    const view = text(page({...fixture, totals: {...fixture.totals, calls: 0}}))
+    assert.match(view, /用量分布/)
+    assert.match(view, /用量趋势/)
+    assert.match(view, /委派操作/)
+    assert.match(view, /缓存性能/)
+    assert.match(view, /令牌构成/)
+    assert.match(view, /模型浏览器/)
+    assert.match(view, /缓存经济/)
+    assert.match(view, /本期未记录后端调用/)
+    assert.match(view, /历史基线与对账/)
+  } finally {
+    globalThis.analyticsLanguage = 'en'
+  }
+})
+
 test('analytics pricing, insights and deltas follow the chosen language', () => {
   const translator = language => (key, ...args) => {
     const entry = T.I18N[language][key]
