@@ -907,5 +907,33 @@ class EconomicsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
 
 
+class CodesTests(EconomicsCase):
+    """PR28: headline, group and attribution notes carry stable codes."""
+
+    def test_headline_codes_align_with_notes(self):
+        self.write_store([])
+        result = self.report()
+        headline = result["headline"]
+        self.assertEqual(len(headline["note_codes"]), len(headline["notes"]))
+        self.assertEqual(headline["note_codes"][0]["code"], "econ_head_no_fees")
+        self.assertEqual(headline["notes"][0],
+                         "No subscription has a known fee; declare fees in Memberships.")
+
+    def test_group_codes_align_with_notes(self):
+        self.write_store([account("s1", "test")])
+        result = self.report()
+        self.assertTrue(result["groups"])
+        for group in result["groups"]:
+            self.assertEqual(len(group["note_codes"]), len(group["notes"]))
+            for entry in group["note_codes"]:
+                self.assertEqual(set(entry), {"code", "params"})
+
+    def test_attribution_notes_carry_codes(self):
+        self.write_store([])
+        result = self.report()
+        self.assertEqual(result["unattributed"]["note_code"], "econ_unattributed")
+        self.assertEqual(result["ambiguous"]["note_code"], "econ_ambiguous")
+
+
 if __name__ == "__main__":
     unittest.main()

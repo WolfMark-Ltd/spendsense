@@ -49,6 +49,28 @@ class BuildFeedTests(unittest.TestCase):
         self.assertEqual(by_model["gamma"]["category"], "new_model")
         self.assertNotIn("beta", by_model)
 
+    def test_items_carry_summary_and_conditions_codes(self):
+        # PR28: feed items carry codes; English strings keep exact wording.
+        feed = feed_module()
+        previous = models([("acme", "alpha", {"input": 3.0, "output": 15.0})])
+        current = models([("acme", "alpha", {"input": 2.0, "output": 10.0}),
+                          ("acme", "gamma", {"input": 0.5, "output": 1.0}),
+                          ("zeta", "one", {"input": 1.0, "output": 1.0})])
+        doc, problems = feed.build_feed(current, previous, {"announcements": []},
+                                        observed_at=self.OBSERVED)
+        self.assertEqual(problems, [])
+        by_model = {item["model"]: item for item in doc["items"]}
+        self.assertEqual(by_model["gamma"]["summary_code"], "news_sum_new_model_feed")
+        self.assertEqual(by_model["gamma"]["summary_params"],
+                         {"model": "gamma", "provider": "acme"})
+        self.assertEqual(by_model["gamma"]["conditions_code"], "news_cond_listing_any_account")
+        self.assertEqual(by_model["alpha"]["summary_code"], "news_sum_price_change_feed")
+        self.assertEqual(by_model["alpha"]["summary"],
+                         "alpha (acme) list price changed on models.dev.")
+        providers = [item for item in doc["items"] if item["model"] == ""]
+        self.assertEqual(providers[0]["summary_code"], "news_sum_new_provider_feed")
+        self.assertEqual(providers[0]["summary_params"], {"provider": "zeta", "count": 1})
+
     def test_output_is_deterministic(self):
         feed = feed_module()
         previous = models([("acme", "alpha", {"input": 3.0, "output": 15.0})])

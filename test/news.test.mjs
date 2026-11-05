@@ -223,3 +223,108 @@ test('new news labels exist in English and Chinese', () => {
   assert.equal(S.I18N.en.newsWhyRelevant('x'), 'For you because it x.')
   assert.ok(String(S.I18N.zh.newsWhyRelevant('x')).includes('x'))
 })
+
+// --- PR28: backend summary/conditions/impact codes ---------------------------
+const enT = (key, ...args) => {
+  const entry = S.I18N.en[key]
+  return typeof entry === 'function' ? entry(...args) : entry ?? key
+}
+const zhT = (key, ...args) => {
+  const entry = S.I18N.zh[key]
+  return typeof entry === 'function' ? entry(...args) : entry ?? key
+}
+
+test('news summaries render backend-identical English from codes', () => {
+  const cases = [
+    [{ summary_code: 'news_sum_new_provider', summary_params: { provider: 'Acme', count: 3 },
+       summary: 'Acme is newly listed with 3 priced model(s).' },
+     'Acme is newly listed with 3 priced model(s).'],
+    [{ summary_code: 'news_sum_new_model', summary_params: { model: 'm1', provider: 'Acme', input: '$1.00', output: '$2.00' },
+       summary: 'm1 newly listed under Acme at $1.00/$2.00 per MTok in/out.' },
+     'm1 newly listed under Acme at $1.00/$2.00 per MTok in/out.'],
+    [{ category: 'price_reduction', summary_code: 'news_sum_price_change',
+       summary_params: { model: 'm1', provider: 'Acme', input: '$1.00', output: '$2.00' },
+       summary: 'm1 (Acme) reduced to $1.00/$2.00 per MTok in/out.' },
+     'm1 (Acme) reduced to $1.00/$2.00 per MTok in/out.'],
+    [{ category: 'price_increase', summary_code: 'news_sum_price_change',
+       summary_params: { model: 'm1', provider: 'Acme', input: '$1.00', output: '$2.00' },
+       summary: 'm1 (Acme) changed to $1.00/$2.00 per MTok in/out.' },
+     'm1 (Acme) changed to $1.00/$2.00 per MTok in/out.'],
+    [{ summary_code: 'news_sum_new_plan', summary_params: { plan: 'Plus', fee: '$20/mo' },
+       summary: 'New plan listed: Plus ($20/mo).' },
+     'New plan listed: Plus ($20/mo).'],
+    [{ summary_code: 'news_sum_plan_change',
+       summary_params: { plan: 'Plus', fee_before: '$20/mo', fee_after: '$25/mo', terms_changed: true },
+       summary: 'Plus: fee $20/mo → $25/mo; allowances/terms changed.' },
+     'Plus: fee $20/mo → $25/mo; allowances/terms changed.'],
+    [{ summary_code: 'news_sum_plan_change',
+       summary_params: { plan: 'Plus', fee_before: '$20/mo', fee_after: '$20/mo', terms_changed: true },
+       summary: 'Plus: allowances/terms changed.' },
+     'Plus: allowances/terms changed.'],
+    [{ summary_code: 'news_sum_new_provider_feed', summary_params: { provider: 'Acme', count: 2 },
+       summary: 'Acme newly listed on models.dev with 2 priced model(s).' },
+     'Acme newly listed on models.dev with 2 priced model(s).'],
+    [{ summary_code: 'news_sum_new_model_feed', summary_params: { model: 'm1', provider: 'Acme' },
+       summary: 'm1 newly listed under Acme on models.dev.' },
+     'm1 newly listed under Acme on models.dev.'],
+    [{ summary_code: 'news_sum_price_change_feed', summary_params: { model: 'm1', provider: 'Acme' },
+       summary: 'm1 (Acme) list price changed on models.dev.' },
+     'm1 (Acme) list price changed on models.dev.'],
+  ]
+  for (const [item, expected] of cases) {
+    assert.equal(S.newsSummaryText(item, enT), expected, item.summary_code)
+    assert.equal(S.newsSummaryText(item, enT), item.summary, `${item.summary_code} matches stored English`)
+  }
+})
+
+test('news summaries fall back to the raw summary', () => {
+  assert.equal(S.newsSummaryText({ summary: 'curator free text' }, enT), 'curator free text')
+  assert.equal(S.newsSummaryText({ summary: 'old', summary_code: 'news_sum_future' }, enT), 'old')
+  assert.equal(S.newsSummaryText({ summary: 'partial', summary_code: 'news_sum_new_model',
+    summary_params: { model: 'm1' } }, enT), 'partial')
+  assert.equal(S.newsSummaryText(null, enT), '')
+})
+
+test('news summaries translate to Chinese and keep proper names', () => {
+  const item = { summary_code: 'news_sum_new_model_feed', summary_params: { model: 'Claude Haiku', provider: 'Anthropic' },
+    summary: 'Claude Haiku newly listed under Anthropic on models.dev.' }
+  const out = S.newsSummaryText(item, zhT)
+  assert.ok(out.includes('Claude Haiku') && out.includes('Anthropic') && out.includes('models.dev'))
+  assert.ok(!out.includes('newly listed'))
+  const price = { category: 'price_reduction', summary_code: 'news_sum_price_change',
+    summary_params: { model: 'm1', provider: 'Acme', input: '$1.00', output: '$2.00' }, summary: 'x' }
+  assert.ok(S.newsSummaryText(price, zhT).includes('降至'))
+})
+
+test('news conditions render from codes with fallback', () => {
+  assert.equal(S.newsConditionsText({ conditions_code: 'news_cond_listing_accounts', conditions: 'x' }, enT),
+    'Catalogue listing only; not confirmed available on your accounts.')
+  assert.equal(S.newsConditionsText({ conditions_code: 'news_cond_tiers_changed', conditions: 'x' }, enT),
+    'Tiered/context pricing changed; base rates compared.')
+  assert.equal(S.newsConditionsText({ conditions_code: 'news_cond_listing_any_account', conditions: 'x' }, enT),
+    'Catalogue listing only; not confirmed available on any account.')
+  assert.equal(S.newsConditionsText({ conditions: 'custom curator note' }, enT), 'custom curator note')
+  assert.equal(S.newsConditionsText({ conditions_code: 'news_cond_future', conditions: 'kept' }, enT), 'kept')
+  const zh = S.newsConditionsText({ conditions_code: 'news_cond_listing_accounts', conditions: 'x' }, zhT)
+  assert.ok(!zh.includes('Catalogue listing only') && zh.length > 0)
+})
+
+test('impact reasons render from reason codes with legacy fallback', () => {
+  const unavailable = { basis: 'unavailable', reason: 'no recent usage of this model',
+    reason_codes: ['news_impact_no_usage'] }
+  assert.equal(S.newsImpactText(unavailable, enT),
+    'Personal estimate unavailable: no recent usage of this model.')
+  assert.ok(S.newsImpactText(unavailable, zhT).includes('该模型近期无用量'))
+  const partial = { basis: 'partial', delta_usd: -1.5, window_days: 30,
+    reason: 'cache rates unavailable for comparison; cache tokens excluded; tiered pricing applies; base rates compared',
+    reason_codes: ['news_impact_cache_excluded', 'news_impact_tiered_rates'] }
+  assert.equal(S.newsImpactReasonText(partial, enT), partial.reason)
+  assert.ok(!/[a-zA-Z]{4,}/.test(S.newsImpactReasonText(partial, zhT).replace(/Token/g, '')))
+  // Legacy items without codes keep the substring translation path.
+  const legacy = { basis: 'partial', delta_usd: -1.5, window_days: 30, reason: partial.reason }
+  assert.equal(S.newsImpactReasonText(legacy, enT), partial.reason)
+  assert.ok(S.newsImpactReasonText(legacy, zhT).includes('缓存'))
+  // An unknown code keeps the whole raw reason rather than dropping it.
+  const mixed = { basis: 'unavailable', reason: 'raw kept', reason_codes: ['news_impact_future'] }
+  assert.equal(S.newsImpactReasonText(mixed, enT), 'raw kept')
+})

@@ -120,7 +120,7 @@ def _model_diff(previous: Mapping[str, dict[str, dict[str, Any]]],
                 "source_url": MODELS_DEV_URL, "confidence": "observed",
                 "provenance": "models.dev",
                 "conditions": tier_note,
-                "conditions_code": "news_cond_tiers_changed_feed" if tier_note else "",
+                "conditions_code": "news_cond_tiers_changed" if tier_note else "",
             })
     return items
 
