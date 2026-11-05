@@ -1925,8 +1925,10 @@ const SHARED_CSS = [
   '.wm-async-status[data-status="success"]{color:var(--ui-success,#2dd4bf)}',
   '.wm-async-status[data-status="error"]{color:var(--ui-error)}',
   '.wm-info{position:static;display:inline-flex;flex-shrink:0}',
-  '.wm-info-btn{width:24px;height:24px;border-radius:50%;border:1px solid var(--ui-text-quaternary);background:none;color:var(--ui-text-quaternary);font-size:10px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;cursor:pointer;display:inline-grid;place-items:center}',
-  '.wm-info-btn:hover,.wm-info-btn:focus-visible{border-color:var(--ui-accent);color:var(--ui-accent)}',
+  '.wm-info-btn{position:relative;width:24px;height:24px;border-radius:50%;border:1px solid transparent;background:none;color:var(--ui-text-quaternary);font-size:10px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;cursor:pointer;display:inline-grid;place-items:center}',
+  '.wm-info-btn::after{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;transform:translate(-50%,-50%);border-radius:50%;border:1px solid var(--ui-text-quaternary);pointer-events:none}',
+  '.wm-info-btn:hover,.wm-info-btn:focus-visible{color:var(--ui-accent)}',
+  '.wm-info-btn:hover::after,.wm-info-btn:focus-visible::after{border-color:var(--ui-accent)}',
   '.wm-info-btn:focus-visible{outline:2px solid var(--ui-accent);outline-offset:1px}',
   '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:20;background:var(--ui-fill-secondary,#1a1d26);border:1px solid var(--ui-stroke-secondary);border-radius:7px;padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;white-space:normal;color:var(--ui-text-secondary);box-shadow:0 6px 20px rgba(0,0,0,.35)}',
   '.wm-info-pop.wm-info-up{top:auto;bottom:calc(100% + 6px)}',
@@ -2935,7 +2937,7 @@ function LedgerTabs() {
     goLedgerTab(LEDGER_TABS[next][0])
   }
   return jsx('div', { className: 'wm-shell', style: { paddingBottom: 0 }, children:
-    jsx('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': 'SpendSense sections', onKeyDown, children:
+    jsx('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': t('tabListLabel'), onKeyDown, children:
       [jsx('span', { className: 'wm-product-brand', 'aria-hidden': true,
         children: jsx(BrandMark, { size: 16, id: 'tabs' }) }, 'brand'),
       ...LEDGER_TABS.map(([id]) =>
@@ -3972,11 +3974,9 @@ function SettingsPage() {
       $basis.set('hybrid')
       $automaticModelOptions.set(false)
       $settingsConfirmation.set(null)
-      $modelRefreshState.set({ origin: identity, tone: 'good',
-        text: 'SpendSense display preferences were reset. Hermes saved pane placement is unchanged.' })
+      $modelRefreshState.set({ origin: identity, tone: 'good', text: t('settingsNotifyPrefsReset') })
     } catch (error) {
-      $modelRefreshState.set({ origin: identity, tone: 'warn',
-        text: 'Preferences could not be reset: ' + String(error.message || error) })
+      $modelRefreshState.set({ origin: identity, tone: 'warn', text: t('settingsNotifyPrefsFailed', String(error.message || error)) })
     }
   }
 
@@ -3995,11 +3995,10 @@ function SettingsPage() {
       await queryClient.invalidateQueries({ queryKey: [ID, 'billing-profiles', captured] })
       await invalidateEconomicsFor(captured)
       await invalidateWeatherFor(captured)
-      $modelRefreshState.set({ origin: captured, tone: 'good',
-        text: 'Memberships and advanced billing rules were cleared for this profile. Captured usage records were retained.' })
+      $modelRefreshState.set({ origin: captured, tone: 'good', text: t('settingsNotifyDataCleared') })
     } catch (error) {
       if (membershipIdentityCurrent(captured)) $modelRefreshState.set({
-        origin: captured, tone: 'warn', text: 'User-entered data was not reset: ' + String(error.message || error)
+        origin: captured, tone: 'warn', text: t('settingsNotifyDataFailed', String(error.message || error))
       })
     }
   }
@@ -4019,12 +4018,11 @@ function SettingsPage() {
       const query = catalogQuery(sessionId, model)
       queryClient.setQueryData(query.queryKey, result)
       if (!sessionId) queryClient.setQueryData(catalogQuery(null).queryKey, result)
-      $modelRefreshState.set({ origin: captured, tone: 'good',
-        text: 'Hermes model availability was refreshed. This does not force a pricing catalogue refresh.' })
+      $modelRefreshState.set({ origin: captured, tone: 'good', text: t('settingsNotifyModelsOk') })
       $settingsConfirmation.set(null)
     } catch (error) {
       if (membershipIdentityCurrent(captured)) $modelRefreshState.set({ origin: captured, tone: 'warn',
-        text: 'Hermes could not refresh model availability: ' + String(error.message || error) })
+        text: t('settingsNotifyModelsFailed', String(error.message || error)) })
     }
   }
 
@@ -4037,15 +4035,13 @@ function SettingsPage() {
       queryClient.setQueryData([ID, 'membership-plans', captured], { ...result, identity: captured })
       const centralState = result?.central?.state
       const centralAlert = newsCentralAlert(result?.central, t)
-      if (centralState === 'ok') $modelRefreshState.set({ origin: captured, tone: 'good',
-        text: 'Membership catalogue was refreshed. Stored memberships, fees and selections are unchanged.' })
+      if (centralState === 'ok') $modelRefreshState.set({ origin: captured, tone: 'good', text: t('settingsNotifyCatalogueOk') })
       else if (centralAlert) $modelRefreshState.set({ origin: captured, tone: 'warn',
-        text: 'Membership catalogue could not be refreshed: ' + centralAlert })
-      else $modelRefreshState.set({ origin: captured, tone: 'warn',
-        text: 'SpendSense Live Updates is off, so the bundled catalogue is shown. Stored memberships, fees and selections are unchanged.' })
+        text: t('settingsNotifyCatalogueFailed', centralAlert) })
+      else $modelRefreshState.set({ origin: captured, tone: 'warn', text: t('settingsNotifyLiveOff') })
     } catch (error) {
       if (membershipIdentityCurrent(captured)) $modelRefreshState.set({ origin: captured, tone: 'warn',
-        text: 'Membership catalogue could not be refreshed: ' + String(error.message || error) })
+        text: t('settingsNotifyCatalogueFailed', String(error.message || error)) })
     }
   }
 
@@ -4057,15 +4053,15 @@ function SettingsPage() {
     jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS }),
     jsx(LedgerTabs, {}),
     jsxs('main', { className: 'wm-shell', children: [
-      jsx(ProductHeader, { title: 'Settings & About',
-        subtitle: 'Privacy, pricing provenance, diagnostics and recovery.' }),
+      jsx(ProductHeader, { title: t('settingsTitle'),
+        subtitle: t('settingsSubtitle') }),
       jsxs('div', { className: 'wm-settings-grid', children: keyedElementChildren([
         jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: 'External data and privacy' }),
-          jsx('p', { children: 'SpendSense makes no direct HTTP pricing requests. It reads Hermes model-pricing metadata when available and falls back to its bundled offline rate snapshot. Membership plans are bundled; user-defined plans stay in your plugin data.' }),
-          jsx('p', { children: 'Automatic Hermes model-options refresh is off by default. When enabled, the live pane asks Hermes for current options on session/model changes and every 15 minutes. Hermes may refresh public models.dev metadata or make authenticated requests to configured provider endpoints using credentials it manages. Membership discovery parses Hermes authentication storage to count configured credential slots; it does not return or log credential values.' }),
-          jsx('p', { children: 'SpendSense stores accounting metadata, membership choices, fee history, custom plan details, and optional user-reported exhaustion marks. It does not collect prompts, responses or telemetry. The plugin backend uses its existing profile-specific plugin data.' }),
-          jsx('p', { children: 'With automatic refresh off, the plugin uses options already cached in this Desktop session and bundled rates. If a route is uncertain, it may use a clearly labelled fallback estimate or remain unpriced; it is never presented as a confirmed provider price. Account discovery and account readings remain user-triggered.' })
+          jsx('h2', { children: t('settingsPrivacyHeading') }),
+          jsx('p', { children: t('settingsPrivacyP1') }),
+          jsx('p', { children: t('settingsPrivacyP2') }),
+          jsx('p', { children: t('settingsPrivacyP3') }),
+          jsx('p', { children: t('settingsPrivacyP4') })
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
           jsx('h2', { children: t('newsLiveTitle') }),
@@ -4100,121 +4096,127 @@ function SettingsPage() {
               : null,
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: 'Pricing provenance and freshness' }),
-          status.error ? jsx('p', { className: 'wm-warn-note', children: 'Pricing status is unavailable. Hermes’ cache or the bundled offline snapshot can still be used.' }) : null,
+          jsx('h2', { children: t('settingsPricingHeading') }),
+          status.error ? jsx('p', { className: 'wm-warn-note', children: t('settingsPricingUnavailable') }) : null,
           pricing ? jsxs('p', { children: [
-            'Source: ', jsx('strong', { children: pricing.source || 'unavailable' }),
-            pricing.as_of ? ' · snapshot/cache date: ' + new Date(pricing.as_of).toLocaleString() : ' · date unavailable',
-            pricing.age_seconds != null ? ' · ' + Math.round(pricing.age_seconds / 3600) + ' h old' : '',
-            pricing.stale ? ' · stale' : ''
+            t('settingsPricingSourceLabel'), jsx('strong', { children: pricing.source || t('settingsPricingNoSource') }),
+            pricing.as_of ? t('settingsPricingDate', new Date(pricing.as_of).toLocaleString()) : t('settingsPricingNoDate'),
+            pricing.age_seconds != null ? t('settingsPricingAge', Math.round(pricing.age_seconds / 3600)) : '',
+            pricing.stale ? t('settingsPricingStale') : ''
           ] }) : null,
-          jsx('p', { className: 'wm-subtle', children: 'Refreshing this status only rereads the backend metadata. It does not trigger an external pricing fetch.' }),
+          jsx('p', { className: 'wm-subtle', children: t('settingsPricingRefreshNote') }),
           jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: status.isFetching,
-            onClick: () => status.refetch?.(), children: status.isFetching ? 'Checking…' : 'Refresh pricing status' }),
+            onClick: () => status.refetch?.(), children: status.isFetching ? t('settingsChecking') : t('settingsRefreshPricing') }),
           jsxs('p', { children: [
-            'Captured Desktop costs retain the rates applied when recorded. Backend API-equivalent values are estimates recalculated using the current available prices; they are not historical charges.'
+            t('settingsCapturedCosts')
           ] }),
-          jsx('p', { children: 'WolfMark publishes an optional, versioned membership catalogue feed. When SpendSense Live Updates is on, the pane fetches it — validating the schema, caching it for offline use and falling back to the bundled plans on any failure; otherwise this build uses the bundled plans. Stored memberships, fees and selections never change.' }),
+          jsx('p', { children: t('settingsCatalogueFeed') }),
           membershipBook ? jsxs('div', { className: 'wm-note', children: [
-            jsx('p', { children: (membershipBook.source === 'live' ? 'Live membership catalogue ' : 'Bundled membership catalogue ') + membershipBook.catalogue_version +
-              (membershipBook.generated_at ? ' · generated ' + new Date(membershipBook.generated_at).toLocaleString() : '') }),
+            jsx('p', { children: t('settingsCatalogueVersion',
+              membershipBook.source === 'live' ? t('settingsCatalogueLive') : t('settingsCatalogueBundled'),
+              membershipBook.catalogue_version,
+              membershipBook.generated_at ? t('settingsCatalogueGenerated', new Date(membershipBook.generated_at).toLocaleString()) : '') }),
             membershipBook.source === 'live' && membershipBook.central
-              ? jsx('p', { className: 'wm-subtle', children: 'Fetched ' + newsFreshLabel(newsAgeDays(membershipBook.central.fetched_at, Date.now()), t) +
-                  (membershipBook.central.fetched_at ? ' · ' + new Date(membershipBook.central.fetched_at).toLocaleString() : '') })
+              ? jsx('p', { className: 'wm-subtle', children: t('settingsCatalogueFetched',
+                  newsFreshLabel(newsAgeDays(membershipBook.central.fetched_at, Date.now()), t),
+                  membershipBook.central.fetched_at ? t('settingsCatalogueFetchedAt', new Date(membershipBook.central.fetched_at).toLocaleString()) : '') })
               : null,
             newsCentralAlert(membershipBook.central, t)
-              ? jsx('p', { className: 'wm-warn-note', role: 'status', children: 'Central catalogue: ' + newsCentralAlert(membershipBook.central, t) + (membershipBook.source === 'live' ? ' The cached live catalogue is shown.' : ' The bundled plans are shown.') })
+              ? jsx('p', { className: 'wm-warn-note', role: 'status', children: t('settingsCentralAlert',
+                  newsCentralAlert(membershipBook.central, t), membershipBook.source === 'live') })
               : null,
             membershipBook.source === 'bundled' && membershipBook.central?.held_back
-              ? jsx('p', { className: 'wm-warn-note', role: 'status', children: 'Central catalogue ' + (membershipBook.central.catalogue_version || 'update') + ' is older than the bundled copy; the bundled plans are shown.' })
+              ? jsx('p', { className: 'wm-warn-note', role: 'status', children: t('settingsCentralHeldBack',
+                  membershipBook.central.catalogue_version || t('settingsCentralUpdate')) })
               : null,
-            jsxs('p', { children: [membershipBook.totals?.plans || 0, ' plans · ',
-              membershipBook.totals?.verified || 0, ' verified prices · ',
-              membershipBook.totals?.provisional || 0, ' provisional · ',
-              membershipBook.totals?.placeholders || 0, ' without a published fee'] }),
+            jsx('p', { children: t('settingsCatalogueTotals', membershipBook.totals?.plans || 0,
+              membershipBook.totals?.verified || 0, membershipBook.totals?.provisional || 0,
+              membershipBook.totals?.placeholders || 0) }),
             jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: planCatalogue.isFetching,
-              onClick: refreshPlansCatalogue, children: planCatalogue.isFetching ? 'Checking…' : 'Refresh membership catalogue' }),
+              onClick: refreshPlansCatalogue, children: planCatalogue.isFetching ? t('settingsChecking') : t('settingsRefreshCatalogue') }),
             jsx('details', { children: [
-              jsx('summary', { children: (membershipBook.source === 'live' ? 'Live' : 'Bundled') + ' source register' }),
+              jsx('summary', { children: t('settingsSourceRegister',
+                membershipBook.source === 'live' ? t('settingsCatalogueLive') : t('settingsCatalogueBundled')) }),
               jsx('ul', { children: (membershipBook.sources || []).map(source => jsx('li', { children: [
-                source.id + ' · ' + source.evidence_kind + ' · ' + (source.retrieved_at || 'retrieval date not recorded') + ' · ',
+                source.id + ' · ' + source.evidence_kind + ' · ' + (source.retrieved_at || t('settingsSourceNoDate')) + ' · ',
                 jsx('a', { href: source.url, target: '_blank', rel: 'noreferrer', children: source.url })
               ] }, source.id)) })
             ] })
-          ] }) : planCatalogue.error ? jsx('p', { className: 'wm-warn-note', children: 'Bundled membership catalogue provenance is unavailable.' }) : null
+          ] }) : planCatalogue.error ? jsx('p', { className: 'wm-warn-note', children: t('settingsCatalogueProvenanceUnavailable') }) : null
         ] }),
         jsx(AdvancedBillingRules, {}),
         jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: 'Hermes model availability' }),
-          jsx('p', { children: 'This refresh asks Hermes to refresh the current profile’s model list. Hermes may probe configured provider endpoints using credentials managed by Hermes.' }),
+          jsx('h2', { children: t('settingsModelsHeading') }),
+          jsx('p', { children: t('settingsModelsExplain') }),
           jsx('label', { className: 'wm-setting-toggle', children: [
             jsx('input', { type: 'checkbox', checked: automaticModelOptions,
               onChange: event => $automaticModelOptions.set(Boolean(event.target.checked)) }),
-            jsx('span', { children: 'Allow automatic Hermes model-options refresh for live pricing. Off by default; when off, cached options and bundled/offline rates are used, with uncertain routes labelled or left unpriced.' })
+            jsx('span', { children: t('settingsAutoRefreshToggle') })
           ] }),
           liveRefresh?.stage === 'confirm-models'
             ? jsx('div', { className: 'wm-confirm-box', children: [
-                jsx('p', { role: 'alert', children: 'This can make authenticated requests to configured providers. Continue with the current Hermes profile?' }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: refreshModels, children: 'Confirm model refresh' }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $modelRefreshState.set(null), children: 'Cancel' })
+                jsx('p', { role: 'alert', children: t('settingsModelsConfirmText') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: refreshModels, children: t('settingsModelsConfirm') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $modelRefreshState.set(null), children: t('settingsCancel') })
               ] })
-            : jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: refreshModels, children: 'Refresh Hermes models' }),
+            : jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: refreshModels, children: t('settingsRefreshModels') }),
           liveRefresh?.text ? jsx('p', { className: liveRefresh.tone === 'warn' ? 'wm-warn-note' : 'wm-subtle',
             role: 'status', children: liveRefresh.text }) : null
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: 'Diagnostics' }),
-          jsx('p', { children: 'Plugin version ' + PLUGIN_VERSION + ' · ' +
-            (last?.version ? 'backend version ' + last.version : health.isPending ? 'checking backend…' : 'backend status unavailable') }),
+          jsx('h2', { children: t('settingsDiagnosticsHeading') }),
+          jsx('p', { children: t('settingsDiagnosticsVersions', PLUGIN_VERSION,
+            last?.version ? t('settingsDiagnosticsBackend', last.version)
+              : health.isPending ? t('settingsDiagnosticsChecking') : t('settingsDiagnosticsNoBackend')) }),
           health.error ? jsx('p', { className: 'wm-warn-note', role: 'status',
-            children: 'Backend health check failed: ' + String(health.error.message || health.error) }) : null,
-          last ? jsx('p', { children: last.ok ? 'Backend health: ready' : 'Backend health: usage database unavailable' }) : null,
+            children: t('settingsHealthFailed', String(health.error.message || health.error)) }) : null,
+          last ? jsx('p', { children: last.ok ? t('settingsHealthReady') : t('settingsHealthUnavailable') }) : null,
           jsx('details', { className: 'wm-note', children: [
-            jsx('summary', { children: 'Recent request diagnostics' }),
+            jsx('summary', { children: t('settingsDiagnosticsRecent') }),
             membershipDiagnostics.length
               ? jsx('ul', { children: membershipDiagnostics.map((entry, index) => jsx('li', {
                   children: `${entry.at} · ${entry.method} ${entry.path} · ${entry.status ?? entry.outcome} · ${entry.scope}`
                 }, index)) })
-              : jsx('p', { children: 'No membership requests recorded in this session.' })
+              : jsx('p', { children: t('settingsDiagnosticsEmpty') })
           ] }),
-          jsx('p', { className: 'wm-subtle', children: 'Diagnostics contain only method, relative path, status, profile scope and time. They do not include tokens, headers, credential values, or request bodies.' })
+          jsx('p', { className: 'wm-subtle', children: t('settingsDiagnosticsNote') })
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: 'Display and recovery' }),
-          jsx('p', { children: 'Resetting display preferences affects only SpendSense filters and view mode. Hermes pane placement is stored by Hermes and remains as you set it.' }),
+          jsx('h2', { children: t('settingsRecoveryHeading') }),
+          jsx('p', { children: t('settingsRecoveryPrefsExplain') }),
           liveConfirmation?.stage === 'reset-preferences'
             ? jsx('div', { className: 'wm-confirm-box', children: [
-                jsx('p', { role: 'alert', children: 'Reset the SpendSense display preferences to their defaults?' }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetPreferences, children: 'Confirm preference reset' }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: 'Cancel' })
+                jsx('p', { role: 'alert', children: t('settingsRecoveryPrefsConfirmText') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetPreferences, children: t('settingsRecoveryPrefsConfirm') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: t('settingsCancel') })
               ] })
             : jsx(ProductButton, { type: 'button', className: 'wm-button',
                 onClick: () => $settingsConfirmation.set({ origin: identity, stage: 'reset-preferences' }),
-                children: 'Reset display preferences' }),
-          jsx('p', { children: 'User-data recovery covers Memberships and advanced billing rules only. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.' }),
+                children: t('settingsResetPrefs') }),
+          jsx('p', { children: t('settingsRecoveryDataExplain') }),
           liveConfirmation?.stage === 'data-copied'
             ? jsx('div', { className: 'wm-confirm-box', children: [
-                jsx('p', { role: 'alert', children: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership and advanced-rule data.' }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetUserData, children: 'Confirm and clear user-entered data' }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: 'Cancel' })
+                jsx('p', { role: 'alert', children: t('settingsRecoveryBackupText') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetUserData, children: t('settingsRecoveryDataConfirm') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: t('settingsCancel') })
               ] })
             : jsx(ProductButton, { type: 'button', className: 'wm-button',
-                onClick: copyRecovery, children: 'Copy recovery backup before reset' })
+                onClick: copyRecovery, children: t('settingsCopyBackup') })
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: 'About and support' }),
+          jsx('h2', { children: t('settingsAboutHeading') }),
           jsx(BrandMark, { size: 32, id: 'about' }),
-          jsx('p', { children: 'SpendSense ' + PLUGIN_VERSION }),
-          jsx('p', { children: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.' }),
-          jsx('p', { children: 'Support and product information are available from WolfMark.' }),
+          jsx('p', { children: t('settingsAboutVersion', PLUGIN_VERSION) }),
+          jsx('p', { children: t('settingsAboutCredit') }),
+          jsx('p', { children: t('settingsAboutSupport') }),
           jsx('a', { href: 'https://wolfmark.co.uk/contact', target: '_blank', rel: 'noreferrer',
-            className: 'wm-source-link', children: 'Contact WolfMark support' }),
-          jsx('p', { className: 'wm-subtle', children: 'The bundled pricing and membership catalogue is maintained through normal reviewed plugin releases. No user-defined plan is overwritten by a catalogue update.' })
+            className: 'wm-source-link', children: t('settingsAboutContact') }),
+          jsx('p', { className: 'wm-subtle', children: t('settingsAboutCatalogueNote') })
         ] })
       ], 'settings-grid') }),
       liveRefresh?.tone === 'warn' && !liveRefresh.stage
         ? jsx('div', { className: 'wm-alert', role: 'status', children: liveRefresh.text }) : null,
-          jsx('p', { className: 'wm-subtle', children: 'The SpendSense pane can be dragged to the left or right using Hermes’ supported layout controls. Hermes remembers your placement across reloads.' })
+          jsx('p', { className: 'wm-subtle', children: t('settingsPanePlacement') })
     ] })
   ] })
 }
@@ -7834,6 +7836,85 @@ const I18N = {
     advRulesEstimatesNote: 'Prepaid and custom-rate rules affect estimates only. They do not change settled Desktop records or represent provider invoices.',
     advRulesSave: 'Save rule',
     advRulesCancel: 'Cancel',
+    // Settings & About.
+    tabListLabel: 'SpendSense sections',
+    settingsNotifyPrefsReset: 'SpendSense display preferences were reset. Hermes saved pane placement is unchanged.',
+    settingsNotifyPrefsFailed: f => `Preferences could not be reset: ${f}`,
+    settingsNotifyDataCleared: 'Memberships and advanced billing rules were cleared for this profile. Captured usage records were retained.',
+    settingsNotifyDataFailed: f => `User-entered data was not reset: ${f}`,
+    settingsNotifyModelsOk: 'Hermes model availability was refreshed. This does not force a pricing catalogue refresh.',
+    settingsNotifyModelsFailed: f => `Hermes could not refresh model availability: ${f}`,
+    settingsNotifyCatalogueOk: 'Membership catalogue was refreshed. Stored memberships, fees and selections are unchanged.',
+    settingsNotifyCatalogueFailed: f => `Membership catalogue could not be refreshed: ${f}`,
+    settingsNotifyLiveOff: 'SpendSense Live Updates is off, so the bundled catalogue is shown. Stored memberships, fees and selections are unchanged.',
+    settingsTitle: 'Settings & About',
+    settingsSubtitle: 'Privacy, pricing provenance, diagnostics and recovery.',
+    settingsPrivacyHeading: 'External data and privacy',
+    settingsPrivacyP1: 'SpendSense makes no direct HTTP pricing requests. It reads Hermes model-pricing metadata when available and falls back to its bundled offline rate snapshot. Membership plans are bundled; user-defined plans stay in your plugin data.',
+    settingsPrivacyP2: 'Automatic Hermes model-options refresh is off by default. When enabled, the live pane asks Hermes for current options on session/model changes and every 15 minutes. Hermes may refresh public models.dev metadata or make authenticated requests to configured provider endpoints using credentials it manages. Membership discovery parses Hermes authentication storage to count configured credential slots; it does not return or log credential values.',
+    settingsPrivacyP3: 'SpendSense stores accounting metadata, membership choices, fee history, custom plan details, and optional user-reported exhaustion marks. It does not collect prompts, responses or telemetry. The plugin backend uses its existing profile-specific plugin data.',
+    settingsPrivacyP4: 'With automatic refresh off, the plugin uses options already cached in this Desktop session and bundled rates. If a route is uncertain, it may use a clearly labelled fallback estimate or remain unpriced; it is never presented as a confirmed provider price. Account discovery and account readings remain user-triggered.',
+    settingsPricingHeading: 'Pricing provenance and freshness',
+    settingsPricingUnavailable: 'Pricing status is unavailable. Hermes’ cache or the bundled offline snapshot can still be used.',
+    settingsPricingSourceLabel: 'Source: ',
+    settingsPricingNoSource: 'unavailable',
+    settingsPricingDate: d => ` · snapshot/cache date: ${d}`,
+    settingsPricingNoDate: ' · date unavailable',
+    settingsPricingAge: h => ` · ${h} h old`,
+    settingsPricingStale: ' · stale',
+    settingsPricingRefreshNote: 'Refreshing this status only rereads the backend metadata. It does not trigger an external pricing fetch.',
+    settingsChecking: 'Checking…',
+    settingsRefreshPricing: 'Refresh pricing status',
+    settingsCapturedCosts: 'Captured Desktop costs retain the rates applied when recorded. Backend API-equivalent values are estimates recalculated using the current available prices; they are not historical charges.',
+    settingsCatalogueFeed: 'WolfMark publishes an optional, versioned membership catalogue feed. When SpendSense Live Updates is on, the pane fetches it — validating the schema, caching it for offline use and falling back to the bundled plans on any failure; otherwise this build uses the bundled plans. Stored memberships, fees and selections never change.',
+    settingsCatalogueLive: 'Live',
+    settingsCatalogueBundled: 'Bundled',
+    settingsCatalogueVersion: (source, version, generated) => `${source} membership catalogue ${version}${generated}`,
+    settingsCatalogueGenerated: d => ` · generated ${d}`,
+    settingsCatalogueFetched: (fresh, at) => `Fetched ${fresh}${at}`,
+    settingsCatalogueFetchedAt: d => ` · ${d}`,
+    settingsCentralAlert: (alert, live) => `Central catalogue: ${alert}${live ? ' The cached live catalogue is shown.' : ' The bundled plans are shown.'}`,
+    settingsCentralUpdate: 'update',
+    settingsCentralHeldBack: v => `Central catalogue ${v} is older than the bundled copy; the bundled plans are shown.`,
+    settingsCatalogueTotals: (p, v, prov, ph) => `${p} plans · ${v} verified prices · ${prov} provisional · ${ph} without a published fee`,
+    settingsRefreshCatalogue: 'Refresh membership catalogue',
+    settingsSourceRegister: source => `${source} source register`,
+    settingsSourceNoDate: 'retrieval date not recorded',
+    settingsCatalogueProvenanceUnavailable: 'Bundled membership catalogue provenance is unavailable.',
+    settingsModelsHeading: 'Hermes model availability',
+    settingsModelsExplain: 'This refresh asks Hermes to refresh the current profile’s model list. Hermes may probe configured provider endpoints using credentials managed by Hermes.',
+    settingsAutoRefreshToggle: 'Allow automatic Hermes model-options refresh for live pricing. Off by default; when off, cached options and bundled/offline rates are used, with uncertain routes labelled or left unpriced.',
+    settingsModelsConfirmText: 'This can make authenticated requests to configured providers. Continue with the current Hermes profile?',
+    settingsModelsConfirm: 'Confirm model refresh',
+    settingsCancel: 'Cancel',
+    settingsRefreshModels: 'Refresh Hermes models',
+    settingsDiagnosticsHeading: 'Diagnostics',
+    settingsDiagnosticsVersions: (plugin, backend) => `Plugin version ${plugin} · ${backend}`,
+    settingsDiagnosticsBackend: v => `backend version ${v}`,
+    settingsDiagnosticsChecking: 'checking backend…',
+    settingsDiagnosticsNoBackend: 'backend status unavailable',
+    settingsHealthFailed: f => `Backend health check failed: ${f}`,
+    settingsHealthReady: 'Backend health: ready',
+    settingsHealthUnavailable: 'Backend health: usage database unavailable',
+    settingsDiagnosticsRecent: 'Recent request diagnostics',
+    settingsDiagnosticsEmpty: 'No membership requests recorded in this session.',
+    settingsDiagnosticsNote: 'Diagnostics contain only method, relative path, status, profile scope and time. They do not include tokens, headers, credential values, or request bodies.',
+    settingsRecoveryHeading: 'Display and recovery',
+    settingsRecoveryPrefsExplain: 'Resetting display preferences affects only SpendSense filters and view mode. Hermes pane placement is stored by Hermes and remains as you set it.',
+    settingsRecoveryPrefsConfirmText: 'Reset the SpendSense display preferences to their defaults?',
+    settingsRecoveryPrefsConfirm: 'Confirm preference reset',
+    settingsResetPrefs: 'Reset display preferences',
+    settingsRecoveryDataExplain: 'User-data recovery covers Memberships and advanced billing rules only. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.',
+    settingsRecoveryBackupText: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership and advanced-rule data.',
+    settingsRecoveryDataConfirm: 'Confirm and clear user-entered data',
+    settingsCopyBackup: 'Copy recovery backup before reset',
+    settingsAboutHeading: 'About and support',
+    settingsAboutVersion: v => `SpendSense ${v}`,
+    settingsAboutCredit: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.',
+    settingsAboutSupport: 'Support and product information are available from WolfMark.',
+    settingsAboutContact: 'Contact WolfMark support',
+    settingsAboutCatalogueNote: 'The bundled pricing and membership catalogue is maintained through normal reviewed plugin releases. No user-defined plan is overwritten by a catalogue update.',
+    settingsPanePlacement: 'The SpendSense pane can be dragged to the left or right using Hermes’ supported layout controls. Hermes remembers your placement across reloads.',
   },
   zh: {
     basisLegacy: '1.0 前旧数据 · 按现价估算',
@@ -8558,6 +8639,85 @@ const I18N = {
     advRulesEstimatesNote: '预付与自定义单价规则仅影响估算。它们不改变已结算的桌面记录，也不代表供应商账单。',
     advRulesSave: '保存规则',
     advRulesCancel: '取消',
+    // 设置与关于。
+    tabListLabel: 'SpendSense 选项卡',
+    settingsNotifyPrefsReset: 'SpendSense 显示偏好已重置。Hermes 已保存的面板位置不变。',
+    settingsNotifyPrefsFailed: f => `偏好设置未能重置：${f}`,
+    settingsNotifyDataCleared: '已清除此配置文件的会员与高级计费规则。已捕获的用量记录予以保留。',
+    settingsNotifyDataFailed: f => `用户数据未能重置：${f}`,
+    settingsNotifyModelsOk: 'Hermes 模型可用性已刷新。这不会强制刷新价格目录。',
+    settingsNotifyModelsFailed: f => `Hermes 未能刷新模型可用性：${f}`,
+    settingsNotifyCatalogueOk: '会员目录已刷新。已存储的会员、费用与选择不变。',
+    settingsNotifyCatalogueFailed: f => `会员目录未能刷新：${f}`,
+    settingsNotifyLiveOff: 'SpendSense 实时更新已关闭，当前显示内置目录。已存储的会员、费用与选择不变。',
+    settingsTitle: '设置与关于',
+    settingsSubtitle: '隐私、价格溯源、诊断与恢复。',
+    settingsPrivacyHeading: '外部数据与隐私',
+    settingsPrivacyP1: 'SpendSense 不直接发起 HTTP 价格请求。它在可用时读取 Hermes 模型价格元数据，并回退到内置离线单价快照。会员方案为内置方案；自定义方案保留在您的插件数据中。',
+    settingsPrivacyP2: 'Hermes 模型选项自动刷新默认关闭。开启后，实时面板将在会话/模型变化时及每 15 分钟向 Hermes 请求当前选项。Hermes 可能刷新公开 models.dev 元数据，或使用其管理的凭据向已配置的供应商端点发起认证请求。会员发现会解析 Hermes 认证存储以统计已配置的凭据槽位；不会返回或记录凭据值。',
+    settingsPrivacyP3: 'SpendSense 存储记账元数据、会员选择、费用历史、自定义方案详情，以及可选的用户上报耗尽标记。不收集提示词、回复或遥测数据。插件后端使用其现有的按配置文件隔离的插件数据。',
+    settingsPrivacyP4: '关闭自动刷新后，插件使用此桌面会话中已缓存的选项与内置单价。若某线路不确定，可能使用明确标注的回退估算或保持未定价；绝不会将其呈现为已确认的供应商价格。账户发现与账户读取仍由用户触发。',
+    settingsPricingHeading: '价格溯源与新鲜度',
+    settingsPricingUnavailable: '价格状态不可用。仍可使用 Hermes 缓存或内置离线快照。',
+    settingsPricingSourceLabel: '来源：',
+    settingsPricingNoSource: '不可用',
+    settingsPricingDate: d => ` · 快照/缓存日期：${d}`,
+    settingsPricingNoDate: ' · 日期不可用',
+    settingsPricingAge: h => ` · ${h} 小时前`,
+    settingsPricingStale: ' · 已过期',
+    settingsPricingRefreshNote: '刷新此状态仅重读后端元数据，不会触发外部价格获取。',
+    settingsChecking: '正在检查…',
+    settingsRefreshPricing: '刷新价格状态',
+    settingsCapturedCosts: '已捕获的桌面成本保留记录时的单价。后端 API 等值按当前可用价格重算估算，并非历史费用。',
+    settingsCatalogueFeed: 'WolfMark 发布可选的、带版本的会员目录源。开启 SpendSense 实时更新后，面板会获取该源——校验结构、缓存以供离线使用，并在任何失败时回退到内置方案；否则此构建使用内置方案。已存储的会员、费用与选择永不改变。',
+    settingsCatalogueLive: '实时',
+    settingsCatalogueBundled: '内置',
+    settingsCatalogueVersion: (source, version, generated) => `${source}会员目录 ${version}${generated}`,
+    settingsCatalogueGenerated: d => ` · 生成于${d}`,
+    settingsCatalogueFetched: (fresh, at) => `获取于${fresh}${at}`,
+    settingsCatalogueFetchedAt: d => ` · ${d}`,
+    settingsCentralAlert: (alert, live) => `中央目录：${alert}${live ? '当前显示缓存的实时目录。' : '当前显示内置方案。'}`,
+    settingsCentralUpdate: '更新',
+    settingsCentralHeldBack: v => `中央目录${v}旧于内置副本；当前显示内置方案。`,
+    settingsCatalogueTotals: (p, v, prov, ph) => `${p} 个方案 · ${v} 个已核验价格 · ${prov} 个暂定 · ${ph} 个无公开费用`,
+    settingsRefreshCatalogue: '刷新会员目录',
+    settingsSourceRegister: source => `${source}来源登记`,
+    settingsSourceNoDate: '未记录获取日期',
+    settingsCatalogueProvenanceUnavailable: '内置会员目录溯源不可用。',
+    settingsModelsHeading: 'Hermes 模型可用性',
+    settingsModelsExplain: '此刷新会请求 Hermes 刷新当前配置文件的模型列表。Hermes 可能使用其管理的凭据探测已配置的供应商端点。',
+    settingsAutoRefreshToggle: '允许自动刷新 Hermes 模型选项以支持实时计价。默认关闭；关闭时使用缓存选项与内置/离线单价，不确定的线路会明确标注或保持未定价。',
+    settingsModelsConfirmText: '这可能向已配置的供应商发起认证请求。继续使用当前 Hermes 配置文件吗？',
+    settingsModelsConfirm: '确认刷新模型',
+    settingsCancel: '取消',
+    settingsRefreshModels: '刷新 Hermes 模型',
+    settingsDiagnosticsHeading: '诊断',
+    settingsDiagnosticsVersions: (plugin, backend) => `插件版本 ${plugin} · ${backend}`,
+    settingsDiagnosticsBackend: v => `后端版本 ${v}`,
+    settingsDiagnosticsChecking: '正在检查后端…',
+    settingsDiagnosticsNoBackend: '后端状态不可用',
+    settingsHealthFailed: f => `后端健康检查失败：${f}`,
+    settingsHealthReady: '后端健康：就绪',
+    settingsHealthUnavailable: '后端健康：用量数据库不可用',
+    settingsDiagnosticsRecent: '近期请求诊断',
+    settingsDiagnosticsEmpty: '此会话中未记录会员请求。',
+    settingsDiagnosticsNote: '诊断仅包含方法、相对路径、状态、配置文件作用域与时间。不包含令牌、标头、凭据值或请求体。',
+    settingsRecoveryHeading: '显示与恢复',
+    settingsRecoveryPrefsExplain: '重置显示偏好仅影响 SpendSense 筛选与视图模式。Hermes 面板位置由 Hermes 存储，保持您的设置不变。',
+    settingsRecoveryPrefsConfirmText: '将 SpendSense 显示偏好重置为默认值吗？',
+    settingsRecoveryPrefsConfirm: '确认重置偏好',
+    settingsResetPrefs: '重置显示偏好',
+    settingsRecoveryDataExplain: '用户数据恢复仅涵盖会员与高级计费规则。已捕获的桌面用量账本、Hermes 数据与供应商凭据不受影响。',
+    settingsRecoveryBackupText: '备份已复制到剪贴板。在清除配置文件会员与高级规则数据前，请将其保存到安全位置。',
+    settingsRecoveryDataConfirm: '确认并清除用户输入的数据',
+    settingsCopyBackup: '重置前复制恢复备份',
+    settingsAboutHeading: '关于与支持',
+    settingsAboutVersion: v => `SpendSense ${v}`,
+    settingsAboutCredit: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.',
+    settingsAboutSupport: '可从 WolfMark 获取支持与产品信息。',
+    settingsAboutContact: '联系 WolfMark 支持',
+    settingsAboutCatalogueNote: '内置价格与会员目录通过常规评审插件版本维护。目录更新不会覆盖任何用户自定义方案。',
+    settingsPanePlacement: '可使用 Hermes 支持的布局控件将 SpendSense 面板拖到左侧或右侧。Hermes 会在重新加载后记住您的位置。',
   }
 }
 
@@ -8689,6 +8849,7 @@ export const __test = {
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
   CostsPage, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark, PRODUCT_CSS,
+  $settingsConfirmation, $modelRefreshState,
   SHARED_CSS, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,

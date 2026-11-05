@@ -392,6 +392,66 @@ test('billing validators and errors follow the chosen language', () => {
   assert.match(T.billingErrorMessage(new Error('conflict: stale')), /Reload, then save again/)
 })
 
+test('every settings string exists in English and Chinese', () => {
+  const keys = ['tabListLabel', 'settingsNotifyPrefsReset', 'settingsNotifyPrefsFailed',
+    'settingsNotifyDataCleared', 'settingsNotifyDataFailed', 'settingsNotifyModelsOk',
+    'settingsNotifyModelsFailed', 'settingsNotifyCatalogueOk', 'settingsNotifyCatalogueFailed',
+    'settingsNotifyLiveOff', 'settingsTitle', 'settingsSubtitle', 'settingsPrivacyHeading',
+    'settingsPrivacyP1', 'settingsPrivacyP2', 'settingsPrivacyP3', 'settingsPrivacyP4',
+    'settingsPricingHeading', 'settingsPricingUnavailable', 'settingsPricingSourceLabel',
+    'settingsPricingNoSource', 'settingsPricingDate', 'settingsPricingNoDate', 'settingsPricingAge',
+    'settingsPricingStale', 'settingsPricingRefreshNote', 'settingsChecking', 'settingsRefreshPricing',
+    'settingsCapturedCosts', 'settingsCatalogueFeed', 'settingsCatalogueLive', 'settingsCatalogueBundled',
+    'settingsCatalogueVersion', 'settingsCatalogueGenerated', 'settingsCatalogueFetched',
+    'settingsCatalogueFetchedAt', 'settingsCentralAlert', 'settingsCentralUpdate', 'settingsCentralHeldBack',
+    'settingsCatalogueTotals', 'settingsRefreshCatalogue', 'settingsSourceRegister', 'settingsSourceNoDate',
+    'settingsCatalogueProvenanceUnavailable', 'settingsModelsHeading', 'settingsModelsExplain',
+    'settingsAutoRefreshToggle', 'settingsModelsConfirmText', 'settingsModelsConfirm', 'settingsCancel',
+    'settingsRefreshModels', 'settingsDiagnosticsHeading', 'settingsDiagnosticsVersions',
+    'settingsDiagnosticsBackend', 'settingsDiagnosticsChecking', 'settingsDiagnosticsNoBackend',
+    'settingsHealthFailed', 'settingsHealthReady', 'settingsHealthUnavailable', 'settingsDiagnosticsRecent',
+    'settingsDiagnosticsEmpty', 'settingsDiagnosticsNote', 'settingsRecoveryHeading',
+    'settingsRecoveryPrefsExplain', 'settingsRecoveryPrefsConfirmText', 'settingsRecoveryPrefsConfirm',
+    'settingsResetPrefs', 'settingsRecoveryDataExplain', 'settingsRecoveryBackupText',
+    'settingsRecoveryDataConfirm', 'settingsCopyBackup', 'settingsAboutHeading', 'settingsAboutVersion',
+    'settingsAboutCredit', 'settingsAboutSupport', 'settingsAboutContact', 'settingsAboutCatalogueNote',
+    'settingsPanePlacement']
+  for (const key of keys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  // The English composites keep their exact pre-localisation wording.
+  assert.equal(en.settingsCatalogueVersion('Live', '2026-11-04.3', ' · generated X'),
+    'Live membership catalogue 2026-11-04.3 · generated X')
+  assert.equal(en.settingsCentralAlert('stale', true),
+    'Central catalogue: stale The cached live catalogue is shown.')
+  assert.equal(en.settingsCatalogueTotals(58, 50, 5, 3),
+    '58 plans · 50 verified prices · 5 provisional · 3 without a published fee')
+  assert.equal(en.settingsAboutVersion('0.6.0'), 'SpendSense 0.6.0')
+  // Proper names survive in both languages; the legal credit is identical.
+  assert.match(en.settingsPrivacyP2, /models\.dev/)
+  assert.match(zh.settingsPrivacyP2, /models\.dev/)
+  assert.match(en.settingsAboutCredit, /WolfMark Ltd/)
+  assert.match(en.settingsAboutCredit, /AFei/)
+  assert.equal(zh.settingsAboutCredit, en.settingsAboutCredit)
+  // The Chinese composites interpolate every argument.
+  assert.match(zh.settingsCatalogueVersion('实时', '2026-11-04.3', ' · 生成于X'), /实时会员目录/)
+  assert.match(zh.settingsCatalogueTotals(58, 50, 5, 3), /58 个方案/)
+  assert.equal(zh.settingsAboutVersion('0.6.0'), 'SpendSense 0.6.0')
+})
+
+test('the InfoTip indicator is compact while its hit area stays accessible', () => {
+  // The interactive box keeps its full size for pointer and keyboard users.
+  assert.match(T.METER_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)
+  // The visible ring is drawn smaller via a centred pseudo-element.
+  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*width:16px;height:16px/)
+  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*pointer-events:none/)
+  // Hover and focus still recolour the ring; focus keeps its outline.
+  assert.match(T.METER_CSS, /\.wm-info-btn:hover::after,\.wm-info-btn:focus-visible::after\{[^}]*border-color:var\(--ui-accent\)/)
+  assert.match(T.METER_CSS, /\.wm-info-btn:focus-visible\{[^}]*outline:2px solid var\(--ui-accent\)/)
+})
+
 test('the meter stylesheet keeps popovers, ring and reduced-motion support', () => {
   assert.match(T.METER_CSS, /wm-info-pop/)
   assert.match(T.METER_CSS, /wm-info-pop-wide/)
