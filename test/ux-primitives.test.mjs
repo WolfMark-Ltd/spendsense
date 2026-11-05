@@ -22,7 +22,7 @@ writeFileSync(entry, `
 export { default as plugin, __test as T } from '${join(ROOT, 'desktop', 'plugin.js')}'
 export * as React from 'react'
 export * as ReactDOMClient from 'react-dom/client'
-export { QueryClientProvider, queryClient } from '@hermes/plugin-sdk'
+export { QueryClientProvider, queryClient, i18nBackend } from '@hermes/plugin-sdk'
 `)
 const bundle = join(work, 'bundle.mjs')
 const esbuild = (await import(pathToFileURL(join(HARNESS_MODULES, 'esbuild', 'lib', 'main.js')).href)).default
@@ -43,7 +43,12 @@ define('HTMLElement', dom.window.HTMLElement); define('Node', dom.window.Node)
 define('MouseEvent', dom.window.MouseEvent); define('KeyboardEvent', dom.window.KeyboardEvent); define('Event', dom.window.Event)
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const lib = await import(pathToFileURL(bundle).href)
-const { T, React, ReactDOMClient, QueryClientProvider, queryClient } = lib
+const { T, React, ReactDOMClient, QueryClientProvider, queryClient, i18nBackend } = lib
+const enT = (key, ...args) => {
+  const entry = T.I18N.en[key]
+  return typeof entry === 'function' ? entry(...args) : entry ?? key
+}
+i18nBackend.t = enT
 // Register with a benign transport so LedgerPage can mount its real pages.
 lib.plugin.register({
   rest: async path => {
@@ -136,6 +141,22 @@ test('LedgerTabs: seven tabs in order, roving tabindex, click and arrow navigati
     last[6].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
   }); await flush()
   assert.equal(T.$ledgerTab.get(), 'overview')
+})
+
+test('LedgerTabs: Chinese labels render through the dictionary', async () => {
+  i18nBackend.t = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  try {
+    T.$ledgerTab.set('overview')
+    const container = await renderEl(React.createElement(T.LedgerTabs))
+    const tabs = [...container.querySelectorAll('[role="tab"]')]
+    assert.deepEqual(tabs.map(el => el.textContent),
+      ['总览', '用量', '费用', '会员', '报告', '模型动态', '设置与关于'])
+  } finally {
+    i18nBackend.t = enT
+  }
 })
 
 test('ProductHeader renders one h1, subtitle and actions in the shared heading', async () => {

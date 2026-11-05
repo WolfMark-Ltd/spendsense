@@ -2870,6 +2870,16 @@ function econFeeLines(t, fees) {
 const LEDGER_TABS = [['overview', 'Overview'], ['usage', 'Usage'], ['costs', 'Costs'],
   ['memberships', 'Memberships'], ['reports', 'Reports'], ['news', 'Model News'],
   ['settings', 'Settings & About']]
+/** Tab ids to their I18N label keys. LEDGER_TABS keeps the canonical English labels. */
+const TAB_LABEL_KEYS = {
+  overview: 'tabOverview',
+  usage: 'tabUsage',
+  costs: 'tabCosts',
+  memberships: 'tabMemberships',
+  reports: 'tabReports',
+  news: 'tabNews',
+  settings: 'tabSettings',
+}
 const $digestDays = atom(30)
 /** Model News view state: audience scope plus one category filter. */
 const $newsScope = atom('foryou')
@@ -2887,6 +2897,7 @@ const $newsLiveState = atom(null)
  */
 let ledgerTabKeyboardNav = false
 function LedgerTabs() {
+  const t = usePluginI18n(ID)
   const tab = useValue($ledgerTab)
   useEffect(() => {
     if (typeof window === 'undefined' || typeof location === 'undefined') return undefined
@@ -2920,11 +2931,11 @@ function LedgerTabs() {
     jsx('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': 'Spend Sense sections', onKeyDown, children:
       [jsx('span', { className: 'wm-product-brand', 'aria-hidden': true,
         children: jsx(BrandMark, { size: 16, id: 'tabs' }) }, 'brand'),
-      ...LEDGER_TABS.map(([id, label]) =>
+      ...LEDGER_TABS.map(([id]) =>
         jsx(ProductButton, { role: 'tab', variant: 'ghost', 'aria-selected': tab === id, 'aria-pressed': tab === id,
           tabIndex: tab === id ? 0 : -1,
           className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
-          onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) }, children: label }, id))] }) })
+          onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) }, children: t(TAB_LABEL_KEYS[id]) }, id))] }) })
 }
 
 function goLedgerTab(next) {
@@ -7697,7 +7708,15 @@ const I18N = {
     storageError: msg => `⚠ The ledger could not be saved (${msg}). New usage is kept only until Hermes restarts.`,
     today: 'today',
     total: 'Total',
-    unpricedNote: n => `${n} tokens had no known rate and are not in the total (shown as ≥).`
+    unpricedNote: n => `${n} tokens had no known rate and are not in the total (shown as ≥).}`,
+    // Ledger tabs.
+    tabOverview: 'Overview',
+    tabUsage: 'Usage',
+    tabCosts: 'Costs',
+    tabMemberships: 'Memberships',
+    tabReports: 'Reports',
+    tabNews: 'Model News',
+    tabSettings: 'Settings & About',
   },
   zh: {
     basisLegacy: '1.0 前旧数据 · 按现价估算',
@@ -8302,7 +8321,15 @@ const I18N = {
     status_partial: '部分',
     status_unpriced: '未定价',
     status_empty: '空',
-    src_fallback: slug => `按 ${slug} 单价估算——该线路无精确单价`
+    src_fallback: slug => `按 ${slug} 单价估算——该线路无精确单价`,
+    // 标签页。
+    tabOverview: '总览',
+    tabUsage: '用量',
+    tabCosts: '费用',
+    tabMemberships: '会员',
+    tabReports: '报告',
+    tabNews: '模型动态',
+    tabSettings: '设置与关于',
   }
 }
 

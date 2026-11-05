@@ -287,6 +287,19 @@ test('every sidebar string exists in English and Chinese', () => {
   assert.match(en.costSourceInfo, /may differ/)
 })
 
+test('every ledger tab string exists in English and Chinese', () => {
+  const keys = ['tabOverview', 'tabUsage', 'tabCosts', 'tabMemberships', 'tabReports', 'tabNews', 'tabSettings']
+  for (const key of keys) {
+    assert.ok(en[key] && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] && zh[key] !== key, `zh has ${key}`)
+  }
+  // The English labels keep their exact pre-localisation wording.
+  assert.deepEqual(keys.map(key => en[key]),
+    ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings & About'])
+  assert.deepEqual(keys.map(key => zh[key]),
+    ['总览', '用量', '费用', '会员', '报告', '模型动态', '设置与关于'])
+})
+
 test('the meter stylesheet keeps popovers, ring and reduced-motion support', () => {
   assert.match(T.METER_CSS, /wm-info-pop/)
   assert.match(T.METER_CSS, /wm-info-pop-wide/)
