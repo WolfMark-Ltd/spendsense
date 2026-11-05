@@ -348,6 +348,50 @@ test('billing evidence and entitlement summaries follow the chosen language', ()
     '方案额度：Nightly · $5.00 额度（用量见“会员”） · 受限模型：m1 · 有效期 2026-01-01 至 持续有效')
 })
 
+test('every advanced-rule string exists in English and Chinese', () => {
+  const keys = ['advRulesErrNoDraft', 'advRulesErrName', 'advRulesErrProvider', 'advRulesErrKind',
+    'advRulesErrUnknownFee', 'advRulesErrFeeNumber', 'advRulesErrAllowanceNumber', 'billErrConflict',
+    'billErrValidation', 'billErrAuth', 'billErrUnavailable', 'billErrSave', 'billKindApi', 'billKindPrepaid',
+    'billKindCustom', 'billKindUnknown', 'advRulesSaved', 'advRulesRemoved', 'advRulesTitle', 'advRulesIntro',
+    'advRulesLegacy', 'advRulesAdd', 'advRulesRefreshing', 'advRulesRefresh', 'advRulesLoading',
+    'advRulesCustomRate', 'advRulesModelAllowance', 'advRulesAllowance', 'advRulesNoAllowance', 'advRulesEdit',
+    'advRulesDelete', 'advRulesEmpty', 'advRulesEditTitle', 'advRulesNewTitle', 'advRulesFieldName',
+    'advRulesPhName', 'advRulesFieldLabel', 'advRulesPhOptional', 'advRulesFieldProvider', 'advRulesFieldModel',
+    'advRulesFieldKind', 'advRulesFieldAllowance', 'advRulesFieldAllowanceModel', 'advRulesFieldCycleDay',
+    'advRulesFieldFrom', 'advRulesFieldTo', 'advRulesFieldRateInput', 'advRulesFieldRateOutput',
+    'advRulesFieldRateCache', 'advRulesEstimatesNote', 'advRulesSave', 'advRulesCancel']
+  for (const key of keys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  // The English composites keep their exact pre-localisation wording.
+  assert.equal(en.advRulesLegacy(2),
+    '2 legacy subscription arrangement(s) are retained for reference and excluded from all fee totals. Choose those plans in Memberships.')
+  assert.equal(en.advRulesCustomRate('$1.50', '$3.00'), 'Custom input $1.50 / output $3.00 per million tokens')
+  assert.equal(en.advRulesModelAllowance('m', '$5.00'), 'm: $5.00 allowance')
+  assert.equal(en.advRulesAllowance('$5.00'), '$5.00 allowance')
+  // The Chinese composites interpolate every argument.
+  assert.match(zh.advRulesLegacy(2), /2 个旧订阅安排/)
+  assert.match(zh.advRulesCustomRate('$1.50', '$3.00'), /每百万令牌/)
+  assert.match(zh.advRulesModelAllowance('m', '$5.00'), /额度/)
+})
+
+test('billing validators and errors follow the chosen language', () => {
+  const translator = language => (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  assert.deepEqual(T.profileDraftErrors({}, translator('zh')),
+    ['需要填写简称。', '需要填写供应商线路。', '请选择该线路的付费方式。'])
+  assert.deepEqual(T.profileDraftErrors(null, translator('zh')), ['无草稿'])
+  assert.deepEqual(T.profileDraftErrors({}),
+    ['A short name is required.', 'A provider route is required.', 'Choose how this route is paid for.'])
+  assert.match(T.billingErrorMessage(new Error('conflict: stale'), translator('zh')), /重新加载/)
+  assert.match(T.billingErrorMessage(new Error('boom'), translator('zh')), /后端日志/)
+  assert.match(T.billingErrorMessage(new Error('conflict: stale')), /Reload, then save again/)
+})
+
 test('the meter stylesheet keeps popovers, ring and reduced-motion support', () => {
   assert.match(T.METER_CSS, /wm-info-pop/)
   assert.match(T.METER_CSS, /wm-info-pop-wide/)

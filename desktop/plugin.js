@@ -2598,15 +2598,15 @@ function billingEvidence(billing, t = needsAttentionEn) {
   }))
 }
 
-function profileDraftErrors(draft) {
+function profileDraftErrors(draft, t = needsAttentionEn) {
   const errors = []
-  if (!draft) return ['no draft']
-  if (!String(draft.id || '').trim()) errors.push('A short name is required.')
-  if (!String(draft.provider || '').trim()) errors.push('A provider route is required.')
-  if (!String(draft.kind || '')) errors.push('Choose how this route is paid for.')
-  if (draft.kind === 'unknown' && draft.monthly_fee_usd) errors.push('An unknown arrangement cannot assert a fee.')
-  if (draft.monthly_fee_usd != null && draft.monthly_fee_usd !== '' && !Number.isFinite(Number(draft.monthly_fee_usd))) errors.push('Fee must be a number.')
-  if (draft.allowance_usd != null && draft.allowance_usd !== '' && !Number.isFinite(Number(draft.allowance_usd))) errors.push('Allowance must be a number.')
+  if (!draft) return [t('advRulesErrNoDraft')]
+  if (!String(draft.id || '').trim()) errors.push(t('advRulesErrName'))
+  if (!String(draft.provider || '').trim()) errors.push(t('advRulesErrProvider'))
+  if (!String(draft.kind || '')) errors.push(t('advRulesErrKind'))
+  if (draft.kind === 'unknown' && draft.monthly_fee_usd) errors.push(t('advRulesErrUnknownFee'))
+  if (draft.monthly_fee_usd != null && draft.monthly_fee_usd !== '' && !Number.isFinite(Number(draft.monthly_fee_usd))) errors.push(t('advRulesErrFeeNumber'))
+  if (draft.allowance_usd != null && draft.allowance_usd !== '' && !Number.isFinite(Number(draft.allowance_usd))) errors.push(t('advRulesErrAllowanceNumber'))
   return errors
 }
 
@@ -2656,6 +2656,13 @@ const KIND_CHOICES = [
   ['custom', 'Custom token rates'],
   ['unknown', 'Unknown']
 ]
+/** Billing-rule kinds to their I18N choice labels. KIND_CHOICES keeps the canonical English. */
+const KIND_LABEL_KEYS = {
+  api: 'billKindApi',
+  prepaid: 'billKindPrepaid',
+  custom: 'billKindCustom',
+  unknown: 'billKindUnknown',
+}
 
 const $billingDraft = atom(null)
 const $billingPresentation = atom('both')
@@ -2704,13 +2711,13 @@ async function billingWrite(method, path, body, transport = rest) {
 }
 
 /** Concise, non-technical messages — never a raw FastAPI/Pydantic payload. */
-function billingErrorMessage(error) {
+function billingErrorMessage(error, t = needsAttentionEn) {
   const raw = typeof error?.message === 'string' ? error.message : ''
-  if (/conflict|409/i.test(raw)) return 'This arrangement changed since you loaded it. Reload, then save again.'
-  if (/valid dictionary|422|validation/i.test(raw)) return 'Some details are not valid. Check the name, arrangement and any amounts.'
-  if (/401|unauthori/i.test(raw)) return 'Your Desktop session has expired. Sign in again, then retry.'
-  if (/404/i.test(raw)) return 'Billing is not available in the running backend. Reload the plugin and check its health.'
-  return 'The arrangement could not be saved. Please retry; if it persists, check the backend log.'
+  if (/conflict|409/i.test(raw)) return t('billErrConflict')
+  if (/valid dictionary|422|validation/i.test(raw)) return t('billErrValidation')
+  if (/401|unauthori/i.test(raw)) return t('billErrAuth')
+  if (/404/i.test(raw)) return t('billErrUnavailable')
+  return t('billErrSave')
 }
 
 function billingSummaryQuery(identity = membershipIdentityNow()) {
@@ -2954,6 +2961,7 @@ function profileDraft(profile, identity) {
 }
 
 function AdvancedBillingRules() {
+  const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const profilesQuery = useQuery(billingQuery(identity))
   const rawDraft = useValue($billingDraft)
@@ -2963,7 +2971,7 @@ function AdvancedBillingRules() {
     ? profilesQuery.data.profiles || [] : []
   const advanced = loaded.filter(profile => !['subscription_included', 'subscription_credits', 'free'].includes(profile.kind))
   const legacy = loaded.length - advanced.length
-  const errors = profileDraftErrors(draft)
+  const errors = profileDraftErrors(draft, t)
   const startEdit = profile => $billingDraft.set(profileDraft(profile, identity))
   const update = (key, value) => $billingDraft.set({ ...draft, [key]: value })
   const save = async event => {
@@ -2978,11 +2986,11 @@ function AdvancedBillingRules() {
       await invalidateBillingDependentsFor(captured)
       if (!membershipIdentityCurrent(captured)) return
       if ($billingDraft.get() !== draft) return
-      $billingNotice.set({ tone: 'good', origin: captured, text: 'Saved. Recorded usage was not changed.' })
+      $billingNotice.set({ tone: 'good', origin: captured, text: t('advRulesSaved') })
       $billingDraft.set(null)
       await profilesQuery.refetch?.()
     } catch (error) {
-      if (membershipIdentityCurrent(captured)) $billingNotice.set({ tone: 'warn', origin: captured, text: billingErrorMessage(error) })
+      if (membershipIdentityCurrent(captured)) $billingNotice.set({ tone: 'warn', origin: captured, text: billingErrorMessage(error, t) })
     }
   }
   const remove = async profile => {
@@ -2994,10 +3002,10 @@ function AdvancedBillingRules() {
       // connection switched while it was pending; the check below guards UI only.
       await invalidateBillingDependentsFor(captured)
       if (!membershipIdentityCurrent(captured)) return
-      $billingNotice.set({ tone: 'good', origin: captured, text: 'Removed. Recorded usage was not changed.' })
+      $billingNotice.set({ tone: 'good', origin: captured, text: t('advRulesRemoved') })
       await profilesQuery.refetch?.()
     } catch (error) {
-      if (membershipIdentityCurrent(captured)) $billingNotice.set({ tone: 'warn', origin: captured, text: billingErrorMessage(error) })
+      if (membershipIdentityCurrent(captured)) $billingNotice.set({ tone: 'warn', origin: captured, text: billingErrorMessage(error, t) })
     }
   }
   const field = (label, key, options = {}) => jsxs('label', { className: 'wm-filter', children: [
@@ -3009,10 +3017,9 @@ function AdvancedBillingRules() {
         onChange: event => update(key, event.target.value) })
   ] }, key)
   return jsxs('section', { className: 'wm-product-section', children: keyedElementChildren([
-    jsx('h2', { children: 'Advanced billing rules' }),
-    jsx('p', { children: 'Optional prepaid wallets, route-specific allowances and custom token rates. Membership plans and recurring fees are managed in Memberships.' }),
-    legacy ? jsx('p', { className: 'wm-subtle', children:
-      `${legacy} legacy subscription arrangement(s) are retained for reference and excluded from all fee totals. Choose those plans in Memberships.` }) : null,
+    jsx('h2', { children: t('advRulesTitle') }),
+    jsx('p', { children: t('advRulesIntro') }),
+    legacy ? jsx('p', { className: 'wm-subtle', children: t('advRulesLegacy', legacy) }) : null,
     notice?.origin === identity ? jsx('div', { className: 'wm-alert', role: 'status', children: notice.text }) : null,
     profilesQuery.error ? jsx('div', { className: 'wm-alert', role: 'alert',
       children: String(profilesQuery.error.message || profilesQuery.error) }) : null,
@@ -3020,49 +3027,48 @@ function AdvancedBillingRules() {
       jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () =>
         $billingDraft.set({ id: '', kind: 'prepaid', provider: '', model: '', monthly_fee_usd: '',
           allowance_usd: '', allowance_model: '', cycle_day: 1, overage_paid: false,
-          origin: identity }), children: 'Add advanced rule' }),
+          origin: identity }), children: t('advRulesAdd') }),
       jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => profilesQuery.refetch?.(),
-        disabled: profilesQuery.isFetching, children: profilesQuery.isFetching ? 'Refreshing…' : 'Refresh rules' })
+        disabled: profilesQuery.isFetching, children: profilesQuery.isFetching ? t('advRulesRefreshing') : t('advRulesRefresh') })
     ] }),
-    profilesQuery.isPending ? jsx('p', { className: 'wm-subtle', children: 'Reading advanced rules…' }) : null,
+    profilesQuery.isPending ? jsx('p', { className: 'wm-subtle', children: t('advRulesLoading') }) : null,
     advanced.length ? jsx('div', { className: 'wm-cost-list', children: advanced.map(profile => jsxs('div', {
       className: 'wm-cost-row', children: [
         jsxs('div', { children: [
           jsx('strong', { children: profile.label || profile.id }),
           jsx('small', { children: [profile.provider, profile.model, profile.kind].filter(Boolean).join(' · ') }),
           jsx('small', { children: profile.kind === 'custom' && profile.rate_override
-            ? `Custom input ${fmtUsd(profile.rate_override.input)} / output ${fmtUsd(profile.rate_override.output)} per million tokens`
-            : profile.allowances ? Object.entries(profile.allowances).map(([model, value]) => `${model}: ${fmtUsd(value)} allowance`).join(' · ')
-              : profile.allowance_usd != null ? `${fmtUsd(profile.allowance_usd)} allowance` : 'No allowance reported' })
+            ? t('advRulesCustomRate', fmtUsd(profile.rate_override.input), fmtUsd(profile.rate_override.output))
+            : profile.allowances ? Object.entries(profile.allowances).map(([model, value]) => t('advRulesModelAllowance', model, fmtUsd(value))).join(' · ')
+              : profile.allowance_usd != null ? t('advRulesAllowance', fmtUsd(profile.allowance_usd)) : t('advRulesNoAllowance') })
         ] }),
         jsx('div', { className: 'wm-setting-action', children: [
-          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => startEdit(profile), children: 'Edit' }),
-          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => remove(profile), children: 'Delete' })
+          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => startEdit(profile), children: t('advRulesEdit') }),
+          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => remove(profile), children: t('advRulesDelete') })
         ] })
       ]
-    }, profile.id)) }) : !profilesQuery.isPending ? jsx('p', { className: 'wm-subtle', children:
-      'No advanced rules are saved. This is optional; Costs and Memberships work without them.' }) : null,
+    }, profile.id)) }) : !profilesQuery.isPending ? jsx('p', { className: 'wm-subtle', children: t('advRulesEmpty') }) : null,
     draft ? jsxs('form', { className: 'wm-custom-form', onSubmit: save, children: [
-      jsx('h3', { children: draft.id ? 'Edit advanced rule' : 'New advanced rule' }),
+      jsx('h3', { children: draft.id ? t('advRulesEditTitle') : t('advRulesNewTitle') }),
       jsx('div', { className: 'wm-custom-grid', children: [
-        field('Rule name', 'id', { placeholder: 'e.g. OpenRouter prepaid' }),
-        field('Display label', 'label', { placeholder: 'Optional' }),
-        field('Provider route', 'provider', { placeholder: 'openai-codex' }),
-        field('Model (optional)', 'model', { placeholder: 'provider/model' }),
-        field('Rule type', 'kind', { choices: KIND_CHOICES }),
-        field('Prepaid balance / allowance (USD)', 'allowance_usd', { type: 'number' }),
-        field('Allowance model (optional)', 'allowance_model', { placeholder: 'provider/model' }),
-        field('Cycle day', 'cycle_day', { type: 'number', step: '1' }),
-        field('Effective from', 'effective_from', { type: 'date' }),
-        field('Effective to', 'effective_to', { type: 'date' }),
-        field('Custom input rate per million (USD)', 'rate_input', { type: 'number' }),
-        field('Custom output rate per million (USD)', 'rate_output', { type: 'number' }),
-        field('Custom cache-read rate per million (USD)', 'rate_cache', { type: 'number' })
+        field(t('advRulesFieldName'), 'id', { placeholder: t('advRulesPhName') }),
+        field(t('advRulesFieldLabel'), 'label', { placeholder: t('advRulesPhOptional') }),
+        field(t('advRulesFieldProvider'), 'provider', { placeholder: 'openai-codex' }),
+        field(t('advRulesFieldModel'), 'model', { placeholder: 'provider/model' }),
+        field(t('advRulesFieldKind'), 'kind', { choices: KIND_CHOICES.map(([value]) => [value, t(KIND_LABEL_KEYS[value])]) }),
+        field(t('advRulesFieldAllowance'), 'allowance_usd', { type: 'number' }),
+        field(t('advRulesFieldAllowanceModel'), 'allowance_model', { placeholder: 'provider/model' }),
+        field(t('advRulesFieldCycleDay'), 'cycle_day', { type: 'number', step: '1' }),
+        field(t('advRulesFieldFrom'), 'effective_from', { type: 'date' }),
+        field(t('advRulesFieldTo'), 'effective_to', { type: 'date' }),
+        field(t('advRulesFieldRateInput'), 'rate_input', { type: 'number' }),
+        field(t('advRulesFieldRateOutput'), 'rate_output', { type: 'number' }),
+        field(t('advRulesFieldRateCache'), 'rate_cache', { type: 'number' })
       ] }),
-      jsx('p', { className: 'wm-subtle', children: 'Prepaid and custom-rate rules affect estimates only. They do not change settled Desktop records or represent provider invoices.' }),
+      jsx('p', { className: 'wm-subtle', children: t('advRulesEstimatesNote') }),
       jsx('div', { className: 'wm-setting-action', children: [
-        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: errors.length > 0, children: 'Save rule' }),
-        jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $billingDraft.set(null), children: 'Cancel' })
+        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: errors.length > 0, children: t('advRulesSave') }),
+        jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $billingDraft.set(null), children: t('advRulesCancel') })
       ] }),
       errors.length ? jsx('p', { className: 'wm-warn-note', role: 'alert', children: errors.join(' ') }) : null
     ] }) : null
@@ -7775,6 +7781,59 @@ const I18N = {
     billEvFeeLabel: 'Membership fee',
     billEvFeeExplain: 'Declared by you in a billing profile; charged once per cycle, not per call.',
     billEvFeeEmpty: 'No membership',
+    // Advanced billing rules.
+    advRulesErrNoDraft: 'no draft',
+    advRulesErrName: 'A short name is required.',
+    advRulesErrProvider: 'A provider route is required.',
+    advRulesErrKind: 'Choose how this route is paid for.',
+    advRulesErrUnknownFee: 'An unknown arrangement cannot assert a fee.',
+    advRulesErrFeeNumber: 'Fee must be a number.',
+    advRulesErrAllowanceNumber: 'Allowance must be a number.',
+    billErrConflict: 'This arrangement changed since you loaded it. Reload, then save again.',
+    billErrValidation: 'Some details are not valid. Check the name, arrangement and any amounts.',
+    billErrAuth: 'Your Desktop session has expired. Sign in again, then retry.',
+    billErrUnavailable: 'Billing is not available in the running backend. Reload the plugin and check its health.',
+    billErrSave: 'The arrangement could not be saved. Please retry; if it persists, check the backend log.',
+    billKindApi: 'Pay as you go',
+    billKindPrepaid: 'Prepaid wallet',
+    billKindCustom: 'Custom token rates',
+    billKindUnknown: 'Unknown',
+    advRulesSaved: 'Saved. Recorded usage was not changed.',
+    advRulesRemoved: 'Removed. Recorded usage was not changed.',
+    advRulesTitle: 'Advanced billing rules',
+    advRulesIntro: 'Optional prepaid wallets, route-specific allowances and custom token rates. Membership plans and recurring fees are managed in Memberships.',
+    advRulesLegacy: legacy => `${legacy} legacy subscription arrangement(s) are retained for reference and excluded from all fee totals. Choose those plans in Memberships.`,
+    advRulesAdd: 'Add advanced rule',
+    advRulesRefreshing: 'Refreshing…',
+    advRulesRefresh: 'Refresh rules',
+    advRulesLoading: 'Reading advanced rules…',
+    advRulesCustomRate: (input, output) => `Custom input ${input} / output ${output} per million tokens`,
+    advRulesModelAllowance: (model, value) => `${model}: ${value} allowance`,
+    advRulesAllowance: value => `${value} allowance`,
+    advRulesNoAllowance: 'No allowance reported',
+    advRulesEdit: 'Edit',
+    advRulesDelete: 'Delete',
+    advRulesEmpty: 'No advanced rules are saved. This is optional; Costs and Memberships work without them.',
+    advRulesEditTitle: 'Edit advanced rule',
+    advRulesNewTitle: 'New advanced rule',
+    advRulesFieldName: 'Rule name',
+    advRulesPhName: 'e.g. OpenRouter prepaid',
+    advRulesFieldLabel: 'Display label',
+    advRulesPhOptional: 'Optional',
+    advRulesFieldProvider: 'Provider route',
+    advRulesFieldModel: 'Model (optional)',
+    advRulesFieldKind: 'Rule type',
+    advRulesFieldAllowance: 'Prepaid balance / allowance (USD)',
+    advRulesFieldAllowanceModel: 'Allowance model (optional)',
+    advRulesFieldCycleDay: 'Cycle day',
+    advRulesFieldFrom: 'Effective from',
+    advRulesFieldTo: 'Effective to',
+    advRulesFieldRateInput: 'Custom input rate per million (USD)',
+    advRulesFieldRateOutput: 'Custom output rate per million (USD)',
+    advRulesFieldRateCache: 'Custom cache-read rate per million (USD)',
+    advRulesEstimatesNote: 'Prepaid and custom-rate rules affect estimates only. They do not change settled Desktop records or represent provider invoices.',
+    advRulesSave: 'Save rule',
+    advRulesCancel: 'Cancel',
   },
   zh: {
     basisLegacy: '1.0 前旧数据 · 按现价估算',
@@ -8446,6 +8505,59 @@ const I18N = {
     billEvFeeLabel: '会员费',
     billEvFeeExplain: '您在计费资料中申报；每周期收取一次，不按调用收取。',
     billEvFeeEmpty: '无会员',
+    // 高级计费规则。
+    advRulesErrNoDraft: '无草稿',
+    advRulesErrName: '需要填写简称。',
+    advRulesErrProvider: '需要填写供应商线路。',
+    advRulesErrKind: '请选择该线路的付费方式。',
+    advRulesErrUnknownFee: '未知安排不能断言费用。',
+    advRulesErrFeeNumber: '费用必须是数字。',
+    advRulesErrAllowanceNumber: '额度必须是数字。',
+    billErrConflict: '该安排在您加载后发生了变化。请重新加载后再保存。',
+    billErrValidation: '部分信息无效。请检查名称、安排及金额。',
+    billErrAuth: '桌面会话已过期。请重新登录后重试。',
+    billErrUnavailable: '运行中的后端不支持计费。请重新加载插件并检查其状态。',
+    billErrSave: '该安排未能保存。请重试；如问题持续，请检查后端日志。',
+    billKindApi: '按量付费',
+    billKindPrepaid: '预付钱包',
+    billKindCustom: '自定义令牌单价',
+    billKindUnknown: '未知',
+    advRulesSaved: '已保存。已记录用量未更改。',
+    advRulesRemoved: '已删除。已记录用量未更改。',
+    advRulesTitle: '高级计费规则',
+    advRulesIntro: '可选的预付钱包、线路专属额度与自定义令牌单价。会员方案与周期性费用在“会员”中管理。',
+    advRulesLegacy: legacy => `${legacy} 个旧订阅安排仅保留备查，不计入任何费用合计。请在“会员”中选择这些方案。`,
+    advRulesAdd: '添加高级规则',
+    advRulesRefreshing: '正在刷新…',
+    advRulesRefresh: '刷新规则',
+    advRulesLoading: '正在读取高级规则…',
+    advRulesCustomRate: (input, output) => `自定义输入 ${input} / 输出 ${output} 每百万令牌`,
+    advRulesModelAllowance: (model, value) => `${model}：${value} 额度`,
+    advRulesAllowance: value => `${value} 额度`,
+    advRulesNoAllowance: '未上报额度',
+    advRulesEdit: '修改',
+    advRulesDelete: '删除',
+    advRulesEmpty: '尚未保存高级规则。此为可选项；“费用”与“会员”无需它们即可工作。',
+    advRulesEditTitle: '修改高级规则',
+    advRulesNewTitle: '新建高级规则',
+    advRulesFieldName: '规则名称',
+    advRulesPhName: '例如：OpenRouter 预付',
+    advRulesFieldLabel: '显示标签',
+    advRulesPhOptional: '选填',
+    advRulesFieldProvider: '供应商线路',
+    advRulesFieldModel: '模型（可选）',
+    advRulesFieldKind: '规则类型',
+    advRulesFieldAllowance: '预付余额 / 额度（美元）',
+    advRulesFieldAllowanceModel: '额度模型（可选）',
+    advRulesFieldCycleDay: '账单日',
+    advRulesFieldFrom: '生效自',
+    advRulesFieldTo: '生效至',
+    advRulesFieldRateInput: '自定义输入单价（美元/百万）',
+    advRulesFieldRateOutput: '自定义输出单价（美元/百万）',
+    advRulesFieldRateCache: '自定义缓存读取单价（美元/百万）',
+    advRulesEstimatesNote: '预付与自定义单价规则仅影响估算。它们不改变已结算的桌面记录，也不代表供应商账单。',
+    advRulesSave: '保存规则',
+    advRulesCancel: '取消',
   }
 }
 
