@@ -2543,8 +2543,8 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const economics=data?.economics || totals?.economics || {}
   const refresh=()=>query.refetch?.()
   const billingMix=totals?.billing_mix ? Object.entries(totals.billing_mix).map(([kind,value])=>`${kind}: ${typeof value==='number'?fmtTokens(value):String(value)}`).join(' · ') : ''
-  const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('div',{className:'wm-eyebrow',children:'WolfMark / Spend Sense'}),jsx('h1',{children:'Usage analytics'}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:`Recorded calls · ${profile || 'current profile'} · all Hermes surfaces`})]}),
-    jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:'NERD MODE'}),jsx(AnalyticsButton,{label:'Refresh analytics',disabled:query.isFetching,onClick:refresh,children:query.isFetching?'Refreshing…':'↻ Refresh'}),jsx(AnalyticsButton,{label:'Use this desktop’s ledger',onClick:()=>$view.set(VIEW_DESKTOP),children:'This desktop'}),jsx(AnalyticsButton,{label:'Close analytics',onClick:closeLedger,children:'× Close'})]})]})
+  const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('div',{className:'wm-eyebrow',children:'WolfMark / Spend Sense'}),jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
+    jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')}),jsx(AnalyticsButton,{label:t('usageCloseTip'),onClick:closeLedger,children:t('usageClose')})]})]})
   return jsxs('div',{className:cn('wm-analytics',productPage&&'wm-product'),children:[jsx('style',{children:productPage?ANALYTICS_CSS+PRODUCT_CSS:ANALYTICS_CSS}),productPage?jsx(LedgerTabs,{}):null,jsxs('div',{className:'wm-shell',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
     query.error?jsxs('div',{className:'wm-alert',role:'alert',children:[jsx('h2',{children:'Analytics unavailable'}),jsx('p',{children:String(query.error.message || query.error)}),jsx('p',{children:data?'The visible snapshot is stale. Retry before using these values.':'The live chip and this desktop’s ledger are still available.'}),jsx(AnalyticsButton,{label:'Retry analytics',onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:'Reading timestamped calls…'}):null,
@@ -7717,6 +7717,18 @@ const I18N = {
     tabReports: 'Reports',
     tabNews: 'Model News',
     tabSettings: 'Settings & About',
+    // Usage header.
+    usageTitle: 'Usage analytics',
+    usageSubtitle: profile => `Recorded calls · ${profile} · all Hermes surfaces`,
+    usageCurrentProfile: 'current profile',
+    usageNerdMode: 'NERD MODE',
+    usageRefreshTip: 'Refresh analytics',
+    usageRefreshing: 'Refreshing…',
+    usageRefresh: '↻ Refresh',
+    usageThisDesktopTip: 'Use this desktop’s ledger',
+    usageThisDesktop: 'This desktop',
+    usageCloseTip: 'Close analytics',
+    usageClose: '× Close',
   },
   zh: {
     basisLegacy: '1.0 前旧数据 · 按现价估算',
@@ -8330,6 +8342,18 @@ const I18N = {
     tabReports: '报告',
     tabNews: '模型动态',
     tabSettings: '设置与关于',
+    // 用量页眉。
+    usageTitle: '用量分析',
+    usageSubtitle: profile => `已记录调用 · ${profile} · 所有 Hermes 来源`,
+    usageCurrentProfile: '当前配置文件',
+    usageNerdMode: '极客模式',
+    usageRefreshTip: '刷新分析数据',
+    usageRefreshing: '正在刷新…',
+    usageRefresh: '↻ 刷新',
+    usageThisDesktopTip: '使用此桌面的账本',
+    usageThisDesktop: '此桌面',
+    usageCloseTip: '关闭分析',
+    usageClose: '× 关闭',
   }
 }
 

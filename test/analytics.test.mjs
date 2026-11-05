@@ -166,6 +166,27 @@ test('analytics cache coverage uses the selected language', () => {
  assert.match(text(english), /75\.0% of prompt tokens covered/)
 })
 
+test('usage header follows the selected language', () => {
+  globalThis.analyticsLanguage = 'zh'
+  try {
+    const view = text(page())
+    assert.match(view, /用量分析/)
+    assert.match(view, /已记录调用 · default · 所有 Hermes 来源/)
+    assert.match(view, /极客模式/)
+    assert.match(view, /↻ 刷新/)
+    assert.match(view, /此桌面/)
+    assert.match(view, /× 关闭/)
+  } finally {
+    globalThis.analyticsLanguage = 'en'
+  }
+  const english = text(page())
+  assert.match(english, /Usage analytics/)
+  assert.match(english, /Recorded calls · default · all Hermes surfaces/)
+  assert.match(english, /NERD MODE/)
+  assert.equal(T.I18N.en.usageCurrentProfile, 'current profile')
+  assert.equal(T.I18N.zh.usageCurrentProfile, '当前配置文件')
+})
+
 test('/rates unavailability falls back to the bundled snapshot', () => {
  const hit = T.resolveRates({model: 'deepseek/deepseek-v4.1-flash', provider: 'commandcode', payload: null, remembered: {}})
  assert.ok(hit.rates, 'bundled rates still price the call when the backend is down')
