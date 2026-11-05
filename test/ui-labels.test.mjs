@@ -300,6 +300,54 @@ test('every ledger tab string exists in English and Chinese', () => {
     ['总览', '用量', '费用', '会员', '报告', '模型动态', '设置与关于'])
 })
 
+test('every costs string exists in English and Chinese', () => {
+  const keys = ['costsPricing', 'costsPricingNoSource', 'costsPricingAge', 'costsPricingNoDate',
+    'costsPricingStale', 'costsPricingTitle', 'costsTitle', 'costsSubtitle', 'costsMembershipTitle',
+    'costsMembershipIntro', 'costsSavedMemberships', 'costsMembershipCount', 'costsCombinedFees',
+    'costsLoading', 'costsBasisCatalogue', 'costsBasisCustom', 'costsBasisDeclared', 'costsBasisUnpriced',
+    'costsEmpty', 'costsLegacyIgnored', 'costsEvidenceTitle', 'costsEvidenceIntro', 'costsEvidenceLoading',
+    'costsFooterNote', 'costsEntAllowance', 'costsEntAllowances', 'costsEntRestricted', 'costsEntEffective',
+    'costsEntAnyTime', 'costsEntOngoing', 'billEvProviderLabel', 'billEvProviderExplain', 'billEvProviderEmpty',
+    'billEvApiLabel', 'billEvApiExplain', 'billEvApiEmpty', 'billEvCreditsLabel', 'billEvCreditsExplain',
+    'billEvCreditsEmpty', 'billEvCashLabel', 'billEvCashExplain', 'billEvCashEmpty', 'billEvFeeLabel',
+    'billEvFeeExplain', 'billEvFeeEmpty']
+  for (const key of keys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  // The English composites keep their exact pre-localisation wording.
+  assert.equal(en.costsPricing('WolfMark catalogue', '3 h old', ' · stale'),
+    'Pricing: WolfMark catalogue · 3 h old · stale · sources and privacy')
+  assert.equal(en.costsPricingAge(3), '3 h old')
+  assert.equal(en.costsMembershipCount(2, 3), '2 of 3')
+  assert.equal(en.costsLegacyIgnored(1),
+    '1 old subscription arrangement(s) remain stored but are excluded. Choose each plan in Memberships to keep one authoritative record.')
+  assert.equal(en.costsEntAllowances('Nightly $5.00'), 'plan allowances: Nightly $5.00 (usage in Memberships)')
+  // The Chinese composites interpolate every argument.
+  assert.match(zh.costsPricing('WolfMark 目录', '3 小时前', ' · 已过期'), /价格：/)
+  assert.equal(zh.costsMembershipCount(2, 3), '2 / 3')
+  assert.match(zh.costsEntEffective('2026-01-01', '持续有效'), /有效期/)
+})
+
+test('billing evidence and entitlement summaries follow the chosen language', () => {
+  const translator = language => (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const rows = T.billingEvidence({ evidence: { provider_reported: { usd: 1 } } }, translator('zh'))
+  assert.equal(rows[0].label, '供应商上报用量')
+  assert.equal(rows[0].empty, '未记录')
+  assert.equal(rows[0].usd, 1)
+  assert.equal(rows[0].basis, 'none')
+  const account = { plan: { entitlements: { windows: [{ id: 'w', label: 'Nightly', amount: 5, currency: 'USD' }] },
+    model_restrictions: ['m1'], effective: { effective_from: '2026-01-01' } } }
+  assert.equal(T.membershipEntitlementSummary(account),
+    'plan allowances: Nightly · $5.00 allowance (usage in Memberships) · restricted models: m1 · effective 2026-01-01 to ongoing')
+  assert.equal(T.membershipEntitlementSummary(account, translator('zh')),
+    '方案额度：Nightly · $5.00 额度（用量见“会员”） · 受限模型：m1 · 有效期 2026-01-01 至 持续有效')
+})
+
 test('the meter stylesheet keeps popovers, ring and reduced-motion support', () => {
   assert.match(T.METER_CSS, /wm-info-pop/)
   assert.match(T.METER_CSS, /wm-info-pop-wide/)

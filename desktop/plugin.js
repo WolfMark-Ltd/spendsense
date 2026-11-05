@@ -2581,14 +2581,14 @@ function AnalyticsPage({productPage=false}={}) {
 /* ------------------------------------------------- billing & pricing settings */
 
 /** Evidence rows, each carrying its own basis so nothing looks confirmed. */
-function billingEvidence(billing) {
+function billingEvidence(billing, t = needsAttentionEn) {
   const ev = billing?.evidence || {}
   const rows = [
-    ['provider_reported', 'Provider-reported use', 'Confirmed by the provider’s own request history.', 'Not recorded'],
-    ['api_equivalent', 'API-equivalent value', 'Published rates applied to these tokens. Theoretical, not an invoice.', 'Not priced'],
-    ['credits_consumed', 'Credits consumed', 'Inferred from your membership profile — not a provider-confirmed deduction.', 'No plan set'],
-    ['incremental_cash', 'Additional cash', 'Inferred overage after allowances; never asserted as a confirmed charge.', 'No plan set'],
-    ['subscription_fee', 'Membership fee', 'Declared by you in a billing profile; charged once per cycle, not per call.', 'No membership']
+    ['provider_reported', t('billEvProviderLabel'), t('billEvProviderExplain'), t('billEvProviderEmpty')],
+    ['api_equivalent', t('billEvApiLabel'), t('billEvApiExplain'), t('billEvApiEmpty')],
+    ['credits_consumed', t('billEvCreditsLabel'), t('billEvCreditsExplain'), t('billEvCreditsEmpty')],
+    ['incremental_cash', t('billEvCashLabel'), t('billEvCashExplain'), t('billEvCashEmpty')],
+    ['subscription_fee', t('billEvFeeLabel'), t('billEvFeeExplain'), t('billEvFeeEmpty')]
   ]
   return rows.map(([key, label, explanation, empty]) => ({
     key, label, explanation, empty,
@@ -3155,23 +3155,25 @@ function pricingStatusQuery(identity = membershipIdentityNow()) {
   }
 }
 
-function membershipEntitlementSummary(account) {
+function membershipEntitlementSummary(account, t = needsAttentionEn) {
   const windows = account?.plan?.entitlements?.windows || []
   const names = windows.map(window => {
-    const amount = window.amount == null ? '' : ` · ${fmtMoney(window.amount, window.currency || 'USD')} allowance`
+    const amount = window.amount == null ? '' : t('costsEntAllowance', fmtMoney(window.amount, window.currency || 'USD'))
     return `${window.label || window.id}${amount}`
   })
   const restrictions = account?.plan?.model_restrictions || []
   const parts = []
-  if (names.length) parts.push(`plan allowances: ${names.join(', ')} (usage in Memberships)`)
-  if (restrictions.length) parts.push(`restricted models: ${restrictions.join(', ')}`)
+  if (names.length) parts.push(t('costsEntAllowances', names.join(', ')))
+  if (restrictions.length) parts.push(t('costsEntRestricted', restrictions.join(', ')))
   if (account?.plan?.effective?.effective_from || account?.plan?.effective?.effective_to) {
-    parts.push(`effective ${account.plan.effective.effective_from || 'any time'} to ${account.plan.effective.effective_to || 'ongoing'}`)
+    parts.push(t('costsEntEffective', account.plan.effective.effective_from || t('costsEntAnyTime'),
+      account.plan.effective.effective_to || t('costsEntOngoing')))
   }
   return parts.join(' · ')
 }
 
 function CostsPage() {
+  const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const summary = useQuery(billingSummaryQuery(identity))
   const accounts = useQuery(membershipQuery(false, identity))
@@ -3182,44 +3184,44 @@ function CostsPage() {
   const list = current ? membershipAccounts(current) : []
   const fees = membershipSummary(list)
   const billing = summary.data?.billing || {}
-  const evidence = billingEvidence(billing).filter(row => row.key !== 'subscription_fee')
+  const evidence = billingEvidence(billing, t).filter(row => row.key !== 'subscription_fee')
   const ignored = Number(billing.legacy_membership_arrangements_ignored || 0)
   const status = pricing.data
   const sourceText = status
-    ? 'Pricing: ' + (status.source || 'source unavailable') +
-      (status.age_seconds != null ? ' · ' + Math.round(status.age_seconds / 3600) + ' h old' : ' · date unknown') +
-      (status.stale ? ' · stale' : '') + ' · sources and privacy'
-    : 'Pricing sources and privacy'
+    ? t('costsPricing', status.source || t('costsPricingNoSource'),
+      status.age_seconds != null ? t('costsPricingAge', Math.round(status.age_seconds / 3600)) : t('costsPricingNoDate'),
+      status.stale ? t('costsPricingStale') : '')
+    : t('costsPricingTitle')
   return jsxs('div', { className: 'wm-analytics wm-product', children: [
     jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + ECONOMICS_CSS }),
     jsx(LedgerTabs, {}),
     jsxs('main', { className: 'wm-shell', children: [
-      jsx(ProductHeader, { title: 'Costs',
-        subtitle: 'Recorded usage, current price estimates and the memberships you have declared.',
+      jsx(ProductHeader, { title: t('costsTitle'),
+        subtitle: t('costsSubtitle'),
         actions: jsx('button', { type: 'button', className: 'wm-source-link',
           onClick: () => goLedgerTab('settings'), children: sourceText }) }),
       summary.error
         ? jsx('div', { className: 'wm-alert', role: 'alert', children: String(summary.error.message || summary.error) })
         : null,
       accounts.error
-        ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read') })
+        ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read', t) })
         : null,
       jsx(EconomicsPanel, { identity }),
       jsxs('section', { className: 'wm-product-section', children: [
-        jsx('h2', { children: 'Membership costs' }),
-        jsx('p', { children: 'Each account appears once. Totals keep currencies and billing periods separate.' }),
+        jsx('h2', { children: t('costsMembershipTitle') }),
+        jsx('p', { children: t('costsMembershipIntro') }),
         jsxs('div', { className: 'wm-product-summary', children: [
           jsxs('div', { className: 'wm-product-stat', children: [
-            jsx('label', { children: 'Saved memberships' }),
-            jsx('strong', { children: accountsReady ? fees.withPlan + ' of ' + fees.total : '—' })
+            jsx('label', { children: t('costsSavedMemberships') }),
+            jsx('strong', { children: accountsReady ? t('costsMembershipCount', fees.withPlan, fees.total) : '—' })
           ] }),
           jsxs('div', { className: 'wm-product-stat', children: [
-            jsx('label', { children: 'Combined membership fees' }),
-            jsx('strong', { children: accountsReady ? feesLabel(fees) : '—' })
+            jsx('label', { children: t('costsCombinedFees') }),
+            jsx('strong', { children: accountsReady ? feesLabel(fees, t) : '—' })
           ] })
         ] }),
         !accountsReady && !accounts.error
-          ? jsx('p', { className: 'wm-subtle', children: 'Reading memberships for this connection…' })
+          ? jsx('p', { className: 'wm-subtle', children: t('costsLoading') })
           : null,
         list.length
           ? jsx('div', { className: 'wm-cost-list', children: list.map(account => jsxs('div', {
@@ -3228,26 +3230,25 @@ function CostsPage() {
                   jsx('strong', { children: account.plan?.name || account.label || account.family }),
                   jsx('small', { children:
                     (account.label !== account.family ? account.label + ' · ' : '') +
-                    (account.fee?.basis === 'catalogue' ? 'Bundled catalogue price'
-                      : account.fee?.basis === 'custom' ? 'User-defined plan price'
-                      : account.fee?.basis === 'declared' ? 'Your fee; plan price kept separately'
-                      : account.fee?.basis === 'unpriced' ? 'No published price' : account.family)
-                    + (membershipEntitlementSummary(account) ? ' · ' + membershipEntitlementSummary(account) : '')
+                    (account.fee?.basis === 'catalogue' ? t('costsBasisCatalogue')
+                      : account.fee?.basis === 'custom' ? t('costsBasisCustom')
+                      : account.fee?.basis === 'declared' ? t('costsBasisDeclared')
+                      : account.fee?.basis === 'unpriced' ? t('costsBasisUnpriced') : account.family)
+                    + (membershipEntitlementSummary(account, t) ? ' · ' + membershipEntitlementSummary(account, t) : '')
                   })
                 ] }),
-                jsx('strong', { children: feeLabel(account.fee) })
+                jsx('strong', { children: feeLabel(account.fee, t) })
               ]
             }, account.id)) })
-          : accountsReady ? jsx('p', { className: 'wm-subtle', children:
-              'No saved memberships yet. Discover accounts and confirm their plans in Memberships.' }) : null,
+          : accountsReady ? jsx('p', { className: 'wm-subtle', children: t('costsEmpty') }) : null,
         ignored
-          ? jsx('p', { className: 'wm-subtle', children: ignored + ' old subscription arrangement(s) remain stored but are excluded. Choose each plan in Memberships to keep one authoritative record.' })
+          ? jsx('p', { className: 'wm-subtle', children: t('costsLegacyIgnored', ignored) })
           : null
       ] }),
       jsxs('section', { className: 'wm-product-section', children: [
-        jsx('h2', { children: 'Usage evidence' }),
-        jsx('p', { children: 'Provider-reported values and price estimates are different kinds of evidence; neither is a payment receipt.' }),
-        summary.isPending ? jsx('p', { className: 'wm-subtle', children: 'Reading usage evidence…' }) : null,
+        jsx('h2', { children: t('costsEvidenceTitle') }),
+        jsx('p', { children: t('costsEvidenceIntro') }),
+        summary.isPending ? jsx('p', { className: 'wm-subtle', children: t('costsEvidenceLoading') }) : null,
         jsx('div', { className: 'wm-product-summary', children: evidence.map(row => jsx('div', {
           className: 'wm-product-stat', children: [
             jsx('label', { children: row.label }),
@@ -3256,8 +3257,7 @@ function CostsPage() {
           ]
         }, row.key)) })
       ] }),
-      jsx('p', { className: 'wm-subtle', children:
-        'Desktop-recorded values keep the rates captured at the time. Backend API-equivalent estimates use the current available catalogue and can change; they are not historical charges.' })
+      jsx('p', { className: 'wm-subtle', children: t('costsFooterNote') })
     ] })
   ] })
 }
@@ -7729,6 +7729,52 @@ const I18N = {
     usageThisDesktop: 'This desktop',
     usageCloseTip: 'Close analytics',
     usageClose: '× Close',
+    // Costs page.
+    costsPricing: (source, age, stale) => `Pricing: ${source} · ${age}${stale} · sources and privacy`,
+    costsPricingNoSource: 'source unavailable',
+    costsPricingAge: h => `${h} h old`,
+    costsPricingNoDate: 'date unknown',
+    costsPricingStale: ' · stale',
+    costsPricingTitle: 'Pricing sources and privacy',
+    costsTitle: 'Costs',
+    costsSubtitle: 'Recorded usage, current price estimates and the memberships you have declared.',
+    costsMembershipTitle: 'Membership costs',
+    costsMembershipIntro: 'Each account appears once. Totals keep currencies and billing periods separate.',
+    costsSavedMemberships: 'Saved memberships',
+    costsMembershipCount: (withPlan, total) => `${withPlan} of ${total}`,
+    costsCombinedFees: 'Combined membership fees',
+    costsLoading: 'Reading memberships for this connection…',
+    costsBasisCatalogue: 'Bundled catalogue price',
+    costsBasisCustom: 'User-defined plan price',
+    costsBasisDeclared: 'Your fee; plan price kept separately',
+    costsBasisUnpriced: 'No published price',
+    costsEmpty: 'No saved memberships yet. Discover accounts and confirm their plans in Memberships.',
+    costsLegacyIgnored: ignored => `${ignored} old subscription arrangement(s) remain stored but are excluded. Choose each plan in Memberships to keep one authoritative record.`,
+    costsEvidenceTitle: 'Usage evidence',
+    costsEvidenceIntro: 'Provider-reported values and price estimates are different kinds of evidence; neither is a payment receipt.',
+    costsEvidenceLoading: 'Reading usage evidence…',
+    costsFooterNote: 'Desktop-recorded values keep the rates captured at the time. Backend API-equivalent estimates use the current available catalogue and can change; they are not historical charges.',
+    costsEntAllowance: money => ` · ${money} allowance`,
+    costsEntAllowances: names => `plan allowances: ${names} (usage in Memberships)`,
+    costsEntRestricted: list => `restricted models: ${list}`,
+    costsEntEffective: (from, to) => `effective ${from} to ${to}`,
+    costsEntAnyTime: 'any time',
+    costsEntOngoing: 'ongoing',
+    billEvProviderLabel: 'Provider-reported use',
+    billEvProviderExplain: 'Confirmed by the provider’s own request history.',
+    billEvProviderEmpty: 'Not recorded',
+    billEvApiLabel: 'API-equivalent value',
+    billEvApiExplain: 'Published rates applied to these tokens. Theoretical, not an invoice.',
+    billEvApiEmpty: 'Not priced',
+    billEvCreditsLabel: 'Credits consumed',
+    billEvCreditsExplain: 'Inferred from your membership profile — not a provider-confirmed deduction.',
+    billEvCreditsEmpty: 'No plan set',
+    billEvCashLabel: 'Additional cash',
+    billEvCashExplain: 'Inferred overage after allowances; never asserted as a confirmed charge.',
+    billEvCashEmpty: 'No plan set',
+    billEvFeeLabel: 'Membership fee',
+    billEvFeeExplain: 'Declared by you in a billing profile; charged once per cycle, not per call.',
+    billEvFeeEmpty: 'No membership',
   },
   zh: {
     basisLegacy: '1.0 前旧数据 · 按现价估算',
@@ -8354,6 +8400,52 @@ const I18N = {
     usageThisDesktop: '此桌面',
     usageCloseTip: '关闭分析',
     usageClose: '× 关闭',
+    // 费用页面。
+    costsPricing: (source, age, stale) => `价格：${source} · ${age}${stale} · 来源与隐私`,
+    costsPricingNoSource: '来源不可用',
+    costsPricingAge: h => `${h} 小时前`,
+    costsPricingNoDate: '日期未知',
+    costsPricingStale: ' · 已过期',
+    costsPricingTitle: '价格来源与隐私',
+    costsTitle: '费用',
+    costsSubtitle: '已记录用量、当前价格估算，以及您申报的会员。',
+    costsMembershipTitle: '会员费用',
+    costsMembershipIntro: '每个账户只出现一次。合计按币种与账单周期分开。',
+    costsSavedMemberships: '已保存会员',
+    costsMembershipCount: (withPlan, total) => `${withPlan} / ${total}`,
+    costsCombinedFees: '会员费合计',
+    costsLoading: '正在读取此连接的会员…',
+    costsBasisCatalogue: '内置目录价格',
+    costsBasisCustom: '自定义方案价格',
+    costsBasisDeclared: '您的费用；方案价格另记',
+    costsBasisUnpriced: '无公开价格',
+    costsEmpty: '尚未保存会员。请在“会员”中发现账户并确认其方案。',
+    costsLegacyIgnored: ignored => `${ignored} 个旧订阅安排仍在存储中，但已排除。请在“会员”中为每个安排选择方案，以保留一条权威记录。`,
+    costsEvidenceTitle: '用量证据',
+    costsEvidenceIntro: '供应商上报值与价格估算属于不同种类的证据；两者都不是付款凭证。',
+    costsEvidenceLoading: '正在读取用量证据…',
+    costsFooterNote: '桌面记录值保留记录时的单价。后端 API 等值估算使用当前可用目录，可能变化；并非历史费用。',
+    costsEntAllowance: money => ` · ${money} 额度`,
+    costsEntAllowances: names => `方案额度：${names}（用量见“会员”）`,
+    costsEntRestricted: list => `受限模型：${list}`,
+    costsEntEffective: (from, to) => `有效期 ${from} 至 ${to}`,
+    costsEntAnyTime: '任何时间',
+    costsEntOngoing: '持续有效',
+    billEvProviderLabel: '供应商上报用量',
+    billEvProviderExplain: '经供应商自有请求历史确认。',
+    billEvProviderEmpty: '未记录',
+    billEvApiLabel: 'API 等值价值',
+    billEvApiExplain: '按公开单价对这些令牌计价。理论值，非账单。',
+    billEvApiEmpty: '未定价',
+    billEvCreditsLabel: '已消耗额度',
+    billEvCreditsExplain: '根据您的会员资料推断——未经供应商确认扣减。',
+    billEvCreditsEmpty: '未设置方案',
+    billEvCashLabel: '额外现金支出',
+    billEvCashExplain: '额度之外的推断超额部分；从不断言为已确认费用。',
+    billEvCashEmpty: '未设置方案',
+    billEvFeeLabel: '会员费',
+    billEvFeeExplain: '您在计费资料中申报；每周期收取一次，不按调用收取。',
+    billEvFeeEmpty: '无会员',
   }
 }
 
@@ -8469,6 +8561,7 @@ export const __test = {
   $membershipExpanded, $membershipTarget, arrangementLabel, attentionActionLabel, queueMembershipTarget,
   membershipTargetDom, weatherReadingLi,
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
+  membershipEntitlementSummary,
   billingNumberStep, $billingDraft, $billingNotice,
   economicsQuery, fxQuery, fxWrite, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
   econWindowLines, windowSpanLabel, invalidateEconomicsFor,
