@@ -441,6 +441,42 @@ test('every settings string exists in English and Chinese', () => {
   assert.equal(zh.settingsAboutVersion('0.6.0'), 'SpendSense 0.6.0')
 })
 
+test('every usage panel string exists in English and Chinese', () => {
+  const panelKeys = ['usageDonutAction', 'usageLegendInspectOther', 'usageLegendProviders',
+    'usageLegendModels', 'usageLegendFilter', 'usageLegendInspectTitle', 'usageLegendApplyTitle',
+    'usageDistTitle', 'usageDistSubtitle', 'usageSegDistribution', 'usageSegCost', 'usageSegTokens',
+    'usageSegDistBy', 'usageSegModel', 'usageSegProvider', 'usageDistEmptyCost', 'usageDistEmptyTokens',
+    'usageDistRemainder', 'usageDistFooterCost', 'usageDistFooterTokens', 'usageDistFooterWarn',
+    'usageDistFooterNote', 'usageTrendPoint', 'usageTrendTitle', 'usageTrendPanelTitle', 'usageTrendSubtitle',
+    'usageSegTrend', 'usageTrendAria', 'usageTrendHint', 'usageTrendUnstacked', 'usageTrendTotal',
+    'usageTrendStream', 'usageTrendEmpty', 'usageTrendFooterCost', 'usageTrendFooterTokens', 'usageDelegBar',
+    'usageDelegBarAria', 'usageDelegTitle', 'usageDelegSubtitle', 'usageSegDelegScope', 'usageSegAll',
+    'usageSegParent', 'usageSegSubagents', 'usageDelegParent', 'usageDelegSubagents', 'usageDelegKnown',
+    'usageDelegCache', 'usageDelegBusiest', 'usageDelegOpWorkers', 'usageDelegUnattributed', 'usageDelegNote',
+    'usageDelegFooter', 'usageRankTitle', 'usageRankSubtitle', 'usageSegRankBy', 'usageSegHitRate',
+    'usageSegVolume', 'usageRankAria', 'usageRankHint', 'usageRankRowAria', 'usageRankRowTitle',
+    'usageRankRowSub', 'usageRankFooter', 'usageRankModeSavings', 'usageRankModeVolume', 'usageRankModeRate',
+    'usageCompTitle', 'usageCompSubtitle', 'usageSegComposition', 'usageSegStacked', 'usageSegDoughnut',
+    'usageDonutAllStreams', 'usageCompTokensTotal', 'usageCompAria', 'usageCompSvgPart', 'usageCompPartTitle',
+    'usageCompSelect', 'usageCompFocus', 'usageCompNoteCacheRead', 'usageCompNoteCacheWrite',
+    'usageCompNoteInput', 'usageCompNoteOutput', 'usageCompEmpty', 'usagePricingNone', 'usagePricingUnpriced',
+    'usagePricingPartial', 'usagePricingFallback', 'usagePricingComplete', 'usageInsightDriver',
+    'usageInsightDriverText', 'usageInsightVerdict', 'usageInsightVerdictLoss', 'usageInsightVerdictSave',
+    'usageInsightDelegated', 'usageInsightDelegatedText', 'usageDelta', 'usageStreamInput', 'usageStreamOutput',
+    'usageStreamCacheRead', 'usageStreamCacheWrite', 'usageOther', 'usageUnknown', 'usageUnknownModel',
+    'usageUnknownProviderCap']
+  for (const key of panelKeys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  assert.equal(en.usageDonutAction(true, 'Input', '1K', '50%'), 'Inspect Input: 1K, 50%')
+  assert.equal(en.usageTrendPoint('t', '$1', 0), 't: $1')
+  assert.equal(en.usageRankFooter(8, 'weighted rate'),
+    'Top 8 by weighted rate. Zero-cache older rows are ambiguous, not confirmed misses. Unknown is not zero. All models remain in the explorer.')
+  assert.match(zh.usageCompFocus('输入', '1K', '50%', '注'), /占全部令牌的/)
+})
+
 test('the InfoTip indicator is compact while its hit area stays accessible', () => {
   // The interactive box keeps its full size for pointer and keyboard users.
   assert.match(T.METER_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)

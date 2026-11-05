@@ -2317,7 +2317,7 @@ function AnalyticsPanel({number,title,subtitle,controls,children,footer}) {
 function AnalyticsStat({label,value,hint,extra,tone}) {
   return jsxs('div',{className:'wm-stat',children:[jsx('div',{className:'wm-statlabel',children:label}),jsx('div',{className:cn('wm-statvalue wm-mono',tone),children:value}),jsx('div',{className:'wm-subtle',children:hint}),extra?jsx('div',{className:'wm-subtle',style:{marginTop:5},children:extra}):null]})
 }
-function AnalyticsDonut({items,total,label,format,onSelect,chart='distribution'}) {
+function AnalyticsDonut({items,total,label,format,onSelect,chart='distribution',t}) {
   const radius=72,circumference=2*Math.PI*radius
   let offset=0
   return jsxs('svg',{className:'wm-donut',viewBox:'0 0 200 200','data-chart':chart,role:'img','aria-label':`${label}: ${format(total)}`,children:[
@@ -2328,30 +2328,32 @@ function AnalyticsDonut({items,total,label,format,onSelect,chart='distribution'}
       const select=()=>onSelect(item)
       return jsx('circle',{className:'wm-ring',cx:100,cy:100,r:radius,fill:'none',stroke:item.color || CHART_COLORS[i%CHART_COLORS.length],strokeWidth:22,
         strokeDasharray:`${item.share*circumference} ${circumference}`,strokeDashoffset:-start,
-        role:'button',tabIndex:0,'aria-label':`${item.other?'Inspect':'Select'} ${item.label}: ${format(item.value)}, ${percent(item.share)}`,
+        role:'button',tabIndex:0,'aria-label':t('usageDonutAction', item.other, item.label, format(item.value), percent(item.share)),
         onClick:select,onKeyDown:event=>keyActivate(event,select),style:{cursor:'pointer'},children:jsx('title',{children:`${item.label} · ${format(item.value)} · ${percent(item.share)}`})},item.id)
     }),jsx('text',{x:100,y:97,textAnchor:'middle',className:'wm-svgtext',children:format(total)}),jsx('text',{x:100,y:116,textAnchor:'middle',className:'wm-svghint',children:label})]})
 }
 function AnalyticsDistribution({data,state,dispatch}) {
+  const t = usePluginI18n(ID)
   const grouped=state.grouping==='provider'
-  const dist=analyticsDistribution((grouped?data.by_route:data.by_model) || [],state.distributionMetric,state.grouping)
+  const dist=analyticsDistribution((grouped?data.by_route:data.by_model) || [],state.distributionMetric,state.grouping,6,t)
   const format=state.distributionMetric==='cost'?analyticMoney:fmtTokens
   const select=row=>row.other ? dispatch({type:'toggle',key:'otherOpen'}) : dispatch({type:'select',group:state.grouping,row})
   const legend=(row,i)=>jsxs('button',{type:'button',className:'wm-legendrow',
-    'aria-label':row.other?`Inspect Other ${grouped?'providers':'models'}`:`Filter ${grouped?row.provider:row.model} via ${row.provider}`,
-    'aria-expanded':row.other?state.otherOpen:undefined,onClick:()=>select(row),title:row.other?'Inspect the exact remainder without changing filters':`Apply exact ${state.grouping} filter`,children:[
+    'aria-label':row.other?t('usageLegendInspectOther', grouped?t('usageLegendProviders'):t('usageLegendModels')):t('usageLegendFilter', grouped?row.provider:row.model, row.provider),
+    'aria-expanded':row.other?state.otherOpen:undefined,onClick:()=>select(row),title:row.other?t('usageLegendInspectTitle'):t('usageLegendApplyTitle', state.grouping),children:[
       jsx('span',{className:'wm-dot',style:{background:CHART_COLORS[i%CHART_COLORS.length]}}),
-      jsxs('span',{className:'wm-label',children:[row.label,!grouped&&!row.other?jsx('small',{children:row.provider || 'Unknown provider'}):null]}),
+      jsxs('span',{className:'wm-label',children:[row.label,!grouped&&!row.other?jsx('small',{children:row.provider || t('usageUnknownProviderCap')}):null]}),
       jsx('span',{className:'wm-bartrack','aria-hidden':'true',children:jsx('span',{className:'wm-barfill',style:{width:`${Math.max(0,Math.min(100,row.share*100))}%`,background:CHART_COLORS[i%CHART_COLORS.length]}})}),
       jsxs('span',{className:'wm-value wm-mono',children:[format(row.value),jsx('small',{children:percent(row.share)})]})]},row.id)
-  return jsx(AnalyticsPanel,{number:'01',title:'Usage distribution',subtitle:'Where your usage goes',controls:jsxs('div',{className:'wm-controls',children:[
-    jsx(AnalyticsSegments,{label:'Distribution',value:state.distributionMetric,options:[['cost','Cost'],['tokens','Tokens']],onChange:value=>dispatch({type:'set',key:'distributionMetric',value})}),
-    jsx(AnalyticsSegments,{label:'Distribution by',value:state.grouping,options:[['model','Model'],['provider','Provider']],onChange:value=>dispatch({type:'set',key:'grouping',value})})]}),
-    children:jsxs('div',{children:[jsx('div',{className:'wm-legend',children:dist.items.length?dist.items.map(legend):jsx('p',{className:'wm-subtle',children:state.distributionMetric==='cost'?'No priced cost to distribute. Known free usage has zero cost; unpriced usage is not zero.':'No tokens to distribute.'})}),
-      state.otherOpen?jsxs('div',{className:'wm-remainder',children:[jsx('h2',{children:`Remainder · ${dist.remainder.length} ${grouped?'providers':'models'}`}),...dist.remainder.map((r,i)=>legend(r,i+6))]}):null]}),
-    footer:jsxs('span',{children:[state.distributionMetric==='cost'?'Shares of the PRICED subtotal only. ':'Shares of all recorded tokens. ',num(dist.unpricedTokens)?jsx('span',{className:'wm-warn',children:`${fmtTokens(dist.unpricedTokens)} unpriced tokens are excluded from cost shares. `}):null,'Top 6 + Other conserves the total. Click a legend to filter; Other only inspects.']})})
+  return jsx(AnalyticsPanel,{number:'01',title:t('usageDistTitle'),subtitle:t('usageDistSubtitle'),controls:jsxs('div',{className:'wm-controls',children:[
+    jsx(AnalyticsSegments,{label:t('usageSegDistribution'),value:state.distributionMetric,options:[['cost',t('usageSegCost')],['tokens',t('usageSegTokens')]],onChange:value=>dispatch({type:'set',key:'distributionMetric',value})}),
+    jsx(AnalyticsSegments,{label:t('usageSegDistBy'),value:state.grouping,options:[['model',t('usageSegModel')],['provider',t('usageSegProvider')]],onChange:value=>dispatch({type:'set',key:'grouping',value})})]}),
+    children:jsxs('div',{children:[jsx('div',{className:'wm-legend',children:dist.items.length?dist.items.map(legend):jsx('p',{className:'wm-subtle',children:state.distributionMetric==='cost'?t('usageDistEmptyCost'):t('usageDistEmptyTokens')})}),
+      state.otherOpen?jsxs('div',{className:'wm-remainder',children:[jsx('h2',{children:t('usageDistRemainder', dist.remainder.length, grouped?t('usageLegendProviders'):t('usageLegendModels'))}),...dist.remainder.map((r,i)=>legend(r,i+6))]}):null]}),
+    footer:jsxs('span',{children:[state.distributionMetric==='cost'?t('usageDistFooterCost'):t('usageDistFooterTokens'),num(dist.unpricedTokens)?jsx('span',{className:'wm-warn',children:t('usageDistFooterWarn', fmtTokens(dist.unpricedTokens))}):null,t('usageDistFooterNote')]})})
 }
 function AnalyticsTrendChart({data,state,dispatch}) {
+  const t = usePluginI18n(ID)
   const metric=state.trendMetric
   const trend=analyticsTrend(data.trend?.buckets || [],metric)
   const format=metric==='cost'?analyticMoney:fmtTokens
@@ -2366,12 +2368,12 @@ function AnalyticsTrendChart({data,state,dispatch}) {
     const d=`M ${trend.points.map(p=>`${x(p)},${y(upper(p))}`).join(' L ')} L ${trend.points.slice().reverse().map(p=>`${x(p)},${y(lower(p))}`).join(' L ')} Z`
     layers.push(jsx('path',{d,fill:TOKEN_STREAMS[i][2],fillOpacity:.68,stroke:TOKEN_STREAMS[i][2],strokeWidth:.8},`layer${i}`))
   }
-  const markers=trend.points.map((p,index)=>jsxs('g',{'data-trend-point':index,role:'button',tabIndex:0,'aria-label':`${p.ts}: ${format(p.total)}${num(p.row.unpriced_tokens)?' partial priced subtotal':''}`,
+  const markers=trend.points.map((p,index)=>jsxs('g',{'data-trend-point':index,role:'button',tabIndex:0,'aria-label':t('usageTrendPoint', p.ts, format(p.total), num(p.row.unpriced_tokens)),
     onClick:()=>select(index),onFocus:()=>select(index),onMouseEnter:()=>select(index),onKeyDown:event=>{
       if(event.key==='ArrowRight'||event.key==='ArrowLeft'){event.preventDefault();dispatch({type:'trend-step',index,total:trend.points.length,direction:event.key==='ArrowRight'?1:-1})}
       else keyActivate(event,()=>select(index))
     },style:{cursor:'crosshair'},children:[
-      jsx('title',{children:`${p.ts} · ${format(p.total)} · ${exactTokens(p.row.calls)} calls`}),
+      jsx('title',{children:t('usageTrendTitle', p.ts, format(p.total), exactTokens(p.row.calls))}),
       trend.stacked&&trend.points.length===1?TOKEN_STREAMS.map(([, ,color],i)=>jsx('rect',{x:x(p)-15,width:30,y:y(p.values.slice(0,i+1).reduce((a,b)=>a+b,0)),height:(p.values[i]/(trend.max||1))*(bottom-top),fill:color},i)):null,
       jsx('line',{x1:x(p),x2:x(p),y1:top,y2:bottom,stroke:'var(--ui-accent)',strokeOpacity:active===p?.45:0}),
       jsx('rect',{x:x(p)-Math.min(18,(right-left)/Math.max(1,trend.points.length)/2),y:top,width:Math.min(36,(right-left)/Math.max(1,trend.points.length)),height:bottom-top,fill:'transparent'}),
@@ -2384,75 +2386,78 @@ function AnalyticsTrendChart({data,state,dispatch}) {
     for(const p of trend.points){if(p.total==null)flush();else run.push(p)}flush()
   }
   const axisLabel=row=>data.trend?.granularity==='hour' ? `${String(row.ts_local || row.ts).slice(11,16)} ${row.ts_local ? String(row.ts_local).slice(-6) : 'UTC'}` : String(row.ts_local || row.ts).slice(5,10)
-  return jsx(AnalyticsPanel,{number:'02',title:'Usage over time',subtitle:`Timestamped calls · ${data.trend?.granularity || 'day'} buckets · ${data.window?.timezone || 'UTC'}`,controls:jsx(AnalyticsSegments,{label:'Trend',value:metric,options:[['tokens','Tokens'],['cost','Cost']],onChange:value=>dispatch({type:'set',key:'trendMetric',value})}),children:jsxs('div',{children:[
-    jsxs('svg',{className:'wm-trend',viewBox:`0 0 ${width} ${height}`,'data-chart':'trend',role:'img','aria-label':`${metric} over true timestamps`,children:[
-      jsx('title',{children:'True elapsed-time positions. Focus or hover a timestamp for exact values.'}),
+  return jsx(AnalyticsPanel,{number:'02',title:t('usageTrendPanelTitle'),subtitle:t('usageTrendSubtitle', data.trend?.granularity || 'day', data.window?.timezone || 'UTC'),controls:jsx(AnalyticsSegments,{label:t('usageSegTrend'),value:metric,options:[['tokens',t('usageSegTokens')],['cost',t('usageSegCost')]],onChange:value=>dispatch({type:'set',key:'trendMetric',value})}),children:jsxs('div',{children:[
+    jsxs('svg',{className:'wm-trend',viewBox:`0 0 ${width} ${height}`,'data-chart':'trend',role:'img','aria-label':t('usageTrendAria', metric),children:[
+      jsx('title',{children:t('usageTrendHint')}),
       ...[0,.25,.5,.75,1].flatMap(r=>[jsx('line',{className:'wm-gridline',x1:left,x2:right,y1:y(r*trend.max),y2:y(r*trend.max)},`grid${r}`),jsx('text',{className:'wm-axis',x:left-9,y:y(r*trend.max)+3,textAnchor:'end',children:format(r*trend.max)},`axis${r}`)]),
       ...layers,...costLines,...markers,
       ...trend.points.filter((_,i)=>i===0||i===trend.points.length-1||i===Math.floor(trend.points.length/2)).map(p=>jsx('text',{x:x(p),y:bottom+24,textAnchor:'middle',className:'wm-axis',children:axisLabel(p.row)},`date${p.ts}`))]}),
-    jsx('div',{className:'wm-chartkey',children:trend.stacked?TOKEN_STREAMS.map(([key,label,color])=>jsxs('span',{children:[jsx('i',{className:'wm-dot',style:{background:color}}),label]},key)):jsx('span',{children:'Priced API-equivalent subtotal · category-dollar streams unavailable'})}),
+    jsx('div',{className:'wm-chartkey',children:trend.stacked?TOKEN_STREAMS.map(([key,,color])=>jsxs('span',{children:[jsx('i',{className:'wm-dot',style:{background:color}}),t(STREAM_LABEL_KEYS[key])]},key)):jsx('span',{children:t('usageTrendUnstacked')})}),
     jsx('div',{className:'wm-chartdetail','aria-live':'polite',children:active?[
       jsx('span',{className:'wm-mono',children:(active.row.ts_local || active.ts).replace('T',' ').replace('Z',' UTC')},'ts'),
-      jsx('strong',{className:'wm-mono',children:`${format(active.total)}${num(active.row.unpriced_tokens)?' · partial':''}`},'total'),
-      ...TOKEN_STREAMS.map(([key,label])=>jsx('span',{children:`${label} ${exactTokens(active.row[key])}`},key))
-    ]:'Hover or keyboard-focus a point to inspect exact usage. ← → selects adjacent timestamps.'})]}),
-    footer:metric==='cost'?'API-equivalent cost, not recorded billing. Unknown prices leave gaps; unpriced tokens are never counted as $0.':'Stacked fresh input + output + cache read + cache write. X positions reflect real elapsed time, not array indices.'})
+      jsx('strong',{className:'wm-mono',children:t('usageTrendTotal', format(active.total), num(active.row.unpriced_tokens))},'total'),
+      ...TOKEN_STREAMS.map(([key])=>jsx('span',{children:t('usageTrendStream', t(STREAM_LABEL_KEYS[key]), exactTokens(active.row[key]))},key))
+    ]:t('usageTrendEmpty')})]}),
+    footer:metric==='cost'?t('usageTrendFooterCost'):t('usageTrendFooterTokens')})
 }
 function AnalyticsDelegation({data,state,dispatch}) {
+  const t = usePluginI18n(ID)
   const scopes=Object.fromEntries((data.by_scope || []).map(row=>[row.scope,row]))
   const direct=scopes.direct || null, sub=scopes.subagent || null, aux=scopes.auxiliary || null, un=scopes.unattributed || null
   const attribution=data.attribution || {}
   const max=Math.max(num(direct?.list_usd),num(sub?.list_usd)) || 1
   const bar=(row,label,color)=>jsxs('div',{className:'wm-comparerow',children:[
-    jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:`${analyticMoney(row?.list_usd)} · ${fmtTokens(row?.tokens)} tok · ${exactTokens(row?.calls)} calls`})]}),
-    jsx('div',{className:'wm-comparetrack',role:'img','aria-label':`${label}: ${analyticMoney(row?.list_usd)}`,children:row&&num(row.list_usd)?jsx('span',{style:{width:`${num(row.list_usd)/max*100}%`,background:color}}):null})]},label)
-  return jsx(AnalyticsPanel,{number:'03',title:'Delegated operations',subtitle:'Parent inference versus delegated workers',controls:jsx(AnalyticsSegments,{label:'Delegation scope',value:state.filters.scope || 'all',options:[['all','All'],['direct','Parent'],['subagent','Subagents']],onChange:value=>dispatch({type:'filter',key:'scope',value:value==='all'?'':value})}),children:jsxs('div',{children:[
-    jsx('div',{className:'wm-comparison',children:[bar(direct,'Parent (direct)','var(--ui-accent)'),bar(sub,'Subagents','var(--ui-success)')]}),
+    jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:t('usageDelegBar', analyticMoney(row?.list_usd), fmtTokens(row?.tokens), exactTokens(row?.calls))})]}),
+    jsx('div',{className:'wm-comparetrack',role:'img','aria-label':t('usageDelegBarAria', label, analyticMoney(row?.list_usd)),children:row&&num(row.list_usd)?jsx('span',{style:{width:`${num(row.list_usd)/max*100}%`,background:color}}):null})]},label)
+  return jsx(AnalyticsPanel,{number:'03',title:t('usageDelegTitle'),subtitle:t('usageDelegSubtitle'),controls:jsx(AnalyticsSegments,{label:t('usageSegDelegScope'),value:state.filters.scope || 'all',options:[['all',t('usageSegAll')],['direct',t('usageSegParent')],['subagent',t('usageSegSubagents')]],onChange:value=>dispatch({type:'filter',key:'scope',value:value==='all'?'':value})}),children:jsxs('div',{children:[
+    jsx('div',{className:'wm-comparison',children:[bar(direct,t('usageDelegParent'),'var(--ui-accent)'),bar(sub,t('usageDelegSubagents'),'var(--ui-success)')]}),
     jsxs('div',{className:'wm-subtle',style:{marginTop:14},children:[
-      jsx('p',{children:`${exactTokens(attribution.child_sessions)} child sessions known · ${exactTokens(sub?.calls || 0)} delegated calls captured`}),
-      jsx('p',{children:`Cache: parent ${percent(direct?.cache_hit_rate)} · workers ${percent(sub?.cache_hit_rate)} · auxiliary ${percent(aux?.cache_hit_rate)}`}),
-      (data.options?.operations || []).length?jsx('p',{children:`Busiest operations: ${(data.options.operations || []).slice(0,5).map(o=>`${String(o.parent).length>24?`${String(o.parent).slice(0,23)}…`:o.parent} (${exactTokens(o.subagent_calls)} worker calls)`).join(' · ')}`}):null,
-      num(attribution.unattributed_calls)?jsx('p',{className:'wm-warn',children:`${exactTokens(attribution.unattributed_calls)} calls could not be attributed to a session; they stay in totals as unattributed.`}):null,
-      jsx('p',{children:'Combined totals include parent, delegated and auxiliary calls exactly once. Child sessions are matched read-only through state.db parent_session_id; nested delegations roll up to the operation root.'})].filter(Boolean)})]}),
-    footer:'A subagent is a persisted child session, not a separate invoice. Where Hermes cannot establish a parent, usage is reported as unattributed rather than assigned.'})
+      jsx('p',{children:t('usageDelegKnown', exactTokens(attribution.child_sessions), exactTokens(sub?.calls || 0))}),
+      jsx('p',{children:t('usageDelegCache', percent(direct?.cache_hit_rate), percent(sub?.cache_hit_rate), percent(aux?.cache_hit_rate))}),
+      (data.options?.operations || []).length?jsx('p',{children:t('usageDelegBusiest', (data.options.operations || []).slice(0,5).map(o=>t('usageDelegOpWorkers', String(o.parent).length>24?`${String(o.parent).slice(0,23)}…`:o.parent, exactTokens(o.subagent_calls))).join(' · '))}):null,
+      num(attribution.unattributed_calls)?jsx('p',{className:'wm-warn',children:t('usageDelegUnattributed', exactTokens(attribution.unattributed_calls))}):null,
+      jsx('p',{children:t('usageDelegNote')})].filter(Boolean)})]}),
+    footer:t('usageDelegFooter')})
 }
 function AnalyticsRanking({data,state,dispatch}) {
+  const t = usePluginI18n(ID)
   const ranked=analyticsSort(data.by_model || [],state.ranking,'desc').slice(0,8)
   const numeric=row=>state.ranking==='savings'?finiteValue(row.economics?.savings_usd):finiteValue(row[state.ranking])
   const maximum=Math.max(0,...ranked.map(r=>Math.abs(numeric(r)||0))) || 1
   const format=state.ranking==='savings'?analyticMoney:state.ranking==='cache_read_tokens'?fmtTokens:percent
   const signed=state.ranking==='savings'
   const start=signed?333:225,end=535,range=signed?100:end-start
-  return jsx(AnalyticsPanel,{number:'04',title:'Cache performance',subtitle:'Weighted prompt-cache rate · model × route',controls:jsx(AnalyticsSegments,{label:'Rank by',value:state.ranking,options:[['cache_hit_rate','Hit rate'],['cache_read_tokens','Volume']],onChange:value=>dispatch({type:'set',key:'ranking',value})}),
-    children:jsxs('svg',{className:'wm-rank',viewBox:`0 0 620 ${Math.max(170,ranked.length*42+8)}`,'data-chart':'ranking',role:'img','aria-label':'Cache ranking. Exact model filters available on every row.',children:[jsx('title',{children:'Ranked models. Rates are weighted on known-cache calls only. Volume is cache-read tokens. Savings can be negative.'}),
+  return jsx(AnalyticsPanel,{number:'04',title:t('usageRankTitle'),subtitle:t('usageRankSubtitle'),controls:jsx(AnalyticsSegments,{label:t('usageSegRankBy'),value:state.ranking,options:[['cache_hit_rate',t('usageSegHitRate')],['cache_read_tokens',t('usageSegVolume')]],onChange:value=>dispatch({type:'set',key:'ranking',value})}),
+    children:jsxs('svg',{className:'wm-rank',viewBox:`0 0 620 ${Math.max(170,ranked.length*42+8)}`,'data-chart':'ranking',role:'img','aria-label':t('usageRankAria'),children:[jsx('title',{children:t('usageRankHint')}),
       ...ranked.map((row,i)=>{
         const value=numeric(row),barWidth=Math.abs(value || 0)/(state.ranking==='cache_hit_rate'?1:maximum)*range
         const action=()=>dispatch({type:'select',group:'model',row})
-        return jsxs('g',{transform:`translate(0,${i*42+5})`,role:'button',tabIndex:0,'aria-label':`Filter ${row.model} via ${row.provider}; hit ${percent(row.cache_hit_rate)}, ${fmtTokens(row.cache_read_tokens)} read tokens, net savings ${analyticMoney(row.economics?.savings_usd)}`,onClick:action,onKeyDown:event=>keyActivate(event,action),style:{cursor:'pointer'},children:[
-          jsx('title',{children:`${row.model} · ${row.provider}\nKnown-cache calls: ${row.cache_known_calls || 0}; unknown: ${row.cache_unknown_calls || 0}\nRead tokens: ${exactTokens(row.cache_read_tokens)}; theoretical net savings: ${analyticMoney(row.economics?.savings_usd)}`}),
-          jsx('text',{x:0,y:12,fill:'var(--ui-text-primary)',fontSize:11,children:row.model?.length>31?`${row.model.slice(0,29)}…`:row.model}),jsx('text',{x:0,y:26,className:'wm-axis',children:`${row.provider || 'unknown'} · ${fmtTokens(row.cache_read_tokens)} read · ${analyticMoney(row.economics?.savings_usd)} net`}),
+        return jsxs('g',{transform:`translate(0,${i*42+5})`,role:'button',tabIndex:0,'aria-label':t('usageRankRowAria', row.model, row.provider, percent(row.cache_hit_rate), fmtTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd)),onClick:action,onKeyDown:event=>keyActivate(event,action),style:{cursor:'pointer'},children:[
+          jsx('title',{children:t('usageRankRowTitle', row.model, row.provider, row.cache_known_calls || 0, row.cache_unknown_calls || 0, exactTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
+          jsx('text',{x:0,y:12,fill:'var(--ui-text-primary)',fontSize:11,children:row.model?.length>31?`${row.model.slice(0,29)}…`:row.model}),jsx('text',{x:0,y:26,className:'wm-axis',children:t('usageRankRowSub', row.provider || t('unknown'), fmtTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
           jsx('rect',{x:signed?233:start,y:5,width:signed?200:range,height:8,rx:3,fill:'var(--ui-fill-tertiary)'}),
           value!=null?jsx('rect',{x:value<0?start-barWidth:start,y:5,width:barWidth,height:8,rx:3,fill:value<0?'var(--ui-warning)':'var(--ui-success)'}):null,
           signed?jsx('line',{x1:start,x2:start,y1:1,y2:18,stroke:'var(--ui-text-quaternary)'}):null,
-          jsx('text',{x:609,y:13,textAnchor:'end',className:'wm-axis',children:value==null?'unknown':format(value)})]},analyticsId(row))})]}),
-    footer:`Top ${ranked.length} by ${state.ranking==='savings'?'theoretical net savings':state.ranking==='cache_read_tokens'?'cache-read volume':'weighted rate'}. Zero-cache older rows are ambiguous, not confirmed misses. Unknown is not zero. All models remain in the explorer.`})
+          jsx('text',{x:609,y:13,textAnchor:'end',className:'wm-axis',children:value==null?t('unknown'):format(value)})]},analyticsId(row))})]}),
+    footer:t('usageRankFooter', ranked.length, state.ranking==='savings'?t('usageRankModeSavings'):state.ranking==='cache_read_tokens'?t('usageRankModeVolume'):t('usageRankModeRate'))})
 }
 function AnalyticsComposition({data,state,dispatch}) {
-  const parts=analyticsComposition(data.totals)
+  const t = usePluginI18n(ID)
+  const parts=analyticsComposition(data.totals, t)
   const total=parts.reduce((s,r)=>s+r.value,0)
   const focus=parts.find(r=>r.id===state.compositionFocus)
   const select=row=>dispatch({type:'set',key:'compositionFocus',value:row.id})
   let x=0
-  return jsx(AnalyticsPanel,{number:'05',title:'Token composition',subtitle:'Four disjoint streams · no prompt double-counting',controls:jsx(AnalyticsSegments,{label:'Composition',value:state.compositionMode,options:[['stacked','Stacked'],['doughnut','Doughnut']],onChange:value=>dispatch({type:'set',key:'compositionMode',value})}),
+  return jsx(AnalyticsPanel,{number:'05',title:t('usageCompTitle'),subtitle:t('usageCompSubtitle'),controls:jsx(AnalyticsSegments,{label:t('usageSegComposition'),value:state.compositionMode,options:[['stacked',t('usageSegStacked')],['doughnut',t('usageSegDoughnut')]],onChange:value=>dispatch({type:'set',key:'compositionMode',value})}),
     children:jsxs('div',{className:'wm-composition',children:[state.compositionMode==='doughnut'?
-      jsx(AnalyticsDonut,{items:parts,total,label:'all token streams',format:fmtTokens,onSelect:select,chart:'composition'}):
-      jsxs('div',{children:[jsx('div',{className:'wm-compositiontotal wm-mono',children:fmtTokens(total)}),jsx('p',{className:'wm-subtle',children:'tokens across all recorded calls'}),
-        jsxs('svg',{viewBox:'0 0 600 44',style:{width:'100%',marginTop:18},'data-chart':'composition',role:'img','aria-label':`Token composition: ${exactTokens(total)} total`,children:[jsx('title',{children:parts.map(r=>`${r.label}: ${exactTokens(r.value)} (${percent(r.share)})`).join('; ')}),jsx('rect',{x:0,y:4,width:600,height:28,rx:4,fill:'var(--ui-fill-tertiary)'}),...parts.map(row=>{
+      jsx(AnalyticsDonut,{items:parts,total,label:t('usageDonutAllStreams'),format:fmtTokens,onSelect:select,chart:'composition',t}):
+      jsxs('div',{children:[jsx('div',{className:'wm-compositiontotal wm-mono',children:fmtTokens(total)}),jsx('p',{className:'wm-subtle',children:t('usageCompTokensTotal')}),
+        jsxs('svg',{viewBox:'0 0 600 44',style:{width:'100%',marginTop:18},'data-chart':'composition',role:'img','aria-label':t('usageCompAria', exactTokens(total)),children:[jsx('title',{children:parts.map(r=>t('usageCompSvgPart', r.label, exactTokens(r.value), percent(r.share))).join('; ')}),jsx('rect',{x:0,y:4,width:600,height:28,rx:4,fill:'var(--ui-fill-tertiary)'}),...parts.map(row=>{
           const start=x;x+=row.share*600
-          return jsx('rect',{x:start,y:4,width:row.share*600,height:28,fill:row.color,role:'button',tabIndex:0,'aria-label':`Select ${row.label} composition`,onClick:()=>select(row),onKeyDown:event=>keyActivate(event,()=>select(row)),children:jsx('title',{children:`${row.label}: ${exactTokens(row.value)} · ${percent(row.share)}`})},row.id)
+          return jsx('rect',{x:start,y:4,width:row.share*600,height:28,fill:row.color,role:'button',tabIndex:0,'aria-label':t('usageCompSelect', row.label),onClick:()=>select(row),onKeyDown:event=>keyActivate(event,()=>select(row)),children:jsx('title',{children:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share))})},row.id)
         })]})]}),
-      jsx('div',{className:'wm-compositionkey',children:parts.map(row=>jsxs('button',{type:'button',className:'wm-legendrow','aria-label':`Select ${row.label} composition`,'aria-pressed':state.compositionFocus===row.id,onClick:()=>select(row),children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsxs('span',{className:'wm-value wm-mono',children:[fmtTokens(row.value),jsx('small',{children:percent(row.share)})]})]},row.id))})]}),
-    footer:jsx('div',{'aria-live':'polite',children:focus?`${focus.label}: ${exactTokens(focus.value)} tokens · ${percent(focus.share)} of all tokens. ${focus.id==='cache_read_tokens'?'Reused prompt tokens; billed at the cache-read rate when known.':focus.id==='cache_write_tokens'?'New cache writes; write premiums are included in net savings when rates are known.':focus.id==='input_tokens'?'Fresh, uncached input only.':'Generated output tokens.'}`:'Select a stream for its exact count. This is a composition inspection, not a hidden model filter.'})})
+      jsx('div',{className:'wm-compositionkey',children:parts.map(row=>jsxs('button',{type:'button',className:'wm-legendrow','aria-label':t('usageCompSelect', row.label),'aria-pressed':state.compositionFocus===row.id,onClick:()=>select(row),children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsxs('span',{className:'wm-value wm-mono',children:[fmtTokens(row.value),jsx('small',{children:percent(row.share)})]})]},row.id))})]}),
+    footer:jsx('div',{'aria-live':'polite',children:focus?t('usageCompFocus', focus.label, exactTokens(focus.value), percent(focus.share), focus.id==='cache_read_tokens'?t('usageCompNoteCacheRead'):focus.id==='cache_write_tokens'?t('usageCompNoteCacheWrite'):focus.id==='input_tokens'?t('usageCompNoteInput'):t('usageCompNoteOutput')):t('usageCompEmpty')})})
 }
 const ANALYTICS_COLUMNS = [['model','Model'],['provider','Provider'],['calls','Calls'],['tokens','Tokens'],['input_tokens','Input'],['output_tokens','Output'],['reasoning_tokens','Reasoning'],['cache_read_tokens','Read'],['cache_write_tokens','Write'],['cache_hit_rate','Cache %'],['savings','Net savings'],['list_usd','API cost'],['per_call','$/call'],['per_million','$/1M tokens'],['pricing','Pricing'],['billing','Billing']]
 const ANALYTICS_CORE_COLUMNS = ['model','provider','calls','tokens','input_tokens','output_tokens','list_usd','per_call','per_million','pricing','billing']
@@ -7946,6 +7951,90 @@ const I18N = {
     usageUnknown: 'Unknown',
     usageUnknownModel: 'Unknown model',
     usageUnknownProviderCap: 'Unknown provider',
+    // Usage chart panels.
+    usageDonutAction: (other, label, value, share) => `${other ? 'Inspect' : 'Select'} ${label}: ${value}, ${share}`,
+    usageLegendInspectOther: grouped => `Inspect Other ${grouped}`,
+    usageLegendProviders: 'providers',
+    usageLegendModels: 'models',
+    usageLegendFilter: (target, provider) => `Filter ${target} via ${provider}`,
+    usageLegendInspectTitle: 'Inspect the exact remainder without changing filters',
+    usageLegendApplyTitle: grouping => `Apply exact ${grouping} filter`,
+    usageDistTitle: 'Usage distribution',
+    usageDistSubtitle: 'Where your usage goes',
+    usageSegDistribution: 'Distribution',
+    usageSegCost: 'Cost',
+    usageSegTokens: 'Tokens',
+    usageSegDistBy: 'Distribution by',
+    usageSegModel: 'Model',
+    usageSegProvider: 'Provider',
+    usageDistEmptyCost: 'No priced cost to distribute. Known free usage has zero cost; unpriced usage is not zero.',
+    usageDistEmptyTokens: 'No tokens to distribute.',
+    usageDistRemainder: (n, grouped) => `Remainder · ${n} ${grouped}`,
+    usageDistFooterCost: 'Shares of the PRICED subtotal only. ',
+    usageDistFooterTokens: 'Shares of all recorded tokens. ',
+    usageDistFooterWarn: tokens => `${tokens} unpriced tokens are excluded from cost shares. `,
+    usageDistFooterNote: 'Top 6 + Other conserves the total. Click a legend to filter; Other only inspects.',
+    usageTrendPoint: (ts, value, partial) => `${ts}: ${value}${partial ? ' partial priced subtotal' : ''}`,
+    usageTrendTitle: (ts, value, calls) => `${ts} · ${value} · ${calls} calls`,
+    usageTrendPanelTitle: 'Usage over time',
+    usageTrendSubtitle: (gran, tz) => `Timestamped calls · ${gran} buckets · ${tz}`,
+    usageSegTrend: 'Trend',
+    usageTrendAria: metric => `${metric} over true timestamps`,
+    usageTrendHint: 'True elapsed-time positions. Focus or hover a timestamp for exact values.',
+    usageTrendUnstacked: 'Priced API-equivalent subtotal · category-dollar streams unavailable',
+    usageTrendTotal: (value, partial) => `${value}${partial ? ' · partial' : ''}`,
+    usageTrendStream: (label, count) => `${label} ${count}`,
+    usageTrendEmpty: 'Hover or keyboard-focus a point to inspect exact usage. ← → selects adjacent timestamps.',
+    usageTrendFooterCost: 'API-equivalent cost, not recorded billing. Unknown prices leave gaps; unpriced tokens are never counted as $0.',
+    usageTrendFooterTokens: 'Stacked fresh input + output + cache read + cache write. X positions reflect real elapsed time, not array indices.',
+    usageDelegBar: (money, tokens, calls) => `${money} · ${tokens} tok · ${calls} calls`,
+    usageDelegBarAria: (label, money) => `${label}: ${money}`,
+    usageDelegTitle: 'Delegated operations',
+    usageDelegSubtitle: 'Parent inference versus delegated workers',
+    usageSegDelegScope: 'Delegation scope',
+    usageSegAll: 'All',
+    usageSegParent: 'Parent',
+    usageSegSubagents: 'Subagents',
+    usageDelegParent: 'Parent (direct)',
+    usageDelegSubagents: 'Subagents',
+    usageDelegKnown: (sessions, calls) => `${sessions} child sessions known · ${calls} delegated calls captured`,
+    usageDelegCache: (parent, workers, aux) => `Cache: parent ${parent} · workers ${workers} · auxiliary ${aux}`,
+    usageDelegBusiest: list => `Busiest operations: ${list}`,
+    usageDelegOpWorkers: (parent, n) => `${parent} (${n} worker calls)`,
+    usageDelegUnattributed: calls => `${calls} calls could not be attributed to a session; they stay in totals as unattributed.`,
+    usageDelegNote: 'Combined totals include parent, delegated and auxiliary calls exactly once. Child sessions are matched read-only through state.db parent_session_id; nested delegations roll up to the operation root.',
+    usageDelegFooter: 'A subagent is a persisted child session, not a separate invoice. Where Hermes cannot establish a parent, usage is reported as unattributed rather than assigned.',
+    usageRankTitle: 'Cache performance',
+    usageRankSubtitle: 'Weighted prompt-cache rate · model × route',
+    usageSegRankBy: 'Rank by',
+    usageSegHitRate: 'Hit rate',
+    usageSegVolume: 'Volume',
+    usageRankAria: 'Cache ranking. Exact model filters available on every row.',
+    usageRankHint: 'Ranked models. Rates are weighted on known-cache calls only. Volume is cache-read tokens. Savings can be negative.',
+    usageRankRowAria: (model, provider, hit, read, savings) => `Filter ${model} via ${provider}; hit ${hit}, ${read} read tokens, net savings ${savings}`,
+    usageRankRowTitle: (model, provider, known, unknown, read, savings) => `${model} · ${provider}\nKnown-cache calls: ${known}; unknown: ${unknown}\nRead tokens: ${read}; theoretical net savings: ${savings}`,
+    usageRankRowSub: (provider, read, savings) => `${provider} · ${read} read · ${savings} net`,
+    usageRankFooter: (n, mode) => `Top ${n} by ${mode}. Zero-cache older rows are ambiguous, not confirmed misses. Unknown is not zero. All models remain in the explorer.`,
+    usageRankModeSavings: 'theoretical net savings',
+    usageRankModeVolume: 'cache-read volume',
+    usageRankModeRate: 'weighted rate',
+    usageCompTitle: 'Token composition',
+    usageCompSubtitle: 'Four disjoint streams · no prompt double-counting',
+    usageSegComposition: 'Composition',
+    usageSegStacked: 'Stacked',
+    usageSegDoughnut: 'Doughnut',
+    usageDonutAllStreams: 'all token streams',
+    usageCompTokensTotal: 'tokens across all recorded calls',
+    usageCompAria: total => `Token composition: ${total} total`,
+    usageCompSvgPart: (label, value, share) => `${label}: ${value} (${share})`,
+    usageCompPartTitle: (label, value, share) => `${label}: ${value} · ${share}`,
+    usageCompSelect: label => `Select ${label} composition`,
+    usageCompFocus: (label, value, share, note) => `${label}: ${value} tokens · ${share} of all tokens. ${note}`,
+    usageCompNoteCacheRead: 'Reused prompt tokens; billed at the cache-read rate when known.',
+    usageCompNoteCacheWrite: 'New cache writes; write premiums are included in net savings when rates are known.',
+    usageCompNoteInput: 'Fresh, uncached input only.',
+    usageCompNoteOutput: 'Generated output tokens.',
+    usageCompEmpty: 'Select a stream for its exact count. This is a composition inspection, not a hidden model filter.',
   },
   zh: {
     basisLegacy: '1.0 前旧数据 · 按现价估算',
@@ -8771,6 +8860,90 @@ const I18N = {
     usageUnknown: '未知',
     usageUnknownModel: '未知模型',
     usageUnknownProviderCap: '未知供应商',
+    // 用量图表。
+    usageDonutAction: (other, label, value, share) => `${other ? '查看' : '选择'}${label}：${value}，${share}`,
+    usageLegendInspectOther: grouped => `查看其余${grouped}`,
+    usageLegendProviders: '供应商',
+    usageLegendModels: '模型',
+    usageLegendFilter: (target, provider) => `按 ${target}（经 ${provider}）筛选`,
+    usageLegendInspectTitle: '查看确切余项，不更改筛选',
+    usageLegendApplyTitle: grouping => `应用确切 ${grouping} 筛选`,
+    usageDistTitle: '用量分布',
+    usageDistSubtitle: '用量去向',
+    usageSegDistribution: '分布',
+    usageSegCost: '成本',
+    usageSegTokens: '令牌',
+    usageSegDistBy: '分布维度',
+    usageSegModel: '模型',
+    usageSegProvider: '供应商',
+    usageDistEmptyCost: '无已定价成本可分布。已知免费用量成本为零；未定价用量不是零。',
+    usageDistEmptyTokens: '无令牌可分布。',
+    usageDistRemainder: (n, grouped) => `余项 · ${n} 个${grouped}`,
+    usageDistFooterCost: '仅为已定价小计的份额。',
+    usageDistFooterTokens: '为全部已记录令牌的份额。',
+    usageDistFooterWarn: tokens => `${tokens} 未定价令牌不计入成本份额。`,
+    usageDistFooterNote: '前 6 名 + 其他保持总数守恒。点击图例筛选；“其他”仅供查看。',
+    usageTrendPoint: (ts, value, partial) => `${ts}：${value}${partial ? '（部分已定价小计）' : ''}`,
+    usageTrendTitle: (ts, value, calls) => `${ts} · ${value} · ${calls} 次调用`,
+    usageTrendPanelTitle: '用量趋势',
+    usageTrendSubtitle: (gran, tz) => `带时间戳调用 · ${gran} 分桶 · ${tz}`,
+    usageSegTrend: '趋势',
+    usageTrendAria: metric => `${metric} 真实时间戳趋势`,
+    usageTrendHint: '真实流逝时间位置。将焦点移到时间戳或悬停以查看确切值。',
+    usageTrendUnstacked: '已定价 API 等值小计 · 无分类美元流',
+    usageTrendTotal: (value, partial) => `${value}${partial ? ' · 部分' : ''}`,
+    usageTrendStream: (label, count) => `${label} ${count}`,
+    usageTrendEmpty: '悬停或用键盘聚焦数据点以查看确切用量。← → 选择相邻时间戳。',
+    usageTrendFooterCost: 'API 等值成本，非已记录账单。未知价格留空；未定价令牌永不计为 $0。',
+    usageTrendFooterTokens: '堆叠的新输入 + 输出 + 缓存读取 + 缓存写入。X 位置反映真实流逝时间，而非数组下标。',
+    usageDelegBar: (money, tokens, calls) => `${money} · ${tokens} 令牌 · ${calls} 次调用`,
+    usageDelegBarAria: (label, money) => `${label}：${money}`,
+    usageDelegTitle: '委派操作',
+    usageDelegSubtitle: '父推理与委派工作线程对比',
+    usageSegDelegScope: '委派范围',
+    usageSegAll: '全部',
+    usageSegParent: '父级',
+    usageSegSubagents: '子代理',
+    usageDelegParent: '父级（直接）',
+    usageDelegSubagents: '子代理',
+    usageDelegKnown: (sessions, calls) => `已知 ${sessions} 个子会话 · 捕获 ${calls} 次委派调用`,
+    usageDelegCache: (parent, workers, aux) => `缓存：父级 ${parent} · 工作线程 ${workers} · 辅助 ${aux}`,
+    usageDelegBusiest: list => `最繁忙操作：${list}`,
+    usageDelegOpWorkers: (parent, n) => `${parent}（${n} 次工作线程调用）`,
+    usageDelegUnattributed: calls => `${calls} 次调用无法归属到会话；作为未归属保留在合计中。`,
+    usageDelegNote: '合并合计将父级、委派与辅助调用各计一次。子会话通过 state.db parent_session_id 只读匹配；嵌套委派汇总到操作根。',
+    usageDelegFooter: '子代理是持久化的子会话，而非单独账单。Hermes 无法确定父级时，用量报告为未归属，而非指派。',
+    usageRankTitle: '缓存性能',
+    usageRankSubtitle: '加权提示词缓存命中率 · 模型 × 线路',
+    usageSegRankBy: '排序依据',
+    usageSegHitRate: '命中率',
+    usageSegVolume: '量',
+    usageRankAria: '缓存排名。每行均可使用确切模型筛选。',
+    usageRankHint: '模型排名。命中率仅按已知缓存调用加权。量为缓存读取令牌。节省可为负。',
+    usageRankRowAria: (model, provider, hit, read, savings) => `按 ${model}（经 ${provider}）筛选；命中 ${hit}，${read} 读取令牌，净节省 ${savings}`,
+    usageRankRowTitle: (model, provider, known, unknown, read, savings) => `${model} · ${provider}\n已知缓存调用：${known}；未知：${unknown}\n读取令牌：${read}；理论净节省：${savings}`,
+    usageRankRowSub: (provider, read, savings) => `${provider} · ${read} 读取 · ${savings} 净额`,
+    usageRankFooter: (n, mode) => `按${mode}排列的前 ${n} 名。零缓存旧行含义不明，并非确认未命中。未知不是零。所有模型保留在浏览器中。`,
+    usageRankModeSavings: '理论净节省',
+    usageRankModeVolume: '缓存读取量',
+    usageRankModeRate: '加权命中率',
+    usageCompTitle: '令牌构成',
+    usageCompSubtitle: '四个不相交流 · 提示词不重复计数',
+    usageSegComposition: '构成',
+    usageSegStacked: '堆叠',
+    usageSegDoughnut: '环形',
+    usageDonutAllStreams: '全部令牌流',
+    usageCompTokensTotal: '全部已记录调用的令牌',
+    usageCompAria: total => `令牌构成：共 ${total}`,
+    usageCompSvgPart: (label, value, share) => `${label}：${value}（${share}）`,
+    usageCompPartTitle: (label, value, share) => `${label}：${value} · ${share}`,
+    usageCompSelect: label => `选择${label}构成`,
+    usageCompFocus: (label, value, share, note) => `${label}：${value} 令牌 · 占全部令牌的 ${share}。${note}`,
+    usageCompNoteCacheRead: '复用的提示词令牌；已知时按缓存读取单价计费。',
+    usageCompNoteCacheWrite: '新增缓存写入；已知单价时，写入溢价计入净节省。',
+    usageCompNoteInput: '仅新鲜未缓存输入。',
+    usageCompNoteOutput: '生成的输出令牌。',
+    usageCompEmpty: '选择一个流以查看确切计数。这是构成查看，不是隐藏的模型筛选。',
   }
 }
 
