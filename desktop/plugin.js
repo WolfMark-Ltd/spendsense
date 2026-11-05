@@ -1046,7 +1046,7 @@ function saveLedger(next) {
     const message = String((err && err.message) || err)
     if (!$storageError.get()) {
       try {
-        host.notify({ kind: 'warning', message: `Spend Sense could not save its Desktop ledger (${message})` })
+        host.notify({ kind: 'warning', message: `SpendSense could not save its Desktop ledger (${message})` })
       } catch {
         /* notify is best-effort */
       }
@@ -1644,7 +1644,7 @@ function MeterHeader({ presence, t, view }) {
   return jsxs('header', { className: 'wm-meter-head', children: [
     jsxs('div', { className: 'wm-meter-brandrow', children: [
       jsx('span', { className: 'wm-meter-mark', children: jsx(BrandMark, { size: 18, id: 'pane' }) }, 'mark'),
-      jsx('span', { className: 'wm-meter-name', children: 'Spend Sense' }, 'name'),
+      jsx('span', { className: 'wm-meter-name', children: 'SpendSense' }, 'name'),
       jsxs('span', { className: 'wm-meter-presence', children: [
         jsx('span', { className: 'wm-dot', 'data-state': presence, 'aria-hidden': true }, 'dot'),
         jsx('span', { children: stateLabel }, 'label')
@@ -1858,7 +1858,7 @@ function MeterEmpty({ t }) {
   return jsxs('div', { className: 'wm-meter-empty', children: [
     jsxs('div', { className: 'wm-meter-brandrow', children: [
       jsx('span', { className: 'wm-meter-mark', children: jsx(BrandMark, { size: 18, id: 'pane' }) }, 'mark'),
-      jsx('span', { className: 'wm-meter-name', children: 'Spend Sense' }, 'name')
+      jsx('span', { className: 'wm-meter-name', children: 'SpendSense' }, 'name')
     ] }, 'brand'),
     jsx(Note, { children: t('empty') }, 'note')
   ] })
@@ -2543,7 +2543,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const economics=data?.economics || totals?.economics || {}
   const refresh=()=>query.refetch?.()
   const billingMix=totals?.billing_mix ? Object.entries(totals.billing_mix).map(([kind,value])=>`${kind}: ${typeof value==='number'?fmtTokens(value):String(value)}`).join(' · ') : ''
-  const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('div',{className:'wm-eyebrow',children:'WolfMark / Spend Sense'}),jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
+  const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('div',{className:'wm-eyebrow',children:'WolfMark / SpendSense'}),jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
     jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')}),jsx(AnalyticsButton,{label:t('usageCloseTip'),onClick:closeLedger,children:t('usageClose')})]})]})
   return jsxs('div',{className:cn('wm-analytics',productPage&&'wm-product'),children:[jsx('style',{children:productPage?ANALYTICS_CSS+PRODUCT_CSS:ANALYTICS_CSS}),productPage?jsx(LedgerTabs,{}):null,jsxs('div',{className:'wm-shell',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
     query.error?jsxs('div',{className:'wm-alert',role:'alert',children:[jsx('h2',{children:'Analytics unavailable'}),jsx('p',{children:String(query.error.message || query.error)}),jsx('p',{children:data?'The visible snapshot is stale. Retry before using these values.':'The live chip and this desktop’s ledger are still available.'}),jsx(AnalyticsButton,{label:'Retry analytics',onClick:refresh})]}):null,
@@ -2935,7 +2935,7 @@ function LedgerTabs() {
     goLedgerTab(LEDGER_TABS[next][0])
   }
   return jsx('div', { className: 'wm-shell', style: { paddingBottom: 0 }, children:
-    jsx('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': 'Spend Sense sections', onKeyDown, children:
+    jsx('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': 'SpendSense sections', onKeyDown, children:
       [jsx('span', { className: 'wm-product-brand', 'aria-hidden': true,
         children: jsx(BrandMark, { size: 16, id: 'tabs' }) }, 'brand'),
       ...LEDGER_TABS.map(([id]) =>
@@ -3973,7 +3973,7 @@ function SettingsPage() {
       $automaticModelOptions.set(false)
       $settingsConfirmation.set(null)
       $modelRefreshState.set({ origin: identity, tone: 'good',
-        text: 'Spend Sense display preferences were reset. Hermes saved pane placement is unchanged.' })
+        text: 'SpendSense display preferences were reset. Hermes saved pane placement is unchanged.' })
     } catch (error) {
       $modelRefreshState.set({ origin: identity, tone: 'warn',
         text: 'Preferences could not be reset: ' + String(error.message || error) })
@@ -4042,7 +4042,7 @@ function SettingsPage() {
       else if (centralAlert) $modelRefreshState.set({ origin: captured, tone: 'warn',
         text: 'Membership catalogue could not be refreshed: ' + centralAlert })
       else $modelRefreshState.set({ origin: captured, tone: 'warn',
-        text: 'Spend Sense Live Updates is off, so the bundled catalogue is shown. Stored memberships, fees and selections are unchanged.' })
+        text: 'SpendSense Live Updates is off, so the bundled catalogue is shown. Stored memberships, fees and selections are unchanged.' })
     } catch (error) {
       if (membershipIdentityCurrent(captured)) $modelRefreshState.set({ origin: captured, tone: 'warn',
         text: 'Membership catalogue could not be refreshed: ' + String(error.message || error) })
@@ -4062,9 +4062,9 @@ function SettingsPage() {
       jsxs('div', { className: 'wm-settings-grid', children: keyedElementChildren([
         jsxs('section', { className: 'wm-product-section', children: [
           jsx('h2', { children: 'External data and privacy' }),
-          jsx('p', { children: 'Spend Sense makes no direct HTTP pricing requests. It reads Hermes model-pricing metadata when available and falls back to its bundled offline rate snapshot. Membership plans are bundled; user-defined plans stay in your plugin data.' }),
+          jsx('p', { children: 'SpendSense makes no direct HTTP pricing requests. It reads Hermes model-pricing metadata when available and falls back to its bundled offline rate snapshot. Membership plans are bundled; user-defined plans stay in your plugin data.' }),
           jsx('p', { children: 'Automatic Hermes model-options refresh is off by default. When enabled, the live pane asks Hermes for current options on session/model changes and every 15 minutes. Hermes may refresh public models.dev metadata or make authenticated requests to configured provider endpoints using credentials it manages. Membership discovery parses Hermes authentication storage to count configured credential slots; it does not return or log credential values.' }),
-          jsx('p', { children: 'Spend Sense stores accounting metadata, membership choices, fee history, custom plan details, and optional user-reported exhaustion marks. It does not collect prompts, responses or telemetry. The plugin backend uses its existing profile-specific plugin data.' }),
+          jsx('p', { children: 'SpendSense stores accounting metadata, membership choices, fee history, custom plan details, and optional user-reported exhaustion marks. It does not collect prompts, responses or telemetry. The plugin backend uses its existing profile-specific plugin data.' }),
           jsx('p', { children: 'With automatic refresh off, the plugin uses options already cached in this Desktop session and bundled rates. If a route is uncertain, it may use a clearly labelled fallback estimate or remain unpriced; it is never presented as a confirmed provider price. Account discovery and account readings remain user-triggered.' })
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
@@ -4114,7 +4114,7 @@ function SettingsPage() {
           jsxs('p', { children: [
             'Captured Desktop costs retain the rates applied when recorded. Backend API-equivalent values are estimates recalculated using the current available prices; they are not historical charges.'
           ] }),
-          jsx('p', { children: 'WolfMark publishes an optional, versioned membership catalogue feed. When Spend Sense Live Updates is on, the pane fetches it — validating the schema, caching it for offline use and falling back to the bundled plans on any failure; otherwise this build uses the bundled plans. Stored memberships, fees and selections never change.' }),
+          jsx('p', { children: 'WolfMark publishes an optional, versioned membership catalogue feed. When SpendSense Live Updates is on, the pane fetches it — validating the schema, caching it for offline use and falling back to the bundled plans on any failure; otherwise this build uses the bundled plans. Stored memberships, fees and selections never change.' }),
           membershipBook ? jsxs('div', { className: 'wm-note', children: [
             jsx('p', { children: (membershipBook.source === 'live' ? 'Live membership catalogue ' : 'Bundled membership catalogue ') + membershipBook.catalogue_version +
               (membershipBook.generated_at ? ' · generated ' + new Date(membershipBook.generated_at).toLocaleString() : '') }),
@@ -4181,10 +4181,10 @@ function SettingsPage() {
         ] }),
         jsxs('section', { className: 'wm-product-section', children: [
           jsx('h2', { children: 'Display and recovery' }),
-          jsx('p', { children: 'Resetting display preferences affects only Spend Sense filters and view mode. Hermes pane placement is stored by Hermes and remains as you set it.' }),
+          jsx('p', { children: 'Resetting display preferences affects only SpendSense filters and view mode. Hermes pane placement is stored by Hermes and remains as you set it.' }),
           liveConfirmation?.stage === 'reset-preferences'
             ? jsx('div', { className: 'wm-confirm-box', children: [
-                jsx('p', { role: 'alert', children: 'Reset the Spend Sense display preferences to their defaults?' }),
+                jsx('p', { role: 'alert', children: 'Reset the SpendSense display preferences to their defaults?' }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetPreferences, children: 'Confirm preference reset' }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: 'Cancel' })
               ] })
@@ -4204,7 +4204,7 @@ function SettingsPage() {
         jsxs('section', { className: 'wm-product-section', children: [
           jsx('h2', { children: 'About and support' }),
           jsx(BrandMark, { size: 32, id: 'about' }),
-          jsx('p', { children: 'Spend Sense ' + PLUGIN_VERSION }),
+          jsx('p', { children: 'SpendSense ' + PLUGIN_VERSION }),
           jsx('p', { children: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.' }),
           jsx('p', { children: 'Support and product information are available from WolfMark.' }),
           jsx('a', { href: 'https://wolfmark.co.uk/contact', target: '_blank', rel: 'noreferrer',
@@ -4214,7 +4214,7 @@ function SettingsPage() {
       ], 'settings-grid') }),
       liveRefresh?.tone === 'warn' && !liveRefresh.stage
         ? jsx('div', { className: 'wm-alert', role: 'status', children: liveRefresh.text }) : null,
-          jsx('p', { className: 'wm-subtle', children: 'The Spend Sense pane can be dragged to the left or right using Hermes’ supported layout controls. Hermes remembers your placement across reloads.' })
+          jsx('p', { className: 'wm-subtle', children: 'The SpendSense pane can be dragged to the left or right using Hermes’ supported layout controls. Hermes remembers your placement across reloads.' })
     ] })
   ] })
 }
@@ -7130,7 +7130,7 @@ const I18N = {
     calls: 'Calls',
     chipTip: (model, source, today, hit, saved) =>
       `${model} — cost ${source}. Today ${today}. Cache hit ${hit}; theoretical net cache savings ${saved}. Click for details.`,
-  chipTipIdle: 'Spend Sense — click for details',
+  chipTipIdle: 'SpendSense — click for details',
     context: 'Context',
     copied: 'Ledger JSON copied to the clipboard.',
     copyJson: 'Copy JSON',
@@ -7153,7 +7153,7 @@ const I18N = {
     legacyNote: n => `${n} tokens come from the pre-1.0 ledger, which stored no provider or price; they are estimated at current rates and may change.`,
     loadingPrice: 'Loading pricing…',
     modelCol: 'Model',
-    navLabel: 'Spend Sense',
+    navLabel: 'SpendSense',
     noLedger: 'Nothing recorded in this range. Usage is folded in as turns complete.',
     noPrice: 'n/a',
     noPriceLong: 'No rate for this model in the provider catalog or the bundled models.dev table. Run scripts/gen-rates.py to refresh it.',
@@ -7161,7 +7161,7 @@ const I18N = {
     meterRecorded: 'Recorded',
     meterUpdating: 'Updating…',
     apiEquivalent: 'API equivalent',
-    costSourceInfo: 'Spend Sense prices this conversation from Hermes backend estimates or catalogue $/Mtok rates, depending on what is available. A provider invoice may differ by route, peak pricing or rounding.',
+    costSourceInfo: 'SpendSense prices this conversation from Hermes backend estimates or catalogue $/Mtok rates, depending on what is available. A provider invoice may differ by route, peak pricing or rounding.',
     totalTokens: 'Total tokens',
     sinceDate: d => `since ${d}`,
     promptMix: 'Prompt mix',
@@ -7466,7 +7466,7 @@ const I18N = {
     // Page notices and states.
     memRefuseStale: 'That action belongs to a different connection. Reload the pane before changing anything.',
     memRefuseBusy: 'Another membership action is still processing. Please wait and try again.',
-    memRefuseUnversioned: 'This record has no revision and cannot be saved safely. It was probably written outside Spend Sense — restore the membership store before editing.',
+    memRefuseUnversioned: 'This record has no revision and cannot be saved safely. It was probably written outside SpendSense — restore the membership store before editing.',
     memDiscovering: 'Discovering…',
     memRefreshing: 'Refreshing…',
     memReadFailed: 'Memberships could not be read for this connection.',
@@ -7564,10 +7564,10 @@ const I18N = {
     newsReasonSelectedPlan: 'matches your selected plan',
     newsBaseline: date => `Catalogue baseline taken ${date}. Changes observed from the next refresh will appear here.`,
     newsRemoved: n => `${n} model(s) are no longer listed.`,
-    newsLiveOffText: 'Local catalogue news is shown. Turn on Spend Sense Live Updates in Settings for public announcements from Spend Sense.',
+    newsLiveOffText: 'Local catalogue news is shown. Turn on SpendSense Live Updates in Settings for public announcements from SpendSense.',
     newsOpenSettings: 'Open Settings',
-    newsCentralFresh: label => `Spend Sense announcements · updated ${label}.`,
-    newsCentralStale: 'Spend Sense announcements could not be refreshed — showing the last fetch.',
+    newsCentralFresh: label => `SpendSense announcements · updated ${label}.`,
+    newsCentralStale: 'SpendSense announcements could not be refreshed — showing the last fetch.',
     newsObserved: date => `Observed ${date}`,
     newsEffective: date => `Effective ${date}`,
     newsRateWas: 'Was',
@@ -7584,11 +7584,11 @@ const I18N = {
     newsCaveatTiers: 'tiered pricing applies; base rates compared',
     newsRoutes: () => 'Your routes:',
     newsSource: 'Source',
-    newsLiveTitle: 'Spend Sense Live Updates',
-    newsLiveExplain: 'Download public model and subscription updates from Spend Sense. No personal usage, accounts, credentials, model selections or telemetry are uploaded.',
+    newsLiveTitle: 'SpendSense Live Updates',
+    newsLiveExplain: 'Download public model and subscription updates from SpendSense. No personal usage, accounts, credentials, model selections or telemetry are uploaded.',
     newsLiveIp: 'Enabling involves an HTTPS request whose source IP is visible to the server. On a remote Hermes host, that host makes the request.',
-    newsLiveToggle: 'Download public updates from Spend Sense (off by default).',
-    newsLiveConfirmText: 'Turn on Spend Sense Live Updates for this profile?',
+    newsLiveToggle: 'Download public updates from SpendSense (off by default).',
+    newsLiveConfirmText: 'Turn on SpendSense Live Updates for this profile?',
     newsLiveConfirm: 'Enable live updates',
     newsLiveCancel: 'Cancel',
     newsLiveOn: 'Live updates are on for this profile.',
@@ -7621,15 +7621,15 @@ const I18N = {
     fxErrRejected: 'The rates were rejected. Check each rate and retry.',
     fxErrSave: 'The rates could not be saved. Please retry; if it persists, check the backend log.',
     output: 'Output',
-  pageTitle: 'Spend Sense',
-    pageTitleDesktop: 'Spend Sense — this desktop',
-    allHermesTitle: 'Spend Sense',
+  pageTitle: 'SpendSense',
+    pageTitleDesktop: 'SpendSense — this desktop',
+    allHermesTitle: 'SpendSense',
     viewAll: 'All Hermes',
     viewDesktop: 'This desktop',
     allHermesHint:
       'Timestamped calls captured since this plugin was enabled. The historical baseline is read separately from state.db and is never added to the period.',
     allHermesEmpty: 'No usage recorded in this window.',
-    backendUnavailable: 'The Spend Sense backend is not reachable.',
+    backendUnavailable: 'The SpendSense backend is not reachable.',
     backendLoading: 'Reading the timestamped ledger…',
     backendRetry: 'Retry',
     backendUseDesktop: 'Use this desktop’s ledger',
@@ -7885,7 +7885,7 @@ const I18N = {
     meterRecorded: '已记录',
     meterUpdating: '更新中…',
     apiEquivalent: 'API 等值',
-    costSourceInfo: 'Spend Sense 按 Hermes 后端估算或目录单价（$/百万令牌）为本次对话计价，具体取决于可用数据。实际账单可能因线路、峰谷价或取整而不同。',
+    costSourceInfo: 'SpendSense 按 Hermes 后端估算或目录单价（$/百万令牌）为本次对话计价，具体取决于可用数据。实际账单可能因线路、峰谷价或取整而不同。',
     totalTokens: '总令牌',
     sinceDate: d => `自 ${d} 起`,
     promptMix: '提示词构成',
@@ -8190,7 +8190,7 @@ const I18N = {
     // 页面通知与状态。
     memRefuseStale: '该操作属于另一个连接，更改前请重新加载面板。',
     memRefuseBusy: '另一个会员操作仍在处理中，请稍候再试。',
-    memRefuseUnversioned: '该记录没有版本号，无法安全保存。它可能是在 Spend Sense 之外写入的——编辑前请先恢复会员数据。',
+    memRefuseUnversioned: '该记录没有版本号，无法安全保存。它可能是在 SpendSense 之外写入的——编辑前请先恢复会员数据。',
     memDiscovering: '发现中……',
     memRefreshing: '刷新中……',
     memReadFailed: '该连接的会员无法读取。',
@@ -8288,10 +8288,10 @@ const I18N = {
     newsReasonSelectedPlan: '匹配您选择的套餐',
     newsBaseline: date => `目录基线已于${date}建立。从下次刷新起观察到的变化将显示在这里。`,
     newsRemoved: n => `${n} 个模型已不再收录。`,
-    newsLiveOffText: '当前显示本地目录动态。在“设置”中开启 Spend Sense 实时更新，可获取 Spend Sense 的公开公告。',
+    newsLiveOffText: '当前显示本地目录动态。在“设置”中开启 SpendSense 实时更新，可获取 SpendSense 的公开公告。',
     newsOpenSettings: '打开设置',
-    newsCentralFresh: label => `Spend Sense 公告 · 更新于${label}。`,
-    newsCentralStale: '无法刷新 Spend Sense 公告——显示上次获取的数据。',
+    newsCentralFresh: label => `SpendSense 公告 · 更新于${label}。`,
+    newsCentralStale: '无法刷新 SpendSense 公告——显示上次获取的数据。',
     newsObserved: date => `观察于${date}`,
     newsEffective: date => `生效于${date}`,
     newsRateWas: '原价',
@@ -8308,11 +8308,11 @@ const I18N = {
     newsCaveatTiers: '适用阶梯价格；按基准价格对比',
     newsRoutes: () => '您的路由：',
     newsSource: '来源',
-    newsLiveTitle: 'Spend Sense 实时更新',
-    newsLiveExplain: '从 Spend Sense 下载公开的模型与订阅更新。不会上传个人用量、帐户、凭据、模型选择或遥测数据。',
+    newsLiveTitle: 'SpendSense 实时更新',
+    newsLiveExplain: '从 SpendSense 下载公开的模型与订阅更新。不会上传个人用量、帐户、凭据、模型选择或遥测数据。',
     newsLiveIp: '开启后会发出 HTTPS 请求，其来源 IP 对服务器可见。在远程 Hermes 主机上，由该主机发出请求。',
-    newsLiveToggle: '从 Spend Sense 下载公开更新（默认关闭）。',
-    newsLiveConfirmText: '要为此配置文件开启 Spend Sense 实时更新吗？',
+    newsLiveToggle: '从 SpendSense 下载公开更新（默认关闭）。',
+    newsLiveConfirmText: '要为此配置文件开启 SpendSense 实时更新吗？',
     newsLiveConfirm: '开启实时更新',
     newsLiveCancel: '取消',
     newsLiveOn: '此配置文件已开启实时更新。',
@@ -8380,13 +8380,13 @@ const I18N = {
     total: '合计',
     unpricedNote: n => `有 ${n} 令牌没有可用单价，未计入总额（显示为 ≥）。`,
     // Ledger header, record stats, baseline reconciliation and grouping.
-    pageTitleDesktop: 'Spend Sense — 本机',
-    allHermesTitle: 'Spend Sense',
+    pageTitleDesktop: 'SpendSense — 本机',
+    allHermesTitle: 'SpendSense',
     viewAll: '所有 Hermes',
     viewDesktop: '本机',
     allHermesHint: '自插件启用以来捕获的带时间戳调用。历史基线从 state.db 单独读取，从不计入本期。',
     allHermesEmpty: '本窗口内没有记录用量。',
-    backendUnavailable: 'Spend Sense 后端无法访问。',
+    backendUnavailable: 'SpendSense 后端无法访问。',
     backendLoading: '正在读取带时间戳的账本…',
     backendRetry: '重试',
     backendUseDesktop: '使用本机账本',
@@ -8565,7 +8565,7 @@ const I18N = {
 
 export default {
   id: ID,
-  name: 'Spend Sense',
+  name: 'SpendSense',
   description: 'Hermes usage accounting, provider-aware cost estimates, memberships, and live session usage.',
   register(ctx) {
     pluginLifetime++
@@ -8632,7 +8632,7 @@ export default {
     ctx.register({
       id: 'pane',
       area: 'panes',
-      title: 'Spend Sense',
+      title: 'SpendSense',
       data: PANE_DATA,
       render: () => jsx(Meter, {})
     })
@@ -8640,14 +8640,14 @@ export default {
     ctx.register({
       id: 'page',
       area: 'routes',
-      title: 'Spend Sense',
+      title: 'SpendSense',
       data: { path: LEDGER_ROUTE },
       render: () => jsx(LedgerPage, {})
     })
     ctx.register({
       id: 'nav',
       area: 'sidebar.nav',
-      data: { codicon: 'graph', label: 'Spend Sense', path: LEDGER_ROUTE }
+      data: { codicon: 'graph', label: 'SpendSense', path: LEDGER_ROUTE }
     })
   }
 }

@@ -674,7 +674,7 @@ def validate_feed(raw: Any) -> tuple[Optional[dict[str, Any]], list[str]]:
             "observed_at": observed_at,
             "effective_at": _valid_text(entry.get("effective_at"), 64),
             "source_url": source_url, "confidence": confidence,
-            "provenance": _valid_text(entry.get("provenance"), 256) or "Spend Sense central feed",
+            "provenance": _valid_text(entry.get("provenance"), 256) or "SpendSense central feed",
             "conditions": _valid_text(entry.get("conditions"), 500),
         })
     items.sort(key=lambda item: (item["observed_at"], item["provider"], item["model"]), reverse=True)

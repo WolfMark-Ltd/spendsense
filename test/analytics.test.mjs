@@ -336,7 +336,7 @@ test('product Usage keeps one aligned shell and explains an empty period', () =>
  const roots=nodes(empty,n=>n.type==='div' && String(n.props?.className || '').split(/\s+/).includes('wm-analytics'))
  assert.equal(roots.length,1,'product Usage has one full-height scroll root')
  assert.ok(String(roots[0].props.className).split(/\s+/).includes('wm-product'))
- assert.equal(nodes(empty,n=>n.props?.role==='tablist' && n.props?.['aria-label']==='Spend Sense sections').length,1)
+ assert.equal(nodes(empty,n=>n.props?.role==='tablist' && n.props?.['aria-label']==='SpendSense sections').length,1)
  assert.ok(text(empty).includes('This report covers backend analytics'))
  button(empty,'Show Desktop-recorded usage').props.onClick()
  assert.equal(T.$view.get(),'desktop','the empty-state action opens the separate local ledger')

@@ -42,7 +42,7 @@ from .pricing import Catalogue, load_catalogue
 #: new report sentences go here in both languages or not at all.
 STRINGS: dict[str, dict[str, str]] = {
     "en": {
-        "title": "Spend Sense digest",
+        "title": "SpendSense digest",
         "generated": "Generated {ts} UTC",
         "period_days": "Last {days} days ({start} → {end} UTC)",
         "cycle_as_of": "Current cycle, as of {date}",
@@ -119,7 +119,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "method_missing": "A dash means unknown or unavailable, never zero. Zeros appear only where recording genuinely observed nothing.",
     },
     "zh": {
-        "title": "Spend Sense 摘要",
+        "title": "SpendSense 摘要",
         "generated": "生成于 {ts} UTC",
         "period_days": "过去 {days} 天（{start} → {end} UTC）",
         "cycle_as_of": "当前周期（截至 {date}）",

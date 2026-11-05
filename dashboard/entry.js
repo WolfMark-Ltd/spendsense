@@ -4,6 +4,6 @@
   const React = window.__HERMES_PLUGIN_SDK__?.React
   if (!registry || !React) return
   registry.register('spend-sense', function SpendSenseDashboard() {
-    return React.createElement('p', null, 'Open Spend Sense in Hermes Desktop to view your usage.')
+    return React.createElement('p', null, 'Open SpendSense in Hermes Desktop to view your usage.')
   })
 })()

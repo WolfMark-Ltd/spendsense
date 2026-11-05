@@ -75,7 +75,7 @@ i18nBackend.t = enT
 
 const digestFixture = (days = 30, lang = 'en') => ({
   ok: true, generated_at: '2026-10-31T12:00:00Z', days, lang,
-  title: lang === 'zh' ? 'Spend Sense 摘要' : 'Spend Sense digest',
+  title: lang === 'zh' ? 'SpendSense 摘要' : 'SpendSense digest',
   period: { label: `Last ${days} days`, start: '2026-10-01T00:00:00Z', end: '2026-10-31T00:00:00Z', timezone: 'UTC' },
   sections: [
     { id: 'usage', heading: 'Usage', window: `Last ${days} days`, kind: 'lines',
@@ -88,7 +88,7 @@ const digestFixture = (days = 30, lang = 'en') => ({
     { id: 'methodology', heading: 'Methodology', window: '', kind: 'notes', lines: [],
       notes: ['Local only.'] },
   ],
-  markdown: `# Spend Sense digest\n\n- **Calls:** 3\n`,
+  markdown: `# SpendSense digest\n\n- **Calls:** 3\n`,
   filename: `spend-sense-digest-2026-10-31-${days}d-${lang}.md`,
   empty: false,
 })
@@ -290,7 +290,7 @@ test('copy writes the markdown and notifies success', async () => {
     await clickByText(container, 'Copy')
     await flush(2)
     assert.equal(copied.length, 1)
-    assert.match(copied[0], /# Spend Sense digest/)
+    assert.match(copied[0], /# SpendSense digest/)
     assert.deepEqual(notices, [{ kind: 'success', message: 'Report copied to the clipboard.' }])
   } finally {
     host.notify = originalNotify

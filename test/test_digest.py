@@ -151,7 +151,7 @@ class DigestShapeTests(DigestCase):
         self.assertEqual(result["days"], 7)
         self.assertEqual(result["lang"], "en")
         self.assertEqual(result["generated_at"], "2026-10-31T12:00:00Z")
-        self.assertIn("Spend Sense", result["title"])
+        self.assertIn("SpendSense", result["title"])
         self.assertIn("7", result["period"]["label"])
         self.assertRegex(result["filename"], r"^spend-sense-digest-2026-10-31-7d-en\.md$")
         self.assertFalse(result["empty"])
