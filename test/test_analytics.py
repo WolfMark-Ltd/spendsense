@@ -220,7 +220,7 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(set(report), {"ok", "window", "filters", "options", "totals", "previous",
                                      "by_model", "by_route", "by_scope", "attribution", "pricing_source", "valuation",
                                      "pricing_coverage", "billing",
-                                     "trend", "economics", "recording", "notes"})
+                                     "trend", "economics", "recording", "notes", "note_codes"})
         self.assertTrue(report["ok"])
         self.assertEqual(report["window"]["kind"], "timestamped_calls")
         self.assertEqual(report["filters"], dict.fromkeys(

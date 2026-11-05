@@ -384,11 +384,14 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
             "origin": "local", "category": "new_model",
             "provider": str(provider), "model": "",
             "summary": f"{provider} is newly listed with {len(models)} priced model(s).",
+            "summary_code": "news_sum_new_provider",
+            "summary_params": {"provider": str(provider), "count": len(models)},
             "previous": None, "current": None,
             "observed_at": observed_at, "effective_at": "",
             "source_url": "", "confidence": "observed",
             "provenance": "Hermes models.dev cache",
             "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+            "conditions_code": "news_cond_listing_accounts",
         })
     for provider in sorted(set(old_providers) - set(new_providers)):
         for model in sorted((old_providers.get(provider) or {})):
@@ -407,11 +410,16 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
                 "provider": str(provider), "model": str(model),
                 "summary": (f"{model} newly listed under {provider} at "
                             f"{_money(entry.get('input'))}/{_money(entry.get('output'))} per MTok in/out."),
+                "summary_code": "news_sum_new_model",
+                "summary_params": {"model": str(model), "provider": str(provider),
+                                   "input": _money(entry.get('input')),
+                                   "output": _money(entry.get('output'))},
                 "previous": None, "current": _slim(entry),
                 "observed_at": observed_at, "effective_at": "",
                 "source_url": "", "confidence": "observed",
                 "provenance": "Hermes models.dev cache",
                 "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+                "conditions_code": "news_cond_listing_accounts",
             })
         for model in sorted(set(before) - set(after)):
             removed_models.append({"provider": str(provider), "model": str(model)})
@@ -433,12 +441,17 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
                 "provider": str(provider), "model": str(model),
                 "summary": (f"{model} ({provider}) {verb} "
                             f"{_money(new_entry.get('input'))}/{_money(new_entry.get('output'))} per MTok in/out."),
+                "summary_code": "news_sum_price_change",
+                "summary_params": {"model": str(model), "provider": str(provider),
+                                   "input": _money(new_entry.get('input')),
+                                   "output": _money(new_entry.get('output'))},
                 "previous": _slim(old_entry), "current": _slim(new_entry),
                 "has_tiers": bool(old_entry.get("tiers") or new_entry.get("tiers")),
                 "observed_at": observed_at, "effective_at": "",
                 "source_url": "", "confidence": "observed",
                 "provenance": "Hermes models.dev cache",
                 "conditions": conditions,
+                "conditions_code": "news_cond_tiers_changed" if conditions else "",
             })
 
     # Plan catalogue: fees and allowance terms change with catalogue updates.
@@ -456,6 +469,9 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
             "origin": "local", "category": "subscription",
             "provider": str(plan.get("family") or ""), "model": "",
             "summary": f"New plan listed: {plan.get('name') or plan_id} ({_fee_text(plan.get('price') or {})}).",
+            "summary_code": "news_sum_new_plan",
+            "summary_params": {"plan": str(plan.get('name') or plan_id),
+                               "fee": _fee_text(plan.get('price') or {})},
             "previous": None, "current": None,
             "observed_at": observed_at, "effective_at": "",
             "source_url": urls.get(str(plan.get("source_id") or ""), ""),
@@ -484,6 +500,11 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
             "origin": "local", "category": "subscription",
             "provider": str(after.get("family") or before.get("family") or ""), "model": "",
             "summary": f"{after.get('name') or plan_id}: {'; '.join(bits)}.",
+            "summary_code": "news_sum_plan_change",
+            "summary_params": {"plan": str(after.get('name') or plan_id),
+                               "fee_before": _fee_text(before.get('price') or {}),
+                               "fee_after": _fee_text(after.get('price') or {}),
+                               "terms_changed": bool(terms_changed)},
             "previous": None, "current": None,
             "observed_at": observed_at, "effective_at": "",
             "source_url": urls.get(str(after.get("source_id") or before.get("source_id") or ""), ""),
@@ -664,10 +685,18 @@ def validate_feed(raw: Any) -> tuple[Optional[dict[str, Any]], list[str]]:
             errors.append(f"{where}: unknown confidence")
             continue
         seen.add(item_id)
+        raw_params = entry.get("summary_params")
+        params: dict[str, Any] = {}
+        if isinstance(raw_params, dict):
+            for key, value in list(raw_params.items())[:16]:
+                if value is None or isinstance(value, (str, int, float, bool)):
+                    params[str(key)[:64]] = value[:256] if isinstance(value, str) else value
         items.append({
             "id": item_id, "origin": "central", "category": category,
             "provider": provider, "model": _valid_text(entry.get("model"), 256),
             "summary": summary,
+            "summary_code": _valid_text(entry.get("summary_code"), 64),
+            "summary_params": params,
             "previous": _valid_rate_block(previous) if previous is not None else None,
             "current": _valid_rate_block(current) if current is not None else None,
             "has_tiers": entry.get("has_tiers") is True,
@@ -676,6 +705,7 @@ def validate_feed(raw: Any) -> tuple[Optional[dict[str, Any]], list[str]]:
             "source_url": source_url, "confidence": confidence,
             "provenance": _valid_text(entry.get("provenance"), 256) or "SpendSense central feed",
             "conditions": _valid_text(entry.get("conditions"), 500),
+            "conditions_code": _valid_text(entry.get("conditions_code"), 64),
         })
     items.sort(key=lambda item: (item["observed_at"], item["provider"], item["model"]), reverse=True)
     if len(items) > FEED_MAX_ITEMS:
@@ -895,21 +925,28 @@ def estimate_impact(item: Mapping[str, Any], tokens: Mapping[str, int]) -> dict[
     """
     previous, current = item.get("previous"), item.get("current")
     if sum(tokens.get(key, 0) for key in ("input", "output", "cache_read", "cache_write")) <= 0:
-        return {"basis": "unavailable", "reason": "no recent usage of this model"}
+        return {"basis": "unavailable", "reason": "no recent usage of this model",
+                "reason_codes": ["news_impact_no_usage"]}
     if not isinstance(previous, Mapping) or not isinstance(current, Mapping):
-        return {"basis": "unavailable", "reason": "rate comparison unavailable"}
+        return {"basis": "unavailable", "reason": "rate comparison unavailable",
+                "reason_codes": ["news_impact_no_rates"]}
     old_usd, old_complete = _cost(tokens, previous, current)
     new_usd, new_complete = _cost(tokens, current, previous)
     if old_usd is None or new_usd is None:
-        return {"basis": "unavailable", "reason": "rate comparison unavailable"}
+        return {"basis": "unavailable", "reason": "rate comparison unavailable",
+                "reason_codes": ["news_impact_no_rates"]}
     caveats = []
+    caveat_codes = []
     if not (old_complete and new_complete):
         caveats.append("cache rates unavailable for comparison; cache tokens excluded")
+        caveat_codes.append("news_impact_cache_excluded")
     if item.get("has_tiers") is True:
         caveats.append("tiered pricing applies; base rates compared")
+        caveat_codes.append("news_impact_tiered_rates")
     return {
         "basis": "full" if not caveats else "partial",
         "reason": "; ".join(caveats),
+        "reason_codes": caveat_codes,
         "window_days": IMPACT_DAYS,
         "tokens": {key: int(tokens.get(key, 0)) for key in ("input", "output", "cache_read", "cache_write")},
         "calls": int(tokens.get("calls", 0)),
