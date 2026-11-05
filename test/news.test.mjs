@@ -277,6 +277,26 @@ test('news summaries render backend-identical English from codes', () => {
   }
 })
 
+test('plan changes use the fee_changed flag, never an empty clause', () => {
+  // Formatted fees can compare equal while the prices differ ({number:g}).
+  const rounded = { summary_code: 'news_sum_plan_change',
+    summary_params: { plan: 'Plus', fee_before: 'VND 1e+06', fee_after: 'VND 1e+06',
+      fee_changed: true, terms_changed: false },
+    summary: 'Plus: fee VND 1e+06 → VND 1e+06.' }
+  assert.equal(S.newsSummaryText(rounded, enT), 'Plus: fee VND 1e+06 → VND 1e+06.')
+  // Legacy items without the flag keep the string comparison.
+  const legacy = { summary_code: 'news_sum_plan_change',
+    summary_params: { plan: 'Plus', fee_before: '$20/mo', fee_after: '$25/mo', terms_changed: false },
+    summary: 'Plus: fee $20/mo → $25/mo.' }
+  assert.equal(S.newsSummaryText(legacy, enT), 'Plus: fee $20/mo → $25/mo.')
+  // Nothing to say: fall back to the stored summary instead of "Plan: .".
+  const empty = { summary_code: 'news_sum_plan_change',
+    summary_params: { plan: 'Plus', fee_before: '$20/mo', fee_after: '$20/mo',
+      fee_changed: false, terms_changed: false },
+    summary: 'Plus: fee $20/mo → $20/mo.' }
+  assert.equal(S.newsSummaryText(empty, enT), 'Plus: fee $20/mo → $20/mo.')
+})
+
 test('news summaries fall back to the raw summary', () => {
   assert.equal(S.newsSummaryText({ summary: 'curator free text' }, enT), 'curator free text')
   assert.equal(S.newsSummaryText({ summary: 'old', summary_code: 'news_sum_future' }, enT), 'old')

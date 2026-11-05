@@ -81,10 +81,13 @@ const renderCard = async (item, impact, locale) => {
   document.body.appendChild(container)
   const root = ReactDOMClient.createRoot(container)
   roots.push(root)
-  await React.act(async () => {
-    root.render(React.createElement(T.NewsCard, { item, impact, t: translator(locale) }))
-  })
-  return { container, text: () => container.textContent }
+  const show = async (nextLocale) => {
+    await React.act(async () => {
+      root.render(React.createElement(T.NewsCard, { item, impact, t: translator(nextLocale) }))
+    })
+  }
+  await show(locale)
+  return { container, text: () => container.textContent, show }
 }
 
 after(() => { queryClient.clear(); dom.window.close() })
@@ -153,12 +156,14 @@ test('items without codes keep their raw English in both locales', async () => {
 })
 
 test('switching locales never persists translated labels', async () => {
-  const first = await renderCard(codedItem(), codedImpact(), 'en')
-  const before = first.text()
+  const item = codedItem()
+  const impact = codedImpact()
+  const card = await renderCard(item, impact, 'en')
+  const before = card.text()
   assert.match(before, /reduced to/)
-  const middle = await renderCard(codedItem(), codedImpact(), 'zh')
-  assert.match(middle.text(), /降至/)
-  assert.doesNotMatch(middle.text(), /reduced to/)
-  const afterSwitch = await renderCard(codedItem(), codedImpact(), 'en')
-  assert.equal(afterSwitch.text(), before, 'returning to English restores byte-identical output')
+  await card.show('zh')
+  assert.match(card.text(), /降至/)
+  assert.doesNotMatch(card.text(), /reduced to/)
+  await card.show('en')
+  assert.equal(card.text(), before, 'returning to English restores byte-identical output')
 })

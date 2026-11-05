@@ -2918,12 +2918,28 @@ const ANALYTICS_NOTE_KEYS = {
   ov_note_previous: 'ovNotePrevious',
 }
 
+/** Economics gap reasons from analytics._call_economics; unknown reasons pass through raw. */
+const OV_GAP_REASON_KEYS = {
+  call_failed: 'ovGapCallFailed',
+  usage_missing: 'ovGapUsageMissing',
+  cache_provenance_unknown: 'ovGapCacheProvenance',
+  rate_unavailable: 'ovGapRateUnavailable',
+  missing_base_rate: 'ovGapMissingBaseRate',
+  missing_cache_read_rate: 'ovGapMissingCacheRead',
+  missing_cache_write_rate: 'ovGapMissingCacheWrite',
+}
+
+function analyticsGapReasonLabel(reason, t) {
+  const key = OV_GAP_REASON_KEYS[reason]
+  return key ? t(key) : reason
+}
+
 /** One analytics note from its note_codes entry; the English note is the fallback. */
 function analyticsNoteText(entry, fallback, t) {
   const params = entry?.params
   if (entry?.code === 'ov_note_gap' && params && typeof params === 'object'
       && params.count !== undefined && params.reason !== undefined)
-    return t('ovNoteGap', params.count, params.reason)
+    return t('ovNoteGap', params.count, analyticsGapReasonLabel(params.reason, t))
   const key = entry ? ANALYTICS_NOTE_KEYS[entry.code] : null
   return key ? t(key) : fallback
 }
@@ -6886,9 +6902,16 @@ function newsSummaryText(item, t) {
   if (code === 'news_sum_new_plan' && need('plan', 'fee'))
     return t('newsSumNewPlan', params.plan, params.fee)
   if (code === 'news_sum_plan_change' && need('plan', 'fee_before', 'fee_after')) {
+    // fee_changed comes from the backend's own raw-price comparison: formatted
+    // fees can compare equal while the prices differ ({number:g} precision).
+    // Items without the flag keep the legacy string comparison.
+    const feeChanged = typeof params.fee_changed === 'boolean'
+      ? params.fee_changed
+      : params.fee_before !== params.fee_after
     const bits = []
-    if (params.fee_before !== params.fee_after) bits.push(t('newsPlanFeeBit', params.fee_before, params.fee_after))
+    if (feeChanged) bits.push(t('newsPlanFeeBit', params.fee_before, params.fee_after))
     if (params.terms_changed) bits.push(t('newsPlanTermsChanged'))
+    if (!bits.length) return fallback
     return t('newsSumPlanChange', params.plan, bits.join('; '))
   }
   if (code === 'news_sum_new_provider_feed' && need('provider', 'count'))
@@ -7844,6 +7867,13 @@ const I18N = {
     ovNoteBilling: 'Billing mix is the latest route/model classification, not a per-call invoice. Only included routes have known $0 marginal billing.',
     ovNotePrevious: 'Previous totals cover the equal-length window immediately before this one under the same filters, for comparison only; deltas are omitted when that window has no recorded calls and it may predate recording.',
     ovNoteGap: (count, reason) => `Economics excluded ${count} calls: ${reason}.`,
+    ovGapCallFailed: 'call_failed',
+    ovGapUsageMissing: 'usage_missing',
+    ovGapCacheProvenance: 'cache_provenance_unknown',
+    ovGapRateUnavailable: 'rate_unavailable',
+    ovGapMissingBaseRate: 'missing_base_rate',
+    ovGapMissingCacheRead: 'missing_cache_read_rate',
+    ovGapMissingCacheWrite: 'missing_cache_write_rate',
     econHeadNoFees: 'No subscription has a known fee; declare fees in Memberships.',
     econHeadUnpriced: count => `${count} subscription(s) have no fee; the headline cannot be compared.`,
     econHeadIncomparable: 'At least one subscription cannot be compared (missing price, coverage or FX rate); see the rows.',
@@ -8930,6 +8960,13 @@ const I18N = {
     ovNoteBilling: 'Billing mix 是最新的路由/模型分类，不是逐调用账单。只有 included 路由的边际账单确认为 $0。',
     ovNotePrevious: 'Previous 总量覆盖同一过滤条件下紧邻的前一个等长窗口，仅用于对比；当前一窗口无记录调用时省略差值，且该窗口可能早于记录起点。',
     ovNoteGap: (count, reason) => `Economics 已排除 ${count} 次调用：${reason}。`,
+    ovGapCallFailed: '调用失败',
+    ovGapUsageMissing: '用量缺失',
+    ovGapCacheProvenance: '缓存来源未知',
+    ovGapRateUnavailable: '价格不可用',
+    ovGapMissingBaseRate: '缺失基础价格',
+    ovGapMissingCacheRead: '缺失缓存读取价格',
+    ovGapMissingCacheWrite: '缺失缓存写入价格',
     econHeadNoFees: '没有订阅登记了已知费用；请在会员中登记费用。',
     econHeadUnpriced: count => `${count} 个订阅没有费用；无法对比汇总数字。`,
     econHeadIncomparable: '至少一个订阅无法对比（缺失价格、覆盖或汇率）；请查看各行。',
@@ -9645,7 +9682,8 @@ export const __test = {
   newsQuery, newsSettingsQuery, newsSaveSettings, invalidateNewsFor, newsFilter, newsCategoryLabel,
   newsImpactText, newsReasonLabel, newsAgeDays, newsFreshLabel, newsCentralAlert, newsIsRelevant, newsHasSignals, newsRelevanceReasons, newsRelevanceText, newsEmptyText, NEWS_RELEVANCE_ORDER, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
   newsSummaryText, newsConditionsText, newsImpactReasonText, NEWS_SUMMARY_CODES, NEWS_CONDITION_KEYS, NEWS_IMPACT_REASON_KEYS,
-  analyticsNoteText, analyticsNotesText, ANALYTICS_NOTE_KEYS, econNoteText, econNotesText, econSingularNoteText, econExplanationText, ECON_NOTE_KEYS, ECON_EXPLANATION_KEYS,
+  analyticsNoteText, analyticsNotesText, ANALYTICS_NOTE_KEYS, analyticsGapReasonLabel, OV_GAP_REASON_KEYS,
+  econNoteText, econNotesText, econSingularNoteText, econExplanationText, ECON_NOTE_KEYS, ECON_EXPLANATION_KEYS,
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   $fxDraft, $fxSaving, $fxNotice,

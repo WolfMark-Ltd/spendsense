@@ -781,6 +781,8 @@ test('every PR28 generated-content key exists in English and Chinese', () => {
     'newsCondListingAccounts', 'newsCondTiersChanged', 'newsCondListingAnyAccount',
     'ovNoteWindow', 'ovNoteOptions', 'ovNotePrices', 'ovNoteErrors', 'ovNoteCache',
     'ovNoteFallback', 'ovNoteEconomics', 'ovNoteBilling', 'ovNotePrevious', 'ovNoteGap',
+    'ovGapCallFailed', 'ovGapUsageMissing', 'ovGapCacheProvenance', 'ovGapRateUnavailable',
+    'ovGapMissingBaseRate', 'ovGapMissingCacheRead', 'ovGapMissingCacheWrite',
     'econHeadNoFees', 'econHeadUnpriced', 'econHeadIncomparable', 'econHeadPartial',
     'econHeadOk', 'econHeadFxError',
     'econGroupUnknownCurrency', 'econGroupUnpriced', 'econGroupNoFx',
@@ -793,7 +795,7 @@ test('every PR28 generated-content key exists in English and Chinese', () => {
     assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
   }
   for (const map of [T.NEWS_CONDITION_KEYS, T.NEWS_IMPACT_REASON_KEYS,
-      T.ANALYTICS_NOTE_KEYS, T.ECON_NOTE_KEYS, T.ECON_EXPLANATION_KEYS]) {
+      T.ANALYTICS_NOTE_KEYS, T.OV_GAP_REASON_KEYS, T.ECON_NOTE_KEYS, T.ECON_EXPLANATION_KEYS]) {
     for (const key of Object.values(map)) {
       assert.ok(en[key] !== undefined, `en has mapped ${key}`)
       assert.ok(zh[key] !== undefined, `zh has mapped ${key}`)

@@ -676,3 +676,16 @@ test('analytics notes translate to Chinese and fall back per entry', () => {
  // A gap entry without params falls back rather than printing undefined.
  assert.equal(T.analyticsNoteText({ code: 'ov_note_gap', params: {} }, notes[1], noteEn), notes[1])
 })
+
+test('gap reasons label in Chinese and echo the identifier in English', () => {
+ const entry = reason => ({ code: 'ov_note_gap', params: { count: 4, reason } })
+ assert.equal(T.analyticsNoteText(entry('cache_provenance_unknown'), 'x', noteEn),
+  'Economics excluded 4 calls: cache_provenance_unknown.')
+ assert.equal(T.analyticsNoteText(entry('cache_provenance_unknown'), 'x', noteZh),
+  'Economics 已排除 4 次调用：缓存来源未知。')
+ assert.equal(T.analyticsGapReasonLabel('missing_cache_write_rate', noteZh), '缺失缓存写入价格')
+ // Unknown future reasons pass through raw in both locales.
+ assert.equal(T.analyticsGapReasonLabel('future_reason', noteZh), 'future_reason')
+ assert.equal(T.analyticsNoteText(entry('future_reason'), 'x', noteEn),
+  'Economics excluded 4 calls: future_reason.')
+})

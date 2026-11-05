@@ -769,7 +769,24 @@ class CodesTests(NewsTestCase):
         change = by_code["news_sum_plan_change"]["summary_params"]
         self.assertEqual(change["plan"], "Plus")
         self.assertNotEqual(change["fee_before"], change["fee_after"])
+        self.assertTrue(change["fee_changed"])
         self.assertIn("terms_changed", change)
+
+    def test_fee_changed_survives_fee_text_rounding(self):
+        news = news_module()
+        before = {"amount": 1000000, "currency": "VND", "period": "month"}
+        after = {"amount": 1000001, "currency": "VND", "period": "month"}
+        self.assertEqual(news._fee_text(before), news._fee_text(after))
+        old = {"providers": {}, "plans": {
+            "p1": {"name": "Plus", "family": "acme", "price": before}}}
+        new = {"providers": {}, "plans": {
+            "p1": {"name": "Plus", "family": "acme", "price": after}}}
+        items, _ = news.diff_snapshots(old, new, observed_at="2026-11-05T00:00:00Z")
+        self.assertEqual(len(items), 1)
+        params = items[0]["summary_params"]
+        self.assertTrue(params["fee_changed"])
+        self.assertFalse(params["terms_changed"])
+        self.assertIn("fee VND", items[0]["summary"])
 
     def test_impact_reasons_emit_codes(self):
         news = news_module()
