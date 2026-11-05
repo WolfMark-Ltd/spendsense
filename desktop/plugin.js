@@ -2629,7 +2629,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
     !totals&&!query.isLoading&&!query.error?jsx('div',{className:'wm-empty',role:'status',children:t('usageNoData')}):null,
     totals?jsxs('div',{className:'wm-charts',children:[jsx(AnalyticsDistribution,{data,state,dispatch}),jsx(AnalyticsTrendChart,{data,state,dispatch}),jsx(AnalyticsDelegation,{data,state,dispatch}),jsx(AnalyticsRanking,{data,state,dispatch}),jsx(AnalyticsComposition,{data,state,dispatch})]}):null,
     totals?jsx(AnalyticsExplorer,{data,state,dispatch}):null,totals?jsx(AnalyticsEconomics,{data}):null,
-    totals?jsxs('div',{className:'wm-subtle',children:[jsx('p',{children:t('usageRecordingLine', data.recording?.since || t('usageRecordingPending'), data.recording?.last || '—')}),jsx('p',{children:t('usageCacheFormula')}),jsxs('details',{style:{marginTop:10},children:[jsx('summary',{children:t('usageMethodologyTitle')}),...(data.notes || []).map((note,i)=>jsx('p',{style:{marginTop:7},children:note},i))]})]}):null,
+    totals?jsxs('div',{className:'wm-subtle',children:[jsx('p',{children:t('usageRecordingLine', data.recording?.since || t('usageRecordingPending'), data.recording?.last || '—')}),jsx('p',{children:t('usageCacheFormula')}),jsxs('details',{style:{marginTop:10},children:[jsx('summary',{children:t('usageMethodologyTitle')}),...analyticsNotesText(data.notes, data.note_codes, t).map((note,i)=>jsx('p',{style:{marginTop:7},children:note},i))]})]}):null,
     jsxs('details',{className:'wm-baseline',open:state.baselineOpen,onToggle:event=>dispatch({type:'set',key:'baselineOpen',value:event.currentTarget.open}),children:[jsx('summary',{children:t('usageBaselineSummaryTitle')}),state.baselineOpen?jsx(AnalyticsBaseline,{days:state.days,scope}):null]})]})]})
 }
 function AnalyticsPage({productPage=false}={}) {
@@ -2903,6 +2903,114 @@ function fmtDay(value) {
 /** Short human status for an economics comparison. */
 function econStatusLabel(t, status) {
   return status === 'ok' ? t('econStatusOk') : status === 'partial' ? t('econStatusPartial') : t('econStatusUnavailable')
+}
+
+/** Static backend note codes from wolfmark_ledger/analytics.py (ov_note_gap carries params). */
+const ANALYTICS_NOTE_KEYS = {
+  ov_note_window: 'ovNoteWindow',
+  ov_note_options: 'ovNoteOptions',
+  ov_note_prices: 'ovNotePrices',
+  ov_note_errors: 'ovNoteErrors',
+  ov_note_cache: 'ovNoteCache',
+  ov_note_fallback: 'ovNoteFallback',
+  ov_note_economics: 'ovNoteEconomics',
+  ov_note_billing: 'ovNoteBilling',
+  ov_note_previous: 'ovNotePrevious',
+}
+
+/** Economics gap reasons from analytics._call_economics; unknown reasons pass through raw. */
+const OV_GAP_REASON_KEYS = {
+  call_failed: 'ovGapCallFailed',
+  usage_missing: 'ovGapUsageMissing',
+  cache_provenance_unknown: 'ovGapCacheProvenance',
+  rate_unavailable: 'ovGapRateUnavailable',
+  missing_base_rate: 'ovGapMissingBaseRate',
+  missing_cache_read_rate: 'ovGapMissingCacheRead',
+  missing_cache_write_rate: 'ovGapMissingCacheWrite',
+}
+
+function analyticsGapReasonLabel(reason, t) {
+  const key = OV_GAP_REASON_KEYS[reason]
+  return key ? t(key) : reason
+}
+
+/** One analytics note from its note_codes entry; the English note is the fallback. */
+function analyticsNoteText(entry, fallback, t) {
+  const params = entry?.params
+  if (entry?.code === 'ov_note_gap' && params && typeof params === 'object'
+      && params.count !== undefined && params.reason !== undefined)
+    return t('ovNoteGap', params.count, analyticsGapReasonLabel(params.reason, t))
+  const key = entry ? ANALYTICS_NOTE_KEYS[entry.code] : null
+  return key ? t(key) : fallback
+}
+
+/** Index-aligned analytics notes from note_codes; entries without a known code pass through. */
+function analyticsNotesText(notes, codes, t) {
+  const list = Array.isArray(notes) ? notes : []
+  const aligned = Array.isArray(codes) ? codes : []
+  return list.map((note, index) => {
+    const entry = aligned[index]
+    if (!entry || typeof entry !== 'object') return note
+    return analyticsNoteText(entry, note, t)
+  })
+}
+
+/** Static backend note codes from wolfmark_ledger/economics.py (unpriced/no_fx/fx_error carry params). */
+const ECON_NOTE_KEYS = {
+  econ_head_no_fees: 'econHeadNoFees',
+  econ_head_incomparable: 'econHeadIncomparable',
+  econ_head_partial: 'econHeadPartial',
+  econ_head_ok: 'econHeadOk',
+  econ_group_unknown_currency: 'econGroupUnknownCurrency',
+  econ_group_missing: 'econGroupMissing',
+  econ_group_partial: 'econGroupPartial',
+  econ_unattributed: 'econUnattributed',
+  econ_ambiguous: 'econAmbiguous',
+}
+
+/** One economics note from its note_codes entry; the English note is the fallback. */
+function econNoteText(entry, fallback, t) {
+  const params = (entry && typeof entry.params === 'object' && entry.params) || {}
+  const code = entry?.code
+  if ((code === 'econ_head_unpriced' || code === 'econ_group_unpriced') && params.count !== undefined)
+    return t(code === 'econ_head_unpriced' ? 'econHeadUnpriced' : 'econGroupUnpriced', params.count)
+  if (code === 'econ_group_no_fx' && params.currency !== undefined)
+    return t('econGroupNoFx', params.currency)
+  if (code === 'econ_head_fx_error' && params.error !== undefined)
+    return t('econHeadFxError', params.error)
+  const key = code ? ECON_NOTE_KEYS[code] : null
+  return key ? t(key) : fallback
+}
+
+/** Index-aligned economics notes from note_codes; entries without a known code pass through. */
+function econNotesText(notes, codes, t) {
+  const list = Array.isArray(notes) ? notes : []
+  const aligned = Array.isArray(codes) ? codes : []
+  return list.map((note, index) => {
+    const entry = aligned[index]
+    if (!entry || typeof entry !== 'object') return note
+    return econNoteText(entry, note, t)
+  })
+}
+
+/** Singular economics note (unattributed/ambiguous note_code); raw note is the fallback. */
+function econSingularNoteText(section, t) {
+  const fallback = section?.note || ''
+  const key = section ? ECON_NOTE_KEYS[section.note_code] : null
+  return key ? t(key) : fallback
+}
+
+const ECON_EXPLANATION_KEYS = {
+  api_only: 'econExplApiOnly',
+  prepaid: 'econExplPrepaid',
+  unconfirmed: 'econExplUnconfirmed',
+}
+
+/** Non-subscription account explanation from the stable arrangement; raw text is the fallback. */
+function econExplanationText(row, t) {
+  const fallback = row?.explanation || ''
+  const key = row ? ECON_EXPLANATION_KEYS[row.arrangement] : null
+  return key ? t(key) : fallback
 }
 
 /** One line for a usage value and its pricing coverage. */
@@ -3573,7 +3681,7 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
       ] })
     ] }),
     (headline.notes || []).length
-      ? jsx('ul', { className: 'wm-econ-notes', children: headline.notes.map((note, i) =>
+      ? jsx('ul', { className: 'wm-econ-notes', children: econNotesText(headline.notes, headline.note_codes, t).map((note, i) =>
           jsx('li', { children: note }, i)) })
       : null,
     groups.length ? jsxs('div', { className: 'wm-econ-groups', children: [
@@ -3581,7 +3689,7 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
       ...groups.map(group => group.difference_usd == null && !group.usage_usd && group.status === 'unavailable'
         ? jsxs('div', { className: 'wm-econ-group', children: [
             jsx('strong', { children: group.currency }),
-            jsx('span', { className: 'wm-econ-dim', children: ` ${t('econPerMonth', fmtMoney(group.monthly_fees, group.currency))} · ${(group.notes || []).join(' ') || t('econNoComparison')}` })
+            jsx('span', { className: 'wm-econ-dim', children: ` ${t('econPerMonth', fmtMoney(group.monthly_fees, group.currency))} · ${econNotesText(group.notes, group.note_codes, t).join(' ') || t('econNoComparison')}` })
           ] }, group.currency)
         : jsxs('div', { className: 'wm-econ-group', children: [
             jsxs('div', { className: 'wm-econ-group-head', children: [
@@ -3590,7 +3698,7 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
                 t('econGroupHead', fmtMoney(group.monthly_fees, group.currency), group.window_fees == null ? '—' : fmtMoney(group.window_fees, group.currency), analyticMoney(group.usage_usd), econStatusLabel(t, group.status)) })
             ] }),
             group.difference_usd == null
-              ? jsx('p', { className: 'wm-subtle', children: (group.notes || []).join(' ') || t('econNoComparison') })
+              ? jsx('p', { className: 'wm-subtle', children: econNotesText(group.notes, group.note_codes, t).join(' ') || t('econNoComparison') })
               : jsx(EconomicsBars, { group, t })
           ] }, group.currency))
     ] }) : null,
@@ -3615,14 +3723,14 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
       jsx('h3', { children: t('econOthersTitle') }),
       jsx('ul', { className: 'wm-econ-notes', children: others.map(row =>
         jsx('li', { children:
-          `${row.label || row.family}: ${row.usage?.list_usd == null ? t('econNoPricedUsageShort') : t('econApiUsageMoney', analyticMoney(row.usage.list_usd))} · ${row.explanation}` },
+          `${row.label || row.family}: ${row.usage?.list_usd == null ? t('econNoPricedUsageShort') : t('econApiUsageMoney', analyticMoney(row.usage.list_usd))} · ${econExplanationText(row, t)}` },
         row.account_id)) })
     ] }) : null,
     (data?.unattributed?.usage?.tokens || data?.ambiguous?.usage?.tokens) ? jsxs('div', { className: 'wm-econ-accounts', children: [
       jsx('h3', { children: t('econOutsideTitle') }),
       jsx('ul', { className: 'wm-econ-notes', children: [
         data?.unattributed?.usage?.tokens ? jsx('li', { children:
-          t('econUnattributedLine', analyticMoney(data.unattributed.usage.list_usd), (data.unattributed.routes || []).join(', ') || t('econUnknownRoutes'), data.unattributed.note) }, 'unattributed') : null,
+          t('econUnattributedLine', analyticMoney(data.unattributed.usage.list_usd), (data.unattributed.routes || []).join(', ') || t('econUnknownRoutes'), econSingularNoteText(data.unattributed, t)) }, 'unattributed') : null,
         data?.ambiguous?.usage?.tokens ? jsx('li', { children:
           t('econAmbiguousLine', analyticMoney(data.ambiguous.usage.list_usd)) }, 'ambiguous') : null
       ].filter(Boolean) })
@@ -3900,7 +4008,7 @@ function OverviewPage() {
             ? economics.error ? t('econOverviewError')
               : t('econOverviewReading')
             : econDifference == null
-              ? (econHeadline.notes || [])[0] || t('econOverviewNone')
+              ? econNotesText(econHeadline.notes, econHeadline.note_codes, t)[0] || t('econOverviewNone')
               : t('econOverviewSmall', econFeeLines(t, econHeadline.fees_monthly_by_currency).join(' + '),
                   econWindowLines(econHeadline.fees_window_by_currency).join(' + '),
                   windowSpanLabel(t, economics.data?.window_days), analyticMoney(econHeadline.usage_usd)) }),
@@ -6756,10 +6864,92 @@ function newsReasonLabel(reason, t) {
   return out
 }
 
+/** Stable backend summary codes from wolfmark_ledger/news.py and news_feed.py. */
+const NEWS_SUMMARY_CODES = new Set([
+  'news_sum_new_provider', 'news_sum_new_model', 'news_sum_price_change',
+  'news_sum_new_plan', 'news_sum_plan_change',
+  'news_sum_new_provider_feed', 'news_sum_new_model_feed', 'news_sum_price_change_feed',
+])
+
+const NEWS_CONDITION_KEYS = {
+  news_cond_listing_accounts: 'newsCondListingAccounts',
+  news_cond_tiers_changed: 'newsCondTiersChanged',
+  news_cond_listing_any_account: 'newsCondListingAnyAccount',
+}
+
+const NEWS_IMPACT_REASON_KEYS = {
+  news_impact_no_usage: 'newsImpactNoUsage',
+  news_impact_no_rates: 'newsImpactNoRates',
+  news_impact_cache_excluded: 'newsCaveatCache',
+  news_impact_tiered_rates: 'newsCaveatTiers',
+}
+
+/** Localised news summary from summary_code/summary_params; raw summary is the fallback. */
+function newsSummaryText(item, t) {
+  const fallback = item?.summary || ''
+  const params = item?.summary_params
+  if (!item || !params || typeof params !== 'object' || !NEWS_SUMMARY_CODES.has(item.summary_code)) return fallback
+  const need = (...names) => names.every(name => params[name] !== undefined && params[name] !== null && params[name] !== '')
+  const code = item.summary_code
+  if (code === 'news_sum_new_provider' && need('provider', 'count'))
+    return t('newsSumNewProvider', params.provider, params.count)
+  if (code === 'news_sum_new_model' && need('model', 'provider', 'input', 'output'))
+    return t('newsSumNewModel', params.model, params.provider, params.input, params.output)
+  if (code === 'news_sum_price_change' && need('model', 'provider', 'input', 'output'))
+    return t('newsSumPriceChange', params.model, params.provider,
+      t(item.category === 'price_reduction' ? 'newsVerbReduced' : 'newsVerbChanged'),
+      params.input, params.output)
+  if (code === 'news_sum_new_plan' && need('plan', 'fee'))
+    return t('newsSumNewPlan', params.plan, params.fee)
+  if (code === 'news_sum_plan_change' && need('plan', 'fee_before', 'fee_after')) {
+    // fee_changed comes from the backend's own raw-price comparison: formatted
+    // fees can compare equal while the prices differ ({number:g} precision).
+    // Items without the flag keep the legacy string comparison.
+    const feeChanged = typeof params.fee_changed === 'boolean'
+      ? params.fee_changed
+      : params.fee_before !== params.fee_after
+    const bits = []
+    if (feeChanged) bits.push(t('newsPlanFeeBit', params.fee_before, params.fee_after))
+    if (params.terms_changed) bits.push(t('newsPlanTermsChanged'))
+    if (!bits.length) return fallback
+    return t('newsSumPlanChange', params.plan, bits.join('; '))
+  }
+  if (code === 'news_sum_new_provider_feed' && need('provider', 'count'))
+    return t('newsSumNewProviderFeed', params.provider, params.count)
+  if (code === 'news_sum_new_model_feed' && need('model', 'provider'))
+    return t('newsSumNewModelFeed', params.model, params.provider)
+  if (code === 'news_sum_price_change_feed' && need('model', 'provider'))
+    return t('newsSumPriceChangeFeed', params.model, params.provider)
+  return fallback
+}
+
+/** Localised news conditions from conditions_code; raw conditions is the fallback. */
+function newsConditionsText(item, t) {
+  const fallback = item?.conditions || ''
+  const key = item ? NEWS_CONDITION_KEYS[item.conditions_code] : null
+  return key ? t(key) : fallback
+}
+
+/**
+ * Localised impact reason. reason_codes render each part through its own key;
+ * items without codes keep the legacy substring translation of the raw reason.
+ */
+function newsImpactReasonText(impact, t) {
+  const codes = Array.isArray(impact?.reason_codes) ? impact.reason_codes : null
+  if (!codes) return newsReasonLabel(impact?.reason, t)
+  const parts = []
+  for (const code of codes) {
+    const key = NEWS_IMPACT_REASON_KEYS[code]
+    if (!key) return impact?.reason || ''
+    parts.push(t(key))
+  }
+  return parts.join('; ')
+}
+
 function newsImpactText(impact, t) {
   if (!impact) return null
-  if (impact.basis === 'unavailable') return t('newsImpactUnavailable', impact.reason || '')
-  if (impact.basis === 'partial') return t('newsImpactPartial', fmtUsd(impact.delta_usd), impact.window_days, newsReasonLabel(impact.reason, t))
+  if (impact.basis === 'unavailable') return t('newsImpactUnavailable', newsImpactReasonText(impact, t))
+  if (impact.basis === 'partial') return t('newsImpactPartial', fmtUsd(impact.delta_usd), impact.window_days, newsImpactReasonText(impact, t))
   return t('newsImpactFull', fmtUsd(impact.delta_usd), impact.window_days)
 }
 
@@ -6909,11 +7099,11 @@ function NewsCard({ item, impact, t }) {
         children: newsCategoryLabel(item.category, t) }),
     ] }),
     jsx('p', { className: 'wm-news-dates', children: dates.join(' · ') }),
-    jsx('p', { className: 'wm-news-summary', children: item.summary }),
+    jsx('p', { className: 'wm-news-summary', children: newsSummaryText(item, t) }),
     reasons ? jsx('p', { className: 'wm-news-reasons', children: reasons }) : null,
     jsx(NewsRateTable, { previous: item.previous, current: item.current, t }),
     impactText ? jsx('p', { className: 'wm-news-impact', 'data-tone': tone, children: impactText }) : null,
-    item.conditions ? jsx('p', { className: 'wm-news-conditions', children: item.conditions }) : null,
+    item.conditions ? jsx('p', { className: 'wm-news-conditions', children: newsConditionsText(item, t) }) : null,
     (item.related_routes && item.related_routes.length)
       ? jsx('div', { className: 'wm-news-routes', children: [
           jsx('span', { children: t('newsRoutes', '') }),
@@ -7650,6 +7840,56 @@ const I18N = {
     newsImpactUnavailable: reason => `Personal estimate unavailable: ${reason}.`,
     newsCaveatCache: 'cache rates unavailable for comparison; cache tokens excluded',
     newsCaveatTiers: 'tiered pricing applies; base rates compared',
+    newsImpactNoUsage: 'no recent usage of this model',
+    newsImpactNoRates: 'rate comparison unavailable',
+    newsSumNewProvider: (provider, count) => `${provider} is newly listed with ${count} priced model(s).`,
+    newsSumNewModel: (model, provider, input, output) => `${model} newly listed under ${provider} at ${input}/${output} per MTok in/out.`,
+    newsSumPriceChange: (model, provider, verb, input, output) => `${model} (${provider}) ${verb} ${input}/${output} per MTok in/out.`,
+    newsVerbReduced: 'reduced to',
+    newsVerbChanged: 'changed to',
+    newsSumNewPlan: (plan, fee) => `New plan listed: ${plan} (${fee}).`,
+    newsSumPlanChange: (plan, bits) => `${plan}: ${bits}.`,
+    newsPlanFeeBit: (before, after) => `fee ${before} → ${after}`,
+    newsPlanTermsChanged: 'allowances/terms changed',
+    newsSumNewProviderFeed: (provider, count) => `${provider} newly listed on models.dev with ${count} priced model(s).`,
+    newsSumNewModelFeed: (model, provider) => `${model} newly listed under ${provider} on models.dev.`,
+    newsSumPriceChangeFeed: (model, provider) => `${model} (${provider}) list price changed on models.dev.`,
+    newsCondListingAccounts: 'Catalogue listing only; not confirmed available on your accounts.',
+    newsCondTiersChanged: 'Tiered/context pricing changed; base rates compared.',
+    newsCondListingAnyAccount: 'Catalogue listing only; not confirmed available on any account.',
+    ovNoteWindow: 'Only timestamped calls in [since, until) are counted; no historical usage is inferred. Buckets follow local calendar boundaries and carry explicit UTC timestamps, including across DST.',
+    ovNoteOptions: 'Options describe the unfiltered selected window; recording describes all retained calls, independent of filters. The collector retains calls for 180 days, so longer windows may be incomplete.',
+    ovNotePrices: 'Prices use the current catalogue, not historical invoices. Economics applies whole-context tiers per call, including tiers that decrease rates; list_usd preserves existing accounting tier/fallback semantics.',
+    ovNoteErrors: 'Calls with provider errors or missing usage keep their tokens but are unpriced.',
+    ovNoteCache: 'Cache provenance is unknown for all-zero read/write buckets: old rows cannot distinguish missing fields from true zero. Only positive read/write calls enter the prompt-only cache-hit denominator; cache_coverage is known calls / all calls; cache_prompt_coverage uses prompt tokens.',
+    ovNoteFallback: 'List USD preserves the existing accounting fallback for absent cache rates; strict economics excludes calls requiring those missing prices instead of treating the fallback as savings.',
+    ovNoteEconomics: 'Economics compares hypothetical uncached and cached list costs for the same covered calls, including output and cache-write premiums; savings may be negative. Coverage is covered tokens / all selected tokens.',
+    ovNoteBilling: 'Billing mix is the latest route/model classification, not a per-call invoice. Only included routes have known $0 marginal billing.',
+    ovNotePrevious: 'Previous totals cover the equal-length window immediately before this one under the same filters, for comparison only; deltas are omitted when that window has no recorded calls and it may predate recording.',
+    ovNoteGap: (count, reason) => `Economics excluded ${count} calls: ${reason}.`,
+    ovGapCallFailed: 'call_failed',
+    ovGapUsageMissing: 'usage_missing',
+    ovGapCacheProvenance: 'cache_provenance_unknown',
+    ovGapRateUnavailable: 'rate_unavailable',
+    ovGapMissingBaseRate: 'missing_base_rate',
+    ovGapMissingCacheRead: 'missing_cache_read_rate',
+    ovGapMissingCacheWrite: 'missing_cache_write_rate',
+    econHeadNoFees: 'No subscription has a known fee; declare fees in Memberships.',
+    econHeadUnpriced: count => `${count} subscription(s) have no fee; the headline cannot be compared.`,
+    econHeadIncomparable: 'At least one subscription cannot be compared (missing price, coverage or FX rate); see the rows.',
+    econHeadPartial: 'Estimated value comparison; at least one input is partial.',
+    econHeadOk: 'Estimated value comparison of recorded usage against fees.',
+    econHeadFxError: error => `FX rates could not be read (${error}); no conversion applied.`,
+    econGroupUnknownCurrency: 'Fee currency is unknown.',
+    econGroupUnpriced: count => `${count} subscription(s) have no fee; the group cannot be compared.`,
+    econGroupNoFx: currency => `Fees are in ${currency} with no FX rate; add a dated rate to compare against USD-valued usage.`,
+    econGroupMissing: 'Usage or fees are missing for this group.',
+    econGroupPartial: 'At least one account comparison is partial; see the rows.',
+    econUnattributed: "Usage on routes no account claims. Attribute it by confirming the route's account in Memberships.",
+    econAmbiguous: 'Usage on routes claimed by more than one account. It is counted once here and attributed to nobody.',
+    econExplApiOnly: 'API Only: pay-as-you-go usage with no subscription to compare against.',
+    econExplPrepaid: 'Prepaid credits: compare this usage against top-ups and wallet balances, not against a recurring fee.',
+    econExplUnconfirmed: 'Billing arrangement not confirmed: confirm whether this account is a subscription before comparing.',
     newsRoutes: () => 'Your routes:',
     newsSource: 'Source',
     newsLiveTitle: 'SpendSense Live Updates',
@@ -8693,6 +8933,56 @@ const I18N = {
     newsImpactUnavailable: reason => `无法给出个人估算：${reason}。`,
     newsCaveatCache: '缓存价格无法对比；已排除缓存 Token',
     newsCaveatTiers: '适用阶梯价格；按基准价格对比',
+    newsImpactNoUsage: '该模型近期无用量',
+    newsImpactNoRates: '无法对比价格',
+    newsSumNewProvider: (provider, count) => `${provider} 新收录，共有 ${count} 个已定价模型。`,
+    newsSumNewModel: (model, provider, input, output) => `${model} 已在 ${provider} 上架，输入/输出价格为 ${input}/${output} 每百万 Token。`,
+    newsSumPriceChange: (model, provider, verb, input, output) => `${model}（${provider}）${verb} ${input}/${output} 每百万 Token 输入/输出。`,
+    newsVerbReduced: '降至',
+    newsVerbChanged: '变为',
+    newsSumNewPlan: (plan, fee) => `新套餐上架：${plan}（${fee}）。`,
+    newsSumPlanChange: (plan, bits) => `${plan}：${bits}。`,
+    newsPlanFeeBit: (before, after) => `费用 ${before} → ${after}`,
+    newsPlanTermsChanged: '额度/条款已变更',
+    newsSumNewProviderFeed: (provider, count) => `${provider} 已在 models.dev 上架，共有 ${count} 个已定价模型。`,
+    newsSumNewModelFeed: (model, provider) => `${model} 已在 models.dev ${provider} 分类下上架。`,
+    newsSumPriceChangeFeed: (model, provider) => `${model}（${provider}）在 models.dev 上的标价已变更。`,
+    newsCondListingAccounts: '仅为目录收录；尚未确认您的帐户可用。',
+    newsCondTiersChanged: '阶梯/上下文价格已变更；按基准价格对比。',
+    newsCondListingAnyAccount: '仅为目录收录；尚未确认任何帐户可用。',
+    ovNoteWindow: '仅统计 [since, until) 区间内带时间戳的调用，不推断历史用量。分桶遵循本地日历边界并带有明确的 UTC 时间戳，夏令时切换期间亦然。',
+    ovNoteOptions: '选项描述未过滤的所选窗口；recording 描述所有保留的调用，与过滤条件无关。采集器保留 180 天的调用，因此更长窗口的数据可能不完整。',
+    ovNotePrices: '价格采用当前目录，而非历史账单。Economics 对每次调用采用整上下文阶梯价格，包括降价阶梯；list_usd 保留现有的会计阶梯/回退语义。',
+    ovNoteErrors: '发生供应商错误或缺失用量的调用保留其 Token，但不计价。',
+    ovNoteCache: '全零读/写分桶的缓存来源未知：旧数据无法区分字段缺失与真正的零。只有读/写为正的调用才进入纯提示词缓存命中率的分母；cache_coverage 为已知调用/全部调用；cache_prompt_coverage 使用提示词 Token。',
+    ovNoteFallback: 'List USD 对缺失的缓存价格保留现有的会计回退；严格 economics 会排除需要这些缺失价格的调用，而不是把回退当作节省。',
+    ovNoteEconomics: 'Economics 对比同一覆盖调用的假设未缓存与已缓存标价成本，包含输出与缓存写入溢价；节省额可能为负。覆盖率为覆盖 Token/全部所选 Token。',
+    ovNoteBilling: 'Billing mix 是最新的路由/模型分类，不是逐调用账单。只有 included 路由的边际账单确认为 $0。',
+    ovNotePrevious: 'Previous 总量覆盖同一过滤条件下紧邻的前一个等长窗口，仅用于对比；当前一窗口无记录调用时省略差值，且该窗口可能早于记录起点。',
+    ovNoteGap: (count, reason) => `Economics 已排除 ${count} 次调用：${reason}。`,
+    ovGapCallFailed: '调用失败',
+    ovGapUsageMissing: '用量缺失',
+    ovGapCacheProvenance: '缓存来源未知',
+    ovGapRateUnavailable: '价格不可用',
+    ovGapMissingBaseRate: '缺失基础价格',
+    ovGapMissingCacheRead: '缺失缓存读取价格',
+    ovGapMissingCacheWrite: '缺失缓存写入价格',
+    econHeadNoFees: '没有订阅登记了已知费用；请在会员中登记费用。',
+    econHeadUnpriced: count => `${count} 个订阅没有费用；无法对比汇总数字。`,
+    econHeadIncomparable: '至少一个订阅无法对比（缺失价格、覆盖或汇率）；请查看各行。',
+    econHeadPartial: '估算价值对比；至少一项输入为部分数据。',
+    econHeadOk: '已记录用量与费用的估算价值对比。',
+    econHeadFxError: error => `无法读取汇率（${error}）；未做换算。`,
+    econGroupUnknownCurrency: '费用币种未知。',
+    econGroupUnpriced: count => `${count} 个订阅没有费用；无法对比该分组。`,
+    econGroupNoFx: currency => `费用为 ${currency} 但没有汇率；请添加带日期的汇率以便与按 USD 计价的用量对比。`,
+    econGroupMissing: '该分组缺失用量或费用。',
+    econGroupPartial: '至少一个帐户对比为部分数据；请查看各行。',
+    econUnattributed: '用量位于无帐户认领的路由。请在会员中确认该路由的帐户以完成归属。',
+    econAmbiguous: '用量位于被多个帐户认领的路由。此处仅计数一次，不归属任何一方。',
+    econExplApiOnly: '纯 API：按量付费，没有可对比的订阅。',
+    econExplPrepaid: '预付额度：请将该用量与充值和钱包余额对比，而非与周期性费用对比。',
+    econExplUnconfirmed: '账单安排未确认：请先确认该帐户是否为订阅再做对比。',
     newsRoutes: () => '您的路由：',
     newsSource: '来源',
     newsLiveTitle: 'SpendSense 实时更新',
@@ -9391,6 +9681,9 @@ export const __test = {
   REPORTS_CSS, $digestDays,
   newsQuery, newsSettingsQuery, newsSaveSettings, invalidateNewsFor, newsFilter, newsCategoryLabel,
   newsImpactText, newsReasonLabel, newsAgeDays, newsFreshLabel, newsCentralAlert, newsIsRelevant, newsHasSignals, newsRelevanceReasons, newsRelevanceText, newsEmptyText, NEWS_RELEVANCE_ORDER, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
+  newsSummaryText, newsConditionsText, newsImpactReasonText, NEWS_SUMMARY_CODES, NEWS_CONDITION_KEYS, NEWS_IMPACT_REASON_KEYS,
+  analyticsNoteText, analyticsNotesText, ANALYTICS_NOTE_KEYS, analyticsGapReasonLabel, OV_GAP_REASON_KEYS,
+  econNoteText, econNotesText, econSingularNoteText, econExplanationText, ECON_NOTE_KEYS, ECON_EXPLANATION_KEYS,
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   $fxDraft, $fxSaving, $fxNotice,

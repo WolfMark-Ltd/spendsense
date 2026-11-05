@@ -170,3 +170,57 @@ test('economics and fx queries are keyed by connection identity', () => {
   assert.deepEqual(S.fxQuery('id-1').queryKey[1], 'fx-rates')
   assert.equal(S.economicsQuery('id-1').staleTime, 30_000)
 })
+
+// --- PR28: economics note_codes ------------------------------------------------
+test('economics notes render backend-identical English from codes', () => {
+  const cases = [
+    [[{ code: 'econ_head_no_fees', params: {} }],
+     ['No subscription has a known fee; declare fees in Memberships.']],
+    [[{ code: 'econ_head_unpriced', params: { count: 2 } }],
+     ['2 subscription(s) have no fee; the headline cannot be compared.']],
+    [[{ code: 'econ_head_incomparable', params: {} }],
+     ['At least one subscription cannot be compared (missing price, coverage or FX rate); see the rows.']],
+    [[{ code: 'econ_head_partial', params: {} }],
+     ['Estimated value comparison; at least one input is partial.']],
+    [[{ code: 'econ_head_ok', params: {} }],
+     ['Estimated value comparison of recorded usage against fees.']],
+    [[{ code: 'econ_head_fx_error', params: { error: 'boom' } }],
+     ['FX rates could not be read (boom); no conversion applied.']],
+    [[{ code: 'econ_group_unknown_currency', params: {} }], ['Fee currency is unknown.']],
+    [[{ code: 'econ_group_unpriced', params: { count: 1 } }],
+     ['1 subscription(s) have no fee; the group cannot be compared.']],
+    [[{ code: 'econ_group_no_fx', params: { currency: 'EUR' } }],
+     ['Fees are in EUR with no FX rate; add a dated rate to compare against USD-valued usage.']],
+    [[{ code: 'econ_group_missing', params: {} }], ['Usage or fees are missing for this group.']],
+    [[{ code: 'econ_group_partial', params: {} }],
+     ['At least one account comparison is partial; see the rows.']],
+  ]
+  for (const [codes, notes] of cases) {
+    assert.deepEqual(S.econNotesText(notes, codes, en), notes, codes[0].code)
+  }
+})
+
+test('economics notes translate to Chinese and fall back per entry', () => {
+  const notes = ['Fee currency is unknown.', 'custom note kept']
+  const codes = [{ code: 'econ_group_unknown_currency', params: {} }, { code: 'econ_future', params: {} }]
+  const out = S.econNotesText(notes, codes, zh)
+  assert.equal(out[0], '费用币种未知。')
+  assert.equal(out[1], 'custom note kept')
+  assert.deepEqual(S.econNotesText(notes, null, zh), notes)
+  assert.equal(S.econNoteText({ code: 'econ_group_no_fx', params: {} }, notes[1], en), notes[1])
+})
+
+test('attribution notes and arrangement explanations render from stable keys', () => {
+  assert.equal(S.econSingularNoteText(
+    { note: 'Usage on routes no account claims. Attribute it by confirming the route\'s account in Memberships.',
+      note_code: 'econ_unattributed' }, en),
+    'Usage on routes no account claims. Attribute it by confirming the route\'s account in Memberships.')
+  assert.ok(S.econSingularNoteText({ note: 'x', note_code: 'econ_ambiguous' }, zh).includes('多个帐户'))
+  assert.equal(S.econSingularNoteText({ note: 'kept' }, en), 'kept')
+  assert.equal(S.econExplanationText(
+    { arrangement: 'api_only', explanation: 'API Only: pay-as-you-go usage with no subscription to compare against.' }, en),
+    'API Only: pay-as-you-go usage with no subscription to compare against.')
+  assert.ok(S.econExplanationText({ arrangement: 'prepaid', explanation: 'x' }, zh).includes('预付额度'))
+  assert.ok(S.econExplanationText({ arrangement: 'unconfirmed', explanation: 'x' }, zh).includes('未确认'))
+  assert.equal(S.econExplanationText({ arrangement: 'whatever', explanation: 'kept' }, en), 'kept')
+})

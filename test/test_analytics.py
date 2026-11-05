@@ -220,7 +220,7 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(set(report), {"ok", "window", "filters", "options", "totals", "previous",
                                      "by_model", "by_route", "by_scope", "attribution", "pricing_source", "valuation",
                                      "pricing_coverage", "billing",
-                                     "trend", "economics", "recording", "notes"})
+                                     "trend", "economics", "recording", "notes", "note_codes"})
         self.assertTrue(report["ok"])
         self.assertEqual(report["window"]["kind"], "timestamped_calls")
         self.assertEqual(report["filters"], dict.fromkeys(
@@ -241,6 +241,15 @@ class AnalyticsTests(unittest.TestCase):
         self.assertTrue(all(b["calls"] == 0 for b in report["trend"]["buckets"]))
         self.assertFalse(self.events.exists())
         self.assertFalse(self.state.exists())
+
+    def test_note_codes_align_with_notes(self):
+        # PR28: machine-readable codes sit index-aligned beside the notes.
+        report = self.report(days=1)
+        self.assertEqual(len(report["note_codes"]), len(report["notes"]))
+        self.assertEqual(report["note_codes"][0], {"code": "ov_note_window", "params": {}})
+        for entry in report["note_codes"]:
+            self.assertEqual(set(entry), {"code", "params"})
+            self.assertIsInstance(entry["params"], dict)
 
     def test_timestamped_totals_groups_options_and_billing_classification(self):
         self.create_events([

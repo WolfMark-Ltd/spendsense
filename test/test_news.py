@@ -729,5 +729,99 @@ class PayloadTests(NewsTestCase):
         self.assertEqual(payload["central"]["state"], "disabled")
 
 
+class CodesTests(NewsTestCase):
+    """PR28: stable message codes sit alongside the English strings."""
+
+    def test_local_templates_emit_summary_codes(self):
+        news = news_module()
+        old = {"providers": {"acme": {"down": {"input": 3.0, "output": 15.0}}}}
+        new = {"providers": {
+            "acme": {"down": {"input": 2.0, "output": 10.0},
+                     "beta": {"input": 0.5, "output": 1.0}},
+            "fresh": {"one": {"input": 1.0, "output": 1.0}}}}
+        items, _ = news.diff_snapshots(old, new, observed_at="2026-11-05T00:00:00Z")
+        by_code = {item["summary_code"]: item for item in items}
+        self.assertEqual(by_code["news_sum_new_provider"]["summary_params"],
+                         {"provider": "fresh", "count": 1})
+        model = by_code["news_sum_new_model"]
+        self.assertEqual(model["summary_params"]["model"], "beta")
+        self.assertIn("input", model["summary_params"])
+        price = by_code["news_sum_price_change"]
+        self.assertEqual(price["category"], "price_reduction")
+        # English strings keep their exact historical wording.
+        self.assertEqual(by_code["news_sum_new_provider"]["summary"],
+                         "fresh is newly listed with 1 priced model(s).")
+        self.assertIn("reduced to", price["summary"])
+
+    def test_plan_templates_emit_summary_codes(self):
+        news = news_module()
+        old = {"providers": {}, "plans": {
+            "p1": {"name": "Plus", "family": "acme",
+                   "price": {"amount": 20, "currency": "USD", "period": "month"}}}}
+        new = {"providers": {}, "plans": {
+            "p1": {"name": "Plus", "family": "acme",
+                   "price": {"amount": 25, "currency": "USD", "period": "month"}},
+            "p2": {"name": "Team", "family": "acme",
+                   "price": {"amount": 40, "currency": "USD", "period": "month"}}}}
+        items, _ = news.diff_snapshots(old, new, observed_at="2026-11-05T00:00:00Z")
+        by_code = {item["summary_code"]: item for item in items}
+        self.assertEqual(by_code["news_sum_new_plan"]["summary_params"]["plan"], "Team")
+        change = by_code["news_sum_plan_change"]["summary_params"]
+        self.assertEqual(change["plan"], "Plus")
+        self.assertNotEqual(change["fee_before"], change["fee_after"])
+        self.assertTrue(change["fee_changed"])
+        self.assertIn("terms_changed", change)
+
+    def test_fee_changed_survives_fee_text_rounding(self):
+        news = news_module()
+        before = {"amount": 1000000, "currency": "VND", "period": "month"}
+        after = {"amount": 1000001, "currency": "VND", "period": "month"}
+        self.assertEqual(news._fee_text(before), news._fee_text(after))
+        old = {"providers": {}, "plans": {
+            "p1": {"name": "Plus", "family": "acme", "price": before}}}
+        new = {"providers": {}, "plans": {
+            "p1": {"name": "Plus", "family": "acme", "price": after}}}
+        items, _ = news.diff_snapshots(old, new, observed_at="2026-11-05T00:00:00Z")
+        self.assertEqual(len(items), 1)
+        params = items[0]["summary_params"]
+        self.assertTrue(params["fee_changed"])
+        self.assertFalse(params["terms_changed"])
+        self.assertIn("fee VND", items[0]["summary"])
+
+    def test_impact_reasons_emit_codes(self):
+        news = news_module()
+        item = {"id": "x", "category": "price_reduction", "has_tiers": True,
+                "previous": {"input": 3.0, "output": 15.0},
+                "current": {"input": 1.5, "output": 7.5}}
+        tokens = {"input": 1_000_000, "output": 100_000, "cache_read": 0,
+                  "cache_write": 0, "calls": 4}
+        result = news.estimate_impact(item, tokens)
+        self.assertEqual(result["basis"], "partial")
+        self.assertEqual(result["reason_codes"], ["news_impact_tiered_rates"])
+        empty = news.estimate_impact(item, {"input": 0, "output": 0,
+                                            "cache_read": 0, "cache_write": 0})
+        self.assertEqual(empty["reason_codes"], ["news_impact_no_usage"])
+        norates = news.estimate_impact({**item, "previous": None, "current": None}, tokens)
+        self.assertEqual(norates["reason_codes"], ["news_impact_no_rates"])
+
+    def test_feed_codes_pass_through_validation(self):
+        news = news_module()
+        raw = {"version": 1, "generated_at": "2026-11-05T00:00:00Z", "items": [{
+            "id": "c1", "category": "new_model", "provider": "acme", "model": "beta",
+            "summary": "curator wording stays", "observed_at": "2026-11-05T00:00:00Z",
+            "source_url": "https://example.com/pricing",
+            "summary_code": "news_sum_new_model_feed",
+            "summary_params": {"model": "beta", "provider": "acme"},
+            "conditions": "note", "conditions_code": "news_cond_listing_any_account",
+        }]}
+        doc, errors = news.validate_feed(raw)
+        self.assertEqual(errors, [])
+        item = doc["items"][0]
+        self.assertEqual(item["summary"], "curator wording stays")
+        self.assertEqual(item["summary_code"], "news_sum_new_model_feed")
+        self.assertEqual(item["summary_params"], {"model": "beta", "provider": "acme"})
+        self.assertEqual(item["conditions_code"], "news_cond_listing_any_account")
+
+
 if __name__ == "__main__":
     unittest.main()

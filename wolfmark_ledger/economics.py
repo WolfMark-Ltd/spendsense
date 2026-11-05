@@ -737,24 +737,31 @@ def build_economics_report(
             difference = round(sum(differences), 6)  # type: ignore[arg-type]
         if currency == "unknown":
             status, note = "unavailable", "Fee currency is unknown."
+            group_code: dict[str, Any] = {"code": "econ_group_unknown_currency", "params": {}}
         elif unknown:
             status, note = "unavailable", (f"{len(unknown)} subscription(s) have no fee; "
                                            "the group cannot be compared.")
+            group_code = {"code": "econ_group_unpriced", "params": {"count": len(unknown)}}
         elif difference is None and currency != "USD" and rate is None:
             status, note = "unavailable", ("Fees are in {0} with no FX rate; add a dated rate "
                                            "to compare against USD-valued usage.").format(currency)
+            group_code = {"code": "econ_group_no_fx", "params": {"currency": currency}}
         elif difference is None:
             status, note = "unavailable", "Usage or fees are missing for this group."
+            group_code = {"code": "econ_group_missing", "params": {}}
         elif any(r["status"] == "partial" for r in known):
             status, note = "partial", "At least one account comparison is partial; see the rows."
+            group_code = {"code": "econ_group_partial", "params": {}}
         else:
             status, note = "ok", ""
+            group_code = {}
         groups.append({
             "currency": currency, "monthly_fees": fees, "window_fees": window_fees,
             "fee_accounts": len(known),
             "unknown_fee_accounts": unknown, "usage_usd": usage_total,
             "difference_usd": difference, "converted": bool(rate) and currency != "USD",
             "fx": rate, "status": status, "notes": [note] if note else [],
+            "note_codes": [group_code] if note else [],
         })
 
     headline_fees = [{"currency": g["currency"], "amount": g["monthly_fees"]}
@@ -774,6 +781,7 @@ def build_economics_report(
         headline_status = "unavailable"
         headline_difference = None
         headline_notes = ["No subscription has a known fee; declare fees in Memberships."]
+        headline_codes: list[dict[str, Any]] = [{"code": "econ_head_no_fees", "params": {}}]
     elif unpriced:
         # An unknown fee is not a zero fee: the headline withholds the
         # combined difference rather than comparing a subset silently.
@@ -781,21 +789,26 @@ def build_economics_report(
         headline_difference = None
         headline_notes = [f"{unpriced} subscription(s) have no fee; "
                           "the headline cannot be compared."]
+        headline_codes = [{"code": "econ_head_unpriced", "params": {"count": unpriced}}]
     elif any(r["difference_usd"] is None for r in comparable):
         headline_status = "unavailable"
         headline_difference = None
         headline_notes = ["At least one subscription cannot be compared "
                           "(missing price, coverage or FX rate); see the rows."]
+        headline_codes = [{"code": "econ_head_incomparable", "params": {}}]
     else:
         headline_difference = round(sum(r["difference_usd"] for r in comparable), 6)  # type: ignore[misc]
         if any(r["status"] == "partial" for r in comparable) or not recording_covers_window:
             headline_status = "partial"
             headline_notes = ["Estimated value comparison; at least one input is partial."]
+            headline_codes = [{"code": "econ_head_partial", "params": {}}]
         else:
             headline_status = "ok"
             headline_notes = ["Estimated value comparison of recorded usage against fees."]
+            headline_codes = [{"code": "econ_head_ok", "params": {}}]
     if fx_doc.get("error"):
         headline_notes.append(f"FX rates could not be read ({fx_doc['error']}); no conversion applied.")
+        headline_codes.append({"code": "econ_head_fx_error", "params": {"error": str(fx_doc["error"])}})
 
     unattributed_usage = _sum_usage([by_route[r] for r in mapping["unattributed"] if r in by_route])
     ambiguous_usage = _sum_usage([by_route[r] for r in mapping["ambiguous"] if r in by_route])
@@ -820,18 +833,21 @@ def build_economics_report(
             "difference_label": ("Estimated value comparison over the same window "
                                  "(API-equivalent value minus fees)"),
             "notes": headline_notes,
+            "note_codes": headline_codes,
         },
         "groups": groups,
         "accounts": subscription_rows,
         "non_subscription_accounts": other_rows,
         "unattributed": {"routes": mapping["unattributed"], "usage": unattributed_usage,
                          "note": ("Usage on routes no account claims. Attribute it by confirming "
-                                  "the route's account in Memberships.")},
+                                  "the route's account in Memberships."),
+                         "note_code": "econ_unattributed"},
         "ambiguous": {"routes": [{"route": route, "accounts": aids}
                                  for route, aids in sorted(mapping["ambiguous"].items())],
                       "usage": ambiguous_usage,
                       "note": ("Usage on routes claimed by more than one account. It is counted "
-                               "once here and attributed to nobody.")},
+                               "once here and attributed to nobody."),
+                      "note_code": "econ_ambiguous"},
         "trend": trend,
         "coverage": {
             "recording_since": recording.get("since"),

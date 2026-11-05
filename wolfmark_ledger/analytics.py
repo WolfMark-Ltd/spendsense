@@ -424,4 +424,20 @@ def build_analytics_report(
             *[f"Economics excluded {count} calls: {reason}."
               for reason, count in sorted(total_acc.economics_gaps.items())],
         ],
+        # Machine-readable codes aligned by index with "notes". The English
+        # strings above stay byte-identical for API compatibility; localised
+        # clients render from these codes and fall back to "notes".
+        "note_codes": [
+            {"code": "ov_note_window", "params": {}},
+            {"code": "ov_note_options", "params": {}},
+            {"code": "ov_note_prices", "params": {}},
+            {"code": "ov_note_errors", "params": {}},
+            {"code": "ov_note_cache", "params": {}},
+            {"code": "ov_note_fallback", "params": {}},
+            {"code": "ov_note_economics", "params": {}},
+            {"code": "ov_note_billing", "params": {}},
+            {"code": "ov_note_previous", "params": {}},
+            *[{"code": "ov_note_gap", "params": {"count": count, "reason": reason}}
+              for reason, count in sorted(total_acc.economics_gaps.items())],
+        ],
     }

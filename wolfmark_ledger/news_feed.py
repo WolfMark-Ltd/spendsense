@@ -74,11 +74,14 @@ def _model_diff(previous: Mapping[str, dict[str, dict[str, Any]]],
             "id": _model_id("new_model", provider, "", "", str(len(models))),
             "category": "new_model", "provider": provider, "model": "",
             "summary": f"{provider} newly listed on models.dev with {len(models)} priced model(s).",
+            "summary_code": "news_sum_new_provider_feed",
+            "summary_params": {"provider": str(provider), "count": len(models)},
             "previous": None, "current": None,
             "observed_at": observed_at, "effective_at": "",
             "source_url": MODELS_DEV_URL, "confidence": "observed",
             "provenance": "models.dev",
             "conditions": "Catalogue listing only; not confirmed available on any account.",
+            "conditions_code": "news_cond_listing_any_account",
         })
     for provider in sorted(set(current) & set(previous)):
         before, after = previous[provider], current[provider]
@@ -88,11 +91,14 @@ def _model_diff(previous: Mapping[str, dict[str, dict[str, Any]]],
                 "id": _model_id("new_model", provider, model, "", _sig(entry)),
                 "category": "new_model", "provider": provider, "model": model,
                 "summary": f"{model} newly listed under {provider} on models.dev.",
+                "summary_code": "news_sum_new_model_feed",
+                "summary_params": {"model": str(model), "provider": str(provider)},
                 "previous": None, "current": _slim(entry),
                 "observed_at": observed_at, "effective_at": "",
                 "source_url": MODELS_DEV_URL, "confidence": "observed",
                 "provenance": "models.dev",
                 "conditions": "Catalogue listing only; not confirmed available on any account.",
+                "conditions_code": "news_cond_listing_any_account",
             })
         for model in sorted(set(before) & set(after)):
             old_entry, new_entry = before[model], after[model]
@@ -106,12 +112,15 @@ def _model_diff(previous: Mapping[str, dict[str, dict[str, Any]]],
                 "id": _model_id(category, provider, model, old_sig, new_sig),
                 "category": category, "provider": provider, "model": model,
                 "summary": f"{model} ({provider}) list price changed on models.dev.",
+                "summary_code": "news_sum_price_change_feed",
+                "summary_params": {"model": str(model), "provider": str(provider)},
                 "previous": _slim(old_entry), "current": _slim(new_entry),
                 "has_tiers": bool(old_entry.get("tiers") or new_entry.get("tiers")),
                 "observed_at": observed_at, "effective_at": "",
                 "source_url": MODELS_DEV_URL, "confidence": "observed",
                 "provenance": "models.dev",
                 "conditions": tier_note,
+                "conditions_code": "news_cond_tiers_changed" if tier_note else "",
             })
     return items
 

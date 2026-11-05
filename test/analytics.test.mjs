@@ -639,3 +639,53 @@ test('explorer CSV keeps price coverage beside the unit costs', () => {
  assert.ok(head.includes('priced_tokens') && head.includes('unpriced_tokens'),head)
  assert.deepEqual(line.split(',').slice(-2),['10','90'])
 })
+
+// --- PR28: analytics note_codes ------------------------------------------------
+const noteEn = (key, ...args) => {
+ const entry = T.I18N.en[key]
+ return typeof entry === 'function' ? entry(...args) : entry ?? key
+}
+const noteZh = (key, ...args) => {
+ const entry = T.I18N.zh[key]
+ return typeof entry === 'function' ? entry(...args) : entry ?? key
+}
+
+test('analytics notes render backend-identical English from codes', () => {
+ const notes = [
+  'Only timestamped calls in [since, until) are counted; no historical usage is inferred. Buckets follow local calendar boundaries and carry explicit UTC timestamps, including across DST.',
+  'Calls with provider errors or missing usage keep their tokens but are unpriced.',
+  'Economics excluded 4 calls: missing price.',
+ ]
+ const codes = [
+  { code: 'ov_note_window', params: {} },
+  { code: 'ov_note_errors', params: {} },
+  { code: 'ov_note_gap', params: { count: 4, reason: 'missing price' } },
+ ]
+ assert.deepEqual(T.analyticsNotesText(notes, codes, noteEn), notes)
+})
+
+test('analytics notes translate to Chinese and fall back per entry', () => {
+ const notes = ['Calls with provider errors or missing usage keep their tokens but are unpriced.', 'custom note kept']
+ const codes = [{ code: 'ov_note_errors', params: {} }, { code: 'ov_note_future', params: {} }]
+ const out = T.analyticsNotesText(notes, codes, noteZh)
+ assert.ok(out[0].includes('调用') && !out[0].includes('unpriced'))
+ assert.equal(out[1], 'custom note kept')
+ // Missing or short code lists pass the English notes through untouched.
+ assert.deepEqual(T.analyticsNotesText(notes, null, noteZh), notes)
+ assert.deepEqual(T.analyticsNotesText(notes, [], noteEn), notes)
+ // A gap entry without params falls back rather than printing undefined.
+ assert.equal(T.analyticsNoteText({ code: 'ov_note_gap', params: {} }, notes[1], noteEn), notes[1])
+})
+
+test('gap reasons label in Chinese and echo the identifier in English', () => {
+ const entry = reason => ({ code: 'ov_note_gap', params: { count: 4, reason } })
+ assert.equal(T.analyticsNoteText(entry('cache_provenance_unknown'), 'x', noteEn),
+  'Economics excluded 4 calls: cache_provenance_unknown.')
+ assert.equal(T.analyticsNoteText(entry('cache_provenance_unknown'), 'x', noteZh),
+  'Economics 已排除 4 次调用：缓存来源未知。')
+ assert.equal(T.analyticsGapReasonLabel('missing_cache_write_rate', noteZh), '缺失缓存写入价格')
+ // Unknown future reasons pass through raw in both locales.
+ assert.equal(T.analyticsGapReasonLabel('future_reason', noteZh), 'future_reason')
+ assert.equal(T.analyticsNoteText(entry('future_reason'), 'x', noteEn),
+  'Economics excluded 4 calls: future_reason.')
+})

@@ -771,3 +771,37 @@ test('every digest string exists in English and Chinese', () => {
   assert.match(zh.reportsTitle, /报告/)
   assert.match(zh.rpSaveFallback, /剪贴板/)
 })
+
+test('every PR28 generated-content key exists in English and Chinese', () => {
+  const keys = ['newsImpactNoUsage', 'newsImpactNoRates',
+    'newsSumNewProvider', 'newsSumNewModel', 'newsSumPriceChange',
+    'newsVerbReduced', 'newsVerbChanged', 'newsSumNewPlan', 'newsSumPlanChange',
+    'newsPlanFeeBit', 'newsPlanTermsChanged',
+    'newsSumNewProviderFeed', 'newsSumNewModelFeed', 'newsSumPriceChangeFeed',
+    'newsCondListingAccounts', 'newsCondTiersChanged', 'newsCondListingAnyAccount',
+    'ovNoteWindow', 'ovNoteOptions', 'ovNotePrices', 'ovNoteErrors', 'ovNoteCache',
+    'ovNoteFallback', 'ovNoteEconomics', 'ovNoteBilling', 'ovNotePrevious', 'ovNoteGap',
+    'ovGapCallFailed', 'ovGapUsageMissing', 'ovGapCacheProvenance', 'ovGapRateUnavailable',
+    'ovGapMissingBaseRate', 'ovGapMissingCacheRead', 'ovGapMissingCacheWrite',
+    'econHeadNoFees', 'econHeadUnpriced', 'econHeadIncomparable', 'econHeadPartial',
+    'econHeadOk', 'econHeadFxError',
+    'econGroupUnknownCurrency', 'econGroupUnpriced', 'econGroupNoFx',
+    'econGroupMissing', 'econGroupPartial',
+    'econUnattributed', 'econAmbiguous',
+    'econExplApiOnly', 'econExplPrepaid', 'econExplUnconfirmed']
+  for (const key of keys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  for (const map of [T.NEWS_CONDITION_KEYS, T.NEWS_IMPACT_REASON_KEYS,
+      T.ANALYTICS_NOTE_KEYS, T.OV_GAP_REASON_KEYS, T.ECON_NOTE_KEYS, T.ECON_EXPLANATION_KEYS]) {
+    for (const key of Object.values(map)) {
+      assert.ok(en[key] !== undefined, `en has mapped ${key}`)
+      assert.ok(zh[key] !== undefined, `zh has mapped ${key}`)
+    }
+  }
+  // Catalogue-supplied plan notes have no catalogue: the raw note is the fallback.
+  assert.equal(T.econExplanationText({ arrangement: 'subscription', explanation: 'Catalogue note stays English.' },
+    (key, ...args) => zh[key] ?? key), 'Catalogue note stays English.')
+})
