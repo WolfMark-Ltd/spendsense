@@ -155,11 +155,13 @@ const PROVIDER_ALIASES = {
   anthropic: 'anthropic',
   openai: 'openai',
   codex: 'openai',
+  'openai-codex': 'openai',
   gemini: 'google',
   'google-gemini': 'google',
   google: 'google',
   vertex: 'google-vertex',
   grok: 'xai',
+  'xai-oauth': 'xai',
   xai: 'xai',
   deepseek: 'deepseek',
   kimi: 'moonshotai',
@@ -186,7 +188,7 @@ function modelAliases(model) {
 
 function tableRates(table, names) {
   if (!table) return null
-  const row = r => ({ cache: r[2] ?? r[0], input: r[0], output: r[1] ?? 0, inputKnown: false, outputKnown: false, cacheKnown: false })
+  const row = r => ({ cache: r[2] ?? r[0], input: r[0], output: r[1] ?? 0, inputKnown: false, outputKnown: false, cacheKnown: false, usageInputKnown: typeof r[0] === 'number', usageOutputKnown: typeof r[1] === 'number' })
   for (const n of names) {
     const r = table[n]
     if (Array.isArray(r)) return row(r)
@@ -269,7 +271,7 @@ function toRates(entry) {
   const input = rIn ?? 0
   const output = rOut ?? 0
   const cache = parseRate(entry.cache) ?? input
-  return { input, output, cache, write: parseRate(entry.cache_write ?? entry.cacheWrite), inputKnown: rIn != null && Array.isArray(entry.tiers) && entry.tiers.length === 0, outputKnown: rOut != null, cacheKnown: parseRate(entry.cache) != null }
+  return { input, output, cache, write: parseRate(entry.cache_write ?? entry.cacheWrite), inputKnown: rIn != null && Array.isArray(entry.tiers) && entry.tiers.length === 0, outputKnown: rOut != null, cacheKnown: parseRate(entry.cache) != null, usageInputKnown: rIn != null, usageOutputKnown: rOut != null }
 }
 
 function rateKey(provider, model) {
@@ -302,7 +304,8 @@ async function ensureBackendRate(provider, model) {
     if (!membershipIdentityCurrent(identity)) { delete backendRateBook[key]; return }
     if (!result?.rate) throw new Error('unpriced')
     const entry = { at: Date.now(), rates: { input: result.rate.input, output: result.rate.output, cache: result.rate.cache_read, write: result.rate.cache_write,
-      inputKnown: result.rate.input != null && result.rate.has_tiers === false, outputKnown: result.rate.output != null, cacheKnown: result.rate.cache_read != null },
+      inputKnown: result.rate.input != null && result.rate.has_tiers === false, outputKnown: result.rate.output != null, cacheKnown: result.rate.cache_read != null,
+      usageInputKnown: result.rate.input != null && result.rate.has_tiers === false, usageOutputKnown: result.rate.output != null },
       provenance: result.rate.provenance, provisional: result.rate.provisional || [],
       stale: Boolean(result.catalogue?.stale), asOf: result.catalogue?.as_of || '', age: result.catalogue?.age_seconds ?? null }
     backendRateBook[key] = entry
@@ -623,6 +626,7 @@ function changeCacheKnown(cur, init, delta) {
 /** Add one priced delta to a bucket (copy-on-write). */
 function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolved, source }) {
   const b = prevBucket ? { ...prevBucket, sources: { ...prevBucket.sources } } : newBucket(init)
+  Object.assign(b, usageValueDelta(prevBucket, delta, resolved, membershipScopeOf($scopeConnection.get(), init.profile || $scopeProfile.get())))
   b.input += delta.input
   b.output += delta.output
   b.cacheRead += delta.cacheRead
@@ -839,6 +843,8 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
     resolved.origin === 'live' && provider ? { ...led.rates, [rateKey(provider, model)]: resolved.rates } : led.rates
   const snapshots = pruneSnapshots({ ...led.snapshots, [snapKey]: {
     ...cur,
+    guardrail: { ...usageValueDelta(restarted ? null : prev?.guardrail ? { ...prev.guardrail, input: prev.input, output: prev.output, cacheRead: prev.cacheRead, cacheWrite: prev.cacheWrite } : prev, delta, resolved, membershipScopeOf($scopeConnection.get(), profile || $scopeProfile.get())),
+      input: cur.input, output: cur.output, cacheRead: cur.cacheRead, cacheWrite: cur.cacheWrite },
     at: now,
     costUsd: gatewayCost,
     counterPrompt: restarted || rawPrompt.value != null ? rawPrompt.value : prev?.counterPrompt ?? null,
@@ -1327,6 +1333,7 @@ function useLive() {
     const histRates = usage ? resolved : resolveRates({ model: histModel, payload, provider: hist.provider || provider, remembered: led.rates })
     return {
       bucket: hist,
+      guardrailValue: hist,
       cacheHitPct: hitPctOf(hist),
       cost: hist.pricedTokens ? hist.cost : null,
       costSource: histSource,
@@ -1354,6 +1361,7 @@ function useLive() {
 
   return {
     bucket,
+    guardrailValue: led.snapshots[String(sessionId)]?.guardrail || null,
     cacheHitPct: bucket ? hitPctOf(bucket) : null,
     cost: backendCost != null ? backendCost : computed ? computed.total : null,
     costSource: backendCost != null ? 'gateway' : computed ? resolved.origin : 'none',
@@ -1454,12 +1462,19 @@ function Chip() {
   const t = usePluginI18n(ID)
   const live = useLive()
   const today = useSummary('today').totals
+  const identity = useValue($membershipIdentity)
+  const budgetRead = useQuery(budgetQuery(identity))
+  const budgetData = budgetRead.data?.identity === identity && membershipIdentityCurrent(identity) ? budgetRead.data : null
+  const latestGuard = sessionBudgetStatus(live, budgetData?.budgets)
+  const guard = latestGuard && budgetRead.error ? { ...latestGuard, level: 'unavailable' } : latestGuard
+  const monthlyIndicator = jsx(BudgetStatusIndicator, { data: budgetData, error: budgetRead.error, t })
+  const monthlyTooltip = budgetRead.error ? t('budgetStale') : (budgetData?.statuses || []).filter(row => row.budget.enabled).map(row => budgetTooltip(row, t)).join('\n')
   const open = openLedger
   const todayText = today.known ? `${t('today')} ${fmtUsd(today.cost)}${today.unpricedTokens ? '+' : ''}` : null
 
   if (!live.bucket) {
     return jsx(Tip, {
-      label: t('chipTipIdle'),
+      label: [t('chipTipIdle'), monthlyTooltip].filter(Boolean).join('\n'),
       children: jsx('button', {
         className: cn(
           'inline-flex h-full items-center px-1.5 text-[0.6875rem] transition-colors',
@@ -1467,21 +1482,21 @@ function Chip() {
         ),
         onClick: open,
         type: 'button',
-        children: todayText || t('idle')
+        children: jsxs('span', { className: 'inline-flex items-center gap-1.5', children: [todayText || t('idle'), monthlyIndicator] })
       })
     })
   }
 
   const warn = live.costSource === 'foreign' || live.costSource === 'none'
   return jsx(Tip, {
-    label: t(
+    label: (guard ? budgetTooltip(guard, t) + (budgetRead.error ? ' · ' + t('budgetStale') : '') + ' · ' + t(live.fromHistory ? 'scopeConversation' : 'scopeRun') + '\n' : '') + t(
       'chipTip',
       live.model || '—',
-      sourceLabel(t, live.costSource, live.foreignSlug, live.providerUnknown),
+      guard?.spend != null ? t('budgetEstimated') : sourceLabel(t, live.costSource, live.foreignSlug, live.providerUnknown),
       fmtUsd(today.cost),
       live.cacheHitPct != null ? `${live.bucket?.cacheEstimated ? '≈' : ''}${Math.round(live.cacheHitPct)}%` : '—',
       live.saved != null ? `${live.bucket && live.bucket.cacheEstimated ? '≈' : ''}${fmtUsd(live.saved)}` : '—'
-    ),
+    ) + (monthlyTooltip ? '\n' + monthlyTooltip : ''),
     children: jsxs('button', {
       className: cn(
         'inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] transition-colors',
@@ -1493,13 +1508,18 @@ function Chip() {
         jsx('span', { children: `${fmtTokens(live.bucket.input)}↑ ${fmtTokens(live.bucket.output)}↓` }),
         jsx('span', { className: 'text-(--ui-text-quaternary)', children: '·' }),
         jsx('span', {
-          className: live.cost == null ? 'text-(--ui-text-quaternary)' : warn ? 'text-(--ui-warning)' : 'text-(--ui-accent)',
-          children: live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${fmtUsd(live.cost)}`
+          className: guard?.spend != null ? 'text-(--ui-accent)' : live.cost == null ? 'text-(--ui-text-quaternary)' : warn ? 'text-(--ui-warning)' : 'text-(--ui-accent)',
+          'data-session-budget': guard?.level || 'none',
+          style: { color: budgetColour(guard?.level) },
+          'aria-label': guard ? budgetTooltip(guard, t) : undefined,
+          role: guard ? 'img' : undefined,
+          children: guard?.spend != null ? `≈${fmtUsd(guard.spend)}${guard.partial ? '+' : ''}` : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${fmtUsd(live.cost)}`
         }),
         live.cacheHitPct != null
           ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ⚡${live.bucket?.cacheEstimated ? '≈' : ''}${Math.round(live.cacheHitPct)}%` })
           : null,
-        todayText ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ${todayText}` }) : null
+        todayText ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ${todayText}` }) : null,
+        monthlyIndicator
       ].filter(Boolean)
     })
   })
@@ -3136,6 +3156,238 @@ function profileDraft(profile, identity) {
       original_allowance_model: allowanceModel, original_scalar_allowance: profile.allowance_usd }
 }
 
+/* Budget guardrails share the account identity boundary and backend bridge. */
+const $budgetDraft = atom(null)
+const $budgetNotice = atom(null)
+const $budgetBusy = atom(null)
+let budgetActivityDirty = false
+const BUDGET_RANK = { disabled: -2, unavailable: -1, normal: 0, info: 1, warning: 2, exceeded: 3 }
+function budgetQuery(identity = membershipIdentityNow()) {
+  return {
+    queryKey: [ID, 'budget-status', identity],
+    queryFn: async () => {
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      if (typeof rest !== 'function') throw new Error('Budget service unavailable.')
+      const result = await rest('/budgets/status')
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      if (!result?.ok || !Array.isArray(result.budgets) || !Array.isArray(result.statuses)) throw new Error('Budget service unavailable.')
+      return { ...result, identity }
+    },
+    retry: false, staleTime: 10_000, refetchInterval: 15_000
+  }
+}
+function budgetLevel(value, budget, partial = false) {
+  if (!budget?.enabled) return 'disabled'
+  if (!Number.isFinite(value)) return 'unavailable'
+  const pct = value / budget.amount * 100
+  const thresholds = budget.thresholds || [50, 80, 100]
+  if (pct >= thresholds[2]) return 'exceeded'
+  if (pct >= thresholds[1]) return 'warning'
+  if (pct >= thresholds[0]) return 'info'
+  return partial ? 'unavailable' : 'normal'
+}
+function budgetColour(level) {
+  return level === 'exceeded' ? 'var(--ui-error)' : level === 'warning' ? 'var(--ui-warning)' : undefined
+}
+function usageValueDelta(previous, delta, resolved, scope = membershipScopeNow()) {
+  // Additive fields: an old bucket's existing tokens remain uncovered. Never
+  // reinterpret an old gateway-reported total as catalogue usage value.
+  const sameScope = previous?.usageValueScope === scope
+  const oldTokens = previous ? tokensOf(previous) : 0
+  const oldMissing = sameScope ? Math.max(num(previous?.usageValueMissing), oldTokens - num(previous?.usageValuePriced)) : oldTokens
+  const exact = ['backend', 'live', 'remembered', 'bundled'].includes(resolved?.origin)
+  const rates = resolved?.rates
+  const covered = rates && validRates(rates) && (!num(delta.input) || rates.usageInputKnown !== false) &&
+    (!num(delta.output) || rates.usageOutputKnown !== false) &&
+    (!num(delta.cacheRead) || Number.isFinite(rates.cache)) &&
+    (!num(delta.cacheWrite) || rates.write != null || rates.usageInputKnown !== false)
+  const priced = exact && covered ? costOf(delta, rates) : null
+  const value = priced && Number.isFinite(priced.total) && priced.total >= 0 ? priced.total : null
+  return {
+    usageValueScope: scope,
+    usageValueCost: (sameScope ? num(previous?.usageValueCost) : 0) + (value ?? 0),
+    usageValuePriced: (sameScope ? num(previous?.usageValuePriced) : 0) + (value != null ? tokensOf(delta) : 0),
+    usageValueMissing: num(oldMissing) + (value == null ? tokensOf(delta) : 0)
+  }
+}
+function sessionBudgetStatus(live, configured) {
+  const limits = (configured || []).filter(b => b.enabled && b.scope === 'session' && b.measurement === 'api_equivalent' && b.currency === 'USD')
+  const bucket = live.guardrailValue
+  const cost = bucket?.usageValueScope === membershipScopeNow() && num(bucket.usageValuePriced) > 0 ? bucket.usageValueCost : null
+  const partial = !bucket || num(bucket.usageValueMissing) > 0 || tokensOf(bucket) > num(bucket.usageValuePriced)
+  return limits.map(budget => ({ budget, spend: cost, partial,
+    percentage: cost == null ? null : cost / budget.amount * 100,
+    level: budgetLevel(cost, budget, partial) }))
+    .sort((a, b) => BUDGET_RANK[b.level] - BUDGET_RANK[a.level] || (b.percentage || 0) - (a.percentage || 0))[0] || null
+}
+function budgetMetric(t, measurement) {
+  return t(measurement === 'api_equivalent' ? 'budgetEstimated' : 'budgetActual')
+}
+function budgetTooltip(row, t) {
+  const b = row.budget
+  const amount = row.spend == null ? '—' : fmtMoney(row.spend, b.currency)
+  const percent = row.percentage == null ? '—' : `${Math.round(row.percentage)}%`
+  return `${b.label} · ${budgetMetric(t, b.measurement)} · ${amount}${row.partial || row.complete === false ? '+' : ''} / ${fmtMoney(b.amount, b.currency)} (${percent}) · ${t('budgetLevel_' + row.level)}`
+}
+function BudgetStatusIndicator({ data, error, t }) {
+  if (!data?.budgets?.some(b => b.enabled && b.scope !== 'session')) return null
+  const rows = data.statuses || []
+  const highest = [...rows].filter(r => r.budget.enabled).sort((a, b) => BUDGET_RANK[b.level] - BUDGET_RANK[a.level])[0]
+  const level = error ? 'unavailable' : highest?.level || 'unavailable'
+  const tooltip = error ? t('budgetStale') : rows.filter(r => r.budget.enabled).map(r => budgetTooltip(r, t)).join('\n')
+  return jsx('span', { className: 'tabular-nums', role: 'img', 'data-budget-monthly': level,
+    style: { color: budgetColour(level) }, title: tooltip, 'aria-label': tooltip,
+    children: `· ${level === 'exceeded' ? '■' : level === 'warning' ? '▲' : '◇'} ${t('budgetShort')}` })
+}
+async function budgetWrite(path, method, body, rev, identity, transport = rest) {
+  if (!membershipIdentityCurrent(identity) || typeof transport !== 'function') throw new Error('Connection changed.')
+  const result = await transport(`${path}?if_rev=${encodeURIComponent(rev)}`, { method, ...(body ? { body } : {}) })
+  if (!result?.ok) throw new Error(result?.detail || result?.error || 'Budget save failed.')
+  await queryClient.invalidateQueries({ queryKey: [ID, 'budget-status', identity] })
+  return result
+}
+function budgetError(error, t) {
+  const raw = String(error?.message || '')
+  return /409|conflict/i.test(raw) ? t('budgetConflict') : /422|validation|threshold|amount|currency|timezone/i.test(raw) ? t('budgetInvalid') : t('budgetFailed')
+}
+function newBudgetDraft(identity, rev) {
+  let zone = 'UTC'
+  try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } catch {}
+  return { origin: identity, rev, id: `budget-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    label: '', amount: '', currency: 'USD', scope: 'total', measurement: 'api_equivalent', provider: '', model: '',
+    enabled: true, thresholds: [50, 80, 100], cycle_day: 1, timezone: zone }
+}
+function budgetPayload(draft) {
+  const { origin, rev, ...body } = draft
+  return { ...body, amount: Number(body.amount), cycle_day: Number(body.cycle_day),
+    thresholds: body.thresholds.map(Number),
+    provider: ['provider', 'model_route'].includes(body.scope) ? body.provider.trim() : '',
+    model: body.scope === 'model_route' ? body.model.trim() : '', label: body.label.trim(),
+    currency: body.scope === 'session' ? 'USD' : body.currency.toUpperCase(),
+    measurement: body.scope === 'session' ? 'api_equivalent' : body.measurement }
+}
+function BudgetPanel({ manage = false, forecasts = false }) {
+  const t = usePluginI18n(ID)
+  const identity = useValue($membershipIdentity)
+  const live = useLive()
+  const query = useQuery(budgetQuery(identity))
+  const rawDraft = useValue($budgetDraft)
+  const busy = useValue($budgetBusy)
+  const notice = useValue($budgetNotice)
+  const current = query.data?.identity === identity && membershipIdentityCurrent(identity) ? query.data : null
+  const draft = rawDraft?.origin === identity ? rawDraft : null
+  const locked = busy?.origin === identity
+  const set = (key, value) => $budgetDraft.set({ ...draft, [key]: value })
+  const act = async (path, method, body, rev, clearDraft = false) => {
+    if (locked || !membershipIdentityCurrent(identity)) return
+    const token = { origin: identity }
+    $budgetBusy.set(token)
+    try {
+      await budgetWrite(path, method, body, rev, identity)
+      if (!membershipIdentityCurrent(identity)) return
+      if (clearDraft && $budgetDraft.get() === draft) $budgetDraft.set(null)
+      $budgetNotice.set({ origin: identity, text: t('budgetSaved') })
+      await query.refetch?.()
+    } catch (error) {
+      if (membershipIdentityCurrent(identity)) $budgetNotice.set({ origin: identity, text: budgetError(error, t) })
+    } finally { if ($budgetBusy.get() === token) $budgetBusy.set(null) }
+  }
+  const field = (key, label, type = 'text', choices = null) => jsxs('label', { className: 'wm-filter', children: [
+    jsx('span', { children: t(label) }), choices
+      ? jsx('select', { value: draft[key], disabled: locked, onChange: e => {
+          if (key === 'scope' && e.target.value === 'session') $budgetDraft.set({ ...draft, scope: 'session', measurement: 'api_equivalent', currency: 'USD' })
+          else set(key, e.target.value)
+        }, children: choices.map(value => jsx('option', { value, children: t('budgetOption_' + value) }, value)) })
+      : jsx('input', { value: draft[key], type, disabled: locked, required: true, step: type === 'number' ? 'any' : undefined,
+          min: type === 'number' ? (key === 'cycle_day' ? 1 : .000001) : undefined, max: key === 'cycle_day' ? 31 : undefined,
+          onChange: e => set(key, e.target.value) })
+  ] }, key)
+  const statusMap = new Map((current?.statuses || []).map(r => [r.id, r]))
+  const allBudgets = current?.budgets || []
+  const compact = !manage && !forecasts
+  const list = compact ? [...allBudgets].sort((a, b) =>
+    (BUDGET_RANK[statusMap.get(b.id)?.level] ?? -1) - (BUDGET_RANK[statusMap.get(a.id)?.level] ?? -1)).slice(0, 3) : allBudgets
+  return jsxs('section', { className: 'wm-product-section wm-budgets', 'aria-label': t('budgetTitle'), children: [
+    jsxs('div', { className: 'wm-budget-heading', children: [
+      jsx('h2', { children: t('budgetTitle') }),
+      jsx(InfoTip, { id: `budgets-${manage ? 'manage' : forecasts ? 'forecast' : 'overview'}`, label: t('infoLabel'), text: t('budgetHelp') }),
+      manage ? jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !current || locked || !!query.error,
+        onClick: () => $budgetDraft.set(newBudgetDraft(identity, current.rev)), children: t('budgetAdd') }) : null
+    ] }),
+    query.error ? jsxs('p', { className: 'wm-warn-note', children: [t(current ? 'budgetStale' : 'budgetFailed'), ' ',
+      jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => query.refetch?.(), children: t('budgetRetry') })] }) : null,
+    !current && !query.error ? jsx('p', { children: t('budgetLoading') }) : null,
+    current && !list.length ? jsxs('p', { children: [t('budgetEmpty'), ' ', !manage ? jsx('button', {
+      type: 'button', className: 'wm-source-link', onClick: () => goLedgerTab('settings'), children: t('budgetManage') }) : null] }) : null,
+    jsx('div', { className: 'wm-cost-list', children: list.map(budget => {
+      const session = budget.scope === 'session' ? sessionBudgetStatus(live, [budget]) : null
+      const row = session ? { ...session, complete: !session.partial, measurement: 'api_equivalent' } : statusMap.get(budget.id)
+      const level = query.error ? 'unavailable' : row?.level || (budget.enabled ? 'unavailable' : 'disabled')
+      const f = row?.forecast
+      const alert = !query.error && row?.cycle && !row.dismissed && BUDGET_RANK[level] >= 1
+      return jsxs('article', { className: 'wm-budget-row', 'data-budget-id': budget.id, children: [
+        jsxs('div', { className: 'wm-budget-heading', children: [
+          jsx('strong', { children: budget.label }),
+          jsx('span', { className: 'wm-certainty', children: budgetMetric(t, budget.measurement) }),
+          jsx('span', { style: { color: budgetColour(level) }, children: `${level === 'warning' ? '▲ ' : level === 'exceeded' ? '■ ' : ''}${t('budgetLevel_' + level)}` })
+        ] }),
+        jsx('small', { children: budget.scope === 'session' ? t('budgetSessionHelp') : `${t('budgetOption_' + budget.scope)}${budget.provider ? ' · ' + budget.provider : ''}${budget.model ? ' × ' + budget.model : ''} · ${budget.timezone} · ${row?.cycle?.start?.slice(0, 10) || '—'} → ${row?.cycle?.end?.slice(0, 10) || '—'}` }),
+        jsx('div', { className: 'wm-budget-amount', title: row ? budgetTooltip(row, t) : t('budgetSessionHelp'), children:
+          `${row?.spend == null ? '—' : fmtMoney(row.spend, budget.currency) + (row.complete ? '' : '+')} / ${fmtMoney(budget.amount, budget.currency)}${row?.percentage == null ? '' : ` · ${Math.round(row.percentage)}%`}` }),
+        row ? jsx('progress', { max: 100, value: Math.max(0, Math.min(100, row.percentage || 0)), 'aria-label': budgetTooltip(row, t),
+          style: { accentColor: budgetColour(level) || 'var(--ui-accent)' } }) : null,
+        row?.coverage ? jsx('small', { children: t('budgetCoverage', row.coverage.calls, row.coverage.measured_calls,
+          row.complete ? t('budgetComplete') : t('budgetPartial')) }) : null,
+        forecasts && f ? jsx('p', { className: 'wm-budget-forecast', children: f.available
+          ? t('budgetProjection', fmtMoney(f.projected, budget.currency), row.remaining == null ? '—' : fmtMoney(row.remaining, budget.currency),
+              f.days_remaining == null ? '—' : String(f.days_remaining), f.breach_date || t('budgetNoBreach'))
+          : t('budgetForecast_' + f.reason) }) : null,
+        forecasts && f?.available ? jsx('small', { children: t('budgetBurn',
+          f.burn_7 == null ? '—' : fmtMoney(f.burn_7, budget.currency), fmtMoney(f.burn_30, budget.currency),
+          f.trend ? t('budgetTrend_' + f.trend) : '—', f.samples['30'].active_days, f.samples['30'].calls) }) : null,
+        row?.fx ? jsx('small', { children: t('budgetFx', row.fx.usd_per_unit, row.fx.currency, row.fx.as_of, row.fx.source) }) : null,
+        alert ? jsxs('div', { className: 'wm-budget-alert', role: 'status', children: [
+          jsx('span', { children: budgetTooltip(row, t) }), jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: locked,
+            onClick: () => act(`/budgets/${encodeURIComponent(budget.id)}/dismiss`, 'POST', { cycle: row.cycle.id, budget_rev: row.budget_rev, level }, current.rev), children: t('budgetDismiss') })
+        ] }) : null,
+        manage ? jsx('div', { className: 'wm-setting-action', children: [
+          jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: locked || !!query.error,
+            onClick: () => $budgetDraft.set({ ...budget, thresholds: [...budget.thresholds], origin: identity, rev: current.rev }), children: t('budgetEdit') }, 'edit'),
+          jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: locked || !!query.error,
+            onClick: () => act(`/budgets/${encodeURIComponent(budget.id)}`, 'DELETE', null, current.rev), children: t('budgetDelete') }, 'delete')
+        ] }) : null
+      ] }, budget.id)
+    }) }),
+    compact && allBudgets.length > 3 ? jsx('button', { type: 'button', className: 'wm-source-link', onClick: () => goLedgerTab('costs'), children: t('budgetViewAll', allBudgets.length) }) : null,
+    manage && draft ? jsxs('form', { className: 'wm-custom-form', onSubmit: event => {
+      event.preventDefault(); act(`/budgets/${encodeURIComponent(draft.id)}`, 'PUT', budgetPayload(draft), draft.rev, true)
+    }, children: [
+      jsx('div', { className: 'wm-custom-grid', children: [field('label', 'budgetName'), field('amount', 'budgetAmount', 'number'),
+        field('scope', 'budgetScope', 'text', ['total', 'provider', 'model_route', 'session']),
+        draft.scope !== 'session' ? field('measurement', 'budgetMeasurement', 'text', ['api_equivalent', 'actual_metered']) : null,
+        draft.scope !== 'session' ? field('currency', 'budgetCurrency') : null,
+        ['provider', 'model_route'].includes(draft.scope) ? field('provider', 'budgetProvider') : null,
+        draft.scope === 'model_route' ? field('model', 'budgetModel') : null,
+        draft.scope !== 'session' ? field('cycle_day', 'budgetCycleDay', 'number') : null,
+        draft.scope !== 'session' ? field('timezone', 'budgetTimezone') : null
+      ].filter(Boolean) }),
+      jsx('div', { className: 'wm-custom-grid', children: [0, 1].map(index => jsxs('label', { className: 'wm-filter', children: [
+        jsx('span', { children: t(index ? 'budgetWarningAt' : 'budgetInfoAt') }), jsx('input', { type: 'number', required: true, min: .001, max: 99.999, step: 'any', value: draft.thresholds[index], disabled: locked,
+          onChange: event => set('thresholds', draft.thresholds.map((value, i) => i === index ? event.target.value : value)) })
+      ] }, index)) }),
+      jsxs('label', { className: 'wm-setting-toggle', children: [jsx('input', { type: 'checkbox', checked: draft.enabled, disabled: locked,
+        onChange: event => set('enabled', event.target.checked) }), t('budgetEnabled')] }),
+      jsx('small', { children: t('budgetThresholdHelp') }),
+      jsx('div', { className: 'wm-setting-action', children: [
+        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: locked || !!query.error, children: t('budgetSave') }, 'save'),
+        jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: locked, onClick: () => $budgetDraft.set(null), children: t('budgetCancel') }, 'cancel')
+      ] })
+    ] }) : null,
+    notice?.origin === identity ? jsx('p', { role: 'status', children: notice.text }) : null
+  ] })
+}
+const BUDGET_CSS = '.wm-budget-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.wm-budget-heading h2{margin-right:auto}.wm-budget-row{padding:12px 0;border-top:1px solid var(--ui-stroke-secondary);min-width:0}.wm-budget-row:first-child{border-top:0}.wm-budget-row small{display:block;color:var(--ui-text-secondary);font-size:11.5px;line-height:1.5;overflow-wrap:anywhere}.wm-budget-amount{margin:7px 0;font-variant-numeric:tabular-nums;font-size:14px}.wm-budget-row progress{display:block;width:100%;height:6px;margin:8px 0}.wm-budget-alert{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-top:8px;padding:8px;border:1px solid var(--ui-stroke-secondary);border-radius:6px;font-size:12px}.wm-budget-forecast{font-size:12px;line-height:1.5}.wm-budgets .wm-filter select{min-height:34px;max-width:100%;background:var(--ui-fill-primary);color:var(--ui-text-primary);border:1px solid var(--ui-stroke-secondary);border-radius:6px}.wm-budgets progress{appearance:auto}'
+
 function AdvancedBillingRules() {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
@@ -3320,7 +3572,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-section p{max-width:78ch}',
   '.wm-product :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}',
   '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-overview-grid{grid-template-columns:1fr}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}}'
-].join('');
+].join('') + BUDGET_CSS;
 
 function pricingStatusQuery(identity = membershipIdentityNow()) {
   return {
@@ -3388,6 +3640,7 @@ function CostsPage() {
       accounts.error
         ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read', t) })
         : null,
+      jsx(BudgetPanel, { forecasts: true }),
       jsx(EconomicsPanel, { identity }),
       jsxs('section', { className: 'wm-product-section', children: [
         jsx('h2', { children: t('costsMembershipTitle') }),
@@ -3757,6 +4010,7 @@ function EconomicsPanel({ identity }) {
     $fxNotice.set(null)
     try {
       await fxWrite(rates)
+      await queryClient.invalidateQueries({ queryKey: [ID, 'budget-status', captured] })
       if (!membershipIdentityCurrent(captured) || $fxDraft.get()?.origin !== captured) return
       $fxDraft.set(null)
       $fxNotice.set({ tone: 'good', origin: captured, text: t('fxSaved') })
@@ -3950,6 +4204,7 @@ function OverviewPage() {
     jsx(LedgerTabs, {}),
     jsxs('main', { className: 'wm-shell', children: [
       jsx(ProductHeader, { title: t('ovTitle'), subtitle: t('ovSubtitle') }),
+      jsx(BudgetPanel, {}),
       analytics.error ? jsx('div', { className: 'wm-alert', role: 'alert',
         children: String(analytics.error.message || analytics.error) }) : null,
       items.length || unpriced
@@ -4106,23 +4361,24 @@ function SettingsPage() {
     const captured = identity
     if (!membershipIdentityCurrent(captured)) return
     try {
-      const [accountDoc, profileDoc] = await Promise.all([
-        rest('/membership/accounts'), rest('/billing/profiles')
+      const [accountDoc, profileDoc, budgetDoc] = await Promise.all([
+        rest('/membership/accounts'), rest('/billing/profiles'), rest('/budgets')
       ])
       if (!membershipIdentityCurrent(captured)) return
       if (!Array.isArray(accountDoc?.accounts) || accountDoc?.store?.error || !accountDoc?.seat_store || !accountDoc?.membership_store ||
-          !Array.isArray(profileDoc?.profiles) || profileDoc?.error) {
+          !Array.isArray(profileDoc?.profiles) || profileDoc?.error || !Array.isArray(budgetDoc?.budgets) || !budgetDoc.rev) {
         throw new Error('The user-data export is incomplete.')
       }
       const bundle = {
         product: 'Spend Sense',
         version: PLUGIN_VERSION,
         exported_at: new Date().toISOString(),
-        note: 'This contains Spend Sense membership, seat history and advanced-rule data. It contains no provider credential secrets or recorded usage ledger.',
+        note: 'This contains Spend Sense membership, seat history, budget and advanced-rule data. It contains no provider credential secrets or recorded usage ledger.',
         memberships: accountDoc.accounts,
         membership_store: accountDoc.membership_store,
         seat_history: accountDoc.seat_store,
-        advanced_rules: profileDoc.profiles
+        advanced_rules: profileDoc.profiles,
+        budget_guardrails: budgetDoc
       }
       const copied = await writeClipboard(JSON.stringify(bundle, null, 2))
       if (!membershipIdentityCurrent(captured)) return
@@ -4169,6 +4425,9 @@ function SettingsPage() {
       $membershipSnapshot.set({ identity: captured, accounts: [], store: { loaded: true, error: '' }, notes: [] })
       await queryClient.invalidateQueries({ queryKey: [ID, 'membership-accounts', captured] })
       await queryClient.invalidateQueries({ queryKey: [ID, 'billing-profiles', captured] })
+      await queryClient.invalidateQueries({ queryKey: [ID, 'budget-status', captured] })
+      $budgetDraft.set(null)
+      $budgetNotice.set(null)
       await invalidateEconomicsFor(captured)
       await invalidateWeatherFor(captured)
       $modelRefreshState.set({ origin: captured, tone: 'good', text: t('settingsNotifyDataCleared') })
@@ -4320,6 +4579,7 @@ function SettingsPage() {
             ] })
           ] }) : planCatalogue.error ? jsx('p', { className: 'wm-warn-note', children: t('settingsCatalogueProvenanceUnavailable') }) : null
         ] }),
+        jsx(BudgetPanel, { manage: true }),
         jsx(AdvancedBillingRules, {}),
         jsxs('section', { className: 'wm-product-section', children: [
           jsx('h2', { children: t('settingsModelsHeading') }),
@@ -7426,6 +7686,38 @@ function LedgerPage() {
 
 const I18N = {
   en: {
+    budgetViewAll: count => `View all ${count} limits`,
+    budgetTitle: 'Budget guardrails', budgetShort: 'Budget', budgetAdd: 'Add limit', budgetManage: 'Manage limits',
+    budgetEstimated: 'Estimated usage value · not billed', budgetActual: 'Actual metered spending',
+    budgetHelp: 'Advisory limits only. Estimated usage value uses catalogue prices, including subscription usage; it is not a bill. Actual limits need timestamped charge evidence. Fees and allowances are never added. Partial amounts are known subtotals (+), not complete spending. Forecasts need at least three active days, full sample pricing and a fully observed cycle.',
+    budgetSessionHelp: 'Applies to the focused run or recorded conversation, as labelled in the status tooltip. Uses separately recorded catalogue estimates, even when the existing cost mixes gateway figures. Older or unpriced activity stays uncovered; this is never a cash limit.',
+    budgetEmpty: 'Choose a monthly spending or estimated usage-value limit, or a session estimate limit.',
+    budgetLoading: 'Reading local limits…', budgetFailed: 'Budget data is unavailable. Retry before editing.',
+    budgetStale: 'Budget snapshot is stale. Warning colours are paused until a successful refresh.', budgetRetry: 'Retry',
+    budgetLevel_normal: 'Within limit', budgetLevel_info: 'Informational threshold', budgetLevel_warning: 'Warning threshold',
+    budgetLevel_exceeded: 'Limit reached', budgetLevel_unavailable: 'Unavailable / incomplete', budgetLevel_disabled: 'Disabled',
+    budgetName: 'Name', budgetAmount: 'Limit amount', budgetScope: 'Scope', budgetMeasurement: 'Measurement',
+    budgetCurrency: 'Currency (ISO code)', budgetProvider: 'Exact provider route', budgetModel: 'Exact model ID',
+    budgetCycleDay: 'Monthly reset day', budgetTimezone: 'IANA timezone', budgetInfoAt: 'Informational at (%)', budgetWarningAt: 'Warning at (%)',
+    budgetThresholdHelp: 'Informational < warning < 100%. The limit is reached at 100%. Day 29–31 resets clamp to the month’s last day. Session estimates use USD.',
+    budgetEnabled: 'Enable this guardrail', budgetSave: 'Save limit', budgetCancel: 'Cancel', budgetEdit: 'Edit', budgetDelete: 'Delete',
+    budgetDismiss: 'Dismiss for this cycle', budgetSaved: 'Budget settings saved.', budgetConflict: 'Limits changed elsewhere. Reload and reopen the edit before saving.',
+    budgetInvalid: 'Check the amount, thresholds, currency, route and timezone.',
+    budgetOption_total: 'All usage', budgetOption_provider: 'Provider route', budgetOption_model_route: 'Model × route', budgetOption_session: 'Session / conversation',
+    budgetOption_api_equivalent: 'Estimated usage value (catalogue)', budgetOption_actual_metered: 'Actual metered spending',
+    budgetComplete: 'complete recorded coverage', budgetPartial: 'partial coverage · known subtotal only',
+    budgetCoverage: (calls, covered, completeness) => `${covered}/${calls} calls measured · ${completeness}`,
+    budgetProjection: (projected, remaining, days, breach) => `Cycle-end projection ${projected} · remaining ${remaining} · runway ${days} days · breach ${breach}`,
+    budgetNoBreach: 'not projected this cycle', budgetBurn: (seven, thirty, trend, days, calls) => `7-day ${seven}/day · 30-day ${thirty}/day · ${trend} · ${days} active days / ${calls} calls`,
+    budgetTrend_accelerating: '↑ accelerating', budgetTrend_slowing: '↓ slowing', budgetTrend_steady: '→ steady',
+    budgetForecast_disabled: 'Forecast disabled.', budgetForecast_ledger_unavailable: 'Forecast unavailable: no readable timestamped ledger.',
+    budgetForecast_currency_unavailable: 'Forecast unavailable: add a dated currency rate in Costs.',
+    budgetForecast_insufficient_days: 'Forecast unavailable: at least three active days are needed.',
+    budgetForecast_metered_unavailable: 'Actual spending unavailable: Hermes does not provide per-call billed charges. An estimated usage-value limit is available separately.',
+    budgetForecast_incomplete_pricing: 'Forecast unavailable: some calls have missing usage or no price. Subtotals do not imply free usage.',
+    budgetForecast_incomplete_cycle: 'Forecast unavailable: recording began after this cycle started. The known subtotal is shown.',
+    budgetFx: (rate, currency, date, source) => `Converted at ${rate} USD/${currency} · ${date} · ${source}`,
+
     basisLegacy: 'pre-1.0 data · at current rates',
     basisMixed: 'mixed rate sources',
     cacheEstNote: '≈ The gateway cache split is reconstructed or incomplete; cache figures and savings are estimates.',
@@ -8213,7 +8505,7 @@ const I18N = {
     tabListLabel: 'SpendSense sections',
     settingsNotifyPrefsReset: 'SpendSense display preferences were reset. Hermes saved pane placement is unchanged.',
     settingsNotifyPrefsFailed: f => `Preferences could not be reset: ${f}`,
-    settingsNotifyDataCleared: 'Memberships and advanced billing rules were cleared for this profile. Captured usage records were retained.',
+    settingsNotifyDataCleared: 'Memberships, budgets and advanced billing rules were cleared for this profile. Captured usage records were retained.',
     settingsNotifyDataFailed: f => `User-entered data was not reset: ${f}`,
     settingsNotifyModelsOk: 'Hermes model availability was refreshed. This does not force a pricing catalogue refresh.',
     settingsNotifyModelsFailed: f => `Hermes could not refresh model availability: ${f}`,
@@ -8277,8 +8569,8 @@ const I18N = {
     settingsRecoveryPrefsConfirmText: 'Reset the SpendSense display preferences to their defaults?',
     settingsRecoveryPrefsConfirm: 'Confirm preference reset',
     settingsResetPrefs: 'Reset display preferences',
-    settingsRecoveryDataExplain: 'User-data recovery covers Memberships, seat history and advanced billing rules. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.',
-    settingsRecoveryBackupText: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership, seat history and advanced-rule data.',
+    settingsRecoveryDataExplain: 'User-data recovery covers Memberships, seat history, budgets and advanced billing rules. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.',
+    settingsRecoveryBackupText: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership, seat history, budget and advanced-rule data.',
     settingsRecoveryDataConfirm: 'Confirm and clear user-entered data',
     settingsCopyBackup: 'Copy recovery backup before reset',
     settingsAboutHeading: 'About and support',
@@ -8530,6 +8822,38 @@ const I18N = {
     usageBaselineSummaryTitle: 'Historical baseline & reconciliation — separate cumulative estimate',
   },
   zh: {
+    budgetViewAll: count => `查看全部 ${count} 个限额`,
+    budgetTitle: '预算护栏', budgetShort: '预算', budgetAdd: '添加限额', budgetManage: '管理限额',
+    budgetEstimated: '估算用量价值 · 非账单', budgetActual: '实际计量支出',
+    budgetHelp: '仅提供建议，不阻止调用。估算用量价值按目录价格计算，包括订阅用量，并非账单。实际支出限额需要带时间戳的费用证据。会员费和额度不会相加。部分金额为已知小计（+），不是完整支出。预测需要至少三个活跃日、样本定价完整且完整观察当前周期。',
+    budgetSessionHelp: '适用于状态栏提示中标明的当前运行或已记录会话。使用独立记录的目录估算，即使原费用混有网关数据也不影响。旧数据和未定价活动保持未知。这不是现金支出限额。',
+    budgetEmpty: '设置月度支出或估算用量价值限额，也可设置会话估算限额。',
+    budgetLoading: '正在读取本地限额…', budgetFailed: '预算数据不可用。编辑前请重试。',
+    budgetStale: '预算快照已过期。成功刷新前暂停警告着色。', budgetRetry: '重试',
+    budgetLevel_normal: '限额内', budgetLevel_info: '提示阈值', budgetLevel_warning: '警告阈值',
+    budgetLevel_exceeded: '已达限额', budgetLevel_unavailable: '不可用／不完整', budgetLevel_disabled: '已禁用',
+    budgetName: '名称', budgetAmount: '限额金额', budgetScope: '范围', budgetMeasurement: '计量类型',
+    budgetCurrency: '货币（ISO 代码）', budgetProvider: '精确供应商线路', budgetModel: '精确模型 ID',
+    budgetCycleDay: '每月重置日', budgetTimezone: 'IANA 时区', budgetInfoAt: '提示阈值（%）', budgetWarningAt: '警告阈值（%）',
+    budgetThresholdHelp: '提示 < 警告 < 100%。100% 表示已达限额。29–31 日重置在短月按月末计算。会话估算使用美元。',
+    budgetEnabled: '启用此护栏', budgetSave: '保存限额', budgetCancel: '取消', budgetEdit: '编辑', budgetDelete: '删除',
+    budgetDismiss: '本周期忽略', budgetSaved: '预算设置已保存。', budgetConflict: '限额已在其他位置更改。请重新加载并打开编辑后保存。',
+    budgetInvalid: '请检查金额、阈值、货币、线路和时区。',
+    budgetOption_total: '全部用量', budgetOption_provider: '供应商线路', budgetOption_model_route: '模型 × 线路', budgetOption_session: '运行／会话',
+    budgetOption_api_equivalent: '估算用量价值（目录）', budgetOption_actual_metered: '实际计量支出',
+    budgetComplete: '记录覆盖完整', budgetPartial: '部分覆盖 · 仅已知小计',
+    budgetCoverage: (calls, covered, completeness) => `${covered}/${calls} 次调用已计量 · ${completeness}`,
+    budgetProjection: (projected, remaining, days, breach) => `周期末预测 ${projected} · 剩余 ${remaining} · 预计可用 ${days} 天 · 达限日期 ${breach}`,
+    budgetNoBreach: '本周期预计不达限', budgetBurn: (seven, thirty, trend, days, calls) => `7 日 ${seven}/天 · 30 日 ${thirty}/天 · ${trend} · ${days} 个活跃日／${calls} 次调用`,
+    budgetTrend_accelerating: '↑ 加速', budgetTrend_slowing: '↓ 放缓', budgetTrend_steady: '→ 稳定',
+    budgetForecast_disabled: '预测已禁用。', budgetForecast_ledger_unavailable: '预测不可用：没有可读的带时间戳账本。',
+    budgetForecast_currency_unavailable: '预测不可用：请在费用页添加带日期的汇率。',
+    budgetForecast_insufficient_days: '预测不可用：至少需要三个活跃日。',
+    budgetForecast_metered_unavailable: '实际支出不可用：Hermes 未提供逐次账单费用。可单独设置估算用量价值限额。',
+    budgetForecast_incomplete_pricing: '预测不可用：部分调用缺少用量或价格。小计不代表未知用量免费。',
+    budgetForecast_incomplete_cycle: '预测不可用：记录在本周期开始后才启动。显示已知小计。',
+    budgetFx: (rate, currency, date, source) => `换算汇率 ${rate} USD/${currency} · ${date} · ${source}`,
+
     basisLegacy: '1.0 前旧数据 · 按现价估算',
     basisMixed: '多种价格来源',
     cacheEstNote: '≈ 网关缓存拆分是推算值或不完整；缓存数据及节省额均为估算。',
@@ -9317,7 +9641,7 @@ const I18N = {
     tabListLabel: 'SpendSense 选项卡',
     settingsNotifyPrefsReset: 'SpendSense 显示偏好已重置。Hermes 已保存的面板位置不变。',
     settingsNotifyPrefsFailed: f => `偏好设置未能重置：${f}`,
-    settingsNotifyDataCleared: '已清除此配置文件的会员与高级计费规则。已捕获的用量记录予以保留。',
+    settingsNotifyDataCleared: '已清除此配置文件的会员、预算与高级计费规则。已捕获的用量记录予以保留。',
     settingsNotifyDataFailed: f => `用户数据未能重置：${f}`,
     settingsNotifyModelsOk: 'Hermes 模型可用性已刷新。这不会强制刷新价格目录。',
     settingsNotifyModelsFailed: f => `Hermes 未能刷新模型可用性：${f}`,
@@ -9381,8 +9705,8 @@ const I18N = {
     settingsRecoveryPrefsConfirmText: '将 SpendSense 显示偏好重置为默认值吗？',
     settingsRecoveryPrefsConfirm: '确认重置偏好',
     settingsResetPrefs: '重置显示偏好',
-    settingsRecoveryDataExplain: '用户数据恢复涵盖会员、席位历史和高级计费规则。已捕获的桌面用量账本、Hermes 数据与供应商凭据不受影响。',
-    settingsRecoveryBackupText: '备份已复制到剪贴板。在清除配置文件会员、席位历史与高级规则数据前，请将其保存到安全位置。',
+    settingsRecoveryDataExplain: '用户数据恢复涵盖会员、席位历史、预算和高级计费规则。已捕获的桌面用量账本、Hermes 数据与供应商凭据不受影响。',
+    settingsRecoveryBackupText: '备份已复制到剪贴板。在清除配置文件会员、席位历史、预算与高级规则数据前，请将其保存到安全位置。',
     settingsRecoveryDataConfirm: '确认并清除用户输入的数据',
     settingsCopyBackup: '重置前复制恢复备份',
     settingsAboutHeading: '关于与支持',
@@ -9685,7 +10009,7 @@ export default {
     // session.usage is the mid-turn tick (applyUsage no-ops on a zero delta).
     const intake = event => {
       const usage = event && event.payload && event.payload.usage
-      if (usage && event.session_id) enqueueUsage(event.session_id, usage)
+      if (usage && event.session_id) { enqueueUsage(event.session_id, usage); budgetActivityDirty = true }
     }
     ctx.onEvent('message.complete', intake)
     ctx.onEvent('session.usage', intake)
@@ -9701,6 +10025,12 @@ export default {
       const usage = host.state.focusedUsage.get()
       if (sid && usage) enqueueUsage(sid, usage)
     }, 30_000)
+
+    ctx.setInterval(() => {
+      if (!budgetActivityDirty) return
+      budgetActivityDirty = false
+      queryClient.invalidateQueries?.({ queryKey: [ID, 'budget-status', membershipIdentityNow()] })?.catch?.(() => {})
+    }, 2_000)
 
     // --- UI ------------------------------------------------------------
     ctx.register({
@@ -9728,6 +10058,7 @@ export default {
 
 /** Pure internals, exported for the node test-suite (the host only reads `default`). */
 export const __test = {
+  Chip, BudgetPanel, BudgetStatusIndicator, budgetLevel, budgetColour, sessionBudgetStatus, usageValueDelta, budgetQuery, budgetWrite, budgetPayload, newBudgetDraft, budgetTooltip, $budgetDraft, $budgetBusy, $budgetNotice, BUDGET_CSS,
   analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText,
   AnalyticsPage, AnalyticsDashboard, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
   AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS,

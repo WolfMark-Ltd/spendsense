@@ -166,7 +166,7 @@ test('unknown-model first frame remains separate and keeps its tokens', () => {
 test('resolveRates: own provider wins over a foreign row with the same model', () => {
   const r = T.resolveRates({ model: 'claude-opus-5', provider: 'github-copilot', payload: copilotPayload({ input: '$5', output: '$25', cache: '$0.5' }) })
   assert.equal(r.origin, 'live')
-  assert.deepEqual(r.rates, { input: 5, output: 25, cache: 0.5, write: null, inputKnown: false, outputKnown: true, cacheKnown: true })
+  assert.deepEqual(r.rates, { input: 5, output: 25, cache: 0.5, write: null, inputKnown: false, outputKnown: true, cacheKnown: true, usageInputKnown: true, usageOutputKnown: true })
 })
 
 test('resolveRates: empty own catalog -> bundled table of the same provider, not nous', () => {
@@ -518,7 +518,7 @@ test('registers the All Hermes page on /spend-sense and keeps the live chip', ()
 test('CommandCode prices exactly from its own table, not a reseller', () => {
   const r = T.resolveRates({ model: 'deepseek/deepseek-v4.1-flash', provider: 'commandcode', payload: null })
   assert.equal(r.origin, 'bundled')
-  assert.deepEqual(r.rates, { input: 0.15, output: 0.6, cache: 0.003, inputKnown: false, outputKnown: false, cacheKnown: false },
+  assert.deepEqual(r.rates, { input: 0.15, output: 0.6, cache: 0.003, inputKnown: false, outputKnown: false, cacheKnown: false, usageInputKnown: true, usageOutputKnown: true },
     'the verified CommandCode rates')
   assert.equal(r.foreignSlug, null)
   const noProvider = T.resolveRates({ model: 'deepseek/deepseek-v4.1-flash', provider: '', payload: null })
@@ -530,7 +530,7 @@ test('vendor-prefixed and bare model slugs resolve to the same route rates', () 
   assert.equal(prefixed.origin, 'bundled')
   assert.equal(bare.origin, 'bundled')
   assert.deepEqual(prefixed.rates, bare.rates, 'prefix is a vendor namespace, not a different model')
-  assert.deepEqual(prefixed.rates, { input: 0.15, output: 0.6, cache: 0.003, inputKnown: false, outputKnown: false, cacheKnown: false })
+  assert.deepEqual(prefixed.rates, { input: 0.15, output: 0.6, cache: 0.003, inputKnown: false, outputKnown: false, cacheKnown: false, usageInputKnown: true, usageOutputKnown: true })
 
   // The vendor prefix must not be mistaken for the serving provider.
   assert.equal(T.providerMatches({ slug: 'commandcode' }, 'commandcode'), true)
@@ -542,7 +542,7 @@ test('vendor-prefixed and bare model slugs resolve to the same route rates', () 
   ] }
   const live = T.resolveRates({ model: 'deepseek-v4.1-flash', provider: 'commandcode', payload })
   assert.equal(live.origin, 'live')
-  assert.deepEqual(live.rates, { input: 0.15, output: 0.6, cache: 0.003, write: null, inputKnown: false, outputKnown: true, cacheKnown: true })
+  assert.deepEqual(live.rates, { input: 0.15, output: 0.6, cache: 0.003, write: null, inputKnown: false, outputKnown: true, cacheKnown: true, usageInputKnown: true, usageOutputKnown: true })
   assert.equal(T.liveProvider(payload, 'deepseek-v4.1-flash'), 'commandcode')
 })
 test('a corrected provider uses its own exact rates, not a live foreign row', () => {
@@ -557,7 +557,7 @@ test('a corrected provider uses its own exact rates, not a live foreign row', ()
   }
   const r = T.resolveRates({ model: 'deepseek/deepseek-v4.1-flash', provider: 'commandcode', payload })
   assert.equal(r.origin, 'bundled', 'own exact table wins over a foreign live row')
-  assert.deepEqual(r.rates, { input: 0.15, output: 0.6, cache: 0.003, inputKnown: false, outputKnown: false, cacheKnown: false })
+  assert.deepEqual(r.rates, { input: 0.15, output: 0.6, cache: 0.003, inputKnown: false, outputKnown: false, cacheKnown: false, usageInputKnown: true, usageOutputKnown: true })
   assert.equal(r.foreignSlug, null, 'no borrowing warning when the exact rate exists')
 })
 

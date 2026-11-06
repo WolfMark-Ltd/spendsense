@@ -2838,6 +2838,7 @@ test('recovery clipboard includes raw seat history and membership documents', as
   const membershipStore = { version: 1, accounts: [{ id: 'account', family: 'test' }] }
   transportCtl.respond(call => call.path === '/membership/accounts'
     ? { ok: true, accounts: [account('account')], membership_store: membershipStore, seat_store: seatStore, store: {} }
+    : call.path === '/budgets' ? { ok: true, version: 1, budgets: [], dismissals: {}, rev: 'fixture' }
     : call.path === '/membership/plans' ? plansOk()
       : { ok: true, profiles: [], loaded: true, error: '' })
   let copied = ''
@@ -2851,5 +2852,7 @@ test('recovery clipboard includes raw seat history and membership documents', as
     const bundle = JSON.parse(copied)
     assert.deepEqual(bundle.membership_store, membershipStore)
     assert.deepEqual(bundle.seat_history, seatStore)
+    assert.deepEqual(bundle.budget_guardrails.budgets, [])
+    assert.equal(bundle.budget_guardrails.rev, 'fixture')
   } finally { delete navigator.clipboard }
 })
