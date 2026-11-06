@@ -117,7 +117,10 @@ def evaluate(budget: dict, rows: list[dict], *, now: float, observed_since: floa
     if not budget['enabled']:
         forecast['reason'] = 'disabled'
         return result
-    if not ledger_available or observed_since is None:
+    if not ledger_available:
+        return result
+    if observed_since is None:
+        forecast['reason'] = 'insufficient_days'
         return result
     if conversion is None:
         forecast['reason'] = 'currency_unavailable'
@@ -187,6 +190,10 @@ def build_report(*, path: Path | str | None = None, event_db_path=None, now=None
     now = time.time() if now is None else now
     doc = budgets.load(path)
     monthly = [b for b in doc['budgets'] if b['scope'] != 'session']
+    if not monthly:
+        return {'ok': True, **doc, 'statuses': [],
+                'generated_at': datetime.fromtimestamp(now, timezone.utc).isoformat(),
+                'charge_evidence_supported': False}
     rows = []
     observed_since = None
     available = False
@@ -204,7 +211,11 @@ def build_report(*, path: Path | str | None = None, event_db_path=None, now=None
                 book = catalogue if catalogue is not None else load_catalogue()
                 for item in raw:
                     priced = _event_result(item, book, 'list', {'exact': {}}, at=item['ts'])
-                    rows.append({**item, 'list_usd': priced['list_usd'],
+                    pricing = priced.get('pricing') or {}
+                    # General analytics may display an input-rate fallback;
+                    # a guardrail must not treat that guess as measured value.
+                    explicit = not (pricing.get('cache_read_defaulted') or pricing.get('cache_write_defaulted'))
+                    rows.append({**item, 'list_usd': priced['list_usd'] if explicit else None,
                                  'actual_metered_usd': None, 'measurement': 'unknown'})
                 available = True
         finally:

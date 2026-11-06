@@ -66,10 +66,10 @@ const modelPayload = { model: 'gpt-5', provider: 'openai', providers: [{ slug: '
 async function usage(input, cost = 99) {
   await React.act(async () => {
     const next = T.applyUsage(T.$ledger.get(), { now: Date.now(), model: 'gpt-5', provider: 'openai', payload: modelPayload,
-      profile: 'default', sessionId: 'runtime', storedId: 'conversation', usage: { model: 'gpt-5', input, calls: 1, cost_usd: cost } })
+      profile: 'default', sessionId: 'runtime', storedId: 'conversation', usage: { model: 'gpt-5', input, output: 0, calls: 1, cost_usd: cost } })
     T.$ledger.set(next)
     host.state.focusedSessionId.set('runtime'); host.state.focusedStoredSessionId.set('conversation')
-    host.state.focusedUsage.set({ model: 'gpt-5', input, calls: 1, cost_usd: cost })
+    host.state.focusedUsage.set({ model: 'gpt-5', input, output: 0, calls: 1, cost_usd: cost })
   })
   await flush()
 }
@@ -108,7 +108,7 @@ test('actual Chip updates informational, amber and red on live session activity'
 test('legacy, unpriced, unknown-rate and cross-gateway activity never become complete estimates', async () => {
   await reset()
   const delta = { input: 100, output: 0, cacheRead: 0, cacheWrite: 0 }
-  const good = { origin: 'live', rates: { input: 1, output: 1, cache: 1 } }
+  const good = T.resolveRates({ model: 'gpt-5', provider: 'openai', payload: modelPayload })
   const legacy = { input: 100, output: 0, cacheRead: 0, cacheWrite: 0, cost: 400 }
   const computed = T.usageValueDelta(legacy, delta, good)
   assert.equal(computed.usageValueMissing, 100)
@@ -256,12 +256,193 @@ test('activity written by an older version stays uncovered after upgrade', async
 
 test('subscription OAuth routes can use their own catalogue value without a billed charge', async () => {
   await reset()
-  const model = 'gpt-5.5', provider = 'openai-codex'
+  const model = 'gpt-5', provider = 'openai-codex'
   const payload = { model, provider, providers: [{ slug: provider, pricing: {} }] }
   const led = T.applyUsage(T.emptyLedger(), { provider, payload, profile: 'default', sessionId: 'runtime', storedId: 'conversation',
-    usage: { model, input: 100000, calls: 1, cost_usd: 0 } })
+    usage: { model, input: 400000, output: 0, calls: 1, cost_usd: 0 } })
   const bucket = led.sessions.conversation
   assert.equal(bucket.usageValueCost, .5)
   assert.equal(bucket.usageValueMissing, 0)
   assert.equal(T.sessionBudgetStatus({ guardrailValue: bucket }, [b()]).level, 'info')
+})
+
+// PR #32 review regressions: reproduce before changing accounting.
+const reviewedApply = (led, usage, pricing = { input: '1', output: '1', cache: '.1', cache_write: '2', tiers: [] }, extra = {}) =>
+  T.applyUsage(led, { now: Date.now(), profile: 'default', provider: 'review-provider', sessionId: 'review-run', storedId: 'review-conversation',
+    payload: { model: 'review-model', provider: 'review-provider', providers: [{ slug: 'review-provider', pricing: { 'review-model': pricing } }] },
+    usage: { model: 'review-model', ...usage }, ...extra })
+const reviewedStatus = led => T.sessionBudgetStatus({ guardrailValue: led.sessions['review-conversation'] }, [b()])
+
+test('review: an unknown zero-token call makes a previously measured conversation partial', async () => {
+  await reset()
+  let led = reviewedApply(T.emptyLedger(), { input: 100000, output: 0, calls: 1 })
+  assert.equal(reviewedStatus(led).level, 'normal')
+  led = reviewedApply(led, { input: 100000, output: 0, calls: 2 })
+  assert.equal(reviewedStatus(led).partial, true)
+  assert.equal(reviewedStatus(led).level, 'unavailable')
+  assert.equal(led.sessions['review-conversation'].usageValueMissingCalls, 1)
+  assert.equal(led.snapshots['review-run'].guardrail.usageValueMissingCalls, 1)
+})
+
+test('review: missing output usage cannot be converted into a measured zero', async () => {
+  await reset()
+  const led = reviewedApply(T.emptyLedger(), { input: 100000, calls: 1 })
+  assert.equal(reviewedStatus(led).partial, true)
+  assert.equal(reviewedStatus(led).level, 'unavailable')
+})
+
+test('review: unresolved live context tiers cover neither input nor output-only deltas', async () => {
+  await reset()
+  const pricing = { input: '1', output: '1', cache: '.1', cache_write: '2', tiers: [{ threshold: 100000, input: '2', output: '4' }] }
+  for (const usage of [{ input: 200000, output: 0, calls: 1 }, { input: 0, output: 200000, calls: 1 }]) {
+    const led = reviewedApply(T.emptyLedger(), usage, pricing)
+    assert.equal(led.sessions['review-conversation'].usageValuePriced, 0)
+    assert.equal(reviewedStatus(led).level, 'unavailable')
+  }
+})
+
+test('review: remembered live prices preserve unresolved tier restrictions', async () => {
+  await reset()
+  let led = reviewedApply(T.emptyLedger(), { input: 100000, output: 0, calls: 1 }, { input: '1', output: '1', tiers: [{ threshold: 1 }] })
+  led = reviewedApply(led, { input: 200000, output: 0, calls: 2 }, null)
+  assert.equal(led.sessions['review-conversation'].usageValuePriced, 0)
+  assert.equal(reviewedStatus(led).level, 'unavailable')
+})
+
+test('review: missing cache read or write prices never cause a false exceeded warning', async () => {
+  await reset()
+  for (const [usage, prices] of [
+    [{ input: 1000, output: 0, cache_read: 2000000, cache_write: 0, calls: 1 }, { input: '1', output: '1', tiers: [] }],
+    [{ input: 1000, output: 0, cache_read: 0, cache_write: 2000000, calls: 1 }, { input: '1', output: '1', cache: '.1', tiers: [] }]
+  ]) {
+    const led = reviewedApply(T.emptyLedger(), usage, prices)
+    assert.equal(led.sessions['review-conversation'].usageValuePriced, 0)
+    assert.equal(reviewedStatus(led).level, 'unavailable')
+  }
+})
+
+test('review: bundled context-tier models cannot look completely priced at base rates', async () => {
+  await reset()
+  const model = 'deep-research-max-preview-04-2026', provider = 'google'
+  const led = T.applyUsage(T.emptyLedger(), { sessionId: 'review-run', storedId: 'review-conversation', profile: 'default', provider,
+    payload: { model, provider, providers: [] }, usage: { model, input: 300000, output: 0, calls: 1 } })
+  assert.equal(led.sessions['review-conversation'].usageValuePriced, 0)
+  assert.equal(reviewedStatus(led).level, 'unavailable')
+})
+
+test('review: explicit zero and positive cache prices remain fully supported', async () => {
+  await reset()
+  for (const [read, write] of [['0', '0'], ['.1', '2']]) {
+    const led = reviewedApply(T.emptyLedger(), { input: 100000, output: 0, cache_read: 10000, cache_write: 10000, calls: 1 },
+      { input: '1', output: '1', cache: read, cache_write: write, tiers: [] })
+    assert.equal(reviewedStatus(led).partial, false)
+    assert.equal(reviewedStatus(led).level, 'normal')
+    assert.equal(led.sessions['review-conversation'].usageValuePriced, 120000)
+  }
+})
+
+test('review: late usage completes only its current missing call, including a zero-output final frame', async () => {
+  await reset()
+  let led = reviewedApply(T.emptyLedger(), { input: 100000, output: 0, calls: 1 })
+  led = reviewedApply(led, { input: 100000, output: 0, calls: 2 })
+  assert.equal(reviewedStatus(led).partial, true)
+  led = reviewedApply(led, { input: 200000, output: 0, calls: 2 })
+  assert.equal(reviewedStatus(led).partial, false)
+  assert.equal(led.sessions['review-conversation'].usageValueMissingCalls, 0)
+  assert.equal(led.snapshots['review-run'].guardrail.usageValueMissingCalls, 0)
+  led = reviewedApply(led, { input: 300000, calls: 3 })
+  assert.equal(reviewedStatus(led).partial, true)
+  led = reviewedApply(led, { input: 300000, output: 0, calls: 3 })
+  assert.equal(reviewedStatus(led).partial, false, 'explicit final zero output completes reported input usage')
+})
+
+test('review: later calls and restarts cannot erase earlier missing usage, but real subtotal warnings survive', async () => {
+  await reset()
+  let led = reviewedApply(T.emptyLedger(), { input: 800000, output: 0, calls: 1, cost_usd: 500 })
+  led = reviewedApply(led, { input: 800000, output: 0, calls: 2, cost_usd: 501 })
+  led = reviewedApply(led, { input: 810000, output: 0, calls: 3 })
+  assert.equal(reviewedStatus(led).level, 'warning')
+  assert.equal(reviewedStatus(led).partial, true)
+  assert.equal(led.sessions['review-conversation'].usageValueMissingCalls, 1)
+  led = reviewedApply(led, { input: 10000, output: 0, calls: 1 })
+  assert.equal(led.snapshots['review-run'].guardrail.usageValueMissingCalls, 0)
+  assert.equal(led.sessions['review-conversation'].usageValueMissingCalls, 1)
+  assert.equal(reviewedStatus(led).level, 'warning')
+})
+
+test('review: partial cache and tier evidence cannot contaminate a previously proved warning', async () => {
+  await reset()
+  for (const prices of [{ input: '20', output: '1', tiers: [] }, { input: '20', output: '1', cache: '10', tiers: [{}] }]) {
+    let led = reviewedApply(T.emptyLedger(), { input: 800000, output: 0, calls: 1 })
+    led = reviewedApply(led, { input: 900000, output: 0, cache_read: 1000000, cache_write: 0, calls: 2 }, prices)
+    assert.equal(led.sessions['review-conversation'].usageValueCost, .8)
+    assert.equal(reviewedStatus(led).level, 'warning')
+    assert.equal(reviewedStatus(led).partial, true)
+  }
+})
+
+test('review: old tallies without trustworthy pricing provenance cannot prove coverage or warnings', async () => {
+  await reset()
+  let led = reviewedApply(T.emptyLedger(), { input: 100000, output: 0, calls: 1 })
+  const bucket = led.sessions['review-conversation']
+  delete bucket.usageValueVersion
+  bucket.usageValueCost = 999
+  assert.equal(reviewedStatus(led).level, 'unavailable')
+  led = reviewedApply(led, { input: 200000, output: 0, calls: 2 })
+  assert.equal(led.sessions['review-conversation'].usageValueCost, .1)
+  assert.equal(reviewedStatus(led).level, 'unavailable')
+  assert.equal(reviewedStatus(led).partial, true)
+})
+
+test('review: a restarted run can complete its own pending usage without inheriting the old counter baseline', async () => {
+  await reset()
+  let led = reviewedApply(T.emptyLedger(), { input: 500000, output: 0, calls: 2 })
+  led = reviewedApply(led, { input: 10000, calls: 1 })
+  led = reviewedApply(led, { input: 10000, output: 0, calls: 1 })
+  assert.equal(led.snapshots['review-run'].guardrail.usageValueMissingCalls, 0)
+  assert.equal(led.sessions['review-conversation'].usageValueMissingCalls, 1, 'older coalesced-call gap remains incomplete')
+})
+
+test('review: bundled explicit cache prices and remembered flat rates stay usable', async () => {
+  await reset()
+  const model = 'claude-opus-5', provider = 'github-copilot'
+  const led = T.applyUsage(T.emptyLedger(), { sessionId: 'review-run', storedId: 'review-conversation', profile: 'default', provider,
+    payload: { model, provider, providers: [] }, usage: { model, input: 10000, output: 0, cache_read: 10000, cache_write: 10000, calls: 1 } })
+  assert.equal(reviewedStatus(led).partial, false)
+  assert.equal(led.sessions['review-conversation'].usageValuePriced, 30000)
+  assert.ok(Math.abs(led.sessions['review-conversation'].usageValueCost - .1175) < 1e-9)
+  let flat = reviewedApply(T.emptyLedger(), { input: 100000, output: 0, calls: 1 })
+  const remembered = flat.rates['review-provider|review-model']
+  assert.equal(remembered.usagePriceSource, 'live_catalogue')
+  assert.equal(remembered.usageCacheKnown, true)
+  assert.equal(remembered.usageWriteKnown, true)
+  flat = reviewedApply(flat, { input: 200000, output: 0, calls: 2 }, null)
+  assert.equal(reviewedStatus(flat).partial, false)
+  assert.equal(flat.sessions['review-conversation'].usageValueCost, .2)
+})
+
+test('review: backend tier and provisional cache evidence is preserved without disabling unused cache streams', async () => {
+  await reset()
+  const scenarios = [
+    { name: 'flat-no-cache', rate: { input: 1, output: 1, cache_read: null, cache_write: null, has_tiers: false }, usage: { input: 100000, output: 0, calls: 1 }, partial: false },
+    { name: 'tiered', rate: { input: 1, output: 1, cache_read: .1, has_tiers: true }, usage: { input: 0, output: 100000, calls: 1 }, partial: true },
+    { name: 'provisional-read', rate: { input: 1, output: 1, cache_read: .1, has_tiers: false, provisional: ['cache_read'] }, usage: { input: 100000, output: 0, cache_read: 100000, calls: 1 }, partial: true }
+  ]
+  for (const scenario of scenarios) {
+    const provider = `backend-review-${scenario.name}`
+    T.setRest(async () => ({ rate: { ...scenario.rate, provenance: 'official_verified' } }))
+    await T.ensureBackendRate(provider, 'review-model')
+    const resolved = T.resolveRates({ provider, model: 'review-model' })
+    assert.equal(resolved.origin, 'backend')
+    assert.equal(resolved.rates.usagePriceSource, 'official_verified')
+    const led = reviewedApply(T.emptyLedger(), scenario.usage, null, { provider, payload: { model: 'review-model', provider, providers: [] } })
+    assert.equal(reviewedStatus(led).partial, scenario.partial)
+  }
+})
+
+test('review: a coalesced multi-call reading cannot manufacture a proved warning at one current-model rate', async () => {
+  await reset()
+  const led = reviewedApply(T.emptyLedger(), { input: 2000000, output: 0, calls: 2 })
+  assert.equal(reviewedStatus(led).level, 'unavailable')
+  assert.equal(led.sessions['review-conversation'].usageValuePriced, 0)
 })

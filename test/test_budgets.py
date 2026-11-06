@@ -185,7 +185,7 @@ class ForecastTests(unittest.TestCase):
         self.assertEqual(self.evaluate(ledger_available=False)['forecast']['reason'], 'ledger_unavailable')
         self.assertEqual(self.evaluate(budget(currency='GBP'))['forecast']['reason'], 'currency_unavailable')
         self.assertEqual(self.evaluate(observed_since=START + 10)['forecast']['reason'], 'incomplete_cycle')
-        self.assertEqual(self.evaluate(observed_since=None)['forecast']['reason'], 'ledger_unavailable')
+        self.assertEqual(self.evaluate(observed_since=None)['forecast']['reason'], 'insufficient_days')
 
     def test_user_supplied_fx_is_cited_and_future_rates_are_refused(self):
         rate = {'currency': 'GBP', 'usd_per_unit': 2, 'as_of': '2026-11-01', 'source': 'fixture'}
@@ -278,3 +278,83 @@ class ForecastTests(unittest.TestCase):
             events.write_bytes(b'corrupt ledger')
             refused = F.build_report(path=path, event_db_path=events, now=NOW, catalogue=book)
             self.assertEqual(refused['statuses'][0]['forecast']['reason'], 'ledger_unavailable')
+
+
+class ReviewReportRegressions(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / 'budgets.json'
+        self.events = Path(tmp.name) / 'usage.db'
+
+    def test_no_monthly_limits_never_open_or_price_the_ledger(self):
+        for configured in [[], [budget(id='session', scope='session')]]:
+            doc = {'version': 1, 'budgets': configured, 'dismissals': {}, 'rev': 'fixture'}
+            with self.subTest(configured=configured), patch.object(B, 'load', return_value=doc), \
+                    patch.object(store, 'connect_reader') as reader, \
+                    patch.object(F, 'load_catalogue') as catalogue, \
+                    patch.object(F, '_event_result') as price, \
+                    patch.object(F.economics, 'load_fx') as fx:
+                reader.return_value = None
+                result = F.build_report(now=NOW)
+                self.assertEqual(result['statuses'], [])
+                self.assertEqual(result['budgets'], configured)
+                self.assertEqual(result['rev'], 'fixture')
+                reader.assert_not_called()
+                catalogue.assert_not_called()
+                price.assert_not_called()
+                fx.assert_not_called()
+
+    def test_readable_empty_ledger_is_insufficient_days_not_unavailable(self):
+        B.mutate('total', if_rev=B.load(self.path)['rev'], budget=budget(), path=self.path)
+        with closing(sqlite3.connect(self.events)) as conn:
+            conn.executescript(store._SCHEMA)
+        report = F.build_report(path=self.path, event_db_path=self.events, now=NOW)
+        status = report['statuses'][0]
+        self.assertEqual(status['forecast']['reason'], 'insufficient_days')
+        self.assertIsNone(status['spend'])
+        self.assertIsNone(status['forecast']['projected'])
+        self.assertEqual(status['coverage']['calls'], 0)
+
+    def test_monthly_guardrails_do_not_treat_cache_fallbacks_as_complete_prices(self):
+        B.mutate('total', if_rev=B.load(self.path)['rev'], budget=budget(amount=1), path=self.path)
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.executescript(store._SCHEMA)
+            conn.execute('INSERT INTO baseline VALUES (1, ?, 0, 0, 0)', (START,))
+            for i in range(3):
+                conn.execute('INSERT INTO calls(event_id, ts, model, provider, outcome, input_tokens, cache_read_tokens, cache_write_tokens, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                             (str(i), START + (i + 1) * 86400, 'm', 'fixture', 'ok', 10, 1000000, 1000000, NOW))
+        for read, write in [(None, 2), (.1, None)]:
+            book = Catalogue({'fixture': {'m': Rate(1, 1, read, write)}}, 'fixture', 'test', '', '1')
+            result = F.build_report(path=self.path, event_db_path=self.events, now=NOW, catalogue=book)['statuses'][0]
+            self.assertIsNone(result['spend'])
+            self.assertEqual(result['level'], 'unavailable')
+            self.assertFalse(result['forecast']['available'])
+            self.assertEqual(result['forecast']['reason'], 'incomplete_pricing')
+        # Explicit zero is a real price, not missing information.
+        book = Catalogue({'fixture': {'m': Rate(1, 1, 0, 0)}}, 'fixture', 'test', '', '1')
+        result = F.build_report(path=self.path, event_db_path=self.events, now=NOW, catalogue=book)['statuses'][0]
+        self.assertTrue(result['forecast']['available'])
+        self.assertTrue(result['complete'])
+
+    def test_invalid_persisted_fx_rates_are_refused_by_the_report_loader(self):
+        B.mutate('total', if_rev=B.load(self.path)['rev'], budget=budget(currency='GBP'), path=self.path)
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.executescript(store._SCHEMA)
+            conn.execute('INSERT INTO baseline VALUES (1, ?, 0, 0, 0)', (START,))
+            for i in range(3):
+                conn.execute('INSERT INTO calls(event_id, ts, model, provider, outcome, input_tokens, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                             (str(i), START + (i + 1) * 86400, 'm', 'fixture', 'ok', 100000, NOW))
+        path = self.path.with_name('fx.json')
+        book = Catalogue({'fixture': {'m': Rate(1, 1)}}, 'fixture', 'test', '', '1')
+        for value in [0, -1, float('nan'), None]:
+            rate = {'currency': 'GBP', 'as_of': '2026-11-01', 'source': 'synthetic'}
+            if value is not None:
+                rate['usd_per_unit'] = value
+            path.write_text(json.dumps({'rates': [rate]}))
+            with self.subTest(value=value):
+                result = F.build_report(path=self.path, event_db_path=self.events, now=NOW,
+                                        catalogue=book, fx_path=path)['statuses'][0]
+                self.assertEqual(result['forecast']['reason'], 'currency_unavailable')
+                self.assertIsNone(result['spend'])
+                self.assertIsNone(result['forecast']['projected'])
