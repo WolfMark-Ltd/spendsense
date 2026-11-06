@@ -116,7 +116,32 @@ Spend Sense answers those from the usage Hermes already sees, on your own machin
 
 Memberships can mark an account **API Only**, or identify it as a subscription, prepaid credits, or not yet confirmed. API Only hides recurring membership fees from totals while retaining the saved plan and fee revisions for a later switch back. Prepaid top-ups are not recurring membership fees; configure any advanced cost rules separately in Costs. These choices do not change recorded usage or model pricing.
 
-Back up the profile's Spend Sense plugin data before upgrading. Older releases do not recognise the new account fields; restoring a pre-upgrade backup is the supported rollback, and edits made after that backup will not be present in it.
+Back up the profile's Spend Sense plugin data before upgrading. Releases older than 0.6.0 may not recognise membership fields; restoring a compatible pre-upgrade backup may be necessary, and edits made after that backup will not be present in it.
+
+Seat quantities are stored separately in `membership-seats.json` alongside
+`memberships.json` and `billing-profiles.json` in the profile's Spend Sense
+plugin-data directory. Back up all three together with the plugin stopped;
+restore them together to the same profile with the plugin stopped. If a file was
+absent when the backup was taken, it should also be absent after restoration.
+The Settings recovery clipboard export includes the raw `membership_store` and
+`seat_history` documents as well as the advanced rules; retain it securely.
+To restore its seat history, save the `seat_history` JSON object as
+`membership-seats.json` beside the restored `memberships.json`. The clipboard
+export does not include the usage ledger or provider credentials.
+
+The preceding 0.6.0 membership store can still be read and edited after seats
+are saved: it ignores the separate seat file and does not calculate seat totals.
+After upgrading again, the newer version reads the saved seat history. Keep the
+sidecar with the matching profile and membership data throughout a downgrade;
+do not remove or replace it when using an older version. Version 0.6.0 cannot
+clear the sidecar when it resets its own user data: if you reset or remove an
+account while downgraded, handle the matching seat backup explicitly before
+using the newer version again.
+
+An unmerged earlier PR #30 test build stored seat revisions inside
+`memberships.json`. Those test-build files are rejected as unreadable rather
+than migrated or overwritten; retain the original file and use a pre-test
+backup when returning to a compatible version.
 
 Discovery reads Hermes' authentication storage in memory and counts the configured credential slots per provider. Credential values are never returned, logged or stored. A slot proves an account is configured — not which plan it is on — so Spend Sense suggests a plan where it can and asks you to confirm it. That human confirmation is deliberate: a wrong plan silently reprices every past month.
 

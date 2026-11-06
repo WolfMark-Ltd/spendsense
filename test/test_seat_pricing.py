@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from wolfmark_ledger import economics as E, membership as M, membership_api as API, membership_live, plans_feed
+from wolfmark_ledger import economics as E, membership as M, membership_api as API, membership_live, membership_store, plans_feed
 
 PLAN = 'openai-codex.chatgpt-business-premium'
 NOW = '2026-11-06T12:00:00Z'
@@ -79,23 +79,28 @@ class SeatPricingTests(unittest.TestCase):
 
     def test_validation_and_account_card(self):
         for quantity in (0, -1, 1.5, True, '3', 10**100):
-            self.assertTrue(M.validation_errors(account(seat_revisions=[revision(quantity)])))
+            self.assertTrue(M.seat_revision_errors([revision(quantity)]))
         member = account(seat_revisions=[revision(3)])
-        self.assertFalse(M.validation_errors(member))
+        self.assertFalse(M.seat_revision_errors(member['seat_revisions']))
         card = API.account_card(member, self.book, at='2026-11-07T00:00:00Z')
         self.assertEqual(card['fee']['effective']['amount'], 375)
-        self.assertEqual(API._document(card), member)
+        self.assertEqual(API._document(card), account())
 
     def test_summary_uses_effective_total_and_preserves_override(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'memberships.json'
             for overrides, expected in [([], 375), ([{'id': 'actual', 'amount': 330,
                                                       'currency': 'USD', 'period': 'month'}], 330)]:
-                member = account(seat_revisions=[revision(3)], fee_overrides=overrides)
-                path.write_text(json.dumps({'version': 1, 'accounts': [member]}))
+                member = account(fee_overrides=overrides)
+                saved = membership_store.save_account(member, path)['account']
+                current = membership_store.load_with_seats(path)['accounts'][0]
+                membership_store.append_seat_revision('a', revision(3), if_rev=saved['rev'],
+                                                       if_seat_rev=current['seat_rev'], path=path)
                 summary = API.fee_summary_payload(path=path, catalogue=self.book,
                                                   at='2026-11-07T00:00:00Z')
                 self.assertEqual(summary['totals_by_currency_period']['USD/month'], expected)
+                path.unlink()
+                membership_store.seat_store_path(path).unlink()
 
     def test_reporting_window_splits_at_quantity_revision(self):
         member = account(seat_revisions=[revision(3)])

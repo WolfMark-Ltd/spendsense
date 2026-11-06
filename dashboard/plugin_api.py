@@ -287,6 +287,8 @@ def membership_discover(native: bool = Query(False, description="Also read accou
         raise _store_unreadable(exc) from exc
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except MembershipConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - discovery must fail closed, never 500 with internals
         log.error("spend-sense: discovery failed")
         raise HTTPException(status_code=500, detail="discovery failed") from exc
@@ -315,6 +317,20 @@ def membership_delete(account_id: str) -> dict[str, Any]:
         return members.delete_payload(account_id)
     except StoreUnreadable as exc:
         raise _store_unreadable(exc) from exc
+
+
+@router.put("/membership/accounts/{account_id}/seats")
+def membership_seats_save(account_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return members.save_seat_payload(account_id, body)
+    except StoreUnreadable as exc:
+        raise _store_unreadable(exc) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="no such membership") from exc
+    except MembershipConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/membership/accounts/{account_id}/exhaustion")

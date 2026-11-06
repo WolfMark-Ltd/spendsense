@@ -4110,7 +4110,7 @@ function SettingsPage() {
         rest('/membership/accounts'), rest('/billing/profiles')
       ])
       if (!membershipIdentityCurrent(captured)) return
-      if (!Array.isArray(accountDoc?.accounts) || accountDoc?.store?.error ||
+      if (!Array.isArray(accountDoc?.accounts) || accountDoc?.store?.error || !accountDoc?.seat_store || !accountDoc?.membership_store ||
           !Array.isArray(profileDoc?.profiles) || profileDoc?.error) {
         throw new Error('The user-data export is incomplete.')
       }
@@ -4118,8 +4118,10 @@ function SettingsPage() {
         product: 'Spend Sense',
         version: PLUGIN_VERSION,
         exported_at: new Date().toISOString(),
-        note: 'This contains only Spend Sense membership and advanced-rule data. It contains no provider credential secrets or recorded usage ledger.',
+        note: 'This contains Spend Sense membership, seat history and advanced-rule data. It contains no provider credential secrets or recorded usage ledger.',
         memberships: accountDoc.accounts,
+        membership_store: accountDoc.membership_store,
+        seat_history: accountDoc.seat_store,
         advanced_rules: profileDoc.profiles
       }
       const copied = await writeClipboard(JSON.stringify(bundle, null, 2))
@@ -6431,8 +6433,8 @@ function MembershipsPage() {
       const effective_from = new Date().toISOString()
       const revision = { id: `${effective_from}-${Math.random().toString(36).slice(2)}`, plan_id: account.plan_id,
         quantity, period: value.period, effective_from }
-      return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
-        { ...account, seat_revisions: [...(account.seat_revisions || []), revision] }, 'PUT')
+      return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}/seats`,
+        { revision, rev: account.rev, seat_rev: account.seat_rev }, 'PUT')
     }
     if (kind === 'fee') {
       // The draft carries the identity it was opened in, so a save can tell
@@ -8272,8 +8274,8 @@ const I18N = {
     settingsRecoveryPrefsConfirmText: 'Reset the SpendSense display preferences to their defaults?',
     settingsRecoveryPrefsConfirm: 'Confirm preference reset',
     settingsResetPrefs: 'Reset display preferences',
-    settingsRecoveryDataExplain: 'User-data recovery covers Memberships and advanced billing rules only. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.',
-    settingsRecoveryBackupText: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership and advanced-rule data.',
+    settingsRecoveryDataExplain: 'User-data recovery covers Memberships, seat history and advanced billing rules. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.',
+    settingsRecoveryBackupText: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership, seat history and advanced-rule data.',
     settingsRecoveryDataConfirm: 'Confirm and clear user-entered data',
     settingsCopyBackup: 'Copy recovery backup before reset',
     settingsAboutHeading: 'About and support',
@@ -9375,8 +9377,8 @@ const I18N = {
     settingsRecoveryPrefsConfirmText: '将 SpendSense 显示偏好重置为默认值吗？',
     settingsRecoveryPrefsConfirm: '确认重置偏好',
     settingsResetPrefs: '重置显示偏好',
-    settingsRecoveryDataExplain: '用户数据恢复仅涵盖会员与高级计费规则。已捕获的桌面用量账本、Hermes 数据与供应商凭据不受影响。',
-    settingsRecoveryBackupText: '备份已复制到剪贴板。在清除配置文件会员与高级规则数据前，请将其保存到安全位置。',
+    settingsRecoveryDataExplain: '用户数据恢复涵盖会员、席位历史和高级计费规则。已捕获的桌面用量账本、Hermes 数据与供应商凭据不受影响。',
+    settingsRecoveryBackupText: '备份已复制到剪贴板。在清除配置文件会员、席位历史与高级规则数据前，请将其保存到安全位置。',
     settingsRecoveryDataConfirm: '确认并清除用户输入的数据',
     settingsCopyBackup: '重置前复制恢复备份',
     settingsAboutHeading: '关于与支持',

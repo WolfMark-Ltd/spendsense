@@ -556,7 +556,7 @@ def build_economics_report(
     else:
         history_plans = plans
 
-    stored = mstore.load_store(membership_path)
+    stored = mstore.load_with_seats(membership_path)
     if stored.get("error"):
         raise mstore.StoreUnreadable(str(stored["error"]))
     accounts = stored.get("accounts", [])

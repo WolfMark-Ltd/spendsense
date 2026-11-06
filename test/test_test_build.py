@@ -195,12 +195,13 @@ ps.plugin_db = plugin_db
 sys.modules['plugins'] = plugins; sys.modules['plugins.plugin_storage'] = ps
 from wolfmark_ledger import store, membership_store, billing, user_data, news
 prod = home / 'plugin-data' / 'spend-sense'; prod.mkdir(parents=True)
-for name in ('usage.db','memberships.json','billing-profiles.json','news-settings.json','news-local.json'):
+for name in ('usage.db','memberships.json','membership-seats.json','billing-profiles.json','news-settings.json','news-local.json'):
     (prod / name).write_text('production sentinel')
 assert store.event_db_path() == home / 'plugin-data' / 'spend-sense-test' / 'usage.db'
 store.connect_writer()
 assert seen == [('spend-sense-test','usage.db')]
 assert membership_store.store_path().parent.name == 'spend-sense-test'
+assert membership_store.seat_store_path().parent.name == 'spend-sense-test'
 assert billing.profiles_path().parent.name == 'spend-sense-test'
 assert news.settings_path().parent.name == 'spend-sense-test'
 assert news.items_path().parent.name == 'spend-sense-test'
@@ -214,8 +215,9 @@ billing.save_profile({'id':'test-sentinel','provider':'example','kind':'api'}, t
 user_data.reset_user_data()
 assert (test / 'usage.db').read_text() == 'test sentinel'
 assert json.loads((test / 'memberships.json').read_text())['accounts'] == []
+assert json.loads((test / 'membership-seats.json').read_text())['accounts'] == {}
 assert json.loads((test / 'billing-profiles.json').read_text())['profiles'] == []
-assert all((prod / name).read_text() == 'production sentinel' for name in ('usage.db','memberships.json','billing-profiles.json'))
+assert all((prod / name).read_text() == 'production sentinel' for name in ('usage.db','memberships.json','membership-seats.json','billing-profiles.json'))
 """
         with tempfile.TemporaryDirectory() as home:
             result = subprocess.run([sys.executable, '-c', program, str(self.out), home],

@@ -26,6 +26,106 @@ from .filelock import locked as _locked
 
 STORE_NAME = "memberships.json"
 STORE_VERSION = 1
+SEAT_STORE_NAME = "membership-seats.json"
+SEAT_STORE_VERSION = 1
+
+
+def seat_store_path(path: Optional[Path | str] = None) -> Path:
+    target = Path(path) if path else store_path()
+    return target.with_name(SEAT_STORE_NAME)
+
+
+def load_seat_store(path: Optional[Path | str] = None) -> dict[str, Any]:
+    target = seat_store_path(path)
+    try:
+        doc = json.loads(target.read_text(encoding="utf-8"))
+        if (not isinstance(doc, dict) or set(doc) != {"version", "accounts"}
+                or type(doc["version"]) is not int or doc["version"] != SEAT_STORE_VERSION
+                or not isinstance(doc["accounts"], dict)):
+            raise ValueError("invalid document")
+        for account_id, entry in doc["accounts"].items():
+            if (not isinstance(account_id, str) or not account_id.strip()
+                    or not isinstance(entry, dict) or set(entry) != {"family", "identity", "revisions"}
+                    or not isinstance(entry["family"], str) or not entry["family"].strip()
+                    or (entry["identity"] is not None and not isinstance(entry["identity"], str))
+                    or mem.seat_revision_errors(entry["revisions"])):
+                raise ValueError("invalid account history")
+        return doc
+    except FileNotFoundError:
+        return {"version": SEAT_STORE_VERSION, "accounts": {}}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+        raise StoreUnreadable("seat history store unreadable") from exc
+
+
+def seat_revision_hash(entry: Mapping[str, Any] | None) -> str:
+    return hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:12]
+
+
+def _seat_matches(entry: Mapping[str, Any], account: Mapping[str, Any]) -> bool:
+    return entry["family"] == account["family"] and entry["identity"] == account.get("identity")
+
+
+def load_with_seats(path: Optional[Path | str] = None) -> dict[str, Any]:
+    target = Path(path) if path else store_path()
+    with _locked(target):
+        data = load_store(target, strict=True)
+        seats = load_seat_store(target)
+        accounts = []
+        for account in data["accounts"]:
+            entry = seats["accounts"].get(account["id"])
+            if entry is not None and not _seat_matches(entry, account):
+                raise StoreUnreadable("seat history does not match the membership identity")
+            accounts.append({**account, "seat_revisions": list(entry["revisions"]) if entry else [],
+                             "seat_rev": seat_revision_hash(entry)})
+        return {**data, "accounts": accounts, "seat_store": seats,
+                "membership_store": {"version": data["version"], "accounts": data["accounts"]}}
+
+
+def append_seat_revision(account_id: str, revision: Mapping[str, Any], *, if_rev: str,
+                         if_seat_rev: str, path: Optional[Path | str] = None) -> dict[str, Any]:
+    target = Path(path) if path else store_path()
+    errors = mem.seat_revision_errors([revision])
+    if errors:
+        raise ValueError("; ".join(errors))
+    with _locked(target):
+        accounts = load_store(target, strict=True)["accounts"]
+        account = next((a for a in accounts if a["id"] == account_id), None)
+        if account is None:
+            raise KeyError(account_id)
+        if account.get("identity") is not None and not isinstance(account["identity"], str):
+            raise StoreUnreadable("membership identity cannot be associated with seat history")
+        seats = load_seat_store(target)
+        previous = seats["accounts"].get(account_id)
+        if previous is not None and not _seat_matches(previous, account):
+            raise StoreUnreadable("seat history does not match the membership identity")
+        if not if_rev or if_rev != str(account.get("rev") or ""):
+            raise MembershipConflict("conflict: membership changed; reload before saving seats")
+        if not if_seat_rev or if_seat_rev != seat_revision_hash(previous):
+            raise MembershipConflict("conflict: seat history changed; reload before saving seats")
+        if revision.get("plan_id") != account.get("plan_id"):
+            raise MembershipConflict("conflict: selected plan changed; reload before saving seats")
+        if revision.get("quantity") is not None and mem.billing_arrangement(account) != "subscription":
+            raise ValueError("seat quantity requires a subscription")
+        revisions = list(previous["revisions"]) if previous else []
+        if any(item["id"] == revision["id"] for item in revisions):
+            raise ValueError("duplicate seat revision id")
+        entry = {"family": account["family"], "identity": account.get("identity"),
+                 "revisions": [*revisions, dict(revision)]}
+        seats["accounts"][account_id] = entry
+        sidecar = seat_store_path(target)
+        handle = tempfile.NamedTemporaryFile("w", dir=sidecar.parent, delete=False, suffix=".tmp", encoding="utf-8")
+        try:
+            json.dump(seats, handle, indent=2, sort_keys=True, allow_nan=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+            handle.close()
+            os.replace(handle.name, sidecar)
+        finally:
+            if not handle.closed:
+                handle.close()
+            if os.path.exists(handle.name):
+                os.unlink(handle.name)
+        return {"seat_rev": seat_revision_hash(entry)}
 
 
 def store_path(data_dir: Optional[Path | str] = None) -> Path:
@@ -210,8 +310,14 @@ def save_account(account: Mapping[str, Any], path: Optional[Path | str] = None,
     with _locked(target):
         # strict: an unreadable store raises here, so the write never happens.
         data = load_store(target, strict=True)
+        seats = load_seat_store(target)
         accounts = data.get("accounts", [])
         existing = next((a for a in accounts if str(a.get("id")) == str(account.get("id"))), None)
+        seat_entry = seats["accounts"].get(str(account.get("id")))
+        if seat_entry is not None and existing is not None and not _seat_matches(seat_entry, existing):
+            raise StoreUnreadable("seat history does not match the membership identity")
+        if seat_entry is not None and not _seat_matches(seat_entry, account):
+            raise MembershipConflict("conflict: membership identity does not match its seat history")
         if existing is None and must_exist:
             # Accounts are created by discovery, not by a PUT. Refusing an unknown
             # id also means a stale card from another gateway cannot create a
@@ -239,6 +345,7 @@ def delete_account(account_id: str, path: Optional[Path | str] = None) -> dict[s
     target = Path(path) if path else store_path()
     with _locked(target):
         data = load_store(target, strict=True)
+        load_seat_store(target)
         before = data.get("accounts", [])
         accounts = [a for a in before if str(a.get("id")) != str(account_id)]
         _write(accounts, target)
@@ -260,6 +367,7 @@ def upsert_discovered(discovered: Iterable[Mapping[str, Any]],
         # Discovery writes too: refusing an unreadable store here stops a corrupt
         # file being replaced by whatever the credential slots happen to say.
         data = load_store(target, strict=True)
+        seats = load_seat_store(target)
         accounts = list(data.get("accounts", []))
         index = {str(a.get("id")): i for i, a in enumerate(accounts)}
         added, updated = [], []
@@ -289,5 +397,9 @@ def upsert_discovered(discovered: Iterable[Mapping[str, Any]],
                 accounts[index[key]] = merged
                 updated.append(key)
         if added or updated:
+            for account in accounts:
+                entry = seats["accounts"].get(str(account.get("id")))
+                if entry is not None and not _seat_matches(entry, account):
+                    raise MembershipConflict("conflict: discovered identity does not match its seat history")
             _write(accounts, target)
         return {"accounts": accounts, "added": added, "updated": updated, "path": str(target)}

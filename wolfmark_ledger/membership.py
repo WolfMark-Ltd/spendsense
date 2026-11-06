@@ -1532,10 +1532,39 @@ MEMBERSHIP_FIELDS = {
     "id", "family", "label", "route_slugs", "credential_present", "identity",
     "identity_source", "discovered_at", "plan_id", "plan_hint", "fee_overrides",
     "billing_cycle", "manual_exhaustions", "advanced", "migrated_from", "custom_plan",
-    "api_only", "billing_arrangement", "seat_revisions",
+    "api_only", "billing_arrangement",
     # Written by discovery, so they must survive validation on the next save.
     "catalogue_plans", "usage_source",
 }
+
+
+def seat_revision_errors(revisions: Any) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(revisions, list):
+        errors.append("seat revisions must be a list")
+    else:
+        ids = set()
+        for revision in revisions:
+            if not isinstance(revision, dict):
+                errors.append("each seat revision must be an object")
+                continue
+            quantity = revision.get("quantity")
+            stamp = _epoch(revision.get("effective_from")) if isinstance(revision.get("effective_from"), str) else None
+            if (set(revision) != {"id", "plan_id", "quantity", "period", "effective_from"}
+                    or not isinstance(revision.get("id"), str) or not revision["id"].strip()
+                    or not isinstance(revision.get("plan_id"), str) or not revision["plan_id"].strip()
+                    or not isinstance(revision.get("effective_from"), str)
+                    or stamp is None or not math.isfinite(stamp)):
+                errors.append("seat revision needs an id, plan and valid effective time")
+            if quantity is not None and (isinstance(quantity, bool) or not isinstance(quantity, int) or not 1 <= quantity <= 9007199254740991):
+                errors.append("seat quantity must be a positive integer or empty")
+            if revision.get("period") not in ("month", "year"):
+                errors.append("seat billing period must be month or year")
+            if isinstance(revision.get("id"), str):
+                if revision["id"] in ids:
+                    errors.append("duplicate seat revision id")
+                ids.add(revision["id"])
+    return errors
 
 
 def validation_errors(membership: Mapping[str, Any]) -> list[str]:
@@ -1554,21 +1583,6 @@ def validation_errors(membership: Mapping[str, Any]) -> list[str]:
         errors.append("api_only must be a boolean")
     if "billing_arrangement" in membership and membership["billing_arrangement"] not in ("subscription", "prepaid", "unconfirmed"):
         errors.append("billing arrangement must be subscription, prepaid or unconfirmed")
-    revisions = membership.get("seat_revisions", [])
-    if not isinstance(revisions, list):
-        errors.append("seat revisions must be a list")
-    else:
-        for revision in revisions:
-            if not isinstance(revision, dict):
-                errors.append("each seat revision must be an object")
-                continue
-            quantity = revision.get("quantity")
-            if set(revision) != {"id", "plan_id", "quantity", "period", "effective_from"} or not str(revision.get("id") or "").strip() or not str(revision.get("plan_id") or "").strip() or _epoch(revision.get("effective_from")) is None:
-                errors.append("seat revision needs an id, plan and valid effective time")
-            if quantity is not None and (isinstance(quantity, bool) or not isinstance(quantity, int) or not 1 <= quantity <= 9007199254740991):
-                errors.append("seat quantity must be a positive integer or empty")
-            if revision.get("period") not in ("month", "year"):
-                errors.append("seat billing period must be month or year")
     custom_plan = membership.get("custom_plan")
     if custom_plan is not None:
         if not isinstance(custom_plan, dict):
