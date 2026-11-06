@@ -219,6 +219,50 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         with self.assertRaises(store.MembershipConflict):
             store.save_account({**api._document(after), 'identity': 'other'}, self.path, if_rev=after['rev'])
 
+    def test_absent_identity_values_match_and_bind_on_discovery_and_save(self):
+        for account_identity in (None, ''):
+            for seat_identity in (None, ''):
+                for method in ('discovery', 'save'):
+                    with self.subTest(account=account_identity, seat=seat_identity, method=method), \
+                            tempfile.TemporaryDirectory() as directory:
+                        path = Path(directory) / 'memberships.json'
+                        saved = legacy_store.save_account({**self.original, 'identity': account_identity}, path)['account']
+                        initial = store.load_with_seats(path)['accounts'][0]
+                        store.append_seat_revision(saved['id'], revision('two', 2, '2026-11-05T00:00:00Z'),
+                                                   if_rev=saved['rev'], if_seat_rev=initial['seat_rev'], path=path)
+                        sidecar_path = store.seat_store_path(path)
+                        sidecar = json.loads(sidecar_path.read_text())
+                        sidecar['accounts'][saved['id']]['identity'] = seat_identity
+                        sidecar_path.write_text(json.dumps(sidecar))
+                        before = store.load_with_seats(path)['accounts'][0]
+                        updated = {**api._document(before), 'identity': 'confirmed', 'identity_source': 'native'}
+                        if method == 'discovery':
+                            store.upsert_discovered([updated], path)
+                        else:
+                            store.save_account(updated, path, if_rev=before['rev'])
+                        after = store.load_with_seats(path)['accounts'][0]
+                        self.assertEqual(after['identity'], 'confirmed')
+                        self.assertEqual(after['seat_revisions'], before['seat_revisions'])
+                        self.assertEqual(after['fee_overrides'], self.original['fee_overrides'])
+                        self.assertEqual(store.load_seat_store(path)['accounts'][saved['id']]['identity'], 'confirmed')
+                        with self.assertRaises(store.MembershipConflict):
+                            store.save_account({**api._document(after), 'identity': 'other'}, path, if_rev=after['rev'])
+
+    def test_absent_identity_is_not_bound_until_nonempty_and_known_identity_is_not_cleared(self):
+        unknown = legacy_store.save_account({**self.saved, 'identity': ''}, self.path, if_rev=self.saved['rev'])['account']
+        self.append(2, '2026-11-05T00:00:00Z', 'two')
+        sidecar_path = store.seat_store_path(self.path)
+        before = sidecar_path.read_bytes()
+        store.save_account({**unknown, 'label': 'Updated'}, self.path, if_rev=unknown['rev'])
+        self.assertEqual(sidecar_path.read_bytes(), before)
+        current = store.load_with_seats(self.path)['accounts'][0]
+        store.save_account({**api._document(current), 'identity': 'confirmed'}, self.path, if_rev=current['rev'])
+        current = store.load_with_seats(self.path)['accounts'][0]
+        for missing in (None, ''):
+            with self.subTest(identity=missing), self.assertRaises(store.MembershipConflict):
+                store.save_account({**api._document(current), 'identity': missing}, self.path, if_rev=current['rev'])
+        self.assertEqual(store.load_seat_store(self.path)['accounts'][current['id']]['identity'], 'confirmed')
+
     def test_identity_discovered_while_downgraded_is_not_rejected(self):
         unknown = legacy_store.save_account({**self.saved, 'identity': None}, self.path, if_rev=self.saved['rev'])['account']
         self.append(2, '2026-11-05T00:00:00Z', 'two')
@@ -251,6 +295,19 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         current = store.load_with_seats(self.path)['accounts'][0]
         with self.assertRaises(store.MembershipConflict):
             store.upsert_discovered([{**current, 'identity': 'different'}], self.path)
+
+    def test_empty_membership_identity_does_not_replace_a_known_seat_identity(self):
+        self.append(2, '2026-11-05T00:00:00Z', 'two')
+        legacy_store.save_account({**self.saved, 'identity': ''}, self.path, if_rev=self.saved['rev'])
+        self.append(3, '2026-11-06T00:00:00Z', 'three')
+        current = store.load_with_seats(self.path)['accounts'][0]
+        self.assertEqual(store.load_seat_store(self.path)['accounts'][current['id']]['identity'], 'test-account')
+        with self.assertRaises(store.MembershipConflict):
+            store.upsert_discovered([{**current, 'identity': 'different'}], self.path)
+        store.upsert_discovered([{**current, 'identity': 'test-account'}], self.path)
+        after = store.load_with_seats(self.path)['accounts'][0]
+        self.assertEqual([item['quantity'] for item in after['seat_revisions']], [2, 3])
+        self.assertEqual(after['fee_overrides'], self.original['fee_overrides'])
 
     @unittest.skipIf(__import__('os').name == 'nt', 'directory fsync is not available on Windows')
     def test_directory_sync_propagates_real_errors_and_closes_handle(self):

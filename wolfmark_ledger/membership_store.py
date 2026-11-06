@@ -64,7 +64,7 @@ def seat_revision_hash(entry: Mapping[str, Any] | None) -> str:
 
 def _seat_matches(entry: Mapping[str, Any], account: Mapping[str, Any]) -> bool:
     left, right = entry["identity"], account.get("identity")
-    return entry["family"] == account["family"] and (left is None or right is None or left == right)
+    return entry["family"] == account["family"] and (left in (None, "") or right in (None, "") or left == right)
 
 
 class SeatStoreDurabilityError(OSError):
@@ -349,7 +349,7 @@ def save_account(account: Mapping[str, Any], path: Optional[Path | str] = None,
             raise StoreUnreadable("seat history does not match the membership identity")
         if seat_entry is not None and not _seat_matches(seat_entry, account):
             raise MembershipConflict("conflict: membership identity does not match its seat history")
-        if (seat_entry is not None and existing is not None and existing.get("identity") is not None
+        if (seat_entry is not None and existing is not None and existing.get("identity") not in (None, "")
                 and account.get("identity") != existing.get("identity")):
             raise MembershipConflict("conflict: membership identity does not match its seat history")
         if existing is None and must_exist:
@@ -364,7 +364,8 @@ def save_account(account: Mapping[str, Any], path: Optional[Path | str] = None,
                 raise MembershipConflict("conflict: this membership changed since you loaded it; reload before saving")
             position = next(i for i, a in enumerate(accounts)
                             if str(a.get("id")) == str(account.get("id")))
-        bound_identity = seat_entry is not None and seat_entry["identity"] is None and account.get("identity") is not None
+        bound_identity = (seat_entry is not None and seat_entry["identity"] in (None, "")
+                          and account.get("identity") not in (None, ""))
         if bound_identity:
             seats["accounts"][str(account["id"])] = {**seat_entry, "identity": account["identity"]}
             _write_seat_store(seats, target)
@@ -450,7 +451,8 @@ def upsert_discovered(discovered: Iterable[Mapping[str, Any]],
                     raise ValueError("membership identity must be a string or empty")
                 if entry is not None and not _seat_matches(entry, account):
                     raise MembershipConflict("conflict: discovered identity does not match its seat history")
-                if entry is not None and entry["identity"] is None and account.get("identity") is not None:
+                if (entry is not None and entry["identity"] in (None, "")
+                        and account.get("identity") not in (None, "")):
                     seats["accounts"][str(account["id"])] = {**entry, "identity": account["identity"]}
                     needs_binding = True
             if needs_binding:
