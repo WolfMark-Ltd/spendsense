@@ -115,6 +115,13 @@ class SeatPricingTests(unittest.TestCase):
         self.assertEqual(self.fee(account(seat_revisions=[revision(3, 'year')]), book=book)
                          ['effective']['amount'], 3600)
 
+    def test_annual_seat_price_changes_block_catalogue_promotion(self):
+        updated = copy.deepcopy(self.book)
+        M.plan_index(updated)[PLAN]['seat_pricing']['prices']['year']['amount'] = 1320
+        report = M.diff_catalogues(self.book, updated)
+        self.assertIn(f'{PLAN}:seat_pricing', report['blocking'])
+        self.assertFalse(M.promotion_plan(report)['promotable'])
+
 
 if __name__ == '__main__':
     unittest.main()

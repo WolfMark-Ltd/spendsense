@@ -2766,7 +2766,10 @@ test('seat controls save and clear a quantity with billing period', async () => 
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
   const id = 'openai-codex:seats'
-  let saved = account(id, { plan_id: 'business', plan: { name: 'Business', seat_pricing: {
+  let saved = account(id, { plan_id: 'business', seat_revisions: [
+    { id: 'active', plan_id: 'business', quantity: 2, period: 'month', effective_from: '2020-01-01T00:00:00Z' },
+    { id: 'future', plan_id: 'business', quantity: null, period: 'month', effective_from: '2099-01-01T00:00:00Z' }
+  ], plan: { name: 'Business', seat_pricing: {
     usual_minimum: 2, prices: { month: { amount: 125, currency: 'USD', period: 'month' },
       year: { amount: 1200, currency: 'USD', period: 'year' } } } },
     fee: { basis: 'catalogue', effective: { amount: 125, currency: 'USD', period: 'month' },
@@ -2780,6 +2783,7 @@ test('seat controls save and clear a quantity with billing period', async () => 
   assert.match(container.textContent, /Usually at least 2 seats/)
   assert.match(container.textContent, /\$125\.00 per seat/)
   const form = container.querySelector('input[name="quantity"]').closest('form')
+  assert.equal(form.querySelector('input[name="quantity"]').value, '2', 'future revisions do not replace current form values')
   await setField(container, 'Seats', '3', form)
   await setField(container, 'Period', 'year', form)
   await React.act(async () => form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })))

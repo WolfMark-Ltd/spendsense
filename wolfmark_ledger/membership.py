@@ -1430,6 +1430,9 @@ def diff_catalogues(old: Mapping[str, Any] | None, new: Mapping[str, Any] | None
                 add(plan_id, f"price.{field}", (before.get("price") or {}).get(field),
                     (after.get("price") or {}).get(field), kind=field if field != "amount" else "price",
                     ambiguous=ambiguous)
+        if before.get("seat_pricing") != after.get("seat_pricing"):
+            add(plan_id, "seat_pricing", before.get("seat_pricing"), after.get("seat_pricing"),
+                kind="price", ambiguous=ambiguous)
         if (before.get("billing_cycle") or {}) != (after.get("billing_cycle") or {}):
             add(plan_id, "billing_cycle", before.get("billing_cycle"), after.get("billing_cycle"),
                 kind="billing_cycle", ambiguous=ambiguous)

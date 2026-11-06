@@ -5821,7 +5821,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   const arrangement = account.effective_arrangement || (account.api_only ? 'api_only' : account.billing_arrangement || (planSaved ? 'subscription' : 'unconfirmed'))
   const apiOnly = arrangement === 'api_only'
   const subscription = arrangement === 'subscription'
-  const seatRevision = (account.seat_revisions || []).filter(r => r.plan_id === account.plan_id)
+  const seatRevision = (account.seat_revisions || []).filter(r => r.plan_id === account.plan_id && Date.parse(r.effective_from) <= now)
     .reduce((latest, item) => !latest || Date.parse(item.effective_from) >= Date.parse(latest.effective_from) ? item : latest, null)
   const seatPricing = account.plan?.seat_pricing
   const seatPeriods = seatPricing?.prices || { month: null, year: null }
