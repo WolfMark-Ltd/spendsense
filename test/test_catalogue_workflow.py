@@ -219,6 +219,7 @@ class Activation(CatalogueCase):
         self.assertEqual((self.catalogue_dir / "plans.json").read_bytes(), before)
 
     def test_rollback_restores_the_archive(self):
+        """Verify rollback restores the archive."""
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "accept"})
         R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")
@@ -239,6 +240,7 @@ class Activation(CatalogueCase):
             R.rollback(self.catalogue_dir, "1999-01-01.1", by="reviewer")
 
     def test_rollback_refuses_to_overwrite_a_conflicting_archive(self):
+        """Verify rollback refuses to overwrite a conflicting archive."""
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "accept"})
         R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")

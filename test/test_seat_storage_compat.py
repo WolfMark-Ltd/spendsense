@@ -32,11 +32,13 @@ PLAN = 'openai-codex.chatgpt-business-premium'
 
 
 def revision(ident, quantity, when, period='month'):
+    """Create a synthetic seat revision."""
     return {'id': ident, 'plan_id': PLAN, 'quantity': quantity, 'period': period, 'effective_from': when}
 
 
 class SeatStorageCompatibilityTests(unittest.TestCase):
     def setUp(self):
+        """Create isolated membership data for each test."""
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / 'memberships.json'
@@ -50,11 +52,13 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.book = api.load_plans()
 
     def append(self, quantity, date, ident):
+        """Append a seat revision using current account and seat revision tokens."""
         current = store.load_with_seats(self.path)['accounts'][0]
         return store.append_seat_revision(self.original['id'], revision(ident, quantity, date),
                                           if_rev=current['rev'], if_seat_rev=current['seat_rev'], path=self.path)
 
     def test_upgrade_downgrade_reupgrade_uses_real_060_store(self):
+        """Verify upgrade downgrade reupgrade uses real 060 store."""
         before = self.path.read_bytes()
         self.append(2, '2026-11-05T00:00:00Z', 'two')
         self.append(3, '2026-11-06T00:00:00Z', 'three')
@@ -73,6 +77,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertEqual(mem.resolve_fee(upgraded, self.book, '2026-11-09T00:00:00Z')['calculated']['amount'], 375)
 
     def test_ordinary_save_strips_echoed_seats_and_preserves_history(self):
+        """Verify ordinary save strips echoed seats and preserves history."""
         self.append(3, '2026-11-06T00:00:00Z', 'three')
         card = api.accounts_payload(path=self.path, catalogue=self.book)['accounts'][0]
         seat_before = store.seat_store_path(self.path).read_bytes()
@@ -81,7 +86,100 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertNotIn('seat_revisions', legacy_store.load_store(self.path, strict=True)['accounts'][0])
         self.assertEqual(len(store.load_with_seats(self.path)['accounts'][0]['seat_revisions']), 1)
 
+    def test_deleting_account_removes_only_its_seats_and_rediscovery_does_not_restore_them(self):
+        """Verify deleting account removes only its seats and rediscovery does not restore them."""
+        self.append(3, '2026-11-06T00:00:00Z', 'three')
+        other = {**self.original, 'id': 'openai-codex:other', 'identity': 'other-account'}
+        other_saved = store.save_account(other, self.path)['account']
+        other_card = store.load_with_seats(self.path)['accounts'][1]
+        store.append_seat_revision(other['id'], revision('other', 2, '2026-11-06T00:00:00Z'),
+                                   if_rev=other_saved['rev'], if_seat_rev=other_card['seat_rev'], path=self.path)
+        other_history = store.load_seat_store(self.path)['accounts'][other['id']]
+        result = store.delete_account(self.saved['id'], self.path)
+        self.assertTrue(result['removed'])
+        self.assertNotIn(self.saved['id'], store.load_seat_store(self.path)['accounts'])
+        self.assertEqual(store.load_seat_store(self.path)['accounts'][other['id']], other_history)
+        store.upsert_discovered([self.original], self.path)
+        rediscovered = next(a for a in store.load_with_seats(self.path)['accounts'] if a['id'] == self.saved['id'])
+        self.assertEqual(rediscovered['seat_revisions'], [])
+        self.assertTrue(legacy_store.load_store(self.path, strict=True)['accounts'])
+
+    def test_delete_rolls_back_membership_if_sidecar_write_fails(self):
+        """Verify delete rolls back membership if sidecar write fails."""
+        self.append(3, '2026-11-06T00:00:00Z', 'three')
+        membership_before = json.loads(self.path.read_text())
+        seats_before = store.load_seat_store(self.path)
+        with patch.object(store, '_write_seat_store', side_effect=OSError('replace failed')):
+            with self.assertRaises(OSError):
+                store.delete_account(self.saved['id'], self.path)
+        self.assertEqual(json.loads(self.path.read_text()), membership_before)
+        self.assertEqual(store.load_seat_store(self.path), seats_before)
+
+    def test_delete_preserves_both_stores_if_membership_write_fails(self):
+        """A failed initial membership write must not remove seat history."""
+        self.append(3, '2026-11-06T00:00:00Z', 'three')
+        membership_before = self.path.read_bytes()
+        seats_before = store.seat_store_path(self.path).read_bytes()
+        with patch.object(store, '_write', side_effect=OSError('membership write failed')):
+            with self.assertRaises(OSError):
+                store.delete_account(self.saved['id'], self.path)
+        self.assertEqual(self.path.read_bytes(), membership_before)
+        self.assertEqual(store.seat_store_path(self.path).read_bytes(), seats_before)
+
+    def test_delete_rolls_back_both_stores_when_directory_sync_fails(self):
+        """Verify delete rolls back both stores when directory sync fails."""
+        self.append(3, '2026-11-06T00:00:00Z', 'three')
+        membership_before = json.loads(self.path.read_text())
+        seats_before = store.load_seat_store(self.path)
+        with patch.object(store, '_sync_seat_directory', side_effect=[OSError(errno.EIO, 'sync failed'), None]):
+            with self.assertRaises(store.SeatStoreDurabilityError):
+                store.delete_account(self.saved['id'], self.path)
+        self.assertEqual(json.loads(self.path.read_text()), membership_before)
+        self.assertEqual(store.load_seat_store(self.path), seats_before)
+
+    def test_delete_reports_when_rollback_fails(self):
+        """Verify delete reports when rollback fails."""
+        self.append(3, '2026-11-06T00:00:00Z', 'three')
+        original_write = store._write
+        def fail_rollback(records, target):
+            """Allow the initial write and simulate a failed rollback."""
+            if write.call_count == 1:
+                return original_write(records, target)
+            raise OSError('rollback failed')
+        with patch.object(store, '_write', side_effect=fail_rollback) as write, \
+                patch.object(store, '_write_seat_store', side_effect=OSError('seat write failed')):
+            with self.assertRaises(store.SeatStoreDurabilityError):
+                store.delete_account(self.saved['id'], self.path)
+
+    @unittest.skipUnless(FastAPI is not None, 'FastAPI/httpx not installed')
+    def test_delete_api_reports_uncertain_outcome_when_rollback_fails(self):
+        """Expose an uncertain outcome if a failed deletion cannot be rolled back."""
+        self.append(3, '2026-11-06T00:00:00Z', 'three')
+        app = FastAPI()
+        app.include_router(plugin_api.router, prefix='/api/plugins/spend-sense')
+        original_write = store._write
+        def fail_rollback(records, target):
+            """Permit the first write and reject the compensating write."""
+            if write.call_count == 1:
+                return original_write(records, target)
+            raise OSError('rollback failed')
+        with patch.object(store, 'store_path', return_value=self.path), \
+                patch.object(store, '_write', side_effect=fail_rollback) as write, \
+                patch.object(store, '_write_seat_store', side_effect=OSError('seat write failed')), TestClient(app) as client:
+            response = client.delete('/api/plugins/spend-sense/membership/accounts/openai-codex:default')
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('seat_write_uncertain', response.json()['detail'])
+
+    def test_delete_cleans_orphaned_seats_without_recreating_a_membership(self):
+        """Verify delete cleans orphaned seats without recreating a membership."""
+        self.append(3, '2026-11-06T00:00:00Z', 'three')
+        legacy_store.delete_account(self.saved['id'], self.path)
+        result = store.delete_account(self.saved['id'], self.path)
+        self.assertFalse(result['removed'])
+        self.assertNotIn(self.saved['id'], store.load_seat_store(self.path)['accounts'])
+
     def test_both_membership_and_seat_revisions_are_checked(self):
+        """Verify both membership and seat revisions are checked."""
         card = store.load_with_seats(self.path)['accounts'][0]
         self.append(2, '2026-11-05T00:00:00Z', 'two')
         with self.assertRaises(store.MembershipConflict):
@@ -95,9 +193,11 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertEqual(len(store.load_seat_store(self.path)['accounts'][card['id']]['revisions']), 1)
 
     def test_concurrent_seat_edits_do_not_overwrite_one_another(self):
+        """Verify concurrent seat edits do not overwrite one another."""
         card = store.load_with_seats(self.path)['accounts'][0]
         barrier = threading.Barrier(2)
         def update(quantity):
+            """Attempt a concurrent seat edit using the original revision tokens."""
             barrier.wait()
             try:
                 store.append_seat_revision(card['id'], revision(str(quantity), quantity, '2026-11-06T00:00:00Z'),
@@ -111,6 +211,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertEqual(len(store.load_with_seats(self.path)['accounts'][0]['seat_revisions']), 1)
 
     def test_corrupt_sidecar_fails_closed_for_read_write_and_reset(self):
+        """Verify corrupt sidecar fails closed for read write and reset."""
         sidecar = store.seat_store_path(self.path)
         sidecar.write_bytes(b'{"version":1,"accounts":false}')
         old_members = self.path.read_bytes()
@@ -129,10 +230,12 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertEqual(sidecar.read_bytes(), b'{"version":1,"accounts":false}')
 
     def test_unreadable_sidecar_is_not_treated_as_missing(self):
+        """Verify unreadable sidecar is not treated as missing."""
         sidecar = store.seat_store_path(self.path)
         sidecar.write_text('{}')
         read_text = Path.read_text
         def read(path, *args, **kwargs):
+            """Simulate an unreadable seat sidecar while leaving other reads intact."""
             if path == sidecar:
                 raise PermissionError('not readable')
             return read_text(path, *args, **kwargs)
@@ -141,6 +244,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
                 store.load_with_seats(self.path)
 
     def test_atomic_failure_does_not_replace_existing_history(self):
+        """Verify atomic failure does not replace existing history."""
         self.append(2, '2026-11-05T00:00:00Z', 'two')
         card = store.load_with_seats(self.path)['accounts'][0]
         sidecar = store.seat_store_path(self.path)
@@ -153,6 +257,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertEqual(len(store.load_with_seats(self.path)['accounts'][0]['seat_revisions']), 1)
 
     def test_backup_and_reset_include_full_seat_store(self):
+        """Verify backup and reset include full seat store."""
         self.append(3, '2026-11-06T00:00:00Z', 'three')
         exported = api.accounts_payload(path=self.path, catalogue=self.book)
         self.assertEqual(exported['seat_store'], store.load_seat_store(self.path))
@@ -164,6 +269,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertEqual(store.load_with_seats(self.path)['accounts'][0]['seat_revisions'][0]['quantity'], 3)
 
     def test_earlier_pr_inline_history_can_be_exported_without_changing_source(self):
+        """Verify earlier pr inline history can be exported without changing source."""
         original = {**self.saved, 'seat_revisions': [
             revision('two', 2, '2026-11-05T00:00:00Z'), revision('three', 3, '2026-11-06T00:00:00Z')]}
         self.path.write_text(json.dumps({'version': 1, 'accounts': [original]}))
@@ -186,6 +292,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, 'existing recovery bundles must not be overwritten')
 
     def test_inline_recovery_rejects_invalid_seats_without_writing_output(self):
+        """Verify inline recovery rejects invalid seats without writing output."""
         raw = {'version': 1, 'accounts': [{**self.saved, 'seat_revisions': [
             revision('invalid', 0, '2026-11-06T00:00:00Z')]}]}
         self.path.write_text(json.dumps(raw))
@@ -199,6 +306,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), original)
 
     def test_mismatched_identity_fails_closed(self):
+        """Verify mismatched identity fails closed."""
         self.append(2, '2026-11-05T00:00:00Z', 'two')
         with self.assertRaises(store.MembershipConflict):
             store.save_account({**self.saved, 'identity': 'different-account'}, self.path, if_rev=self.saved['rev'])
@@ -207,6 +315,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
             store.load_with_seats(self.path)
 
     def test_discovery_binds_previously_unknown_identity_without_losing_seats(self):
+        """Verify discovery binds previously unknown identity without losing seats."""
         unknown = legacy_store.save_account({**self.saved, 'identity': None}, self.path, if_rev=self.saved['rev'])['account']
         self.append(2, '2026-11-05T00:00:00Z', 'two')
         original = store.load_with_seats(self.path)['accounts'][0]
@@ -220,6 +329,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
             store.save_account({**api._document(after), 'identity': 'other'}, self.path, if_rev=after['rev'])
 
     def test_absent_identity_values_match_and_bind_on_discovery_and_save(self):
+        """Verify absent identity values match and bind on discovery and save."""
         for account_identity in (None, ''):
             for seat_identity in (None, ''):
                 for method in ('discovery', 'save'):
@@ -249,6 +359,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
                             store.save_account({**api._document(after), 'identity': 'other'}, path, if_rev=after['rev'])
 
     def test_absent_identity_is_not_bound_until_nonempty_and_known_identity_is_not_cleared(self):
+        """Verify absent identity is not bound until nonempty and known identity is not cleared."""
         unknown = legacy_store.save_account({**self.saved, 'identity': ''}, self.path, if_rev=self.saved['rev'])['account']
         self.append(2, '2026-11-05T00:00:00Z', 'two')
         sidecar_path = store.seat_store_path(self.path)
@@ -264,6 +375,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertEqual(store.load_seat_store(self.path)['accounts'][current['id']]['identity'], 'confirmed')
 
     def test_identity_discovered_while_downgraded_is_not_rejected(self):
+        """Verify identity discovered while downgraded is not rejected."""
         unknown = legacy_store.save_account({**self.saved, 'identity': None}, self.path, if_rev=self.saved['rev'])['account']
         self.append(2, '2026-11-05T00:00:00Z', 'two')
         legacy_store.save_account({**unknown, 'identity': 'confirmed'}, self.path, if_rev=unknown['rev'])
@@ -274,6 +386,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertEqual(store.load_seat_store(self.path)['accounts'][current['id']]['identity'], 'confirmed')
 
     def test_interrupted_identity_binding_remains_readable_and_rejects_another_identity(self):
+        """Verify interrupted identity binding remains readable and rejects another identity."""
         unknown = legacy_store.save_account({**self.saved, 'identity': None}, self.path, if_rev=self.saved['rev'])['account']
         self.append(2, '2026-11-05T00:00:00Z', 'two')
         with patch.object(store, '_write', side_effect=OSError('membership write failed')):
@@ -288,6 +401,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertEqual(store.load_with_seats(self.path)['accounts'][0]['identity'], 'confirmed')
 
     def test_known_identity_is_not_lost_when_membership_is_temporarily_unknown(self):
+        """Verify known identity is not lost when membership is temporarily unknown."""
         self.append(2, '2026-11-05T00:00:00Z', 'two')
         legacy_store.save_account({**self.saved, 'identity': None}, self.path, if_rev=self.saved['rev'])
         self.append(3, '2026-11-06T00:00:00Z', 'three')
@@ -297,6 +411,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
             store.upsert_discovered([{**current, 'identity': 'different'}], self.path)
 
     def test_empty_membership_identity_does_not_replace_a_known_seat_identity(self):
+        """Verify empty membership identity does not replace a known seat identity."""
         self.append(2, '2026-11-05T00:00:00Z', 'two')
         legacy_store.save_account({**self.saved, 'identity': ''}, self.path, if_rev=self.saved['rev'])
         self.append(3, '2026-11-06T00:00:00Z', 'three')
@@ -311,6 +426,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
 
     @unittest.skipIf(__import__('os').name == 'nt', 'directory fsync is not available on Windows')
     def test_directory_sync_propagates_real_errors_and_closes_handle(self):
+        """Verify directory sync propagates real errors and closes handle."""
         directory = self.path.parent
         with patch.object(store.os, 'open', return_value=42), patch.object(store.os, 'close') as close, \
                 patch.object(store.os, 'fsync', side_effect=OSError(errno.EIO, 'failed')):
@@ -324,6 +440,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
                 store._sync_seat_directory(directory)
 
     def test_directory_sync_failure_reports_uncertain_write_without_losing_history(self):
+        """Verify directory sync failure reports uncertain write without losing history."""
         card = store.load_with_seats(self.path)['accounts'][0]
         with patch.object(store, '_sync_seat_directory', side_effect=OSError(errno.EIO, 'failed')):
             with self.assertRaises(store.SeatStoreDurabilityError):
@@ -336,6 +453,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
 
     @unittest.skipUnless(FastAPI is not None, 'FastAPI/httpx not installed')
     def test_sync_failure_api_reports_ambiguous_save_and_stale_retry(self):
+        """Verify sync failure api reports ambiguous save and stale retry."""
         app = FastAPI()
         app.include_router(plugin_api.router, prefix='/api/plugins/spend-sense')
         with patch.object(store, 'store_path', return_value=self.path), \
@@ -353,6 +471,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
             self.assertEqual(client.put(url, json=request).status_code, 409)
 
     def test_profile_isolation(self):
+        """Verify profile isolation."""
         other = Path(self.tmp.name) / 'other-profile' / 'memberships.json'
         legacy_store.save_account(self.original, other)
         self.append(2, '2026-11-05T00:00:00Z', 'two')
@@ -360,11 +479,13 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertFalse(store.seat_store_path(other).exists())
 
     def test_reset_rolls_back_when_seat_file_cannot_be_replaced(self):
+        """Verify reset rolls back when seat file cannot be replaced."""
         self.append(2, '2026-11-05T00:00:00Z', 'two')
         paths = [self.path, self.billing, store.seat_store_path(self.path)]
         before = [path.read_bytes() for path in paths]
         replace = user_data._replace_bytes
         def fail_seats(path, contents):
+            """Simulate failure when replacing the seat-history file."""
             if path == paths[2]:
                 raise OSError('seat replacement failed')
             return replace(path, contents)
@@ -375,6 +496,7 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
 
     @unittest.skipUnless(FastAPI is not None, 'FastAPI/httpx not installed')
     def test_http_updates_are_separate_and_stale_edits_conflict(self):
+        """Verify http updates are separate and stale edits conflict."""
         app = FastAPI()
         app.include_router(plugin_api.router, prefix='/api/plugins/spend-sense')
         with patch.object(store, 'store_path', return_value=self.path), \

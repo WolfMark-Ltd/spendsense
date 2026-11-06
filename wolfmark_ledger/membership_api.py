@@ -179,6 +179,7 @@ def fee_summary_payload(*, path: Optional[Path | str] = None,
                         catalogue: Optional[Mapping[str, Any]] = None,
                         data_dir: Optional[Path | str] = None,
                         at: Any = None) -> dict[str, Any]:
+    """Summarise effective membership fees by currency and billing period."""
     book, _source = active_catalogue(catalogue or None, data_dir=data_dir)
     data = store.load_with_seats(path)
     if data.get("error"):
@@ -368,6 +369,7 @@ def save_payload(account_id: str, body: Mapping[str, Any], *, if_rev: Optional[s
 
 def save_seat_payload(account_id: str, body: Mapping[str, Any], *,
                       path: Optional[Path | str] = None) -> dict[str, Any]:
+    """Validate a seat update and append it to the profile sidecar."""
     if set(body) != {"revision", "rev", "seat_rev"} or not isinstance(body.get("revision"), dict):
         raise ValueError("seat update needs a revision and both revision tokens")
     revision = body["revision"]

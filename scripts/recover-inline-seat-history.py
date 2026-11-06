@@ -12,6 +12,7 @@ from wolfmark_ledger import membership as mem, membership_store as store  # noqa
 
 
 def convert(raw):
+    """Convert embedded seat revisions into separate recovery documents."""
     if (not isinstance(raw, dict) or set(raw) != {'version', 'accounts'}
             or type(raw['version']) is not int or raw['version'] != store.STORE_VERSION
             or not isinstance(raw['accounts'], list)):
@@ -41,6 +42,7 @@ def convert(raw):
 
 
 def main():
+    """Export a recovery bundle without modifying or overwriting its source."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path, help='backed-up memberships.json from the earlier PR test build')
     parser.add_argument('output', type=Path, help='new recovery JSON file; must not already exist')

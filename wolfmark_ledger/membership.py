@@ -1539,6 +1539,7 @@ MEMBERSHIP_FIELDS = {
 
 
 def seat_revision_errors(revisions: Any) -> list[str]:
+    """Validate seat revision fields, quantities, periods and timestamps."""
     errors: list[str] = []
     if not isinstance(revisions, list):
         errors.append("seat revisions must be a list")

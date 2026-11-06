@@ -28,6 +28,7 @@ def _replace_bytes(path: Path, value: bytes) -> None:
 
 def reset_user_data(membership_path: Path | str | None = None,
                     billing_path: Path | str | None = None) -> dict:
+    """Reset profile user data with rollback if a replacement fails."""
     members = Path(membership_path) if membership_path else membership_store.store_path()
     profiles = Path(billing_path) if billing_path else billing.profiles_path()
     seats = membership_store.seat_store_path(members)
