@@ -142,7 +142,7 @@ def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
                      native_snapshots: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     """Stored accounts with quota. ``native`` uses Hermes' own readings."""
     book, _source = active_catalogue(catalogue or None, data_dir=data_dir)
-    data = store.load_store(path)
+    data = store.load_with_seats(path)
     if data.get("error"):
         # A corrupt store is not "no memberships": say so, and let the caller
         # surface a read error instead of an empty, confident list.
@@ -167,6 +167,8 @@ def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
         "ok": True,
         "catalogue_version": book.get("catalogue_version"),
         "accounts": cards,
+        "membership_store": data["membership_store"],
+        "seat_store": data["seat_store"],
         "store": {"loaded": data.get("loaded"), "error": data.get("error") or "", "path": data.get("path")},
         "native_probe": bool(native),
         "notes": notes,
@@ -177,8 +179,9 @@ def fee_summary_payload(*, path: Optional[Path | str] = None,
                         catalogue: Optional[Mapping[str, Any]] = None,
                         data_dir: Optional[Path | str] = None,
                         at: Any = None) -> dict[str, Any]:
+    """Summarise effective membership fees by currency and billing period."""
     book, _source = active_catalogue(catalogue or None, data_dir=data_dir)
-    data = store.load_store(path)
+    data = store.load_with_seats(path)
     if data.get("error"):
         raise store.StoreUnreadable(str(data["error"]))
     entries = []
@@ -340,7 +343,7 @@ DERIVED_FIELDS = frozenset({
     "plan", "fee", "quota", "cycle", "effective_arrangement", "plan_proposal", "plan_reconfirmation", "native_state", "rev",
     # Route-eligibility lists are computed from the catalogue per request, so a
     # card posted back unchanged must not try to persist them.
-    "plan_choices", "excluded_plans",
+    "plan_choices", "excluded_plans", "seat_revisions", "seat_rev",
 })
 # `usage_source` and `catalogue_plans` are written by discovery and re-validated
 # on the next save, so they are part of the document rather than derived.
@@ -362,6 +365,25 @@ def save_payload(account_id: str, body: Mapping[str, Any], *, if_rev: Optional[s
     result = store.save_account(payload, path, if_rev=if_rev or (body or {}).get("rev"),
                                 must_exist=True)
     return {"ok": True, "account": result["account"], "accounts": result["accounts"]}
+
+
+def save_seat_payload(account_id: str, body: Mapping[str, Any], *,
+                      path: Optional[Path | str] = None) -> dict[str, Any]:
+    """Validate a seat update and append it to the profile sidecar."""
+    if set(body) != {"revision", "rev", "seat_rev"} or not isinstance(body.get("revision"), dict):
+        raise ValueError("seat update needs a revision and both revision tokens")
+    revision = body["revision"]
+    errors = mem.seat_revision_errors([revision])
+    if errors:
+        raise ValueError("; ".join(errors))
+    if revision.get("quantity") is not None:
+        book, _ = active_catalogue()
+        plan = mem.plan_index(book).get(revision.get("plan_id"))
+        if (not plan or plan.get("billing_arrangement") != "recurring_subscription"
+                or not isinstance(plan.get("seat_pricing"), dict)):
+            raise ValueError("seat quantity requires a per-seat subscription plan")
+    return {"ok": True, **store.append_seat_revision(
+        account_id, revision, if_rev=body.get("rev"), if_seat_rev=body.get("seat_rev"), path=path)}
 
 
 def delete_payload(account_id: str, *, path: Optional[Path | str] = None) -> dict[str, Any]:

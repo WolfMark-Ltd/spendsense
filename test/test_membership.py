@@ -135,8 +135,9 @@ def override(amount=16.0, currency="GBP", reason="legacy_pricing",
 
 class CatalogueLoadingTests(unittest.TestCase):
     def test_seed_catalogue_loads_with_families_and_kinds(self):
+        """Verify seed catalogue loads with families and kinds."""
         catalogue_data = catalogue()
-        self.assertEqual(catalogue_data["catalogue_version"], "2026-11-04.3")
+        self.assertEqual(catalogue_data["catalogue_version"], "2026-11-06.1")
         families = {p["provider_family"] for p in catalogue_data["plans"]}
         for expected in ("openai-codex", "anthropic", "commandcode", "xai-oauth",
                          "github-copilot", "nous", "openrouter", "zai-coding-plan"):

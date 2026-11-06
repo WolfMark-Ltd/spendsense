@@ -145,8 +145,8 @@ class StagingAndApproval(CatalogueCase):
         before = (self.catalogue_dir / "plans.json").read_bytes()
         revision = self.stage("demo-change", note="october review")
         self.assertEqual(revision["status"], "staged")
-        self.assertEqual(revision["base_version"], "2026-11-04.3")
-        self.assertEqual(revision["proposed_version"], "2026-11-04.4")
+        self.assertEqual(revision["base_version"], "2026-11-06.1")
+        self.assertEqual(revision["proposed_version"], "2026-11-06.2")
         self.assertTrue((self.catalogue_dir / "revisions" / f"{revision['revision_id']}.json").exists())
         self.assertEqual((self.catalogue_dir / "plans.json").read_bytes(), before,
                          "staging must not touch the active catalogue")
@@ -192,7 +192,7 @@ class Activation(CatalogueCase):
                                                  "price_changed:opencode-go.go-plus": "reject"})
         result = R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")
         self.assertTrue(result["activated"])
-        self.assertEqual(result["to_version"], "2026-11-04.4")
+        self.assertEqual(result["to_version"], "2026-11-06.2")
         updated = M.load_plan_catalogue(self.catalogue_dir / "plans.json")
         self.assertEqual(self.plan(updated, "opencode-go.go")["price"]["amount"], 12.0)
         self.assertEqual(self.plan(updated, "opencode-go.go-plus")["price"]["amount"], 40.0,
@@ -206,7 +206,7 @@ class Activation(CatalogueCase):
         archived = list((self.catalogue_dir / "history").glob("plans-*.json"))
         self.assertEqual(len(archived), 1)
         restored = M.load_plan_catalogue(archived[0])
-        self.assertEqual(restored["catalogue_version"], "2026-11-04.3")
+        self.assertEqual(restored["catalogue_version"], "2026-11-06.1")
         self.assertEqual(self.plan(restored, "opencode-go.go")["price"]["amount"], 10.0)
 
     def test_a_dry_run_changes_nothing(self):
@@ -219,15 +219,16 @@ class Activation(CatalogueCase):
         self.assertEqual((self.catalogue_dir / "plans.json").read_bytes(), before)
 
     def test_rollback_restores_the_archive(self):
+        """Verify rollback restores the archive."""
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "accept"})
         R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")
         rolled = M.load_plan_catalogue(self.catalogue_dir / "plans.json")
         self.assertEqual(self.plan(rolled, "opencode-go.go")["price"]["amount"], 12.0)
-        result = R.rollback(self.catalogue_dir, "2026-11-04.3", by="reviewer", reason="revert the trial price")
+        result = R.rollback(self.catalogue_dir, "2026-11-06.1", by="reviewer", reason="revert the trial price")
         self.assertTrue(result["rolled_back"])
         back = M.load_plan_catalogue(self.catalogue_dir / "plans.json")
-        self.assertEqual(back["catalogue_version"], "2026-11-04.3")
+        self.assertEqual(back["catalogue_version"], "2026-11-06.1")
         self.assertEqual(self.plan(back, "opencode-go.go")["price"]["amount"], 10.0)
         record = R.load_revision(self.catalogue_dir, result["revision_id"])
         self.assertEqual(record["status"], "rollback")
@@ -239,18 +240,19 @@ class Activation(CatalogueCase):
             R.rollback(self.catalogue_dir, "1999-01-01.1", by="reviewer")
 
     def test_rollback_refuses_to_overwrite_a_conflicting_archive(self):
+        """Verify rollback refuses to overwrite a conflicting archive."""
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "accept"})
         R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")
         planted = dict(M.load_plan_catalogue(self.catalogue_dir / "plans.json"))
         planted["plans"] = [{**p, "price": {**p["price"], "amount": 999.0}}
                             if p["id"] == "opencode-go.go" else p for p in planted["plans"]]
-        archive = self.catalogue_dir / "history" / "plans-2026-11-04.4.json"
+        archive = self.catalogue_dir / "history" / "plans-2026-11-06.2.json"
         archive.write_text(json.dumps(planted, indent=2, sort_keys=True))
         before_active = (self.catalogue_dir / "plans.json").read_bytes()
         before_archive = archive.read_bytes()
         with self.assertRaises(ValueError):
-            R.rollback(self.catalogue_dir, "2026-11-04.3", by="reviewer")
+            R.rollback(self.catalogue_dir, "2026-11-06.1", by="reviewer")
         self.assertEqual((self.catalogue_dir / "plans.json").read_bytes(), before_active)
         self.assertEqual(archive.read_bytes(), before_archive)
 
@@ -261,8 +263,8 @@ class Activation(CatalogueCase):
         # Archives store the raw persisted bytes, so an identical archive is a
         # byte copy of the active catalogue — not the loader-normalised form.
         current = (self.catalogue_dir / "plans.json").read_bytes()
-        (self.catalogue_dir / "history" / "plans-2026-11-04.4.json").write_bytes(current)
-        result = R.rollback(self.catalogue_dir, "2026-11-04.3", by="reviewer")
+        (self.catalogue_dir / "history" / "plans-2026-11-06.2.json").write_bytes(current)
+        result = R.rollback(self.catalogue_dir, "2026-11-06.1", by="reviewer")
         self.assertTrue(result["rolled_back"])
 
     def test_personal_fee_overrides_survive_activation_and_rollback(self):
@@ -281,7 +283,7 @@ class Activation(CatalogueCase):
         revision = self._approve("demo-change", {"price_changed:opencode-go.go": "accept",
                                                  "price_changed:opencode-go.go-plus": "accept"})
         R.activate(self.catalogue_dir, revision["revision_id"], by="reviewer")
-        R.rollback(self.catalogue_dir, "2026-11-04.3", by="reviewer")
+        R.rollback(self.catalogue_dir, "2026-11-06.1", by="reviewer")
         self.assertEqual(memberships.read_bytes(), before,
                          "a catalogue change must never rewrite a personal fee override")
         fee = M.resolve_fee(store.accounts_by_id(memberships)["opencode-go:default"],
@@ -339,8 +341,8 @@ class ActivationRoundTripTests(CatalogueCase):
 
     def test_rollback_restores_the_archived_bytes(self):
         self._activate_demo_change()
-        archive = self.catalogue_dir / "history" / "plans-2026-11-04.3.json"
-        result = R.rollback(self.catalogue_dir, "2026-11-04.3", by="reviewer",
+        archive = self.catalogue_dir / "history" / "plans-2026-11-06.1.json"
+        result = R.rollback(self.catalogue_dir, "2026-11-06.1", by="reviewer",
                             reason="revert the trial price")
         self.assertTrue(result["rolled_back"])
         self.assertEqual((self.catalogue_dir / "plans.json").read_bytes(),
@@ -349,15 +351,15 @@ class ActivationRoundTripTests(CatalogueCase):
     def test_activation_after_rollback_succeeds(self):
         raw_before = (self.catalogue_dir / "plans.json").read_bytes()
         self._activate_demo_change()
-        archive = self.catalogue_dir / "history" / "plans-2026-11-04.3.json"
+        archive = self.catalogue_dir / "history" / "plans-2026-11-06.1.json"
         self.assertEqual(archive.read_bytes(), raw_before,
                          "activation archives the original plans.json bytes")
-        R.rollback(self.catalogue_dir, "2026-11-04.3", by="reviewer")
+        R.rollback(self.catalogue_dir, "2026-11-06.1", by="reviewer")
         self.active = M.load_plan_catalogue(self.catalogue_dir / "plans.json")
         archive_before = archive.read_bytes()
         result = self._activate_demo_change()
         self.assertTrue(result["activated"])
-        self.assertEqual(result["to_version"], "2026-11-04.5")
+        self.assertEqual(result["to_version"], "2026-11-06.3")
         self.assertEqual(archive.read_bytes(), archive_before,
                          "a matching archive is reused, not rewritten")
 
@@ -385,7 +387,7 @@ class ActivationRoundTripTests(CatalogueCase):
         forged["plans"][0]["price"]["amount"] = 999.0
         history = self.catalogue_dir / "history"
         history.mkdir(parents=True, exist_ok=True)
-        (history / "plans-2026-11-04.3.json").write_text(json.dumps(forged))
+        (history / "plans-2026-11-06.1.json").write_text(json.dumps(forged))
         revision = self.stage("demo-change")
         R.approve(self.catalogue_dir, revision["revision_id"],
                   {"price_changed:opencode-go.go": "accept",

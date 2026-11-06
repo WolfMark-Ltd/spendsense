@@ -107,7 +107,8 @@ def _split_window_expenditure(account: Mapping[str, Any], plans: Mapping[str, An
         return None
     revisions = [o for o in (account.get("fee_overrides") or []) if isinstance(o, dict)]
     custom = account.get("custom_plan")
-    candidates = revisions + ([custom] if isinstance(custom, dict) else [])
+    seats = [r for r in (account.get("seat_revisions") or []) if isinstance(r, dict)]
+    candidates = revisions + seats + ([custom] if isinstance(custom, dict) else [])
     splits = set()
     for rev in candidates:
         for key in ("effective_from", "effective_to"):
@@ -555,7 +556,7 @@ def build_economics_report(
     else:
         history_plans = plans
 
-    stored = mstore.load_store(membership_path)
+    stored = mstore.load_with_seats(membership_path)
     if stored.get("error"):
         raise mstore.StoreUnreadable(str(stored["error"]))
     accounts = stored.get("accounts", [])

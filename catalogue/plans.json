@@ -1,5 +1,5 @@
 {
-  "catalogue_version": "2026-11-04.3",
+  "catalogue_version": "2026-11-06.1",
   "generated_at": "2026-11-04T05:35:33+00:00",
   "notes": [
     "Seed catalogue for the account-first membership redesign. Structure is final; most prices are not.",
@@ -14,7 +14,8 @@
     "2026-10-31.1: Nous current Free, Plus, Super and Ultra plans added from the Portal; API-key usage is separately metered. The previous unpriced Portal entry remains for existing selections.",
     "2026-11-04.1: Alibaba Coding Plan Pro verified at $50/month with request quotas; Claude's $200 tier renamed to Ultra (10x weekly, no 5-hour limit); Ollama Team verified at $500/month (still early access); Copilot prices and credit allotments re-confirmed. Tencent publishes four Token Plan tiers, MiniMax an M Plan with three tiers, Kimi states no API subscription, Volcengine gates its Coding Plan price, xAI prices Plus/Premium/Super/Ultra but no SuperGrok tier, and CommandCode still contradicts itself on Go windows ($2/$5 table vs $3/$6 FAQ and Go page).",
     "2026-11-04.2: ChatGPT Business Standard verified against the Help Centre ($25/$20 per seat) and Premium added ($125/$100); Tencent Token Plan split into Lite/Standard/Pro/Max tiers (legacy generic entry kept); X Subscription modelled as its own family (Free/Plus/Premium/Super/Ultra/Teams/Enterprise) with legacy SuperGrok preserved and no tier equivalence inferred.",
-    "2026-11-04.3: staged by catalogue-maintain; 3 accepted change(s)."
+    "2026-11-04.3: staged by catalogue-maintain; 3 accepted change(s).",
+    "2026-11-06.1: structured verified per-seat monthly and annual prices for ChatGPT Business Standard and Premium."
   ],
   "plans": [
     {
@@ -1678,6 +1679,21 @@
         "notes": "Help Centre checked on 2026-11-04: 'Standard ChatGPT seats cost $25 per user per month on monthly billing or $20 per user per month when billed annually.' Previously tracker-confirmed; now verified against official pricing.",
         "source_id": "openai-business-help",
         "status": "verified"
+      },
+      "seat_pricing": {
+        "prices": {
+          "month": {
+            "amount": 25.0,
+            "currency": "USD",
+            "period": "month"
+          },
+          "year": {
+            "amount": 240.0,
+            "currency": "USD",
+            "period": "year"
+          }
+        },
+        "usual_minimum": 2
       }
     },
     {
@@ -1715,6 +1731,21 @@
         "notes": "Help Centre checked on 2026-11-04: 'Premium ChatGPT seats cost $125 per user per month on monthly billing or $100 per user per month when billed annually.'",
         "source_id": "openai-business-help",
         "status": "verified"
+      },
+      "seat_pricing": {
+        "prices": {
+          "month": {
+            "amount": 125.0,
+            "currency": "USD",
+            "period": "month"
+          },
+          "year": {
+            "amount": 1200.0,
+            "currency": "USD",
+            "period": "year"
+          }
+        },
+        "usual_minimum": 2
       }
     },
     {

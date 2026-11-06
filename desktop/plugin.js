@@ -4110,7 +4110,7 @@ function SettingsPage() {
         rest('/membership/accounts'), rest('/billing/profiles')
       ])
       if (!membershipIdentityCurrent(captured)) return
-      if (!Array.isArray(accountDoc?.accounts) || accountDoc?.store?.error ||
+      if (!Array.isArray(accountDoc?.accounts) || accountDoc?.store?.error || !accountDoc?.seat_store || !accountDoc?.membership_store ||
           !Array.isArray(profileDoc?.profiles) || profileDoc?.error) {
         throw new Error('The user-data export is incomplete.')
       }
@@ -4118,8 +4118,10 @@ function SettingsPage() {
         product: 'Spend Sense',
         version: PLUGIN_VERSION,
         exported_at: new Date().toISOString(),
-        note: 'This contains only Spend Sense membership and advanced-rule data. It contains no provider credential secrets or recorded usage ledger.',
+        note: 'This contains Spend Sense membership, seat history and advanced-rule data. It contains no provider credential secrets or recorded usage ledger.',
         memberships: accountDoc.accounts,
+        membership_store: accountDoc.membership_store,
+        seat_history: accountDoc.seat_store,
         advanced_rules: profileDoc.profiles
       }
       const copied = await writeClipboard(JSON.stringify(bundle, null, 2))
@@ -5087,6 +5089,7 @@ async function membershipWrite(method, path, body, transport = rest) {
 function membershipErrorKind(error) {
   const raw = typeof error?.message === 'string' ? error.message : String(error ?? '')
   const status = Number((raw.match(/\b([45][0-9]{2})\b/) || [])[1] || 0)
+  if (/seat_write_uncertain/i.test(raw)) return { kind: 'seat_write_uncertain', status }
   if (/store_unreadable/i.test(raw)) return { kind: 'storage', status }
   if (status === 401 || /unauthori|sign in/i.test(raw)) return { kind: 'auth', status }
   if (/plugin not found|no such plugin/i.test(raw)) return { kind: 'namespace', status }
@@ -5102,6 +5105,7 @@ function membershipErrorKind(error) {
 /** Short, operation-specific text. Never a raw FastAPI/Pydantic payload. */
 function membershipErrorText(error, operation = 'read', t = needsAttentionEn) {
   const { kind } = membershipErrorKind(error)
+  if (kind === 'seat_write_uncertain') return t('memErrSeatWriteUncertain')
   if (kind === 'storage') return t('memErrStorage')
   if (kind === 'auth') return t('memErrAuth')
   if (kind === 'namespace') return t('memErrNamespace')
@@ -5163,14 +5167,16 @@ function feeLabel(fee, t = needsAttentionEn) {
   if (fee.basis === 'prepaid') return t('memFeePrepaid')
   if (fee.basis === 'unconfirmed') return t('memFeeUnconfirmed')
   if (fee.basis === 'declared') {
-    const published = fee.published ? fmtMoney(fee.published.amount, fee.published.currency) : null
+    const comparison = fee.published?.per_seat ? null : fee.published
+    const published = comparison ? fmtMoney(comparison.amount, comparison.currency) : null
     const comparable = fee.currency_comparable !== false
     const tail = published && comparable
       ? t('memFeeTail', fee.published.source === 'user_defined' ? t('memFeeSrcCustom') : t('memFeeSrcCatalogue'), published) : ''
     return t('memFeeYourPrice', amount, period, tail)
   }
   if (fee.basis === 'custom') return t('memFeeCustom', amount, period)
-  if (fee.basis === 'catalogue') return t('memFeeCatalogue', amount, period)
+  if (fee.basis === 'catalogue') return fee.published?.per_seat && !fee.calculated
+    ? t('memSeatUnitFee', amount, period) : t('memFeeCatalogue', amount, period)
   if (fee.basis === 'unpriced') return t('memFeeUnpriced')
   return t('memFeeNoPlan')
 }
@@ -5819,6 +5825,10 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   const arrangement = account.effective_arrangement || (account.api_only ? 'api_only' : account.billing_arrangement || (planSaved ? 'subscription' : 'unconfirmed'))
   const apiOnly = arrangement === 'api_only'
   const subscription = arrangement === 'subscription'
+  const seatRevision = (account.seat_revisions || []).filter(r => r.plan_id === account.plan_id && Date.parse(r.effective_from) <= now)
+    .reduce((latest, item) => !latest || Date.parse(item.effective_from) >= Date.parse(latest.effective_from) ? item : latest, null)
+  const seatPricing = account.plan?.seat_pricing
+  const seatPeriods = seatPricing?.prices || { month: null, year: null }
   const customDraft = rawPlanDraft?.origin === identity && rawPlanDraft.account_id === account.id
     ? rawPlanDraft : null
   const customErrors = customPlanDraftErrors(customDraft, t)
@@ -6044,6 +6054,37 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
         ]
       })
     ] }) : null,
+    subscription && (seatPricing || seatRevision?.quantity != null) ? jsxs('form', { className: 'wm-fee-form',
+      onSubmit: event => {
+        event.preventDefault()
+        const fields = event.currentTarget.elements
+        onAction('seats', account, { quantity: String(fields.namedItem('quantity').value || '').trim(),
+          period: String(fields.namedItem('period').value || '') })
+      }, children: [
+      jsx('p', { className: 'wm-note', children: t('memSeatHelp') }),
+      !seatPricing ? jsx('p', { className: 'wm-note', children: t('memSeatUnavailable') }) : null,
+      ...Object.entries(seatPricing?.prices || {}).map(([period, price]) => jsx('p', { className: 'wm-note',
+        children: t('memSeatPrice', fmtMoney(price.amount, price.currency) || '—', t('memPeriodAbbr', period)) }, period)),
+      seatPricing?.usual_minimum ? jsx('p', { className: 'wm-note', children: t('memSeatMinimum', seatPricing.usual_minimum) }) : null,
+      jsxs('div', { className: 'wm-controls', children: [
+        jsxs('label', { className: 'wm-filter', children: [
+          jsx('span', { children: t('memSeats') }),
+          jsx('input', { type: 'number', name: 'quantity', min: '1', step: '1', inputMode: 'numeric',
+            defaultValue: seatRevision?.quantity ?? '', disabled: !!busy, 'aria-describedby': `seat-help-${account.id}` })
+        ] }),
+        jsxs('label', { className: 'wm-filter', children: [
+          jsx('span', { children: t('memPeriod') }),
+          jsx('select', { name: 'period', defaultValue: seatRevision?.period || 'month', disabled: !!busy,
+            children: Object.keys(seatPeriods).map(period => jsx('option', { value: period,
+              children: period === 'year' ? t('memPeriodYearly') : t('memPeriodMonthly') }, period)) })
+        ] }),
+        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy, children: t('memSaveSeats') })
+      ] }),
+      jsx('p', { className: 'wm-note', id: `seat-help-${account.id}`, children: t('memSeatClear') }),
+      fee.calculated ? jsx('p', { className: 'wm-note', 'data-seat-total': 'true', children: t('memSeatTotal',
+        fmtMoney(fee.calculated.unit_amount, fee.calculated.currency), t('memPeriodAbbr', fee.calculated.period),
+        fee.calculated.quantity, fmtMoney(fee.calculated.amount, fee.calculated.currency)) }) : null
+    ] }, `seats-${account.rev || ''}-${account.plan_id}`) : null,
     subscription || apiOnly ? jsxs('div', { className: 'wm-fee-row', children: [
       jsx('span', { className: 'wm-fee', children: feeLabel(fee, t) }),
       jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'edit-fee',
@@ -6381,6 +6422,21 @@ function MembershipsPage() {
     if (kind === 'plan') {
       return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
                  { ...account, plan_id: value || null }, 'PUT')
+    }
+    if (kind === 'seats') {
+      const raw = value?.quantity || ''
+      const quantity = raw === '' ? null : Number(raw)
+      if ((quantity !== null && (!Number.isSafeInteger(quantity) || quantity < 1)) ||
+          !(account.plan?.seat_pricing ? Object.hasOwn(account.plan.seat_pricing.prices || {}, value?.period)
+            : quantity === null && ['month', 'year'].includes(value?.period))) {
+        setMembershipNotice(identity, 'warn', t('memSeatInvalid'), undefined, account.id)
+        return { ok: false, invalid: true }
+      }
+      const effective_from = new Date().toISOString()
+      const revision = { id: `${effective_from}-${Math.random().toString(36).slice(2)}`, plan_id: account.plan_id,
+        quantity, period: value.period, effective_from }
+      return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}/seats`,
+        { revision, rev: account.rev, seat_rev: account.seat_rev }, 'PUT')
     }
     if (kind === 'fee') {
       // The draft carries the identity it was opened in, so a save can tell
@@ -7540,6 +7596,16 @@ const I18N = {
     memSubtitle: 'Confirm each account’s plan and declared fee. Usage tracking never depends on this page.',
     memDetails: 'Details',
     memGroupPlan: 'Plan & billing',
+    memSeats: 'Seats',
+    memSaveSeats: 'Save seats',
+    memSeatHelp: 'Enter the number of seats and billing period to calculate the catalogue total.',
+    memSeatUnavailable: 'Per-seat pricing is unavailable in this catalogue. You can clear the saved quantity.',
+    memSeatPrice: (price, period) => `Catalogue: ${price} per seat/${period}`,
+    memSeatUnitFee: (price, period) => `Catalogue: ${price}${period} per seat`,
+    memSeatClear: 'Leave seats empty and save to clear the quantity. Use a positive whole number.',
+    memSeatMinimum: n => `Usually at least ${n} seats are required; provider exceptions may apply.`,
+    memSeatInvalid: 'Enter a positive whole number of seats, or leave it empty to clear.',
+    memSeatTotal: (price, period, quantity, total) => `${price} per seat/${period} × ${quantity} = ${total}/${period} catalogue total`,
     memGroupAllow: 'Allowances & readings',
     memGroupAdvanced: 'Advanced & diagnostics',
     memNeedsAttention: 'Needs attention',
@@ -7670,6 +7736,7 @@ const I18N = {
     memPlanErrAllowanceAmount: 'Allowance amount must be zero or more.',
     // Backend failures.
     memErrStorage: 'The membership store could not be read, so nothing was changed. The file is preserved; fix or restore it before saving.',
+    memErrSeatWriteUncertain: 'The seat data may have been saved, but the write could not be confirmed. Reload memberships before trying again.',
     memErrAuth: 'Your Desktop session has expired. Sign in again, then retry.',
     memErrNamespace: 'The membership plugin is not available on this connection and profile. Choose the right connection, or check that the plugin is enabled here.',
     memErrConflict: 'This membership changed since you loaded it. Reload, then save again.',
@@ -8210,8 +8277,8 @@ const I18N = {
     settingsRecoveryPrefsConfirmText: 'Reset the SpendSense display preferences to their defaults?',
     settingsRecoveryPrefsConfirm: 'Confirm preference reset',
     settingsResetPrefs: 'Reset display preferences',
-    settingsRecoveryDataExplain: 'User-data recovery covers Memberships and advanced billing rules only. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.',
-    settingsRecoveryBackupText: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership and advanced-rule data.',
+    settingsRecoveryDataExplain: 'User-data recovery covers Memberships, seat history and advanced billing rules. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.',
+    settingsRecoveryBackupText: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership, seat history and advanced-rule data.',
     settingsRecoveryDataConfirm: 'Confirm and clear user-entered data',
     settingsCopyBackup: 'Copy recovery backup before reset',
     settingsAboutHeading: 'About and support',
@@ -8633,6 +8700,16 @@ const I18N = {
     memSubtitle: '确认每个账户的方案与已申报费用。用量跟踪不依赖于此页面。',
     memDetails: '详情',
     memGroupPlan: '方案与账单',
+    memSeats: '席位数',
+    memSaveSeats: '保存席位数',
+    memSeatHelp: '输入席位数并选择账单周期，计算目录总价。',
+    memSeatUnavailable: '此目录没有可用的每席价格。您可以清除已保存的席位数。',
+    memSeatPrice: (price, period) => `目录价格：每席 ${price}/${period}`,
+    memSeatUnitFee: (price, period) => `目录价格：每席 ${price}${period}`,
+    memSeatClear: '清空席位数并保存即可移除数量。请输入正整数。',
+    memSeatMinimum: n => `通常至少需要 ${n} 个席位；服务商可能允许例外。`,
+    memSeatInvalid: '请输入正整数席位数，或留空以清除。',
+    memSeatTotal: (price, period, quantity, total) => `每席 ${price}/${period} × ${quantity} = 目录总价 ${total}/${period}`,
     memGroupAllow: '额度与读数',
     memGroupAdvanced: '高级与诊断',
     memNeedsAttention: '需要注意',
@@ -8763,6 +8840,7 @@ const I18N = {
     memPlanErrAllowanceAmount: '额度数量必须为 0 或更大。',
     // 后端失败。
     memErrStorage: '会员数据无法读取，没有任何内容被更改。文件已保留；保存前请先修复或恢复。',
+    memErrSeatWriteUncertain: '席位数据可能已保存，但无法确认写入是否完成。请先重新加载会员，再重试。',
     memErrAuth: 'Desktop 会话已过期，请重新登录后再试。',
     memErrNamespace: '该连接和档案下没有会员插件。请选择正确的连接，或检查插件是否已启用。',
     memErrConflict: '该会员在你加载后发生了变化，请重新加载再保存。',
@@ -9303,8 +9381,8 @@ const I18N = {
     settingsRecoveryPrefsConfirmText: '将 SpendSense 显示偏好重置为默认值吗？',
     settingsRecoveryPrefsConfirm: '确认重置偏好',
     settingsResetPrefs: '重置显示偏好',
-    settingsRecoveryDataExplain: '用户数据恢复仅涵盖会员与高级计费规则。已捕获的桌面用量账本、Hermes 数据与供应商凭据不受影响。',
-    settingsRecoveryBackupText: '备份已复制到剪贴板。在清除配置文件会员与高级规则数据前，请将其保存到安全位置。',
+    settingsRecoveryDataExplain: '用户数据恢复涵盖会员、席位历史和高级计费规则。已捕获的桌面用量账本、Hermes 数据与供应商凭据不受影响。',
+    settingsRecoveryBackupText: '备份已复制到剪贴板。在清除配置文件会员、席位历史与高级规则数据前，请将其保存到安全位置。',
     settingsRecoveryDataConfirm: '确认并清除用户输入的数据',
     settingsCopyBackup: '重置前复制恢复备份',
     settingsAboutHeading: '关于与支持',

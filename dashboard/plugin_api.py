@@ -38,7 +38,7 @@ from wolfmark_ledger import user_data  # noqa: E402
 from wolfmark_ledger import membership_api as members  # noqa: E402
 from wolfmark_ledger import monitoring, news as news_mod  # noqa: E402
 from wolfmark_ledger.membership import CatalogueError  # noqa: E402
-from wolfmark_ledger.membership_store import MembershipConflict, StoreUnreadable  # noqa: E402
+from wolfmark_ledger.membership_store import MembershipConflict, SeatStoreDurabilityError, StoreUnreadable  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -287,6 +287,10 @@ def membership_discover(native: bool = Query(False, description="Also read accou
         raise _store_unreadable(exc) from exc
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except MembershipConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SeatStoreDurabilityError as exc:
+        raise HTTPException(status_code=503, detail="seat_write_uncertain: reload membership data before retrying") from exc
     except Exception as exc:  # noqa: BLE001 - discovery must fail closed, never 500 with internals
         log.error("spend-sense: discovery failed")
         raise HTTPException(status_code=500, detail="discovery failed") from exc
@@ -295,6 +299,7 @@ def membership_discover(native: bool = Query(False, description="Also read accou
 @router.put("/membership/accounts/{account_id}")
 def membership_save(account_id: str, account: dict[str, Any],
                     if_rev: str | None = Query(None)) -> dict[str, Any]:
+    """Save an existing membership using its revision token."""
     try:
         return members.save_payload(account_id, account, if_rev=if_rev)
     except StoreUnreadable as exc:
@@ -305,16 +310,38 @@ def membership_save(account_id: str, account: dict[str, Any],
         raise HTTPException(status_code=404, detail="no such membership in this store") from exc
     except MembershipConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SeatStoreDurabilityError as exc:
+        raise HTTPException(status_code=503, detail="seat_write_uncertain: reload membership data before retrying") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.delete("/membership/accounts/{account_id}")
 def membership_delete(account_id: str) -> dict[str, Any]:
+    """Delete a membership and its associated seat history."""
     try:
         return members.delete_payload(account_id)
     except StoreUnreadable as exc:
         raise _store_unreadable(exc) from exc
+    except SeatStoreDurabilityError as exc:
+        raise HTTPException(status_code=503, detail="seat_write_uncertain: reload membership data before retrying") from exc
+
+
+@router.put("/membership/accounts/{account_id}/seats")
+def membership_seats_save(account_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Append a seat revision after checking account and seat revisions."""
+    try:
+        return members.save_seat_payload(account_id, body)
+    except StoreUnreadable as exc:
+        raise _store_unreadable(exc) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="no such membership") from exc
+    except MembershipConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SeatStoreDurabilityError as exc:
+        raise HTTPException(status_code=503, detail="seat_write_uncertain: reload membership data before retrying") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/membership/accounts/{account_id}/exhaustion")

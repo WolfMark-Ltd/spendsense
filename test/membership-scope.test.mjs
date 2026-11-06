@@ -2761,3 +2761,95 @@ test('PR26 review: account-scope exhaustion rows follow the UI language', async 
     i18nBackend.t = enT
   }
 })
+
+test('seat controls save and clear a quantity with billing period', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const id = 'openai-codex:seats'
+  let saved = account(id, { plan_id: 'business', seat_rev: 's1', seat_revisions: [
+    { id: 'active', plan_id: 'business', quantity: 2, period: 'month', effective_from: '2020-01-01T00:00:00Z' },
+    { id: 'future', plan_id: 'business', quantity: null, period: 'month', effective_from: '2099-01-01T00:00:00Z' }
+  ], plan: { name: 'Business', seat_pricing: {
+    usual_minimum: 2, prices: { month: { amount: 125, currency: 'USD', period: 'month' },
+      year: { amount: 1200, currency: 'USD', period: 'year' } } } },
+    fee: { basis: 'catalogue', effective: { amount: 125, currency: 'USD', period: 'month' },
+      published: { amount: 125, currency: 'USD', per_seat: true } } })
+  transportCtl.respond(call => {
+    if (call.path === '/membership/plans') return plansOk()
+    if (call.method === 'PUT') {
+      saved = { ...saved, seat_revisions: [...saved.seat_revisions, call.body.revision], seat_rev: 's2' }
+      return { ok: true }
+    }
+    return { ok: true, accounts: [saved], store: { loaded: true, error: '' }, notes: [] }
+  })
+  const { container } = await boot(); await flush(3)
+  assert.match(container.textContent, /Usually at least 2 seats/)
+  assert.match(container.textContent, /\$125\.00 per seat/)
+  const form = container.querySelector('input[name="quantity"]').closest('form')
+  assert.equal(form.querySelector('input[name="quantity"]').value, '2', 'future revisions do not replace current form values')
+  await setField(container, 'Seats', '3', form)
+  await setField(container, 'Period', 'year', form)
+  await React.act(async () => form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })))
+  await flush(4)
+  let writes = transportCtl.calls.filter(call => call.method === 'PUT')
+  assert.equal(writes.at(-1).path, `/membership/accounts/${encodeURIComponent(id)}/seats`)
+  assert.equal(writes.at(-1).body.revision.quantity, 3)
+  assert.equal(writes.at(-1).body.revision.period, 'year')
+  assert.equal(writes.at(-1).body.seat_rev, 's1')
+  const next = container.querySelector('input[name="quantity"]').closest('form')
+  await setField(container, 'Seats', '', next)
+  await React.act(async () => next.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })))
+  await flush(4)
+  writes = transportCtl.calls.filter(call => call.method === 'PUT')
+  assert.equal(writes.at(-1).body.revision.quantity, null)
+  assert.equal(writes.at(-1).body.seat_rev, 's2')
+})
+
+test('seat comparison renders in Simplified Chinese', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const originalTranslate = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  try {
+    const member = account('openai-codex:zh', { plan_id: 'business', plan: { name: 'Business', seat_pricing: {
+      usual_minimum: 2, prices: { month: { amount: 125, currency: 'USD', period: 'month' } } } },
+      fee: { basis: 'declared', effective: { amount: 330, currency: 'USD', period: 'month' },
+        published: { amount: 125, currency: 'USD', per_seat: true },
+        calculated: { amount: 375, currency: 'USD', period: 'month', unit_amount: 125, quantity: 3 } } })
+    transportCtl.respond(call => call.path === '/membership/plans' ? plansOk()
+      : { ok: true, accounts: [member], store: { loaded: true, error: '' }, notes: [] })
+    const { container } = await boot(); await flush(3)
+    assert.match(container.textContent, /席位数/)
+    assert.match(container.textContent, /目录总价 \$375\.00/)
+    assert.match(container.textContent, /\$330\.00/)
+    assert.ok(container.querySelector('input[name="quantity"]'))
+  } finally { i18nBackend.t = originalTranslate }
+})
+
+test('recovery clipboard includes raw seat history and membership documents', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const seatStore = { version: 1, accounts: { account: { family: 'test', identity: null, revisions: [
+    { id: 's', plan_id: 'plan', quantity: 3, period: 'month', effective_from: '2026-01-01T00:00:00Z' }
+  ] } } }
+  const membershipStore = { version: 1, accounts: [{ id: 'account', family: 'test' }] }
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [account('account')], membership_store: membershipStore, seat_store: seatStore, store: {} }
+    : call.path === '/membership/plans' ? plansOk()
+      : { ok: true, profiles: [], loaded: true, error: '' })
+  let copied = ''
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { copied = text } } })
+  try {
+    const container = document.createElement('div'); document.body.appendChild(container)
+    const root = ReactDOMClient.createRoot(container); roots.push(root)
+    await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient }, React.createElement(T.SettingsPage))))
+    await flush(3)
+    await clickByText(container, 'Copy recovery backup before reset'); await flush(3)
+    const bundle = JSON.parse(copied)
+    assert.deepEqual(bundle.membership_store, membershipStore)
+    assert.deepEqual(bundle.seat_history, seatStore)
+  } finally { delete navigator.clipboard }
+})
