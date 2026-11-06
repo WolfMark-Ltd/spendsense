@@ -2761,3 +2761,60 @@ test('PR26 review: account-scope exhaustion rows follow the UI language', async 
     i18nBackend.t = enT
   }
 })
+
+test('seat controls save and clear a quantity with billing period', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const id = 'openai-codex:seats'
+  let saved = account(id, { plan_id: 'business', plan: { name: 'Business', seat_pricing: {
+    usual_minimum: 2, prices: { month: { amount: 125, currency: 'USD', period: 'month' },
+      year: { amount: 1200, currency: 'USD', period: 'year' } } } },
+    fee: { basis: 'catalogue', effective: { amount: 125, currency: 'USD', period: 'month' },
+      published: { amount: 125, currency: 'USD', per_seat: true } } })
+  transportCtl.respond(call => {
+    if (call.path === '/membership/plans') return plansOk()
+    if (call.method === 'PUT') { saved = { ...call.body, rev: 'r2' }; return { ok: true } }
+    return { ok: true, accounts: [saved], store: { loaded: true, error: '' }, notes: [] }
+  })
+  const { container } = await boot(); await flush(3)
+  assert.match(container.textContent, /Usually at least 2 seats/)
+  assert.match(container.textContent, /\$125\.00 per seat/)
+  const form = container.querySelector('input[name="quantity"]').closest('form')
+  await setField(container, 'Seats', '3', form)
+  await setField(container, 'Period', 'year', form)
+  await React.act(async () => form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })))
+  await flush(4)
+  let writes = transportCtl.calls.filter(call => call.method === 'PUT')
+  assert.equal(writes.at(-1).body.seat_revisions.at(-1).quantity, 3)
+  assert.equal(writes.at(-1).body.seat_revisions.at(-1).period, 'year')
+  const next = container.querySelector('input[name="quantity"]').closest('form')
+  await setField(container, 'Seats', '', next)
+  await React.act(async () => next.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })))
+  await flush(4)
+  writes = transportCtl.calls.filter(call => call.method === 'PUT')
+  assert.equal(writes.at(-1).body.seat_revisions.at(-1).quantity, null)
+})
+
+test('seat comparison renders in Simplified Chinese', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  const originalTranslate = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  try {
+    const member = account('openai-codex:zh', { plan_id: 'business', plan: { name: 'Business', seat_pricing: {
+      usual_minimum: 2, prices: { month: { amount: 125, currency: 'USD', period: 'month' } } } },
+      fee: { basis: 'declared', effective: { amount: 330, currency: 'USD', period: 'month' },
+        published: { amount: 125, currency: 'USD', per_seat: true },
+        calculated: { amount: 375, currency: 'USD', period: 'month', unit_amount: 125, quantity: 3 } } })
+    transportCtl.respond(call => call.path === '/membership/plans' ? plansOk()
+      : { ok: true, accounts: [member], store: { loaded: true, error: '' }, notes: [] })
+    const { container } = await boot(); await flush(3)
+    assert.match(container.textContent, /席位数/)
+    assert.match(container.textContent, /目录总价 \$375\.00/)
+    assert.match(container.textContent, /\$330\.00/)
+    assert.ok(container.querySelector('input[name="quantity"]'))
+  } finally { i18nBackend.t = originalTranslate }
+})

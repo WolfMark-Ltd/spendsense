@@ -338,6 +338,25 @@ def load_plan_catalogue(source: Mapping[str, Any] | str | Path | None = None) ->
             # A wallet is drawn down, not billed on a cycle: a recurring amount
             # here would be a subscription wearing the wrong label.
             raise CatalogueError(f"plan {plan_id} is a prepaid wallet with a recurring price")
+        seat_pricing = entry.get("seat_pricing")
+        if seat_pricing is not None:
+            if not isinstance(seat_pricing, dict) or arrangement != "recurring_subscription":
+                raise CatalogueError(f"plan {plan_id} has invalid seat pricing")
+            prices = seat_pricing.get("prices")
+            minimum = seat_pricing.get("usual_minimum")
+            if not isinstance(prices, dict) or not prices or set(prices) - {"month", "year"}:
+                raise CatalogueError(f"plan {plan_id} has invalid seat prices")
+            if minimum is not None and (isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 1):
+                raise CatalogueError(f"plan {plan_id} has invalid seat guidance")
+            normalised_prices = {}
+            for period, value in prices.items():
+                normalised = normalise_price(value, plan_id)
+                if normalised["period"] != period:
+                    raise CatalogueError(f"plan {plan_id} has a mismatched seat price period")
+                if normalised["amount"] is not None and not math.isfinite(normalised["amount"]):
+                    raise CatalogueError(f"plan {plan_id} has an invalid seat price")
+                normalised_prices[period] = normalised
+            seat_pricing = {"prices": normalised_prices, "usual_minimum": minimum}
         out.append({
             "id": plan_id,
             "provider_family": family,
@@ -346,6 +365,7 @@ def load_plan_catalogue(source: Mapping[str, Any] | str | Path | None = None) ->
             "kind": kind,
             "billing_arrangement": arrangement,
             "price": price,
+            "seat_pricing": seat_pricing,
             "billing_cycle": _cycle((entry.get("billing_cycle") or {}).get("anchor_day"),
                                     (entry.get("billing_cycle") or {}).get("period") or price["period"]),
             "entitlements": entitlements,
@@ -563,8 +583,37 @@ def resolve_fee(membership: Mapping[str, Any], catalogue: Mapping[str, Any] | No
             "verification": plan.get("verification"),
             "billing_cycle": plan.get("billing_cycle"),
             "source": plan.get("source") or "catalogue",
+            "per_seat": bool(plan.get("seat_pricing")),
             "effective": plan.get("effective"),
         }
+
+    calculated = None
+    seat_pricing = (plan or {}).get("seat_pricing")
+    seat_revisions = [r for r in (membership.get("seat_revisions") or [])
+                      if isinstance(r, dict) and r.get("plan_id") == plan_id
+                      and _epoch(r.get("effective_from")) is not None
+                      and _epoch(r.get("effective_from")) <= moment]
+    seat_revision = max(enumerate(seat_revisions),
+                        key=lambda item: (_epoch(item[1].get("effective_from")), item[0]),
+                        default=(0, None))[1]
+    published_price = (plan or {}).get("price") or {}
+    reference_price = ((seat_pricing or {}).get("prices") or {}).get(published_price.get("period")) if isinstance(seat_pricing, dict) else None
+    seat_prices_current = bool(reference_price and reference_price == published_price)
+    if (seat_revision and isinstance(seat_pricing, dict) and seat_prices_current and plan_active
+            and billing_arrangement(membership) == "subscription"
+            and (plan or {}).get("billing_arrangement") == "recurring_subscription"
+            and ((plan or {}).get("verification") or {}).get("status") == "verified"):
+        quantity = seat_revision.get("quantity")
+        period = seat_revision.get("period")
+        price = (seat_pricing.get("prices") or {}).get(period) or {}
+        unit = _money(price.get("amount"))
+        if (isinstance(quantity, int) and not isinstance(quantity, bool) and 0 < quantity <= 9007199254740991
+                and unit is not None and math.isfinite(unit) and unit >= 0 and math.isfinite(unit * quantity)
+                and price.get("currency") in CURRENCIES and price.get("period") == period):
+            calculated = {"amount": round(unit * quantity, 6), "currency": price["currency"],
+                          "period": period, "unit_amount": unit, "quantity": quantity,
+                          "billing_cycle": _cycle((membership.get("billing_cycle") or {}).get("anchor_day"), period),
+                          "source": "catalogue"}
 
     override = active_override(membership, moment)
     override_view: Optional[dict[str, Any]] = None
@@ -597,6 +646,15 @@ def resolve_fee(membership: Mapping[str, Any], catalogue: Mapping[str, Any] | No
         basis = "declared"
         effective = {k: override_view[k] for k in ("amount", "currency", "period", "billing_cycle")}
         effective["source"] = "account_override"
+    elif calculated:
+        basis = "catalogue"
+        effective = {k: calculated[k] for k in ("amount", "currency", "period", "billing_cycle", "source")}
+    elif (seat_revision and seat_revision.get("quantity") is not None
+          and billing_arrangement(membership) == "subscription"):
+        basis = "unpriced"
+        effective = {"amount": None, "currency": None, "period": None,
+                     "billing_cycle": None, "source": "none"}
+        notes.append("The selected per-seat price is unavailable or unverified.")
     elif published and published.get("amount") is not None:
         basis = "custom" if published.get("source") == "user_defined" else "catalogue"
         effective = {
@@ -656,6 +714,7 @@ def resolve_fee(membership: Mapping[str, Any], catalogue: Mapping[str, Any] | No
     return {
         "basis": basis,
         "published": published,
+        "calculated": calculated,
         "override": override_view,
         "effective": effective,
         "currency_comparable": comparable,
@@ -1470,7 +1529,7 @@ MEMBERSHIP_FIELDS = {
     "id", "family", "label", "route_slugs", "credential_present", "identity",
     "identity_source", "discovered_at", "plan_id", "plan_hint", "fee_overrides",
     "billing_cycle", "manual_exhaustions", "advanced", "migrated_from", "custom_plan",
-    "api_only", "billing_arrangement",
+    "api_only", "billing_arrangement", "seat_revisions",
     # Written by discovery, so they must survive validation on the next save.
     "catalogue_plans", "usage_source",
 }
@@ -1492,6 +1551,21 @@ def validation_errors(membership: Mapping[str, Any]) -> list[str]:
         errors.append("api_only must be a boolean")
     if "billing_arrangement" in membership and membership["billing_arrangement"] not in ("subscription", "prepaid", "unconfirmed"):
         errors.append("billing arrangement must be subscription, prepaid or unconfirmed")
+    revisions = membership.get("seat_revisions", [])
+    if not isinstance(revisions, list):
+        errors.append("seat revisions must be a list")
+    else:
+        for revision in revisions:
+            if not isinstance(revision, dict):
+                errors.append("each seat revision must be an object")
+                continue
+            quantity = revision.get("quantity")
+            if set(revision) != {"id", "plan_id", "quantity", "period", "effective_from"} or not str(revision.get("id") or "").strip() or not str(revision.get("plan_id") or "").strip() or _epoch(revision.get("effective_from")) is None:
+                errors.append("seat revision needs an id, plan and valid effective time")
+            if quantity is not None and (isinstance(quantity, bool) or not isinstance(quantity, int) or not 1 <= quantity <= 9007199254740991):
+                errors.append("seat quantity must be a positive integer or empty")
+            if revision.get("period") not in ("month", "year"):
+                errors.append("seat billing period must be month or year")
     custom_plan = membership.get("custom_plan")
     if custom_plan is not None:
         if not isinstance(custom_plan, dict):

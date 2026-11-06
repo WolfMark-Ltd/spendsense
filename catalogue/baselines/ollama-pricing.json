@@ -1,6 +1,6 @@
 {
   "adapter": "ollama_pricing",
-  "catalogue_version": "2026-11-04.3",
+  "catalogue_version": "2026-11-06.1",
   "complete": true,
   "derived_at": "2026-11-04T04:20:20Z",
   "family": "ollama-cloud",

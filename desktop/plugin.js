@@ -5163,14 +5163,16 @@ function feeLabel(fee, t = needsAttentionEn) {
   if (fee.basis === 'prepaid') return t('memFeePrepaid')
   if (fee.basis === 'unconfirmed') return t('memFeeUnconfirmed')
   if (fee.basis === 'declared') {
-    const published = fee.published ? fmtMoney(fee.published.amount, fee.published.currency) : null
+    const comparison = fee.published?.per_seat ? null : fee.published
+    const published = comparison ? fmtMoney(comparison.amount, comparison.currency) : null
     const comparable = fee.currency_comparable !== false
     const tail = published && comparable
       ? t('memFeeTail', fee.published.source === 'user_defined' ? t('memFeeSrcCustom') : t('memFeeSrcCatalogue'), published) : ''
     return t('memFeeYourPrice', amount, period, tail)
   }
   if (fee.basis === 'custom') return t('memFeeCustom', amount, period)
-  if (fee.basis === 'catalogue') return t('memFeeCatalogue', amount, period)
+  if (fee.basis === 'catalogue') return fee.published?.per_seat && !fee.calculated
+    ? t('memSeatUnitFee', amount, period) : t('memFeeCatalogue', amount, period)
   if (fee.basis === 'unpriced') return t('memFeeUnpriced')
   return t('memFeeNoPlan')
 }
@@ -5819,6 +5821,10 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   const arrangement = account.effective_arrangement || (account.api_only ? 'api_only' : account.billing_arrangement || (planSaved ? 'subscription' : 'unconfirmed'))
   const apiOnly = arrangement === 'api_only'
   const subscription = arrangement === 'subscription'
+  const seatRevision = (account.seat_revisions || []).filter(r => r.plan_id === account.plan_id)
+    .reduce((latest, item) => !latest || Date.parse(item.effective_from) >= Date.parse(latest.effective_from) ? item : latest, null)
+  const seatPricing = account.plan?.seat_pricing
+  const seatPeriods = seatPricing?.prices || { month: null, year: null }
   const customDraft = rawPlanDraft?.origin === identity && rawPlanDraft.account_id === account.id
     ? rawPlanDraft : null
   const customErrors = customPlanDraftErrors(customDraft, t)
@@ -6044,6 +6050,37 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
         ]
       })
     ] }) : null,
+    subscription && (seatPricing || seatRevision?.quantity != null) ? jsxs('form', { className: 'wm-fee-form',
+      onSubmit: event => {
+        event.preventDefault()
+        const fields = event.currentTarget.elements
+        onAction('seats', account, { quantity: String(fields.namedItem('quantity').value || '').trim(),
+          period: String(fields.namedItem('period').value || '') })
+      }, children: [
+      jsx('p', { className: 'wm-note', children: t('memSeatHelp') }),
+      !seatPricing ? jsx('p', { className: 'wm-note', children: t('memSeatUnavailable') }) : null,
+      ...Object.entries(seatPricing?.prices || {}).map(([period, price]) => jsx('p', { className: 'wm-note',
+        children: t('memSeatPrice', fmtMoney(price.amount, price.currency) || '—', t('memPeriodAbbr', period)) }, period)),
+      seatPricing?.usual_minimum ? jsx('p', { className: 'wm-note', children: t('memSeatMinimum', seatPricing.usual_minimum) }) : null,
+      jsxs('div', { className: 'wm-controls', children: [
+        jsxs('label', { className: 'wm-filter', children: [
+          jsx('span', { children: t('memSeats') }),
+          jsx('input', { type: 'number', name: 'quantity', min: '1', step: '1', inputMode: 'numeric',
+            defaultValue: seatRevision?.quantity ?? '', disabled: !!busy, 'aria-describedby': `seat-help-${account.id}` })
+        ] }),
+        jsxs('label', { className: 'wm-filter', children: [
+          jsx('span', { children: t('memPeriod') }),
+          jsx('select', { name: 'period', defaultValue: seatRevision?.period || 'month', disabled: !!busy,
+            children: Object.keys(seatPeriods).map(period => jsx('option', { value: period,
+              children: period === 'year' ? t('memPeriodYearly') : t('memPeriodMonthly') }, period)) })
+        ] }),
+        jsx(ProductButton, { type: 'submit', className: 'wm-button', disabled: !!busy, children: t('memSaveSeats') })
+      ] }),
+      jsx('p', { className: 'wm-note', id: `seat-help-${account.id}`, children: t('memSeatClear') }),
+      fee.calculated ? jsx('p', { className: 'wm-note', 'data-seat-total': 'true', children: t('memSeatTotal',
+        fmtMoney(fee.calculated.unit_amount, fee.calculated.currency), t('memPeriodAbbr', fee.calculated.period),
+        fee.calculated.quantity, fmtMoney(fee.calculated.amount, fee.calculated.currency)) }) : null
+    ] }, `seats-${account.rev || ''}-${account.plan_id}`) : null,
     subscription || apiOnly ? jsxs('div', { className: 'wm-fee-row', children: [
       jsx('span', { className: 'wm-fee', children: feeLabel(fee, t) }),
       jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'edit-fee',
@@ -6381,6 +6418,21 @@ function MembershipsPage() {
     if (kind === 'plan') {
       return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
                  { ...account, plan_id: value || null }, 'PUT')
+    }
+    if (kind === 'seats') {
+      const raw = value?.quantity || ''
+      const quantity = raw === '' ? null : Number(raw)
+      if ((quantity !== null && (!Number.isSafeInteger(quantity) || quantity < 1)) ||
+          !(account.plan?.seat_pricing ? Object.hasOwn(account.plan.seat_pricing.prices || {}, value?.period)
+            : quantity === null && ['month', 'year'].includes(value?.period))) {
+        setMembershipNotice(identity, 'warn', t('memSeatInvalid'), undefined, account.id)
+        return { ok: false, invalid: true }
+      }
+      const effective_from = new Date().toISOString()
+      const revision = { id: `${effective_from}-${Math.random().toString(36).slice(2)}`, plan_id: account.plan_id,
+        quantity, period: value.period, effective_from }
+      return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
+        { ...account, seat_revisions: [...(account.seat_revisions || []), revision] }, 'PUT')
     }
     if (kind === 'fee') {
       // The draft carries the identity it was opened in, so a save can tell
@@ -7540,6 +7592,16 @@ const I18N = {
     memSubtitle: 'Confirm each account’s plan and declared fee. Usage tracking never depends on this page.',
     memDetails: 'Details',
     memGroupPlan: 'Plan & billing',
+    memSeats: 'Seats',
+    memSaveSeats: 'Save seats',
+    memSeatHelp: 'Enter the number of seats and billing period to calculate the catalogue total.',
+    memSeatUnavailable: 'Per-seat pricing is unavailable in this catalogue. You can clear the saved quantity.',
+    memSeatPrice: (price, period) => `Catalogue: ${price} per seat/${period}`,
+    memSeatUnitFee: (price, period) => `Catalogue: ${price}${period} per seat`,
+    memSeatClear: 'Leave seats empty and save to clear the quantity. Use a positive whole number.',
+    memSeatMinimum: n => `Usually at least ${n} seats are required; provider exceptions may apply.`,
+    memSeatInvalid: 'Enter a positive whole number of seats, or leave it empty to clear.',
+    memSeatTotal: (price, period, quantity, total) => `${price} per seat/${period} × ${quantity} = ${total}/${period} catalogue total`,
     memGroupAllow: 'Allowances & readings',
     memGroupAdvanced: 'Advanced & diagnostics',
     memNeedsAttention: 'Needs attention',
@@ -8633,6 +8695,16 @@ const I18N = {
     memSubtitle: '确认每个账户的方案与已申报费用。用量跟踪不依赖于此页面。',
     memDetails: '详情',
     memGroupPlan: '方案与账单',
+    memSeats: '席位数',
+    memSaveSeats: '保存席位数',
+    memSeatHelp: '输入席位数并选择账单周期，计算目录总价。',
+    memSeatUnavailable: '此目录没有可用的每席价格。您可以清除已保存的席位数。',
+    memSeatPrice: (price, period) => `目录价格：每席 ${price}/${period}`,
+    memSeatUnitFee: (price, period) => `目录价格：每席 ${price}${period}`,
+    memSeatClear: '清空席位数并保存即可移除数量。请输入正整数。',
+    memSeatMinimum: n => `通常至少需要 ${n} 个席位；服务商可能允许例外。`,
+    memSeatInvalid: '请输入正整数席位数，或留空以清除。',
+    memSeatTotal: (price, period, quantity, total) => `每席 ${price}/${period} × ${quantity} = 目录总价 ${total}/${period}`,
     memGroupAllow: '额度与读数',
     memGroupAdvanced: '高级与诊断',
     memNeedsAttention: '需要注意',

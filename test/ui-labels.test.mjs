@@ -816,3 +816,11 @@ test('every PR28 generated-content key exists in English and Chinese', () => {
   assert.equal(T.econExplanationText({ arrangement: 'subscription', explanation: 'Catalogue note stays English.' },
     (key, ...args) => zh[key] ?? key), 'Catalogue note stays English.')
 })
+
+test('seat billing explanations cover English and Simplified Chinese', () => {
+  assert.match(en.memSeatTotal('$125.00', 'mo', 3, '$375.00'), /\$125\.00 per seat\/mo × 3 = \$375\.00/)
+  assert.match(zh.memSeatTotal('$125.00', '月', 3, '$375.00'), /每席.*125.*3.*375/)
+  assert.match(en.memSeatClear, /positive whole number/)
+  assert.match(zh.memSeatClear, /正整数/)
+  assert.match(zh.memSeatMinimum(2), /2/)
+})
