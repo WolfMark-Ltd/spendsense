@@ -1,5 +1,7 @@
 """Upgrade/downgrade tests use the unmodified 0.6.0 base-commit implementation."""
 import json
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -151,6 +153,41 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.path.write_text(json.dumps(exported['membership_store']))
         store.seat_store_path(self.path).write_text(json.dumps(exported['seat_store']))
         self.assertEqual(store.load_with_seats(self.path)['accounts'][0]['seat_revisions'][0]['quantity'], 3)
+
+    def test_earlier_pr_inline_history_can_be_exported_without_changing_source(self):
+        original = {**self.saved, 'seat_revisions': [
+            revision('two', 2, '2026-11-05T00:00:00Z'), revision('three', 3, '2026-11-06T00:00:00Z')]}
+        self.path.write_text(json.dumps({'version': 1, 'accounts': [original]}))
+        source = self.path.read_bytes()
+        output = Path(self.tmp.name) / 'recovery.json'
+        script = Path(__file__).resolve().parents[1] / 'scripts' / 'recover-inline-seat-history.py'
+        result = subprocess.run([sys.executable, str(script), str(self.path), str(output)],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.path.read_bytes(), source)
+        bundle = json.loads(output.read_text())
+        self.path.write_text(json.dumps(bundle['membership_store']))
+        store.seat_store_path(self.path).write_text(json.dumps(bundle['seat_history']))
+        self.assertTrue(legacy_store.load_store(self.path, strict=True)['accounts'])
+        recovered = store.load_with_seats(self.path)['accounts'][0]
+        self.assertEqual([r['quantity'] for r in recovered['seat_revisions']], [2, 3])
+        self.assertEqual(mem.resolve_fee(recovered, self.book, '2026-11-07T00:00:00Z')['effective']['amount'], 375)
+        result = subprocess.run([sys.executable, str(script), str(self.path), str(output)],
+                                capture_output=True, text=True, check=False)
+        self.assertNotEqual(result.returncode, 0, 'existing recovery bundles must not be overwritten')
+
+    def test_inline_recovery_rejects_invalid_seats_without_writing_output(self):
+        raw = {'version': 1, 'accounts': [{**self.saved, 'seat_revisions': [
+            revision('invalid', 0, '2026-11-06T00:00:00Z')]}]}
+        self.path.write_text(json.dumps(raw))
+        original = self.path.read_bytes()
+        output = Path(self.tmp.name) / 'recovery.json'
+        script = Path(__file__).resolve().parents[1] / 'scripts' / 'recover-inline-seat-history.py'
+        result = subprocess.run([sys.executable, str(script), str(self.path), str(output)],
+                                capture_output=True, text=True, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(output.exists())
+        self.assertEqual(self.path.read_bytes(), original)
 
     def test_mismatched_identity_fails_closed(self):
         self.append(2, '2026-11-05T00:00:00Z', 'two')

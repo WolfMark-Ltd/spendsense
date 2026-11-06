@@ -139,9 +139,14 @@ account while downgraded, handle the matching seat backup explicitly before
 using the newer version again.
 
 An unmerged earlier PR #30 test build stored seat revisions inside
-`memberships.json`. Those test-build files are rejected as unreadable rather
-than migrated or overwritten; retain the original file and use a pre-test
-backup when returning to a compatible version.
+`memberships.json`. Those test-build files are rejected rather than silently
+migrated or overwritten. With the plugin stopped, make a copy of that file
+and run `python scripts/recover-inline-seat-history.py COPY OUTPUT`, where
+`OUTPUT` is a new file. The export leaves the source untouched and contains
+`membership_store` and `seat_history` objects; save those objects as
+`memberships.json` and `membership-seats.json` respectively to restore the
+matching profile. Retain the original and back up all profile files first.
+Do not overwrite a newer sidecar with an older recovery export.
 
 Discovery reads Hermes' authentication storage in memory and counts the configured credential slots per provider. Credential values are never returned, logged or stored. A slot proves an account is configured — not which plan it is on — so Spend Sense suggests a plan where it can and asks you to confirm it. That human confirmation is deliberate: a wrong plan silently reprices every past month.
 
