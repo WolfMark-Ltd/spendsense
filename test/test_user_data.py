@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from wolfmark_ledger import billing, membership_store, user_data
+from wolfmark_ledger import billing, budgets, membership_store, user_data
 
 
 class UserDataResetTests(unittest.TestCase):
@@ -58,6 +58,37 @@ class UserDataResetTests(unittest.TestCase):
             user_data.reset_user_data()
         self.assertEqual(self.memberships.read_bytes(), membership_bytes)
         self.assertEqual(self.profiles.read_bytes(), billing_bytes)
+
+    def test_reset_includes_budgets_and_preserves_usage(self):
+        target = self.profiles.with_name('budgets.json')
+        target.write_text(json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}))
+        with self.paths()[0], self.paths()[1]:
+            result = user_data.reset_user_data()
+        self.assertTrue(result['budgets_cleared'])
+        self.assertEqual(budgets.load(target)['budgets'], [])
+        self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
+
+    def test_corrupt_budget_aborts_reset_before_any_replacement(self):
+        target = self.profiles.with_name('budgets.json')
+        target.write_bytes(b'{corrupt-budget')
+        before = {p: p.read_bytes() for p in (self.memberships, self.profiles, target)}
+        with self.paths()[0], self.paths()[1], self.assertRaises(budgets.BudgetStoreUnreadable):
+            user_data.reset_user_data()
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+
+    def test_budget_replace_failure_rolls_back_all_stores(self):
+        target = self.profiles.with_name('budgets.json')
+        target.write_text(json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}))
+        before = {p: p.read_bytes() for p in (self.memberships, self.profiles, target)}
+        replace = user_data._replace_bytes
+        def fail_budget(path, value):
+            if path == target:
+                raise OSError('fixture replacement failure')
+            replace(path, value)
+        with self.paths()[0], self.paths()[1], patch.object(user_data, '_replace_bytes', side_effect=fail_budget):
+            with self.assertRaises(OSError):
+                user_data.reset_user_data()
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
 
 
 if __name__ == "__main__":

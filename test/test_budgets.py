@@ -1,0 +1,280 @@
+"""Budget persistence, evidence and calendar contracts; temporary data only."""
+import json
+import multiprocessing
+import sqlite3
+import tempfile
+import unittest
+from contextlib import closing
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
+
+from wolfmark_ledger import budgets as B, forecast as F, store
+from wolfmark_ledger.pricing import Catalogue, Rate
+
+NOW = datetime(2026, 11, 10, 12, tzinfo=timezone.utc).timestamp()
+START = datetime(2026, 11, 1, tzinfo=timezone.utc).timestamp()
+
+
+def budget(**kwargs):
+    return {'id': 'total', 'label': 'Monthly value', 'scope': 'total', 'amount': 100.,
+            'currency': 'USD', 'enabled': True, 'thresholds': [50, 80, 100], 'cycle_day': 1,
+            'timezone': 'UTC', 'measurement': 'api_equivalent', 'provider': '', 'model': '', **kwargs}
+
+
+def rows(amount=10, count=4):
+    return [{'event_id': str(i), 'ts': START + (i + 1) * 86400, 'provider': 'fixture', 'model': 'm',
+             'list_usd': amount, 'outcome': 'ok', 'actual_metered_usd': amount / 2,
+             'measurement': 'actual_metered'} for i in range(count)]
+
+
+def process_save(path, rev, identity):
+    try:
+        B.mutate(identity, if_rev=rev, budget=budget(id=identity), path=path)
+        return 'saved'
+    except B.BudgetConflict:
+        return 'conflict'
+
+
+class BudgetStoreTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / 'budgets.json'
+
+    def save(self, value=None, rev=None):
+        value = value or budget()
+        return B.mutate(value['id'], budget=value, if_rev=rev or B.load(self.path)['rev'], path=self.path)
+
+    def test_create_edit_delete_revision_contract(self):
+        original = B.load(self.path)
+        saved = self.save()
+        self.assertNotEqual(original['rev'], saved['rev'])
+        with self.assertRaises(B.BudgetConflict):
+            self.save(budget(amount=70), original['rev'])
+        edited = self.save(budget(amount=70), saved['rev'])
+        self.assertEqual(edited['budgets'][0]['amount'], 70)
+        with self.assertRaises(B.BudgetConflict):
+            B.mutate('total', if_rev='', path=self.path)
+        removed = B.mutate('total', if_rev=edited['rev'], path=self.path)
+        self.assertEqual(removed['budgets'], [])
+        with self.assertRaises(KeyError):
+            B.mutate('absent', if_rev=removed['rev'], path=self.path)
+
+    def test_two_processes_with_same_revision_cannot_lose_updates(self):
+        rev = B.load(self.path)['rev']
+        ctx = multiprocessing.get_context('spawn')
+        with ctx.Pool(2) as pool:
+            results = pool.starmap(process_save, [(self.path, rev, 'a'), (self.path, rev, 'b')])
+        self.assertCountEqual(results, ['saved', 'conflict'])
+        self.assertEqual(len(B.load(self.path)['budgets']), 1)
+
+    def test_failed_replace_preserves_original_and_cleans_tempfile(self):
+        saved = self.save()
+        before = self.path.read_bytes()
+        with patch.object(B.os, 'replace', side_effect=OSError('fixture')):
+            with self.assertRaises(OSError):
+                self.save(budget(amount=70), saved['rev'])
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(list(self.path.parent.glob('*.tmp')), [])
+
+    def test_corrupt_documents_fail_closed_without_rewriting(self):
+        for bad in ['{', 'null', '[]', '{"version":2,"budgets":[],"dismissals":{}}',
+                    '{"version":1,"budgets":[{}],"dismissals":{}}',
+                    '{"version":1,"budgets":[],"dismissals":{"x":{}}}']:
+            self.path.write_text(bad)
+            with self.assertRaises(B.BudgetStoreUnreadable):
+                B.load(self.path)
+            with self.assertRaises(B.BudgetStoreUnreadable):
+                self.save()
+            self.assertEqual(self.path.read_text(), bad)
+
+    def test_validation_rejects_invalid_and_cross_metric_configuration(self):
+        for changes in [{'amount': True}, {'amount': float('nan')}, {'amount': -1}, {'amount': 0},
+                        {'thresholds': [80, 50, 100]}, {'thresholds': [50, 80, 101]},
+                        {'enabled': 'true'}, {'thresholds': [50, 10**1000, 100]}, {'timezone': 'Not/AZone'}, {'cycle_day': 32},
+                        {'scope': 'model_route'}, {'scope': 'total', 'provider': 'x'},
+                        {'scope': 'session', 'measurement': 'actual_metered'},
+                        {'scope': 'session', 'currency': 'GBP'}, {'currency': 'usd'}, {'unexpected': 2}]:
+            with self.subTest(changes=changes):
+                with self.assertRaises(ValueError):
+                    self.save(budget(**changes))
+        for scope, extra in [('total', {}), ('provider', {'provider': 'x'}),
+                             ('model_route', {'provider': 'x', 'model': 'm'}), ('session', {})]:
+            for metric in ['api_equivalent', 'actual_metered'] if scope != 'session' else ['api_equivalent']:
+                self.assertEqual(B.validation_errors(budget(scope=scope, measurement=metric, **extra)), [])
+
+    def test_dismissals_survive_restart_and_edits_clear_them(self):
+        saved = self.save()
+        entry = {'cycle': F.cycle_bounds(budget(), NOW)['id'], 'budget_rev': B.revision(budget()), 'level': 'warning'}
+        dismissed = B.mutate('total', if_rev=saved['rev'], dismissal=entry, path=self.path)
+        self.assertEqual(B.load(self.path)['dismissals']['total'], entry)
+        edited = self.save(budget(amount=80), dismissed['rev'])
+        self.assertEqual(edited['dismissals'], {})
+
+
+class ForecastTests(unittest.TestCase):
+    def evaluate(self, b=None, evidence=None, **kwargs):
+        return F.evaluate(b or budget(), evidence if evidence is not None else rows(), now=kwargs.pop('now', NOW),
+                          observed_since=kwargs.pop('observed_since', START), **kwargs)
+
+    def test_exact_50_80_100_transitions_and_disabled(self):
+        for spend, expected in [(49.99, 'normal'), (50, 'info'), (79.99, 'info'), (80, 'warning'), (100, 'exceeded')]:
+            self.assertEqual(self.evaluate(evidence=rows(spend, 1))['level'], expected)
+        self.assertEqual(self.evaluate(budget(enabled=False))['level'], 'disabled')
+        self.assertEqual(self.evaluate(budget(enabled=False))['forecast']['reason'], 'disabled')
+
+    def test_metrics_never_mix_and_subscription_fee_fields_are_ignored(self):
+        evidence = rows(20)
+        for row in evidence:
+            row.update(subscription_fee_usd=1000, allowance_usd=1000, estimated_cost_usd=9000)
+        estimate = self.evaluate(evidence=evidence)
+        actual = self.evaluate(budget(measurement='actual_metered'), evidence)
+        self.assertEqual(estimate['spend'], 80)
+        self.assertEqual(actual['spend'], 40)
+        self.assertEqual(actual['measurement'], 'actual_metered')
+        for row in evidence:
+            row['measurement'] = 'estimated'
+        actual = self.evaluate(budget(measurement='actual_metered'), evidence)
+        self.assertIsNone(actual['spend'])
+        self.assertEqual(actual['level'], 'unavailable')
+
+    def test_partial_subtotal_can_prove_warning_but_never_within_limit(self):
+        evidence = rows(30, 4)
+        evidence[0]['list_usd'] = None
+        report = self.evaluate(evidence=evidence)
+        self.assertEqual(report['spend'], 90)
+        self.assertEqual(report['level'], 'warning')
+        self.assertFalse(report['complete'])
+        self.assertIsNone(report['remaining'])
+        self.assertFalse(report['forecast']['available'])
+        self.assertEqual(report['forecast']['reason'], 'incomplete_pricing')
+        self.assertEqual(self.evaluate(evidence=[{**r, 'list_usd': 1 if i else None} for i, r in enumerate(evidence)])['level'], 'unavailable')
+
+    def test_failed_or_missing_usage_is_not_free_or_priced(self):
+        for outcome in ['error', 'missing_usage']:
+            evidence = rows()
+            evidence[0]['outcome'] = outcome
+            report = self.evaluate(evidence=evidence)
+            self.assertFalse(report['forecast']['available'])
+            self.assertEqual(report['spend'], 30)
+
+    def test_three_active_days_required_not_three_calls(self):
+        evidence = rows(count=3)
+        for row in evidence:
+            row['ts'] = START + 86400
+        report = self.evaluate(evidence=evidence)
+        self.assertEqual(report['forecast']['reason'], 'insufficient_days')
+        self.assertIsNone(report['forecast']['burn_30'])
+        self.assertTrue(self.evaluate(evidence=rows(count=3))['forecast']['available'])
+
+    def test_projection_runway_trend_and_samples(self):
+        result = self.evaluate()
+        f = result['forecast']
+        self.assertTrue(f['available'])
+        self.assertEqual(result['remaining'], 60)
+        self.assertEqual(f['samples']['30']['active_days'], 4)
+        self.assertEqual(f['samples']['30']['calls'], 4)
+        self.assertAlmostEqual(f['burn_30'], 40 / 9.5)
+        self.assertAlmostEqual(f['projected'], 40 + (40 / 9.5) * 20.5, places=5)
+        self.assertEqual(f['days_remaining'], 14.25)
+        self.assertIsNotNone(f['breach_date'])
+
+    def test_forecasts_refuse_unavailable_currency_ledger_and_partial_cycle(self):
+        self.assertEqual(self.evaluate(ledger_available=False)['forecast']['reason'], 'ledger_unavailable')
+        self.assertEqual(self.evaluate(budget(currency='GBP'))['forecast']['reason'], 'currency_unavailable')
+        self.assertEqual(self.evaluate(observed_since=START + 10)['forecast']['reason'], 'incomplete_cycle')
+        self.assertEqual(self.evaluate(observed_since=None)['forecast']['reason'], 'ledger_unavailable')
+
+    def test_user_supplied_fx_is_cited_and_future_rates_are_refused(self):
+        rate = {'currency': 'GBP', 'usd_per_unit': 2, 'as_of': '2026-11-01', 'source': 'fixture'}
+        result = self.evaluate(budget(currency='GBP'), fx={'rates': [rate]})
+        self.assertEqual(result['spend'], 20)
+        self.assertEqual(result['fx'], rate)
+        self.assertEqual(self.evaluate(budget(currency='GBP'), fx={'rates': [{**rate, 'as_of': '2027-01-01'}]})['forecast']['reason'], 'currency_unavailable')
+
+    def test_provider_model_route_filters_and_duplicate_attempts(self):
+        evidence = rows(10) + [{**rows(80, 1)[0], 'event_id': 'other', 'provider': 'other'}]
+        evidence.append(evidence[0])
+        b = budget(scope='model_route', provider='fixture', model='m')
+        self.assertEqual(self.evaluate(b, evidence)['spend'], 40)
+        self.assertEqual(self.evaluate(budget(scope='provider', provider='other'), evidence)['spend'], 80)
+
+    def test_cycle_half_open_boundary_leap_year_and_day31_clamping(self):
+        b = budget(cycle_day=31)
+        at = datetime(2028, 2, 29, tzinfo=timezone.utc).timestamp()
+        bounds = F.cycle_bounds(b, at)
+        self.assertEqual(bounds['start'][:10], '2028-02-29')
+        self.assertEqual(bounds['end'][:10], '2028-03-31')
+        before = F.cycle_bounds(b, at - .001)
+        self.assertEqual(before['start'][:10], '2028-01-31')
+        self.assertEqual(before['until'], bounds['since'])
+        december = F.cycle_bounds(budget(), datetime(2026, 12, 31, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(december['end'][:10], '2027-01-01')
+        evidence = [{'event_id': 'previous', 'ts': START - .001, 'list_usd': 999, 'outcome': 'ok'}, *rows(10, 1)]
+        self.assertEqual(self.evaluate(evidence=evidence)['spend'], 10)
+
+    def test_DST_boundaries_use_named_zone_not_fixed_seconds(self):
+        b = budget(timezone='Europe/London')
+        spring = F.cycle_bounds(b, datetime(2026, 3, 20, tzinfo=timezone.utc).timestamp())
+        autumn = F.cycle_bounds(b, datetime(2026, 10, 20, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(spring['until'] - spring['since'], 31 * 86400 - 3600)
+        self.assertEqual(autumn['until'] - autumn['since'], 31 * 86400 + 3600)
+        spring_now = datetime(2026, 3, 31, 12, tzinfo=ZoneInfo('Europe/London')).timestamp()
+        evidence = [{**r, 'ts': datetime(2026, 3, i + 27, 12, tzinfo=ZoneInfo('Europe/London')).timestamp()} for i, r in enumerate(rows(10, 3))]
+        report = F.evaluate(b, evidence, now=spring_now, observed_since=spring['since'])
+        self.assertTrue(report['forecast']['available'])
+        self.assertEqual(report['forecast']['samples']['30']['active_days'], 3)
+
+
+    def test_burn_trend_has_accelerating_slowing_and_steady_states(self):
+        now = datetime(2026, 11, 20, 12, tzinfo=timezone.utc).timestamp()
+        evidence = [{'event_id': str(i), 'ts': START + i * 86400 + 3600,
+                     'provider': 'fixture', 'model': 'm', 'list_usd': 1,
+                     'outcome': 'ok'} for i in range(20)]
+        steady = self.evaluate(budget(amount=1000), evidence, now=now)
+        self.assertEqual(steady['forecast']['trend'], 'steady')
+        for mode, amount in [('accelerating', 5), ('slowing', .1)]:
+            changed = [{**r, 'list_usd': amount if r['ts'] >= START + 13 * 86400 else 1} for r in evidence]
+            self.assertEqual(self.evaluate(budget(amount=1000), changed, now=now)['forecast']['trend'], mode)
+        self.assertIsNone(steady['forecast']['breach_date'])
+
+    def test_breach_date_accounts_for_time_of_day(self):
+        now = datetime(2026, 11, 10, 20, tzinfo=timezone.utc).timestamp()
+        evidence = rows()
+        # Half a day of runway at 20:00 crosses into the next date.
+        rate = 40 / (9 + 20 / 24)
+        result = self.evaluate(budget(amount=40 + rate / 2), evidence, now=now)
+        self.assertEqual(result['forecast']['breach_date'], '2026-11-11')
+
+    def test_real_store_adapter_prices_estimates_and_refuses_actual_charges(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'budgets.json'
+            events = Path(tmp) / 'usage.db'
+            b = budget(amount=10)
+            doc = B.mutate('total', if_rev=B.load(path)['rev'], budget=b, path=path)
+            B.mutate('actual', if_rev=doc['rev'], budget=budget(id='actual', measurement='actual_metered'), path=path)
+            with closing(sqlite3.connect(events)) as conn, conn:
+                conn.executescript(store._SCHEMA)
+                conn.execute('INSERT INTO baseline VALUES (1, ?, 0, 0, 0)', (START,))
+                for i in range(4):
+                    conn.execute('INSERT INTO calls(event_id, ts, model, provider, outcome, input_tokens, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                                 (str(i), START + (i + 1) * 86400, 'm', 'fixture', 'ok', 1000000, NOW))
+            book = Catalogue({'fixture': {'m': Rate(2, 4, .5, 3)}}, 'fixture', 'test', '', '1')
+            report = F.build_report(path=path, event_db_path=events, now=NOW, catalogue=book, fx_path=Path(tmp)/'fx.json')
+            est, actual = report['statuses']
+            self.assertEqual(est['spend'], 8)
+            self.assertEqual(est['level'], 'warning')
+            self.assertTrue(est['forecast']['available'])
+            self.assertIsNone(actual['spend'])
+            self.assertEqual(actual['forecast']['reason'], 'metered_unavailable')
+            B.mutate('total', if_rev=report['rev'], dismissal={'cycle': est['cycle']['id'], 'budget_rev': est['budget_rev'], 'level': 'warning'}, path=path)
+            self.assertTrue(F.build_report(path=path, event_db_path=events, now=NOW, catalogue=book)['statuses'][0]['dismissed'])
+            # A higher threshold is a new alert; a cycle reset is a new alert.
+            with closing(sqlite3.connect(events)) as conn, conn:
+                conn.execute('UPDATE calls SET input_tokens=2000000')
+            self.assertFalse(F.build_report(path=path, event_db_path=events, now=NOW, catalogue=book)['statuses'][0]['dismissed'])
+            events.write_bytes(b'corrupt ledger')
+            refused = F.build_report(path=path, event_db_path=events, now=NOW, catalogue=book)
+            self.assertEqual(refused['statuses'][0]['forecast']['reason'], 'ledger_unavailable')

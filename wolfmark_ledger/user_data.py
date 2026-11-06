@@ -6,7 +6,7 @@ import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 
-from . import billing
+from . import billing, budgets
 from . import membership_store
 
 
@@ -32,8 +32,9 @@ def reset_user_data(membership_path: Path | str | None = None,
     members = Path(membership_path) if membership_path else membership_store.store_path()
     profiles = Path(billing_path) if billing_path else billing.profiles_path()
     seats = membership_store.seat_store_path(members)
-    targets = [members, profiles, seats]
-    locks = {members: membership_store._locked, profiles: billing._locked}
+    budget_path = profiles.with_name('budgets.json')
+    targets = [members, profiles, seats, budget_path]
+    locks = {members: membership_store._locked, profiles: billing._locked, budget_path: budgets.locked}
     ordered = sorted(locks.items(), key=lambda item: str(item[0]))
     with ExitStack() as stack:
         for path, lock in ordered:
@@ -41,7 +42,9 @@ def reset_user_data(membership_path: Path | str | None = None,
         membership = membership_store.load_store(members, strict=True)
         billing_doc = billing._load_profiles(profiles, strict=True)
         membership_store.load_seat_store(members)
+        budgets.load(budget_path)
         replacements = {
+            budget_path: json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}).encode('utf-8'),
             members: json.dumps({"version": membership_store.STORE_VERSION, "accounts": []},
                                 indent=2, sort_keys=True).encode("utf-8"),
             profiles: json.dumps({"version": billing_doc.get("version", 1), "profiles": []},
@@ -63,4 +66,4 @@ def reset_user_data(membership_path: Path | str | None = None,
                 else:
                     _replace_bytes(path, before)
             raise
-    return {"memberships_cleared": True, "seat_history_cleared": True, "advanced_rules_cleared": True}
+    return {"memberships_cleared": True, "seat_history_cleared": True, "advanced_rules_cleared": True, "budgets_cleared": True}

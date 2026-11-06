@@ -34,6 +34,7 @@ from wolfmark_ledger import allowance_weather  # noqa: E402
 from wolfmark_ledger import billing  # noqa: E402
 from wolfmark_ledger import digest  # noqa: E402
 from wolfmark_ledger import economics  # noqa: E402
+from wolfmark_ledger import budgets, forecast  # noqa: E402
 from wolfmark_ledger import user_data  # noqa: E402
 from wolfmark_ledger import membership_api as members  # noqa: E402
 from wolfmark_ledger import monitoring, news as news_mod  # noqa: E402
@@ -515,7 +516,7 @@ def reset_user_data(body: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="explicit confirmation is required")
     try:
         result = user_data.reset_user_data()
-    except (StoreUnreadable, billing.ProfileStoreUnreadable) as exc:
+    except (StoreUnreadable, billing.ProfileStoreUnreadable, budgets.BudgetStoreUnreadable) as exc:
         raise HTTPException(status_code=503, detail=f"store_unreadable: {exc}") from exc
     return {"ok": True, **result,
             "retained": ["captured usage ledger", "Hermes profile data", "provider credentials", "catalogue"]}
@@ -542,3 +543,57 @@ def billing_delete(profile_id: str) -> dict[str, Any]:
         return {"ok": True, **billing.delete_profile(profile_id)}
     except billing.ProfileStoreUnreadable as exc:
         raise HTTPException(status_code=503, detail=f"store_unreadable: {exc}") from exc
+
+
+# Advisory only: none of these routes can interrupt provider calls.
+def _budget_call(operation):
+    try:
+        return operation()
+    except budgets.BudgetConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except budgets.BudgetStoreUnreadable as exc:
+        raise HTTPException(status_code=503, detail='budget_store_unreadable') from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail='budget_not_found') from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail='budget_store_unavailable') from exc
+    except Exception as exc:
+        log.error('spend-sense: budget operation failed')
+        raise HTTPException(status_code=500, detail='budget_operation_failed') from exc
+
+
+@router.get('/budgets')
+def budget_list():
+    return _budget_call(lambda: {'ok': True, **budgets.load()})
+
+
+@router.get('/budgets/status')
+@router.get('/forecast')
+def budget_status():
+    return _budget_call(forecast.build_report)
+
+
+@router.put('/budgets/{budget_id}')
+def budget_save(budget_id: str, body: dict[str, Any], if_rev: str = Query(...)):
+    return _budget_call(lambda: {'ok': True, **budgets.mutate(budget_id, budget=body, if_rev=if_rev)})
+
+
+@router.delete('/budgets/{budget_id}')
+def budget_delete(budget_id: str, if_rev: str = Query(...)):
+    return _budget_call(lambda: {'ok': True, **budgets.mutate(budget_id, if_rev=if_rev)})
+
+
+@router.post('/budgets/{budget_id}/dismiss')
+def budget_dismiss(budget_id: str, body: dict[str, Any], if_rev: str = Query(...)):
+    def dismiss():
+        import time
+        doc = budgets.load()
+        budget = next((b for b in doc['budgets'] if b['id'] == budget_id), None)
+        if budget is None:
+            raise KeyError(budget_id)
+        if budget['scope'] == 'session' or body.get('cycle') != forecast.cycle_bounds(budget, time.time())['id']:
+            raise ValueError('dismissal must refer to the current monthly cycle')
+        return {'ok': True, **budgets.mutate(budget_id, if_rev=if_rev, dismissal=body)}
+    return _budget_call(dismiss)
