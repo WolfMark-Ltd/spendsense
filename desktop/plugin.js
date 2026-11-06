@@ -5089,6 +5089,7 @@ async function membershipWrite(method, path, body, transport = rest) {
 function membershipErrorKind(error) {
   const raw = typeof error?.message === 'string' ? error.message : String(error ?? '')
   const status = Number((raw.match(/\b([45][0-9]{2})\b/) || [])[1] || 0)
+  if (/seat_write_uncertain/i.test(raw)) return { kind: 'seat_write_uncertain', status }
   if (/store_unreadable/i.test(raw)) return { kind: 'storage', status }
   if (status === 401 || /unauthori|sign in/i.test(raw)) return { kind: 'auth', status }
   if (/plugin not found|no such plugin/i.test(raw)) return { kind: 'namespace', status }
@@ -5104,6 +5105,7 @@ function membershipErrorKind(error) {
 /** Short, operation-specific text. Never a raw FastAPI/Pydantic payload. */
 function membershipErrorText(error, operation = 'read', t = needsAttentionEn) {
   const { kind } = membershipErrorKind(error)
+  if (kind === 'seat_write_uncertain') return t('memErrSeatWriteUncertain')
   if (kind === 'storage') return t('memErrStorage')
   if (kind === 'auth') return t('memErrAuth')
   if (kind === 'namespace') return t('memErrNamespace')
@@ -7734,6 +7736,7 @@ const I18N = {
     memPlanErrAllowanceAmount: 'Allowance amount must be zero or more.',
     // Backend failures.
     memErrStorage: 'The membership store could not be read, so nothing was changed. The file is preserved; fix or restore it before saving.',
+    memErrSeatWriteUncertain: 'The seat data may have been saved, but the write could not be confirmed. Reload memberships before trying again.',
     memErrAuth: 'Your Desktop session has expired. Sign in again, then retry.',
     memErrNamespace: 'The membership plugin is not available on this connection and profile. Choose the right connection, or check that the plugin is enabled here.',
     memErrConflict: 'This membership changed since you loaded it. Reload, then save again.',
@@ -8837,6 +8840,7 @@ const I18N = {
     memPlanErrAllowanceAmount: '额度数量必须为 0 或更大。',
     // 后端失败。
     memErrStorage: '会员数据无法读取，没有任何内容被更改。文件已保留；保存前请先修复或恢复。',
+    memErrSeatWriteUncertain: '席位数据可能已保存，但无法确认写入是否完成。请先重新加载会员，再重试。',
     memErrAuth: 'Desktop 会话已过期，请重新登录后再试。',
     memErrNamespace: '该连接和档案下没有会员插件。请选择正确的连接，或检查插件是否已启用。',
     memErrConflict: '该会员在你加载后发生了变化，请重新加载再保存。',

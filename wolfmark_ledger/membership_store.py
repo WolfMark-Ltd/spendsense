@@ -14,6 +14,7 @@ rejected with 409 rather than overwriting a newer one.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -62,7 +63,47 @@ def seat_revision_hash(entry: Mapping[str, Any] | None) -> str:
 
 
 def _seat_matches(entry: Mapping[str, Any], account: Mapping[str, Any]) -> bool:
-    return entry["family"] == account["family"] and entry["identity"] == account.get("identity")
+    left, right = entry["identity"], account.get("identity")
+    return entry["family"] == account["family"] and (left is None or right is None or left == right)
+
+
+class SeatStoreDurabilityError(OSError):
+    """The replacement happened, but its directory could not be synced."""
+
+
+def _sync_seat_directory(directory: Path) -> None:
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError as exc:
+        if exc.errno in {errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP}:
+            return
+        raise
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _write_seat_store(seats: Mapping[str, Any], target: Path) -> None:
+    sidecar = seat_store_path(target)
+    handle = tempfile.NamedTemporaryFile("w", dir=sidecar.parent, delete=False, suffix=".tmp", encoding="utf-8")
+    try:
+        json.dump(seats, handle, indent=2, sort_keys=True, allow_nan=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+        handle.close()
+        os.replace(handle.name, sidecar)
+        try:
+            _sync_seat_directory(sidecar.parent)
+        except OSError as exc:
+            raise SeatStoreDurabilityError("seat history was replaced but its durability could not be confirmed") from exc
+    finally:
+        if not handle.closed:
+            handle.close()
+        if os.path.exists(handle.name):
+            os.unlink(handle.name)
 
 
 def load_with_seats(path: Optional[Path | str] = None) -> dict[str, Any]:
@@ -109,22 +150,10 @@ def append_seat_revision(account_id: str, revision: Mapping[str, Any], *, if_rev
         revisions = list(previous["revisions"]) if previous else []
         if any(item["id"] == revision["id"] for item in revisions):
             raise ValueError("duplicate seat revision id")
-        entry = {"family": account["family"], "identity": account.get("identity"),
+        entry = {"family": account["family"], "identity": account.get("identity") or (previous or {}).get("identity"),
                  "revisions": [*revisions, dict(revision)]}
         seats["accounts"][account_id] = entry
-        sidecar = seat_store_path(target)
-        handle = tempfile.NamedTemporaryFile("w", dir=sidecar.parent, delete=False, suffix=".tmp", encoding="utf-8")
-        try:
-            json.dump(seats, handle, indent=2, sort_keys=True, allow_nan=False)
-            handle.flush()
-            os.fsync(handle.fileno())
-            handle.close()
-            os.replace(handle.name, sidecar)
-        finally:
-            if not handle.closed:
-                handle.close()
-            if os.path.exists(handle.name):
-                os.unlink(handle.name)
+        _write_seat_store(seats, target)
         return {"seat_rev": seat_revision_hash(entry)}
 
 
@@ -314,9 +343,14 @@ def save_account(account: Mapping[str, Any], path: Optional[Path | str] = None,
         accounts = data.get("accounts", [])
         existing = next((a for a in accounts if str(a.get("id")) == str(account.get("id"))), None)
         seat_entry = seats["accounts"].get(str(account.get("id")))
+        if seat_entry is not None and account.get("identity") is not None and not isinstance(account["identity"], str):
+            raise ValueError("membership identity must be a string or empty")
         if seat_entry is not None and existing is not None and not _seat_matches(seat_entry, existing):
             raise StoreUnreadable("seat history does not match the membership identity")
         if seat_entry is not None and not _seat_matches(seat_entry, account):
+            raise MembershipConflict("conflict: membership identity does not match its seat history")
+        if (seat_entry is not None and existing is not None and existing.get("identity") is not None
+                and account.get("identity") != existing.get("identity")):
             raise MembershipConflict("conflict: membership identity does not match its seat history")
         if existing is None and must_exist:
             # Accounts are created by discovery, not by a PUT. Refusing an unknown
@@ -330,6 +364,10 @@ def save_account(account: Mapping[str, Any], path: Optional[Path | str] = None,
                 raise MembershipConflict("conflict: this membership changed since you loaded it; reload before saving")
             position = next(i for i, a in enumerate(accounts)
                             if str(a.get("id")) == str(account.get("id")))
+        bound_identity = seat_entry is not None and seat_entry["identity"] is None and account.get("identity") is not None
+        if bound_identity:
+            seats["accounts"][str(account["id"])] = {**seat_entry, "identity": account["identity"]}
+            _write_seat_store(seats, target)
         record = {**dict(account), "rev": account_revision(account)}
         if existing is not None:
             # Replace in place: remove-and-append reordered the cards on
@@ -337,7 +375,12 @@ def save_account(account: Mapping[str, Any], path: Optional[Path | str] = None,
             accounts[position] = record
         else:
             accounts.append(record)
-        _write(accounts, target)
+        try:
+            _write(accounts, target)
+        except OSError as exc:
+            if bound_identity:
+                raise SeatStoreDurabilityError("seat identity was bound but membership save failed") from exc
+            raise
         return {"accounts": accounts, "account": record, "path": str(target)}
 
 
@@ -397,9 +440,25 @@ def upsert_discovered(discovered: Iterable[Mapping[str, Any]],
                 accounts[index[key]] = merged
                 updated.append(key)
         if added or updated:
+            errors = _records_errors(accounts)
+            if errors:
+                raise ValueError("; ".join(errors))
+            needs_binding = False
             for account in accounts:
                 entry = seats["accounts"].get(str(account.get("id")))
+                if entry is not None and account.get("identity") is not None and not isinstance(account["identity"], str):
+                    raise ValueError("membership identity must be a string or empty")
                 if entry is not None and not _seat_matches(entry, account):
                     raise MembershipConflict("conflict: discovered identity does not match its seat history")
-            _write(accounts, target)
+                if entry is not None and entry["identity"] is None and account.get("identity") is not None:
+                    seats["accounts"][str(account["id"])] = {**entry, "identity": account["identity"]}
+                    needs_binding = True
+            if needs_binding:
+                _write_seat_store(seats, target)
+            try:
+                _write(accounts, target)
+            except OSError as exc:
+                if needs_binding:
+                    raise SeatStoreDurabilityError("seat identity was bound but membership discovery failed") from exc
+                raise
         return {"accounts": accounts, "added": added, "updated": updated, "path": str(target)}

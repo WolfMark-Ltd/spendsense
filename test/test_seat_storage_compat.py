@@ -1,4 +1,7 @@
 """Upgrade/downgrade tests use the unmodified 0.6.0 base-commit implementation."""
+import errno
+import importlib
+import importlib.util
 import json
 import subprocess
 import sys
@@ -9,8 +12,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
-from test.fixtures.legacy_060 import membership as legacy_membership
-from test.fixtures.legacy_060 import membership_store as legacy_store
+_fixture_dir = Path(__file__).resolve().parent / 'fixtures' / 'legacy_060'
+_fixture_spec = importlib.util.spec_from_file_location(
+    '_spendsense_legacy_060', _fixture_dir / '__init__.py', submodule_search_locations=[str(_fixture_dir)])
+_fixture_package = importlib.util.module_from_spec(_fixture_spec)
+sys.modules[_fixture_spec.name] = _fixture_package
+_fixture_spec.loader.exec_module(_fixture_package)
+legacy_membership = importlib.import_module('_spendsense_legacy_060.membership')
+legacy_store = importlib.import_module('_spendsense_legacy_060.membership_store')
 from wolfmark_ledger import membership as mem, membership_api as api, membership_store as store, user_data
 try:
     from dashboard import plugin_api
@@ -196,6 +205,95 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         legacy_store.save_account({**self.saved, 'identity': 'different-account'}, self.path, if_rev=self.saved['rev'])
         with self.assertRaises(store.StoreUnreadable):
             store.load_with_seats(self.path)
+
+    def test_discovery_binds_previously_unknown_identity_without_losing_seats(self):
+        unknown = legacy_store.save_account({**self.saved, 'identity': None}, self.path, if_rev=self.saved['rev'])['account']
+        self.append(2, '2026-11-05T00:00:00Z', 'two')
+        original = store.load_with_seats(self.path)['accounts'][0]
+        discovered = {**unknown, 'identity': 'confirmed', 'identity_source': 'native'}
+        store.upsert_discovered([discovered], self.path)
+        after = store.load_with_seats(self.path)['accounts'][0]
+        self.assertEqual(after['identity'], 'confirmed')
+        self.assertEqual(after['seat_revisions'], original['seat_revisions'])
+        self.assertEqual(store.load_seat_store(self.path)['accounts'][after['id']]['identity'], 'confirmed')
+        with self.assertRaises(store.MembershipConflict):
+            store.save_account({**api._document(after), 'identity': 'other'}, self.path, if_rev=after['rev'])
+
+    def test_identity_discovered_while_downgraded_is_not_rejected(self):
+        unknown = legacy_store.save_account({**self.saved, 'identity': None}, self.path, if_rev=self.saved['rev'])['account']
+        self.append(2, '2026-11-05T00:00:00Z', 'two')
+        legacy_store.save_account({**unknown, 'identity': 'confirmed'}, self.path, if_rev=unknown['rev'])
+        current = store.load_with_seats(self.path)['accounts'][0]
+        self.assertEqual(current['identity'], 'confirmed')
+        self.assertEqual(current['seat_revisions'][0]['quantity'], 2)
+        store.save_account({**api._document(current), 'label': 'Updated'}, self.path, if_rev=current['rev'])
+        self.assertEqual(store.load_seat_store(self.path)['accounts'][current['id']]['identity'], 'confirmed')
+
+    def test_interrupted_identity_binding_remains_readable_and_rejects_another_identity(self):
+        unknown = legacy_store.save_account({**self.saved, 'identity': None}, self.path, if_rev=self.saved['rev'])['account']
+        self.append(2, '2026-11-05T00:00:00Z', 'two')
+        with patch.object(store, '_write', side_effect=OSError('membership write failed')):
+            with self.assertRaises(store.SeatStoreDurabilityError):
+                store.upsert_discovered([{**unknown, 'identity': 'confirmed'}], self.path)
+        current = store.load_with_seats(self.path)['accounts'][0]
+        self.assertIsNone(current['identity'])
+        self.assertEqual(current['seat_revisions'][0]['quantity'], 2)
+        with self.assertRaises(store.MembershipConflict):
+            store.upsert_discovered([{**unknown, 'identity': 'different'}], self.path)
+        store.upsert_discovered([{**unknown, 'identity': 'confirmed'}], self.path)
+        self.assertEqual(store.load_with_seats(self.path)['accounts'][0]['identity'], 'confirmed')
+
+    def test_known_identity_is_not_lost_when_membership_is_temporarily_unknown(self):
+        self.append(2, '2026-11-05T00:00:00Z', 'two')
+        legacy_store.save_account({**self.saved, 'identity': None}, self.path, if_rev=self.saved['rev'])
+        self.append(3, '2026-11-06T00:00:00Z', 'three')
+        self.assertEqual(store.load_seat_store(self.path)['accounts'][self.original['id']]['identity'], 'test-account')
+        current = store.load_with_seats(self.path)['accounts'][0]
+        with self.assertRaises(store.MembershipConflict):
+            store.upsert_discovered([{**current, 'identity': 'different'}], self.path)
+
+    @unittest.skipIf(__import__('os').name == 'nt', 'directory fsync is not available on Windows')
+    def test_directory_sync_propagates_real_errors_and_closes_handle(self):
+        directory = self.path.parent
+        with patch.object(store.os, 'open', return_value=42), patch.object(store.os, 'close') as close, \
+                patch.object(store.os, 'fsync', side_effect=OSError(errno.EIO, 'failed')):
+            with self.assertRaises(OSError):
+                store._sync_seat_directory(directory)
+            close.assert_called_once_with(42)
+        with patch.object(store.os, 'open', side_effect=OSError(errno.ENOTSUP, 'unsupported')):
+            store._sync_seat_directory(directory)
+        with patch.object(store.os, 'open', side_effect=OSError(errno.EACCES, 'denied')):
+            with self.assertRaises(OSError):
+                store._sync_seat_directory(directory)
+
+    def test_directory_sync_failure_reports_uncertain_write_without_losing_history(self):
+        card = store.load_with_seats(self.path)['accounts'][0]
+        with patch.object(store, '_sync_seat_directory', side_effect=OSError(errno.EIO, 'failed')):
+            with self.assertRaises(store.SeatStoreDurabilityError):
+                store.append_seat_revision(card['id'], revision('r1', 3, '2026-11-06T00:00:00Z'),
+                                           if_rev=card['rev'], if_seat_rev=card['seat_rev'], path=self.path)
+        self.assertEqual(store.load_with_seats(self.path)['accounts'][0]['seat_revisions'][0]['quantity'], 3)
+        with self.assertRaises(store.MembershipConflict):
+            store.append_seat_revision(card['id'], revision('r2', 2, '2026-11-07T00:00:00Z'),
+                                       if_rev=card['rev'], if_seat_rev=card['seat_rev'], path=self.path)
+
+    @unittest.skipUnless(FastAPI is not None, 'FastAPI/httpx not installed')
+    def test_sync_failure_api_reports_ambiguous_save_and_stale_retry(self):
+        app = FastAPI()
+        app.include_router(plugin_api.router, prefix='/api/plugins/spend-sense')
+        with patch.object(store, 'store_path', return_value=self.path), \
+                patch.object(api, 'active_catalogue', return_value=(self.book, 'bundled')), TestClient(app) as client:
+            root = '/api/plugins/spend-sense/membership/accounts'
+            card = client.get(root).json()['accounts'][0]
+            request = {'revision': revision('r1', 3, '2026-11-06T00:00:00Z'),
+                       'rev': card['rev'], 'seat_rev': card['seat_rev']}
+            url = root + '/openai-codex:default/seats'
+            with patch.object(store, '_sync_seat_directory', side_effect=OSError(errno.EIO, 'failed')):
+                response = client.put(url, json=request)
+            self.assertEqual(response.status_code, 503)
+            self.assertIn('seat_write_uncertain', response.json()['detail'])
+            self.assertEqual(client.get(root).json()['accounts'][0]['seat_revisions'][0]['quantity'], 3)
+            self.assertEqual(client.put(url, json=request).status_code, 409)
 
     def test_profile_isolation(self):
         other = Path(self.tmp.name) / 'other-profile' / 'memberships.json'

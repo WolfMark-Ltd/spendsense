@@ -250,6 +250,8 @@ test('a failure is classified before it is described', () => {
   assert.equal(T.membershipErrorKind(new Error('404 {"detail":"Plugin not found"}')).kind, 'namespace')
   assert.equal(T.membershipErrorKind(new Error('404 {"detail":"no such membership"}')).kind, 'missing')
   assert.equal(T.membershipErrorKind(new Error('503 store_unreadable: bad')).kind, 'storage')
+  assert.equal(T.membershipErrorKind(new Error('503 seat_write_uncertain: reload')).kind, 'seat_write_uncertain')
+  assert.match(T.membershipErrorText(new Error('503 seat_write_uncertain: reload'), 'write'), /may have been saved.*Reload/)
   assert.equal(T.membershipErrorKind(new Error('401 Unauthorized')).kind, 'auth')
   assert.equal(T.membershipErrorKind(new Error('502 bad gateway')).kind, 'backend')
   assert.equal(T.membershipErrorKind(new Error('timeout after 15000ms')).kind, 'timeout')
