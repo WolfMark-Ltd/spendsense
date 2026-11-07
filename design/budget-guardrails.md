@@ -130,7 +130,9 @@ threshold reappears. They suppress the local alert, never the status indicator.
 
 Recovery exports include limits and dismissals. Explicit user-data reset clears
 these alongside memberships and advanced rules under the shared reset/rollback
-contract; usage, provider credentials and Hermes profiles remain untouched.
+contract; every replacement and rollback syncs its containing directory where
+supported. A sync failure after rename keeps that target in rollback handling.
+Usage, provider credentials and Hermes profiles remain untouched.
 
 ## Compatibility and release boundary
 

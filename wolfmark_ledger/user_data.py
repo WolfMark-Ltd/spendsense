@@ -20,6 +20,7 @@ def _replace_bytes(path: Path, value: bytes) -> None:
         os.fsync(handle.fileno())
         handle.close()
         os.replace(handle.name, path)
+        budgets._sync_parent_directory(path.parent)
     finally:
         if not handle.closed:
             handle.close()
@@ -57,8 +58,8 @@ def reset_user_data(membership_path: Path | str | None = None,
         replaced: list[Path] = []
         try:
             for path in targets:
-                _replace_bytes(path, replacements[path])
                 replaced.append(path)
+                _replace_bytes(path, replacements[path])
         except OSError:
             for path in reversed(replaced):
                 before = original[path]

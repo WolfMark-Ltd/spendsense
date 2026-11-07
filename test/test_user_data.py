@@ -104,12 +104,39 @@ class UserDataResetTests(unittest.TestCase):
         self.assertEqual({p: p.read_bytes() for p in before}, before)
         self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
 
+    def test_directory_sync_failure_rolls_back_the_replaced_budget_file(self):
+        target = self.profiles.with_name('budgets.json')
+        target.write_text(json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}))
+        seats = membership_store.seat_store_path(self.memberships)
+        self.assertFalse(seats.exists())
+        before = {p: p.read_bytes() for p in (self.memberships, self.profiles, target)}
+        sync = budgets._sync_parent_directory
+        sync_calls = 0
+
+        def fail_budget_sync(directory):
+            nonlocal sync_calls
+            sync_calls += 1
+            if sync_calls == 4:
+                raise OSError('fixture directory sync failure')
+            return sync(directory)
+
+        with self.paths()[0], self.paths()[1], patch.object(
+                budgets, '_sync_parent_directory', side_effect=fail_budget_sync):
+            with self.assertRaisesRegex(OSError, 'fixture directory sync failure'):
+                user_data.reset_user_data()
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assertFalse(seats.exists())
+        self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
+
     def fail_budget_reset(self, target):
         """Fail at the final reset replacement after the seat file has been replaced."""
         replace = user_data._replace_bytes
+        failure_injected = False
         def fail_budget(path, value):
             """Inject a failure only at the budget replacement step of the reset."""
-            if path == target:
+            nonlocal failure_injected
+            if path == target and not failure_injected:
+                failure_injected = True
                 raise OSError('fixture replacement failure')
             replace(path, value)
         with self.paths()[0], self.paths()[1], patch.object(user_data, '_replace_bytes', side_effect=fail_budget):
