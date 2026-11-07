@@ -1,24 +1,10 @@
-"""Central Model News feed generator (operator tooling).
-
-Deterministic: the same ``--current`` / ``--previous`` models.dev snapshots,
-curated announcements and ``--observed-at`` always produce byte-identical
-output. Compares priced catalogue rows only — no usage, no accounts — and
-transcribes curated subscription notes verbatim after strict validation.
-
-Nothing is invented: a curated entry is published exactly as written, with
-its source URL, and the generator refuses entries without https evidence.
-"""
-
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import math
 import re
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from .news import CATEGORIES, CONFIDENCES, FEED_MAX_ITEMS, rate_direction, validate_feed
@@ -325,45 +311,3 @@ def build_feed(current: Any, previous: Any, curated_doc: Any, *,
     if dropped:
         doc["truncated"] = {"model_items_dropped": dropped}
     return doc, problems
-
-
-def main(argv: Optional[list[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Build the public Model News feed.")
-    parser.add_argument("--current", type=Path, required=True,
-                        help="Current models.dev api.json snapshot")
-    parser.add_argument("--previous", type=Path,
-                        help="Previous snapshot; omit on the first run (no model diff)")
-    parser.add_argument("--curated", type=Path, required=True,
-                        help="Curated announcements JSON")
-    parser.add_argument("--observed-at", default="",
-                        help="Observation timestamp (default: now, UTC)")
-    parser.add_argument("--prior-feed", type=Path,
-                        help="Last published feed; recent items carry forward")
-    parser.add_argument("--retain-days", type=int, default=90,
-                        help="Prior items older than this expire (default: 90)")
-    parser.add_argument("--out", type=Path, required=True, help="Feed JSON to write")
-    args = parser.parse_args(argv)
-    try:
-        current = json.loads(args.current.read_text(encoding="utf-8-sig"))
-        previous = json.loads(args.previous.read_text(encoding="utf-8-sig")) if args.previous else None
-        curated_doc = json.loads(args.curated.read_text(encoding="utf-8-sig"))
-        prior_feed = json.loads(args.prior_feed.read_text(encoding="utf-8-sig")) \
-            if args.prior_feed else None
-    except (OSError, ValueError) as exc:
-        print(f"news-feed: cannot read inputs: {exc}", file=sys.stderr)
-        return 1
-    observed_at = args.observed_at or datetime.now(timezone.utc).isoformat()
-    doc, problems = build_feed(current, previous, curated_doc, observed_at=observed_at,
-                               prior_feed=prior_feed, retain_days=args.retain_days)
-    if problems:
-        for problem in problems:
-            print(f"news-feed: {problem}", file=sys.stderr)
-        return 1
-    args.out.write_text(json.dumps(doc, indent=2, sort_keys=True, allow_nan=False) + "\n",
-                             encoding="utf-8")
-    print(f"wrote {args.out}: {len(doc['items'])} items")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

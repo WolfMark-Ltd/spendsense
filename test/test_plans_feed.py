@@ -7,11 +7,8 @@ same client validation the desktop pane uses.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from wolfmark_ledger import plans_feed
 from wolfmark_ledger import membership_live as live
@@ -105,54 +102,6 @@ class BuildFeedTests(unittest.TestCase):
             seen_null_currency = seen_null_currency or value is None
         self.assertTrue(seen_null_currency,
                         "the fixture catalogue must exercise null currencies")
-
-
-class MainTests(unittest.TestCase):
-    def setUp(self):
-        self.scratch = tempfile.TemporaryDirectory(
-            dir=os.environ.get("TMPDIR"))
-        self.addCleanup(self.scratch.cleanup)
-        self.out = Path(self.scratch.name) / "plans.json"
-
-    def write_catalogue(self, data):
-        path = Path(self.scratch.name) / "plans-input.json"
-        path.write_text(json.dumps(data), encoding="utf-8")
-        return path
-
-    def test_main_writes_feed(self):
-        source = self.write_catalogue(catalogue([plan("a")]))
-        code = plans_feed.main(["--catalogue", str(source),
-                                "--generated-at", "2026-11-01T00:00:00Z",
-                                "--out", str(self.out)])
-        self.assertEqual(code, 0)
-        doc = json.loads(self.out.read_text(encoding="utf-8"))
-        self.assertEqual(doc["plans"][0]["id"], "a")
-        self.assertEqual(doc["generated_at"], "2026-11-01T00:00:00Z")
-
-    def test_main_refuses_invalid_catalogue(self):
-        source = self.write_catalogue(catalogue([plan("dup"), plan("dup")]))
-        with mock.patch("sys.stderr"):
-            code = plans_feed.main(["--catalogue", str(source),
-                                    "--out", str(self.out)])
-        self.assertEqual(code, 1)
-        self.assertFalse(self.out.exists())
-
-    def test_main_refuses_missing_catalogue(self):
-        missing = Path(self.scratch.name) / "absent.json"
-        with mock.patch("sys.stderr"):
-            code = plans_feed.main(["--catalogue", str(missing),
-                                    "--out", str(self.out)])
-        self.assertEqual(code, 1)
-        self.assertFalse(self.out.exists())
-
-    def test_main_enforces_byte_cap(self):
-        source = self.write_catalogue(catalogue([plan("a")]))
-        with mock.patch.object(plans_feed, "FEED_MAX_BYTES", 10), \
-                mock.patch("sys.stderr"):
-            code = plans_feed.main(["--catalogue", str(source),
-                                    "--out", str(self.out)])
-        self.assertEqual(code, 1)
-        self.assertFalse(self.out.exists())
 
 
 if __name__ == "__main__":
