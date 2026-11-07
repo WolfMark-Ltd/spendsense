@@ -105,8 +105,10 @@ steady between them; it is omitted when either sample is insufficient.
 `budgets.json` lives beside the profile's billing configuration. Version 1 contains
 `budgets` and bounded per-budget `dismissals`. All mutations acquire the existing
 cross-process file lock, check the whole-document revision, fsync a temporary file
-and atomically replace the document. An unreadable or unsupported document fails
-closed and is never implicitly replaced. No usage ledger migration is required.
+and atomically replace the document, then sync the parent directory where supported.
+If that final sync fails, the API reports an uncertain write because the replacement
+may already be visible. An unreadable or unsupported document fails closed and is
+never implicitly replaced. No usage ledger migration is required.
 The additive desktop tally is compatible with older readers; after downgrade and
 subsequent usage, its token coverage must be checked before applying a limit.
 

@@ -9,6 +9,8 @@ provider-confirmed charge adapter; catalogue prices never fill that field.
 from __future__ import annotations
 
 import calendar
+import hashlib
+import json
 import math
 import time
 import threading
@@ -48,13 +50,15 @@ def _freeze(value):
     return value
 
 
-def _catalogue_revision(book):
+def _catalogue_revision(book) -> bytes:
     """Fingerprint all pricing and provenance data that can affect a call."""
-    return (book.source, book.confidence, book.as_of, book.version,
-            _freeze(book.providers), _freeze(book.official))
+    content = (book.source, book.confidence, book.as_of, book.version,
+               _freeze(book.providers), _freeze(book.official))
+    encoded = json.dumps(content, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    return hashlib.blake2b(encoded, digest_size=16).digest()
 
 
-def _cached_per_call_value(item: dict, book, revision: tuple) -> float | None:
+def _cached_per_call_value(item: dict, book, revision: bytes) -> float | None:
     """Reuse one call's price only while its ledger and catalogue evidence match."""
     global _PRICE_CACHE_REVISION
     key = (revision, _freeze(item))
@@ -263,6 +267,11 @@ def _per_call_value(item: dict, book) -> float | None:
     lookup = book.lookup(str(item.get('provider') or '').strip(),
                          str(item.get('model') or '').strip(), at=item['ts'])
     if lookup is None:
+        return None
+    provisional_tokens = {'cache_read': item['cache_read_tokens'],
+                          'cache_write': item['cache_write_tokens']}
+    if any(bucket in getattr(lookup, 'provisional', ()) and count > 0
+           for bucket, count in provisional_tokens.items()):
         return None
     effective, _ = _effective_rate(lookup.rate, prompt)
     priced = price(effective, **{key: item[key] for key in fields}, calls=1)

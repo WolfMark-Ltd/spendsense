@@ -6,6 +6,7 @@ Unreadable existing documents are never repaired or overwritten implicitly.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import math
@@ -37,6 +38,31 @@ class BudgetConflict(ValueError):
 
 class BudgetStoreUnreadable(RuntimeError):
     pass
+
+
+class BudgetStoreDurabilityError(OSError):
+    """The budget file changed, but its directory durability is unconfirmed."""
+
+
+def _sync_parent_directory(directory: Path) -> None:
+    """Sync a replaced budget filename where directory fsync is supported."""
+    if os.name == 'nt':
+        return
+    unsupported = {errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP}
+    try:
+        fd = os.open(directory, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+    except OSError as exc:
+        if exc.errno in unsupported:
+            return
+        raise
+    try:
+        try:
+            os.fsync(fd)
+        except OSError as exc:
+            if exc.errno not in unsupported:
+                raise
+    finally:
+        os.close(fd)
 
 
 def store_path() -> Path:
@@ -148,6 +174,11 @@ def _write(doc: dict, target: Path) -> dict:
         os.fsync(handle.fileno())
         handle.close()
         os.replace(handle.name, target)
+        try:
+            _sync_parent_directory(target.parent)
+        except OSError as exc:
+            raise BudgetStoreDurabilityError(
+                'budget file was replaced but its durability could not be confirmed') from exc
     finally:
         try:
             if not handle.closed:

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, after } from 'node:test'
+import { test, after, mock } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const modules = join(ROOT, 'test/harness/node_modules')
@@ -200,8 +200,31 @@ test('both languages cover all guardrail states and render refusal explanations'
   assert.doesNotMatch(el.textContent, /budget[A-Z_]/)
 })
 
-test('monthly budget queries poll every 15 seconds independently of activity', () => {
+test('Chip polls budget status after 15 seconds without session activity', async () => {
+  await reset()
   assert.equal(T.budgetQuery().refetchInterval, 15_000)
+  const monthly = b({ id: 'monthly', scope: 'total' })
+  payload = { ok: true, rev: 'r1', budgets: [monthly], statuses: [{ id: monthly.id, budget: monthly,
+    level: 'normal', complete: true, spend: 0, percentage: 0, budget_rev: 'budget-r1', cycle: {},
+    coverage: { calls: 0, measured_calls: 0 }, forecast: { available: false, reason: 'insufficient_days' } }] }
+  mock.timers.enable({ apis: ['Date', 'setInterval'] })
+  try {
+    await mount(T.Chip)
+    const count = () => requests.filter(r => r.path === '/budgets/status').length
+    assert.equal(count(), 1)
+    assert.equal(events.has('session.usage'), true)
+    mock.timers.tick(14_999)
+    await flush()
+    assert.equal(count(), 1)
+    await React.act(async () => {
+      mock.timers.tick(1)
+      for (let i = 0; i < 5; i++) await Promise.resolve()
+    })
+    await flush()
+    assert.equal(count(), 2)
+  } finally {
+    mock.timers.reset()
+  }
 })
 
 test('session activity invalidates budget queries on the bounded refresh timer', async () => {

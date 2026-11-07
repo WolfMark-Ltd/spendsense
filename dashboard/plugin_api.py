@@ -555,6 +555,9 @@ def _budget_call(operation):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except budgets.BudgetStoreUnreadable as exc:
         raise HTTPException(status_code=503, detail='budget_store_unreadable') from exc
+    except budgets.BudgetStoreDurabilityError as exc:
+        raise HTTPException(status_code=503,
+                            detail='budget_write_uncertain: reload budget settings before retrying') from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail='budget_not_found') from exc
     except ValueError as exc:

@@ -47,6 +47,16 @@ class BudgetApiTests(unittest.TestCase):
         self.assertNotIn('private-sentinel', result.text)
         self.assertEqual(self.path.read_text(), '{private-sentinel')
 
+    def test_directory_sync_failure_reports_uncertain_write_and_keeps_replacement_readable(self):
+        """Tell clients to reload when rename succeeded but its directory sync failed."""
+        doc = self.client.get('/budgets').json()
+        with patch.object(budgets, '_sync_parent_directory', side_effect=OSError('fixture directory sync failure')):
+            response = self.client.put('/budgets/x', params={'if_rev': doc['rev']}, json=budget(id='x'))
+        self.assertEqual(response.status_code, 503)
+        self.assertIn('budget_write_uncertain', response.json()['detail'])
+        persisted = self.client.get('/budgets').json()
+        self.assertEqual(persisted['budgets'][0]['id'], 'x')
+
     def test_status_and_forecast_return_clear_unavailable_not_zero(self):
         """Require both status aliases to preserve unknown spend when the ledger is absent."""
         doc = self.client.get('/budgets').json()

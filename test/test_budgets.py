@@ -103,6 +103,16 @@ class BudgetStoreTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), before)
         self.assertEqual(list(self.path.parent.glob('*.tmp')), [])
 
+    def test_directory_sync_failure_reports_an_uncertain_replacement(self):
+        """Keep the atomic replacement and report when its directory sync fails."""
+        saved = self.save()
+        with patch.object(B, '_sync_parent_directory', side_effect=OSError('fixture directory sync failure')):
+            with self.assertRaises(B.BudgetStoreDurabilityError):
+                self.save(budget(amount=70), saved['rev'])
+        persisted = B.load(self.path)
+        self.assertEqual(persisted['budgets'][0]['amount'], 70)
+        self.assertEqual(list(self.path.parent.glob('*.tmp')), [])
+
     def test_corrupt_documents_fail_closed_without_rewriting(self):
         """Reject damaged documents on read and write while preserving their original bytes."""
         for bad in ['{', 'null', '[]', '{"version":2,"budgets":[],"dismissals":{}}',
@@ -384,6 +394,26 @@ class ReviewReportRegressions(unittest.TestCase):
             self.assertEqual(changed_catalogue['coverage']['calls'], 4)
             self.assertEqual(changed_catalogue['coverage']['measured_calls'], 4)
 
+    def test_catalogue_fingerprint_is_compact_and_tracks_all_pricing_provenance(self):
+        """Hash every catalogue revision field once into a small reusable value."""
+        base = Catalogue({'fixture': {'m': Rate(1, 2, .5, .25)}}, 'source', 'confidence', 'as_of', 'version')
+        fingerprint = F._catalogue_revision(base)
+        self.assertIsInstance(fingerprint, bytes)
+        self.assertEqual(len(fingerprint), 16)
+        variants = [
+            Catalogue(base.providers, 'other-source', base.confidence, base.as_of, base.version, base.official),
+            Catalogue(base.providers, base.source, 'other-confidence', base.as_of, base.version, base.official),
+            Catalogue(base.providers, base.source, base.confidence, 'other-as-of', base.version, base.official),
+            Catalogue(base.providers, base.source, base.confidence, base.as_of, 'other-version', base.official),
+            Catalogue({'fixture': {'m': Rate(1, 2, .75, .25)}}, base.source, base.confidence,
+                      base.as_of, base.version, base.official),
+            Catalogue(base.providers, base.source, base.confidence, base.as_of, base.version,
+                      {('fixture', 'm'): (Rate(1, 2, .5, .25), 'verified', ())}),
+        ]
+        for book in variants:
+            with self.subTest(source=book.source, confidence=book.confidence, version=book.version):
+                self.assertNotEqual(F._catalogue_revision(book), fingerprint)
+
     def test_monthly_guardrails_do_not_treat_cache_fallbacks_as_complete_prices(self):
         """Reject guessed cache prices while accepting documented zero cache prices."""
         B.mutate('total', if_rev=B.load(self.path)['rev'], budget=budget(amount=1), path=self.path)
@@ -462,6 +492,24 @@ class PerCallTierForecastRegressions(unittest.TestCase):
         legacy = _event_result(row, book, 'list', {'exact': {}}, at=row['ts'])
         result = F.build_report(path=self.path, event_db_path=self.events, now=NOW, catalogue=book)
         return result['statuses'][0], legacy
+
+    def test_provisional_cache_prices_are_unpriced_only_when_the_cache_bucket_is_used(self):
+        """Refuse provisional cache-read rates while preserving calls with no cache reads."""
+        from wolfmark_ledger.pricing import Tier
+        windows = ((frozenset(range(7)), 0, 1440, 1, 2, .5, .25),)
+        rate = Rate(1, 2, .5, .25, (Tier(0, 1, 2, .5, .25),))
+        book = Catalogue({'fixture': {'m': rate}}, 'fixture', 'test', '', '1',
+                         {('fixture', 'm'): (rate, 'verified', windows)})
+        no_cache = {'event_id': 'provisional-no-cache', 'ts': NOW, 'provider': 'fixture', 'model': 'm',
+                    'outcome': 'ok', 'input_tokens': 100000, 'output_tokens': 0,
+                    'cache_read_tokens': 0, 'cache_write_tokens': 0,
+                    'prompt_tokens': 100000, 'total_tokens': 100000}
+        lookup = book.lookup('fixture', 'm', at=NOW)
+        self.assertEqual(lookup.provisional, ('cache_read',))
+        self.assertEqual(F._per_call_value(no_cache, book), .1)
+        cache_used = {**no_cache, 'event_id': 'provisional-cache-read', 'cache_read_tokens': 100000,
+                      'prompt_tokens': 200000, 'total_tokens': 200000}
+        self.assertIsNone(F._per_call_value(cache_used, book))
 
     def test_discounted_tier_cannot_trigger_a_warning_from_the_higher_base_price(self):
         from wolfmark_ledger.pricing import Tier
