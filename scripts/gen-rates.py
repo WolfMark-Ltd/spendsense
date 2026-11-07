@@ -41,6 +41,8 @@ def build(catalog):
                 continue
             inp = float(inp)
             outp = float(outp)
+            if not all(math.isfinite(value) and value >= 0 for value in (inp, outp)):
+                continue
             # Keep explicit zero prices, missing cache prices and unresolved
             # context tiers distinct. Bits: flat tier evidence / read / write.
             def known(value):

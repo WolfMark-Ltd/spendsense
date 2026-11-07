@@ -1,13 +1,16 @@
 """HTTP budget contract with a synthetic profile and no network."""
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from dashboard import plugin_api
 from wolfmark_ledger import budgets
-from test_budgets import budget
+from wolfmark_ledger.pricing import Catalogue, Rate
+from test_budgets import budget, NOW, START
 
 
 class BudgetApiTests(unittest.TestCase):
@@ -65,3 +68,39 @@ class BudgetApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.client.post('/budgets/x/dismiss', params={'if_rev': status['rev']}, json=body).status_code, 409)
         self.assertEqual(self.client.post('/budgets/x/dismiss', params={'if_rev': response.json()['rev']}, json={**body, 'cycle': 'old-cycle'}).status_code, 422)
+
+    def test_populated_status_and_forecast_serialize_warning_and_dismissal(self):
+        """Read real SQLite usage through both HTTP aliases and persist a warning dismissal."""
+        events = self.path.with_name('usage.db')
+        with closing(sqlite3.connect(events)) as conn, conn:
+            conn.executescript(plugin_api.store._SCHEMA)
+            conn.execute('INSERT INTO baseline VALUES (1, ?, 0, 0, 0)', (START,))
+            for i in range(4):
+                conn.execute('INSERT INTO calls(event_id, ts, model, provider, outcome, input_tokens, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                             (str(i), START + (i + 1) * 86400, 'm', 'fixture', 'ok', 1000000, NOW))
+        book = Catalogue({'fixture': {'m': Rate(2, 4, .5, 3)}}, 'fixture', 'test', '', '1')
+        with patch.object(plugin_api.store, 'event_db_path', return_value=events), \
+                patch.object(plugin_api.forecast, 'load_catalogue', return_value=book), \
+                patch('time.time', return_value=NOW):
+            doc = self.client.get('/budgets').json()
+            saved = self.client.put('/budgets/x', params={'if_rev': doc['rev']}, json=budget(id='x', amount=10))
+            self.assertEqual(saved.status_code, 200)
+            for path in ('/budgets/status', '/forecast'):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                report = response.json()
+                item = report['statuses'][0]
+                self.assertEqual(item['spend'], 8)
+                self.assertEqual(item['level'], 'warning')
+                self.assertEqual(item['measurement'], 'api_equivalent')
+                self.assertTrue(item['forecast']['available'])
+                self.assertFalse(item['dismissed'])
+            body = {'cycle': item['cycle']['id'], 'budget_rev': item['budget_rev'], 'level': item['level']}
+            dismissed = self.client.post('/budgets/x/dismiss', params={'if_rev': report['rev']}, json=body)
+            self.assertEqual(dismissed.status_code, 200)
+            response = self.client.get('/budgets/status')
+            self.assertEqual(response.status_code, 200)
+            item = response.json()['statuses'][0]
+            self.assertTrue(item['dismissed'])
+            self.assertEqual(item['spend'], 8)
+            self.assertEqual(item['level'], 'warning')

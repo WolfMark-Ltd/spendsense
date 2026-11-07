@@ -200,6 +200,10 @@ test('both languages cover all guardrail states and render refusal explanations'
   assert.doesNotMatch(el.textContent, /budget[A-Z_]/)
 })
 
+test('monthly budget queries poll every 15 seconds independently of activity', () => {
+  assert.equal(T.budgetQuery().refetchInterval, 15_000)
+})
+
 test('session activity invalidates budget queries on the bounded refresh timer', async () => {
   await reset()
   const timer = intervals.find(x => x.ms === 2000)

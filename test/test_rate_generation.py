@@ -12,6 +12,23 @@ class RateGenerationTests(unittest.TestCase):
     def build(self, cost):
         return generator.build({'synthetic': {'models': {'model': {'cost': cost}}}})['synthetic']['model']
 
+    def test_invalid_converted_base_prices_are_skipped_without_dropping_valid_models(self):
+        """Reject negative and non-finite base prices in either stream after conversion."""
+        valid = {'cost': {'input': 2, 'output': 4}}
+        for field in ('input', 'output'):
+            for value in (-1, float('nan'), float('inf'), float('-inf'), '-1', 'NaN', 'Infinity', '-Infinity'):
+                with self.subTest(field=field, value=value):
+                    invalid = {'cost': {'input': 2, 'output': 4, field: value}}
+                    result = generator.build({'synthetic': {'models': {'invalid': invalid, 'valid': valid}}})
+                    self.assertEqual(result, {'synthetic': {'valid': [2, 4, 2, None, 1]}})
+
+    def test_zero_and_valid_converted_base_prices_remain_supported(self):
+        """Retain free models and the existing numeric-string conversion."""
+        for value in (0, '0', 1.25, '1.25'):
+            with self.subTest(value=value):
+                self.assertEqual(self.build({'input': value, 'output': value}),
+                                 [float(value), float(value), float(value), None, 1])
+
     def test_missing_cache_prices_are_distinct_from_explicit_zero(self):
         missing = self.build({'input': 2, 'output': 4})
         zero = self.build({'input': 2, 'output': 4, 'cache_read': 0, 'cache_write': 0})

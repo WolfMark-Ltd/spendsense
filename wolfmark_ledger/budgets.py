@@ -149,10 +149,12 @@ def _write(doc: dict, target: Path) -> dict:
         handle.close()
         os.replace(handle.name, target)
     finally:
-        if not handle.closed:
-            handle.close()
-        if os.path.exists(handle.name):
-            os.unlink(handle.name)
+        try:
+            if not handle.closed:
+                handle.close()
+        finally:
+            if os.path.exists(handle.name):
+                os.unlink(handle.name)
     return {**data, 'rev': revision(data)}
 
 

@@ -82,6 +82,27 @@ class BudgetStoreTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), before)
         self.assertEqual(list(self.path.parent.glob('*.tmp')), [])
 
+    def test_close_failure_during_write_cleanup_still_removes_tempfile(self):
+        """Remove temporary budget data even when closing after a write error fails."""
+        saved = self.save()
+        before = self.path.read_bytes()
+        handle = tempfile.NamedTemporaryFile('w', dir=self.path.parent, delete=False, suffix='.tmp')
+        close = handle.close
+        self.addCleanup(close)
+
+        def fail_close():
+            """Close the real fixture portably, then report an injected close failure."""
+            close()
+            raise OSError('fixture close failure')
+
+        with patch.object(B.tempfile, 'NamedTemporaryFile', return_value=handle), \
+                patch.object(B.json, 'dump', side_effect=OSError('fixture write failure')), \
+                patch.object(handle, 'close', side_effect=fail_close):
+            with self.assertRaisesRegex(OSError, 'fixture close failure'):
+                self.save(budget(amount=70), saved['rev'])
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(list(self.path.parent.glob('*.tmp')), [])
+
     def test_corrupt_documents_fail_closed_without_rewriting(self):
         """Reject damaged documents on read and write while preserving their original bytes."""
         for bad in ['{', 'null', '[]', '{"version":2,"budgets":[],"dismissals":{}}',
