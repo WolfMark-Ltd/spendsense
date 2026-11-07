@@ -394,6 +394,35 @@ class ReviewReportRegressions(unittest.TestCase):
             self.assertEqual(changed_catalogue['coverage']['calls'], 4)
             self.assertEqual(changed_catalogue['coverage']['measured_calls'], 4)
 
+    def test_over_capacity_report_bypasses_cache_without_losing_priced_rows(self):
+        count = F._PRICE_CACHE_MAX_ENTRIES + 1
+        B.mutate('total', if_rev=B.load(self.path)['rev'], budget=budget(), path=self.path)
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.executescript(store._SCHEMA)
+            conn.execute('INSERT INTO baseline VALUES (1, ?, 0, 0, 0)', (START,))
+            conn.executemany(
+                'INSERT INTO calls(event_id, ts, model, provider, outcome, input_tokens, recorded_at) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?)',
+                ((f'overflow-{i}', START + 1 + i, 'm', 'cache-overflow-fixture', 'ok', 1000, NOW)
+                 for i in range(count)))
+        book = Catalogue({'cache-overflow-fixture': {'m': Rate(1, 2)}}, 'fixture', 'test', '', '1')
+        with patch.object(F, '_PRICE_CACHE', type(F._PRICE_CACHE)()), \
+                patch.object(F, '_PRICE_CACHE_REVISION', None), \
+                patch.object(F, '_cached_per_call_value', wraps=F._cached_per_call_value) as cache_call, \
+                patch.object(F, '_per_call_value', wraps=F._per_call_value) as price_call:
+            first = F.build_report(path=self.path, event_db_path=self.events, now=NOW, catalogue=book)['statuses'][0]
+            self.assertEqual(first['coverage']['calls'], count)
+            self.assertEqual(price_call.call_count, count)
+            self.assertEqual(cache_call.call_count, 0)
+            self.assertEqual(len(F._PRICE_CACHE), 0)
+            price_call.reset_mock()
+            second = F.build_report(path=self.path, event_db_path=self.events, now=NOW, catalogue=book)['statuses'][0]
+            self.assertEqual(second['coverage']['calls'], count)
+            self.assertEqual(second['spend'], first['spend'])
+            self.assertEqual(price_call.call_count, count)
+            self.assertEqual(cache_call.call_count, 0)
+            self.assertEqual(len(F._PRICE_CACHE), 0)
+
     def test_catalogue_fingerprint_is_compact_and_tracks_all_pricing_provenance(self):
         """Hash every catalogue revision field once into a small reusable value."""
         base = Catalogue({'fixture': {'m': Rate(1, 2, .5, .25)}}, 'source', 'confidence', 'as_of', 'version')

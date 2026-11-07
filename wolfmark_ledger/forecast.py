@@ -307,9 +307,12 @@ def build_report(*, path: Path | str | None = None, event_db_path=None, now=None
                 since = min(starts + [now - 32 * 86400])
                 raw = store.query_calls(conn, since=since, until=now)
                 book = catalogue if catalogue is not None else load_catalogue()
-                revision = _catalogue_revision(book)
+                cache_prices = len(raw) <= _PRICE_CACHE_MAX_ENTRIES
+                revision = _catalogue_revision(book) if cache_prices else None
                 for item in raw:
-                    rows.append({**item, 'list_usd': _cached_per_call_value(item, book, revision),
+                    list_usd = (_cached_per_call_value(item, book, revision) if cache_prices
+                                else _per_call_value(item, book))
+                    rows.append({**item, 'list_usd': list_usd,
                                  'actual_metered_usd': None, 'measurement': 'unknown'})
                 available = True
         finally:

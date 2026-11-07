@@ -76,6 +76,9 @@ Session colours react to local usage changes. Monthly reads poll every 15 second
 and activity invalidation is coalesced to at most once per two seconds. A failed
 refresh preserves the displayed snapshot and neutralises warning colours until
 successful refresh; data from another connection or activation is never adopted.
+Per-call price caching is bounded to 8,192 calls; larger reports bypass it to
+avoid evicting entries during a full ledger scan. This changes only report work,
+not spend or coverage results.
 
 ## Cycles and forecasts
 
