@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from . import budgets, economics, membership, store
 from .aggregate import _event_result
 from .db import LedgerUnavailable
-from .pricing import load_catalogue
+from .pricing import _effective_rate, load_catalogue, price
 
 RANK = {'normal': 0, 'info': 1, 'warning': 2, 'exceeded': 3}
 
@@ -185,6 +185,38 @@ def evaluate(budget: dict, rows: list[dict], *, now: float, observed_since: floa
     return result
 
 
+def _per_call_value(item: dict, book) -> float | None:
+    """Price one recorded attempt at its applicable rate, never an upper bound.
+
+    Keep shared analytics normalisation and pricing unchanged. A request ordinal
+    is not a call count; each call-store row supplies its own token buckets.
+    """
+    row = _event_result(item, book, 'list', {'exact': {}}, at=item['ts'])
+    if row['_failure'] or row['_missing']:
+        return None
+    fields = ('input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens')
+    if any(type(item.get(key)) is not int or item[key] < 0 for key in fields):
+        return None
+    prompt = item['input_tokens'] + item['cache_read_tokens'] + item['cache_write_tokens']
+    total = prompt + item['output_tokens']
+    # Old stores/fixtures may omit aggregate counters (zero). Reported totals
+    # must agree with the buckets; never pick a cheaper tier from conflicting data.
+    if (not total or item.get('prompt_tokens') not in (None, 0, prompt)
+            or item.get('total_tokens') not in (None, 0, total)):
+        return None
+    lookup = book.lookup(str(item.get('provider') or '').strip(),
+                         str(item.get('model') or '').strip(), at=item['ts'])
+    if lookup is None:
+        return None
+    effective, _ = _effective_rate(lookup.rate, prompt)
+    priced = price(effective, **{key: item[key] for key in fields}, calls=1)
+    # These flags now describe the effective tier, including explicitly inherited
+    # base prices. A missing used cache price is still unknown, never guessed.
+    if priced.cache_read_defaulted or priced.cache_write_defaulted:
+        return None
+    return priced.usd
+
+
 def build_report(*, path: Path | str | None = None, event_db_path=None, now=None,
                  catalogue=None, fx_path=None) -> dict:
     now = time.time() if now is None else now
@@ -210,12 +242,7 @@ def build_report(*, path: Path | str | None = None, event_db_path=None, now=None
                 raw = store.query_calls(conn, since=since, until=now)
                 book = catalogue if catalogue is not None else load_catalogue()
                 for item in raw:
-                    priced = _event_result(item, book, 'list', {'exact': {}}, at=item['ts'])
-                    pricing = priced.get('pricing') or {}
-                    # General analytics may display an input-rate fallback;
-                    # a guardrail must not treat that guess as measured value.
-                    explicit = not (pricing.get('cache_read_defaulted') or pricing.get('cache_write_defaulted'))
-                    rows.append({**item, 'list_usd': priced['list_usd'] if explicit else None,
+                    rows.append({**item, 'list_usd': _per_call_value(item, book),
                                  'actual_metered_usd': None, 'measurement': 'unknown'})
                 available = True
         finally:

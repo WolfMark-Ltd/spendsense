@@ -47,8 +47,12 @@ Cache reads and writes require their own explicit price; a documented zero price
 is supported, but an input-rate fallback is not measurement evidence. Live,
 remembered, backend and bundled rates retain this distinction and explicit tier
 metadata. Session deltas with unresolved context tiers remain uncovered, including
-output-only deltas; monthly forecasts can resolve tiers from individual calls.
-Monthly guardrails also exclude calls valued through a cache-price fallback.
+output-only deltas. Monthly guardrails use the applicable per-call tier, including
+discounts, and validate cache prices against that same effective rate (with
+explicit base-price inheritance where the tier omits a field). They do not use
+the legacy analytics upper bound as an exact amount. Conflicting recorded prompt
+or total counters leave the call incomplete rather than selecting a tier.
+Monthly guardrails still exclude calls requiring a cache-price fallback.
 
 A call that advances the call counter without complete token usage remains a
 coverage gap even when the token subtotal is unchanged. A later complete reading

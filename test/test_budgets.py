@@ -358,3 +358,104 @@ class ReviewReportRegressions(unittest.TestCase):
                 self.assertEqual(result['forecast']['reason'], 'currency_unavailable')
                 self.assertIsNone(result['spend'])
                 self.assertIsNone(result['forecast']['projected'])
+
+
+class PerCallTierForecastRegressions(unittest.TestCase):
+    """One SQLite row is a physical call, not a cumulative session average."""
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / 'budgets.json'
+        self.events = Path(tmp.name) / 'usage.db'
+        B.mutate('total', if_rev=B.load(self.path)['rev'], budget=budget(amount=2), path=self.path)
+
+    def report(self, rate, *, input_tokens=300000, output_tokens=0,
+               cache_read_tokens=0, cache_write_tokens=0, **overrides):
+        from wolfmark_ledger.aggregate import _event_result
+        book = Catalogue({'fixture': {'m': rate}}, 'fixture', 'test', '', '1')
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.executescript(store._SCHEMA)
+            conn.execute('DELETE FROM calls')
+            conn.execute('INSERT OR REPLACE INTO baseline VALUES (1, ?, 0, 0, 0)', (START,))
+            for i in range(3):
+                prompt = input_tokens + cache_read_tokens + cache_write_tokens
+                row = {'event_id': str(i), 'ts': START + (i + 1) * 86400,
+                       'model': 'm', 'provider': 'fixture', 'outcome': 'ok',
+                       'input_tokens': input_tokens, 'output_tokens': output_tokens,
+                       'cache_read_tokens': cache_read_tokens, 'cache_write_tokens': cache_write_tokens,
+                       'prompt_tokens': prompt, 'total_tokens': prompt + output_tokens,
+                       # This field is the request ordinal, not a call cardinality.
+                       'api_call_count': 40 + i, 'recorded_at': NOW, **overrides}
+                columns = list(row)
+                conn.execute(f"INSERT INTO calls ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})", list(row.values()))
+        legacy = _event_result(row, book, 'list', {'exact': {}}, at=row['ts'])
+        result = F.build_report(path=self.path, event_db_path=self.events, now=NOW, catalogue=book)
+        return result['statuses'][0], legacy
+
+    def test_discounted_tier_cannot_trigger_a_warning_from_the_higher_base_price(self):
+        from wolfmark_ledger.pricing import Tier
+        rate = Rate(10, 20, tiers=(Tier(200000, input=1, output=2),))
+        result, legacy = self.report(rate)
+        self.assertAlmostEqual(result['spend'], .9)
+        self.assertEqual(result['level'], 'normal')
+        self.assertTrue(result['complete'])
+        self.assertTrue(result['forecast']['available'])
+        self.assertEqual(legacy['list_usd'], 3, 'shared analytics keeps its existing upper-bound behaviour')
+
+    def test_cache_prices_supplied_only_by_the_applicable_tier_are_measured(self):
+        from wolfmark_ledger.pricing import Tier
+        rate = Rate(10, 20, tiers=(Tier(200000, input=1, output=2, cache_read=.1, cache_write=2),))
+        result, legacy = self.report(rate, input_tokens=100000, output_tokens=10000,
+                                     cache_read_tokens=100000, cache_write_tokens=100000)
+        self.assertIsNotNone(result['spend'])
+        self.assertAlmostEqual(result['spend'], .99)
+        self.assertEqual(result['coverage']['measured_calls'], 3)
+        self.assertTrue(result['complete'])
+        self.assertTrue(result['forecast']['available'])
+        self.assertTrue(legacy['pricing']['cache_read_defaulted'])
+        self.assertTrue(legacy['pricing']['cache_write_defaulted'])
+
+    def test_explicit_tier_cache_zeroes_are_supported_without_a_fallback(self):
+        from wolfmark_ledger.pricing import Tier
+        rate = Rate(10, 20, tiers=(Tier(200000, input=1, output=2, cache_read=0, cache_write=0),))
+        result, _ = self.report(rate, input_tokens=100000, cache_read_tokens=100000, cache_write_tokens=100000)
+        self.assertIsNotNone(result['spend'])
+        self.assertAlmostEqual(result['spend'], .3)
+        self.assertTrue(result['forecast']['available'])
+
+    def test_tier_selection_respects_the_strict_boundary_and_inherited_base_prices(self):
+        from wolfmark_ledger.pricing import Tier
+        rate = Rate(10, 20, .5, 3, tiers=(Tier(200000, input=1, output=2),))
+        at_boundary, _ = self.report(rate, input_tokens=200000)
+        above_boundary, _ = self.report(rate, input_tokens=200001)
+        inherited, _ = self.report(rate, input_tokens=100000, cache_read_tokens=100000, cache_write_tokens=100000)
+        self.assertEqual(at_boundary['spend'], 6)
+        self.assertAlmostEqual(above_boundary['spend'], .600003)
+        self.assertAlmostEqual(inherited['spend'], 1.35)
+        self.assertTrue(inherited['complete'])
+
+    def test_a_non_applicable_tier_cannot_supply_missing_cache_prices(self):
+        from wolfmark_ledger.pricing import Tier
+        rate = Rate(10, 20, tiers=(Tier(500000, input=1, output=2, cache_read=.1, cache_write=2),))
+        result, _ = self.report(rate, input_tokens=100000, cache_read_tokens=100000, cache_write_tokens=100000)
+        self.assertIsNone(result['spend'])
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['forecast']['reason'], 'incomplete_pricing')
+
+    def test_one_missing_effective_cache_price_keeps_the_call_unpriced(self):
+        from wolfmark_ledger.pricing import Tier
+        for read, write in [(None, 2), (.1, None)]:
+            rate = Rate(10, 20, tiers=(Tier(200000, input=1, output=2, cache_read=read, cache_write=write),))
+            result, _ = self.report(rate, input_tokens=100000, cache_read_tokens=100000, cache_write_tokens=100000)
+            self.assertIsNone(result['spend'])
+            self.assertEqual(result['forecast']['reason'], 'incomplete_pricing')
+
+    def test_inconsistent_recorded_prompt_or_total_cannot_select_a_discounted_tier(self):
+        from wolfmark_ledger.pricing import Tier
+        rate = Rate(10, 20, tiers=(Tier(200000, input=1, output=2),))
+        for evidence in [{'prompt_tokens': 400000}, {'total_tokens': 400000}]:
+            result, _ = self.report(rate, **evidence)
+            self.assertIsNone(result['spend'])
+            self.assertFalse(result['complete'])
+            self.assertIsNone(result['forecast']['projected'])
+            self.assertEqual(result['forecast']['reason'], 'incomplete_pricing')
