@@ -11,6 +11,9 @@ from __future__ import annotations
 import calendar
 import math
 import time
+import threading
+from collections import OrderedDict
+from dataclasses import is_dataclass, fields as dataclass_fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -20,6 +23,55 @@ from .db import LedgerUnavailable
 from .pricing import _effective_rate, load_catalogue, price
 
 RANK = {'normal': 0, 'info': 1, 'warning': 2, 'exceeded': 3}
+_PRICE_CACHE_MAX_ENTRIES = 8192
+_PRICE_CACHE = OrderedDict()
+_PRICE_CACHE_LOCK = threading.Lock()
+_PRICE_CACHE_REVISION = None
+
+
+def _freeze(value):
+    """Convert catalogue and ledger values into stable, hashable cache keys."""
+    if isinstance(value, dict):
+        pairs = [(_freeze(key), _freeze(item)) for key, item in value.items()]
+        return tuple(sorted(pairs, key=lambda pair: repr(pair[0])))
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return tuple(sorted((_freeze(item) for item in value), key=repr))
+    if is_dataclass(value):
+        return (type(value).__qualname__, tuple((field.name, _freeze(getattr(value, field.name)))
+                                                for field in dataclass_fields(value)))
+    try:
+        hash(value)
+    except TypeError:
+        return repr(value)
+    return value
+
+
+def _catalogue_revision(book):
+    """Fingerprint all pricing and provenance data that can affect a call."""
+    return (book.source, book.confidence, book.as_of, book.version,
+            _freeze(book.providers), _freeze(book.official))
+
+
+def _cached_per_call_value(item: dict, book, revision: tuple) -> float | None:
+    """Reuse one call's price only while its ledger and catalogue evidence match."""
+    global _PRICE_CACHE_REVISION
+    key = (revision, _freeze(item))
+    with _PRICE_CACHE_LOCK:
+        if revision != _PRICE_CACHE_REVISION:
+            _PRICE_CACHE.clear()
+            _PRICE_CACHE_REVISION = revision
+        if key in _PRICE_CACHE:
+            _PRICE_CACHE.move_to_end(key)
+            return _PRICE_CACHE[key]
+    value = _per_call_value(item, book)
+    with _PRICE_CACHE_LOCK:
+        _PRICE_CACHE[key] = value
+        _PRICE_CACHE.move_to_end(key)
+        while len(_PRICE_CACHE) > _PRICE_CACHE_MAX_ENTRIES:
+            _PRICE_CACHE.popitem(last=False)
+    return value
 
 
 def cycle_bounds(budget: dict, now: float) -> dict:
@@ -246,8 +298,9 @@ def build_report(*, path: Path | str | None = None, event_db_path=None, now=None
                 since = min(starts + [now - 32 * 86400])
                 raw = store.query_calls(conn, since=since, until=now)
                 book = catalogue if catalogue is not None else load_catalogue()
+                revision = _catalogue_revision(book)
                 for item in raw:
-                    rows.append({**item, 'list_usd': _per_call_value(item, book),
+                    rows.append({**item, 'list_usd': _cached_per_call_value(item, book, revision),
                                  'actual_metered_usd': None, 'measurement': 'unknown'})
                 available = True
         finally:

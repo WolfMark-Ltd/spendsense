@@ -352,6 +352,38 @@ class ReviewReportRegressions(unittest.TestCase):
         self.assertIsNone(status['forecast']['projected'])
         self.assertEqual(status['coverage']['calls'], 0)
 
+    def test_price_cache_reuses_only_unchanged_calls_and_catalogue_data(self):
+        """Cache repeat status pricing while retaining disabled-row coverage and invalidating changes."""
+        disabled = budget(amount=10, enabled=False)
+        B.mutate('total', if_rev=B.load(self.path)['rev'], budget=disabled, path=self.path)
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.executescript(store._SCHEMA)
+            conn.execute('INSERT INTO baseline VALUES (1, ?, 0, 0, 0)', (START,))
+            for i in range(4):
+                conn.execute('INSERT INTO calls(event_id, ts, model, provider, outcome, input_tokens, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                             (f'cache-{i}', START + (i + 1) * 86400, 'm', 'cache-fixture', 'ok', 1000000, NOW))
+        book = Catalogue({'cache-fixture': {'m': Rate(2, 4, .5, 3)}}, 'fixture', 'test', '', '1')
+        with patch.object(F, '_per_call_value', wraps=F._per_call_value) as price_call:
+            first = F.build_report(path=self.path, event_db_path=self.events, now=NOW, catalogue=book)['statuses'][0]
+            self.assertEqual((first['spend'], first['coverage']['calls'], first['coverage']['measured_calls'], first['level']),
+                             (8, 4, 4, 'disabled'))
+            F.build_report(path=self.path, event_db_path=self.events, now=NOW, catalogue=book)
+            self.assertEqual(price_call.call_count, 4)
+
+            with closing(sqlite3.connect(self.events)) as conn, conn:
+                conn.execute("UPDATE calls SET input_tokens=2000000 WHERE event_id='cache-0'")
+            changed_call = F.build_report(path=self.path, event_db_path=self.events, now=NOW, catalogue=book)['statuses'][0]
+            self.assertEqual(price_call.call_count, 5)
+            self.assertEqual(changed_call['spend'], 10)
+            self.assertEqual(changed_call['coverage']['measured_calls'], 4)
+
+            book.providers['cache-fixture']['m'] = Rate(4, 8, .5, 3)
+            changed_catalogue = F.build_report(path=self.path, event_db_path=self.events, now=NOW, catalogue=book)['statuses'][0]
+            self.assertEqual(price_call.call_count, 9)
+            self.assertEqual(changed_catalogue['spend'], 20)
+            self.assertEqual(changed_catalogue['coverage']['calls'], 4)
+            self.assertEqual(changed_catalogue['coverage']['measured_calls'], 4)
+
     def test_monthly_guardrails_do_not_treat_cache_fallbacks_as_complete_prices(self):
         """Reject guessed cache prices while accepting documented zero cache prices."""
         B.mutate('total', if_rev=B.load(self.path)['rev'], budget=budget(amount=1), path=self.path)
