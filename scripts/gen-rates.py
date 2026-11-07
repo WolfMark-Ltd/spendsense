@@ -10,7 +10,9 @@ The desktop plugin loader rejects relative imports, so the table cannot live in
 its own module — this script rewrites the `const FALLBACK_RATES = ...` literal
 in place.
 """
+import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -24,6 +26,7 @@ KEEP = None  # every provider in the catalog; exact rates first
 
 
 def build(catalog):
+    """Build compact rates while retaining explicit cache prices and tier evidence."""
     out = {}
     providers = sorted(catalog) if KEEP is None else KEEP
     for provider in providers:
@@ -38,10 +41,19 @@ def build(catalog):
                 continue
             inp = float(inp)
             outp = float(outp)
-            cache = cost.get("cache_read")
-            row = [inp, outp, float(cache) if cache is not None else inp]
-            while len(row) > 2 and row[-1] == 0:
-                row.pop()
+            if not all(math.isfinite(value) and value >= 0 for value in (inp, outp)):
+                continue
+            # Keep explicit zero prices, missing cache prices and unresolved
+            # context tiers distinct. Bits: flat tier evidence / read / write.
+            def known(value):
+                """Recognise explicit finite, non-negative prices, including zero."""
+                return type(value) in (int, float) and math.isfinite(value) and value >= 0
+            cache, write = cost.get("cache_read"), cost.get("cache_write")
+            flags = int(not cost.get("tiers") and not cost.get("context_over_200k"))
+            flags |= 2 if known(cache) else 0
+            flags |= 4 if known(write) else 0
+            row = [inp, outp, float(cache) if known(cache) else inp,
+                   float(write) if known(write) else None, flags]
             models[str(model_id).lower()] = row
         if models:
             out[provider] = models
@@ -49,10 +61,15 @@ def build(catalog):
 
 
 def main():
-    if not os.path.exists(CACHE):
-        sys.exit(f"missing {CACHE} — run Hermes once so it fetches models.dev")
-    catalog = json.load(open(CACHE))
-    catalog = catalog.get("data", catalog)
+    """Regenerate the inline rate table from the selected catalogue or Hermes cache."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--catalogue', default=CACHE, help='explicit offline catalogue, or the Hermes cache')
+    args = parser.parse_args()
+    source_path = args.catalogue
+    if not os.path.exists(source_path):
+        sys.exit(f"missing {source_path} — run Hermes once so it fetches models.dev")
+    catalog = json.load(open(source_path))
+    catalog = catalog.get("data", catalog.get("providers", catalog))
     table = build(catalog)
     literal = json.dumps(table, sort_keys=True, separators=(",", ":"))
 
