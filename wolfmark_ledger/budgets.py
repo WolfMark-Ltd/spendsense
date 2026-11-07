@@ -24,6 +24,7 @@ MAX_BUDGETS = 100
 
 
 def _finite(value):
+    """Accept finite numbers while rejecting booleans and overflowing integers."""
     try:
         return type(value) in (int, float) and math.isfinite(value)
     except OverflowError:
@@ -39,15 +40,18 @@ class BudgetStoreUnreadable(RuntimeError):
 
 
 def store_path() -> Path:
+    """Locate guardrails beside the active profile’s billing configuration."""
     return billing.profiles_path().with_name('budgets.json')
 
 
 def revision(doc: dict) -> str:
+    """Hash canonical configuration without its transport revision token."""
     return hashlib.sha256(json.dumps({k: v for k, v in doc.items() if k != 'rev'},
                                     sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()[:16]
 
 
 def validation_errors(budget: Any) -> list[str]:
+    """Check scope, metric, amount, thresholds and cycle settings without writing."""
     if not isinstance(budget, dict):
         return ['budget must be an object']
     allowed = {'id', 'label', 'scope', 'provider', 'model', 'amount', 'currency', 'enabled',
@@ -105,6 +109,7 @@ def validation_errors(budget: Any) -> list[str]:
 
 
 def load(path: Path | str | None = None) -> dict:
+    """Read validated configuration; distinguish an absent store from a corrupt one."""
     target = Path(path) if path is not None else store_path()
     try:
         doc = json.loads(target.read_text(encoding='utf-8-sig'))
@@ -134,6 +139,7 @@ def load(path: Path | str | None = None) -> dict:
 
 
 def _write(doc: dict, target: Path) -> dict:
+    """Fsync temporary JSON and atomically replace a validated budget document."""
     data = {k: v for k, v in doc.items() if k != 'rev'}
     handle = tempfile.NamedTemporaryFile('w', dir=target.parent, delete=False, suffix='.tmp', encoding='utf-8')
     try:
@@ -152,6 +158,7 @@ def _write(doc: dict, target: Path) -> dict:
 
 def mutate(budget_id: str, *, if_rev: str, budget: dict | None = None,
            dismissal: dict | None = None, path: Path | str | None = None) -> dict:
+    """Apply a save, deletion or dismissal under the store lock and revision check."""
     target = Path(path) if path is not None else store_path()
     with locked(target):
         doc = load(target)
@@ -187,6 +194,7 @@ def mutate(budget_id: str, *, if_rev: str, budget: dict | None = None,
 
 
 def level(amount: float | None, budget: dict) -> str:
+    """Classify a limit without interpreting an unavailable amount as zero."""
     if not budget['enabled']:
         return 'disabled'
     if amount is None:

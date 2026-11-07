@@ -16,7 +16,6 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import budgets, economics, membership, store
-from .aggregate import _event_result
 from .db import LedgerUnavailable
 from .pricing import _effective_rate, load_catalogue, price
 
@@ -24,10 +23,12 @@ RANK = {'normal': 0, 'info': 1, 'warning': 2, 'exceeded': 3}
 
 
 def cycle_bounds(budget: dict, now: float) -> dict:
+    """Resolve half-open monthly boundaries in the configured timezone."""
     zone = ZoneInfo(budget['timezone'])
     moment = datetime.fromtimestamp(now, zone)
 
     def anchor(year, month):
+        """Clamp the reset day to the selected calendar month."""
         return datetime(year, month, min(budget['cycle_day'], calendar.monthrange(year, month)[1]), tzinfo=zone)
 
     start = anchor(moment.year, moment.month)
@@ -39,6 +40,7 @@ def cycle_bounds(budget: dict, now: float) -> dict:
 
 
 def _amount(row):
+    """Accept only finite, non-negative amounts explicitly marked actual metered."""
     value = row.get('actual_metered_usd')
     if row.get('measurement') != 'actual_metered' or type(value) not in (int, float):
         return None
@@ -49,6 +51,7 @@ def _amount(row):
 
 
 def _matches(row, budget):
+    """Apply exact route and model filters without combining overlapping limits."""
     return ((budget['scope'] == 'total' or row.get('provider') == budget.get('provider'))
             and (budget['scope'] != 'model_route' or row.get('model') == budget.get('model')))
 
@@ -79,6 +82,7 @@ def evaluate(budget: dict, rows: list[dict], *, now: float, observed_since: floa
     cycle_rows = [r for r in selected if cycle['since'] <= r['ts'] < cycle['until']]
     estimated = budget['measurement'] == 'api_equivalent'
     def measured(row):
+        """Select one measurement type without filling its gaps from another."""
         if estimated:
             value = row.get('list_usd')
             return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 and row.get('outcome') == 'ok' else None
@@ -139,6 +143,7 @@ def evaluate(budget: dict, rows: list[dict], *, now: float, observed_since: floa
         # Fractional local calendar day avoids treating a partial first/today
         # as a full day. UTC timestamp subtraction alone miscounts DST days.
         def calendar_position(ts):
+            """Express local wall time as calendar days rather than elapsed DST hours."""
             dt = datetime.fromtimestamp(ts, zone)
             return dt.date().toordinal() + (dt.hour * 3600 + dt.minute * 60 + dt.second) / 86400
         span = max(0, calendar_position(now) - calendar_position(start))
@@ -188,11 +193,10 @@ def evaluate(budget: dict, rows: list[dict], *, now: float, observed_since: floa
 def _per_call_value(item: dict, book) -> float | None:
     """Price one recorded attempt at its applicable rate, never an upper bound.
 
-    Keep shared analytics normalisation and pricing unchanged. A request ordinal
+    Keep shared analytics and pricing unchanged. A request ordinal
     is not a call count; each call-store row supplies its own token buckets.
     """
-    row = _event_result(item, book, 'list', {'exact': {}}, at=item['ts'])
-    if row['_failure'] or row['_missing']:
+    if str(item.get('outcome') or 'ok') in ('error', 'missing_usage'):
         return None
     fields = ('input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens')
     if any(type(item.get(key)) is not int or item[key] < 0 for key in fields):
@@ -219,6 +223,7 @@ def _per_call_value(item: dict, book) -> float | None:
 
 def build_report(*, path: Path | str | None = None, event_db_path=None, now=None,
                  catalogue=None, fx_path=None) -> dict:
+    """Build monthly status from local evidence, skipping ledger work for session-only limits."""
     now = time.time() if now is None else now
     doc = budgets.load(path)
     monthly = [b for b in doc['budgets'] if b['scope'] != 'session']

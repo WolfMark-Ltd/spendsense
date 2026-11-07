@@ -11,6 +11,7 @@ from . import membership_store
 
 
 def _replace_bytes(path: Path, value: bytes) -> None:
+    """Durably flush a temporary file before atomically replacing one reset target."""
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False, suffix=".tmp")
     try:

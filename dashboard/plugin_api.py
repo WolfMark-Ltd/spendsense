@@ -512,6 +512,7 @@ def billing_profiles() -> dict[str, Any]:
 
 @router.post("/settings/reset-user-data")
 def reset_user_data(body: dict[str, Any]) -> dict[str, Any]:
+    """Clear plugin-entered settings only after explicit recovery confirmation."""
     if body.get("confirm") != "RESET_USER_ENTERED_DATA":
         raise HTTPException(status_code=400, detail="explicit confirmation is required")
     try:
@@ -547,6 +548,7 @@ def billing_delete(profile_id: str) -> dict[str, Any]:
 
 # Advisory only: none of these routes can interrupt provider calls.
 def _budget_call(operation):
+    """Translate budget errors into API statuses without leaking storage details."""
     try:
         return operation()
     except budgets.BudgetConflict as exc:
@@ -566,28 +568,34 @@ def _budget_call(operation):
 
 @router.get('/budgets')
 def budget_list():
+    """Return local budget configuration and its concurrency revision."""
     return _budget_call(lambda: {'ok': True, **budgets.load()})
 
 
 @router.get('/budgets/status')
 @router.get('/forecast')
 def budget_status():
+    """Return monthly statuses, forecasts and explicit evidence refusal states."""
     return _budget_call(forecast.build_report)
 
 
 @router.put('/budgets/{budget_id}')
 def budget_save(budget_id: str, body: dict[str, Any], if_rev: str = Query(...)):
+    """Create or replace one budget only at the supplied store revision."""
     return _budget_call(lambda: {'ok': True, **budgets.mutate(budget_id, budget=body, if_rev=if_rev)})
 
 
 @router.delete('/budgets/{budget_id}')
 def budget_delete(budget_id: str, if_rev: str = Query(...)):
+    """Remove one budget only if the caller holds the current revision."""
     return _budget_call(lambda: {'ok': True, **budgets.mutate(budget_id, if_rev=if_rev)})
 
 
 @router.post('/budgets/{budget_id}/dismiss')
 def budget_dismiss(budget_id: str, body: dict[str, Any], if_rev: str = Query(...)):
+    """Persist a cycle-scoped local alert dismissal with revision protection."""
     def dismiss():
+        """Validate the current monthly cycle before storing its dismissal."""
         import time
         doc = budgets.load()
         budget = next((b for b in doc['budgets'] if b['id'] == budget_id), None)

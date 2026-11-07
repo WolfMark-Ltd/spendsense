@@ -26,6 +26,7 @@ KEEP = None  # every provider in the catalog; exact rates first
 
 
 def build(catalog):
+    """Build compact rates while retaining explicit cache prices and tier evidence."""
     out = {}
     providers = sorted(catalog) if KEEP is None else KEEP
     for provider in providers:
@@ -43,6 +44,7 @@ def build(catalog):
             # Keep explicit zero prices, missing cache prices and unresolved
             # context tiers distinct. Bits: flat tier evidence / read / write.
             def known(value):
+                """Recognise explicit finite, non-negative prices, including zero."""
                 return type(value) in (int, float) and math.isfinite(value) and value >= 0
             cache, write = cost.get("cache_read"), cost.get("cache_write")
             flags = int(not cost.get("tiers") and not cost.get("context_over_200k"))
@@ -57,6 +59,7 @@ def build(catalog):
 
 
 def main():
+    """Regenerate the inline rate table from the selected catalogue or Hermes cache."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--catalogue', default=CACHE, help='explicit offline catalogue, or the Hermes cache')
     args = parser.parse_args()

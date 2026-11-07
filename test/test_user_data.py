@@ -69,6 +69,7 @@ class UserDataResetTests(unittest.TestCase):
         self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
 
     def test_corrupt_budget_aborts_reset_before_any_replacement(self):
+        """Keep every store intact when the budget document cannot be understood."""
         target = self.profiles.with_name('budgets.json')
         target.write_bytes(b'{corrupt-budget')
         before = {p: p.read_bytes() for p in (self.memberships, self.profiles, target)}
@@ -77,11 +78,13 @@ class UserDataResetTests(unittest.TestCase):
         self.assertEqual({p: p.read_bytes() for p in before}, before)
 
     def test_budget_replace_failure_rolls_back_all_stores(self):
+        """Restore prior bytes if replacement of the budget reset target fails."""
         target = self.profiles.with_name('budgets.json')
         target.write_text(json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}))
         before = {p: p.read_bytes() for p in (self.memberships, self.profiles, target)}
         replace = user_data._replace_bytes
         def fail_budget(path, value):
+            """Inject a failure only at the budget replacement step of the reset."""
             if path == target:
                 raise OSError('fixture replacement failure')
             replace(path, value)

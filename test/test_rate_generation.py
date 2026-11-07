@@ -19,6 +19,7 @@ class RateGenerationTests(unittest.TestCase):
         self.assertEqual(zero, [2, 4, 0, 0, 7])
 
     def test_tier_metadata_is_retained_instead_of_claiming_flat_coverage(self):
+        """Retain both supported context-tier forms in generated pricing evidence."""
         for extra in [{'tiers': [{'tier': {'size': 200000, 'type': 'context'}, 'input': 4}]},
                       {'context_over_200k': {'input': 4}}]:
             row = self.build({'input': 2, 'output': 4, 'cache_read': .5, **extra})

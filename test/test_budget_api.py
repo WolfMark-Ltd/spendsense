@@ -45,6 +45,7 @@ class BudgetApiTests(unittest.TestCase):
         self.assertEqual(self.path.read_text(), '{private-sentinel')
 
     def test_status_and_forecast_return_clear_unavailable_not_zero(self):
+        """Require both status aliases to preserve unknown spend when the ledger is absent."""
         doc = self.client.get('/budgets').json()
         self.client.put('/budgets/x', params={'if_rev': doc['rev']}, json=budget(id='x'))
         for path in ['/budgets/status', '/forecast']:

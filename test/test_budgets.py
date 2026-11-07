@@ -24,12 +24,14 @@ def budget(**kwargs):
 
 
 def rows(amount=10, count=4):
+    """Create distinct synthetic attempts with separate catalogue and actual values."""
     return [{'event_id': str(i), 'ts': START + (i + 1) * 86400, 'provider': 'fixture', 'model': 'm',
              'list_usd': amount, 'outcome': 'ok', 'actual_metered_usd': amount / 2,
              'measurement': 'actual_metered'} for i in range(count)]
 
 
 def process_save(path, rev, identity):
+    """Attempt a cross-process revision-checked write and report its outcome."""
     try:
         B.mutate(identity, if_rev=rev, budget=budget(id=identity), path=path)
         return 'saved'
@@ -44,6 +46,7 @@ class BudgetStoreTests(unittest.TestCase):
         self.path = Path(tmp.name) / 'budgets.json'
 
     def save(self, value=None, rev=None):
+        """Save one fixture against either an explicit or freshly loaded revision."""
         value = value or budget()
         return B.mutate(value['id'], budget=value, if_rev=rev or B.load(self.path)['rev'], path=self.path)
 
@@ -80,6 +83,7 @@ class BudgetStoreTests(unittest.TestCase):
         self.assertEqual(list(self.path.parent.glob('*.tmp')), [])
 
     def test_corrupt_documents_fail_closed_without_rewriting(self):
+        """Reject damaged documents on read and write while preserving their original bytes."""
         for bad in ['{', 'null', '[]', '{"version":2,"budgets":[],"dismissals":{}}',
                     '{"version":1,"budgets":[{}],"dismissals":{}}',
                     '{"version":1,"budgets":[],"dismissals":{"x":{}}}']:
@@ -91,6 +95,7 @@ class BudgetStoreTests(unittest.TestCase):
             self.assertEqual(self.path.read_text(), bad)
 
     def test_validation_rejects_invalid_and_cross_metric_configuration(self):
+        """Reject invalid settings and allow the supported combinations of scope and metric."""
         for changes in [{'amount': True}, {'amount': float('nan')}, {'amount': -1}, {'amount': 0},
                         {'thresholds': [80, 50, 100]}, {'thresholds': [50, 80, 101]},
                         {'enabled': 'true'}, {'thresholds': [50, 10**1000, 100]}, {'timezone': 'Not/AZone'}, {'cycle_day': 32},
@@ -116,16 +121,19 @@ class BudgetStoreTests(unittest.TestCase):
 
 class ForecastTests(unittest.TestCase):
     def evaluate(self, b=None, evidence=None, **kwargs):
+        """Evaluate fixture evidence with a known cycle observation window."""
         return F.evaluate(b or budget(), evidence if evidence is not None else rows(), now=kwargs.pop('now', NOW),
                           observed_since=kwargs.pop('observed_since', START), **kwargs)
 
     def test_exact_50_80_100_transitions_and_disabled(self):
+        """Exercise exact threshold boundaries and the disabled guardrail state."""
         for spend, expected in [(49.99, 'normal'), (50, 'info'), (79.99, 'info'), (80, 'warning'), (100, 'exceeded')]:
             self.assertEqual(self.evaluate(evidence=rows(spend, 1))['level'], expected)
         self.assertEqual(self.evaluate(budget(enabled=False))['level'], 'disabled')
         self.assertEqual(self.evaluate(budget(enabled=False))['forecast']['reason'], 'disabled')
 
     def test_metrics_never_mix_and_subscription_fee_fields_are_ignored(self):
+        """Keep catalogue value, actual charges, subscription fees and allowances separate."""
         evidence = rows(20)
         for row in evidence:
             row.update(subscription_fee_usd=1000, allowance_usd=1000, estimated_cost_usd=9000)
@@ -141,6 +149,7 @@ class ForecastTests(unittest.TestCase):
         self.assertEqual(actual['level'], 'unavailable')
 
     def test_partial_subtotal_can_prove_warning_but_never_within_limit(self):
+        """Allow proved subtotal warnings while refusing complete balances and forecasts."""
         evidence = rows(30, 4)
         evidence[0]['list_usd'] = None
         report = self.evaluate(evidence=evidence)
@@ -153,6 +162,7 @@ class ForecastTests(unittest.TestCase):
         self.assertEqual(self.evaluate(evidence=[{**r, 'list_usd': 1 if i else None} for i, r in enumerate(evidence)])['level'], 'unavailable')
 
     def test_failed_or_missing_usage_is_not_free_or_priced(self):
+        """Exclude failed attempts and missing usage instead of counting them as free."""
         for outcome in ['error', 'missing_usage']:
             evidence = rows()
             evidence[0]['outcome'] = outcome
@@ -161,6 +171,7 @@ class ForecastTests(unittest.TestCase):
             self.assertEqual(report['spend'], 30)
 
     def test_three_active_days_required_not_three_calls(self):
+        """Require activity on distinct days rather than a minimum count of calls."""
         evidence = rows(count=3)
         for row in evidence:
             row['ts'] = START + 86400
@@ -216,6 +227,7 @@ class ForecastTests(unittest.TestCase):
         self.assertEqual(self.evaluate(evidence=evidence)['spend'], 10)
 
     def test_DST_boundaries_use_named_zone_not_fixed_seconds(self):
+        """Keep calendar cycles and sample days correct across DST offset changes."""
         b = budget(timezone='Europe/London')
         spring = F.cycle_bounds(b, datetime(2026, 3, 20, tzinfo=timezone.utc).timestamp())
         autumn = F.cycle_bounds(b, datetime(2026, 10, 20, tzinfo=timezone.utc).timestamp())
@@ -229,6 +241,7 @@ class ForecastTests(unittest.TestCase):
 
 
     def test_burn_trend_has_accelerating_slowing_and_steady_states(self):
+        """Classify supported burn-rate comparisons without predicting an unwarranted breach."""
         now = datetime(2026, 11, 20, 12, tzinfo=timezone.utc).timestamp()
         evidence = [{'event_id': str(i), 'ts': START + i * 86400 + 3600,
                      'provider': 'fixture', 'model': 'm', 'list_usd': 1,
@@ -249,6 +262,7 @@ class ForecastTests(unittest.TestCase):
         self.assertEqual(result['forecast']['breach_date'], '2026-11-11')
 
     def test_real_store_adapter_prices_estimates_and_refuses_actual_charges(self):
+        """Exercise real SQLite evidence, dismissals and refusal of unrecorded charges."""
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'budgets.json'
             events = Path(tmp) / 'usage.db'
@@ -288,12 +302,13 @@ class ReviewReportRegressions(unittest.TestCase):
         self.events = Path(tmp.name) / 'usage.db'
 
     def test_no_monthly_limits_never_open_or_price_the_ledger(self):
+        """Return empty monthly statuses without reader, pricing or FX work."""
         for configured in [[], [budget(id='session', scope='session')]]:
             doc = {'version': 1, 'budgets': configured, 'dismissals': {}, 'rev': 'fixture'}
             with self.subTest(configured=configured), patch.object(B, 'load', return_value=doc), \
                     patch.object(store, 'connect_reader') as reader, \
                     patch.object(F, 'load_catalogue') as catalogue, \
-                    patch.object(F, '_event_result') as price, \
+                    patch.object(F, '_per_call_value') as price, \
                     patch.object(F.economics, 'load_fx') as fx:
                 reader.return_value = None
                 result = F.build_report(now=NOW)
@@ -317,6 +332,7 @@ class ReviewReportRegressions(unittest.TestCase):
         self.assertEqual(status['coverage']['calls'], 0)
 
     def test_monthly_guardrails_do_not_treat_cache_fallbacks_as_complete_prices(self):
+        """Reject guessed cache prices while accepting documented zero cache prices."""
         B.mutate('total', if_rev=B.load(self.path)['rev'], budget=budget(amount=1), path=self.path)
         with closing(sqlite3.connect(self.events)) as conn, conn:
             conn.executescript(store._SCHEMA)
@@ -338,6 +354,7 @@ class ReviewReportRegressions(unittest.TestCase):
         self.assertTrue(result['complete'])
 
     def test_invalid_persisted_fx_rates_are_refused_by_the_report_loader(self):
+        """Pass invalid persisted FX through the production loader and refuse conversion."""
         B.mutate('total', if_rev=B.load(self.path)['rev'], budget=budget(currency='GBP'), path=self.path)
         with closing(sqlite3.connect(self.events)) as conn, conn:
             conn.executescript(store._SCHEMA)
@@ -371,6 +388,7 @@ class PerCallTierForecastRegressions(unittest.TestCase):
 
     def report(self, rate, *, input_tokens=300000, output_tokens=0,
                cache_read_tokens=0, cache_write_tokens=0, **overrides):
+        """Record three physical calls and compare budget valuation with legacy analytics."""
         from wolfmark_ledger.aggregate import _event_result
         book = Catalogue({'fixture': {'m': rate}}, 'fixture', 'test', '', '1')
         with closing(sqlite3.connect(self.events)) as conn, conn:
@@ -443,6 +461,7 @@ class PerCallTierForecastRegressions(unittest.TestCase):
         self.assertEqual(result['forecast']['reason'], 'incomplete_pricing')
 
     def test_one_missing_effective_cache_price_keeps_the_call_unpriced(self):
+        """Keep a call incomplete if either used cache stream lacks an effective price."""
         from wolfmark_ledger.pricing import Tier
         for read, write in [(None, 2), (.1, None)]:
             rate = Rate(10, 20, tiers=(Tier(200000, input=1, output=2, cache_read=read, cache_write=write),))
@@ -451,6 +470,7 @@ class PerCallTierForecastRegressions(unittest.TestCase):
             self.assertEqual(result['forecast']['reason'], 'incomplete_pricing')
 
     def test_inconsistent_recorded_prompt_or_total_cannot_select_a_discounted_tier(self):
+        """Refuse tier selection when reported totals contradict the recorded buckets."""
         from wolfmark_ledger.pricing import Tier
         rate = Rate(10, 20, tiers=(Tier(200000, input=1, output=2),))
         for evidence in [{'prompt_tokens': 400000}, {'total_tokens': 400000}]:
@@ -459,3 +479,38 @@ class PerCallTierForecastRegressions(unittest.TestCase):
             self.assertFalse(result['complete'])
             self.assertIsNone(result['forecast']['projected'])
             self.assertEqual(result['forecast']['reason'], 'incomplete_pricing')
+
+
+class StatusReadWorkRegressions(unittest.TestCase):
+    """Status pricing must classify outcomes before doing catalogue work."""
+
+    def item(self, outcome):
+        """Return a synthetic complete call above a discounted tier boundary."""
+        return {'provider': 'fixture', 'model': 'm', 'ts': NOW, 'outcome': outcome,
+                'input_tokens': 300000, 'output_tokens': 0,
+                'cache_read_tokens': 0, 'cache_write_tokens': 0}
+
+    def test_failed_and_missing_usage_calls_never_touch_lookup_or_pricing(self):
+        """Reject known failure outcomes before touching an unavailable price book."""
+        from unittest.mock import Mock
+        for outcome in ('error', 'missing_usage'):
+            book = Mock()
+            book.lookup.side_effect = AssertionError('rejected calls must not query prices')
+            with self.subTest(outcome=outcome), patch.object(F, 'price') as pricer:
+                self.assertIsNone(F._per_call_value(self.item(outcome), book))
+                book.lookup.assert_not_called()
+                pricer.assert_not_called()
+
+    def test_other_outcomes_keep_their_value_with_one_lookup_and_one_price(self):
+        """Preserve the former outcome normalisation while removing duplicate work."""
+        from unittest.mock import Mock
+        from wolfmark_ledger.pricing import Tier
+        catalogue = Catalogue({'fixture': {'m': Rate(10, 20, tiers=(Tier(200000, input=1, output=2),))}},
+                              'fixture', 'test', '', '1')
+        for outcome in ('ok', None, '', 'custom'):
+            book = Mock()
+            book.lookup.side_effect = catalogue.lookup
+            with self.subTest(outcome=outcome), patch.object(F, 'price', wraps=F.price) as pricer:
+                self.assertEqual(F._per_call_value(self.item(outcome), book), .3)
+                book.lookup.assert_called_once_with('fixture', 'm', at=NOW)
+                self.assertEqual(pricer.call_count, 1)
