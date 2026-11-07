@@ -116,17 +116,19 @@ class UserDataResetTests(unittest.TestCase):
         def fail_budget_sync(directory):
             nonlocal sync_calls
             sync_calls += 1
-            if sync_calls == 4:
+            if sync_calls in (4, 5):
                 raise OSError('fixture directory sync failure')
             return sync(directory)
 
         with self.paths()[0], self.paths()[1], patch.object(
                 budgets, '_sync_parent_directory', side_effect=fail_budget_sync):
-            with self.assertRaisesRegex(OSError, 'fixture directory sync failure'):
+            with self.assertRaisesRegex(OSError, 'rollback could not be confirmed') as raised:
                 user_data.reset_user_data()
+        self.assertRegex(str(raised.exception.__cause__), 'fixture directory sync failure')
         self.assertEqual({p: p.read_bytes() for p in before}, before)
         self.assertFalse(seats.exists())
         self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
+        self.assertEqual(sync_calls, 7)
 
     def fail_budget_reset(self, target):
         """Fail at the final reset replacement after the seat file has been replaced."""

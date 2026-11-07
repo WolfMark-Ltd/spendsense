@@ -61,11 +61,20 @@ def reset_user_data(membership_path: Path | str | None = None,
                 replaced.append(path)
                 _replace_bytes(path, replacements[path])
         except OSError:
+            rollback_errors: list[tuple[Path, OSError]] = []
             for path in reversed(replaced):
-                before = original[path]
-                if before is None:
-                    path.unlink(missing_ok=True)
-                else:
-                    _replace_bytes(path, before)
+                try:
+                    before = original[path]
+                    if before is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        _replace_bytes(path, before)
+                except OSError as rollback_error:
+                    rollback_errors.append((path, rollback_error))
+            if rollback_errors:
+                failed_paths = ", ".join(path.name for path, _ in rollback_errors)
+                raise OSError(
+                    f"user data reset failed and rollback could not be confirmed for: {failed_paths}"
+                ) from rollback_errors[0][1]
             raise
     return {"memberships_cleared": True, "seat_history_cleared": True, "advanced_rules_cleared": True, "budgets_cleared": True}
