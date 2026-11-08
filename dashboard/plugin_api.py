@@ -519,6 +519,11 @@ def reset_user_data(body: dict[str, Any]) -> dict[str, Any]:
         result = user_data.reset_user_data()
     except (StoreUnreadable, billing.ProfileStoreUnreadable, budgets.BudgetStoreUnreadable) as exc:
         raise HTTPException(status_code=503, detail=f"store_unreadable: {exc}") from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="reset_uncertain: reload and verify user data before retrying",
+        ) from exc
     return {"ok": True, **result,
             "retained": ["captured usage ledger", "Hermes profile data", "provider credentials", "catalogue"]}
 

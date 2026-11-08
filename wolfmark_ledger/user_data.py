@@ -67,6 +67,7 @@ def reset_user_data(membership_path: Path | str | None = None,
                     before = original[path]
                     if before is None:
                         path.unlink(missing_ok=True)
+                        budgets._sync_parent_directory(path.parent)
                     else:
                         _replace_bytes(path, before)
                 except OSError as rollback_error:

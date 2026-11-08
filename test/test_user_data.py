@@ -128,7 +128,39 @@ class UserDataResetTests(unittest.TestCase):
         self.assertEqual({p: p.read_bytes() for p in before}, before)
         self.assertFalse(seats.exists())
         self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
-        self.assertEqual(sync_calls, 7)
+        self.assertEqual(sync_calls, 8)
+
+    def test_absent_seat_rollback_sync_failure_is_reported_after_all_restores(self):
+        """Sync an absent sidecar removal and continue restoring other targets."""
+        target = self.profiles.with_name('budgets.json')
+        target.write_text(json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}))
+        seats = Path(self.directory.name) / 'seat-history' / membership_store.SEAT_STORE_NAME
+        self.assertFalse(seats.exists())
+        before = {p: p.read_bytes() for p in (self.memberships, self.profiles, target)}
+        sync = budgets._sync_parent_directory
+        sync_calls = 0
+
+        def fail_forward_and_seat_unlink_sync(directory):
+            nonlocal sync_calls
+            sync_calls += 1
+            if directory == self.memberships.parent and sync_calls == 4:
+                raise OSError('fixture forward directory sync failure')
+            if directory == seats.parent and not seats.exists():
+                raise OSError('fixture seat unlink directory sync failure')
+            return sync(directory)
+
+        with self.paths()[0], self.paths()[1], \
+                patch.object(membership_store, 'seat_store_path', return_value=seats), \
+                patch.object(budgets, '_sync_parent_directory',
+                             side_effect=fail_forward_and_seat_unlink_sync):
+            with self.assertRaisesRegex(OSError, 'rollback could not be confirmed') as raised:
+                user_data.reset_user_data()
+        self.assertIn(seats.name, str(raised.exception))
+        self.assertRegex(str(raised.exception.__cause__), 'seat unlink directory sync failure')
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assertFalse(seats.exists())
+        self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
+        self.assertEqual(sync_calls, 8)
 
     def fail_budget_reset(self, target):
         """Fail at the final reset replacement after the seat file has been replaced."""
