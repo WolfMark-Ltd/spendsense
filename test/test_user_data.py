@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from wolfmark_ledger import billing, membership_store, user_data
+from wolfmark_ledger import billing, budgets, membership_store, user_data
 
 
 class UserDataResetTests(unittest.TestCase):
@@ -58,6 +58,124 @@ class UserDataResetTests(unittest.TestCase):
             user_data.reset_user_data()
         self.assertEqual(self.memberships.read_bytes(), membership_bytes)
         self.assertEqual(self.profiles.read_bytes(), billing_bytes)
+
+    def test_reset_includes_budgets_and_preserves_usage(self):
+        target = self.profiles.with_name('budgets.json')
+        target.write_text(json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}))
+        with self.paths()[0], self.paths()[1]:
+            result = user_data.reset_user_data()
+        self.assertTrue(result['budgets_cleared'])
+        self.assertEqual(budgets.load(target)['budgets'], [])
+        self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
+
+    def test_corrupt_budget_aborts_reset_before_any_replacement(self):
+        """Keep every store intact when the budget document cannot be understood."""
+        target = self.profiles.with_name('budgets.json')
+        target.write_bytes(b'{corrupt-budget')
+        before = {p: p.read_bytes() for p in (self.memberships, self.profiles, target)}
+        with self.paths()[0], self.paths()[1], self.assertRaises(budgets.BudgetStoreUnreadable):
+            user_data.reset_user_data()
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+
+    def test_budget_replace_failure_rolls_back_all_stores(self):
+        """Restore prior bytes and remove the seat file created by the failed reset."""
+        target = self.profiles.with_name('budgets.json')
+        target.write_text(json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}))
+        seats = membership_store.seat_store_path(self.memberships)
+        self.assertFalse(seats.exists())
+        before = {p: p.read_bytes() for p in (self.memberships, self.profiles, target)}
+        self.fail_budget_reset(target)
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assertFalse(seats.exists())
+        self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
+
+    def test_budget_replace_failure_restores_existing_seat_history_bytes(self):
+        """Roll back populated seat history byte for byte alongside the other stores."""
+        target = self.profiles.with_name('budgets.json')
+        target.write_text(json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}))
+        seats = membership_store.seat_store_path(self.memberships)
+        seats.write_text(json.dumps({'version': 1, 'accounts': {'fixture': {
+            'family': 'openai-codex', 'identity': 'synthetic-account', 'revisions': [{
+                'id': 'first', 'plan_id': 'openai-codex.chatgpt-business-premium',
+                'quantity': 3, 'period': 'month', 'effective_from': '2026-11-01T00:00:00Z'}]}}}, indent=4) + '\n')
+        membership_store.load_seat_store(self.memberships)
+        before = {p: p.read_bytes() for p in (self.memberships, self.profiles, seats, target)}
+        self.fail_budget_reset(target)
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
+
+    def test_directory_sync_failure_rolls_back_the_replaced_budget_file(self):
+        target = self.profiles.with_name('budgets.json')
+        target.write_text(json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}))
+        seats = membership_store.seat_store_path(self.memberships)
+        self.assertFalse(seats.exists())
+        before = {p: p.read_bytes() for p in (self.memberships, self.profiles, target)}
+        sync = budgets._sync_parent_directory
+        sync_calls = 0
+
+        def fail_budget_sync(directory):
+            nonlocal sync_calls
+            sync_calls += 1
+            if sync_calls in (4, 5):
+                raise OSError('fixture directory sync failure')
+            return sync(directory)
+
+        with self.paths()[0], self.paths()[1], patch.object(
+                budgets, '_sync_parent_directory', side_effect=fail_budget_sync):
+            with self.assertRaisesRegex(OSError, 'rollback could not be confirmed') as raised:
+                user_data.reset_user_data()
+        self.assertRegex(str(raised.exception.__cause__), 'fixture directory sync failure')
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assertFalse(seats.exists())
+        self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
+        self.assertEqual(sync_calls, 8)
+
+    def test_absent_seat_rollback_sync_failure_is_reported_after_all_restores(self):
+        """Sync an absent sidecar removal and continue restoring other targets."""
+        target = self.profiles.with_name('budgets.json')
+        target.write_text(json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}))
+        seats = Path(self.directory.name) / 'seat-history' / membership_store.SEAT_STORE_NAME
+        self.assertFalse(seats.exists())
+        before = {p: p.read_bytes() for p in (self.memberships, self.profiles, target)}
+        sync = budgets._sync_parent_directory
+        sync_calls = 0
+
+        def fail_forward_and_seat_unlink_sync(directory):
+            nonlocal sync_calls
+            sync_calls += 1
+            if directory == self.memberships.parent and sync_calls == 4:
+                raise OSError('fixture forward directory sync failure')
+            if directory == seats.parent and not seats.exists():
+                raise OSError('fixture seat unlink directory sync failure')
+            return sync(directory)
+
+        with self.paths()[0], self.paths()[1], \
+                patch.object(membership_store, 'seat_store_path', return_value=seats), \
+                patch.object(budgets, '_sync_parent_directory',
+                             side_effect=fail_forward_and_seat_unlink_sync):
+            with self.assertRaisesRegex(OSError, 'rollback could not be confirmed') as raised:
+                user_data.reset_user_data()
+        self.assertIn(seats.name, str(raised.exception))
+        self.assertRegex(str(raised.exception.__cause__), 'seat unlink directory sync failure')
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assertFalse(seats.exists())
+        self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
+        self.assertEqual(sync_calls, 8)
+
+    def fail_budget_reset(self, target):
+        """Fail at the final reset replacement after the seat file has been replaced."""
+        replace = user_data._replace_bytes
+        failure_injected = False
+        def fail_budget(path, value):
+            """Inject a failure only at the budget replacement step of the reset."""
+            nonlocal failure_injected
+            if path == target and not failure_injected:
+                failure_injected = True
+                raise OSError('fixture replacement failure')
+            replace(path, value)
+        with self.paths()[0], self.paths()[1], patch.object(user_data, '_replace_bytes', side_effect=fail_budget):
+            with self.assertRaisesRegex(OSError, 'fixture replacement failure'):
+                user_data.reset_user_data()
 
 
 if __name__ == "__main__":

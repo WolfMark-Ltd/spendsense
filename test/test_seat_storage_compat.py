@@ -484,9 +484,12 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         paths = [self.path, self.billing, store.seat_store_path(self.path)]
         before = [path.read_bytes() for path in paths]
         replace = user_data._replace_bytes
+        failure_injected = False
         def fail_seats(path, contents):
             """Simulate failure when replacing the seat-history file."""
-            if path == paths[2]:
+            nonlocal failure_injected
+            if path == paths[2] and not failure_injected:
+                failure_injected = True
                 raise OSError('seat replacement failed')
             return replace(path, contents)
         with patch.object(user_data, '_replace_bytes', side_effect=fail_seats):

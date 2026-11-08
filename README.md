@@ -190,6 +190,24 @@ Unpriced usage is reported as unpriced. Unknown is never shown as zero, and know
 - Desktop and backend components should be tested together on an isolated profile. Backend analytics require the agent component to be active on the relevant Hermes profile.
 - Coverage depends on what Hermes supplies and what the plugin observed. Cross-gateway attribution also depends on the event-origin information the SDK provides, so treat figures as indicative until the acceptance checks in [RELEASING.md](RELEASING.md) are complete.
 
+## Budget guardrails
+
+Set monthly limits for all usage, a provider route or a model × route in
+**Settings & About**. Choose **estimated usage value** (catalogue-based, including
+subscription usage) or **actual metered spending** (requires charge evidence).
+The two measurements are never combined with one another, subscription fees or
+allowances. Current Hermes hooks do not provide per-call billed charges, so actual
+spending remains unavailable where evidence is missing.
+
+A separate session/conversation **estimated usage-value** limit gives live amber
+and red status-bar warnings. Overview shows the limits; Costs adds coverage,
+7-day/30-day burn rates, cycle-end projection, budget runway and a possible breach
+date when there is sufficient evidence. Thresholds default to 50%, 80% and 100%.
+Partial pricing shows a known subtotal and cannot produce an “on track” verdict
+or forecast. All limits are advisory and local; no agent call is blocked.
+
+See [the accounting, API and compatibility notes](design/budget-guardrails.md).
+
 ## Development
 
 Run the Python tests from a virtual environment — never system Python (on macOS, system pip is blocked by PEP 668, so install into the project environment instead):

@@ -79,6 +79,16 @@ class UserDataResetApiTests(unittest.TestCase):
         self.assertEqual(self.memberships.read_bytes(), bad)
         self.assertEqual(self.profiles.read_bytes(), before_profiles)
 
+    def test_reset_io_failure_returns_safe_503_guidance(self):
+        with patch.object(plugin_api.user_data, "reset_user_data",
+                          side_effect=OSError("failed at /private/billing-profiles.json")):
+            response = self.client.post("/api/plugins/spend-sense/settings/reset-user-data",
+                                        json={"confirm": "RESET_USER_ENTERED_DATA"})
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["detail"],
+                         "reset_uncertain: reload and verify user data before retrying")
+        self.assertNotIn("/private/billing-profiles.json", response.text)
+
 
 if __name__ == "__main__":
     unittest.main()
