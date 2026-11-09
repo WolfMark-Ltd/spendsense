@@ -1,7 +1,7 @@
 // Run: node --test test/
 //
 // Browser layout test for the Memberships summary strip: real Chrome
-// geometry with synthetic long mixed-currency fees. Asserts one column at
+// geometry with synthetic long mixed-currency fees. Asserts two columns at
 // 380px, four at ledger width, and no fee-value overflow. Skips with an
 // explicit message where no Chrome binary is available.
 import assert from 'node:assert/strict'
@@ -25,7 +25,7 @@ if (!chrome) {
     t.skip('No Chrome/Chromium binary available: layout geometry cannot be verified here.')
   })
 } else {
-  test('memberships layout: summary columns, long fees, and inline exhaustion at 380px', async () => {
+  test('memberships layout: summary and reading states, long fees, and inline exhaustion at 380px', async () => {
     const work = mkdtempSync(join(tmpdir(), 'wm-memberships-layout-'))
     try {
       const esbuild = (await import(pathToFileURL(join(HARNESS_MODULES, 'esbuild', 'lib', 'main.js')).href)).default
@@ -34,7 +34,7 @@ if (!chrome) {
         entryPoints: [join(ROOT, 'test', 'memberships-layout.page.jsx')],
         bundle: true, format: 'iife', platform: 'browser', outfile: bundle,
         jsx: 'automatic',
-        alias: { '@hermes/plugin-sdk': join(ROOT, 'test', 'memberships-layout.sdk.mjs') },
+        alias: { '@hermes/plugin-sdk': join(ROOT, 'test', 'memberships-visual.sdk.mjs') },
         nodePaths: [HARNESS_MODULES], logLevel: 'warning',
       })
       const html = join(work, 'page.html')
@@ -60,12 +60,14 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
       const narrow = result.containers['380']
       const wide = result.containers['1200']
       assert.equal(narrow.rows, 2, 'both synthetic accounts render at 380px')
-      assert.equal(narrow.columns, 1, `380px strip stacks to one column (got ${narrow.columns})`)
+      assert.equal(narrow.columns, 2, `380px strip stays scannable in two columns (got ${narrow.columns})`)
       assert.equal(narrow.hasLongFee, true, 'the long fee is present in the strip')
       assert.equal(narrow.hasMixedCurrencies, true, 'mixed currencies are present in the strip')
       assert.ok(narrow.overflow.every(px => px <= 1),
         `fee values do not overflow their cells (${JSON.stringify(narrow.overflow)})`)
       assert.ok(narrow.paneOverflow <= 1, `the 380px pane has no horizontal overflow (${narrow.paneOverflow}px)`)
+      assert.deepEqual(narrow.readingStates, ['reported', 'unreported'],
+        'provider readings and missing readings remain distinct in the account summaries')
       const flow = result.narrowExhaustion
       assert.ok(flow, 'the narrow-pane exhaustion flow ran')
       assert.equal(flow.formOpened, true, 'Mark exhausted opens the form at 380px')
@@ -73,7 +75,7 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
       assert.equal(flow.directlyUnderButton, true, 'the form sits immediately beneath its button')
       assert.equal(flow.focusInForm, true, 'focus moves into the opened form')
       assert.ok(flow.paneOverflow <= 1, `the open form fits the 380px pane (${flow.paneOverflow}px)`)
-      assert.equal(wide.columns, 4, `ledger width keeps four columns (got ${wide.columns})`)
+      assert.equal(wide.columns, 4, `wide layout keeps four summary facts (got ${wide.columns})`)
       assert.equal(result.hostCalls, 0, 'no host/gateway calls were made')
     } finally {
       rmSync(work, { recursive: true, force: true })

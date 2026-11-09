@@ -5333,19 +5333,29 @@ const MEMBERSHIP_CSS = `
 @keyframes wm-flash{0%{box-shadow:0 0 0 2px var(--ui-warning)}100%{box-shadow:0 0 0 0 transparent}}
 @media (prefers-reduced-motion:reduce){.wm-flash{animation:none}.wm-chev{transition:none}.wm-group > summary::before{transition:none}}
 .wm-memberships select:disabled,.wm-memberships input:disabled{opacity:.55}
-.wm-memberships .wm-stats{grid-template-columns:repeat(4,minmax(0,1fr))}
-@container(max-width:1050px){.wm-memberships .wm-stats{grid-template-columns:1fr 1fr}.wm-memberships .wm-stat:nth-child(2n){border-right:0}.wm-memberships .wm-stat:nth-child(-n+2){border-bottom:1px solid var(--ui-stroke-secondary)}}
-@container(max-width:380px){.wm-memberships .wm-stats{grid-template-columns:1fr}.wm-memberships .wm-stat{border-right:0;border-bottom:1px solid var(--ui-stroke-secondary)}.wm-memberships .wm-stat:last-child{border-bottom:0}}
-.wm-memberships .wm-stat{padding:10px 14px}
-.wm-memberships .wm-statlabel{margin-bottom:2px;font-weight:600}
-.wm-memberships .wm-statvalue{font-size:16px;letter-spacing:-.2px;margin-bottom:0;font-variant-numeric:tabular-nums}
+.wm-membership-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0;
+ border:1px solid var(--ui-stroke-secondary);border-radius:9px;overflow:hidden}
+.wm-membership-summary>div{display:grid;align-content:center;gap:3px;min-width:0;padding:9px 12px;
+ border-left:1px solid var(--ui-stroke-secondary)}
+.wm-membership-summary>div:first-child{border-left:0}
+.wm-membership-summary dt,.wm-row-fact dt{font-size:10.5px;font-weight:600;color:var(--ui-text-tertiary)}
+.wm-membership-summary dd,.wm-row-fact dd{margin:0;min-width:0}
+.wm-membership-summary dd{font-size:14px;line-height:1.35;font-weight:600;color:var(--ui-text-primary);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+@container(max-width:620px){.wm-membership-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.wm-membership-summary>div:nth-child(odd){border-left:0}.wm-membership-summary>div:nth-child(n+3){border-top:1px solid var(--ui-stroke-secondary)}}
+@container(max-width:340px){.wm-membership-summary{grid-template-columns:minmax(0,1fr)}.wm-membership-summary>div{border-left:0;border-top:1px solid var(--ui-stroke-secondary)}.wm-membership-summary>div:first-child{border-top:0}}
 .wm-memberships .wm-cards{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
-.wm-row-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.wm-row-head{display:grid;grid-template-columns:minmax(150px,.9fr) minmax(0,1.7fr);align-items:center;gap:14px}
 .wm-row-id{min-width:0}
-.wm-row-id strong{display:block;font-size:13.5px;font-weight:620;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wm-row-id strong{display:block;font-size:13.5px;font-weight:620;overflow-wrap:anywhere}
 .wm-row-id span{display:block;font-size:11.5px;color:var(--ui-text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wm-row-mid{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
-.wm-row-fee{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.wm-row-mid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(92px,.7fr) auto auto;align-items:center;gap:10px;margin:0;min-width:0}
+.wm-row-fact{display:grid;align-content:center;gap:3px;min-width:0}
+.wm-row-fee{font-size:12px;line-height:1.4;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.wm-row-state{display:flex;align-items:center;justify-content:flex-start;gap:5px;flex-wrap:wrap;min-width:0}
+.wm-row-actions{justify-self:end}
+.wm-chip[data-state="reported"]{color:var(--ui-success,#3fb950);border-color:color-mix(in srgb,var(--ui-success,#3fb950) 45%,transparent)}
+.wm-chip[data-state="partial"],.wm-chip[data-state="stale"]{color:var(--ui-warning);border-color:color-mix(in srgb,var(--ui-warning) 45%,transparent)}
+.wm-chip[data-state="unreported"]{color:var(--ui-text-tertiary)}
 .wm-chev{display:inline-block;transition:transform .15s ease}
 button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
 .wm-row-body{border-top:1px solid var(--ui-stroke-secondary);padding:6px 2px 2px}
@@ -5356,7 +5366,9 @@ button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
 .wm-group > summary::before{content:"›";display:inline-block;font-size:17px;line-height:1;font-weight:700;color:var(--ui-text-primary);transition:transform .15s ease}
 .wm-group[open] > summary::before{transform:rotate(90deg)}
 .wm-group-body{display:grid;gap:8px;padding:4px 0 10px}
-@container(max-width:620px){.wm-memberships .wm-row-mid{margin-left:0;width:100%}.wm-memberships .wm-row-head{align-items:flex-start}.wm-memberships .wm-seg button{min-height:38px}.wm-memberships .wm-attention li{flex-wrap:wrap}.wm-memberships .wm-attention li .wm-button{width:100%}}
+@container(max-width:760px){.wm-row-head{grid-template-columns:minmax(0,1fr)}.wm-row-mid{grid-template-columns:minmax(0,1.35fr) minmax(92px,.7fr) auto auto}}
+@container(max-width:620px){.wm-row-head{align-items:start}.wm-row-mid{grid-template-columns:minmax(0,1fr) minmax(92px,auto);gap:8px 12px}.wm-row-state{grid-column:1}.wm-row-actions{grid-column:2;grid-row:2;align-self:center}.wm-row-actions .wm-button{min-height:38px}.wm-memberships .wm-seg button{min-height:38px}.wm-memberships .wm-attention li{flex-wrap:wrap}.wm-memberships .wm-attention li .wm-button{width:100%}}
+@container(max-width:340px){.wm-row-mid{grid-template-columns:minmax(0,1fr)}.wm-row-state,.wm-row-actions{grid-column:1;grid-row:auto}.wm-row-actions,.wm-row-actions .wm-button{width:100%}}
 `
 
 let membershipReadSerial = 0
@@ -5596,6 +5608,23 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
       stateLabel: state === 'live' ? t('memQuotaLive') : state === 'stale' ? t('memQuotaStale') : state === 'manual' ? t('memQuotaManual') : t('memQuotaUnrecorded')
     }
   })
+}
+
+function membershipReadingStatus(rows, t = needsAttentionEn) {
+  const items = Array.isArray(rows) ? rows : []
+  const reported = items.filter(row => row.state === 'live' || row.state === 'stale')
+  if (!reported.length) {
+    return items.some(row => row.state === 'manual')
+      ? { state: 'manual', label: t('memAllowanceManual') }
+      : { state: 'unreported', label: t('memAllowanceUnreported') }
+  }
+  if (reported.some(row => row.state === 'stale')) {
+    return { state: 'stale', label: t('memAllowanceStale') }
+  }
+  if (reported.length < items.length) {
+    return { state: 'partial', label: t('memAllowancePartial') }
+  }
+  return { state: 'reported', label: t('memAllowanceReported') }
 }
 
 function fmtReset(value) {
@@ -6194,6 +6223,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   const rawPlanDraft = useValue($customPlanDraft)
   const rawExhaustionDraft = useValue($exhaustionDraft)
   const rows = quotaRows(account, now, t)
+  const readingStatus = membershipReadingStatus(rows, t)
   const fee = account.fee || {}
   const proposal = proposalText(account, t)
   const reconfirmation = reconfirmationText(account, t)
@@ -6380,12 +6410,24 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
         jsx('strong', { children: identityLabel }),
         jsx('span', { children: `${arrangementLabel(arrangement, t)} · ${planName}` })
       ] }),
-      jsxs('div', { className: 'wm-row-mid', children: [
-        jsx('span', { className: 'wm-row-fee', children: feeLabel(fee, t) }),
-        hasAttention ? jsx('span', { className: 'wm-certainty', 'data-certainty': 'partial', children: t('memNeedsAttention') }) : null,
-        busy === account.id ? jsx('span', { className: 'wm-note', role: 'status', children: t('memSaving') }) : null,
-        jsx(ProductButton, { type: 'button', className: 'wm-button', 'aria-expanded': expanded, 'aria-controls': bodyId,
-          onClick: toggleExpanded, children: [t('memDetails') + ' ', jsx('span', { className: 'wm-chev', 'aria-hidden': true, children: '›' }, 'chev')] })
+      jsxs('dl', { className: 'wm-row-mid', children: [
+        jsxs('div', { className: 'wm-row-fact', children: [
+          jsx('dt', { children: t('memEffectiveFee') }),
+          jsx('dd', { className: 'wm-row-fee', children: feeLabel(fee, t) })
+        ] }),
+        jsxs('div', { className: 'wm-row-fact', children: [
+          jsx('dt', { children: t('memAllowanceLabel') }),
+          jsx('dd', { children: jsx('span', { className: 'wm-chip', 'data-state': readingStatus.state,
+            children: readingStatus.label }) })
+        ] }),
+        jsxs('div', { className: 'wm-row-state', children: [
+          hasAttention ? jsx('span', { className: 'wm-certainty', 'data-certainty': 'partial', children: t('memNeedsAttention') }) : null,
+          busy === account.id ? jsx('span', { className: 'wm-note', role: 'status', children: t('memSaving') }) : null
+        ] }),
+        jsx('div', { className: 'wm-row-actions', children:
+          jsx(ProductButton, { type: 'button', className: 'wm-button', 'aria-expanded': expanded, 'aria-controls': bodyId,
+            onClick: toggleExpanded, children: [t('memDetails') + ' ', jsx('span', { className: 'wm-chev', 'aria-hidden': true, children: '›' }, 'chev')] })
+        })
       ] })
     ] }),
     jsxs('div', { className: 'wm-row-body', id: bodyId, hidden: expanded ? undefined : true, children: [
@@ -6707,6 +6749,10 @@ function MembershipsPage() {
     return () => clearTimeout(timer)
   }, [target, accountsReady, identity])
   const summary = membershipSummary(list)
+  const summaryValue = value => accountsReady ? value
+    : accounts.error ? t('memSummaryUnavailable') : t('memSummaryLoading')
+  const feeSummary = summaryValue(Object.keys(summary.byCurrencyPeriod || {}).length
+    ? feesLabel(summary, t) : t('memFeesNotRecorded'))
   const storeError = current?.store?.error || ''
   const storeNotes = Array.isArray(current?.notes) ? current.notes : []
   const plansError = plans.error ? membershipErrorText(plans.error, 'plans', t) : ''
@@ -6999,16 +7045,17 @@ function MembershipsPage() {
         ? jsx('div', { className: 'wm-alert', role: 'status', 'data-tone': 'warn',
             children: t('memPlansUnavailable', plansError) })
         : null,
-      jsxs('div', { className: 'wm-stats', children: [
-        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: t('memAccounts') }),
-          jsx('div', { className: 'wm-statvalue', children: accountsReady ? String(summary.total) : '—' })] }),
-        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: t('memPlansConfirmed') }),
-          jsx('div', { className: 'wm-statvalue', children: accountsReady ? t('memPlansOf', summary.withPlan, summary.total) : '—' })] }),
-        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: t('memMarkedExhausted') }),
-          jsx('div', { className: 'wm-statvalue', children: accountsReady ? String(summary.exhausted) : '—' })] }),
-        jsxs('div', { className: 'wm-stat', children: [jsx('div', { className: 'wm-statlabel', children: t('memFeesLabel') }),
-          jsx('div', { className: 'wm-statvalue', children: accountsReady ? feesLabel(summary, t) : '—' })] })
-      ] }),
+      jsx('dl', { className: 'wm-membership-summary', 'aria-label': t('memSummaryLabel'),
+        'aria-busy': !accountsReady && !accounts.error, children: [
+          jsxs('div', { children: [jsx('dt', { children: t('memAccounts') }),
+            jsx('dd', { children: summaryValue(String(summary.total)) })] }),
+          jsxs('div', { children: [jsx('dt', { children: t('memPlansConfirmed') }),
+            jsx('dd', { children: summaryValue(t('memPlansOf', summary.withPlan, summary.total)) })] }),
+          jsxs('div', { children: [jsx('dt', { children: t('memNeedsAttention') }),
+            jsx('dd', { children: summaryValue(String(attention.length)) })] }),
+          jsxs('div', { children: [jsx('dt', { children: t('memFeesLabel') }),
+            jsx('dd', { children: feeSummary })] })
+        ] }),
       jsx('p', { className: 'wm-note',
         children: t('memFeesNote') }),
       attention.length
@@ -8008,8 +8055,18 @@ const I18N = {
     attnActReading: 'Review reading',
     // Memberships layout (Phase C).
     memTitle: 'Memberships',
-    memSubtitle: 'Confirm each account’s plan and declared fee. Usage tracking never depends on this page.',
+    memSubtitle: 'Review provider accounts, billing arrangements and plan fees.',
     memDetails: 'Details',
+    memSummaryLabel: 'Membership summary',
+    memSummaryLoading: 'Loading…',
+    memSummaryUnavailable: 'Unavailable',
+    memEffectiveFee: 'Effective fee',
+    memAllowanceLabel: 'Allowance reading',
+    memAllowanceReported: 'Reported',
+    memAllowancePartial: 'Partially reported',
+    memAllowanceStale: 'Stale reading',
+    memAllowanceManual: 'Manual mark',
+    memAllowanceUnreported: 'Unreported',
     memGroupPlan: 'Plan & billing',
     memSeats: 'Seats',
     memSaveSeats: 'Save seats',
@@ -8035,7 +8092,8 @@ const I18N = {
     memRefresh: 'Refresh provider usage',
     memRefreshNote: 'Refresh provider usage checks provider-reported usage and allowance information where supported. It does not change plans, fees or marks.',
     memFeesLabel: 'Membership fees',
-    memFeesNote: 'Membership fees are the effective amounts by currency and period. Provider percentages are limits, not money, and are never added to them.',
+    memFeesNotRecorded: 'No fee amount recorded',
+    memFeesNote: 'Saved subscription fees stay separate by currency and period; unknown values remain marked on their account. Allowance percentages are limits, not fees. Costs keeps saved fees, API-equivalent estimates and actual charge evidence distinct.',
     memAccountId: id => `Account ID: ${id}`,
     // Memberships labels (previously literal English, never translated).
     memDiscover: 'Discover accounts',
@@ -9156,8 +9214,18 @@ const I18N = {
     attnActReading: '查看读数',
     // 会员布局（第三阶段）。
     memTitle: '会员',
-    memSubtitle: '确认每个账户的方案与已申报费用。用量跟踪不依赖于此页面。',
+    memSubtitle: '查看服务商账户、账单安排与方案费用。',
     memDetails: '详情',
+    memSummaryLabel: '会员摘要',
+    memSummaryLoading: '正在加载…',
+    memSummaryUnavailable: '不可用',
+    memEffectiveFee: '有效费用',
+    memAllowanceLabel: '额度读数',
+    memAllowanceReported: '已上报',
+    memAllowancePartial: '部分上报',
+    memAllowanceStale: '读数已过期',
+    memAllowanceManual: '手动标记',
+    memAllowanceUnreported: '未上报',
     memGroupPlan: '方案与账单',
     memSeats: '席位数',
     memSaveSeats: '保存席位数',
@@ -9183,7 +9251,8 @@ const I18N = {
     memRefresh: '刷新服务商用量',
     memRefreshNote: '刷新服务商用量会检查支持的服务商上报用量与额度信息。不会更改方案、费用或标记。',
     memFeesLabel: '会员费用',
-    memFeesNote: '会员费用是按币种与账单周期的有效金额。服务商百分比是额度而非金额，绝不会计入其中。',
+    memFeesNotRecorded: '未记录费用金额',
+    memFeesNote: '已保存订阅费用按币种与账单周期分列；未知金额会标记在对应账户上。额度百分比是限制，不是费用。“成本”会将已保存费用、API 等效用量估值与实际账单凭据分开显示。',
     memAccountId: id => `账户 ID：${id}`,
     // 会员标签（之前是英文原文，从不翻译）。
     memDiscover: '发现账户',
@@ -10207,7 +10276,7 @@ export const __test = {
   membershipWrite, membershipDiagnostics,
   $membershipScope, $membershipSnapshot, $membershipNotice,
   $membershipBusy, $membershipNative, $membershipAttentionOnly, $membershipDraft, $scopeConnection, $scopeProfile,
-  fmtMoney, feeLabel, quotaRows, needsAttention, membershipSummary, feesLabel, accountPlanChoices,
+  fmtMoney, feeLabel, quotaRows, membershipReadingStatus, needsAttention, membershipSummary, feesLabel, accountPlanChoices,
   excludedPlansNote, planOptionLabel,
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,
   OVERRIDE_REASON_FALLBACK, REASON_LABELS, restoreCatalogueFee, MembershipsPage, MembershipCard, MEMBERSHIP_CSS,

@@ -100,6 +100,19 @@ test('quota rows keep provider, manual and credit readings distinct', () => {
   assert.equal(byId.monthly.stateLabel, 'not recorded')
 })
 
+test('compact allowance state distinguishes reported, partial, stale, manual and missing readings', () => {
+  const en = (key, ...args) => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const status = states => T.membershipReadingStatus(states.map(state => ({ state })), en)
+  assert.deepEqual(status([]), { state: 'unreported', label: 'Unreported' })
+  assert.deepEqual(status(['live']), { state: 'reported', label: 'Reported' })
+  assert.deepEqual(status(['live', 'no_data']), { state: 'partial', label: 'Partially reported' })
+  assert.deepEqual(status(['stale']), { state: 'stale', label: 'Stale reading' })
+  assert.deepEqual(status(['manual']), { state: 'manual', label: 'Manual mark' })
+})
+
 test('needs attention covers exhaustion, conflict, reconfirm, and missing plan or fee', () => {
   const items = T.needsAttention([
     account({ id: 'a', quota: { account_exhausted: true, conflicts: ['weekly'], windows: [] } }),

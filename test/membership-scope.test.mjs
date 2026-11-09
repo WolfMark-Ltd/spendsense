@@ -328,6 +328,10 @@ test('a malformed envelope is an error, not an empty membership list', async () 
   assert.doesNotMatch(container.textContent, /No memberships yet/,
     'an unreadable answer must not be presented as an empty account list')
   assert.match(container.textContent, /could not be read|did not load|retry/i)
+  const summary = container.querySelector('.wm-membership-summary')
+  assert.ok(summary, 'headline summary stays present when account data cannot be read')
+  assert.match(summary.textContent, /Unavailable/)
+  assert.equal(summary.getAttribute('aria-busy'), 'false')
 })
 
 test('recovery: after a 503 the next read renders accounts and clears the error', async () => {
@@ -1868,9 +1872,20 @@ test('PR-C: account rows are compact, collapsed by default, and expand on Detail
   assert.match(head.textContent, /anthropic · main/)
   assert.match(head.textContent, /Subscription · Claude Pro/)
   assert.match(head.textContent, /£45\.00\/mo/)
+  assert.match(head.textContent, /Effective fee/)
+  assert.match(head.textContent, /Allowance reading/)
+  assert.equal(card.querySelector('.wm-row-mid [data-state="unreported"]')?.textContent, 'Unreported',
+    'an account without allowance readings is labelled explicitly')
   const details = [...head.querySelectorAll('button')].find(b => /Details/.test(b.textContent))
   assert.equal(details.getAttribute('aria-expanded'), 'false', 'rows start collapsed')
+  assert.equal(details.getAttribute('aria-controls'), card.querySelector('.wm-row-body').id,
+    'the disclosure button names the body it controls')
   assert.equal(card.querySelector('.wm-row-body').hidden, true)
+  const summary = container.querySelector('dl.wm-membership-summary')
+  assert.ok(summary, 'headline figures render in a compact semantic summary strip')
+  assert.equal(summary.getAttribute('aria-busy'), 'false', 'the loaded summary is not announced as busy')
+  assert.match(summary.textContent, /Needs attention/)
+  assert.match(summary.textContent, /£45\.00\/mo/)
   // Detail groups exist in the DOM with their controls, collapsed.
   const groups = [...card.querySelectorAll('.wm-group')]
   assert.deepEqual(groups.map(g => g.querySelector('summary').textContent),
@@ -2248,8 +2263,11 @@ test('PR-C: expanded rows are identity-isolated and the summary strip keeps its 
     : { ok: true })
   const { container } = await boot()
   await flush(4)
-  assert.match(container.querySelector('.wm-stats').textContent, /Accounts/)
-  assert.match(container.querySelector('.wm-stats').textContent, /Membership fees/)
+  const summary = container.querySelector('.wm-membership-summary')
+  assert.ok(summary, 'the compact membership summary is present')
+  assert.match(summary.textContent, /Accounts/)
+  assert.match(summary.textContent, /Membership fees/)
+  assert.match(summary.textContent, /No fee amount recorded/)
   const card = container.querySelector('[data-account="a:acct"]')
   const details = [...card.querySelectorAll('button')].find(b => /Details/.test(b.textContent))
   await React.act(async () => { details.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
