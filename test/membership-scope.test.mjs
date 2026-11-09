@@ -1198,11 +1198,14 @@ test('Overview renders its settled Desktop cost summary without a React render e
   await flush(2)
 
   assert.match(container.textContent, /Overview/)
-  assert.match(container.textContent, /Recorded usage/)
+  assert.match(container.textContent, /Recorded usage · API-equivalent/)
   assert.match(container.querySelector('.wm-product-summary').textContent, /\$0\.42/)
   assert.match(container.textContent, /API-equivalent/)
-  assert.match(container.textContent, /Membership fees/)
+  assert.match(container.textContent, /Actual provider charges/)
+  assert.match(container.querySelector('[data-kpi="actual-charges"]').textContent, /Not recorded/)
+  assert.match(container.textContent, /Saved account fees/)
   const summary = container.querySelector('.wm-product-summary')
+  assert.equal(summary.querySelectorAll('.wm-kpi').length, 4)
   assert.match(summary.textContent, /Reading memberships for this connection/)
   assert.doesNotMatch(summary.textContent, /0 of 0 accounts/)
   assert.match(summary.textContent, /No backend calls recorded in the last 30 days/)
@@ -1235,7 +1238,7 @@ test('Overview renders its settled Desktop cost summary without a React render e
   await React.act(async () => T.$ledger.set(T.emptyLedger()))
 })
 
-test('Overview value certainty comes from the economics response, not analytics', async () => {
+test('Overview keeps subscription value out of the summary pending verified account and financial coverage', async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
   T.$ledger.set(T.emptyLedger())
@@ -1263,29 +1266,23 @@ test('Overview value certainty comes from the economics response, not analytics'
   await flush(4)
   const cards = [...container.querySelectorAll('.wm-product-summary .wm-kpi')]
   assert.equal(cards.length, 4)
-  const valueCard = cards[3].textContent
-  assert.match(valueCard, /Partial/, 'a partial economics status shows Partial with zero unpriced analytics tokens')
-  assert.doesNotMatch(cards[1].textContent, /Partial/, 'the estimate card stays clean when analytics are fully priced')
+  assert.deepEqual(cards.map(card => card.dataset.kpi), [
+    'recorded-usage', 'actual-charges', 'api-equivalent-estimate', 'saved-fees'
+  ])
+  assert.doesNotMatch(container.querySelector('.wm-product-summary').textContent, /\$8\.40|Subscription value/)
+  assert.match(cards[2].textContent, /API-equivalent estimate/)
+  assert.ok(transportCtl.calls.some(call => call.path === '/economics/summary?days=30&trend_months=6'),
+    'Overview keeps the existing economics query warm for Costs')
 })
 
-test('Overview does not mark a complete subscription comparison partial', async () => {
+test('Overview shows an actual charge amount only when every analytics record is actual', async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
   T.$ledger.set(T.emptyLedger())
   T.$ledgerTab.set('overview')
-  const economics = {
-    ok: true, window_days: 30,
-    headline: {
-      status: 'ok', difference_usd: 8.4, usage_usd: 28.4,
-      fees_monthly_by_currency: [{ currency: 'USD', amount: 20 }],
-      fees_window_by_currency: [{ currency: 'USD', amount: 20 }],
-      notes: ['Estimated value comparison of recorded usage against fees.'],
-    },
-    accounts: [{ usage: { tokens: 100, priced_tokens: 100, unpriced_tokens: 0 } }],
-  }
   transportCtl.respond(call => call.path.startsWith('/analytics')
-    ? { ok: true, totals: { list_usd: 47.9, calls: 5, unpriced_tokens: 18240 } }
-    : call.path === '/economics/summary?days=30&trend_months=6' ? economics
+    ? { ok: true, totals: { list_usd: 47.9, calls: 2, rows: 2, unpriced_tokens: 0,
+        billed_usd: 0.5, billed_complete: false, billing_mix: { actual: 1, estimated: 0, included: 0, unknown: 1 } } }
     : call.path === '/membership/accounts'
       ? { ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] }
       : { ok: true })
@@ -1294,10 +1291,73 @@ test('Overview does not mark a complete subscription comparison partial', async 
   await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
     React.createElement(T.OverviewPage))))
   await flush(4)
-  const cards = [...container.querySelectorAll('.wm-product-summary .wm-kpi')]
-  assert.match(cards[1].textContent, /Partial/, 'unpriced backend usage marks the estimate card')
-  assert.doesNotMatch(cards[3].textContent, /Partial/, 'a complete comparison is not marked partial')
-  assert.doesNotMatch(cards[3].textContent, /lower bound/, 'a complete comparison is not a lower bound')
+  const chargeCard = container.querySelector('[data-kpi="actual-charges"]')
+  assert.match(chargeCard.textContent, /Not recorded/)
+  assert.match(chargeCard.textContent, /1 of 2 records/)
+  assert.match(chargeCard.textContent, /Partial/)
+  assert.doesNotMatch(chargeCard.textContent, /\$0\.50/, 'the mixed aggregate is not shown as actual charges')
+  assert.match(container.querySelector('[data-kpi="api-equivalent-estimate"]').textContent, /\$47\.90/)
+})
+
+test('Overview rejects estimated charge totals but keeps a fully evidenced actual zero', () => {
+  const estimated = T.overviewActualCharges({ rows: 1, billed_usd: 1.25, billed_complete: true,
+    billing_mix: { actual: 0, estimated: 1, included: 0, unknown: 0 } })
+  assert.equal(estimated.complete, false)
+  assert.equal(estimated.amount, null)
+
+  const incomplete = T.overviewActualCharges({ rows: 2, billed_usd: 0.5, billed_complete: false,
+    billing_mix: { actual: 1, estimated: 0, included: 0, unknown: 1 } })
+  assert.equal(incomplete.complete, false)
+  assert.equal(incomplete.partial, true)
+  assert.equal(incomplete.amount, null)
+
+  const zero = T.overviewActualCharges({ rows: 1, billed_usd: 0, billed_complete: true,
+    billing_mix: { actual: 1, estimated: 0, included: 0, unknown: 0 } })
+  assert.equal(zero.complete, true)
+  assert.equal(zero.amount, 0)
+
+  const empty = T.overviewActualCharges({ rows: 0, billed_usd: 0, billed_complete: true,
+    billing_mix: { actual: 0, estimated: 0, included: 0, unknown: 0 } })
+  assert.equal(empty.complete, false)
+  assert.equal(empty.amount, null)
+
+  const inconsistent = T.overviewActualCharges({ rows: 1, billed_usd: 0.5, billed_complete: true,
+    billing_mix: { actual: 1, estimated: 0, included: 0, unknown: 1 } })
+  assert.equal(inconsistent.complete, false, 'contradictory row counts fail closed')
+  assert.equal(inconsistent.amount, null)
+})
+
+test('Overview ranks backend model call counts without displaying per-model cost', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set(T.emptyLedger())
+  T.$ledgerTab.set('overview')
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 12, calls: 6, rows: 3, unpriced_tokens: 0,
+        billed_usd: null, billed_complete: false, billing_mix: { actual: 1, estimated: 1, included: 0, unknown: 1 } },
+        by_model: [
+          { model: 'claude-opus-latest', provider: 'anthropic', calls: 2, list_usd: 10 },
+          { model: 'gpt-codex', provider: 'openai-codex', calls: 4, list_usd: 1 },
+          { model: 'unused', provider: 'other', calls: 0, list_usd: 900 },
+        ] }
+    : { ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  const models = container.querySelector('.wm-overview-models')
+  const rows = [...models.querySelectorAll('.wm-overview-model-row')]
+  assert.deepEqual(rows.map(row => row.querySelector('strong').textContent), [
+    'gpt-codex', 'claude-opus-latest'
+  ])
+  assert.match(models.textContent, /4 calls/)
+  assert.match(models.textContent, /2 calls/)
+  assert.doesNotMatch(models.textContent, /\$|10|900/, 'the ranking uses calls, not price values')
+  assert.equal(transportCtl.count(call => call.path === '/analytics?days=30'), 1,
+    'the panel reuses Overview analytics rather than adding a request')
+  await clickByText(models, 'Open Usage')
+  assert.equal(T.$ledgerTab.get(), 'usage')
 })
 
 test('Overview marks a partly priced Desktop month as a lower bound', async () => {
@@ -1319,7 +1379,7 @@ test('Overview marks a partly priced Desktop month as a lower bound', async () =
   await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
     React.createElement(T.OverviewPage))))
   await flush(4)
-  const recorded = container.querySelectorAll('.wm-product-summary .wm-kpi')[0].textContent
+  const recorded = container.querySelector('[data-kpi="recorded-usage"]').textContent
   assert.match(recorded, /\$0\.42/, 'the priced subtotal is shown')
   assert.match(recorded, /lower bound/, 'a partly priced month is a lower bound')
   assert.match(recorded, /Partial/, 'a partly priced month carries Partial')
@@ -1347,7 +1407,7 @@ test('Overview fee heading describes billing periods, not a monthly conversion',
     React.createElement(T.OverviewPage))))
   await flush(4)
   assert.doesNotMatch(container.textContent, /monthly equivalent/i, 'no conversion is claimed')
-  assert.match(container.textContent, /by billing period/i)
+  assert.match(container.textContent, /by currency and billing period/i)
   assert.match(container.textContent, /\$120\.00\/yr/, 'the original period is preserved')
 })
 
@@ -1371,7 +1431,7 @@ test('Overview distinguishes unknown subscription fees from having no recurring 
   await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
     React.createElement(T.OverviewPage))))
   await flush(4)
-  const fees = container.querySelectorAll('.wm-product-summary .wm-kpi')[2].textContent
+  const fees = container.querySelector('[data-kpi="saved-fees"]').textContent
   assert.match(fees, /Unknown/, 'an unknown subscription fee is Unknown, not a dash')
   assert.match(fees, /1 account\(s\) have no known fee/, 'the subtotal discloses the missing fee')
 
@@ -1389,10 +1449,10 @@ test('Overview distinguishes unknown subscription fees from having no recurring 
   await React.act(async () => root2.render(React.createElement(QueryClientProvider, { client: queryClient },
     React.createElement(T.OverviewPage))))
   await flush(4)
-  const fees2 = container2.querySelectorAll('.wm-product-summary .wm-kpi')[2].textContent
-  assert.match(fees2, /No recurring fees/)
+  const fees2 = container2.querySelector('[data-kpi="saved-fees"]').textContent
+  assert.match(fees2, /No saved recurring fees/)
   assert.doesNotMatch(fees2, /no known fee/)
-  const chips2 = [...container2.querySelectorAll('.wm-product-summary .wm-kpi')[2]
+  const chips2 = [...container2.querySelector('[data-kpi="saved-fees"]')
     .querySelectorAll('.wm-certainty')].map(el => el.textContent)
   assert.ok(!chips2.includes('Unknown'), `a fee-free state carries no Unknown chip (${chips2})`)
 })
@@ -1422,7 +1482,7 @@ test('Overview shows a known fee subtotal as Partial when some fees are unknown'
   await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
     React.createElement(T.OverviewPage))))
   await flush(4)
-  const card = container.querySelectorAll('.wm-product-summary .wm-kpi')[2]
+  const card = container.querySelector('[data-kpi="saved-fees"]')
   assert.match(card.textContent, /\$20\.00\/mo/, 'the known subtotal keeps its amount, currency and period')
   assert.match(card.textContent, /Partial/, 'an unknown subscription marks the subtotal Partial')
   assert.match(card.textContent, /1 account\(s\) have no known fee/, 'the missing fee is disclosed')
@@ -1447,7 +1507,7 @@ test('Overview never treats an unconfirmed or plan-less account as a zero fee', 
   await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
     React.createElement(T.OverviewPage))))
   await flush(4)
-  const fees = container.querySelectorAll('.wm-product-summary .wm-kpi')[2].textContent
+  const fees = container.querySelector('[data-kpi="saved-fees"]').textContent
   assert.match(fees, /Unknown/, 'unconfirmed and plan-less accounts are Unknown, not zero')
   assert.doesNotMatch(fees, /No recurring fees/)
   assert.match(fees, /2 account\(s\) have no known fee/)
