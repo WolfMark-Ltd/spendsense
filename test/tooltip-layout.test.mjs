@@ -53,7 +53,8 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
 </style></head><body><div id="app"></div><div id="tooltip-layout-result"></div>
 <script>${await import('node:fs').then(fs => fs.readFileSync(bundle, 'utf8'))}</script></body></html>`)
         const dom = execFileSync(chrome, [
-          '--headless', '--disable-gpu', '--no-sandbox', '--window-size=800,800',
+          '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-profile-${width}`)}`,
+          '--window-size=800,800',
           '--virtual-time-budget=8000', '--dump-dom', `file://${html}`,
         ], { maxBuffer: 64 * 1024 * 1024, timeout: 90000 }).toString()
         const match = dom.match(/<div id="tooltip-layout-result"[^>]*>([^<]*)<\/div>/)
@@ -70,6 +71,13 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
           assert.equal(tip.focusedButton, true, `${id} trigger takes keyboard focus`)
           assert.equal(tip.tooltipOpened, true, `focus opens ${id}`)
           assert.equal(tip.opaque, true, `${id} background is opaque`)
+          if (id === 'rates-source') {
+            // The 260px content cap plus 22px padding/border is reduced by
+            // the pane and card insets on narrow panes.
+            const expectedWidth = Math.min(282, result.paneWidth - 28)
+            assert.ok(Math.abs(tip.popRect.width - expectedWidth) <= 2,
+              `rates-source width is ~${expectedWidth}px for this pane (got ${tip.popRect.width}px)`)
+          }
           assert.equal(tip.withinPane, true,
             `${id} stays inside the pane (pop ${JSON.stringify(tip.popRect)} pane ${JSON.stringify(tip.paneRect)})`)
           assert.equal(tip.escapeClosed, true, `Escape closes ${id}`)
