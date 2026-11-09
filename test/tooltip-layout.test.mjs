@@ -26,7 +26,7 @@ if (!chrome) {
     t.skip('No Chrome/Chromium binary available: layout geometry cannot be verified here.')
   })
 } else {
-  test('sidebar tooltip at 380px: opaque, inside the pane, focus/Escape, no host calls', async () => {
+  test('rates-source tooltip at 380px: right-edge popover stays in pane and supports focus/Escape', async () => {
     const work = mkdtempSync(join(tmpdir(), 'wm-tooltip-layout-'))
     try {
       const esbuild = (await import(pathToFileURL(join(HARNESS_MODULES, 'esbuild', 'lib', 'main.js')).href)).default
@@ -60,14 +60,17 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
       const result = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
       assert.equal(result.error, undefined, `page script error: ${result.error}`)
       assert.equal(result.paneFound, true, 'the Meter pane renders')
-      assert.equal(result.buttonFound, true, 'an info trigger renders')
+      assert.equal(result.ratesSourceButtonFound, true, 'the RatesPanel source help button renders')
       assert.ok(Math.abs(result.paneWidth - 380) <= 2, `pane is ~380px (got ${result.paneWidth})`)
       assert.equal(result.focusedButton, true, 'the trigger takes keyboard focus')
       assert.equal(result.tooltipOpened, true, 'focus opens the tooltip')
+      assert.equal(result.ratesSourceTooltip, true, 'the opened popover belongs to rates-source')
       assert.equal(result.opaque, true, `tooltip background is opaque (got ${result.backgroundColor})`)
       assert.equal(result.withinPane, true,
         `tooltip stays inside the pane (pop ${JSON.stringify(result.popRect)} pane ${JSON.stringify(result.paneRect)})`)
       assert.equal(result.escapeClosed, true, 'Escape closes the tooltip')
+      assert.equal(result.focusRetained, true, 'Escape returns focus to the help button')
+      assert.equal(result.expandedAfterEscape, true, 'Escape clears aria-expanded')
       assert.equal(result.hostCalls, 0, 'no host/gateway calls were made')
     } finally {
       rmSync(work, { recursive: true, force: true })

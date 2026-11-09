@@ -1886,7 +1886,7 @@ function RatesPanel({ t, view }) {
           jsx('span', { className: cn('wm-chevron', open && 'wm-chevron-open'), 'aria-hidden': true, children: '›' }, 'chevron')
         ]
       }, 'toggle'),
-      jsx(InfoTip, { id: 'rates-source', dir: 'up', label: t('infoLabel'), text: t('ratesNote') }, 'info')
+      jsx(InfoTip, { id: 'rates-source', dir: 'up', label: t('infoLabel'), text: t('ratesNote'), wide: true }, 'info')
     ] }, 'head'),
     open
       ? jsxs('div', { id: 'wm-rates-body', children: [
