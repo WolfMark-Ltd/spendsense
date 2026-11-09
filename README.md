@@ -17,7 +17,7 @@
 
 <p align="center"><strong>What you pay. What you use. What it's worth.</strong></p>
 
-> **Project status: early access.** Spend Sense is not yet a supported public release: there is no catalogue listing yet, so install from the repository URL below and check it matches. Evaluate on an isolated Hermes profile, with a backup of your plugin data. See [RELEASING.md](RELEASING.md) for what still has to be verified before a release.
+> **Early access · Available on GitHub.** SpendSense is an open-source Hermes plugin you can try now, directly from this repository. We're refining the experience and verifying compatibility before a formal release and Hermes catalogue submission. See the [installation instructions](#installation), and back up your Hermes profile data before upgrading an existing installation. Found a bug or have an idea? [Open a GitHub issue](https://github.com/WolfMark-Ltd/spendsense/issues/new/choose). Our [release checklist](RELEASING.md) tracks what remains.
 
 ## Overview
 
