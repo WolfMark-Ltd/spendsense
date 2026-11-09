@@ -22,11 +22,11 @@ const chromeCandidates = [
 ]
 const chrome = chromeCandidates.find(p => existsSync(p))
 if (!chrome) {
-  test('sidebar tooltip layout at 380px (skipped: no Chrome binary)', t => {
+  test('sidebar tooltip layout at narrow widths (skipped: no Chrome binary)', t => {
     t.skip('No Chrome/Chromium binary available: layout geometry cannot be verified here.')
   })
 } else {
-  test('sidebar tooltip at 380px: opaque, inside the pane, focus/Escape, no host calls', async () => {
+  test('Meter tooltips stay within 380px and 268px panes on a wider viewport', async () => {
     const work = mkdtempSync(join(tmpdir(), 'wm-tooltip-layout-'))
     try {
       const esbuild = (await import(pathToFileURL(join(HARNESS_MODULES, 'esbuild', 'lib', 'main.js')).href)).default
@@ -40,35 +40,44 @@ if (!chrome) {
       })
       // Synthetic host theme tokens: the real Hermes host provides --ui-*;
       // the layout test stands them in so computed colours resolve.
-      const html = join(work, 'page.html')
-      writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><style>
+      for (const width of [268, 380]) {
+        const html = join(work, `page-${width}.html`)
+        writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><style>
 :root{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--ui-fill-tertiary:#232633;
 --ui-stroke-secondary:#2b2f40;--ui-text-primary:#eef0f6;--ui-text-secondary:#b9bdd1;
 --ui-text-tertiary:#a9aec6;--ui-text-quaternary:#9398b0;--ui-accent:#4f7cff;
 --ui-success:#2dd4bf;--ui-warning:#f5b544;--ui-error:#f26d6d}
 body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
-#app{width:380px}
+#app{width:${width}px}
 #tooltip-layout-result{display:none}
 </style></head><body><div id="app"></div><div id="tooltip-layout-result"></div>
 <script>${await import('node:fs').then(fs => fs.readFileSync(bundle, 'utf8'))}</script></body></html>`)
-      const dom = execFileSync(chrome, [
-        '--headless', '--disable-gpu', '--no-sandbox',
-        '--virtual-time-budget=8000', '--dump-dom', `file://${html}`,
-      ], { maxBuffer: 64 * 1024 * 1024, timeout: 90000 }).toString()
-      const match = dom.match(/<div id="tooltip-layout-result"[^>]*>([^<]*)<\/div>/)
-      assert.ok(match && match[1], 'the page script must record a result')
-      const result = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
-      assert.equal(result.error, undefined, `page script error: ${result.error}`)
-      assert.equal(result.paneFound, true, 'the Meter pane renders')
-      assert.equal(result.buttonFound, true, 'an info trigger renders')
-      assert.ok(Math.abs(result.paneWidth - 380) <= 2, `pane is ~380px (got ${result.paneWidth})`)
-      assert.equal(result.focusedButton, true, 'the trigger takes keyboard focus')
-      assert.equal(result.tooltipOpened, true, 'focus opens the tooltip')
-      assert.equal(result.opaque, true, `tooltip background is opaque (got ${result.backgroundColor})`)
-      assert.equal(result.withinPane, true,
-        `tooltip stays inside the pane (pop ${JSON.stringify(result.popRect)} pane ${JSON.stringify(result.paneRect)})`)
-      assert.equal(result.escapeClosed, true, 'Escape closes the tooltip')
-      assert.equal(result.hostCalls, 0, 'no host/gateway calls were made')
+        const dom = execFileSync(chrome, [
+          '--headless', '--disable-gpu', '--no-sandbox', '--window-size=800,800',
+          '--virtual-time-budget=8000', '--dump-dom', `file://${html}`,
+        ], { maxBuffer: 64 * 1024 * 1024, timeout: 90000 }).toString()
+        const match = dom.match(/<div id="tooltip-layout-result"[^>]*>([^<]*)<\/div>/)
+        assert.ok(match && match[1], `the page script must record a result at ${width}px`)
+        const result = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
+        assert.equal(result.error, undefined, `page script error at ${width}px: ${result.error}`)
+        assert.equal(result.paneFound, true, 'the Meter pane renders')
+        assert.ok(Math.abs(result.paneWidth - width) <= 2, `pane is ~${width}px (got ${result.paneWidth})`)
+        assert.ok(result.viewportWidth > result.paneWidth,
+          `viewport (${result.viewportWidth}px) is wider than pane (${result.paneWidth}px)`)
+        for (const id of ['rates-source', 'savings-method', 'cost-source', 'cache-method']) {
+          const tip = result.tooltips[id]
+          assert.equal(tip?.buttonFound, true, `${id} help button renders`)
+          assert.equal(tip.focusedButton, true, `${id} trigger takes keyboard focus`)
+          assert.equal(tip.tooltipOpened, true, `focus opens ${id}`)
+          assert.equal(tip.opaque, true, `${id} background is opaque`)
+          assert.equal(tip.withinPane, true,
+            `${id} stays inside the pane (pop ${JSON.stringify(tip.popRect)} pane ${JSON.stringify(tip.paneRect)})`)
+          assert.equal(tip.escapeClosed, true, `Escape closes ${id}`)
+          assert.equal(tip.focusRetained, true, `focus remains on the ${id} help button after Escape`)
+          assert.equal(tip.expandedAfterEscape, true, `Escape clears aria-expanded for ${id}`)
+        }
+        assert.equal(result.hostCalls, 0, 'no host/gateway calls were made')
+      }
     } finally {
       rmSync(work, { recursive: true, force: true })
     }

@@ -1674,18 +1674,14 @@ test('every tab keeps the shared tab bar as a direct child of the page root', as
     })
     await flush(4)
     assert.equal(container.querySelectorAll('[role="tab"]').length, 7, `${tab} shows all seven tabs`)
-    // LedgerTabs brings its own shell wrapper, so the pin is structural: the
-    // tab shell must be a direct child of the page root — a sibling of the
-    // content shell, never nested inside it. Compare booleans only: handing
-    // live DOM nodes to assert hangs the runner while it serialises them.
     const pageRoot = container.firstElementChild
     const tablist = container.querySelector('[role="tablist"]')
     assert.ok(tablist, `${tab} renders the tab bar`)
-    const tabShell = tablist.closest('.wm-shell')
-    assert.ok(tabShell && [...pageRoot.children].includes(tabShell),
-      `${tab} keeps the tab bar as a top-level sibling of the content shell`)
-    assert.ok([...container.querySelectorAll('.wm-shell')]
-      .every(shell => shell === tabShell || !shell.contains(tablist)),
+    const contentShell = [...pageRoot.children].find(child => child.classList.contains('wm-shell'))
+    assert.ok(tablist.parentElement === pageRoot && contentShell?.parentElement === pageRoot
+      && [...pageRoot.children].indexOf(tablist) < [...pageRoot.children].indexOf(contentShell),
+    `${tab} keeps navigation before the content shell at the product root`)
+    assert.ok([...container.querySelectorAll('.wm-shell')].every(shell => !shell.contains(tablist)),
       `${tab} never nests the tab bar inside a content shell`)
     await React.act(async () => { root.unmount() })
     roots.pop()

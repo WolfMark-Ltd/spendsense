@@ -304,11 +304,10 @@ test('every ledger tab string exists in English and Chinese', () => {
     assert.ok(en[key] && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] && zh[key] !== key, `zh has ${key}`)
   }
-  // The English labels keep their exact pre-localisation wording.
   assert.deepEqual(keys.map(key => en[key]),
-    ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings & About'])
+    ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings'])
   assert.deepEqual(keys.map(key => zh[key]),
-    ['总览', '用量', '费用', '会员', '报告', '模型动态', '设置与关于'])
+    ['总览', '用量', '费用', '会员', '报告', '模型动态', '设置'])
 })
 
 test('every costs string exists in English and Chinese', () => {
@@ -557,11 +556,11 @@ test('the InfoTip indicator is compact while its hit area stays accessible', () 
   // The interactive box keeps its full size for pointer and keyboard users.
   assert.match(T.METER_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)
   // The visible ring is drawn smaller via a centred pseudo-element.
-  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*width:16px;height:16px/)
+  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*width:18px;height:18px/)
   assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*pointer-events:none/)
   // Hover and focus still recolour the ring; focus keeps its outline.
-  assert.match(T.METER_CSS, /\.wm-info-btn:hover::after,\.wm-info-btn:focus-visible::after\{[^}]*border-color:var\(--ui-accent\)/)
-  assert.match(T.METER_CSS, /\.wm-info-btn:focus-visible\{[^}]*outline:2px solid var\(--ui-accent\)/)
+  assert.match(T.METER_CSS, /\.wm-info-btn:hover::after,\.wm-info-btn:focus-visible::after\{[^}]*border-color:var\(--wm-action\)/)
+  assert.match(T.METER_CSS, /\.wm-info-btn:focus-visible\{[^}]*outline:2px solid var\(--wm-action\)/)
 })
 
 test('the meter stylesheet keeps popovers, ring and reduced-motion support', () => {
