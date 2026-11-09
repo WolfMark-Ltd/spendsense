@@ -123,6 +123,31 @@ test('compact allowance state distinguishes reported, partial, stale, manual and
   'manual state does not hide provider evidence or make a fully reported account partial')
 })
 
+test('stale provider freshness survives a manual state on a provider-backed window', () => {
+  const en = (key, ...args) => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const staleQuota = {
+    provider_state: 'stale',
+    windows: [
+      { id: 'weekly', state: 'manual', basis: ['provider_reported', 'manual'] },
+      { id: 'session', state: 'manual', basis: ['manual'] }
+    ]
+  }
+  const rows = T.quotaRows(account({ quota: staleQuota }), Date.now(), en)
+  assert.equal(rows[0].providerState, 'stale')
+  assert.deepEqual(T.membershipReadingStatus(rows, en),
+    { state: 'stale', label: 'Stale reading' })
+
+  const manualOnly = T.quotaRows(account({ quota: {
+    provider_state: 'stale', windows: [{ id: 'session', state: 'manual', basis: ['manual'] }]
+  } }), Date.now(), en)
+  assert.deepEqual(T.membershipReadingStatus(manualOnly, en),
+    { state: 'manual', label: 'Manual mark' },
+    'provider freshness only overrides status when provider-backed rows exist')
+})
+
 test('Memberships provider names are display-only labels with a safe fallback', () => {
   const en = (key, ...args) => {
     const entry = T.I18N.en[key]

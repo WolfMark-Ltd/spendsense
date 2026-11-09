@@ -3192,15 +3192,12 @@ function LedgerTabs() {
         jsx('small', { children: 'by WolfMark' }, 'by')
       ] }, 'copy')
     ] }, 'brand'),
-    ...LEDGER_TABS.map(([id], index) =>
-      jsxs(ProductButton, { role: 'tab', variant: 'ghost', 'aria-label': t(TAB_LABEL_KEYS[id]),
+    ...LEDGER_TABS.map(([id]) =>
+      jsx(ProductButton, { role: 'tab', variant: 'ghost', 'aria-label': t(TAB_LABEL_KEYS[id]),
         'aria-selected': tab === id, 'aria-pressed': tab === id, tabIndex: tab === id ? 0 : -1,
         className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
-        onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) }, children: [
-          jsx('span', { className: 'wm-product-tab-number', 'aria-hidden': true,
-            children: String(index + 1).padStart(2, '0') }, 'number'),
-          jsx('span', { className: 'wm-product-tab-label', children: t(TAB_LABEL_KEYS[id]) }, 'label')
-        ] }, id))
+        onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) },
+        children: jsx('span', { className: 'wm-product-tab-label', children: t(TAB_LABEL_KEYS[id]) }) }, id))
   ] })
 }
 
@@ -3590,10 +3587,8 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-brand-copy strong{font-size:13px;font-weight:650;color:var(--wm-text)}',
   '.wm-product .wm-product-brand-copy small{margin-top:2px;font-size:10px;color:var(--wm-text-muted)}',
   '.wm-product .wm-product-tab{border:0;background:transparent;color:var(--wm-text-muted);border-radius:6px;padding:0 10px;min-height:34px;align-self:center;display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12.5px;white-space:nowrap;cursor:pointer;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}',
-  '.wm-product .wm-product-tab-number{font-size:10px;font-variant-numeric:tabular-nums;color:var(--wm-text-quiet)}',
   '.wm-product .wm-product-tab:hover{background:var(--wm-surface-raised);color:var(--wm-text)}',
   '.wm-product .wm-product-tab-active{background:var(--wm-surface-raised);color:var(--wm-text);font-weight:570;box-shadow:inset 0 -2px 0 var(--wm-action)}',
-  '.wm-product .wm-product-tab-active .wm-product-tab-number{color:var(--wm-action)}',
   '.wm-product .wm-button{min-height:34px;transition:background-color .15s ease,color .15s ease,border-color .15s ease,transform .12s ease}',
   '.wm-product .wm-button:hover:not(:disabled){border-color:color-mix(in srgb,var(--wm-action) 45%,var(--wm-border))}',
   '.wm-product .wm-button:active:not(:disabled){transform:translateY(1px)}',
@@ -5612,7 +5607,8 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
     return {
       id: window.id, label: isAccountMark ? t('memScopeAccount') : (window.label || window.id),
       scope: window.scope || 'account', accountMark: isAccountMark,
-      reading, source, reset, state, basis: bases, conflict: !!window.conflict,
+      reading, source, reset, state, basis: bases, providerState: quota.provider_state,
+      conflict: !!window.conflict,
       manual: window.manual || null,
       stateLabel: state === 'live' ? t('memQuotaLive') : state === 'stale' ? t('memQuotaStale') : state === 'manual' ? t('memQuotaManual') : t('memQuotaUnrecorded')
     }
@@ -5628,7 +5624,8 @@ function membershipReadingStatus(rows, t = needsAttentionEn) {
       ? { state: 'manual', label: t('memAllowanceManual') }
       : { state: 'unreported', label: t('memAllowanceUnreported') }
   }
-  if (reported.some(row => row.state === 'stale')) {
+  if (reported.some(row => row.state === 'stale' ||
+      (row.providerState === 'stale' && Array.isArray(row.basis) && row.basis.includes('provider_reported')))) {
     return { state: 'stale', label: t('memAllowanceStale') }
   }
   if (reported.length < items.length) {

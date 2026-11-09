@@ -124,7 +124,8 @@ test('LedgerTabs: seven tabs in order, roving tabindex, click and arrow navigati
   const container = await renderEl(React.createElement(T.LedgerTabs))
   const tabs = [...container.querySelectorAll('[role="tab"]')]
   assert.deepEqual(tabs.map(el => el.getAttribute('aria-label')), ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings'])
-  assert.deepEqual(tabs.map(el => el.querySelector('.wm-product-tab-number').textContent), ['01', '02', '03', '04', '05', '06', '07'])
+  assert.ok(tabs.every(el => !el.querySelector('.wm-product-tab-number')),
+    'section numbers belong in Usage, not on the top-level navigation tabs')
   assert.equal(tabs[0].getAttribute('aria-selected'), 'true')
   assert.deepEqual(tabs.map(el => el.tabIndex), [0, -1, -1, -1, -1, -1, -1], 'only the active tab is tabbable')
 
