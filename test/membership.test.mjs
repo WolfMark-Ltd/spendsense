@@ -82,6 +82,8 @@ test('quota rows keep provider, manual and credit readings distinct', () => {
           state: 'live', basis: ['provider_reported'] },
         { id: 'session', label: 'Session', scope: 'account', used_percent: 100, used_percent_from: 'manual',
           state: 'manual', basis: ['manual'], manual: { status: 'active' } },
+        { id: 'weekly-marked', label: 'Weekly marked', scope: 'account', used_percent: 100, used_percent_from: 'manual',
+          state: 'manual', basis: ['provider_reported', 'manual'], manual: { status: 'active' } },
         { id: 'weekly-credits', label: 'Weekly credits', scope: 'account', used_percent: null, amount: 20,
           currency: 'USD', state: 'no_data', basis: ['none'] },
         { id: 'monthly', label: 'Monthly', scope: 'account', used_percent: null, state: 'no_data', basis: ['none'] }
@@ -95,6 +97,8 @@ test('quota rows keep provider, manual and credit readings distinct', () => {
   assert.equal(byId.session.reading, '100% used (you reported)')
   assert.equal(byId.session.source, 'You reported')
   assert.equal(byId.session.stateLabel, 'manual')
+  assert.deepEqual(byId['weekly-marked'].basis, ['provider_reported', 'manual'],
+    'the compact account summary can still see the provider basis under a manual state')
   assert.equal(byId['weekly-credits'].reading, '$20.00 allowance')
   assert.equal(byId.monthly.reading, 'No reading')
   assert.equal(byId.monthly.stateLabel, 'not recorded')
@@ -105,12 +109,40 @@ test('compact allowance state distinguishes reported, partial, stale, manual and
     const entry = T.I18N.en[key]
     return typeof entry === 'function' ? entry(...args) : entry ?? key
   }
-  const status = states => T.membershipReadingStatus(states.map(state => ({ state })), en)
+  const provider = state => ({ state, basis: ['provider_reported'] })
+  const status = rows => T.membershipReadingStatus(rows, en)
   assert.deepEqual(status([]), { state: 'unreported', label: 'Unreported' })
-  assert.deepEqual(status(['live']), { state: 'reported', label: 'Reported' })
-  assert.deepEqual(status(['live', 'no_data']), { state: 'partial', label: 'Partially reported' })
-  assert.deepEqual(status(['stale']), { state: 'stale', label: 'Stale reading' })
-  assert.deepEqual(status(['manual']), { state: 'manual', label: 'Manual mark' })
+  assert.deepEqual(status([provider('live')]), { state: 'reported', label: 'Reported' })
+  assert.deepEqual(status([provider('live'), { state: 'no_data', basis: ['none'] }]),
+    { state: 'partial', label: 'Partially reported' })
+  assert.deepEqual(status([provider('stale')]), { state: 'stale', label: 'Stale reading' })
+  assert.deepEqual(status([{ state: 'manual', basis: ['manual'] }]), { state: 'manual', label: 'Manual mark' })
+  assert.deepEqual(status([
+    { state: 'manual', basis: ['provider_reported', 'manual'] }, provider('live')
+  ]), { state: 'manual', label: 'Manual mark' },
+  'manual state does not hide provider evidence or make a fully reported account partial')
+})
+
+test('Memberships provider names are display-only labels with a safe fallback', () => {
+  const en = (key, ...args) => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const zh = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  assert.equal(T.membershipProviderLabel('anthropic', en), 'Anthropic')
+  assert.equal(T.membershipProviderLabel('google-gemini', en), 'Google Gemini')
+  assert.equal(T.membershipProviderLabel('openai-codex', en), 'OpenAI Codex')
+  assert.equal(T.membershipProviderLabel('new-provider', en), 'new-provider')
+  assert.equal(T.membershipIdentityLabel({ family: 'anthropic', label: 'Work' }, en), 'Anthropic · Work')
+  assert.equal(T.membershipIdentityLabel({ family: 'openai-codex', label: 'openai-codex' }, en), 'OpenAI Codex')
+  assert.equal(T.membershipIdentityLabel({ family: 'google-gemini', label: '工作室' }, zh), 'Google Gemini 服务 · 工作室')
+  assert.equal(T.membershipAccountShortcutLabel({ family: 'openai-codex', label: 'Personal' }, en), 'Personal',
+    'account shortcuts keep a user-provided account label')
+  assert.equal(T.membershipAccountShortcutLabel({ family: 'google-gemini', label: 'google-gemini' }, en), 'Google Gemini',
+    'provider names replace only the raw provider slug')
 })
 
 test('needs attention covers exhaustion, conflict, reconfirm, and missing plan or fee', () => {

@@ -136,6 +136,8 @@ try {
           const feesText = summary.lastElementChild?.querySelector('dd')?.textContent || ''
           out.containers[width] = {
             columns: cols,
+            accountNavColumns: getComputedStyle(host.querySelector('.wm-membership-account-nav')).gridTemplateColumns.split(' ').filter(Boolean).length,
+            jumpLabel: host.querySelector('.wm-account-nav-label')?.textContent || '',
             feesText,
             hasLongFee: feesText.includes('1234567.89'),
             hasMixedCurrencies: feesText.includes('$') && feesText.includes('£'),

@@ -5295,6 +5295,9 @@ const MEMBERSHIP_CSS = `
 .wm-chip[data-state="manual"]{color:var(--ui-accent);border-color:color-mix(in srgb,var(--ui-accent) 45%,transparent)}
 .wm-chip[data-state="stale"],.wm-chip[data-state="no_data"]{color:var(--ui-text-tertiary)}
 .wm-note{margin:0;font-size:11.5px;line-height:1.5;color:var(--ui-text-secondary)}
+.wm-membership-explainer{padding:1px 0}
+.wm-membership-explainer>summary{width:fit-content;min-height:26px;display:list-item;cursor:pointer;font-weight:600}
+.wm-membership-explainer>p{margin:4px 0 0;max-width:82ch}
 .wm-accent-note{color:var(--ui-accent)}
 .wm-warn-note{color:var(--ui-warning)}
 .wm-fee-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
@@ -5341,6 +5344,11 @@ const MEMBERSHIP_CSS = `
 .wm-membership-summary dt,.wm-row-fact dt{font-size:10.5px;font-weight:600;color:var(--ui-text-tertiary)}
 .wm-membership-summary dd,.wm-row-fact dd{margin:0;min-width:0}
 .wm-membership-summary dd{font-size:14px;line-height:1.35;font-weight:600;color:var(--ui-text-primary);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.wm-memberships nav.wm-account-jump.wm-membership-account-nav{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:10px 14px;align-items:center}
+.wm-membership-shortcuts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px;align-items:center;min-width:0}
+.wm-account-nav-label{font-size:11px;font-weight:600;color:var(--ui-text-tertiary)}
+.wm-membership-account-chips{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
+.wm-membership-account-chips .wm-account-chip{max-width:100%;overflow-wrap:anywhere}
 @container(max-width:620px){.wm-membership-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.wm-membership-summary>div:nth-child(odd){border-left:0}.wm-membership-summary>div:nth-child(n+3){border-top:1px solid var(--ui-stroke-secondary)}}
 @container(max-width:340px){.wm-membership-summary{grid-template-columns:minmax(0,1fr)}.wm-membership-summary>div{border-left:0;border-top:1px solid var(--ui-stroke-secondary)}.wm-membership-summary>div:first-child{border-top:0}}
 .wm-memberships .wm-cards{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
@@ -5368,6 +5376,7 @@ button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
 .wm-group-body{display:grid;gap:8px;padding:4px 0 10px}
 @container(max-width:760px){.wm-row-head{grid-template-columns:minmax(0,1fr)}.wm-row-mid{grid-template-columns:minmax(0,1.35fr) minmax(92px,.7fr) auto auto}}
 @container(max-width:620px){.wm-row-head{align-items:start}.wm-row-mid{grid-template-columns:minmax(0,1fr) minmax(92px,auto);gap:8px 12px}.wm-row-state{grid-column:1}.wm-row-actions{grid-column:2;grid-row:2;align-self:center}.wm-row-actions .wm-button{min-height:38px}.wm-memberships .wm-seg button{min-height:38px}.wm-memberships .wm-attention li{flex-wrap:wrap}.wm-memberships .wm-attention li .wm-button{width:100%}}
+@container(max-width:620px){.wm-memberships nav.wm-account-jump.wm-membership-account-nav{grid-template-columns:minmax(0,1fr);align-items:start}.wm-membership-shortcuts{grid-template-columns:minmax(0,1fr);gap:6px}}
 @container(max-width:340px){.wm-row-mid{grid-template-columns:minmax(0,1fr)}.wm-row-state,.wm-row-actions{grid-column:1;grid-row:auto}.wm-row-actions,.wm-row-actions .wm-button{width:100%}}
 `
 
@@ -5603,7 +5612,7 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
     return {
       id: window.id, label: isAccountMark ? t('memScopeAccount') : (window.label || window.id),
       scope: window.scope || 'account', accountMark: isAccountMark,
-      reading, source, reset, state, conflict: !!window.conflict,
+      reading, source, reset, state, basis: bases, conflict: !!window.conflict,
       manual: window.manual || null,
       stateLabel: state === 'live' ? t('memQuotaLive') : state === 'stale' ? t('memQuotaStale') : state === 'manual' ? t('memQuotaManual') : t('memQuotaUnrecorded')
     }
@@ -5612,7 +5621,8 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
 
 function membershipReadingStatus(rows, t = needsAttentionEn) {
   const items = Array.isArray(rows) ? rows : []
-  const reported = items.filter(row => row.state === 'live' || row.state === 'stale')
+  const reported = items.filter(row => row.state === 'live' || row.state === 'stale' ||
+    (Array.isArray(row.basis) && row.basis.includes('provider_reported')))
   if (!reported.length) {
     return items.some(row => row.state === 'manual')
       ? { state: 'manual', label: t('memAllowanceManual') }
@@ -5623,6 +5633,9 @@ function membershipReadingStatus(rows, t = needsAttentionEn) {
   }
   if (reported.length < items.length) {
     return { state: 'partial', label: t('memAllowancePartial') }
+  }
+  if (items.some(row => row.state === 'manual')) {
+    return { state: 'manual', label: t('memAllowanceManual') }
   }
   return { state: 'reported', label: t('memAllowanceReported') }
 }
@@ -6216,6 +6229,24 @@ function arrangementLabel(arrangement, t) {
     : arrangement === 'prepaid' ? t('memArrPrepaid')
     : arrangement === 'api_only' ? t('memArrMetered') : t('memArrUnconfirmed')
 }
+const MEMBERSHIP_PROVIDER_LABEL_KEYS = {
+  anthropic: 'memProviderAnthropic',
+  'google-gemini': 'memProviderGoogleGemini',
+  'openai-codex': 'memProviderOpenAICodex'
+}
+function membershipProviderLabel(family, t = needsAttentionEn) {
+  const key = MEMBERSHIP_PROVIDER_LABEL_KEYS[family]
+  return key ? t(key) : family || ''
+}
+function membershipIdentityLabel(account, t = needsAttentionEn) {
+  const provider = membershipProviderLabel(account?.family, t)
+  return account?.label && account.label !== account.family
+    ? `${provider} · ${account.label}` : provider
+}
+function membershipAccountShortcutLabel(account, t = needsAttentionEn) {
+  return account?.label && account.label !== account.family
+    ? account.label : membershipProviderLabel(account?.family, t)
+}
 function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention }) {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
@@ -6398,8 +6429,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     $membershipExpanded.set({ origin: identity,
       ids: ids.includes(account.id) ? ids.filter(id => id !== account.id) : [...ids, account.id] })
   }
-  const identityLabel = account.label && account.label !== account.family
-    ? `${account.family} · ${account.label}` : account.family
+  const identityLabel = membershipIdentityLabel(account, t)
   // API-only and prepaid accounts need no plan, so they never show the
   // "not confirmed yet" prompt. Mirrors the arrangement skip in needsAttention.
   const planName = planSaved ? (account.plan?.name || account.plan_id)
@@ -6515,7 +6545,7 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
         // must not block submit before the revision check runs in saveFee().
         ? jsxs('form', { className: 'wm-fee-form', noValidate: !account.rev,
             onSubmit: event => { event.preventDefault(); saveFee() }, children: [
-            jsx('h3', { children: t('memFeeTitle', account.label || account.family) }),
+            jsx('h3', { children: t('memFeeTitle', membershipAccountShortcutLabel(account, t)) }),
             notice?.tone === 'warn' && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
             jsx('p', { className: 'wm-note', children: t('memFeeRevisionNote') }),
             jsxs('fieldset', { disabled: !!busy, className: 'wm-controls wm-fee-fields', children: [
@@ -7033,7 +7063,7 @@ function MembershipsPage() {
           status: busy === 'refresh' ? 'pending' : 'idle', pendingLabel: t('memRefreshing'),
           onClick: refreshReadings, children: t('memRefresh') })
       ] }),
-      jsx('p', { className: 'wm-note',
+      jsx('p', { className: 'wm-note wm-membership-refresh-note',
         children: t('memRefreshNote') }),
       notice ? jsx('div', { className: 'wm-alert', 'data-tone': notice.tone === 'warn' ? 'warn' : 'good',
         role: 'status', children: notice.text }) : null,
@@ -7052,18 +7082,22 @@ function MembershipsPage() {
           jsxs('div', { children: [jsx('dt', { children: t('memPlansConfirmed') }),
             jsx('dd', { children: summaryValue(t('memPlansOf', summary.withPlan, summary.total)) })] }),
           jsxs('div', { children: [jsx('dt', { children: t('memNeedsAttention') }),
-            jsx('dd', { children: summaryValue(String(attention.length)) })] }),
+            jsx('dd', { children: summaryValue(String(attentionIds.size)) })] }),
           jsxs('div', { children: [jsx('dt', { children: t('memFeesLabel') }),
             jsx('dd', { children: feeSummary })] })
         ] }),
-      jsx('p', { className: 'wm-note',
-        children: t('memFeesNote') }),
+      jsx('p', { className: 'wm-note wm-membership-fee-note',
+        children: t('memFeesNoteShort') }),
+      jsxs('details', { className: 'wm-note wm-membership-explainer', children: [
+        jsx('summary', { children: t('memFeesHelp') }),
+        jsx('p', { children: t('memFeesNote') })
+      ] }),
       attention.length
         ? jsxs('section', { className: 'wm-attention', 'aria-label': t('memNeedsAttention'), children: [
             jsx('h3', { children: t('memNeedsAttention') }),
             jsxs('ul', { children: attention.slice(0, 6).map((item, index) =>
               jsxs('li', { 'data-tone': item.tone, children: [
-                jsx('span', { children: `${item.account.label || item.account.family}: ${item.text}` }),
+                jsx('span', { children: `${membershipAccountShortcutLabel(item.account, t)}: ${item.text}` }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
                   onClick: () => queueMembershipTarget(item),
                   children: attentionActionLabel(item.issue, t) })
@@ -7080,14 +7114,19 @@ function MembershipsPage() {
         ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read', t) })
         : null,
       accountsReady && list.length > 1
-        ? jsxs('nav', { className: 'wm-account-jump', 'aria-label': t('memJumpToAccount'), children: [
-            jsx('button', { type: 'button', className: 'wm-account-chip', 'aria-pressed': attentionOnly,
-              onClick: () => $membershipAttentionOnly.set(!attentionOnly),
-              children: attentionOnly ? t('memShowingAttention', attentionIds.size) : t('memAttentionOnly', attentionIds.size) }),
-            ...list.map(account => jsx('button', { type: 'button', className: 'wm-account-chip',
-              'data-attention': attentionIds.has(account.id) ? 'true' : undefined,
-              onClick: () => jumpToAccount(account),
-              children: (account.label || account.family) + (attentionIds.has(account.id) ? t('memJumpCheck') : '') }, account.id))
+        ? jsxs('nav', { className: 'wm-account-jump wm-membership-account-nav', 'aria-label': t('memAccountNavigation'), children: [
+            jsx('div', { role: 'group', 'aria-label': t('memAttentionFilterLabel'), children:
+              jsx(ProductButton, { type: 'button', className: cn('wm-button', attentionOnly && 'wm-accent'), 'aria-pressed': attentionOnly,
+                onClick: () => $membershipAttentionOnly.set(!attentionOnly),
+                children: attentionOnly ? t('memShowingAttention', attentionIds.size) : t('memAttentionOnly', attentionIds.size) })
+            }),
+            jsxs('div', { className: 'wm-membership-shortcuts', role: 'group', 'aria-label': t('memJumpToAccount'), children: [
+              jsx('span', { className: 'wm-account-nav-label', children: t('memJumpToAccount') }),
+              jsxs('div', { className: 'wm-membership-account-chips', children: list.map(account => jsx('button', { type: 'button', className: 'wm-account-chip',
+                'data-attention': attentionIds.has(account.id) ? 'true' : undefined,
+                onClick: () => jumpToAccount(account),
+                children: membershipAccountShortcutLabel(account, t) + (attentionIds.has(account.id) ? t('memJumpCheck') : '') }, account.id)) })
+            ] })
           ] })
         : null,
       jsxs('div', { className: 'wm-cards', children:
@@ -8090,9 +8129,11 @@ const I18N = {
     memBillingTypeFor: account => `Billing type for ${account}`,
     memBillingTip: 'Subscription: a recurring fee you declare. Prepaid credits: top-ups, not a recurring fee. Metered API: pay-as-you-go, no recurring fee. Usage is always tracked.',
     memRefresh: 'Refresh provider usage',
-    memRefreshNote: 'Refresh provider usage checks provider-reported usage and allowance information where supported. It does not change plans, fees or marks.',
+    memRefreshNote: 'Refresh checks provider-reported usage where supported; it never changes saved plans, fees or marks.',
     memFeesLabel: 'Membership fees',
     memFeesNotRecorded: 'No fee amount recorded',
+    memFeesNoteShort: 'Saved fees keep their currency and period. Costs separates them from API-equivalent estimates and actual charge evidence.',
+    memFeesHelp: 'About fees and allowance readings',
     memFeesNote: 'Saved subscription fees stay separate by currency and period; unknown values remain marked on their account. Allowance percentages are limits, not fees. Costs keeps saved fees, API-equivalent estimates and actual charge evidence distinct.',
     memAccountId: id => `Account ID: ${id}`,
     // Memberships labels (previously literal English, never translated).
@@ -8104,9 +8145,14 @@ const I18N = {
     memReading: 'Reading memberships for this connection…',
     memBackendNotes: 'Backend notes',
     memJumpToAccount: 'Jump to an account',
+    memAccountNavigation: 'Account navigation',
+    memAttentionFilterLabel: 'Filter accounts by attention',
     memShowingAttention: n => `Showing needs attention (${n}) — show all`,
     memAttentionOnly: n => `Needs attention only (${n})`,
     memJumpCheck: ' · check',
+    memProviderAnthropic: 'Anthropic',
+    memProviderGoogleGemini: 'Google Gemini',
+    memProviderOpenAICodex: 'OpenAI Codex',
     memDiagnostics: 'Request diagnostics (this session)',
     memSaved: 'Saved.',
     memSavedRereadFailed: error => `Saved, but the list could not be re-read. ${error}`,
@@ -9249,9 +9295,11 @@ const I18N = {
     memBillingTypeFor: account => `${account} 的账单类型`,
     memBillingTip: '订阅：您申报的周期性费用。预付额度：充值，非周期性费用。按量 API：按用量付费，无周期性费用。用量始终会被跟踪。',
     memRefresh: '刷新服务商用量',
-    memRefreshNote: '刷新服务商用量会检查支持的服务商上报用量与额度信息。不会更改方案、费用或标记。',
+    memRefreshNote: '在服务商支持时刷新其上报用量；不会更改已保存的方案、费用或标记。',
     memFeesLabel: '会员费用',
     memFeesNotRecorded: '未记录费用金额',
+    memFeesNoteShort: '已保存费用保留币种和周期。“成本”会将其与 API 等效估值及实际账单凭据分开显示。',
+    memFeesHelp: '关于费用与额度读数',
     memFeesNote: '已保存订阅费用按币种与账单周期分列；未知金额会标记在对应账户上。额度百分比是限制，不是费用。“成本”会将已保存费用、API 等效用量估值与实际账单凭据分开显示。',
     memAccountId: id => `账户 ID：${id}`,
     // 会员标签（之前是英文原文，从不翻译）。
@@ -9263,9 +9311,14 @@ const I18N = {
     memReading: '正在读取该连接的会员……',
     memBackendNotes: '后端备注',
     memJumpToAccount: '跳转到账户',
+    memAccountNavigation: '账户导航',
+    memAttentionFilterLabel: '按关注状态筛选账户',
     memShowingAttention: n => `仅显示需关注（${n}）——显示全部`,
     memAttentionOnly: n => `仅需关注（${n}）`,
     memJumpCheck: ' · 待看',
+    memProviderAnthropic: 'Anthropic 服务',
+    memProviderGoogleGemini: 'Google Gemini 服务',
+    memProviderOpenAICodex: 'OpenAI Codex 服务',
     memDiagnostics: '请求诊断信息（本次会话）',
     memSaved: '已保存。',
     memSavedRereadFailed: error => `已保存，但列表无法重新读取。${error}`,
@@ -10277,6 +10330,7 @@ export const __test = {
   $membershipScope, $membershipSnapshot, $membershipNotice,
   $membershipBusy, $membershipNative, $membershipAttentionOnly, $membershipDraft, $scopeConnection, $scopeProfile,
   fmtMoney, feeLabel, quotaRows, membershipReadingStatus, needsAttention, membershipSummary, feesLabel, accountPlanChoices,
+  membershipProviderLabel, membershipIdentityLabel, membershipAccountShortcutLabel,
   excludedPlansNote, planOptionLabel,
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,
   OVERRIDE_REASON_FALLBACK, REASON_LABELS, restoreCatalogueFee, MembershipsPage, MembershipCard, MEMBERSHIP_CSS,

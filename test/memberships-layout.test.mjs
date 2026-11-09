@@ -61,6 +61,9 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
       const wide = result.containers['1200']
       assert.equal(narrow.rows, 2, 'both synthetic accounts render at 380px')
       assert.equal(narrow.columns, 2, `380px strip stays scannable in two columns (got ${narrow.columns})`)
+      assert.equal(narrow.accountNavColumns, 1,
+        `the narrow account navigation stacks filter and jump controls (got ${narrow.accountNavColumns} columns)`)
+      assert.equal(narrow.jumpLabel, 'Jump to an account', 'account shortcuts have their own visible label')
       assert.equal(narrow.hasLongFee, true, 'the long fee is present in the strip')
       assert.equal(narrow.hasMixedCurrencies, true, 'mixed currencies are present in the strip')
       assert.ok(narrow.overflow.every(px => px <= 1),
