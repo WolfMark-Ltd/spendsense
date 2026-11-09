@@ -53,7 +53,8 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
 </style></head><body><div id="app"></div><div id="tooltip-layout-result"></div>
 <script>${await import('node:fs').then(fs => fs.readFileSync(bundle, 'utf8'))}</script></body></html>`)
         const dom = execFileSync(chrome, [
-          '--headless', '--disable-gpu', '--no-sandbox', '--window-size=800,800',
+          '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-profile-${width}`)}`,
+          '--window-size=800,800',
           '--virtual-time-budget=8000', '--dump-dom', `file://${html}`,
         ], { maxBuffer: 64 * 1024 * 1024, timeout: 90000 }).toString()
         const match = dom.match(/<div id="tooltip-layout-result"[^>]*>([^<]*)<\/div>/)
