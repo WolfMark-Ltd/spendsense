@@ -328,6 +328,10 @@ test('a malformed envelope is an error, not an empty membership list', async () 
   assert.doesNotMatch(container.textContent, /No memberships yet/,
     'an unreadable answer must not be presented as an empty account list')
   assert.match(container.textContent, /could not be read|did not load|retry/i)
+  const summary = container.querySelector('.wm-membership-summary')
+  assert.ok(summary, 'headline summary stays present when account data cannot be read')
+  assert.match(summary.textContent, /Unavailable/)
+  assert.equal(summary.getAttribute('aria-busy'), 'false')
 })
 
 test('recovery: after a 503 the next read renders accounts and clears the error', async () => {
@@ -1865,12 +1869,34 @@ test('PR-C: account rows are compact, collapsed by default, and expand on Detail
   const card = container.querySelector('[data-account="anthropic:default"]')
   const head = card.querySelector('.wm-row-head')
   assert.ok(head, 'the card renders a compact row head')
-  assert.match(head.textContent, /anthropic · main/)
+  assert.match(head.textContent, /Anthropic · main/)
   assert.match(head.textContent, /Subscription · Claude Pro/)
   assert.match(head.textContent, /£45\.00\/mo/)
+  assert.match(head.textContent, /Effective fee/)
+  assert.match(head.textContent, /Allowance reading/)
+  assert.equal(card.querySelector('.wm-row-mid [data-state="unreported"]')?.textContent, 'Unreported',
+    'an account without allowance readings is labelled explicitly')
   const details = [...head.querySelectorAll('button')].find(b => /Details/.test(b.textContent))
   assert.equal(details.getAttribute('aria-expanded'), 'false', 'rows start collapsed')
+  assert.equal(details.getAttribute('aria-controls'), card.querySelector('.wm-row-body').id,
+    'the disclosure button names the body it controls')
   assert.equal(card.querySelector('.wm-row-body').hidden, true)
+  const summary = container.querySelector('dl.wm-membership-summary')
+  assert.ok(summary, 'headline figures render in a compact semantic summary strip')
+  assert.equal(summary.getAttribute('aria-busy'), 'false', 'the loaded summary is not announced as busy')
+  assert.match(summary.textContent, /Needs attention/)
+  assert.match(summary.textContent, /£45\.00\/mo/)
+  const refreshNote = container.querySelector('.wm-membership-refresh-note')
+  assert.match(refreshNote.textContent, /where supported/)
+  assert.match(refreshNote.textContent, /never changes saved plans, fees or marks/)
+  const feeNote = container.querySelector('.wm-membership-fee-note')
+  assert.match(feeNote.textContent, /currency and period/)
+  assert.doesNotMatch(feeNote.textContent, /Allowance percentages/,
+    'the concise note leaves extended methodology below the fold')
+  const feeHelp = container.querySelector('details.wm-membership-explainer')
+  assert.equal(feeHelp.open, false, 'extended fee and allowance caveats are available in a collapsed disclosure')
+  assert.match(feeHelp.querySelector('summary').textContent, /About fees and allowance readings/)
+  assert.match(feeHelp.querySelector('p').textContent, /Allowance percentages are limits, not fees/)
   // Detail groups exist in the DOM with their controls, collapsed.
   const groups = [...card.querySelectorAll('.wm-group')]
   assert.deepEqual(groups.map(g => g.querySelector('summary').textContent),
@@ -1882,6 +1908,47 @@ test('PR-C: account rows are compact, collapsed by default, and expand on Detail
   await flush(2)
   assert.equal(details.getAttribute('aria-expanded'), 'true')
   assert.equal(card.querySelector('.wm-row-body').hidden, false)
+})
+
+test('PR-C: attention summary counts accounts and separates its filter from account jumps', async () => {
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$membershipAttentionOnly.set(false)
+  T.$membershipExpanded.set({ origin: null, ids: [] })
+  T.$ledgerTab.set('memberships')
+  const needsMultipleItems = account('anthropic:work', {
+    family: 'anthropic', label: 'Work', billing_arrangement: 'subscription',
+    effective_arrangement: 'subscription', quota: { account_exhausted: true, conflicts: [], windows: [] }
+  })
+  const metered = account('openai-codex:personal', {
+    family: 'openai-codex', label: 'Personal', effective_arrangement: 'api_only',
+    fee: { basis: 'api_only', effective: { amount: null } }
+  })
+  assert.equal(T.needsAttention([needsMultipleItems], new Map()).length, 2,
+    'the fixture has two reasons for one account')
+  transportCtl.respond(call => call.path === '/membership/accounts'
+    ? { ok: true, accounts: [needsMultipleItems, metered], store: { loaded: true, error: '' }, notes: [] }
+    : { ok: true })
+  const { container } = await boot()
+  await flush(4)
+  const summary = container.querySelector('.wm-membership-summary')
+  assert.equal(summary.querySelectorAll('dd')[2].textContent, '1',
+    'the headline count matches the attention filter count of distinct accounts')
+  const attentionSection = [...container.querySelectorAll('.wm-attention')]
+    .find(el => el.getAttribute('aria-label') === 'Needs attention')
+  assert.equal(attentionSection.querySelectorAll('li').length, 2,
+    'individual attention reasons remain available in the details list')
+  const nav = container.querySelector('nav.wm-membership-account-nav')
+  assert.equal(nav.getAttribute('aria-label'), 'Account navigation')
+  const filterGroup = nav.querySelector('[role="group"][aria-label="Filter accounts by attention"]')
+  const filter = filterGroup.querySelector('button')
+  assert.match(filter.textContent, /Needs attention only \(1\)/)
+  assert.ok(filter.classList.contains('wm-button'), 'the filter has button styling distinct from jump chips')
+  assert.equal(filter.classList.contains('wm-account-chip'), false)
+  const shortcuts = nav.querySelector('[role="group"][aria-label="Jump to an account"]')
+  assert.match(shortcuts.querySelector('.wm-account-nav-label').textContent, /Jump to an account/)
+  assert.deepEqual([...shortcuts.querySelectorAll('.wm-account-chip')].map(button => button.textContent),
+    ['Work · check', 'Personal'])
 })
 
 test('PR-C: plan-less API-only and prepaid rows show No plan, not the confirm prompt', async () => {
@@ -2248,8 +2315,11 @@ test('PR-C: expanded rows are identity-isolated and the summary strip keeps its 
     : { ok: true })
   const { container } = await boot()
   await flush(4)
-  assert.match(container.querySelector('.wm-stats').textContent, /Accounts/)
-  assert.match(container.querySelector('.wm-stats').textContent, /Membership fees/)
+  const summary = container.querySelector('.wm-membership-summary')
+  assert.ok(summary, 'the compact membership summary is present')
+  assert.match(summary.textContent, /Accounts/)
+  assert.match(summary.textContent, /Membership fees/)
+  assert.match(summary.textContent, /No fee amount recorded/)
   const card = container.querySelector('[data-account="a:acct"]')
   const details = [...card.querySelectorAll('button')].find(b => /Details/.test(b.textContent))
   await React.act(async () => { details.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
@@ -2273,7 +2343,8 @@ test('PR-C: refresh is renamed with an explanation and the operation is unchange
   const { container, text } = await boot()
   await flush(4)
   assert.ok([...container.querySelectorAll('button')].some(b => b.textContent === 'Refresh provider usage'))
-  assert.match(text(), /checks provider-reported usage and allowance information where supported/)
+  assert.match(text(), /checks provider-reported usage where supported/)
+  assert.match(text(), /never changes saved plans, fees or marks/)
   await clickByText(container, 'Refresh provider usage')
   await flush(4)
   assert.ok(transportCtl.calls.some(call => call.path === '/membership/accounts?native=true'),
