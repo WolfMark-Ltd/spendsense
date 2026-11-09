@@ -72,8 +72,11 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
           assert.equal(tip.tooltipOpened, true, `focus opens ${id}`)
           assert.equal(tip.opaque, true, `${id} background is opaque`)
           if (id === 'rates-source') {
-            assert.ok(tip.popRect.width > 200,
-              `rates-source renders its full explanation in the available width (got ${tip.popRect.width}px)`)
+            // The 260px content cap plus 22px padding/border is reduced by
+            // the pane and card insets on narrow panes.
+            const expectedWidth = Math.min(282, result.paneWidth - 28)
+            assert.ok(Math.abs(tip.popRect.width - expectedWidth) <= 2,
+              `rates-source width is ~${expectedWidth}px for this pane (got ${tip.popRect.width}px)`)
           }
           assert.equal(tip.withinPane, true,
             `${id} stays inside the pane (pop ${JSON.stringify(tip.popRect)} pane ${JSON.stringify(tip.paneRect)})`)
