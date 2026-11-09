@@ -385,15 +385,21 @@ test('every Overview (ov*) string exists in both en and zh', () => {
   }
 })
 
-test('Overview KPIs use a scoped 2x2 grid that collapses to one column in narrow panes', () => {
+test('Overview summary and insight panels adapt to narrow panes', () => {
   assert.match(T.PRODUCT_CSS, /\.wm-overview-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/)
   assert.match(T.PRODUCT_CSS,
     /\.wm-product \.wm-product-summary\{display:grid;grid-template-columns:repeat\(auto-fit,minmax\(185px,1fr\)\)/,
     'the shared summary grid used by Costs and others is unchanged')
   assert.match(T.PRODUCT_CSS, /@container\(max-width:620px\)\{[\s\S]*?\.wm-overview-grid\{grid-template-columns:1fr\}/,
     'narrow panes stack the Overview cards in one column')
+  assert.match(T.PRODUCT_CSS, /@container\(max-width:760px\)\{[^}]*\.wm-overview-panels\{grid-template-columns:1fr\}/,
+    'narrow panes stack attention and model panels')
   assert.match(T.PRODUCT_CSS, /\.wm-kpi-figure\{[^}]*overflow-wrap:anywhere/,
     'long currency and fee values wrap inside the fixed columns')
+  assert.match(T.PRODUCT_CSS, /\.wm-overview-model-fill\{[^}]*background:var\(--wm-action\)/,
+    'model call bars use the host action token')
+  assert.match(T.PRODUCT_CSS, /\.wm-overview-model-name strong\{[^}]*overflow-wrap:anywhere/,
+    'long model names wrap inside the panel')
 })
 
 test('the methodology disclosure has a visible chevron for both states', () => {
