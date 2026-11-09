@@ -60,6 +60,9 @@ export function Button({ children, ...props }) {
 }
 export const usePluginI18n = () => (key, ...args) => {
   if (typeof key === 'function') return ''
+  if (key === 'ratesNote') {
+    return 'Rates come from the WolfMark catalogue card, not the provider’s invoice. Hermes may show a different estimate when its own route or peak/off-peak pricing differs.'
+  }
   return args.length ? `${key}:${args.join(',')}` : String(key)
 }
 export const queryClient = { fetchQuery: async q => q.queryFn(), getQueryData: () => null, invalidateQueries() {} }

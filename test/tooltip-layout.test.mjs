@@ -70,6 +70,10 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
           assert.equal(tip.focusedButton, true, `${id} trigger takes keyboard focus`)
           assert.equal(tip.tooltipOpened, true, `focus opens ${id}`)
           assert.equal(tip.opaque, true, `${id} background is opaque`)
+          if (id === 'rates-source') {
+            assert.ok(tip.popRect.width > 200,
+              `rates-source renders its full explanation in the available width (got ${tip.popRect.width}px)`)
+          }
           assert.equal(tip.withinPane, true,
             `${id} stays inside the pane (pop ${JSON.stringify(tip.popRect)} pane ${JSON.stringify(tip.paneRect)})`)
           assert.equal(tip.escapeClosed, true, `Escape closes ${id}`)
