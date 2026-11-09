@@ -34,7 +34,7 @@ plugin.register({
       ok: true,
       totals: { list_usd: 12.34, billed_usd: null, billed_complete: false,
         billing_mix: { actual: 1, estimated: 1, included: 0, unknown: 2 },
-        calls: 24, rows: 4, unpriced_tokens: 1500 },
+        calls: 24, unpriced_tokens: 1500 },
       by_model: [
         { provider: 'synthetic-provider', model: 'synthetic-long-model-name-for-wrapping', calls: 15 },
         { provider: 'synthetic-provider', model: 'synthetic-small-model', calls: 9 },
@@ -108,8 +108,10 @@ setTimeout(() => {
       id, width: pane.clientWidth,
       summaryColumns: columns(summary), panelColumns: columns(panels),
       cards: summary.querySelectorAll('.wm-kpi').length,
+      charges: pane.querySelector('[data-kpi="actual-charges"]').textContent,
+      fees: pane.querySelector('[data-kpi="saved-fees"]').textContent,
       overflow: overflow.filter(item => item.excess > 1),
-      text: pane.textContent,
+      text: pane.querySelector('.wm-shell')?.textContent || pane.textContent,
       background: getComputedStyle(pane).backgroundColor,
       foreground: getComputedStyle(pane).color,
     })

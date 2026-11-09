@@ -4226,21 +4226,6 @@ function settledDesktopMonth(ledger, now = new Date()) {
   return { known: priced > 0, cost, pricedTokens: priced, unpricedTokens: unpriced }
 }
 
-function overviewActualCharges(totals = {}) {
-  const rows = Math.max(0, Math.floor(finiteValue(totals.rows) || 0))
-  const sourceMix = totals.billing_mix && typeof totals.billing_mix === 'object' ? totals.billing_mix : {}
-  const mix = Object.fromEntries(['actual', 'estimated', 'included', 'unknown'].map(kind =>
-    [kind, Math.max(0, Math.floor(finiteValue(sourceMix[kind]) || 0))]))
-  const classified = Object.values(mix).reduce((sum, count) => sum + count, 0)
-  mix.unknown += Math.max(0, rows - classified)
-  const classifiedAfterFill = Object.values(mix).reduce((sum, count) => sum + count, 0)
-  const amount = finiteValue(totals.billed_usd)
-  const complete = rows > 0 && classifiedAfterFill === rows && totals.billed_complete === true
-    && mix.actual === rows && amount !== null
-  return { rows, mix, complete, partial: mix.actual > 0 && mix.actual < rows,
-    amount: complete ? amount : null }
-}
-
 function overviewTopModels(rows, limit = 4) {
   return (Array.isArray(rows) ? rows : [])
     .map(row => ({ ...row, calls: finiteValue(row?.calls) }))
@@ -4292,7 +4277,6 @@ function OverviewPage() {
   const local = settledDesktopMonth(ledger)
   const result = analytics.data?.totals || {}
   const unpriced = Number(result.unpriced_tokens || 0)
-  const charges = overviewActualCharges(result)
   const topModels = overviewTopModels(analytics.data?.by_model)
   const topModelMax = topModels[0]?.calls || 1
   // Accounts that could carry a recurring fee but have no known amount —
@@ -4334,20 +4318,10 @@ function OverviewPage() {
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'actual-charges', 'aria-label': t('ovChargesLabel'), children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovChargesLabel') }),
-          jsx('div', { className: 'wm-kpi-figure', children: !analytics.data && analytics.isLoading
-            ? t('ovChargesLoading') : charges.complete ? fmtUsd(charges.amount) : t('ovNotRecorded') }),
-          jsx('p', { className: 'wm-kpi-prov', children: charges.complete ? t('ovChargesRecordedProv')
-            : !analytics.data && analytics.error ? t('ovChargesErrorProv')
-            : !analytics.data && analytics.isLoading ? t('ovChargesLoadingProv')
-            : !analytics.data ? t('ovChargesNoEvidence')
-            : charges.rows && charges.mix.actual < charges.rows ? t('ovChargesIncompleteProv', charges.mix.actual, charges.rows,
-                charges.mix.estimated, charges.mix.included, charges.mix.unknown)
-              : charges.rows ? t('ovChargesTotalUnavailable')
-              : t('ovChargesNoEvidence') }),
-          jsx('div', { className: 'wm-kpi-foot', children: charges.complete
-            ? certaintyChip('ok', t('ovCertChargesRecorded'), 'charges')
-            : charges.partial ? certaintyChip('partial', t('ovCertPartial'), 'charge-partial')
-              : certaintyChip('unknown', t('ovCertChargesUnknown'), 'charge-unknown') })
+          jsx('div', { className: 'wm-kpi-figure', children: t('ovNotRecorded') }),
+          jsx('p', { className: 'wm-kpi-prov', children: t('ovChargesEndpointProv') }),
+          jsx('div', { className: 'wm-kpi-foot', children:
+            certaintyChip('unknown', t('ovCertChargesUnknown'), 'charge-unknown') })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'api-equivalent-estimate', children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovEstimatedLabel') }),
@@ -8004,16 +7978,8 @@ const I18N = {
     ovBackendProv: 'Current catalogue rates; not provider charges.',
     ovChargesLabel: 'Actual provider charges · 30 days',
     ovNotRecorded: 'Not recorded',
-    ovChargesLoading: 'Loading…',
-    ovChargesLoadingProv: 'Checking provider-reported per-call charge evidence.',
-    ovChargesRecordedProv: 'Complete provider-reported charges; not a payment receipt.',
-    ovChargesErrorProv: 'Provider charge evidence could not be read for this connection.',
-    ovChargesNoEvidence: 'No actual provider-reported charge evidence is recorded for this period.',
-    ovChargesIncompleteProv: (actual, total, estimated, included, unknown) =>
-      `Actual charge evidence covers ${actual} of ${total} records; ${estimated} estimated, ${included} included and ${unknown} unknown. Unknown is not $0.`,
-    ovChargesTotalUnavailable: 'A complete actual provider-charge total is not available for this period.',
-    ovCertChargesRecorded: 'Complete actual evidence',
-    ovCertChargesUnknown: 'Evidence incomplete',
+    ovChargesEndpointProv: 'The 30-day analytics endpoint does not include per-call actual-charge evidence.',
+    ovCertChargesUnknown: 'Per-call evidence unavailable',
     ovFeesLabel: 'Saved account fees · by currency and billing period',
     ovFeesSummaryProv: 'Saved fee entries only; no currency conversion or account relationship is inferred.',
     ovPlansConfirmed: (w, t) => `${w} of ${t} accounts have a confirmed plan`,
@@ -8265,7 +8231,7 @@ const I18N = {
     ovReviewMemberships: 'Review memberships',
     ovManageMemberships: 'Manage memberships',
     ovMethodTitle: 'How these figures are calculated',
-    ovMethodBody: 'Desktop recorded usage is an API-equivalent value priced at capture; it is not a payment, invoice or actual provider spend. Backend estimates use current catalogue rates for timestamped calls in the last 30 days; partial amounts are lower bounds and unpriced usage is reported separately. Actual provider charges appear only when every record has actual provider-reported charge evidence; estimated, included and unknown records are not presented as actual charges. Saved account fees retain their currency and billing period, and unknown fees are excluded with their count. No currency conversion or shared-entitlement relationship is inferred. Model rankings count recorded calls only. A subscription-value comparison is not summarised here while account relationships and financial coverage remain unverified.',
+    ovMethodBody: 'Desktop recorded usage is an API-equivalent value priced at capture; it is not a payment, invoice or actual provider spend. Backend estimates use current catalogue rates for timestamped calls in the last 30 days; partial amounts are lower bounds and unpriced usage is reported separately. Actual provider charges are not recorded in this view because the 30-day analytics endpoint does not include per-call actual-charge evidence; billing classifications do not supply that evidence. Saved account fees retain their currency and billing period, and unknown fees are excluded with their count. No currency conversion or shared-entitlement relationship is inferred. Model rankings count recorded calls only. A subscription-value comparison is not summarised here while account relationships and financial coverage remain unverified.',
     // Allowance weather.
     wxTitle: 'Allowance weather',
     wxAhead: 'Ahead of pace',
@@ -9160,16 +9126,8 @@ const I18N = {
     ovBackendProv: '按当前价格目录估算；不是服务商费用。',
     ovChargesLabel: '实际服务商费用 · 30 天',
     ovNotRecorded: '未记录',
-    ovChargesLoading: '正在加载…',
-    ovChargesLoadingProv: '正在检查服务商报告的逐次调用费用记录。',
-    ovChargesRecordedProv: '完整的服务商逐次调用费用记录；不是付款凭证。',
-    ovChargesErrorProv: '无法读取此连接的服务商费用记录。',
-    ovChargesNoEvidence: '此期间没有记录实际服务商逐次调用费用。',
-    ovChargesIncompleteProv: (actual, total, estimated, included, unknown) =>
-      `${total} 条记录中有 ${actual} 条含实际费用；另有 ${estimated} 条估算、${included} 条已包含、${unknown} 条未知。未知不代表 $0。`,
-    ovChargesTotalUnavailable: '此期间没有完整的实际服务商费用总额。',
-    ovCertChargesRecorded: '实际费用记录完整',
-    ovCertChargesUnknown: '费用记录不完整',
+    ovChargesEndpointProv: '30 天分析接口不包含逐次调用的实际费用证据。',
+    ovCertChargesUnknown: '没有逐次费用证据',
     ovFeesLabel: '已保存账户费用 · 按币种和账单周期',
     ovFeesSummaryProv: '仅显示已保存费用；不换算币种，也不推断账户关系。',
     ovPlansConfirmed: (w, t) => `${t} 个账户中有 ${w} 个已确认方案`,
@@ -9421,7 +9379,7 @@ const I18N = {
     ovReviewMemberships: '检查会员',
     ovManageMemberships: '管理会员',
     ovMethodTitle: '这些数据的计算方式',
-    ovMethodBody: '桌面已记录用量是按捕获时价格计算的 API 等值；它不是付款、发票或实际服务商支出。后端估算按过去 30 天带时间戳的调用及当前目录价格计算；部分金额是下限，未定价用量会单独说明。只有每条记录都有实际服务商费用证据时，才会显示实际费用总额；估算、已包含和未知记录不会当作实际费用。已保存账户费用保留原币种和账单周期，未知费用会连同数量说明。不进行币种换算，也不推断共享权益关系。模型排名仅按已记录调用数计算。账户关系和财务覆盖情况尚未核实，因此此处不汇总订阅价值比较。',
+    ovMethodBody: '桌面已记录用量是按捕获时价格计算的 API 等值；它不是付款、发票或实际服务商支出。后端估算按过去 30 天带时间戳的调用及当前目录价格计算；部分金额是下限，未定价用量会单独说明。此视图不记录实际服务商费用，因为 30 天分析接口不包含逐次调用的实际费用证据；账单分类不能代替此类证据。已保存账户费用保留原币种和账单周期，未知费用会连同数量说明。不进行币种换算，也不推断共享权益关系。模型排名仅按已记录调用数计算。账户关系和财务覆盖情况尚未核实，因此此处不汇总订阅价值比较。',
     // 额度动态。
     wxTitle: '额度动态',
     wxAhead: '消耗偏快',
@@ -10277,7 +10235,7 @@ export const __test = {
   CostsPage, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark, PRODUCT_CSS,
   $settingsConfirmation, $modelRefreshState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
-  settledDesktopMonth, overviewActualCharges, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
+  settledDesktopMonth, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
   setRest: value => { rest = value },
   PANE_DATA,

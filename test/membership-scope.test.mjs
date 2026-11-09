@@ -1275,14 +1275,14 @@ test('Overview keeps subscription value out of the summary pending verified acco
     'Overview keeps the existing economics query warm for Costs')
 })
 
-test('Overview shows an actual charge amount only when every analytics record is actual', async () => {
+test('Overview keeps provider charges not recorded because analytics has no per-call evidence', async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
   T.$ledger.set(T.emptyLedger())
   T.$ledgerTab.set('overview')
   transportCtl.respond(call => call.path.startsWith('/analytics')
-    ? { ok: true, totals: { list_usd: 47.9, calls: 2, rows: 2, unpriced_tokens: 0,
-        billed_usd: 0.5, billed_complete: false, billing_mix: { actual: 1, estimated: 0, included: 0, unknown: 1 } } }
+    ? { ok: true, totals: { list_usd: 47.9, calls: 2, unpriced_tokens: 0,
+        billed_usd: 0.5, billed_complete: true, billing_mix: { actual: 1, included: 1 } } }
     : call.path === '/membership/accounts'
       ? { ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] }
       : { ok: true })
@@ -1293,38 +1293,11 @@ test('Overview shows an actual charge amount only when every analytics record is
   await flush(4)
   const chargeCard = container.querySelector('[data-kpi="actual-charges"]')
   assert.match(chargeCard.textContent, /Not recorded/)
-  assert.match(chargeCard.textContent, /1 of 2 records/)
-  assert.match(chargeCard.textContent, /Partial/)
-  assert.doesNotMatch(chargeCard.textContent, /\$0\.50/, 'the mixed aggregate is not shown as actual charges')
+  assert.match(chargeCard.textContent, /analytics endpoint does not include per-call actual-charge evidence/i)
+  assert.match(chargeCard.textContent, /Per-call evidence unavailable/)
+  assert.doesNotMatch(chargeCard.textContent, /\$0\.50|1 of 2 records|evidence covers/i,
+    'aggregate totals and billing classifications do not imply per-call charge evidence')
   assert.match(container.querySelector('[data-kpi="api-equivalent-estimate"]').textContent, /\$47\.90/)
-})
-
-test('Overview rejects estimated charge totals but keeps a fully evidenced actual zero', () => {
-  const estimated = T.overviewActualCharges({ rows: 1, billed_usd: 1.25, billed_complete: true,
-    billing_mix: { actual: 0, estimated: 1, included: 0, unknown: 0 } })
-  assert.equal(estimated.complete, false)
-  assert.equal(estimated.amount, null)
-
-  const incomplete = T.overviewActualCharges({ rows: 2, billed_usd: 0.5, billed_complete: false,
-    billing_mix: { actual: 1, estimated: 0, included: 0, unknown: 1 } })
-  assert.equal(incomplete.complete, false)
-  assert.equal(incomplete.partial, true)
-  assert.equal(incomplete.amount, null)
-
-  const zero = T.overviewActualCharges({ rows: 1, billed_usd: 0, billed_complete: true,
-    billing_mix: { actual: 1, estimated: 0, included: 0, unknown: 0 } })
-  assert.equal(zero.complete, true)
-  assert.equal(zero.amount, 0)
-
-  const empty = T.overviewActualCharges({ rows: 0, billed_usd: 0, billed_complete: true,
-    billing_mix: { actual: 0, estimated: 0, included: 0, unknown: 0 } })
-  assert.equal(empty.complete, false)
-  assert.equal(empty.amount, null)
-
-  const inconsistent = T.overviewActualCharges({ rows: 1, billed_usd: 0.5, billed_complete: true,
-    billing_mix: { actual: 1, estimated: 0, included: 0, unknown: 1 } })
-  assert.equal(inconsistent.complete, false, 'contradictory row counts fail closed')
-  assert.equal(inconsistent.amount, null)
 })
 
 test('Overview ranks backend model call counts without displaying per-model cost', async () => {
@@ -1333,7 +1306,7 @@ test('Overview ranks backend model call counts without displaying per-model cost
   T.$ledger.set(T.emptyLedger())
   T.$ledgerTab.set('overview')
   transportCtl.respond(call => call.path.startsWith('/analytics')
-    ? { ok: true, totals: { list_usd: 12, calls: 6, rows: 3, unpriced_tokens: 0,
+    ? { ok: true, totals: { list_usd: 12, calls: 6, unpriced_tokens: 0,
         billed_usd: null, billed_complete: false, billing_mix: { actual: 1, estimated: 1, included: 0, unknown: 1 } },
         by_model: [
           { model: 'claude-opus-latest', provider: 'anthropic', calls: 2, list_usd: 10 },
