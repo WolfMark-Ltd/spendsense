@@ -1,6 +1,6 @@
 // Run: node --test test/
 // Phase A shared primitives (design/proposal.md §3–§4): token roles, product
-// header, six-tab navigation, opaque tooltips and async-button feedback.
+// header, seven-tab navigation, opaque tooltips and async-button feedback.
 // Real React + jsdom harness, same as sidebar/membership tests. No production
 // page is rebuilt here; these tests pin the shared layer PR-B/C/D build on.
 import assert from 'node:assert/strict'
@@ -88,18 +88,26 @@ const resetDom = async () => {
 }
 
 test('SHARED_CSS names the Phase A roles and enforces [hidden]', () => {
+  assert.match(T.SHARED_CSS, /--wm-surface:var\(--ui-fill-primary\)/)
+  assert.match(T.SHARED_CSS, /--wm-surface-raised:var\(--ui-fill-secondary\)/)
+  assert.match(T.SHARED_CSS, /--wm-border:var\(--ui-stroke-secondary\)/)
+  assert.match(T.SHARED_CSS, /--wm-text:var\(--ui-text-primary\)/)
   assert.match(T.SHARED_CSS, /--wm-action:var\(--ui-accent\)/)
   assert.match(T.SHARED_CSS, /--wm-positive:/)
   assert.match(T.SHARED_CSS, /--wm-attention:var\(--ui-warning\)/)
   assert.match(T.SHARED_CSS, /--wm-space-3:12px/)
-  assert.match(T.SHARED_CSS, /--wm-font-display:24px/)
+  assert.match(T.SHARED_CSS, /--wm-font-display:25px/)
+  assert.match(T.SHARED_CSS, /--wm-radius-card:10px/)
+  assert.doesNotMatch(T.SHARED_CSS, /#[0-9a-f]{3,8}/i, 'semantic colours come from Hermes host tokens')
   // Finding: a hidden certainty chip must stay hidden despite display:inline-flex.
   assert.match(T.SHARED_CSS, /\[hidden\]\{display:none!important\}/)
-  assert.match(T.SHARED_CSS, /\.wm-certainty\{display:inline-flex/)
+  assert.match(T.SHARED_CSS, /\.wm-status-chip,.wm-certainty\{display:inline-flex/)
 })
 
 test('shared tooltip styles are opaque and reach both pane and product surfaces', () => {
-  assert.match(T.SHARED_CSS, /\.wm-info-pop\{[^}]*background:var\(--ui-fill-secondary,#1a1d26\)/)
+  assert.match(T.SHARED_CSS, /\.wm-info\{position:relative/)
+  assert.match(T.SHARED_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)
+  assert.match(T.SHARED_CSS, /\.wm-info-pop\{[^}]*position:absolute[^}]*background:var\(--wm-surface-raised\)/)
   assert.match(T.METER_CSS, /wm-info-pop/, 'pane bundle carries the shared tooltip')
   assert.match(T.ANALYTICS_CSS, /wm-info-pop/, 'product bundle carries the shared tooltip')
 })
@@ -107,13 +115,16 @@ test('shared tooltip styles are opaque and reach both pane and product surfaces'
 test('layout breakpoints use container queries on the plugin root, not the viewport', () => {
   assert.match(T.ANALYTICS_CSS, /container-type:inline-size/)
   assert.match(T.PRODUCT_CSS, /@container\(max-width:620px\)/)
+  assert.match(T.PRODUCT_CSS, /@container\(max-width:760px\)/)
+  assert.match(T.PRODUCT_CSS, /\.wm-product-tabs\{[^}]*flex-wrap:wrap[^}]*overflow:visible/)
 })
 
 test('LedgerTabs: seven tabs in order, roving tabindex, click and arrow navigation', async () => {
   T.$ledgerTab.set('overview')
   const container = await renderEl(React.createElement(T.LedgerTabs))
   const tabs = [...container.querySelectorAll('[role="tab"]')]
-  assert.deepEqual(tabs.map(el => el.textContent), ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings & About'])
+  assert.deepEqual(tabs.map(el => el.getAttribute('aria-label')), ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings'])
+  assert.deepEqual(tabs.map(el => el.querySelector('.wm-product-tab-number').textContent), ['01', '02', '03', '04', '05', '06', '07'])
   assert.equal(tabs[0].getAttribute('aria-selected'), 'true')
   assert.deepEqual(tabs.map(el => el.tabIndex), [0, -1, -1, -1, -1, -1, -1], 'only the active tab is tabbable')
 
@@ -128,7 +139,7 @@ test('LedgerTabs: seven tabs in order, roving tabindex, click and arrow navigati
     after[2].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
   }); await flush()
   assert.equal(T.$ledgerTab.get(), 'memberships')
-  assert.equal(document.activeElement.textContent, 'Memberships')
+  assert.equal(document.activeElement.getAttribute('aria-label'), 'Memberships')
 
   // End / Home bound the list.
   const current = [...container.querySelectorAll('[role="tab"]')]
@@ -152,8 +163,8 @@ test('LedgerTabs: Chinese labels render through the dictionary', async () => {
     T.$ledgerTab.set('overview')
     const container = await renderEl(React.createElement(T.LedgerTabs))
     const tabs = [...container.querySelectorAll('[role="tab"]')]
-    assert.deepEqual(tabs.map(el => el.textContent),
-      ['总览', '用量', '费用', '会员', '报告', '模型动态', '设置与关于'])
+    assert.deepEqual(tabs.map(el => el.getAttribute('aria-label')),
+      ['总览', '用量', '费用', '会员', '报告', '模型动态', '设置'])
   } finally {
     i18nBackend.t = enT
   }
@@ -171,6 +182,36 @@ test('ProductHeader renders one h1, subtitle and actions in the shared heading',
   assert.equal(header.querySelector('button').textContent, 'Act')
   const bare = await renderEl(React.createElement(T.ProductHeader, { title: 'Costs' }))
   assert.equal(bare.querySelector('p'), null, 'subtitle is optional')
+})
+
+test('ProductShell shares themed chrome and keeps the seven-tab bar outside page content', async () => {
+  T.$ledgerTab.set('memberships')
+  const container = await renderEl(React.createElement(T.ProductShell, {
+    pageStyles: '.wp01-test{display:block}',
+    children: React.createElement('main', { children: 'Page content' }),
+  }))
+  const shell = container.querySelector('.wm-analytics.wm-product')
+  assert.ok(shell)
+  assert.equal(shell.querySelector('style').textContent.includes('.wp01-test'), true)
+  assert.equal(shell.querySelectorAll('.wm-product-tabs [role="tab"]').length, 7)
+  assert.equal(shell.querySelector('.wm-product-tabs').nextElementSibling.tagName, 'MAIN')
+  assert.equal(shell.querySelector('main').textContent, 'Page content')
+})
+
+test('ProductCard and StatusChip expose reusable semantic variants', async () => {
+  const card = await renderEl(React.createElement(T.ProductCard, {
+    as: 'article', className: 'wm-product-section', 'aria-label': 'Evidence',
+    children: 'Content',
+  }))
+  const article = card.querySelector('article.wm-product-card.wm-product-section')
+  assert.equal(article.getAttribute('aria-label'), 'Evidence')
+  assert.equal(article.textContent, 'Content')
+
+  const chip = await renderEl(React.createElement(T.StatusChip, {
+    tone: 'attention', children: 'Unreported',
+  }))
+  assert.equal(chip.querySelector('.wm-status-chip').getAttribute('data-tone'), 'attention')
+  assert.equal(chip.querySelector('.wm-status-chip').textContent, 'Unreported')
 })
 
 test('AsyncButton: pending blocks duplicate clicks; success/error announce beside it', async () => {
@@ -216,6 +257,7 @@ test('InfoTip: focus opens an accessible tooltip, Escape closes it', async () =>
     btn.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
   }); await flush()
   assert.equal(container.querySelector('.wm-info-pop'), null, 'Escape closes the tooltip')
+  assert.equal(document.activeElement, btn, 'Escape leaves focus on the help control')
   T.$infoOpen.set(null)
 })
 
@@ -231,14 +273,14 @@ test('LedgerPage: keyboard navigation restores focus to the newly mounted select
   const firstBar = container.querySelector('.wm-product-tabs')
   assert.ok(firstBar, 'the ledger page mounts a tab bar')
   const overviewTab = [...container.querySelectorAll('[role="tab"]')]
-    .find(el => el.textContent === 'Overview')
+    .find(el => el.getAttribute('aria-label') === 'Overview')
   await React.act(async () => {
     overviewTab.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
   }); await flush(4)
   assert.equal(T.$ledgerTab.get(), 'usage')
   assert.notEqual(container.querySelector('.wm-product-tabs'), firstBar,
     'the page (and its tab bar) was actually replaced')
-  assert.equal(document.activeElement?.textContent, 'Usage',
+  assert.equal(document.activeElement?.getAttribute('aria-label'), 'Usage',
     'focus is restored to the newly mounted selected tab')
   assert.equal(document.activeElement?.getAttribute('aria-selected'), 'true')
 
@@ -247,15 +289,15 @@ test('LedgerPage: keyboard navigation restores focus to the newly mounted select
     document.activeElement.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
   }); await flush(4)
   assert.equal(T.$ledgerTab.get(), 'costs')
-  assert.equal(document.activeElement?.textContent, 'Costs')
+  assert.equal(document.activeElement?.getAttribute('aria-label'), 'Costs')
 
   // Mouse navigation does not get focus forced by the keyboard path.
   T.$ledgerTab.set('overview'); await flush(4)
   const costsTab = [...container.querySelectorAll('[role="tab"]')]
-    .find(el => el.textContent === 'Costs')
+    .find(el => el.getAttribute('aria-label') === 'Costs')
   await React.act(async () => costsTab.click()); await flush(4)
   assert.equal(T.$ledgerTab.get(), 'costs')
-  assert.notEqual(document.activeElement?.textContent, 'Memberships')
+  assert.notEqual(document.activeElement?.getAttribute('aria-label'), 'Memberships')
 })
 
 test('LedgerPage: a no-op Home/End press does not leak focus restoration into mouse navigation', async () => {
@@ -267,34 +309,34 @@ test('LedgerPage: a no-op Home/End press does not leak focus restoration into mo
   const container = await renderEl(React.createElement(T.LedgerPage))
   await flush(4)
   const overviewTab = [...container.querySelectorAll('[role="tab"]')]
-    .find(el => el.textContent === 'Overview')
+    .find(el => el.getAttribute('aria-label') === 'Overview')
   await React.act(async () => {
     overviewTab.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
   }); await flush(4)
   assert.equal(T.$ledgerTab.get(), 'overview', 'Home on the first tab is a no-op')
 
   const costsTab = [...container.querySelectorAll('[role="tab"]')]
-    .find(el => el.textContent === 'Costs')
+    .find(el => el.getAttribute('aria-label') === 'Costs')
   await React.act(async () => costsTab.click()); await flush(4)
   assert.equal(T.$ledgerTab.get(), 'costs')
-  const costsNow = [...container.querySelectorAll('[role="tab"]')].find(el => el.textContent === 'Costs')
+  const costsNow = [...container.querySelectorAll('[role="tab"]')].find(el => el.getAttribute('aria-label') === 'Costs')
   assert.notEqual(document.activeElement, costsNow,
     'mouse navigation after a no-op key press must not receive restored focus')
 
   // Same at the other end: End on Settings is a no-op.
   T.$ledgerTab.set('settings'); await flush(4)
   const settingsTab = [...container.querySelectorAll('[role="tab"]')]
-    .find(el => el.textContent === 'Settings & About')
+    .find(el => el.getAttribute('aria-label') === 'Settings')
   await React.act(async () => {
     settingsTab.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
   }); await flush(4)
   assert.equal(T.$ledgerTab.get(), 'settings', 'End on the last tab is a no-op')
   const overviewTab2 = [...container.querySelectorAll('[role="tab"]')]
-    .find(el => el.textContent === 'Overview')
+    .find(el => el.getAttribute('aria-label') === 'Overview')
   await React.act(async () => overviewTab2.click()); await flush(4)
   assert.equal(T.$ledgerTab.get(), 'overview')
   const overviewNow = [...container.querySelectorAll('[role="tab"]')]
-    .find(el => el.textContent === 'Overview')
+    .find(el => el.getAttribute('aria-label') === 'Overview')
   assert.notEqual(document.activeElement, overviewNow,
     'mouse navigation after a no-op End must not receive restored focus')
 })

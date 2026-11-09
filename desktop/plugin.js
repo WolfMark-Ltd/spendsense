@@ -1672,8 +1672,10 @@ function InfoTip({ dir = 'down', id, label, text, wide = false }) {
         onClick: show,
         onKeyDown: event => {
           if (event.key === 'Escape') {
+            event.preventDefault()
             event.stopPropagation()
             hide()
+            event.currentTarget.focus()
           }
         },
         children: 'i'
@@ -1964,24 +1966,27 @@ function BrandMark({ size = 20, id = 'mark' }) {
  * element back into view.
  */
 const SHARED_CSS = [
-  '.wm-analytics,.wm-pane{--wm-action:var(--ui-accent);--wm-brand:#813cf8;--wm-positive:var(--ui-success,#2dd4bf);--wm-attention:var(--ui-warning);--wm-error:#f26d6d;--wm-space-1:4px;--wm-space-2:8px;--wm-space-3:12px;--wm-space-4:16px;--wm-space-5:24px;--wm-radius-card:8px;--wm-radius-ctl:6px;--wm-font-display:24px;--wm-font-kpi:20px;--wm-font-section:14px;--wm-font-body:13px;--wm-font-caption:11.5px}',
+  '.wm-analytics,.wm-pane{--wm-surface:var(--ui-fill-primary);--wm-surface-raised:var(--ui-fill-secondary);--wm-surface-subtle:var(--ui-fill-tertiary);--wm-border:var(--ui-stroke-secondary);--wm-text:var(--ui-text-primary);--wm-text-secondary:var(--ui-text-secondary);--wm-text-muted:var(--ui-text-tertiary);--wm-text-quiet:var(--ui-text-quaternary);--wm-action:var(--ui-accent);--wm-positive:var(--ui-success);--wm-attention:var(--ui-warning);--wm-declared:var(--ui-accent);--wm-error:var(--ui-error);--wm-space-1:4px;--wm-space-2:8px;--wm-space-3:12px;--wm-space-4:14px;--wm-space-5:22px;--wm-radius-card:10px;--wm-radius-nested:8px;--wm-radius-ctl:6px;--wm-font-display:25px;--wm-font-kpi:26px;--wm-font-section:14px;--wm-font-body:13px;--wm-font-caption:10.5px}',
   '.wm-analytics [hidden],.wm-pane [hidden]{display:none!important}',
-  '.wm-certainty{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:1px 8px;font-size:11px;line-height:1.5;color:var(--ui-text-secondary);white-space:nowrap;background:transparent}',
-  '.wm-certainty[data-certainty="partial"],.wm-certainty[data-certainty="lower-bound"]{color:var(--ui-warning);border-color:color-mix(in srgb,var(--ui-warning) 45%,transparent)}',
-  '.wm-certainty[data-certainty="ok"]{color:var(--ui-success,#2dd4bf)}',
+  '.wm-status-chip,.wm-certainty{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--wm-border);border-radius:99px;padding:2px 8px;min-height:22px;font-size:11px;line-height:1.35;color:var(--wm-text-secondary);white-space:nowrap;background:transparent}',
+  '.wm-status-chip[data-tone="action"]{color:var(--wm-action);border-color:color-mix(in srgb,var(--wm-action) 45%,var(--wm-border))}',
+  '.wm-status-chip[data-tone="positive"],.wm-certainty[data-certainty="ok"]{color:var(--wm-positive);border-color:color-mix(in srgb,var(--wm-positive) 45%,var(--wm-border))}',
+  '.wm-status-chip[data-tone="attention"],.wm-certainty[data-certainty="partial"],.wm-certainty[data-certainty="lower-bound"]{color:var(--wm-attention);border-color:color-mix(in srgb,var(--wm-attention) 45%,var(--wm-border))}',
+  '.wm-status-chip[data-tone="declared"]{color:var(--wm-declared);border-color:color-mix(in srgb,var(--wm-declared) 45%,var(--wm-border))}',
+  '.wm-status-chip[data-tone="error"]{color:var(--wm-error);border-color:color-mix(in srgb,var(--wm-error) 45%,var(--wm-border))}',
   '.wm-async{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}',
   '.wm-async-status{font-size:11.5px;line-height:1.4}',
-  '.wm-async-status[data-status="success"]{color:var(--ui-success,#2dd4bf)}',
-  '.wm-async-status[data-status="error"]{color:var(--ui-error)}',
-  '.wm-info{position:static;display:inline-flex;flex-shrink:0}',
-  '.wm-info-btn{position:relative;width:24px;height:24px;border-radius:50%;border:1px solid transparent;background:none;color:var(--ui-text-quaternary);font-size:10px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;cursor:pointer;display:inline-grid;place-items:center}',
-  '.wm-info-btn::after{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;transform:translate(-50%,-50%);border-radius:50%;border:1px solid var(--ui-text-quaternary);pointer-events:none}',
-  '.wm-info-btn:hover,.wm-info-btn:focus-visible{color:var(--ui-accent)}',
-  '.wm-info-btn:hover::after,.wm-info-btn:focus-visible::after{border-color:var(--ui-accent)}',
-  '.wm-info-btn:focus-visible{outline:2px solid var(--ui-accent);outline-offset:1px}',
-  '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:20;background:var(--ui-fill-secondary,#1a1d26);border:1px solid var(--ui-stroke-secondary);border-radius:7px;padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;white-space:normal;color:var(--ui-text-secondary);box-shadow:0 6px 20px rgba(0,0,0,.35)}',
+  '.wm-async-status[data-status="success"]{color:var(--wm-positive)}',
+  '.wm-async-status[data-status="error"]{color:var(--wm-error)}',
+  '.wm-info{position:relative;display:inline-flex;flex-shrink:0;vertical-align:middle}',
+  '.wm-info-btn{position:relative;width:24px;height:24px;min-width:24px;min-height:24px;border-radius:50%;border:1px solid transparent;background:none;color:var(--wm-text-quiet);font-size:10px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;cursor:pointer;display:inline-grid;place-items:center}',
+  '.wm-info-btn::after{content:"";position:absolute;left:50%;top:50%;width:18px;height:18px;transform:translate(-50%,-50%);border-radius:50%;border:1px solid var(--wm-text-quiet);pointer-events:none}',
+  '.wm-info-btn:hover,.wm-info-btn:focus-visible{color:var(--wm-action)}',
+  '.wm-info-btn:hover::after,.wm-info-btn:focus-visible::after{border-color:var(--wm-action)}',
+  '.wm-info-btn:focus-visible{outline:2px solid var(--wm-action);outline-offset:2px}',
+  '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:auto;z-index:40;width:max-content;max-width:min(260px,calc(100vw - 32px));max-width:min(260px,calc(100cqi - 32px));background:var(--wm-surface-raised);border:1px solid var(--wm-border);border-radius:var(--wm-radius-nested);padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;white-space:normal;overflow-wrap:anywhere;color:var(--wm-text-secondary);box-shadow:0 8px 24px color-mix(in srgb,var(--wm-border) 55%,transparent)}',
   '.wm-info-pop.wm-info-up{top:auto;bottom:calc(100% + 6px)}',
-  '.wm-info-pop-wide{left:auto;right:0;width:max-content;max-width:200px}'
+  '.wm-info-pop-wide{left:auto;right:0;width:max-content;max-width:min(260px,calc(100cqi - 32px))}'
 ].join('');
 
 const METER_CSS = [
@@ -2307,8 +2312,14 @@ const percent = v => finiteValue(v)==null ? '—' : `${(v*100).toFixed(1)}%`
 const exactTokens = value => finiteValue(value)==null ? '—' : value.toLocaleString('en-US')
 function analyticMoney(value) { return finiteValue(value)==null ? '—' : value<0 ? `−${fmtUsd(-value)}` : fmtUsd(value) }
 function keyActivate(event, fn) { if (event.key === 'Enter' || event.key === ' ') {event.preventDefault();fn()} }
-function ProductButton({children, variant = 'outline', size = 'sm', ...props}) {
-  return jsx(Button, { ...props, size, variant, children })
+function ProductButton({children, variant = 'outline', size = 'sm', className, ...props}) {
+  return jsx(Button, { ...props, className: cn('wm-button', className), size, variant, children })
+}
+function ProductCard({as = 'section', children, className, ...props}) {
+  return jsx(as, { ...props, className: cn('wm-product-card', className), children })
+}
+function StatusChip({tone = 'neutral', children, className, ...props}) {
+  return jsx('span', { ...props, className: cn('wm-status-chip', className), 'data-tone': tone, children })
 }
 /**
  * Phase A async-action button (proposal C8). Stateless: the caller owns the
@@ -2345,6 +2356,14 @@ function ProductHeader({ title, subtitle, actions }) {
     actions || null
   ].filter(Boolean), 'wm-product-heading') })
 }
+function ProductShell({ children, pageStyles = '' }) {
+  const supplementalStyles = Array.isArray(pageStyles) ? pageStyles.join('') : pageStyles
+  return jsxs('div', { className: 'wm-analytics wm-product', children: [
+    jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + (supplementalStyles || '') }),
+    jsx(LedgerTabs, {}),
+    children
+  ].filter(Boolean) })
+}
 function keyedElementChildren(children, prefix) {
   return children.map((child, index) => {
     if (!child || typeof child !== 'object' || !child.type || child.key != null) return child
@@ -2359,7 +2378,7 @@ function AnalyticsSegments({label,value,options,onChange}) {
     jsx('button',{type:'button','aria-label':aria || `${label} ${id}`,'aria-pressed':value===id,onClick:()=>onChange(id),children:text},id))})
 }
 function AnalyticsPanel({number,title,subtitle,controls,children,footer}) {
-  return jsxs('section',{className:'wm-panel','aria-label':title,children:[
+  return jsxs(ProductCard,{as:'section',className:'wm-panel','aria-label':title,children:[
     jsxs('div',{className:'wm-panelhead',children:[jsxs('div',{children:[jsxs('div',{className:'wm-paneltitle',children:[jsx('span',{className:'wm-number',children:number}),jsx('h2',{children:title})]}),jsx('p',{className:'wm-subtle',children:subtitle})]}),controls]}),
     children,footer?jsx('div',{className:'wm-footnote',children:footer}):null]})
 }
@@ -2662,7 +2681,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const billingMix=totals?.billing_mix ? Object.entries(totals.billing_mix).map(([kind,value])=>`${kind}: ${typeof value==='number'?fmtTokens(value):String(value)}`).join(' · ') : ''
   const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('div',{className:'wm-eyebrow',children:'WolfMark / SpendSense'}),jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
     jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')}),jsx(AnalyticsButton,{label:t('usageCloseTip'),onClick:closeLedger,children:t('usageClose')})]})]})
-  return jsxs('div',{className:cn('wm-analytics',productPage&&'wm-product'),children:[jsx('style',{children:productPage?ANALYTICS_CSS+PRODUCT_CSS:ANALYTICS_CSS}),productPage?jsx(LedgerTabs,{}):null,jsxs('div',{className:'wm-shell',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
+  const content = jsxs('div',{className:'wm-shell',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
     query.error?jsxs('div',{className:'wm-alert',role:'alert',children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:String(query.error.message || query.error)}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
     totals?jsxs('div',{className:'wm-stats',children:[
@@ -2679,7 +2698,9 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
     totals?jsxs('div',{className:'wm-charts',children:[jsx(AnalyticsDistribution,{data,state,dispatch}),jsx(AnalyticsTrendChart,{data,state,dispatch}),jsx(AnalyticsDelegation,{data,state,dispatch}),jsx(AnalyticsRanking,{data,state,dispatch}),jsx(AnalyticsComposition,{data,state,dispatch})]}):null,
     totals?jsx(AnalyticsExplorer,{data,state,dispatch}):null,totals?jsx(AnalyticsEconomics,{data}):null,
     totals?jsxs('div',{className:'wm-subtle',children:[jsx('p',{children:t('usageRecordingLine', data.recording?.since || t('usageRecordingPending'), data.recording?.last || '—')}),jsx('p',{children:t('usageCacheFormula')}),jsxs('details',{style:{marginTop:10},children:[jsx('summary',{children:t('usageMethodologyTitle')}),...analyticsNotesText(data.notes, data.note_codes, t).map((note,i)=>jsx('p',{style:{marginTop:7},children:note},i))]})]}):null,
-    jsxs('details',{className:'wm-baseline',open:state.baselineOpen,onToggle:event=>dispatch({type:'set',key:'baselineOpen',value:event.currentTarget.open}),children:[jsx('summary',{children:t('usageBaselineSummaryTitle')}),state.baselineOpen?jsx(AnalyticsBaseline,{days:state.days,scope}):null]})]})]})
+    jsxs('details',{className:'wm-baseline',open:state.baselineOpen,onToggle:event=>dispatch({type:'set',key:'baselineOpen',value:event.currentTarget.open}),children:[jsx('summary',{children:t('usageBaselineSummaryTitle')}),state.baselineOpen?jsx(AnalyticsBaseline,{days:state.days,scope}):null]})]})
+  return productPage ? jsx(ProductShell, { children: content })
+    : jsxs('div', { className: 'wm-analytics', children: [jsx('style', { children: ANALYTICS_CSS }), content] })
 }
 function AnalyticsPage({productPage=false}={}) {
   const profile=useValue(host.state.profile)
@@ -3101,7 +3122,7 @@ function econFeeLines(t, fees) {
 
 const LEDGER_TABS = [['overview', 'Overview'], ['usage', 'Usage'], ['costs', 'Costs'],
   ['memberships', 'Memberships'], ['reports', 'Reports'], ['news', 'Model News'],
-  ['settings', 'Settings & About']]
+  ['settings', 'Settings']]
 /** Tab ids to their I18N label keys. LEDGER_TABS keeps the canonical English labels. */
 const TAB_LABEL_KEYS = {
   overview: 'tabOverview',
@@ -3159,15 +3180,25 @@ function LedgerTabs() {
     ledgerTabKeyboardNav = true
     goLedgerTab(LEDGER_TABS[next][0])
   }
-  return jsx('div', { className: 'wm-shell', style: { paddingBottom: 0 }, children:
-    jsx('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': t('tabListLabel'), onKeyDown, children:
-      [jsx('span', { className: 'wm-product-brand', 'aria-hidden': true,
-        children: jsx(BrandMark, { size: 16, id: 'tabs' }) }, 'brand'),
-      ...LEDGER_TABS.map(([id]) =>
-        jsx(ProductButton, { role: 'tab', variant: 'ghost', 'aria-selected': tab === id, 'aria-pressed': tab === id,
-          tabIndex: tab === id ? 0 : -1,
-          className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
-          onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) }, children: t(TAB_LABEL_KEYS[id]) }, id))] }) })
+  return jsxs('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': t('tabListLabel'), onKeyDown, children: [
+    jsxs('span', { className: 'wm-product-brand', children: [
+      jsx('span', { className: 'wm-product-brand-mark', 'aria-hidden': true,
+        children: jsx(BrandMark, { size: 20, id: 'tabs' }) }, 'mark'),
+      jsxs('span', { className: 'wm-product-brand-copy', children: [
+        jsx('strong', { children: 'SpendSense' }, 'name'),
+        jsx('small', { children: 'by WolfMark' }, 'by')
+      ] }, 'copy')
+    ] }, 'brand'),
+    ...LEDGER_TABS.map(([id], index) =>
+      jsxs(ProductButton, { role: 'tab', variant: 'ghost', 'aria-label': t(TAB_LABEL_KEYS[id]),
+        'aria-selected': tab === id, 'aria-pressed': tab === id, tabIndex: tab === id ? 0 : -1,
+        className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
+        onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) }, children: [
+          jsx('span', { className: 'wm-product-tab-number', 'aria-hidden': true,
+            children: String(index + 1).padStart(2, '0') }, 'number'),
+          jsx('span', { className: 'wm-product-tab-label', children: t(TAB_LABEL_KEYS[id]) }, 'label')
+        ] }, id))
+  ] })
 }
 
 function goLedgerTab(next) {
@@ -3545,24 +3576,34 @@ function AdvancedBillingRules() {
 }
 
 const PRODUCT_CSS = [
-  '.wm-product .wm-shell{max-width:1180px;padding:24px 22px;gap:18px}',
+  '.wm-product .wm-shell{width:100%;max-width:1180px;padding:24px 22px;gap:18px;min-width:0}',
   '.wm-product .wm-product-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}',
   '.wm-product .wm-product-heading h1{margin:0;font-size:var(--wm-font-display,24px);line-height:1.2;font-weight:620;letter-spacing:-.35px}',
   '.wm-product .wm-product-heading p{margin:5px 0 0;color:var(--ui-text-tertiary);font-size:var(--wm-font-body,13px);line-height:1.45}',
-  '.wm-product .wm-product-tabs{display:flex;gap:4px;overflow:auto;padding:3px;border-bottom:1px solid var(--ui-stroke-secondary);position:sticky;top:0;z-index:6;background:var(--ui-fill-primary)}',
-  '.wm-product .wm-product-brand{display:inline-flex;align-items:center;flex-shrink:0;align-self:center;margin:0 6px 0 2px}',
-  '.wm-product .wm-product-tab{border:0;background:transparent;color:var(--ui-text-tertiary);border-radius:6px;padding:8px 13px;min-height:38px;display:inline-flex;align-items:center;font:inherit;font-size:13px;white-space:nowrap;cursor:pointer;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}',
-  '.wm-product .wm-product-tab:hover{background:var(--ui-fill-secondary);color:var(--ui-text-primary)}',
-  '.wm-product .wm-product-tab-active{background:var(--ui-fill-secondary);color:var(--ui-text-primary);font-weight:570;box-shadow:inset 0 -2px 0 var(--ui-accent)}',
-  '.wm-product .wm-button{min-height:34px;transition:background-color .15s ease,color .15s ease,border-color .15s ease}',
+  '.wm-product .wm-product-tabs{display:flex;align-items:stretch;flex-wrap:wrap;gap:2px;min-height:54px;padding:0 18px;border-bottom:1px solid var(--wm-border);position:sticky;top:0;z-index:30;background:var(--wm-surface);overflow:visible}',
+  '.wm-product .wm-product-brand{display:flex;align-items:center;gap:9px;flex-shrink:0;align-self:stretch;margin:0 10px 0 0;padding:0 15px 0 2px;border-right:1px solid var(--wm-border)}',
+  '.wm-product .wm-product-brand-mark{display:inline-flex;align-items:center;flex-shrink:0}',
+  '.wm-product .wm-product-brand-copy{display:grid;line-height:1.2;white-space:nowrap}',
+  '.wm-product .wm-product-brand-copy strong{font-size:13px;font-weight:650;color:var(--wm-text)}',
+  '.wm-product .wm-product-brand-copy small{margin-top:2px;font-size:10px;color:var(--wm-text-muted)}',
+  '.wm-product .wm-product-tab{border:0;background:transparent;color:var(--wm-text-muted);border-radius:6px;padding:0 10px;min-height:34px;align-self:center;display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12.5px;white-space:nowrap;cursor:pointer;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}',
+  '.wm-product .wm-product-tab-number{font-size:10px;font-variant-numeric:tabular-nums;color:var(--wm-text-quiet)}',
+  '.wm-product .wm-product-tab:hover{background:var(--wm-surface-raised);color:var(--wm-text)}',
+  '.wm-product .wm-product-tab-active{background:var(--wm-surface-raised);color:var(--wm-text);font-weight:570;box-shadow:inset 0 -2px 0 var(--wm-action)}',
+  '.wm-product .wm-product-tab-active .wm-product-tab-number{color:var(--wm-action)}',
+  '.wm-product .wm-button{min-height:34px;transition:background-color .15s ease,color .15s ease,border-color .15s ease,transform .12s ease}',
+  '.wm-product .wm-button:hover:not(:disabled){border-color:color-mix(in srgb,var(--wm-action) 45%,var(--wm-border))}',
+  '.wm-product .wm-button:active:not(:disabled){transform:translateY(1px)}',
+  '.wm-product .wm-button:disabled{cursor:not-allowed;opacity:.62}',
   '.wm-product .wm-account-jump{display:flex;gap:6px;flex-wrap:wrap;align-items:center}',
-  '.wm-product .wm-account-chip{border:1px solid var(--ui-stroke-secondary);background:transparent;color:var(--ui-text-secondary);border-radius:99px;padding:6px 11px;min-height:32px;font:inherit;font-size:12px;cursor:pointer;transition:background-color .15s ease,color .15s ease}',
-  '.wm-product .wm-account-chip:hover{background:var(--ui-fill-secondary);color:var(--ui-text-primary)}',
+  '.wm-product .wm-account-chip{border:1px solid var(--wm-border);background:transparent;color:var(--wm-text-secondary);border-radius:99px;padding:6px 11px;min-height:32px;font:inherit;font-size:12px;cursor:pointer;transition:background-color .15s ease,color .15s ease}',
+  '.wm-product .wm-account-chip:hover{background:var(--wm-surface-raised);color:var(--wm-text)}',
   '.wm-product .wm-account-chip[data-attention="true"]{border-color:var(--ui-warning);color:var(--ui-text-primary)}',
   '.wm-product .wm-overview-attention{margin:6px 0 4px;padding-left:18px;display:grid;gap:5px;font-size:13px;line-height:1.5;color:var(--ui-text-secondary)}',
   '.wm-product .wm-product-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:10px}',
   '.wm-product .wm-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}',
-  '.wm-product .wm-product-stat{border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-primary);padding:14px 15px;min-width:0;min-height:98px}',
+  '.wm-product .wm-product-card,.wm-product .wm-product-section,.wm-product .wm-product-stat{border:1px solid var(--wm-border);border-radius:var(--wm-radius-card);background:var(--wm-surface);min-width:0}',
+  '.wm-product .wm-product-stat{padding:14px 15px;min-height:98px}',
   '.wm-product .wm-product-stat label{display:block;color:var(--ui-text-tertiary);font-size:12px}',
   '.wm-product .wm-product-stat strong{display:block;margin-top:5px;font-size:19px;line-height:1.3;font-weight:580;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
   '.wm-product .wm-kpi{display:flex;flex-direction:column;gap:6px;min-height:118px}',
@@ -3579,14 +3620,14 @@ const PRODUCT_CSS = [
   '.wm-product .wm-attn-main{flex:1;min-width:0}',
   '.wm-product .wm-attn-main strong{font-size:13px;font-weight:600}',
   '.wm-product .wm-attn-main span{display:block;font-size:12px;color:var(--ui-text-secondary);overflow-wrap:anywhere}',
-  '.wm-product .wm-method{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:12px 16px;background:var(--ui-fill-primary)}',
+  '.wm-product .wm-method{border:1px solid var(--wm-border);border-radius:var(--wm-radius-card);padding:12px 16px;background:var(--wm-surface)}',
   '.wm-product .wm-method summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--ui-text-secondary);min-height:32px;display:flex;align-items:center;list-style:none}',
   '.wm-product .wm-method summary::-webkit-details-marker{display:none}',
   '.wm-product .wm-method summary::before{content:"›";display:inline-block;margin-right:8px;font-size:17px;line-height:1;font-weight:700;color:var(--ui-text-primary);transition:transform .15s ease}',
   '.wm-product .wm-method[open] > summary::before{transform:rotate(90deg)}',
   '.wm-product .wm-method summary:hover{color:var(--ui-text-primary)}',
   '.wm-product .wm-method p{font-size:12.5px;line-height:1.6;color:var(--ui-text-secondary);max-width:78ch}',
-  '.wm-product .wm-product-section{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:17px;background:var(--ui-fill-primary)}',
+  '.wm-product .wm-product-section{padding:17px}',
   '.wm-product .wm-product-section h2{margin:0 0 4px;font-size:16px;font-weight:590}',
   '.wm-product .wm-product-section > p{margin:4px 0 12px;color:var(--ui-text-tertiary);font-size:12px;line-height:1.5}',
   '.wm-product .wm-cost-list{display:grid;gap:0}',
@@ -3611,7 +3652,9 @@ const PRODUCT_CSS = [
   '.wm-product .wm-exhaustion-form{display:grid;gap:10px;margin-top:10px;padding:12px;border:1px solid var(--ui-accent);border-radius:8px;background:var(--ui-fill-secondary)}',
   '.wm-product .wm-product-stat small{display:block;margin-top:6px;color:var(--ui-text-tertiary);font-size:11px;line-height:1.4}',
   '.wm-product .wm-product-section p{max-width:78ch}',
-  '.wm-product :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}',
+  '.wm-product :focus-visible{outline:2px solid var(--wm-action);outline-offset:2px}',
+  '@container(max-width:760px){.wm-product .wm-product-tabs{padding:6px 14px;gap:2px}.wm-product .wm-product-brand{flex:0 0 100%;min-height:39px;align-self:auto;margin:0;padding:0 0 8px;border-right:0;border-bottom:1px solid var(--wm-border)}}',
+  '@media(prefers-reduced-motion:reduce){.wm-product .wm-product-tab,.wm-product .wm-button,.wm-product .wm-account-chip{transition:none!important}.wm-product .wm-button:active:not(:disabled){transform:none}}',
   '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-overview-grid{grid-template-columns:1fr}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}}'
 ].join('') + BUDGET_CSS;
 
@@ -3667,9 +3710,7 @@ function CostsPage() {
       status.age_seconds != null ? t('costsPricingAge', Math.round(status.age_seconds / 3600)) : t('costsPricingNoDate'),
       status.stale ? t('costsPricingStale') : '')
     : t('costsPricingTitle')
-  return jsxs('div', { className: 'wm-analytics wm-product', children: [
-    jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + ECONOMICS_CSS }),
-    jsx(LedgerTabs, {}),
+  return jsx(ProductShell, { pageStyles: ECONOMICS_CSS, children:
     jsxs('main', { className: 'wm-shell', children: [
       jsx(ProductHeader, { title: t('costsTitle'),
         subtitle: t('costsSubtitle'),
@@ -3735,7 +3776,7 @@ function CostsPage() {
       ] }),
       jsx('p', { className: 'wm-subtle', children: t('costsFooterNote') })
     ] })
-  ] })
+  })
 }
 
 /** Paired fee-vs-usage bars for one comparable currency group. */
@@ -4183,7 +4224,10 @@ function feeBasisMix(accounts) {
   return bases
 }
 function certaintyChip(certainty, text, key) {
-  return jsx('span', { className: 'wm-certainty', 'data-certainty': certainty, children: text }, key)
+  const tone = certainty === 'ok' ? 'positive' : certainty === 'estimated' ? 'action'
+    : ['partial', 'lower-bound', 'unknown'].includes(certainty) ? 'attention'
+      : certainty === 'declared' ? 'declared' : 'neutral'
+  return jsx(StatusChip, { className: 'wm-certainty', 'data-certainty': certainty, tone, children: text }, key)
 }
 function OverviewPage() {
   const t = usePluginI18n(ID)
@@ -4240,9 +4284,7 @@ function OverviewPage() {
         ?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
     } catch {}
   }
-  return jsxs('div', { className: 'wm-analytics wm-product', children: [
-    jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + ECONOMICS_CSS }),
-    jsx(LedgerTabs, {}),
+  return jsx(ProductShell, { pageStyles: ECONOMICS_CSS, children:
     jsxs('main', { className: 'wm-shell', children: [
       jsx(ProductHeader, { title: t('ovTitle'), subtitle: t('ovSubtitle') }),
       jsx(BudgetPanel, {}),
@@ -4353,7 +4395,7 @@ function OverviewPage() {
         jsx('div', { children: jsx('p', { children: t('ovMethodBody') }) })
       ] })
     ] })
-  ] })
+  })
 }
 
 function SettingsPage() {
@@ -4525,9 +4567,7 @@ function SettingsPage() {
   const membershipBook = planCatalogue.data?.identity === identity && membershipIdentityCurrent(identity)
     ? planCatalogue.data : null
   const last = health.data
-  return jsxs('div', { className: 'wm-analytics wm-product', children: [
-    jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS }),
-    jsx(LedgerTabs, {}),
+  return jsx(ProductShell, { children:
     jsxs('main', { className: 'wm-shell', children: [
       jsx(ProductHeader, { title: t('settingsTitle'),
         subtitle: t('settingsSubtitle') }),
@@ -4695,7 +4735,7 @@ function SettingsPage() {
         ? jsx('div', { className: 'wm-alert', role: 'status', children: liveRefresh.text }) : null,
           jsx('p', { className: 'wm-subtle', children: t('settingsPanePlacement') })
     ] })
-  ] })
+  })
 }
 
 /* --------------------------------------------------------- all hermes view */
@@ -6900,9 +6940,7 @@ function MembershipsPage() {
     return outcome
   }
 
-  return jsxs('div', { className: 'wm-analytics wm-product', children: [
-    jsxs('style', { children: [ANALYTICS_CSS, PRODUCT_CSS, MEMBERSHIP_CSS, WEATHER_CSS] }),
-    jsx(LedgerTabs, {}),
+  return jsx(ProductShell, { pageStyles: [MEMBERSHIP_CSS, WEATHER_CSS], children:
     jsxs('div', { className: 'wm-shell wm-memberships', children: [
       jsx(ProductHeader, { title: t('memTitle'), subtitle: t('memSubtitle') }),
       jsxs('div', { className: 'wm-controls', children: [
@@ -6992,7 +7030,7 @@ function MembershipsPage() {
           ] })
         : null
     ] })
-  ] })
+  })
 }
 
 async function digestCopy(report, t) {
@@ -7083,9 +7121,7 @@ function ReportsPage() {
   // period or locale withholds it until the next explicit Generate.
   const matches = current && current.days === days && current.lang === lang ? current : null
   const failed = !!(report.error && membershipIdentityCurrent(identity))
-  return jsxs('div', { className: 'wm-analytics wm-product', children: [
-    jsx('style', { children: [ANALYTICS_CSS, PRODUCT_CSS, REPORTS_CSS] }),
-    jsx(LedgerTabs, {}),
+  return jsx(ProductShell, { pageStyles: REPORTS_CSS, children:
     jsxs('div', { className: 'wm-shell wm-reports', children: [
       jsxs('div', { className: 'wm-reports-bar', children: [
         jsx('h2', { children: t('reportsTitle') }),
@@ -7118,8 +7154,8 @@ function ReportsPage() {
             : report.isFetching
               ? jsx('p', { className: 'wm-note', role: 'status', children: t('rpGenerating') })
               : jsx('p', { className: 'wm-note', children: t('rpEmpty') }),
-    ] }),
-  ] })
+    ] })
+  })
 }
 
 /* ------------------------------------------------------------- model news */
@@ -7505,9 +7541,7 @@ function NewsPage() {
     baseline: !!current?.local?.baseline, signals: current?.signals ?? null }, t)
   const freshDays = newsAgeDays(central.fetched_at, Date.now())
   const centralAlert = liveOn ? newsCentralAlert(central, t) : null
-  return jsxs('div', { className: 'wm-analytics wm-product', children: [
-    jsx('style', { children: [ANALYTICS_CSS, PRODUCT_CSS, NEWS_CSS] }),
-    jsx(LedgerTabs, {}),
+  return jsx(ProductShell, { pageStyles: NEWS_CSS, children:
     jsxs('main', { className: 'wm-shell', children: [
       jsx(ProductHeader, { title: t('newsTitle'), subtitle: t('newsSubtitle'),
         actions: jsx(AsyncButton, { type: 'button', className: 'wm-button',
@@ -7563,8 +7597,8 @@ function NewsPage() {
               ? jsx('div', { className: 'wm-news-list', role: 'list', children:
                   visible.map(item => jsx(NewsCard, { item, impact: impacts[item.id], t }, item.id)) })
               : jsx('div', { className: 'wm-empty', role: 'status', children: jsx('p', { children: emptyText }) }),
-    ] }),
-  ] })
+    ] })
+  })
 }
 
 function LedgerPage() {
@@ -8430,7 +8464,7 @@ const I18N = {
     tabMemberships: 'Memberships',
     tabReports: 'Reports',
     tabNews: 'Model News',
-    tabSettings: 'Settings & About',
+    tabSettings: 'Settings',
     // Usage header.
     usageTitle: 'Usage analytics',
     usageSubtitle: profile => `Recorded calls · ${profile} · all Hermes surfaces`,
@@ -9566,7 +9600,7 @@ const I18N = {
     tabMemberships: '会员',
     tabReports: '报告',
     tabNews: '模型动态',
-    tabSettings: '设置与关于',
+    tabSettings: '设置',
     // 用量页眉。
     usageTitle: '用量分析',
     usageSubtitle: profile => `已记录调用 · ${profile} · 所有 Hermes 来源`,
@@ -10140,7 +10174,7 @@ export const __test = {
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
   CostsPage, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark, PRODUCT_CSS,
   $settingsConfirmation, $modelRefreshState,
-  SHARED_CSS, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
+  SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
   setRest: value => { rest = value },
