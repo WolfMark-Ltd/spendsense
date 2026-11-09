@@ -1992,6 +1992,9 @@ const SHARED_CSS = [
 const METER_CSS = [
   SHARED_CSS,
   '.wm-pane{display:flex;height:100%;flex-direction:column;gap:10px;overflow:auto;padding:12px;min-width:0}',
+  '.wm-pane .wm-info{position:static}',
+  '.wm-pane .wm-info-pop{max-width:min(260px,calc(100% - 24px))}',
+  '.wm-pane .wm-info-pop-wide{max-width:min(260px,100%)}',
   '.wm-meter-head{display:flex;flex-direction:column;gap:7px;padding-bottom:10px;border-bottom:1px solid var(--ui-stroke-secondary)}',
   '.wm-meter-brandrow{display:flex;align-items:center;gap:8px;min-width:0}',
   '.wm-meter-mark{display:grid;place-items:center;width:22px;height:22px;flex-shrink:0}',
