@@ -777,12 +777,18 @@ test('a mandatory candidate run fails instead of skipping when Chrome is missing
   const work = mkdtempSync(join(tmpdir(), 'wm-news-probe-'))
   process.on('exit', () => rmSync(work, { recursive: true, force: true }))
   const stub = join(work, 'no-chrome.mjs')
+  // namedExports (not exports): the older option key is deprecated on Node 24
+  // but is the only one Node 22 honours, so one source works across both; no
+  // `default` key — Node 24 rejects the mock when `default` is defined.
   writeFileSync(stub, [
     "import { mock } from 'node:test'",
     "import fs from 'node:fs'",
     'const realExistsSync = fs.existsSync',
-    "mock.module('node:fs', { exports: { ...fs,",
-    '  existsSync: path => /chrome/i.test(String(path)) ? false : realExistsSync(path) } })',
+    "mock.module('node:fs', { namedExports: { ...fs,",
+    '  existsSync: path => /chrome/i.test(String(path)) ? false : realExistsSync(path),',
+    '  mkdirSync: fs.mkdirSync, mkdtempSync: fs.mkdtempSync,',
+    '  readFileSync: fs.readFileSync, rmSync: fs.rmSync,',
+    '  writeFileSync: fs.writeFileSync } })',
   ].join('\n'))
   const self = fileURLToPath(import.meta.url)
   const probeChild = flag => {
@@ -791,30 +797,49 @@ test('a mandatory candidate run fails instead of skipping when Chrome is missing
     delete env.WP11_CANDIDATE
     if (flag) env[flag] = '1'
     return spawnSync(process.execPath, [
-      '--experimental-test-module-mocks', '--import', pathToFileURL(stub).href, self,
+      // Force the spec reporter: a piped child would otherwise fall back to
+      // TAP on older Node lines and the named-state assertions below would
+      // not see the ✖/﹣ markers.
+      '--experimental-test-module-mocks', '--test-reporter=spec',
+      '--test-reporter-destination=stdout',
+      '--import', pathToFileURL(stub).href, self,
     ], { encoding: 'utf8', env })
   }
   for (const flag of ['WP11_REQUIRE_CANDIDATE', 'WP11_CANDIDATE', null]) {
     const child = probeChild(flag)
     const output = `${child.stdout}\n${child.stderr}`
-    if (typeof child.status !== 'number' || /mock\.module is not a function/.test(output)) {
-      t.skip(`node:test module mocking unavailable in this Node (${child.status}): ${output.slice(0, 400)}`)
+    // Skip only when module mocking itself is unavailable in this Node; a
+    // child killed by a signal or otherwise aborted is a FAILURE here, never
+    // a silent skip.
+    if (/mock\.module is not a function/.test(output)) {
+      t.skip(`node:test module mocking unavailable in this Node: ${output.slice(0, 400)}`)
       return
     }
+    assert.ok(typeof child.status === 'number',
+      `${flag || 'optional run'}: probe child was killed by signal ${child.signal}: `
+        + `${output.slice(0, 400)}`)
+    const lines = child.stdout.split('\n')
+    const stateLine = name => lines.find(line => line.includes(name))
+    const baseline = stateLine('Model News baseline invariants')
+    const candidate = stateLine('Model News candidate-design assertions')
+    const guard = stateLine('a mandatory candidate run fails instead of skipping')
     if (flag) {
       assert.notEqual(child.status, 0, `${flag}=1: a mandatory run without Chrome must FAIL`)
-      assert.match(child.stdout, /ℹ fail 2/,
-        `${flag}=1: both layout tests ran and failed (got ${child.stdout})`)
-      assert.match(child.stdout, /ℹ skipped 1/,
-        `${flag}=1: only the probe guard skips, never the layout tests (got ${child.stdout})`)
+      assert.ok(baseline?.startsWith('✖') && candidate?.startsWith('✖'),
+        `${flag}=1: both named browser tests must FAIL `
+          + `(baseline: ${baseline}; candidate: ${candidate})`)
       assert.match(output, /never skipp/i,
         `${flag}=1: the failure must state it is mandatory, never a skip`)
     } else {
       assert.equal(child.status, 0,
         'without a mandatory flag a missing Chrome keeps the optional skip')
-      assert.match(child.stdout, /ℹ fail 0/, 'no failures in the optional run')
-      assert.match(child.stdout, /ℹ skipped 3/,
-        'both layout tests and the probe guard skip in the optional run')
+      assert.ok(baseline?.startsWith('﹣') && candidate?.startsWith('﹣'),
+        `optional run: both named browser tests must SKIP, unchanged `
+          + `(baseline: ${baseline}; candidate: ${candidate})`)
     }
+    // The self-guard must be transparent in every child: the probe skips
+    // itself there (no grandchild recursion), visibly in the child's output.
+    assert.ok(guard?.startsWith('﹣') && guard.includes('probe child run'),
+      `probe guard skips itself transparently in the child (got ${guard})`)
   }
 })

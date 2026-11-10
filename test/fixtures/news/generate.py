@@ -510,17 +510,40 @@ def main():
     relevant = [item["id"] for item in
                 realistic["local"]["items"] + realistic["central"]["items"]
                 if item.get("relevance", {}).get("relevant")]
-    # This worktree's rank_items marks a model as used on ANY provider with a
-    # matching last path segment, so the three gpt-5.6-sol offers plus the
-    # fixturelabs pair give for_you_count 9. Read-time relevance (exact
-    # provider+model pairs) marks 7 — what the page's For You scope renders;
-    # the FINAL backend narrows the rank flag to exact pairs as well. Under
-    # the candidate model-first grouping the relevant model groups render
-    # For You (plan/provider cards stay out of For You).
-    assert realistic["for_you_count"] == 13, realistic["for_you_count"]
+    # For You rank flag under the final exact-pair semantics: EXPLICIT
+    # expected membership, reasoned from the fixture's own evidence and NOT
+    # read back from rank_items. An item is for_you when its provider is a
+    # configured token family (anthropic, openai), its provider carries
+    # recorded usage (openai via the openai-codex route, anthropic,
+    # fixturelabs), or the exact (provider, model) pair has a usage row.
+    # The frozen committed JSON still marks the azure-openai and
+    # github-copilot listings of gpt-5.6-sol for_you under the older
+    # last-segment semantics; both have no matching used or configured
+    # provider and read-time relevance=false with empty reasons, so the
+    # final ranking excludes exactly those two and the payload count is 11.
+    EXPECTED_FOR_YOU = {
+        ("openai", "gpt-5.6-sol"), ("openai", "gpt-5.6-sol-pro"),
+        ("anthropic", "claude-sonnet-4-5"),
+        ("anthropic", ""),                       # claude-max-20x plan item
+        ("fixturelabs", "m1"), ("fixturelabs", "x2"),
+        ("fixturelabs", "ts-old90day"), ("fixturelabs", "ts-malformed"),
+        ("fixturelabs", "ts-future"), ("fixturelabs", "ts-empty"),
+        ("anthropic", "claude-opus-4-1-20250805-thinking"),      # central
+    }
+    marked = {(item["provider"], item.get("model") or "")
+              for item in relevant_items(realistic) if item.get("for_you")}
+    assert marked == EXPECTED_FOR_YOU, sorted(marked ^ EXPECTED_FOR_YOU)
+    assert realistic["for_you_count"] == 11, realistic["for_you_count"]
     assert len(relevant) == 11, relevant
     assert len(realistic["local"]["items"]) == 20
     assert len(realistic["central"]["items"]) == 8
+    # The two excluded cross-provider listings: never for_you, never relevant.
+    for item in relevant_items(realistic):
+        if item["provider"] in ("azure-openai", "github-copilot") \
+                and item["model"] == "gpt-5.6-sol":
+            assert not item["for_you"], item["id"]
+            assert item["relevance"]["relevant"] is False, item["relevance"]
+            assert item["relevance"]["reasons"] == [], item["relevance"]
     # Case-only identity variant: the backend emits used_model for the m1 item
     # (match_relevance lowercases) but no impact may exist for it, while the
     # exact-match control x2 is priced.

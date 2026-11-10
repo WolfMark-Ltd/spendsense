@@ -51,10 +51,18 @@ page drifts as real time passes; no assertion depends on it.
 
 ## realistic.json — the populated payload
 
-20 local + 8 central items (payload `for_you_count` 13 from this worktree's
-`rank_items`, which marks a model as used on any provider with a matching
-last path segment; read-time relevance marks 11 — what the page's For You
-scope renders; the final backend narrows the rank flag to exact pairs too).
+20 local + 8 central items. The payload `for_you_count` is 11 under the
+final exact-pair `rank_items` semantics: a provider is For You when it is a
+configured token family (anthropic, openai), carries recorded usage (openai
+via the `openai-codex` route, anthropic, fixturelabs) or holds an exact
+`(provider, model)` usage row. Read-time relevance marks the same 11 — what
+the page's For You scope renders. The **frozen committed JSON still carries
+the older last-segment count 13**, which additionally marks the
+`azure-openai` and `github-copilot` listings of `gpt-5.6-sol`; both have no
+matching used or configured provider and read-time relevance `false` with
+empty reasons, so the current backend excludes them. Regenerating therefore
+does **not** reproduce the committed JSON byte-for-byte until the fixture is
+refreshed with approval (see the pending regeneration note in the review).
 Deliberately included:
 
 - **Same-event proof controls** (the final `newsSameEventProof` /
