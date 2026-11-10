@@ -433,3 +433,33 @@ test('membership fees are preserved per account; routes are never grouped or sup
   assert.equal(summary.withPlan, 3)
   assert.equal(T.feesLabel(summary), '$30.00/mo + £160.00/mo')
 })
+
+
+test('LedgerPage: ledger rows and totals keep a net cache loss signed', async () => {
+  // Greptile P1 at the page level: with the local desktop ledger shown, a
+  // write premium that exceeds the read discount must render as a loss in the
+  // row and in the "Theoretical net cache savings" total, never as $0.00.
+  await resetDom()
+  const day = T.dayKey()
+  const bucket = {
+    input: 100, output: 10, cacheRead: 200, cacheWrite: 1000, calls: 1,
+    pricedTokens: 1310, unpricedTokens: 0, cost: 0.002,
+    sources: { live: 1310 }, cacheEstimated: false,
+    cacheCoveredPrompt: 1300, cacheCoveredRead: 200, cacheExactPrompt: 1300,
+    netSavingsPrompt: 1300, netSavings: -1.25,
+    model: 'gpt-4o', provider: 'openai', legacy: false,
+  }
+  T.$view.set('desktop')
+  T.$ledger.set({ ...T.emptyLedger(), since: day, days: { [day]: { ['["","openai","gpt-4o",0]']: bucket } } })
+  try {
+    const container = await renderEl(React.createElement(T.LedgerPage))
+    await flush()
+    const text = container.textContent
+    assert.match(text, /\u2212\$1\.25/, `signed saving in row and total: ${text.slice(0, 300)}`)
+    assert.doesNotMatch(text, /\$0\.00(?!\d)/, 'a loss is never rendered as zero')
+  } finally {
+    await resetDom()
+    T.$ledger.set(T.emptyLedger())
+    T.$view.set('all')
+  }
+})
