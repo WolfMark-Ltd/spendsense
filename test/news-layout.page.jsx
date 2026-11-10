@@ -544,10 +544,44 @@ async function probeCandidate(c, pane) {
           ? { expanded: button.getAttribute('aria-expanded'), controls: button.getAttribute('aria-controls') }
           : null
       })(),
-      // History events carry [data-news-event=<item id>]; merged evidence
-      // renders both origins as [data-news-source] tags with .wm-news-itemid.
+      // Evidence bookkeeping, per event. `itemIds` stays a reachability aid
+      // only (meta id + any evidence-row id text). Merge semantics read the
+      // dedicated blocks: the latest event's MERGED evidence block
+      // (div.wm-news-evidence, rendered only when merged_sources>1), the
+      // latest event's single-evidence disclosure (data-news-single-evidence,
+      // one unmerged record), and each history event's own nested
+      // [data-news-evidence] rows — every row carries li[data-news-source-id]
+      // plus a [data-news-source] origin tag.
       eventIds: [...offer.querySelectorAll(SELECTORS.historyEvent)]
         .map(el => el.getAttribute('data-news-event')),
+      historyEvidence: [...offer.querySelectorAll(SELECTORS.historyEvent)].map(li => ({
+        id: li.getAttribute('data-news-event'),
+        evidenceIds: [...li.querySelectorAll('li[data-news-source-id]')]
+          .map(row => row.getAttribute('data-news-source-id')),
+        evidenceOrigins: [...li.querySelectorAll('li[data-news-source-id]')]
+          .map(row => row.querySelector('[data-news-source]')?.getAttribute('data-news-source') || ''),
+      })),
+      mergedIds: (() => {
+        const block = offer.querySelector('.wm-news-evidence')
+        return block
+          ? [...block.querySelectorAll('li[data-news-source-id]')]
+              .map(row => row.getAttribute('data-news-source-id'))
+          : []
+      })(),
+      mergedOrigins: (() => {
+        const block = offer.querySelector('.wm-news-evidence')
+        return block
+          ? [...block.querySelectorAll('li[data-news-source-id]')]
+              .map(row => row.querySelector('[data-news-source]')?.getAttribute('data-news-source') || '')
+          : []
+      })(),
+      singleEvidenceIds: (() => {
+        const block = offer.querySelector('[data-news-single-evidence]')
+        return block
+          ? [...block.querySelectorAll('li[data-news-source-id]')]
+              .map(row => row.getAttribute('data-news-source-id'))
+          : []
+      })(),
       sources: [...offer.querySelectorAll(SELECTORS.sourceTag)]
         .map(el => el.getAttribute('data-news-source')),
       itemIds: [...offer.querySelectorAll(SELECTORS.itemId)].map(el => el.textContent.trim()),

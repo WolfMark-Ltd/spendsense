@@ -434,34 +434,48 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
   // provider/model/category, previous/current signatures, known tier rows
   // when declared). Merging then needs an explicit same-event proof and is
   // strictly local↔central 1:1 — never within one origin, never by nearby
-  // time. Every original id and both source evidences survive a collapse.
+  // time. Merge semantics are read PER EVENT from the dedicated evidence
+  // blocks: an event is merged exactly when its evidence rows hold 2+ ids
+  // with both origins; an unmerged event lists exactly its own record.
+  // `itemIds` stays a reachability/locating aid only (history evidence rows
+  // now legitimately expose each event's own id).
   const offerEvents = offer => [...offer.itemIds, ...offer.eventIds]
   const findOfferWith = id =>
     probe.groups.flatMap(group => group.offers).find(offer => offerEvents(offer).includes(id))
   // proven pair (same nonempty effective_at + same nonempty source_url): merge
   const kimiOffer = findOfferWith(KIMI_LOCAL)
   assert.ok(kimiOffer, 'kimi proven pair: local twin reachable')
-  assert.ok(kimiOffer.itemIds.includes(KIMI_CENTRAL),
-    'kimi proven pair merges: the central id is retained as evidence')
-  assert.ok(kimiOffer.sources.includes('local') && kimiOffer.sources.includes('central'),
-    `kimi merged event keeps both source evidences (${JSON.stringify(kimiOffer.sources)})`)
+  assert.deepEqual([...kimiOffer.mergedIds].sort(), [KIMI_LOCAL, KIMI_CENTRAL].sort(),
+    `kimi merged event keeps both original ids as evidence (${JSON.stringify(kimiOffer.mergedIds)})`)
+  assert.ok(kimiOffer.mergedOrigins.includes('local') && kimiOffer.mergedOrigins.includes('central'),
+    `kimi merged event keeps both origin evidences (${JSON.stringify(kimiOffer.mergedOrigins)})`)
   // variant (equal nonempty observed_at, effective both empty, one URL
   // missing — an absent URL never conflicts): merge
   const deepseekOffer = findOfferWith(DEEPSEEK_LOCAL)
   assert.ok(deepseekOffer, 'deepseek variant pair: local twin reachable')
-  assert.ok(deepseekOffer.itemIds.includes(DEEPSEEK_CENTRAL),
-    'deepseek observed/equal pair merges: the central id is retained as evidence')
-  assert.ok(deepseekOffer.sources.includes('local') && deepseekOffer.sources.includes('central'),
-    `deepseek merged event keeps both source evidences (${JSON.stringify(deepseekOffer.sources)})`)
-  // both URLs nonempty and different → distinct events
+  assert.deepEqual([...deepseekOffer.mergedIds].sort(), [DEEPSEEK_LOCAL, DEEPSEEK_CENTRAL].sort(),
+    `deepseek observed/equal pair merges: both original ids retained (${JSON.stringify(deepseekOffer.mergedIds)})`)
+  assert.ok(deepseekOffer.mergedOrigins.includes('local') && deepseekOffer.mergedOrigins.includes('central'),
+    `deepseek merged event keeps both origin evidences (${JSON.stringify(deepseekOffer.mergedOrigins)})`)
+  // both URLs nonempty and different → distinct events; each event's
+  // evidence rows equal exactly its own record, and the conflicting twin
+  // appears as a separate event
   const geminiOffer = findOfferWith(GEMINI_CUT_A)
   assert.ok(geminiOffer, 'gemini conflict control: local event reachable')
-  assert.ok(offerEvents(geminiOffer).includes(GEMINI_CUT_B),
+  assert.ok(geminiOffer.eventIds.includes(GEMINI_CUT_A) || geminiOffer.eventIds.includes(GEMINI_CUT_B),
     'conflicting source URLs keep the near-duplicates as two events')
-  assert.ok(!geminiOffer.itemIds.includes(GEMINI_CUT_A),
-    'the conflicting pair is NOT collapsed into merged evidence')
-  assert.ok(!geminiOffer.sources.includes('central'),
-    'distinct events carry no cross-origin merged evidence')
+  assert.deepEqual(geminiOffer.mergedIds, [],
+    'the conflicting pair renders NO merged evidence block')
+  assert.equal(geminiOffer.historyEvidence.length, 1,
+    'the conflicting pair stays two events (latest + history)')
+  const geminiHistory = geminiOffer.historyEvidence[0]
+  const geminiLatestId = geminiHistory.id === GEMINI_CUT_A ? GEMINI_CUT_B : GEMINI_CUT_A
+  assert.deepEqual(geminiHistory.evidenceIds, [geminiHistory.id],
+    `the history event lists exactly its own record (${JSON.stringify(geminiHistory.evidenceIds)})`)
+  assert.deepEqual(geminiOffer.singleEvidenceIds, [geminiLatestId],
+    `the unmerged latest event lists exactly its own record (${JSON.stringify(geminiOffer.singleEvidenceIds)})`)
+  assert.deepEqual([geminiHistory.id, geminiLatestId].sort(), [GEMINI_CUT_A, GEMINI_CUT_B].sort(),
+    'both original ids stay reachable as two distinct events')
   // conflicting nonempty effective dates → distinct; both twins are central,
   // so this is also the same-origin control (same-origin different-id items
   // never merge) and there is no temporal-proximity heuristic to exploit.
@@ -469,13 +483,29 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
   assert.ok(mistralOffer, 'mistral conflict/same-origin control: newest event reachable')
   assert.ok(mistralOffer.eventIds.includes(MISTRAL_FIRST),
     'conflicting effective dates keep the repeated transition as two events')
-  assert.ok(!mistralOffer.itemIds.includes(MISTRAL_FIRST),
-    'the repeated transition is NOT collapsed into merged evidence')
-  // cross-origin merging is 1:1: exactly the two proven pairs merged
-  const mergedOffers = probe.groups.flatMap(group => group.offers)
-    .filter(offer => offer.sources.includes('local') && offer.sources.includes('central'))
-  assert.equal(mergedOffers.length, 2,
-    `exactly the two proven pairs merged across origins (${mergedOffers.length})`)
+  assert.deepEqual(mistralOffer.mergedIds, [],
+    'the repeated transition renders NO merged evidence block')
+  assert.equal(mistralOffer.historyEvidence.length, 1,
+    'the repeated transition stays two events (latest + history)')
+  const mistralHistory = mistralOffer.historyEvidence[0]
+  assert.equal(mistralHistory.id, MISTRAL_FIRST, 'the older repeated transition is the history event')
+  assert.deepEqual(mistralHistory.evidenceIds, [mistralHistory.id],
+    `the history event lists exactly its own record (${JSON.stringify(mistralHistory.evidenceIds)})`)
+  assert.deepEqual(mistralOffer.singleEvidenceIds, [MISTRAL_REPEAT],
+    `the unmerged latest event lists exactly its own record (${JSON.stringify(mistralOffer.singleEvidenceIds)})`)
+  // cross-origin merging is 1:1: counted PER EVENT, exactly the two proven
+  // pairs merged (a merged event may sit on the latest or in History)
+  const mergedEvents = probe.groups.flatMap(group => group.offers)
+    .flatMap(offer => [
+      { ids: offer.mergedIds.length ? offer.mergedIds : offer.singleEvidenceIds,
+        origins: offer.mergedOrigins },
+      ...offer.historyEvidence.map(event => ({
+        ids: event.evidenceIds, origins: event.evidenceOrigins })),
+    ])
+    .filter(event => event.ids.length >= 2
+      && event.origins.includes('local') && event.origins.includes('central'))
+  assert.equal(mergedEvents.length, 2,
+    `exactly the two proven pairs merged across origins, per event (${mergedEvents.length})`)
 
   // --- case-only identity + recency ---------------------------------------
   // The backend's fuzzy used_model reason (usage "M1" vs item "m1") stays
