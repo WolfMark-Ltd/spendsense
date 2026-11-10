@@ -71,6 +71,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "label_unvalued": "Unclassified calls",
         "label_unpriced_calls": "Unpriced calls",
         "label_provider_charges": "Provider-reported charges",
+        "provider_charge_coverage": "({confirmed} of {calls} recorded calls confirmed)",
         "label_fees_monthly": "Known monthly fees ({currency})",
         "label_fees_window": "Fees in window ({currency})",
         "label_usage_value": "Attributed usage value",
@@ -102,7 +103,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_lower_bound": "Values marked ≥ are lower bounds: some usage is unpriced.",
         "note_unpriced_calls": "{calls} call(s) lack complete usage or price evidence; an unpriced token count of zero does not make their value zero.",
         "note_billing_rule_missing": "Some calls have no matching billing rule; this is separate from API pricing coverage.",
-        "note_actual_not_recorded": "Actual provider charges are unavailable for calls without a confirmed per-call record.",
+        "note_actual_not_recorded": "Actual provider charges are incomplete: some calls lack confirmed per-call records or complete recording coverage.",
         "note_known_monthly_fees": "Known monthly fees are saved subscription declarations, not confirmed payments.",
         "note_unknown_fee_accounts": "{count} subscription fee(s) are unknown; the known subtotal excludes them.",
         "note_historical_fee_missing": "{count} current subscription fee(s) cannot be allocated to this window because historical fee evidence is missing; no effective date is inferred.",
@@ -161,6 +162,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "label_unvalued": "未分类调用",
         "label_unpriced_calls": "未定价调用",
         "label_provider_charges": "服务商报告的费用",
+        "provider_charge_coverage": "（{calls} 次已记录调用中有 {confirmed} 次已确认）",
         "label_fees_monthly": "已知月度费用（{currency}）",
         "label_fees_window": "周期内费用（{currency}）",
         "label_usage_value": "归因用量价值",
@@ -192,7 +194,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_lower_bound": "标有 ≥ 的数值为下限：部分用量未定价。",
         "note_unpriced_calls": "{calls} 次调用缺少完整用量或价格证据；未定价令牌为零不代表其价值为零。",
         "note_billing_rule_missing": "部分调用没有匹配的计费规则；这与 API 定价覆盖率是不同问题。",
-        "note_actual_not_recorded": "没有逐次确认记录的调用无法确认服务商实际费用。",
+        "note_actual_not_recorded": "实际服务商费用不完整：部分调用缺少逐次确认记录，或记录未覆盖整个周期。",
         "note_known_monthly_fees": "已知月度费用来自已保存的订阅声明，并非已确认付款。",
         "note_unknown_fee_accounts": "有 {count} 个订阅的费用未知；已知小计不包含这些费用。",
         "note_historical_fee_missing": "有 {count} 个当前订阅费用因历史费用证据缺失而无法分配至本周期；未推断生效日期。",
@@ -310,7 +312,7 @@ def _usage_section(S: Mapping[str, str], window_label: str, totals: Mapping[str,
     unpriced = totals.get("unpriced_tokens") or 0
     if value is None:
         lines.append({"label": S["label_api_value"], "value": S["unknown"]})
-    elif unpriced or unpriced_calls:
+    elif unpriced or unpriced_calls or not covers:
         lines.append({"label": S["label_api_value"], "value": f"≥{value}"})
         if unpriced:
             notes.append(S["note_lower_bound"])
@@ -341,7 +343,7 @@ def _ranked_table(S: Mapping[str, str], sid: str, heading: str, window_label: st
         incomplete_calls += int(row.get("unpriced_calls") or 0)
         if value is None:
             shown = S["unknown"]
-        elif row.get("unpriced_tokens") or row.get("unpriced_calls"):
+        elif row.get("unpriced_tokens") or row.get("unpriced_calls") or not covers:
             shown = f"≥{value}"
             lower_bound = lower_bound or bool(row.get("unpriced_tokens"))
         else:
@@ -377,7 +379,7 @@ def _value_section(S: Mapping[str, str], window_label: str, totals: Mapping[str,
     unpriced_calls = totals.get("unpriced_calls") or 0
     if value is None:
         shown: str = S["unknown"]
-    elif unpriced or unpriced_calls:
+    elif unpriced or unpriced_calls or not covers:
         shown = f"≥{value}"
         if unpriced:
             notes.append(S["note_lower_bound"])
@@ -409,13 +411,17 @@ def _spending_section(S: Mapping[str, str], window_label: str,
     notes = [S["note_metered_basis"]]
     evidence = billing.get("evidence") or {}
     provider_reported = evidence.get("provider_reported") or {}
+    confirmed_calls = provider_reported.get("calls") or 0
     provider_charge = (provider_reported.get("usd")
                        if provider_reported.get("basis") == "confirmed"
-                       and (provider_reported.get("calls") or 0) > 0 else None)
+                       and confirmed_calls > 0 else None)
+    provider_charge_value = _money(provider_charge) or S["unknown"]
+    if provider_charge is not None and (confirmed_calls < calls or not covers):
+        provider_charge_value += " " + S["provider_charge_coverage"].format(
+            confirmed=confirmed_calls, calls=calls)
     provider_line = {"label": S["label_provider_charges"],
-                     "value": _money(provider_charge) or S["unknown"]}
-    confirmed_calls = provider_reported.get("calls") or 0
-    if calls == 0 or confirmed_calls < calls:
+                     "value": provider_charge_value}
+    if calls == 0 or confirmed_calls < calls or not covers:
         notes.append(S["note_actual_not_recorded"])
     excluded = billing.get("excluded_out_of_cycle") or 0
     scope = S["spending_cycle"] if excluded else window_label
@@ -446,14 +452,15 @@ def _spending_section(S: Mapping[str, str], window_label: str,
     unclassified_tokens = billing.get("unclassified_tokens") or 0
     unclassified_calls = billing.get("unclassified_calls") or 0
     unvalued = bool(unclassified_tokens or unclassified_calls)
+    partial = unvalued or not covers
 
     def stated(amount: Any) -> str:
         text = _money(amount)
         if text is None:
             return S["unknown"]
-        if float(amount or 0) == 0 and unvalued:
+        if float(amount or 0) == 0 and partial:
             return S["unknown"]
-        return f"≥{text}" if unvalued else text
+        return f"≥{text}" if partial else text
 
     def stated_cash(entry: Mapping[str, Any]) -> str:
         # An unknown basis means some calls escaped judgment: a zero is not
@@ -474,9 +481,9 @@ def _spending_section(S: Mapping[str, str], window_label: str,
         provider_line,
     ]
     if (lines[1]["value"] == S["unknown"]
-            or incremental.get("basis") == "unknown") and not unvalued:
+            or incremental.get("basis") == "unknown") and not partial:
         notes.append(S["note_cash_unknown"])
-    if lines[2]["value"] == S["unknown"] and not unvalued:
+    if lines[2]["value"] == S["unknown"] and not partial:
         notes.append(S["note_credits_unknown"])
     if unvalued:
         if unclassified_tokens:
@@ -484,20 +491,16 @@ def _spending_section(S: Mapping[str, str], window_label: str,
         if unclassified_calls:
             notes.append(S["note_billing_rule_missing"])
         lines.append({"label": S["label_unvalued"], "value": str(unclassified_calls)})
-    elif not covers:
+    if calls > 0 and not covers:
         notes.append(S["note_partial"])
     return {"id": "spending", "heading": S["heading_spending"], "window": scope,
             "kind": "lines", "lines": lines, "notes": notes}
 
 
 def _attributed_pricing_partial(accounts: Any) -> bool:
-    """True when any subscription row leaves usage unpriced.
-
-    Checks the unrounded token count: row coverage is rounded to six
-    decimals, so a large account with one unpriced token still reads 1.0.
-    """
     for row in accounts or []:
-        if (((row or {}).get("usage") or {}).get("unpriced_tokens") or 0) > 0:
+        usage = (row or {}).get("usage") or {}
+        if (usage.get("unpriced_tokens") or 0) > 0 or (usage.get("unpriced_calls") or 0) > 0:
             return True
     return False
 

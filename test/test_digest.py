@@ -449,7 +449,7 @@ class DigestReviewFixesTests(DigestCase):
         self.assertEqual(
             next(line["value"] for line in section["lines"]
                  if line["label"] == "Provider-reported charges"), "—")
-        self.assertTrue(any("Actual provider charges are unavailable" in note
+        self.assertTrue(any("Actual provider charges are incomplete" in note
                             for note in section["notes"]))
 
     def test_provider_reported_charge_keeps_its_own_basis_and_currency_line(self):
@@ -468,6 +468,57 @@ class DigestReviewFixesTests(DigestCase):
         self.assertEqual(by_label["Metered (allowance) spending"], "$2.00")
         self.assertEqual(by_label["Extra cash (incremental) spending"], "$2.00")
         self.assertEqual(by_label["Credits consumed"], "$1.00")
+
+    def test_partial_provider_charge_subtotal_names_confirmed_call_coverage(self):
+        billing = {
+            "metered_usd": 0.0, "excluded_out_of_cycle": 0,
+            "unclassified_tokens": 0, "unclassified_calls": 0,
+            "evidence": {
+                "provider_reported": {"usd": 3.25, "basis": "confirmed", "calls": 1},
+                "incremental_cash": {"usd": 0.0, "basis": "inferred"},
+                "credits_consumed": {"usd": 0.0},
+            },
+        }
+        for language, expected in (
+                ("en", "(1 of 2 recorded calls confirmed)"),
+                ("zh", "（2 次已记录调用中有 1 次已确认）")):
+            section = D._spending_section(D.STRINGS[language], "Last 7 days", billing, False, 2)
+            by_label = {line["label"]: line["value"] for line in section["lines"]}
+            self.assertIn(expected, by_label[D.STRINGS[language]["label_provider_charges"]])
+            self.assertEqual(by_label[D.STRINGS[language]["label_metered"]], D.STRINGS[language]["unknown"])
+            self.assertEqual(by_label[D.STRINGS[language]["label_incremental"]], D.STRINGS[language]["unknown"])
+            self.assertEqual(by_label[D.STRINGS[language]["label_credits"]], D.STRINGS[language]["unknown"])
+
+    def test_incomplete_recording_qualifies_usage_and_ranked_api_subtotals(self):
+        totals = {"calls": 2, "tokens": 100, "list_usd": 2.0, "unpriced_tokens": 0,
+                  "unpriced_calls": 0, "input_tokens": 100, "output_tokens": 0,
+                  "cache_read_tokens": 0, "cache_write_tokens": 0}
+        usage = D._usage_section(D.STRINGS["en"], "Last 7 days", totals, False, 2)
+        usage_value = next(line["value"] for line in usage["lines"]
+                           if line["label"] == D.STRINGS["en"]["label_api_value"])
+        self.assertTrue(usage_value.startswith("≥"))
+        ranked = D._ranked_table(
+            D.STRINGS["en"], "models", "Models", "Last 7 days", [],
+            [{"name": "m", "calls": 2, "tokens": 100, "list_usd": 2.0,
+              "unpriced_tokens": 0, "unpriced_calls": 0}], "empty", False, 2)
+        self.assertTrue(ranked["rows"][0][-1].startswith("≥"))
+        value = D._value_section(D.STRINGS["en"], "Last 7 days", totals,
+                                 {"coverage": 1.0, "unpriced_tokens": 0}, False, 2)
+        api_value = next(line["value"] for line in value["lines"]
+                         if line["label"] == D.STRINGS["en"]["label_api_value"])
+        self.assertTrue(api_value.startswith("≥"))
+
+    def test_zero_token_price_gap_makes_the_attributed_comparison_partial(self):
+        partial = D._attributed_pricing_partial([{"usage": {
+            "unpriced_tokens": 0, "unpriced_calls": 1}}])
+        self.assertTrue(partial)
+        section = D._fees_section(D.STRINGS["en"], "Last 7 days", {
+            "fees_monthly_by_currency": [], "fees_window_by_currency": [],
+            "usage_usd": 2.0, "difference_usd": 1.0, "status": "partial",
+        }, True, 2, partial)
+        usage_value = next(line["value"] for line in section["lines"]
+                           if line["label"] == D.STRINGS["en"]["label_usage_value"])
+        self.assertTrue(usage_value.startswith("≥"))
 
     def test_value_comparison_withheld_when_current_window_partly_priced(self):
         self.standard_fixture()
