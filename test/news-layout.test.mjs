@@ -189,8 +189,9 @@ const EXACT_IDS = [
   'openrouter/anthropic/claude-sonnet-4.5', 'deepseek-ai/deepseek-v4-pro',
 ]
 
-// Candidate pagination semantics. The final UI shows the first
-// NEWS_FOR_YOU_LIMIT ranked groups on For You and the first NEWS_PAGE_SIZE
+// Candidate pagination semantics. For You shows the ranked prefix through
+// the NEWS_FOR_YOU_LIMIT-th model group, retaining cards before that group;
+// with fewer groups every entry shows. All shows the first NEWS_PAGE_SIZE
 // entries on All; completeness is always asserted on the EXPANDED list
 // (after show-all / load-more), never redefined away. Grouping turns N
 // relevant events into one entry per distinct model (+ one per model-less
@@ -199,8 +200,17 @@ const NEWS_PAGE_SIZE = 10
 const NEWS_FOR_YOU_LIMIT = 5
 const FOR_YOU_GROUPS = new Set(NEWS_ITEMS.filter(isRelevant)
   .map(item => item.model).filter(Boolean)).size
+const FOR_YOU_CARDS = NEWS_ITEMS.filter(item => isRelevant(item) && !item.model)
+const FOR_YOU_ENTRIES = FOR_YOU_GROUPS + FOR_YOU_CARDS.length
+const FOR_YOU_PLAN = uniqueId(item => isRelevant(item) && !item.model
+  && item.category === 'subscription' && item.source_url.endsWith('/claude-max-20x'))
+// In these committed fixtures the sole relevant card (the selected Claude
+// plan) ranks before the fifth model group. It must not displace that group.
+const FOR_YOU_PREFIX = Math.min(NEWS_FOR_YOU_LIMIT, FOR_YOU_GROUPS) + FOR_YOU_CARDS.length
 const PARTIAL_FOR_YOU_GROUPS = new Set(PARTIAL_ITEMS.filter(isRelevant)
   .map(item => item.model).filter(Boolean)).size
+const PARTIAL_FOR_YOU_PREFIX = Math.min(NEWS_FOR_YOU_LIMIT, PARTIAL_FOR_YOU_GROUPS)
+  + PARTIAL_ITEMS.filter(item => isRelevant(item) && !item.model).length
 const ALL_ENTRIES = new Set(NEWS_ITEMS.map(item => item.model).filter(Boolean)).size
   + NEWS_ITEMS.filter(item => !item.model).length
 const PARTIAL_ENTRIES = new Set(PARTIAL_ITEMS.map(item => item.model).filter(Boolean)).size
@@ -294,7 +304,7 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
       const allLabel = r.labels.find(text => /all updates|全部动态/i.test(text))
       if (r.candidateDetected) {
         assert.match(forYouLabel || '',
-          countLabelRegex(FOR_YOU_GROUPS), `${label} For You count (grouped)`)
+          countLabelRegex(FOR_YOU_ENTRIES), `${label} For You count (grouped entries)`)
         assert.match(allLabel || '',
           countLabelRegex(ALL_ENTRIES), `${label} All Updates count (grouped)`)
       } else {
@@ -304,8 +314,8 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
           new RegExp(`\\(${TOTAL_COUNT}\\)`), `${label} All Updates count`)
       }
       if (r.scope === 'foryou') {
-        // candidate For You shows the initial ranked-group page, not all events
-        assert.equal(r.cards, r.candidateDetected ? Math.min(NEWS_FOR_YOU_LIMIT, FOR_YOU_GROUPS) : RELEVANT_COUNT,
+        // Candidate prefix retains the plan card as well as five model groups.
+        assert.equal(r.cards, r.candidateDetected ? FOR_YOU_PREFIX : RELEVANT_COUNT,
           `${label} For You initial page`)
       } else {
         assert.equal(r.cards, r.candidateDetected ? Math.min(NEWS_PAGE_SIZE, ALL_ENTRIES) : TOTAL_COUNT,
@@ -325,13 +335,13 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
       assert.match(r.text, /Local catalogue news is shown/i, `${label} live-updates-off note`)
       assert.equal(r.cards, r.candidateDetected
         ? (r.scope === 'foryou'
-          ? Math.min(NEWS_FOR_YOU_LIMIT, PARTIAL_FOR_YOU_GROUPS)
+          ? PARTIAL_FOR_YOU_PREFIX
           : Math.min(NEWS_PAGE_SIZE, PARTIAL_ENTRIES))
         : PARTIAL_RELEVANT, label)
     }
     if (r.fixture === 'stale') {
       assert.match(r.text, /central feed unavailable/, `${label} central stale alert`)
-      assert.equal(r.cards, r.candidateDetected ? Math.min(NEWS_FOR_YOU_LIMIT, FOR_YOU_GROUPS) : RELEVANT_COUNT,
+      assert.equal(r.cards, r.candidateDetected ? FOR_YOU_PREFIX : RELEVANT_COUNT,
         `${label} stale cache still serves the relevant items`)
     }
     if (r.fixture === 'nosignals') {
@@ -733,17 +743,24 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
   assert.ok(Number.parseFloat(probe.ring.scopeRing?.outline?.width || '0') > 0
     && probe.ring.scopeRing.outline.style !== 'none', 'scope ring is visible')
 
-  // For You shows the initial page of ranked groups, with show-all for the rest
+  // For You preserves mixed rank order through the fifth MODEL group.
   const forYouGroups = [...new Set(NEWS_ITEMS.filter(isRelevant).map(item => item.model).filter(Boolean))]
-  assert.equal(forYou.probe.forYou.visible, Math.min(5, forYouGroups.length),
+  assert.equal(FOR_YOU_GROUPS, 10, 'realistic fixture has ten relevant model groups')
+  assert.equal(FOR_YOU_CARDS.length, 1, 'realistic fixture has one relevant ungrouped card')
+  assert.equal(forYou.cards, FOR_YOU_PREFIX, 'For You initial prefix has five groups plus the plan card')
+  assert.ok(forYou.ids.matched.includes(FOR_YOU_PLAN),
+    `For You initial prefix includes the exact plan item ${FOR_YOU_PLAN}`)
+  assert.equal(forYou.probe.forYou.visible, Math.min(NEWS_FOR_YOU_LIMIT, forYouGroups.length),
     `For You shows the initial page of groups (got ${forYou.probe.forYou.visible})`)
   assert.equal(forYou.probe.groups.length,
-    forYou.probe.forYou.showAllPresent ? forYouGroups.length : Math.min(5, forYouGroups.length),
+    forYou.probe.forYou.showAllPresent ? forYouGroups.length : Math.min(NEWS_FOR_YOU_LIMIT, forYouGroups.length),
     `For You structure captures the post-show-all total (got ${forYou.probe.groups.length})`)
-  if (forYouGroups.length > 5) {
+  if (forYouGroups.length > NEWS_FOR_YOU_LIMIT) {
     assert.equal(forYou.probe.forYou.showAllPresent, true, 'show-all is offered for the remaining groups')
     assert.equal(forYou.probe.forYou.afterShowAll, forYouGroups.length,
       `show-all reveals every relevant group (${forYou.probe.forYou.afterShowAll})`)
+    assert.equal(forYou.probe.forYou.focusIndex, FOR_YOU_PREFIX,
+      'show-all focuses the first newly revealed entry at the prior prefix length')
     // For You after show-all covers every relevant exact ID (the relevant
     // subset of EXACT_IDS; the rest are covered by the complete All list)
     for (const id of FOR_YOU_EXACT) {
@@ -791,6 +808,7 @@ test('the Chrome-discovery mock hides every discovery candidate', () => {
 // mandatory candidate run. The child sets WP11_LAYOUT_PROBE_CHILD so this
 // probe skips itself there (no grandchild recursion).
 test('a mandatory candidate run fails instead of skipping when Chrome is missing', {
+  timeout: 90000,
   skip: process.env.WP11_LAYOUT_PROBE_CHILD ? 'probe child run' : false,
 }, async t => {
   const work = mkdtempSync(join(tmpdir(), 'wm-news-probe-'))
@@ -819,17 +837,27 @@ test('a mandatory candidate run fails instead of skipping when Chrome is missing
   const self = fileURLToPath(import.meta.url)
   const probeChild = (flag, stub = standardStub) => {
     const env = { ...process.env, WP11_LAYOUT_PROBE_CHILD: '1' }
+    // A real node --test parent injects runner protocol state; a standalone
+    // spec-reporter child must not inherit that state (or its V8 event stream).
+    for (const key of Object.keys(env)) {
+      if (key.startsWith('NODE_TEST_')) delete env[key]
+    }
     delete env.WP11_REQUIRE_CANDIDATE
     delete env.WP11_CANDIDATE
     if (flag) env[flag] = '1'
-    return spawnSync(process.execPath, [
+    const child = spawnSync(process.execPath, [
       // Force the spec reporter: a piped child would otherwise fall back to
       // TAP on older Node lines and the named-state assertions below would
       // not see the ✖/﹣ markers.
       '--experimental-test-module-mocks', '--test-reporter=spec',
       '--test-reporter-destination=stdout',
       '--import', pathToFileURL(stub).href, self,
-    ], { encoding: 'utf8', env })
+    ], { encoding: 'utf8', env, timeout: 30000, killSignal: 'SIGKILL' })
+    assert.ok(!child.error && !child.signal && typeof child.status === 'number',
+      `${flag || 'optional run'}: probe child failed to complete: `
+        + `error=${child.error?.message || 'none'}, signal=${child.signal}, status=${child.status}; `
+        + `${`${child.stdout || ''}\n${child.stderr || ''}`.slice(0, 400)}`)
+    return child
   }
   for (const flag of ['WP11_REQUIRE_CANDIDATE', 'WP11_CANDIDATE', null]) {
     const child = probeChild(flag)

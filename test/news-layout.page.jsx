@@ -667,8 +667,14 @@ async function probeCandidate(c, pane) {
     const showAll = pane.querySelector(SELECTORS.showAll)
     out.forYou = { visible, showAllPresent: !!showAll, showAllLabel: showAll?.textContent?.trim() || '' }
     if (showAll) {
+      document.activeElement?.blur()
+      showAll.focus()
       showAll.click()
       await tick(120)
+      const active = document.activeElement
+      out.forYou.focusIndex = [...(pane.querySelector('.wm-news-list[role="list"]')?.children || [])].indexOf(active)
+      out.forYou.focusModel = active?.getAttribute('data-news-group') || ''
+      out.forYou.focusItemId = active?.querySelector('li[data-news-source-id]')?.getAttribute('data-news-source-id') || ''
       out.forYou.afterShowAll = groupEls().length
       out.forYou.afterShowAllGroups = groupEls().map(groupIdOf)
     }
