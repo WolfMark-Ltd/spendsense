@@ -135,6 +135,22 @@ class B1RawTierIdentityTests(NewsReviewTestCase):
                          "local-price-reduction-acme-m--r-----cache-read---null"
                          "---cache-write-b8f4d45cd8")
 
+    def test_b1_normalised_tier_change_with_differing_raw_keeps_legacy_id(self):
+        # Like the fixture's vercel/glm-large: the normalised tier rate moves
+        # AND the raw tier lists differ. The legacy signature already
+        # distinguishes the transition, so the id must stay byte-identical.
+        news = news_module()
+        self.refresh(book([("acme", "m",
+                            Rate(1.0, 2.0, tiers=(Tier(200_001, 2.0, 4.0),)))]),
+                     raw_doc=raw_doc("context"))
+        result = self.refresh(
+            book([("acme", "m", Rate(1.0, 2.0, tiers=(Tier(200_001, 2.5, 4.0),)))]),
+            now=NOW + 3600, raw_doc=raw_doc("long_context", tier_input=2.5))
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["items"][0]["id"],
+                         "local-price-increase-acme-m--r-----cache-read---null"
+                         "---cache-write-a7da09d29d")
+
 
 # ------------------------------------------------------------------ B2
 

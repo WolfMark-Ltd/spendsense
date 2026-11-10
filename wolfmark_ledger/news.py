@@ -642,9 +642,15 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
             # A raw tier change (e.g. the tariff kind) is a real transition
             # even when the normalised tiers are identical; without raw
             # material in the id the reverse transition collapses onto the
-            # same id and is dropped as an already-known observation.
+            # same id and is dropped as an already-known observation. Raw
+            # material joins the id only for such raw-only transitions: when
+            # the normalised tiers or base rates moved, the legacy signature
+            # already distinguishes the transition and existing ids stay.
+            raw_only = _raw_tiers_changed(old_entry, new_entry) \
+                and _slim(old_entry) == _slim(new_entry) \
+                and not _tiers_changed(old_entry, new_entry)
             raw_material = json.dumps([old_raw, new_raw], sort_keys=True) \
-                if _raw_tiers_changed(old_entry, new_entry) else ""
+                if raw_only else ""
             model_name = new_entry.get("name")
             verb = "reduced to" if category == "price_reduction" else "changed to"
             item = {
