@@ -286,11 +286,26 @@ def capture_raw_rows(book: Catalogue, *, raw_doc: Any = None,
     ``book.providers``, reading the same source file the book was built from
     at most once. Any unreadable, unparseable or mismatched source returns
     None: raw detail is then unknown and never guessed.
+
+    Tier detail is only served when it is numerically coherent with the book:
+    on a file read, every raw row must re-normalise (via pricing's own
+    parser) to the very Rate the book holds, and the file stat must be
+    unchanged across the read; otherwise every row is returned with
+    ``tiers_raw`` None (name kept) so tier detail reads as unknown. Rows
+    injected via ``raw_doc`` (tests) bypass the coherence check so a
+    deliberately divergent injected source keeps working. Residual: a
+    replacement whose base and normalised tier numbers are all identical but
+    whose raw tier type/name differs cannot be detected — numeric coherence
+    and a stable capture are checked, source version identity is not proven.
     """
+    from .pricing import _rate_from_cost
+
     if not _is_cache_source(book.source):
         return None
+    check_coherence = False
     if raw_doc is not None:
         doc = raw_doc
+        captured_stably = True
     else:
         target = Path(raw_path) if raw_path else None
         if target is None:
@@ -304,15 +319,27 @@ def capture_raw_rows(book: Catalogue, *, raw_doc: Any = None,
                 return None
             target = candidate
         try:
-            doc = json.loads(Path(target).read_text(encoding="utf-8-sig"))
+            before = target.stat()
+        except OSError:
+            return None
+        try:
+            doc = json.loads(target.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             return None
+        try:
+            after = target.stat()
+        except OSError:
+            return None
+        captured_stably = (before.st_mtime_ns, before.st_size, before.st_ino) \
+            == (after.st_mtime_ns, after.st_size, after.st_ino)
+        check_coherence = True
     if not isinstance(doc, dict):
         return None
     data = doc.get("data") if isinstance(doc.get("data"), dict) else doc
     if not isinstance(data, dict):
         return None
     rows: dict[tuple[str, str], dict[str, Any]] = {}
+    consistent = captured_stably
     for provider, models in (book.providers or {}).items():
         entry = data.get(str(provider))
         model_rows = entry.get("models") if isinstance(entry, dict) else None
@@ -323,10 +350,27 @@ def capture_raw_rows(book: Catalogue, *, raw_doc: Any = None,
             if not isinstance(raw_row, dict):
                 continue
             name = raw_row.get("name")
+            if check_coherence:
+                try:
+                    # Mirror pricing._parse_catalogue's cost-block selection.
+                    cost = raw_row.get("cost")
+                    if cost is None and any(key in raw_row for key in ("input", "output")):
+                        cost = raw_row
+                    normalised = _rate_from_cost(cost)
+                except Exception:
+                    consistent = False
+                    normalised = None
+                if normalised is None or normalised != models.get(model):
+                    consistent = False
             rows[(str(provider), str(model))] = {
                 "name": name if isinstance(name, str) else "",
                 "tiers_raw": _raw_tiers(raw_row),
             }
+    if not consistent:
+        # The raw detail cannot be tied to the book it will be compared
+        # against; downgrade to unknown instead of guessing.
+        return {key: {"name": row["name"], "tiers_raw": None}
+                for key, row in rows.items()}
     return rows
 
 

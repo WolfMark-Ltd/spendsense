@@ -259,9 +259,6 @@ class B3RateCodeTests(NewsReviewTestCase):
 
 
 # ------------------------------------------------------------------ B4
-# Expected RED at the time of writing: the stale-cache tier-safety behaviour
-# below is NOT yet implemented. These tests document the required behaviour
-# and are marked @unittest.expectedFailure in the commit until fixed.
 
 class B4StaleCacheTierSafetyTests(NewsReviewTestCase):
     """When the raw cache file changes underneath a book parsed from it and
@@ -289,10 +286,6 @@ class B4StaleCacheTierSafetyTests(NewsReviewTestCase):
         target.write_text(v2_text, encoding="utf-8")
         os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns))
 
-    # B4 is RED-only in this commit: the stale-cache tier-safety behaviour is
-    # not yet implemented (capture_raw_rows still serves fresh-file tiers
-    # against a stale book); these stay until the fix lands.
-    @unittest.expectedFailure
     def test_b4a_base_rate_change_yields_unknown_tiers(self):
         news = news_module()
         target = Path(self.scratch.name) / "spoofed-cache.json"
@@ -315,7 +308,6 @@ class B4StaleCacheTierSafetyTests(NewsReviewTestCase):
                 if item.get("tiers_after") is not None:
                     self.assertIsNone(item["tiers_after"])
 
-    @unittest.expectedFailure
     def test_b4b_tier_rate_change_yields_unknown_tiers(self):
         news = news_module()
         target = Path(self.scratch.name) / "spoofed-cache.json"
@@ -331,21 +323,69 @@ class B4StaleCacheTierSafetyTests(NewsReviewTestCase):
 
     def test_b4c_unchanged_file_yields_known_exact_tiers(self):
         news = news_module()
-        target = Path(self.scratch.name) / "steady-cache.json"
+        cache_dir = Path(self.scratch.name) / "cache-v1"
+        cache_dir.mkdir()
+        target = cache_dir / "models_dev_cache.json"
         target.write_text(json.dumps(self.TIERED_V1), encoding="utf-8")
         stale_book = pricing.load_catalogue(target)
         self.refresh(stale_book, raw_cache_path=target)
         rows = news.capture_raw_rows(stale_book, raw_path=target)
         self.assertEqual(rows[("acme", "m")],
                          {"name": "M", "tiers_raw": [tier_row()]})
-        changed_book = book([("acme", "m",
-                              Rate(0.9, 2.0, tiers=(Tier(200_001, 2.0, 4.0),)))],
-                            source=stale_book.source, as_of=stale_book.as_of)
-        result = self.refresh(changed_book, now=NOW + 3600, raw_cache_path=target)
+        # A genuine rate change arrives as a new cache file whose raw rows
+        # agree with the book parsed from it (same filename → same source).
+        cache_v2 = Path(self.scratch.name) / "cache-v2"
+        cache_v2.mkdir()
+        v2 = json.loads(json.dumps(self.TIERED_V1))
+        v2["data"]["acme"]["models"]["m"]["cost"]["input"] = 0.9
+        target_v2 = cache_v2 / "models_dev_cache.json"
+        target_v2.write_text(json.dumps(v2), encoding="utf-8")
+        changed_book = pricing.load_catalogue(target_v2)
+        self.assertEqual(changed_book.source, stale_book.source)
+        result = self.refresh(changed_book, now=NOW + 3600,
+                              raw_cache_path=target_v2)
         item = result["items"][0]
         self.assertEqual(item["tiers_detail"], "known")
         self.assertEqual(item["tiers_before"], [tier_row()])
         self.assertEqual(item["tiers_after"], [tier_row()])
+
+    def test_b4d_stat_change_during_read_yields_unknown_tiers(self):
+        news = news_module()
+        target = Path(self.scratch.name) / "steady-cache.json"
+        target.write_text(json.dumps(self.TIERED_V1), encoding="utf-8")
+        loaded = pricing.load_catalogue(target)
+        original_read_text = Path.read_text
+
+        def mutating_read_text(path_self, *args, **kwargs):
+            text = original_read_text(path_self, *args, **kwargs)
+            stat = path_self.stat()  # mutate between pre- and post-stat
+            os.utime(path_self,
+                     ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+            return text
+
+        with mock.patch.object(Path, "read_text", mutating_read_text):
+            rows = news.capture_raw_rows(loaded, raw_path=target)
+        self.assertEqual(rows[("acme", "m")]["name"], "M")
+        self.assertIsNone(rows[("acme", "m")]["tiers_raw"])  # stat changed
+
+    def test_b4e_normaliser_error_yields_unknown_and_refresh_succeeds(self):
+        news = news_module()
+        target = Path(self.scratch.name) / "steady-cache.json"
+        target.write_text(json.dumps(self.TIERED_V1), encoding="utf-8")
+        loaded = pricing.load_catalogue(target)
+        self.refresh(loaded, raw_cache_path=target)
+        with mock.patch.object(pricing, "_rate_from_cost",
+                               side_effect=RuntimeError("boom")):
+            rows = news.capture_raw_rows(loaded, raw_path=target)
+            self.assertEqual(rows[("acme", "m")], {"name": "M", "tiers_raw": None})
+            result = self.refresh(loaded, now=NOW + 3600, raw_cache_path=target)
+        self.assertFalse(result["baseline"])
+        row = self.snapshot()["providers"]["acme"]["m"]
+        self.assertIsNone(row["tiers_raw"])
+        self.assertEqual(row["name"], "M")
+        for item in result["items"]:
+            if item["model"] == "m" and item["category"].startswith("price_"):
+                self.assertEqual(item["tiers_detail"], "unknown")
 
 
 # ------------------------------------------------------------------ B5
@@ -354,7 +394,8 @@ class B5TierContractPins(NewsReviewTestCase):
     def test_b5_untiered_change_reports_known_empty_lists(self):
         self.refresh(book([("acme", "m", Rate(1.0, 2.0))]), raw_doc=raw_doc(None))
         result = self.refresh(book([("acme", "m", Rate(0.8, 2.0))]),
-                              now=NOW + 3600, raw_doc=raw_doc(None))
+                              now=NOW + 3600,
+                              raw_doc=raw_doc(None, base_input=0.8))
         item = result["items"][0]
         self.assertEqual(item["tiers_before"], [])
         self.assertEqual(item["tiers_after"], [])
