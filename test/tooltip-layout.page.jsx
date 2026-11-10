@@ -74,6 +74,16 @@ try {
           result.text = pop.textContent.slice(0, 80)
           result.opaque = opaque(pop)
           result.withinScope = within(r, scopeRect())
+          // Client box: with classic (non-overlay) scrollbars the visible
+          // content box is narrower than the border box, and scrollable
+          // overflow is measured against it — the gutter counts as overflow.
+          const outer = scopeRect()
+          const client = {
+            left: outer.left, top: outer.top,
+            right: outer.left + (scroller ? scroller.clientWidth : outer.width),
+            bottom: outer.top + (scroller ? scroller.clientHeight : outer.height),
+          }
+          result.withinClientScope = within(r, client)
           result.withinViewport = within(r, viewport())
           result.scrollWidthDelta = (scroller ? scroller.scrollWidth : 0) - sw0
           result.scrollHeightDelta = (scroller ? scroller.scrollHeight : 0) - sh0

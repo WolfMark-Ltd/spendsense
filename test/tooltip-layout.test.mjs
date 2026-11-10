@@ -123,6 +123,8 @@ body{margin:0;background:${THEMES[theme].background};font:400 13px/1.5 system-ui
               assert.equal(tip.opaque, true, `${tag} background is opaque`)
               assert.equal(tip.withinScope, true,
                 `${tag} stays inside the ${surface} (pop ${JSON.stringify(tip.popRect)})`)
+              assert.equal(tip.withinClientScope, true,
+                `${tag} stays out of the scrollbar gutter (pop ${JSON.stringify(tip.popRect)})`)
               assert.equal(tip.withinViewport, true,
                 `${tag} stays inside the viewport (pop ${JSON.stringify(tip.popRect)})`)
               assert.equal(tip.scrollWidthDelta, 0, `opening ${tag} grows no horizontal scrollbar`)

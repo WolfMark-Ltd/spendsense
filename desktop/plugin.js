@@ -1709,9 +1709,20 @@ function InfoTip({ dir = 'down', id, label, text, wide = false }) {
     const pop = popRef.current
     if (!btn || !pop || typeof btn.getBoundingClientRect !== 'function') return
     const host = btn.closest('.wm-analytics,.wm-pane')
-    const scope = host ? host.getBoundingClientRect() : {
-      left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight,
-      width: window.innerWidth, height: window.innerHeight,
+    // Client box, not border box: classic (non-overlay) scrollbars occupy
+    // layout inside the border box, and scrollable overflow is measured
+    // against the client box — a popover parked in the gutter still grows
+    // scrollWidth/scrollHeight there. Neither scope surface has a border,
+    // and layout is ltr-only, so the client box starts at the border origin.
+    let scope
+    if (host) {
+      const box = host.getBoundingClientRect()
+      scope = { left: box.left, top: box.top, right: box.left + host.clientWidth,
+        bottom: box.top + host.clientHeight, width: host.clientWidth, height: host.clientHeight }
+    } else {
+      const width = document.documentElement.clientWidth || window.innerWidth
+      const height = document.documentElement.clientHeight || window.innerHeight
+      scope = { left: 0, top: 0, right: width, bottom: height, width, height }
     }
     const parent = pop.offsetParent
     const anchor = parent && parent !== document.body && parent !== document.documentElement
