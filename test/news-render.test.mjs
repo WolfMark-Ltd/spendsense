@@ -255,7 +255,7 @@ test('group details open, show the audit trail and History, in both locales', as
       relevance: { relevant: false, reasons: [] } }),
   ])
   for (const [locale, dir, source] of [['en', /Price down/, /Source/], ['zh', /价格下调/, /来源/]]) {
-    T.$newsDetailsOpen.set([])
+    await React.act(async () => { T.$newsDetailsOpen.set([]) })
     const node = React.createElement(T.NewsModelGroup, { group, impacts: {}, t: translator(locale),
       matchedOffers: null, detailsId: `wd-${locale}` })
     const view = await renderNode(node, locale)
@@ -305,7 +305,7 @@ test('a demoted merged event keeps full evidence and raw tiers in History, EN an
     ['en', { evidence: 'Evidence sources', before: 'Tiers before', after: 'Tiers after' }],
     ['zh', { evidence: '证据来源', before: '之前分层', after: '之后分层' }],
   ]) {
-    T.$newsDetailsOpen.set([])
+    await React.act(async () => { T.$newsDetailsOpen.set([]) })
     const node = React.createElement(T.NewsModelGroup, { group: groupFrom([l1, c1]), impacts: {}, t: translator(locale),
       matchedOffers: null, detailsId: `wh-${locale}` })
     const view = await renderNode(node, locale)
@@ -382,7 +382,7 @@ test('a same-id pair renders both original records as evidence', async () => {
     source_url: 'https://example.com/central', provenance: 'models.dev central feed' })
   const group = groupFrom([local, central])
   assert.equal(group.offers[0].events.length, 1, 'one event for one stored id')
-  T.$newsDetailsOpen.set([])
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
   const node = React.createElement(T.NewsModelGroup, { group, impacts: {}, t: translator('en'),
     matchedOffers: null, detailsId: 'ws1' })
   const view = await renderNode(node, 'en')
@@ -479,7 +479,7 @@ const hookGroup = () => {
 }
 
 test('the group and offer markup carries the full DOM hook contract', async () => {
-  T.$newsDetailsOpen.set([])
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
   const group = hookGroup()
   const view = await renderNode(React.createElement(T.NewsModelGroup, {
     group, impacts: { 'loc-1': { basis: 'partial', delta_usd: -1.5, window_days: 30, reason: '' } },
@@ -543,7 +543,7 @@ test('not-comparable chips carry their reason; tiers render their status', async
     relevance: { relevant: false, reasons: [] },
   }
   const group = T.newsGroupModels([item]).groups[0]
-  T.$newsDetailsOpen.set([])
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
   const view = await renderNode(React.createElement(T.NewsModelGroup, {
     group, impacts: {}, t: translator('en'), matchedOffers: null, detailsId: 'wt1' }), 'en')
   const tierChip = view.container.querySelector('[data-news-chip="tiers"]')
@@ -576,7 +576,7 @@ test('comparable tier rows render per row, with a directional tier chip', async 
     provenance: '', confidence: 'observed', relevance: { relevant: false, reasons: [] },
   }
   const group = T.newsGroupModels([item]).groups[0]
-  T.$newsDetailsOpen.set([])
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
   const view = await renderNode(React.createElement(T.NewsModelGroup, {
     group, impacts: {}, t: translator('en'), matchedOffers: null, detailsId: 'wt2' }), 'en')
   const tierChip = view.container.querySelector('[data-news-chip="tiers"]')
@@ -610,7 +610,7 @@ test('a single unmerged event exposes exact evidence and raw tiers in Details, E
   const group = T.newsGroupModels([item]).groups[0]
   assert.equal(group.offers[0].tierStatus, 'mismatch', 'the mismatched tiers are not comparable')
   for (const [locale, origin, evidence] of [['en', 'Local', 'Evidence sources'], ['zh', '本地', '证据来源']]) {
-    T.$newsDetailsOpen.set([])
+    await React.act(async () => { T.$newsDetailsOpen.set([]) })
     const view = await renderNode(React.createElement(T.NewsModelGroup, {
       group, impacts: {}, t: translator(locale), matchedOffers: null, detailsId: `wse-${locale}` }), locale)
     const button = view.container.querySelector('button[data-news-details]')
@@ -672,7 +672,7 @@ test('official rates render as text with every window as its own row, never a li
     relevance: { relevant: false, reasons: [] },
   }
   const group = T.newsGroupModels([item]).groups[0]
-  T.$newsDetailsOpen.set([])
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
   const view = await renderNode(React.createElement(T.NewsModelGroup, {
     group, impacts: {}, t: translator('en'), matchedOffers: null, detailsId: 'wo1' }), 'en')
   const button = view.container.querySelector('button[data-news-details]')
@@ -862,13 +862,13 @@ test('NewsPage carries the scope, category, search, days, count and paging hooks
   document.body.appendChild(container)
   const root = ReactDOMClient.createRoot(container)
   roots.push(root)
-  T.$newsScope.set('foryou')
-  T.$newsCategory.set('all')
-  T.$newsSearch.set('')
-  T.$newsDays.set(null)
-  T.$newsShown.set(T.NEWS_PAGE_SIZE)
-  T.$newsShowAll.set(false)
-  T.$newsDetailsOpen.set([])
+  await React.act(async () => { T.$newsScope.set('foryou') })
+  await React.act(async () => { T.$newsCategory.set('all') })
+  await React.act(async () => { T.$newsSearch.set('') })
+  await React.act(async () => { T.$newsDays.set(null) })
+  await React.act(async () => { T.$newsShown.set(T.NEWS_PAGE_SIZE) })
+  await React.act(async () => { T.$newsShowAll.set(false) })
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
   await React.act(async () => {
     root.render(React.createElement(QueryClientProvider, { client: queryClient },
       React.createElement(T.NewsPage)))
@@ -929,6 +929,95 @@ test('NewsPage carries the scope, category, search, days, count and paging hooks
   }
 })
 
+test('pagination keeps real focus: Load more stays focused, then the first new group does', async () => {
+  // 22 relevant model events: All pages 10 -> 20 -> 22, For You offers Show all.
+  const payload = {
+    ok: true,
+    local: {
+      baseline: true, snapshot_at: '2026-11-01T00:00:00Z', removed_model_count: 0,
+      items: Array.from({ length: 22 }, (_, i) => ({
+        id: `p${i}`, origin: 'local', category: 'price_reduction',
+        provider: 'Acme', model: `acme/model-${i}`,
+        summary_code: '', summary_params: null, summary: `model-${i} changed.`,
+        previous: { input: 5.0, output: 25.0, cache_read: null, cache_write: null },
+        current: { input: 4.0, output: 25.0, cache_read: null, cache_write: null },
+        has_tiers: false, observed_at: '2026-11-03T00:00:00Z', effective_at: '',
+        source_url: '', provenance: '', confidence: 'observed',
+        relevance: { relevant: true, reasons: ['configured_provider'] },
+      })),
+    },
+    central: { items: [] },
+    impacts: {},
+    settings: { live_updates: true },
+    signals: { configured_families: ['acme'] },
+  }
+  T.setRest(async path => path === '/news/refresh' ? payload : { ok: true })
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => { T.$newsScope.set('all') })
+  await React.act(async () => { T.$newsCategory.set('all') })
+  await React.act(async () => { T.$newsSearch.set('') })
+  await React.act(async () => { T.$newsDays.set(null) })
+  await React.act(async () => { T.$newsShown.set(T.NEWS_PAGE_SIZE) })
+  await React.act(async () => { T.$newsShowAll.set(false) })
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  await React.act(async () => {
+    root.render(React.createElement(QueryClientProvider, { client: queryClient },
+      React.createElement(T.NewsPage)))
+  })
+  await React.act(async () => {
+    for (let i = 0; i < 6; i += 1) await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  const c = () => container
+  const list = () => c().querySelector('.wm-news-list')
+  const groups = () => c().querySelectorAll('[data-news-group]').length
+  assert.equal(groups(), 10, 'All pages by ten')
+  const loadMore = c().querySelector('button[data-news-load-more]')
+  assert.ok(loadMore, '22 entries leave twelve behind')
+  await React.act(async () => { loadMore.focus() })
+  assert.equal(document.activeElement, loadMore, 'focus is on Load more before paging')
+  // 10 -> 20: the button stays mounted (stable key); the same DOM element
+  // keeps focus — no remount, focus never drops to body.
+  await React.act(async () => { loadMore.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  assert.equal(groups(), 20, 'the first page load reveals ten more')
+  assert.ok(c().querySelector('button[data-news-load-more]'), 'Load more is still present')
+  assert.equal(document.activeElement, loadMore,
+    'the same Load more element is still focused, never body')
+  // 20 -> 22: final page, the button disappears; focus moves to the first
+  // newly revealed group instead of falling back to body.
+  await React.act(async () => { loadMore.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  assert.equal(groups(), 22, 'the final page reveals the rest')
+  assert.ok(!c().querySelector('button[data-news-load-more]'), 'no Load more on the final page')
+  // The final click revealed the entries after the previous page cut (index
+  // 20 here): the first of them takes focus.
+  const firstRevealed = list().children[2 * T.NEWS_PAGE_SIZE]
+  assert.ok(firstRevealed.matches('[data-news-group]'), 'the first newly revealed entry is a group')
+  assert.equal(document.activeElement, firstRevealed,
+    'the first newly revealed group takes focus, never body')
+  assert.equal(firstRevealed.getAttribute('tabindex'), '-1',
+    'the focused group is programmatically focusable')
+  // For You Show all follows the same focus contract.
+  const scopeButtons = [...c().querySelectorAll('[data-news-scope] button')]
+  await React.act(async () => {
+    scopeButtons.find(b => b.getAttribute('value') === 'foryou')
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+  assert.equal(groups(), 5, 'For You shows five groups first')
+  const showAll = c().querySelector('button[data-news-show-all]')
+  assert.ok(showAll, '22 relevant groups offer Show all')
+  await React.act(async () => { showAll.focus() })
+  assert.equal(document.activeElement, showAll)
+  await React.act(async () => { showAll.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  assert.ok(!c().querySelector('button[data-news-show-all]'), 'Show all disappears once used')
+  assert.equal(groups(), 22, 'Show all reveals every relevant group')
+  const firstNewGroup = list().children[T.NEWS_FOR_YOU_LIMIT]
+  assert.equal(document.activeElement, firstNewGroup,
+    'the first newly revealed For You group takes focus, never body')
+  assert.equal(document.activeElement.tagName, 'ARTICLE')
+})
+
 // --- WP11 fixture rendering: the real generated payloads ---------------------
 
 const readFixture = name => JSON.parse(readFileSync(
@@ -947,7 +1036,7 @@ const openDetails = async (view) => {
 }
 
 test('fixture local-central: the sonnet group renders name, mixed class, evidence and official', async () => {
-  T.$newsDetailsOpen.set([])
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
   const { group } = fixtureGroup('payload-local-central.json', 'claude-sonnet-4')
   const view = await renderNode(React.createElement(T.NewsModelGroup, {
     group, impacts: { 'local-price-reduction-anthropic-claude-sonnet-4--r-----cache-read---0-3--2ea96cf7f1':
@@ -970,7 +1059,7 @@ test('fixture local-central: the sonnet group renders name, mixed class, evidenc
 })
 
 test('fixture local-central: the haiku window renders the weekday list as text', async () => {
-  T.$newsDetailsOpen.set([])
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
   const { group } = fixtureGroup('payload-local-central.json', 'claude-haiku-4-5')
   const view = await renderNode(React.createElement(T.NewsModelGroup, {
     group, impacts: {}, t: translator('en'), matchedOffers: null, detailsId: 'wf-haiku' }), 'en')
@@ -984,7 +1073,7 @@ test('fixture local-central: the haiku window renders the weekday list as text',
 })
 
 test('fixture unknown-recurrence: m1 keeps four events with the newest class', async () => {
-  T.$newsDetailsOpen.set([])
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
   const { group } = fixtureGroup('payload-unknown-recurrence.json', 'm1')
   const view = await renderNode(React.createElement(T.NewsModelGroup, {
     group, impacts: {}, t: translator('en'), matchedOffers: null, detailsId: 'wf-m1' }), 'en')
@@ -1023,7 +1112,7 @@ test('fixture unknown-recurrence: m1 keeps four events with the newest class', a
 })
 
 test('fixture unknown-recurrence: m2 shows the tier_unavailable caveat and the exact ID', async () => {
-  T.$newsDetailsOpen.set([])
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
   const { group } = fixtureGroup('payload-unknown-recurrence.json', 'm2')
   const view = await renderNode(React.createElement(T.NewsModelGroup, {
     group, impacts: {}, t: translator('en'), matchedOffers: null, detailsId: 'wf-m2' }), 'en')

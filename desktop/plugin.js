@@ -8386,7 +8386,7 @@ function NewsRateTable({ previous, current, t, exact = false }) {
   ].filter(([, key]) => (previous && previous[key] != null) || (current && current[key] != null))
   if (!rows.length || !current) return null
   const compare = !!previous
-  return jsx('table', { className: 'wm-news-rates', children: [
+  return jsxs('table', { className: 'wm-news-rates', children: [
     jsx('thead', { children: jsx('tr', { children: [
       jsx('th', { children: '' }, 'h0'),
       compare ? jsx('th', { children: t('newsRateWas') }, 'h1') : null,
@@ -8494,7 +8494,7 @@ function NewsCard({ item, impact, t, flat = false }) {
       'data-news-impact': impact?.basis || 'unavailable', children: impactText }) : null,
     item.conditions ? jsx('p', { className: 'wm-news-conditions', children: newsConditionsText(item, t) }) : null,
     (item.related_routes && item.related_routes.length)
-      ? jsx('div', { className: 'wm-news-routes', children: [
+      ? jsxs('div', { className: 'wm-news-routes', children: [
           jsx('span', { children: t('newsRoutes', '') }),
           ...item.related_routes.map(route => jsx('span', { className: 'wm-news-route', children: route }, route)),
         ] })
@@ -8673,7 +8673,7 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
         latest?.conditions ? jsx('p', { className: 'wm-news-conditions', children: newsConditionsText(latest, t) }) : null,
         reasons ? jsx('p', { className: 'wm-news-reasons', children: reasons }) : null,
         (latest?.related_routes?.length)
-          ? jsx('div', { className: 'wm-news-routes', children: [
+          ? jsxs('div', { className: 'wm-news-routes', children: [
               jsx('span', { children: t('newsRoutes', '') }),
               ...latest.related_routes.map(route => jsx('span', { className: 'wm-news-route', children: route }, route)),
             ] })
@@ -8758,6 +8758,37 @@ function NewsPage() {
   const days = useValue($newsDays)
   const shown = useValue($newsShown)
   const showAll = useValue($newsShowAll)
+  // Pagination focus contract: a growing list keeps the interaction point
+  // focused (stable keys preserve the element); when the expansion button
+  // disappears — final page or all shown — focus moves predictably to the
+  // first newly revealed entry instead of falling back to body.
+  const focusDemand = useRef(null)
+  const paginationView = useRef(null)
+  useEffect(() => {
+    const prev = paginationView.current
+    paginationView.current = { shown, showAll, scope, category, search, days }
+    const demand = focusDemand.current
+    focusDemand.current = null
+    if (!demand || !prev) return
+    // A view change (scope, category, search or day window) resets the
+    // pagination state; focus then follows the user's own interaction.
+    if (prev.scope !== scope || prev.category !== category
+      || prev.search !== search || prev.days !== days) return
+    const button = document.querySelector(demand === 'show-all'
+      ? '[data-news-show-all]' : '[data-news-load-more]')
+    if (button) {
+      // The button stayed mounted (stable key): its focus is preserved.
+      if (document.activeElement !== button) button.focus()
+      return
+    }
+    // The button is gone: focus the first newly revealed entry.
+    const startIndex = demand === 'show-all' ? NEWS_FOR_YOU_LIMIT : prev.shown
+    const target = document.querySelector('.wm-news-list')?.children[startIndex]
+    if (target) {
+      if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1')
+      target.focus()
+    }
+  })
   const query = useQuery(newsQuery(identity))
   const current = query.data?.identity === identity && membershipIdentityCurrent(identity)
     ? query.data : null
@@ -8827,7 +8858,10 @@ function NewsPage() {
                 detailsId: `wm-news-fy-${index}` }, `g:${group.model}`)),
               !showAll && forYouEntries.length > NEWS_FOR_YOU_LIMIT
                 ? jsx('button', { type: 'button', className: 'wm-news-more', 'data-news-show-all': 'true',
-                    onClick: () => $newsShowAll.set(true), children: t('newsShowAll', forYouEntries.length) })
+                    onClick: () => {
+                      focusDemand.current = 'show-all'
+                      $newsShowAll.set(true)
+                    }, children: t('newsShowAll', forYouEntries.length) }, 'show-all')
                 : null,
             ] })
           : jsx('div', { className: 'wm-empty', role: 'status', children: jsx('p', { children: emptyText }) }))
@@ -8847,8 +8881,11 @@ function NewsPage() {
                     `c:${entry.item?.id || index}`)),
               remaining > 0
                 ? jsx('button', { type: 'button', className: 'wm-news-more', 'data-news-load-more': 'true',
-                    onClick: () => $newsShown.set(shown + NEWS_PAGE_SIZE),
-                    children: t('newsLoadMore', remaining) })
+                    onClick: () => {
+                      focusDemand.current = 'load-more'
+                      $newsShown.set(shown + NEWS_PAGE_SIZE)
+                    },
+                    children: t('newsLoadMore', remaining) }, 'load-more')
                 : null,
             ] })
           : jsx('div', { className: 'wm-empty', role: 'status', children: jsx('p', { children: emptyText }) })
@@ -8892,7 +8929,7 @@ function NewsPage() {
               },
               children: [t(key)] }, value)) }) : null,
       ] }),
-      grouped ? jsx('p', { className: 'wm-news-counts', children: [
+      grouped ? jsxs('p', { className: 'wm-news-counts', children: [
         jsx('span', { 'data-news-count': 'groups',
           children: t('newsCountGroups', scope === 'foryou' ? forYouEntries.length : grouped.groups.length) }),
         ' · ',
