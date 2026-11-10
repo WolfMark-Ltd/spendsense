@@ -209,6 +209,53 @@ test('a published write discount is applied, never flattened to input', () => {
   assert.equal(T.cacheSavings(200, rates, 1000, true), (200 * 1.5 + 1000 * 1) / 1e6)
 })
 
+test('a net cache loss keeps its sign in the state every surface reads', () => {
+  // Greptile P1: `num` clamps at zero for token counts, so a negative net
+  // saving must not pass through it. A write premium larger than the read
+  // discount is a real loss, not an unavailable figure.
+  const rates = { input: 2, output: 4, cache: .5, write: 3,
+    inputKnown: true, outputKnown: true, cacheKnown: true }
+  const bucket = { input: 100, output: 10, cacheRead: 200, cacheWrite: 1000,
+    netSavingsPrompt: 1300, netSavings: -0.0007 }
+  const state = T.savingsState(bucket, rates)
+  assert.equal(state.value, -0.0007)
+  assert.equal(state.partial, false, 'full coverage is not partial')
+  assert.equal(state.reason, null, 'a measured loss is not an unavailable figure')
+  assert.ok(T.fmtUsd(state.value).startsWith('−'), 'formatted with a minus, never zeroed')
+  // The full signed range survives; only an absent amount is null.
+  assert.equal(T.savingsState({ ...bucket, netSavings: 0 }, rates).value, 0, 'a measured zero is zero')
+  assert.equal(T.savingsState({ ...bucket, netSavings: 0.42 }, rates).value, 0.42, 'positives are unchanged')
+  assert.equal(T.savingsState({ ...bucket, netSavings: null }, rates).value, null, 'absence stays null')
+  assert.equal(T.savingsState({ ...bucket, netSavings: undefined }, rates).value, null, 'missing stays null')
+})
+
+test('a loss survives the ledger fold and the range totals', () => {
+  // write 3 > input 2, so 1000 write tokens at a 0.0007 loss outweigh the
+  // 200-token read discount.
+  const payload = { model: 'm', provider: 'p', providers: [{ slug: 'p', pricing: {
+    m: { input: '2', output: '4', cache: '.5', cache_write: '3', tiers: [] }
+  } }] }
+  const led = T.applyUsage(T.emptyLedger(), { now: NOW, sessionId: 's', storedId: 'conv', provider: 'p', payload,
+    usage: { model: 'm', input: 100, prompt: 1300, output: 10, cache_read: 200, cache_write: 1000, calls: 1 } })
+  const hist = led.sessions.conv
+  assert.equal(hist.netSavings, -0.0007)
+  assert.equal(T.savingsState(hist, null).value, -0.0007, 'the conversation keeps the loss')
+
+  const { rows, totals } = T.summarize(led, () => true, null)
+  assert.equal(totals.netSavings, -0.0007)
+  assert.equal(T.savingsState(totals, null).value, -0.0007, 'the totals line keeps the loss')
+  assert.equal(T.savingsState(rows[0], null).value, -0.0007, 'the ledger row keeps the loss')
+  assert.ok(T.fmtUsd(T.savingsState(rows[0], null).value).startsWith('−'))
+})
+
+test('negative amounts format with a minus at every magnitude', () => {
+  assert.equal(T.fmtUsd(-1.2), '−$1.20')
+  assert.equal(T.fmtUsd(-42), '−$42.00')
+  assert.equal(T.fmtUsd(-0.0007), '−$0.0007')
+  assert.equal(T.fmtUsd(0), '$0.00', 'zero stays a plain zero')
+  assert.equal(T.fmtUsd(null), '—', 'absence stays absent')
+})
+
 test('the gauge note names an unavailable figure and never claims exactness', () => {
   const t = (key, ...args) => (args.length ? `${key}:${args.join(',')}` : key)
   const missing = T.savedNote(t, { saved: null, savedReason: 'tiered' }, false)

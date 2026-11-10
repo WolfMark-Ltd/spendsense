@@ -481,7 +481,11 @@ function savingsState(bucket, rates) {
   // three streams it is made of.
   const prompt = num(b.prompt) || num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
   const covered = num(b.netSavingsPrompt)
-  const value = covered > 0 && Number.isFinite(num(b.netSavings)) ? num(b.netSavings) : null
+  // `num` clamps at zero because it guards token counts; a net saving is
+  // signed, and a cache-write premium can exceed the read discount. Keep the
+  // sign (Greptile P1) and keep an absent value absent.
+  const amount = finiteValue(b.netSavings)
+  const value = covered > 0 && amount != null ? amount : null
   const coverage = prompt ? Math.min(1, covered / prompt) : null
   return {
     value,

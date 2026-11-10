@@ -393,6 +393,30 @@ test('a conversation whose cold start is unreported shows the measured saving', 
     'a figure covering part of the conversation is never labelled exact')
 })
 
+test('a net cache loss renders as a signed figure, not $0.00', async () => {
+  // Greptile P1 on the sidebar surface: the write premium exceeds the read
+  // discount, so the conversation has a real net loss.
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedStoredSessionId.set('stored-loss')
+  const ledger = T.emptyLedger()
+  ledger.sessions['stored-loss'] = histBucket({
+    input: 100, output: 10, cacheRead: 200, cacheWrite: 1000, calls: 1,
+    pricedTokens: 1310, unpricedTokens: 0, cost: 0.002,
+    sources: { live: 1310 }, cacheEstimated: false, cacheSource: 'exact',
+    cacheCoveredPrompt: 1300, cacheCoveredRead: 200, cacheExactPrompt: 1300,
+    netSavingsPrompt: 1300, netSavings: -1.25,
+  })
+  T.$ledger.set(ledger)
+  host.state.focusedUsage.set(null)
+  const container = await renderMeter()
+  await flush()
+  const stats = container.querySelector('.wm-gauge-stats')
+  assert.match(stats.textContent, /−\$1\.25/, `signed saving: ${stats.textContent}`)
+  assert.doesNotMatch(stats.textContent, /\$0\.00/, 'a loss never renders as zero')
+  assert.match(stats.textContent, /exactLabel/, 'full coverage stays exact')
+})
+
 test('a cache-only frame renders as valid live usage', async () => {
   resetHost()
   host.state.focusedSessionId.set('s1')
