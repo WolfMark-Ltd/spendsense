@@ -2,7 +2,7 @@
 //
 // Browser interaction test for the PR-D Memberships polish: real Chrome
 // geometry and focus with synthetic attention accounts. Asserts the
-// segmented billing control fits a 380px pane without clipping, attention
+// six-choice billing control fits a 380px pane without clipping, attention
 // navigation expands the right account and visibly focuses the right
 // control, and a real segmented write persists. Skips with an explicit
 // message where no Chrome binary is available.
@@ -63,12 +63,12 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
       assert.equal(result.geometry.rows, 3, 'all three synthetic accounts render at 380px')
       assert.equal(result.geometry.segs.length, 3, 'each card has a segmented control')
       for (const seg of result.geometry.segs) {
-        assert.equal(seg.options, 4, `${seg.account} offers four arrangements`)
+        assert.equal(seg.options, 6, `${seg.account} offers six arrangements`)
         assert.equal(seg.pressed, 1, `${seg.account} shows exactly one pressed option`)
         assert.ok(seg.minHeight >= 38,
           `${seg.account} segmented buttons meet the 38px narrow touch target (got ${seg.minHeight})`)
         assert.equal(seg.clipped, 0, `${seg.account} segmented buttons are not clipped`)
-        assert.equal(seg.focusable, 4, `${seg.account} options are keyboard-focusable`)
+        assert.equal(seg.focusable, 6, `${seg.account} options are keyboard-focusable`)
       }
       assert.ok(result.geometry.paneOverflow <= 1,
         `the 380px pane has no horizontal overflow (${result.geometry.paneOverflow}px)`)
@@ -104,7 +104,8 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
       // A real segmented write persists through the current guards.
       assert.equal(result.steps.write.puts.length, 1, 'one arrangement write is sent')
       assert.deepEqual(result.steps.write.puts[0],
-        { id: 'xai:default', api_only: false, billing_arrangement: 'subscription' })
+        { id: 'xai:default', arrangement: 'subscription', owner_account_id: null,
+          rev: 'r1', route_rev: 'route-r1' })
       assert.equal(result.steps.write.pressedIsSubscription, true,
         'the control reflects the saved arrangement after re-read')
       assert.ok(result.containers['1200'].paneOverflow <= 1, 'no overflow at ledger width')

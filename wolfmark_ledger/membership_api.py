@@ -99,8 +99,20 @@ def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
     plan = custom if custom and custom.get("id") == selected_id else _plan_for(account, catalogue)
     native = mem.native_usage(snapshot, account, at=at)
     fee = mem.resolve_fee(account, catalogue, at=at)
-    arrangement = mem.billing_arrangement(account)
-    quota = mem.quota_view(account, native, plan if arrangement == "subscription" else None, at=at)
+    arrangement = str(account.get("route_arrangement") or mem.billing_arrangement(account))
+    if arrangement == "subscription" and plan and plan.get("billing_arrangement") == "free_tier":
+        arrangement = "free_tier"
+        price = plan.get("price") or {}
+        known_free = (isinstance(price.get("amount"), (int, float))
+                      and not isinstance(price.get("amount"), bool)
+                      and price.get("amount") == 0)
+        fee = {**fee, "basis": "free_tier",
+               "effective": {"amount": 0 if known_free else None,
+                             "currency": price.get("currency") if known_free else None,
+                             "period": price.get("period") if known_free else None,
+                             "billing_cycle": None,
+                             "source": "free_tier" if known_free else "none"}}
+    quota = mem.quota_view(account, native, plan if arrangement in {"subscription", "free_tier"} else None, at=at)
     family = str(account.get("family") or "")
     # Nous Portal OAuth uses its Hermes subscription; separate API keys use
     # metered credits. An account slot does not establish which credential it has.
@@ -120,9 +132,12 @@ def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
                     "reason": "the suggested plan does not cover this route"}
     return {
         **dict(account),
-        "plan": plan if arrangement == "subscription" else None,
+        "plan": plan if arrangement in {"subscription", "free_tier"} else None,
         "effective_arrangement": arrangement,
-        "fee": fee,
+        "fee": ({**fee, "basis": arrangement,
+                 "effective": {"amount": None, "currency": None, "period": None,
+                               "billing_cycle": None, "source": "none"}}
+                if arrangement in {"included", "no_plan", "invalid", "mixed"} else fee),
         "quota": quota,
         "plan_proposal": proposal,
         "plan_reconfirmation": reconfirmation,
@@ -147,6 +162,7 @@ def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
         # A corrupt store is not "no memberships": say so, and let the caller
         # surface a read error instead of an empty, confident list.
         raise store.StoreUnreadable(str(data["error"]))
+    resolved = store.resolve_route_entitlements(data.get("accounts", []), data.get("entitlement_store") or {}, book, at)
     snapshots: dict[str, Any] = {}
     if native_snapshots is not None:
         snapshots = {str(family): snapshot
@@ -162,13 +178,14 @@ def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
             elif probe["state"] == "error":
                 notes.append(f"{family}: usage read failed ({probe['reason']}).")
     cards = [account_card(a, book, snapshots.get(str(a.get("family") or "")), at=at)
-             for a in data.get("accounts", [])]
+             for a in resolved.get("accounts", [])]
     return {
         "ok": True,
         "catalogue_version": book.get("catalogue_version"),
         "accounts": cards,
         "membership_store": data["membership_store"],
         "seat_store": data["seat_store"],
+        "entitlement_store": data["entitlement_store"],
         "store": {"loaded": data.get("loaded"), "error": data.get("error") or "", "path": data.get("path")},
         "native_probe": bool(native),
         "notes": notes,
@@ -184,10 +201,13 @@ def fee_summary_payload(*, path: Optional[Path | str] = None,
     data = store.load_with_seats(path)
     if data.get("error"):
         raise store.StoreUnreadable(str(data["error"]))
+    resolved = store.resolve_route_entitlements(data.get("accounts", []), data.get("entitlement_store") or {}, book, at)
     entries = []
     totals: dict[str, float] = {}
-    for account in data.get("accounts", []):
+    for account in resolved.get("accounts", []):
         card = account_card(account, book, at=at)
+        if card.get("effective_arrangement") not in {"subscription", "free_tier"}:
+            continue
         fee = card.get("fee") or {}
         effective = fee.get("effective") or {}
         amount = effective.get("amount")
@@ -344,6 +364,8 @@ DERIVED_FIELDS = frozenset({
     # Route-eligibility lists are computed from the catalogue per request, so a
     # card posted back unchanged must not try to persist them.
     "plan_choices", "excluded_plans", "seat_revisions", "seat_rev",
+    "route_entitlements", "route_entitlement_rev", "route_arrangement",
+    "route_relationship_status", "entitlement_owner_id", "entitlement_owner",
 })
 # `usage_source` and `catalogue_plans` are written by discovery and re-validated
 # on the next save, so they are part of the document rather than derived.
@@ -365,6 +387,21 @@ def save_payload(account_id: str, body: Mapping[str, Any], *, if_rev: Optional[s
     result = store.save_account(payload, path, if_rev=if_rev or (body or {}).get("rev"),
                                 must_exist=True)
     return {"ok": True, "account": result["account"], "accounts": result["accounts"]}
+
+
+def save_arrangement_payload(account_id: str, body: Mapping[str, Any], *,
+                             path: Optional[Path | str] = None,
+                             catalogue: Optional[Mapping[str, Any]] = None,
+                             at: Any = None) -> dict[str, Any]:
+    if set(body) != {"arrangement", "owner_account_id", "rev", "route_rev"}:
+        raise ValueError("billing arrangement update needs its arrangement and both revision tokens")
+    book, _source = active_catalogue(catalogue or None)
+    result = store.set_account_arrangement(
+        account_id, body.get("arrangement"), owner_account_id=body.get("owner_account_id"),
+        if_rev=body.get("rev"), if_route_rev=body.get("route_rev"), path=path,
+        catalogue=book, at=at)
+    return {"ok": True, "account": result["account"], "accounts": result["accounts"],
+            "route_entitlement_rev": result["route_entitlement_rev"]}
 
 
 def save_seat_payload(account_id: str, body: Mapping[str, Any], *,

@@ -26,7 +26,7 @@ const accounts = [
     quota: { windows: [] }, manual_exhaustions: [], fee_overrides: [],
     plan_choices: [{ id: 'xai.supergrok', name: 'SuperGrok',
       price: { amount: null, currency: null, period: 'month' } }],
-    excluded_plans: [], rev: 'r1',
+    excluded_plans: [], rev: 'r1', route_entitlement_rev: 'route-r1',
   },
   {
     id: 'nous:default', family: 'nous', label: 'Nous',
@@ -37,7 +37,7 @@ const accounts = [
     quota: { windows: [] }, manual_exhaustions: [], fee_overrides: [],
     plan_choices: [{ id: 'nous.portal', name: 'Nous Portal',
       price: { amount: null, currency: null, period: 'month' } }],
-    excluded_plans: [], rev: 'r1',
+    excluded_plans: [], rev: 'r1', route_entitlement_rev: 'route-r1',
   },
   {
     id: 'openai:default', family: 'openai', label: 'OpenAI',
@@ -51,7 +51,7 @@ const accounts = [
         manual: { id: 'man-1', status: 'reconfirm_due' } },
     ] },
     manual_exhaustions: [], fee_overrides: [], plan_choices: [],
-    excluded_plans: [], rev: 'r1',
+    excluded_plans: [], rev: 'r1', route_entitlement_rev: 'route-r1',
   },
 ]
 const puts = []
@@ -60,16 +60,18 @@ try {
   plugin.register({
     rest: async (path, opts = {}) => {
       const method = String(opts.method || 'GET').toUpperCase()
-      if (method === 'PUT' && path.startsWith('/membership/accounts/')) {
-        const id = decodeURIComponent(path.split('/').pop())
+      if (method === 'PUT' && path.endsWith('/arrangement')) {
+        const id = decodeURIComponent(path.split('/')[3])
         const body = opts.body || {}
-        puts.push({ id, api_only: body.api_only ?? null,
-          billing_arrangement: body.billing_arrangement ?? null })
+        puts.push({ id, arrangement: body.arrangement ?? null,
+          owner_account_id: body.owner_account_id ?? null, rev: body.rev ?? null,
+          route_rev: body.route_rev ?? null })
         const idx = accounts.findIndex(a => a.id === id)
         if (idx >= 0) {
           const next = { ...accounts[idx], ...body, rev: 'r2' }
-          next.effective_arrangement = next.api_only ? 'api_only'
-            : (next.billing_arrangement || 'unconfirmed')
+          next.billing_arrangement = body.arrangement
+          next.api_only = body.arrangement === 'api_only'
+          next.effective_arrangement = body.arrangement
           accounts[idx] = next
         }
         return { ok: true }

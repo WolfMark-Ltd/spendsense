@@ -53,7 +53,7 @@ const account = (over = {}) => ({
 test('the fee line always names its basis', () => {
   assert.equal(T.feeLabel({ basis: 'catalogue', effective: { amount: 20, currency: 'USD', period: 'month' } }),
     'Catalogue: $20.00/mo')
-  assert.equal(T.feeLabel({ basis: 'no_plan', effective: {} }), 'No plan selected')
+  assert.equal(T.feeLabel({ basis: 'no_plan', effective: {} }), 'No current plan')
   assert.match(T.feeLabel({ basis: 'unpriced', effective: {} }), /no published price/)
   const declared = T.feeLabel({ basis: 'declared', effective: { amount: 17, currency: 'GBP', period: 'month' },
     published: { amount: 20, currency: 'USD' }, currency_comparable: true })
