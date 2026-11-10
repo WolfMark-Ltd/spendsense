@@ -38,7 +38,7 @@ import {
   useQuery,
   useValue
 } from '@hermes/plugin-sdk'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
@@ -1746,17 +1746,101 @@ function useStableLive() {
 }
 
 /**
+ * Edge-aware placement for an open InfoTip popover. Pure geometry: given the
+ * anchor (the popover's offset parent), the popover's measured rect and the
+ * visible scope rect (nearest .wm-analytics/.wm-pane, else the viewport),
+ * keep the author's preferred alignment when it fits, flip onto a fitting
+ * edge when it does not, and otherwise clamp the popover into the scope (a
+ * mid-container trigger in a narrow scope fits neither pure alignment).
+ * Returns { x, y, left, top }: x/y drive the alignment classes, while left/
+ * top are pixel offsets relative to the anchor — null when the classes alone
+ * place the popover correctly. Layout-free environments (jsdom) report zero
+ * rects: the preference is kept with no offsets, so unit tests pin the static
+ * classes and only real browsers adjust.
+ */
+function infoTipPlacement(anchor, pop, scope, { dir = 'down', wide = false } = {}) {
+  const preferred = { x: wide ? 'right' : 'left', y: dir === 'up' ? 'up' : 'down', left: null, top: null }
+  const laidOut = [anchor, pop, scope].every(r => r && (r.width || r.height || r.right || r.bottom))
+  if (!laidOut) return preferred
+  const GAP = 6
+  const leftFor = x => (x === 'left' ? anchor.left : anchor.right - pop.width)
+  const topFor = y => (y === 'up' ? anchor.top - GAP - pop.height : anchor.bottom + GAP)
+  const fitsX = left => pop.width <= scope.width && left >= scope.left && left + pop.width <= scope.right
+  const fitsY = top => pop.height <= scope.height && top >= scope.top && top + pop.height <= scope.bottom
+  const clamp = (value, low, high) => Math.min(Math.max(value, low), high)
+  const next = { ...preferred }
+  if (!fitsX(leftFor(next.x))) {
+    const flipped = next.x === 'left' ? 'right' : 'left'
+    if (fitsX(leftFor(flipped))) next.x = flipped
+  }
+  if (!fitsX(leftFor(next.x)) && pop.width <= scope.width) {
+    next.left = clamp(leftFor(next.x), scope.left, scope.right - pop.width) - anchor.left
+  }
+  if (!fitsY(topFor(next.y))) {
+    const flipped = next.y === 'up' ? 'down' : 'up'
+    if (fitsY(topFor(flipped))) next.y = flipped
+  }
+  if (!fitsY(topFor(next.y)) && pop.height <= scope.height) {
+    next.top = clamp(topFor(next.y), scope.top, scope.bottom - pop.height) - anchor.top
+  }
+  return next
+}
+
+/**
  * Contextual explanation replacing a paragraph of permanent prose. One popover
  * is open at a time ($infoOpen), so narrow panes never stack explanations.
  * Opens on hover, focus and click; closes on leave, blur and Escape. Clicking
  * always opens (never toggles shut what hover just opened), and the button
- * keeps natural focus so Escape works after mouse interaction too.
+ * keeps natural focus so Escape works after mouse interaction too. On open the
+ * popover is measured once against its visible scope and flipped onto a
+ * fitting edge (clamped when neither pure alignment fits), so triggers near
+ * a container or viewport edge never overflow or grow scrollbars; the
+ * author's dir/wide props stay the preference.
  */
 function InfoTip({ dir = 'down', id, label, text, wide = false }) {
   const open = useValue($infoOpen)
   const isOpen = open === id
   const show = () => $infoOpen.set(id)
   const hide = () => { if ($infoOpen.get() === id) $infoOpen.set(null) }
+  const btnRef = useRef(null)
+  const popRef = useRef(null)
+  const [placed, setPlaced] = useState(null)
+  useEffect(() => {
+    if (!isOpen) { setPlaced(null); return }
+    const btn = btnRef.current
+    const pop = popRef.current
+    if (!btn || !pop || typeof btn.getBoundingClientRect !== 'function') return
+    const host = btn.closest('.wm-analytics,.wm-pane')
+    // Client box, not border box: classic (non-overlay) scrollbars occupy
+    // layout inside the border box, and scrollable overflow is measured
+    // against the client box — a popover parked in the gutter still grows
+    // scrollWidth/scrollHeight there. Neither scope surface has a border,
+    // and layout is ltr-only, so the client box starts at the border origin.
+    let scope
+    if (host) {
+      const box = host.getBoundingClientRect()
+      scope = { left: box.left, top: box.top, right: box.left + host.clientWidth,
+        bottom: box.top + host.clientHeight, width: host.clientWidth, height: host.clientHeight }
+    } else {
+      const width = document.documentElement.clientWidth || window.innerWidth
+      const height = document.documentElement.clientHeight || window.innerHeight
+      scope = { left: 0, top: 0, right: width, bottom: height, width, height }
+    }
+    const parent = pop.offsetParent
+    const anchor = parent && parent !== document.body && parent !== document.documentElement
+      && typeof parent.getBoundingClientRect === 'function'
+      ? parent.getBoundingClientRect() : btn.getBoundingClientRect()
+    setPlaced(infoTipPlacement(anchor, pop.getBoundingClientRect(), scope, { dir, wide }))
+  }, [isOpen, id, dir, wide, text])
+  const alignRight = placed ? placed.x === 'right' : wide
+  const openUp = placed ? placed.y === 'up' : dir === 'up'
+  // Clamp fallback: only when neither pure alignment fits (mid-container
+  // triggers in narrow scopes). Inline offsets beat the classes; the
+  // opposing edge resets so left/right and top/bottom never fight.
+  const popStyle = placed && (placed.left != null || placed.top != null) ? {
+    ...(placed.left != null ? { left: `${placed.left}px`, right: 'auto' } : null),
+    ...(placed.top != null ? { top: `${placed.top}px`, bottom: 'auto' } : null),
+  } : undefined
   return jsxs('span', {
     className: 'wm-info',
     onMouseLeave: hide,
@@ -1764,6 +1848,7 @@ function InfoTip({ dir = 'down', id, label, text, wide = false }) {
       jsx('button', {
         type: 'button',
         className: 'wm-info-btn',
+        ref: btnRef,
         'aria-label': label,
         'aria-expanded': isOpen,
         'aria-controls': `wm-info-${id}`,
@@ -1783,8 +1868,11 @@ function InfoTip({ dir = 'down', id, label, text, wide = false }) {
         children: 'i'
       }),
       isOpen
-        ? jsx('span', { id: `wm-info-${id}`, role: 'tooltip',
-            className: cn('wm-info-pop', dir === 'up' && 'wm-info-up', wide && 'wm-info-pop-wide'), children: text })
+        ? jsx('span', { id: `wm-info-${id}`, role: 'tooltip', ref: popRef, style: popStyle,
+            className: cn('wm-info-pop', openUp && 'wm-info-up',
+              wide && 'wm-info-pop-wide',
+              !wide && alignRight && 'wm-info-flip-x',
+              wide && !alignRight && 'wm-info-flip-left'), children: text })
         : null
     ].filter(Boolean), `info-${id}`)
   })
@@ -2123,7 +2211,9 @@ const SHARED_CSS = [
   '.wm-info-btn:focus-visible{outline:2px solid var(--wm-action);outline-offset:2px}',
   '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:auto;z-index:40;width:max-content;max-width:min(260px,calc(100vw - 32px));max-width:min(260px,calc(100cqi - 32px));background:var(--wm-surface-raised);border:1px solid var(--wm-border);border-radius:var(--wm-radius-nested);padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;white-space:normal;overflow-wrap:anywhere;color:var(--wm-text-secondary);box-shadow:0 8px 24px color-mix(in srgb,var(--wm-border) 55%,transparent)}',
   '.wm-info-pop.wm-info-up{top:auto;bottom:calc(100% + 6px)}',
-  '.wm-info-pop-wide{left:auto;right:0;width:max-content;max-width:min(260px,calc(100cqi - 32px))}'
+  '.wm-info-pop-wide{left:auto;right:0;width:max-content;max-width:min(260px,calc(100cqi - 32px))}',
+  '.wm-info-pop.wm-info-flip-x{left:auto;right:0}',
+  '.wm-info-pop-wide.wm-info-flip-left{left:0;right:auto}'
 ].join('');
 
 const METER_CSS = [
@@ -2498,11 +2588,21 @@ function ProductHeader({ title, subtitle, actions }) {
 }
 function ProductShell({ children, pageStyles = '' }) {
   const supplementalStyles = Array.isArray(pageStyles) ? pageStyles.join('') : pageStyles
-  return jsxs('div', { className: 'wm-analytics wm-product', children: [
-    jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + (supplementalStyles || '') }),
-    jsx(LedgerTabs, {}),
-    children
-  ].filter(Boolean) })
+  // Mirror the Meter pane: a hover-opened tip has no focused button to catch
+  // Escape, so dismiss it here on capture and keep the window-level ledger
+  // closer out of it. Plain Escape (no tip open) still propagates as before.
+  return jsxs('div', { className: 'wm-analytics wm-product',
+    onKeyDownCapture: event => {
+      if (event.key === 'Escape' && $infoOpen.get()) {
+        event.stopPropagation()
+        $infoOpen.set(null)
+      }
+    },
+    children: [
+      jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + (supplementalStyles || '') }),
+      jsx(LedgerTabs, {}),
+      children
+    ].filter(Boolean) })
 }
 function keyedElementChildren(children, prefix) {
   return children.map((child, index) => {
@@ -7931,10 +8031,13 @@ function LedgerPage() {
   const totalSaved = savingsState(totals, null)
   const dayCount = Object.keys(led.days).length
 
-  // Esc closes the page, unless the user is typing somewhere.
+  // Esc closes the page, unless the user is typing somewhere. An open info
+  // tip dismisses first, so hover-opened tips with focus outside both scopes
+  // never close the page out from under the user.
   useEffect(() => {
     const onKey = e => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
+      if ($infoOpen.get()) { $infoOpen.set(null); return }
       const el = e.target
       if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return
       if (document.querySelector('[role="dialog"]')) return
@@ -10653,7 +10756,7 @@ export const __test = {
   readUsage, cacheCoverage, cacheCoverageDetail, cacheCoverageLine,
   resolveRates,
   summarize,
-  Meter, MeterHeader, CostKpi, TokenComposition, CacheGauge, RatesPanel, MeterEmpty, InfoTip,
+  Meter, MeterHeader, CostKpi, TokenComposition, CacheGauge, RatesPanel, MeterEmpty, InfoTip, infoTipPlacement,
   useStableLive, mergeStableLive, stableLive, resetStableLive, meterPresence, compositionShares,
   $ratesOpen, $infoOpen, METER_CSS, RING_R, RING_C,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
