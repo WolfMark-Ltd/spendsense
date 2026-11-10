@@ -9085,17 +9085,19 @@ function NewsPage() {
     // pagination state; focus then follows the user's own interaction.
     if (prev.scope !== scope || prev.category !== category
       || prev.search !== search || prev.days !== days) return
-    const button = document.querySelector(demand === 'show-all'
+    const button = document.querySelector(demand.kind === 'show-all'
       ? '[data-news-show-all]' : '[data-news-load-more]')
     if (button) {
       // The button stayed mounted (stable key): its focus is preserved.
       if (document.activeElement !== button) button.focus()
       return
     }
-    // The button is gone: focus the first newly revealed entry. The inner
+    // The button is gone: focus the first newly revealed entry. For the
+    // For You expansion that is the actual prior visible length — the ranked
+    // prefix may include cards, so it is not a constant index. The inner
     // lists all carry role="list"; the stale-error branch wraps its list in
     // an outer .wm-news-list (alert + list), so target the role-marked list.
-    const startIndex = demand === 'show-all' ? NEWS_FOR_YOU_LIMIT : prev.shown
+    const startIndex = demand.kind === 'show-all' ? demand.shown : prev.shown
     const target = document.querySelector('.wm-news-list[role="list"]')?.children[startIndex]
     if (target) {
       if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1')
@@ -9136,7 +9138,22 @@ function NewsPage() {
   // the observed-at window apply to All Updates only.
   const forYouEntries = grouped
     ? newsFilterEntries(relevantEntries, { category, nowMs }) : []
-  const forYouVisible = showAll ? forYouEntries : forYouEntries.slice(0, NEWS_FOR_YOU_LIMIT)
+  // Initial For You page: the smallest ranked prefix through the fifth model
+  // group — relevant cards ranked before that group keep their original rank
+  // and stay visible, and the fifth group is never displaced. With fewer
+  // than five groups, every entry shows. No reordering, no new sections.
+  const forYouPrefixCount = grouped ? (() => {
+    let groups = 0
+    for (let index = 0; index < forYouEntries.length; index += 1) {
+      if (forYouEntries[index].kind === 'group') {
+        groups += 1
+        if (groups === NEWS_FOR_YOU_LIMIT) return index + 1
+      }
+    }
+    return forYouEntries.length
+  })() : 0
+  const forYouVisible = showAll
+    ? forYouEntries : forYouEntries.slice(0, forYouPrefixCount)
   const filtered = grouped && scope === 'all'
     ? newsFilterEntries(grouped.entries, { category, search, days, nowMs }) : []
   const visibleEntries = filtered.slice(0, shown)
@@ -9173,10 +9190,10 @@ function NewsPage() {
                   `g:${entry.model}`)
                 : jsx(NewsCard, { item: entry.item, impact: impacts[entry.item?.id], t },
                     `c:${entry.item?.id || index}`)),
-              !showAll && forYouEntries.length > NEWS_FOR_YOU_LIMIT
+              !showAll && forYouVisible.length < forYouEntries.length
                 ? jsx('button', { type: 'button', className: 'wm-news-more', 'data-news-show-all': 'true',
                     onClick: () => {
-                      focusDemand.current = 'show-all'
+                      focusDemand.current = { kind: 'show-all', shown: forYouVisible.length }
                       $newsShowAll.set(true)
                     }, children: t('newsShowAll', forYouEntries.length) }, 'show-all')
                 : null,
@@ -9204,7 +9221,7 @@ function NewsPage() {
               remaining > 0
                 ? jsx('button', { type: 'button', className: 'wm-news-more', 'data-news-load-more': 'true',
                     onClick: () => {
-                      focusDemand.current = 'load-more'
+                      focusDemand.current = { kind: 'load-more' }
                       $newsShown.set(shown + NEWS_PAGE_SIZE)
                     },
                     children: t('newsLoadMore', remaining) }, 'load-more')

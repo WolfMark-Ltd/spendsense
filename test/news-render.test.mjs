@@ -1453,6 +1453,8 @@ test('a relevant plan-only payload renders the plan card in For You', async () =
   assert.ok(c().querySelector('[data-news-plan]'),
     'the relevant plan card appears in For You')
   assert.ok(!c().querySelector('.wm-empty'), 'no empty state while the plan is shown')
+  assert.equal(c().querySelector('button[data-news-show-all]') === null, true,
+    'a plan-only For You shows every entry, so no Show All is offered')
   // The subscription category keeps the plan card.
   const subsButton = segmentButton('Subscription Updates')
   assert.ok(subsButton, 'the Subscription Updates segment renders')
@@ -1529,9 +1531,12 @@ test('details panel ids separate colliding model/provider tuples', async () => {
   assert.equal(g1.model, 'a:b')
   assert.equal(g2.model, 'a')
   await React.act(async () => { T.$newsDetailsOpen.set([]) })
-  const view = await renderNode(React.createElement(React.Fragment, null,
+  // A function component wrapper keeps renderNode's cloneElement(t) off the
+  // Fragment (a bare Fragment rejects the prop with a React warning).
+  const BothGroups = () => React.createElement(React.Fragment, null,
     React.createElement(T.NewsModelGroup, { group: g1, impacts: {}, t: translator('en'), matchedOffers: null }),
-    React.createElement(T.NewsModelGroup, { group: g2, impacts: {}, t: translator('en'), matchedOffers: null })), 'en')
+    React.createElement(T.NewsModelGroup, { group: g2, impacts: {}, t: translator('en'), matchedOffers: null }))
+  const view = await renderNode(React.createElement(BothGroups), 'en')
   const ids = [...view.container.querySelectorAll('button[data-news-details]')]
     .map(button => button.getAttribute('aria-controls'))
   assert.equal(new Set(ids).size, 2,
@@ -1617,4 +1622,121 @@ test('an open Details panel never migrates to another connection', async () => {
     connection = 'gateway-a'
     await React.act(async () => { lib.$testConnectionId.set('gateway-a') })
   }
+})
+
+/** Ten relevant model groups plus one relevant plan, in memory, no fixture. */
+const prefixPayload = () => ({
+  ok: true,
+  local: {
+    baseline: true, snapshot_at: '2026-11-01T00:00:00Z', removed_model_count: 0,
+    items: [
+      // Exact recency ranks the plan card first; nothing is reordered by the
+      // page afterwards.
+      {
+        id: 'plan-1', origin: 'local', category: 'subscription', provider: 'Acme', model: '',
+        summary: 'Team: fee $100/month → $200/month.', summary_code: 'news_sum_plan_change',
+        summary_params: { plan: 'Team', fee_before: '$100/month', fee_after: '$200/month' },
+        previous: null, current: null, has_tiers: false,
+        observed_at: '2026-11-03T00:00:00Z', effective_at: '', source_url: '',
+        provenance: '', confidence: 'observed',
+        relevance: { relevant: true, reasons: ['selected_plan_family'] },
+        last_used_at: '2026-11-05T00:00:00Z',
+      },
+      ...Array.from({ length: 10 }, (_, i) => ({
+        id: `n${i}`, origin: 'local', category: 'price_reduction',
+        provider: 'Acme', model: `acme/model-${i}`,
+        summary: `model-${i} changed.`, summary_code: '', summary_params: null,
+        previous: { input: 5.0, output: 25.0, cache_read: null, cache_write: null },
+        current: { input: 4.0, output: 25.0, cache_read: null, cache_write: null },
+        has_tiers: false, observed_at: '2026-11-03T00:00:00Z', effective_at: '',
+        source_url: '', provenance: '', confidence: 'observed',
+        relevance: { relevant: true, reasons: ['configured_provider'] },
+      })),
+    ],
+  },
+  central: { items: [] }, impacts: {}, settings: { live_updates: true },
+  signals: { configured_families: ['acme'], plan_families: ['team'] },
+})
+
+/** Render the settled For You page over `payload`; scope preset to For You. */
+const renderPrefixPage = async payload => {
+  T.setRest(async path => path === '/news/refresh' ? payload : { ok: true })
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => { T.$newsScope.set('foryou') })
+  await React.act(async () => { T.$newsCategory.set('all') })
+  await React.act(async () => { T.$newsSearch.set('') })
+  await React.act(async () => { T.$newsDays.set(null) })
+  await React.act(async () => { T.$newsShown.set(T.NEWS_PAGE_SIZE) })
+  await React.act(async () => { T.$newsShowAll.set(false) })
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  await React.act(async () => {
+    root.render(React.createElement(QueryClientProvider, { client: queryClient },
+      React.createElement(T.NewsPage)))
+  })
+  await React.act(async () => {
+    for (let i = 0; i < 6; i += 1) await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  const c = () => container
+  const list = () => c().querySelector('.wm-news-list[role="list"]')
+  return { c, list }
+}
+
+test('For You shows the ranked prefix through the fifth model group, with the plan in place', async () => {
+  const { c, list } = await renderPrefixPage(prefixPayload())
+  // The initial page is the smallest ranked prefix through the FIFTH model
+  // group: the plan card keeps its original rank ahead of it, so five model
+  // groups AND the ranked plan are all visible — the fifth group is never
+  // pushed behind the card.
+  const groups = () => [...c().querySelectorAll('[data-news-group]')]
+    .map(el => el.getAttribute('data-news-group'))
+  assert.equal(groups().length, 5, 'the fifth model group is not displaced')
+  assert.equal(groups().includes('acme/model-4') === true, true,
+    'the fifth ranked model group renders on the initial page')
+  assert.equal(c().querySelector('[data-news-plan]') === null, false,
+    'the ranked plan card stays visible alongside the five groups')
+  // Original rank preserved: the plan card is the first entry, then the
+  // groups in rank order — no partition or reorder.
+  assert.equal(list().children[0].getAttribute('data-news-plan') !== null, true,
+    'the plan keeps its original ranked position')
+  assert.equal(list().children[1].getAttribute('data-news-group'), 'acme/model-0')
+  assert.equal(list().children[5].getAttribute('data-news-group'), 'acme/model-4')
+  // Honest count labels over all ranked entries.
+  assert.match(c().querySelector('[data-news-scope]').textContent, /11 updates/,
+    'the For You tab counts all ranked entries honestly')
+  // Entries remain beyond the prefix, so Show All is offered with the total.
+  const showAll = c().querySelector('button[data-news-show-all]')
+  assert.ok(showAll, 'entries remain beyond the prefix: Show All is offered')
+  assert.match(showAll.textContent, /11/, 'Show All names the honest entry total')
+  // Expanding reveals every entry, then focus moves to the FIRST NEWLY
+  // revealed entry at the actual prior visible length (6 here), not a
+  // constant index.
+  await React.act(async () => { showAll.focus() })
+  await React.act(async () => { showAll.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  assert.equal(groups().length, 10, 'Show All reveals all ten model groups')
+  assert.equal(c().querySelector('[data-news-plan]') !== null, true,
+    'the plan card stays after expansion')
+  assert.equal(list().children.length, 11, 'all ranked entries are listed')
+  assert.equal(document.activeElement, list().children[6],
+    'focus lands on the first newly revealed entry at the actual prior length')
+  assert.equal(list().children[6].getAttribute('data-news-group'), 'acme/model-5',
+    'the focused entry is the first one the expansion revealed')
+  assert.equal(c().querySelector('button[data-news-show-all]') === null, true,
+    'no Show All remains once every entry is visible')
+})
+
+test('a groups-only For You keeps the exact five-group page with no Show All', async () => {
+  const payload = prefixPayload()
+  payload.local.items = payload.local.items.filter(item => item.model).slice(0, 5)
+  const { c } = await renderPrefixPage(payload)
+  const groups = [...c().querySelectorAll('[data-news-group]')]
+    .map(el => el.getAttribute('data-news-group'))
+  assert.deepEqual(groups, ['acme/model-0', 'acme/model-1', 'acme/model-2', 'acme/model-3', 'acme/model-4'],
+    'exactly the old five-group initial page')
+  assert.equal(c().querySelector('button[data-news-show-all]') === null, true,
+    'five groups with no cards leave nothing behind: no Show All')
+  assert.match(c().querySelector('[data-news-scope]').textContent, /5 updates/,
+    'the honest entries count')
 })
