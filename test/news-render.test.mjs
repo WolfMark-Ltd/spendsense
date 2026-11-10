@@ -1209,7 +1209,7 @@ test('fixture unknown-recurrence: m1 keeps four events with the newest class', a
   const ownRecords = [...panel.querySelectorAll('[data-news-evidence] [data-news-source-id]')]
   assert.deepEqual(ownRecords.map(el => el.getAttribute('data-news-source-id')),
     ['md-c312c6eae578',
-      'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-rf2ea95',
+      'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-r4def01',
       'local-price-reduction-acme-m1--r-----cache-read---null---cache-writ-8f80b1eeda',
       'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22'],
     'the latest event and every history event keep their own original record reachable')
@@ -1222,7 +1222,7 @@ test('fixture unknown-recurrence: m1 keeps four events with the newest class', a
     'no merged evidence block: the recurrence stayed separate')
   const history = panel.querySelector('[data-news-history]')
   assert.deepEqual([...history.querySelectorAll('[data-news-event]')].map(el => el.getAttribute('data-news-event')), [
-    'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-rf2ea95',
+    'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-r4def01',
     'local-price-reduction-acme-m1--r-----cache-read---null---cache-writ-8f80b1eeda',
     'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22',
   ])

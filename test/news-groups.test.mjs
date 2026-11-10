@@ -900,7 +900,7 @@ test('payload-unknown-recurrence: recurrence stays separate; the newest drives t
   assert.equal(m1.latest.id, 'md-c312c6eae578')
   assert.equal(m1.news_class, 'increase')
   assert.deepEqual(m1.history.map(event => event.id), [
-    'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-rf2ea95',
+    'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-r4def01',
     'local-price-reduction-acme-m1--r-----cache-read---null---cache-writ-8f80b1eeda',
     'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22',
   ])
