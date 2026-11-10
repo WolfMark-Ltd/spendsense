@@ -49,6 +49,10 @@ const TS_OLD = uniqueId(item => item.model === 'ts-old90day')
 const TS_MALFORMED = uniqueId(item => item.model === 'ts-malformed')
 const TS_FUTURE = uniqueId(item => item.model === 'ts-future')
 const TS_EMPTY = uniqueId(item => item.model === 'ts-empty')
+// Page-local evidence-payload identities (built in news-layout.page.jsx; not
+// committed fixtures — see the README's evidence-variant note).
+const EVIDENCE_HIST_LOCAL_ID = 'evidence-hist-local-1'
+const EVIDENCE_HIST_CENTRAL_ID = 'evidence-hist-central-1'
 
 // Mandatory candidate verification: either explicit flag requires the
 // candidate DOM hooks — a mandatory run must FAIL, never skip, when the
@@ -460,6 +464,78 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
   assert.ok(probe.officialNote, 'the official verification block renders its source note')
   assert.equal(probe.officialNote.linked, false,
     `the official source note is plain text, never a link (${probe.officialNote?.text})`)
+
+  // --- evidence retention regressions (page-local payload) -----------------
+  // 1) Same-ID local+central records dedupe to ONE event, but both records
+  //    stay recoverable in Details: each record's source URL, full observed
+  //    timestamp, effective date and provenance.
+  // 2) A proven distinct-ID pair collapses into one event that becomes
+  //    HISTORY once a newer update lands in the same offer: the historical
+  //    event keeps every original id, both origin evidences, full stamps,
+  //    provenance, its exact previous/current four rates and its raw tier
+  //    type/size recoverable (text or attributes; display format is not
+  //    constrained beyond recoverability).
+  const evidence = await runProbe(h, 'evidence__all__1200__dark__en')
+  assert.ok(!evidence.probe?.skipped, 'evidence probe ran against the candidate DOM')
+  const evOfferOf = model => evidence.probe.evidence?.find(offer => offer.model === model)
+  assert.ok(evOfferOf('ev-model') && evOfferOf('hist-model'),
+    `evidence variant offers rendered (${JSON.stringify(evidence.probe.evidence?.map(o => o.model))})`)
+
+  const shared = evOfferOf('ev-model')
+  assert.equal(shared.eventCount, 1,
+    `same-ID local+central records dedupe to exactly one event (${shared.eventCount})`)
+  const SHARED_TOKENS = [
+    'evidence-shared-event-1',
+    'https://announcements.spend-sense.example/feed/ev-shared-local',
+    'https://announcements.spend-sense.example/feed/ev-shared-central',
+    '2026-11-09T08:00:00Z', '2026-11-10T10:00:00Z',
+    '2026-11-08', '2026-11-09',
+    'Synthetic local diff (evidence variant)', 'Synthetic central feed (evidence variant)',
+  ]
+  for (const token of SHARED_TOKENS) {
+    assert.ok(shared.panelHtml.includes(token),
+      `same-ID variant keeps both records recoverable in Details: ${token}`)
+  }
+
+  const hist = evOfferOf('hist-model')
+  assert.equal(hist.eventCount, 2,
+    `the proven pair collapsed into one event beside the newer update (${hist.eventCount})`)
+  assert.equal(hist.historyEvents.length, 1, 'the collapsed pair sits in History')
+  const histLi = hist.historyEvents[0]
+  assert.equal(histLi.id, EVIDENCE_HIST_LOCAL_ID,
+    'the historical event element carries its merged original id')
+  assert.ok(histLi.sourceTags.includes('local') && histLi.sourceTags.includes('central'),
+    `the historical event keeps both origin evidences (${JSON.stringify(histLi.sourceTags)})`)
+  const HIST_LI_TOKENS = [
+    EVIDENCE_HIST_CENTRAL_ID,
+    'https://announcements.spend-sense.example/feed/hist-local',
+    'https://announcements.spend-sense.example/feed/hist-central',
+    '2026-11-08T11:00:00Z', '2026-11-08T09:30:00Z',
+    '2026-11-07',
+    'Synthetic local diff (history variant)', 'Synthetic central feed (history variant)',
+    // Historical-only values: the previous four rates and the tier row
+    // identity exist nowhere else in the offer, so their presence in the
+    // historical event's own element proves per-event evidence retention.
+    '$2.04', '$8.16', '$0.204', '$2.56',
+    'standard',
+  ]
+  for (const token of HIST_LI_TOKENS) {
+    assert.ok(histLi.html.includes(token),
+      `historical event keeps its evidence recoverable: ${token}`)
+  }
+  // Exact historical previous/current four rates and raw tier identity —
+  // recoverable somewhere in the Details panel (the rendered forms are the
+  // UI's own; only recoverability is asserted).
+  const HIST_PANEL_TOKENS = [
+    ...HIST_LI_TOKENS,
+    '$2.55', '$10.2', '$0.255', '$3.2',
+  ]
+  for (const token of HIST_PANEL_TOKENS) {
+    assert.ok(hist.panelHtml.includes(token),
+      `history variant Details panel keeps evidence recoverable: ${token}`)
+  }
+  assert.ok(hist.panelHtml.includes('250000') || hist.panelHtml.includes('250.0k'),
+    'the historical tier size is recoverable (raw or formatted)')
 
   // search is a full-ID substring match
   assert.deepEqual([...probe.search.after].sort(), ['gpt-5.6-sol', 'gpt-5.6-sol-pro'].sort(),

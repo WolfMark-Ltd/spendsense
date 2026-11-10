@@ -108,12 +108,115 @@ const FORBIDDEN = {
 }
 
 const ERROR_FIXTURE = VARIANTS.error
+
+// ---------------------------------------------------------------- evidence payload
+// Page-local payload for the two source-evidence retention regressions (no
+// fixture regeneration; never part of the grid matrix, only probed as a
+// single case). All data invented; same shape as /news/refresh returns.
+//
+// 1) Same-ID local+central records: both items share ONE id, so the offer
+//    dedupes to exactly one event — but the two records stay distinguishable
+//    by source_url, observed_at, effective_at and provenance, and Details
+//    must keep BOTH recoverable.
+// 2) A proven distinct-ID pair (identical transition + shared event_key)
+//    collapsed into one event, which becomes HISTORY once a newer update
+//    lands in the same offer: the historical event must keep every original
+//    id, both source evidences, full timestamps, provenance, its exact
+//    previous/current rates and its raw tier rows recoverable.
+const EVIDENCE_SHARED_ID = 'evidence-shared-event-1'
+const evidenceSharedLocal = {
+  id: EVIDENCE_SHARED_ID, origin: 'local', category: 'price_reduction',
+  provider: 'evidenceco', model: 'ev-model',
+  summary: 'ev-model (evidenceco) list price changed.',
+  previous: { input: 2.0, output: 8.0, cache_read: 0.2, cache_write: 2.0 },
+  current: { input: 1.5, output: 6.0, cache_read: 0.15, cache_write: 1.5 },
+  observed_at: '2026-11-09T08:00:00Z', effective_at: '2026-11-08',
+  source_url: 'https://announcements.spend-sense.example/feed/ev-shared-local',
+  provenance: 'Synthetic local diff (evidence variant)', confidence: 'observed',
+  relevance: { relevant: false, reasons: [] },
+}
+const evidenceSharedCentral = {
+  ...evidenceSharedLocal,
+  origin: 'central',
+  observed_at: '2026-11-10T10:00:00Z', effective_at: '2026-11-09',
+  source_url: 'https://announcements.spend-sense.example/feed/ev-shared-central',
+  provenance: 'Synthetic central feed (evidence variant)', confidence: 'curated',
+}
+const EVIDENCE_HIST_LOCAL_ID = 'evidence-hist-local-1'
+const EVIDENCE_HIST_CENTRAL_ID = 'evidence-hist-central-1'
+const EVIDENCE_HIST_RATES_PREV = { input: 2.04, output: 8.16, cache_read: 0.204, cache_write: 2.56 }
+const EVIDENCE_HIST_RATES_CUR = { input: 2.55, output: 10.2, cache_read: 0.255, cache_write: 3.2 }
+const EVIDENCE_HIST_TIERS_BEFORE = [{
+  type: 'standard', size: 250000, ...EVIDENCE_HIST_RATES_PREV,
+}]
+const EVIDENCE_HIST_TIERS_AFTER = [{
+  type: 'standard', size: 250000, ...EVIDENCE_HIST_RATES_CUR,
+}]
+const evidenceHistLocal = {
+  id: EVIDENCE_HIST_LOCAL_ID, origin: 'local', category: 'price_increase',
+  provider: 'evidenceco', model: 'hist-model',
+  summary: 'hist-model (evidenceco) list price changed.',
+  previous: EVIDENCE_HIST_RATES_PREV, current: EVIDENCE_HIST_RATES_CUR,
+  tiers_detail: 'known',
+  tiers_before: EVIDENCE_HIST_TIERS_BEFORE, tiers_after: EVIDENCE_HIST_TIERS_AFTER,
+  observed_at: '2026-11-08T11:00:00Z', effective_at: '2026-11-07',
+  source_url: 'https://announcements.spend-sense.example/feed/hist-local',
+  provenance: 'Synthetic local diff (history variant)', confidence: 'observed',
+  event_key: 'evidence-hist-event-key',
+  relevance: { relevant: false, reasons: [] },
+}
+const evidenceHistCentral = {
+  id: EVIDENCE_HIST_CENTRAL_ID, origin: 'central', category: 'price_increase',
+  provider: 'evidenceco', model: 'hist-model',
+  summary: 'hist-model (evidenceco) list price changed.',
+  previous: EVIDENCE_HIST_RATES_PREV, current: EVIDENCE_HIST_RATES_CUR,
+  tiers_detail: 'known',
+  tiers_before: EVIDENCE_HIST_TIERS_BEFORE, tiers_after: EVIDENCE_HIST_TIERS_AFTER,
+  observed_at: '2026-11-08T09:30:00Z', effective_at: '2026-11-07',
+  source_url: 'https://announcements.spend-sense.example/feed/hist-central',
+  provenance: 'Synthetic central feed (history variant)', confidence: 'curated',
+  event_key: 'evidence-hist-event-key',
+  relevance: { relevant: false, reasons: [] },
+}
+const evidenceHistNewer = {
+  id: 'evidence-hist-newer-1', origin: 'local', category: 'price_reduction',
+  provider: 'evidenceco', model: 'hist-model',
+  summary: 'hist-model (evidenceco) list price changed.',
+  previous: EVIDENCE_HIST_RATES_CUR, current: { input: 1.0, output: 4.0, cache_read: 0.1, cache_write: 1.0 },
+  observed_at: '2026-11-10T12:00:00Z',
+  source_url: 'https://announcements.spend-sense.example/feed/hist-newer',
+  provenance: 'Synthetic local diff (history variant)', confidence: 'observed',
+  relevance: { relevant: false, reasons: [] },
+}
+const EVIDENCE = {
+  ok: true,
+  settings: { live_updates: true },
+  catalogue: { source: 'models.dev cache (synthetic fixture)',
+    as_of: '2026-11-09', snapshot_at: '2026-11-10T09:15:00Z' },
+  providers_configured: [],
+  impact_window_days: 30,
+  local: {
+    items: [evidenceSharedLocal, evidenceHistLocal, evidenceHistNewer],
+    baseline: false, store_error: '', snapshot_at: '2026-11-10T09:15:00Z',
+    removed_models: [], removed_model_count: 0, removed_plan_count: 0,
+  },
+  central: {
+    state: 'fresh', items: [evidenceSharedCentral, evidenceHistCentral],
+    fetched_at: '2026-11-10T06:40:00Z', error: '',
+  },
+  for_you_count: 0,
+  impacts: {},
+  signals: { configured_families: [], used_providers: [], used_models: [],
+    plan_ids: [], plan_families: [] },
+}
+
 const FIXTURES = {
   realistic: REALISTIC,
   empty: VARIANTS.empty,
   partial: VARIANTS.partial,
   stale: VARIANTS.stale,
   nosignals: VARIANTS.nosignals,
+  evidence: EVIDENCE,
 }
 
 const errors = (globalThis.__newsErrors = [])
@@ -468,6 +571,32 @@ async function probeCandidate(c, pane) {
     if (glyphs.length > 1) chipIssues.push(chip.textContent.trim().slice(0, 60))
   }
   out.chipDirectionIssues = chipIssues
+
+  // Evidence-retention regressions (page-local payload): capture every
+  // offer's full Details panel (HTML includes attributes, so values stored
+  // in text OR attributes are recoverable) plus each history event's own
+  // element, so the test can assert per-event evidence retention.
+  if (c.fixture === 'evidence') {
+    out.evidence = [...pane.querySelectorAll(SELECTORS.offer)].map(offer => {
+      const panel = offer.querySelector(SELECTORS.detailsPanel)
+      return {
+        provider: offer.getAttribute('data-news-provider') || '',
+        model: offer.getAttribute('data-news-model') || '',
+        eventCount: 1 + offer.querySelectorAll(SELECTORS.historyEvent).length,
+        itemIds: [...offer.querySelectorAll(SELECTORS.itemId)].map(el => el.textContent.trim()),
+        sources: [...offer.querySelectorAll(SELECTORS.sourceTag)]
+          .map(el => el.getAttribute('data-news-source')),
+        historyEvents: [...offer.querySelectorAll(SELECTORS.historyEvent)].map(li => ({
+          id: li.getAttribute('data-news-event'),
+          html: li.outerHTML,
+          sourceTags: [...li.querySelectorAll(SELECTORS.sourceTag)]
+            .map(el => el.getAttribute('data-news-source')),
+        })),
+        panelHtml: panel ? panel.outerHTML : '',
+      }
+    })
+    return out
+  }
 
   if (c.fixture === 'nosignals' && c.scope === 'foryou') {
     // The final UI has no link-to-All hook in the empty state; the navigation

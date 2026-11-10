@@ -135,6 +135,22 @@ Deliberately included:
 | `nosignals` | Full item list but empty signals: relevance/`for_you` all false, no impacts, For You empty with the "nothing to personalise" state while All stays complete. |
 | `error` | Transport-level failure: `rest('/news/refresh')` resolves `{ok:false, detail: …}` so the query rejects and the page shows its error + Retry state. This one is not a payload — it is what the harness transport returns. |
 
+## Evidence-retention regressions (page-local payload)
+
+Two further cases live only in `test/news-layout.page.jsx` under the
+`evidence` fixture name (probed as a single case; never part of the grid
+matrix and never written to these JSON files — no fixture churn):
+
+- `ev-model`: two records sharing ONE id (one local, one central) that
+  dedupe to exactly one event, while both records' source URL, full
+  `observed_at`, `effective_at` and provenance must stay recoverable in
+  Details.
+- `hist-model`: a proven distinct-ID pair (identical transition plus a
+  shared `event_key`) collapsed into one event, which becomes History once a
+  newer update lands in the same offer; the historical event must keep every
+  original id, both origin evidences, full timestamps, provenance, its exact
+  previous/current four rates and its raw tier type/size recoverable.
+
 ## Consumers
 
 - `test/news-layout.test.mjs` + `test/news-layout.page.jsx` +
