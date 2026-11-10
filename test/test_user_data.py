@@ -34,10 +34,19 @@ class UserDataResetTests(unittest.TestCase):
         self.profiles.write_text(json.dumps({"version": 1, "profiles": [
             {"id": "wallet", "provider": "commandcode", "kind": "prepaid"}
         ]}))
+        entitlements = membership_store.entitlement_store_path(self.memberships)
+        entitlements.write_text(json.dumps({"version": 1, "routes": {"anthropic": {
+            "account_id": "anthropic:default", "family": "anthropic", "identity": "synthetic",
+            "baseline_arrangement": "subscription", "history": [{
+                "id": "included-link", "arrangement": "included", "owner_account_id": "cc:default",
+                "owner_family": "commandcode", "owner_identity": "synthetic-cc",
+                "effective_from": "2026-11-01T00:00:00Z"}]}}}))
         with self.paths()[0], self.paths()[1]:
             result = user_data.reset_user_data()
         self.assertTrue(result["memberships_cleared"])
+        self.assertTrue(result["entitlements_cleared"])
         self.assertEqual(json.loads(self.memberships.read_text())["accounts"], [])
+        self.assertEqual(json.loads(entitlements.read_text()), {"version": 1, "routes": {}})
         self.assertEqual(json.loads(self.profiles.read_text())["profiles"], [])
         self.assertEqual(self.ledger.read_bytes(), b"ledger sentinel")
 
@@ -101,6 +110,36 @@ class UserDataResetTests(unittest.TestCase):
         membership_store.load_seat_store(self.memberships)
         before = {p: p.read_bytes() for p in (self.memberships, self.profiles, seats, target)}
         self.fail_budget_reset(target)
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
+
+    def test_entitlement_replace_failure_rolls_back_all_user_data_bytes(self):
+        budget_path = self.profiles.with_name('budgets.json')
+        budget_path.write_text(json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}))
+        seats = membership_store.seat_store_path(self.memberships)
+        seats.write_text(json.dumps({'version': 1, 'accounts': {}}))
+        entitlements = membership_store.entitlement_store_path(self.memberships)
+        entitlements.write_text(json.dumps({'version': 1, 'routes': {'anthropic': {
+            'account_id': 'anthropic:default', 'family': 'anthropic', 'identity': 'synthetic',
+            'baseline_arrangement': 'subscription', 'history': [{'id': 'link', 'arrangement': 'included',
+                'owner_account_id': 'cc:default', 'owner_family': 'commandcode',
+                'owner_identity': 'synthetic-cc', 'effective_from': '2026-11-01T00:00:00Z'}]}}}))
+        before = {p: p.read_bytes() for p in
+                  (self.memberships, self.profiles, seats, budget_path, entitlements)}
+        replace = user_data._replace_bytes
+        failure_injected = False
+
+        def fail_entitlement(path, value):
+            nonlocal failure_injected
+            if path == entitlements and not failure_injected:
+                failure_injected = True
+                raise OSError('fixture entitlement replacement failure')
+            replace(path, value)
+
+        with self.paths()[0], self.paths()[1], patch.object(
+                user_data, '_replace_bytes', side_effect=fail_entitlement):
+            with self.assertRaisesRegex(OSError, 'fixture entitlement replacement failure'):
+                user_data.reset_user_data()
         self.assertEqual({p: p.read_bytes() for p in before}, before)
         self.assertEqual(self.ledger.read_bytes(), b'ledger sentinel')
 

@@ -3874,9 +3874,12 @@ function EconomicsTrend({ trend, t }) {
   return jsx('div', { className: 'wm-econ-trend', children: months.map(entry => {
     const difference = finiteValue(entry.difference_usd)
     const feeUsd = finiteValue(entry.fees_usd)
+    const partialPricing = entry.partial_pricing == null
+      ? !!entry.partial && !entry.partial_attribution : !!entry.partial_pricing
     const flags = [entry.in_progress ? t('econFlagProgress') : null,
       entry.recording_partial ? t('econFlagRecording') : null,
-      entry.partial ? t('econFlagPricing') : null].filter(Boolean).join(' · ')
+      partialPricing ? t('econFlagPricing') : null,
+      entry.partial_attribution ? t('econFlagAttribution') : null].filter(Boolean).join(' · ')
     const feesText = (entry.fees_by_currency || []).map(({ amount, currency }) =>
       t('econPerMonth', fmtMoney(amount, currency))).join(' + ') || t('econNoFees')
     // Bars need the backend's converted fee total; without it (or without a
@@ -4479,7 +4482,7 @@ function SettingsPage() {
         rest('/membership/accounts'), rest('/billing/profiles'), rest('/budgets')
       ])
       if (!membershipIdentityCurrent(captured)) return
-      if (!Array.isArray(accountDoc?.accounts) || accountDoc?.store?.error || !accountDoc?.seat_store || !accountDoc?.membership_store ||
+      if (!Array.isArray(accountDoc?.accounts) || accountDoc?.store?.error || !accountDoc?.seat_store || !accountDoc?.entitlement_store || !accountDoc?.membership_store ||
           !Array.isArray(profileDoc?.profiles) || profileDoc?.error || !Array.isArray(budgetDoc?.budgets) || !budgetDoc.rev) {
         throw new Error('The user-data export is incomplete.')
       }
@@ -4487,10 +4490,11 @@ function SettingsPage() {
         product: 'Spend Sense',
         version: PLUGIN_VERSION,
         exported_at: new Date().toISOString(),
-        note: 'This contains Spend Sense membership, seat history, budget and advanced-rule data. It contains no provider credential secrets or recorded usage ledger.',
+        note: 'This contains Spend Sense membership, seat history, route entitlement relationships, budget and advanced-rule data. It contains no provider credential secrets or recorded usage ledger.',
         memberships: accountDoc.accounts,
         membership_store: accountDoc.membership_store,
         seat_history: accountDoc.seat_store,
+        route_entitlements: accountDoc.entitlement_store,
         advanced_rules: profileDoc.profiles,
         budget_guardrails: budgetDoc
       }
@@ -5135,6 +5139,7 @@ function LegacyAllHermesPage({ range }) {
 const $membershipDraft = atom(null)
 const $customPlanDraft = atom(null)
 const $exhaustionDraft = atom(null)
+const $membershipEntitlementDraft = atom(null)
 const $membershipNotice = atom(null)
 const $membershipBusy = atom('')
 /** Read account usage through Hermes on the next fetch. */
@@ -5321,8 +5326,8 @@ const MEMBERSHIP_CSS = `
 .wm-fee-fields{border:0;margin:0;padding:0;min-width:0}
 .wm-billing-head{display:flex;align-items:center;gap:8px;position:relative}
 .wm-billing-label{font-size:12px;font-weight:600;color:var(--ui-text-secondary)}
-.wm-seg{display:flex;flex-wrap:wrap;border:1px solid var(--ui-stroke-secondary);border-radius:6px;overflow:hidden;width:fit-content;max-width:100%}
-.wm-seg button{border:0;border-left:1px solid var(--ui-stroke-secondary);background:transparent;color:var(--ui-text-tertiary);padding:7px 11px;min-height:34px;font-size:12px;cursor:pointer}
+.wm-seg{box-sizing:border-box;display:flex;flex-wrap:wrap;border:1px solid var(--ui-stroke-secondary);border-radius:6px;overflow:hidden;width:100%;max-width:100%;min-width:0}
+.wm-seg button{box-sizing:border-box;flex:0 1 auto;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;border:0;border-left:1px solid var(--ui-stroke-secondary);background:transparent;color:var(--ui-text-tertiary);padding:7px 11px;min-height:34px;font-size:12px;cursor:pointer}
 .wm-seg button:first-child{border-left:0}
 .wm-seg button:hover:not([disabled]){color:var(--ui-text-primary);background:var(--ui-fill-secondary)}
 .wm-seg button[aria-pressed="true"]{background:var(--ui-fill-tertiary);color:var(--ui-text-primary);font-weight:600}
@@ -5368,7 +5373,7 @@ button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
 .wm-group > summary::-webkit-details-marker{display:none}
 .wm-group > summary::before{content:"›";display:inline-block;font-size:17px;line-height:1;font-weight:700;color:var(--ui-text-primary);transition:transform .15s ease}
 .wm-group[open] > summary::before{transform:rotate(90deg)}
-.wm-group-body{display:grid;gap:8px;padding:4px 0 10px}
+.wm-group-body{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;padding:4px 0 10px}
 @container(max-width:760px){.wm-row-head{grid-template-columns:minmax(0,1fr)}.wm-row-mid{grid-template-columns:minmax(0,1.35fr) minmax(92px,.7fr) auto auto}}
 @container(max-width:620px){.wm-row-head{align-items:start}.wm-row-mid{grid-template-columns:minmax(0,1fr) minmax(92px,auto);gap:8px 12px}.wm-row-state{grid-column:1}.wm-row-actions{grid-column:2;grid-row:2;align-self:center}.wm-row-actions .wm-button{min-height:38px}.wm-memberships .wm-seg button{min-height:38px}.wm-memberships .wm-attention li{flex-wrap:wrap}.wm-memberships .wm-attention li .wm-button{width:100%}}
 @container(max-width:620px){.wm-memberships nav.wm-account-jump.wm-membership-account-nav{grid-template-columns:minmax(0,1fr);align-items:start}.wm-membership-shortcuts{grid-template-columns:minmax(0,1fr);gap:6px}}
@@ -5483,6 +5488,7 @@ function membershipErrorKind(error) {
   const raw = typeof error?.message === 'string' ? error.message : String(error ?? '')
   const status = Number((raw.match(/\b([45][0-9]{2})\b/) || [])[1] || 0)
   if (/seat_write_uncertain/i.test(raw)) return { kind: 'seat_write_uncertain', status }
+  if (/entitlement_write_uncertain/i.test(raw)) return { kind: 'entitlement_write_uncertain', status }
   if (/store_unreadable/i.test(raw)) return { kind: 'storage', status }
   if (status === 401 || /unauthori|sign in/i.test(raw)) return { kind: 'auth', status }
   if (/plugin not found|no such plugin/i.test(raw)) return { kind: 'namespace', status }
@@ -5499,6 +5505,7 @@ function membershipErrorKind(error) {
 function membershipErrorText(error, operation = 'read', t = needsAttentionEn) {
   const { kind } = membershipErrorKind(error)
   if (kind === 'seat_write_uncertain') return t('memErrSeatWriteUncertain')
+  if (kind === 'entitlement_write_uncertain') return t('memErrEntitlementWriteUncertain')
   if (kind === 'storage') return t('memErrStorage')
   if (kind === 'auth') return t('memErrAuth')
   if (kind === 'namespace') return t('memErrNamespace')
@@ -5556,6 +5563,10 @@ function feeLabel(fee, t = needsAttentionEn) {
   const effective = fee.effective || {}
   const amount = fmtMoney(effective.amount, effective.currency)
   const period = effective.period ? `/${t('memPeriodAbbr', String(effective.period))}` : ''
+  if (fee.basis === 'included') return t('memFeeIncluded')
+  if (fee.basis === 'free_tier') return t('memFeeFree')
+  if (fee.basis === 'no_plan') return t('memFeeNoCurrentPlan')
+  if (fee.basis === 'invalid' || fee.basis === 'mixed') return t('memFeeRelationshipUnknown')
   if (fee.basis === 'api_only') return t('memFeeMetered')
   if (fee.basis === 'prepaid') return t('memFeePrepaid')
   if (fee.basis === 'unconfirmed') return t('memFeeUnconfirmed')
@@ -5844,7 +5855,13 @@ function needsAttention(accounts, weatherById, t = needsAttentionEn) {
         }
       }
     }
-    if (account.effective_arrangement === 'api_only' || account.effective_arrangement === 'prepaid') continue
+    const arrangement = account.effective_arrangement
+    if (['invalid', 'mixed'].includes(arrangement) || account.route_relationship_status === 'stale' || account.route_relationship_status === 'mixed') {
+      out.push({ account, tone: 'warn', text: t('attnRelationship'),
+        issue: 'relationship', target: { group: 'plan', focus: 'arrangement' } })
+      continue
+    }
+    if (['api_only', 'prepaid', 'no_plan', 'included', 'free_tier'].includes(arrangement)) continue
     if (account.effective_arrangement === 'unconfirmed') {
       out.push({ account, tone: 'info', text: t('attnUnconfirmed'),
         issue: 'unconfirmed', target: { group: 'plan', focus: 'arrangement' } })
@@ -5868,7 +5885,7 @@ function needsAttention(accounts, weatherById, t = needsAttentionEn) {
 
 /** Action label for an attention issue; never parsed from the warning text. */
 function attentionActionLabel(issue, t) {
-  return issue === 'unconfirmed' ? t('attnActArrangement')
+  return issue === 'unconfirmed' || issue === 'relationship' ? t('attnActArrangement')
     : issue === 'no-plan' ? t('attnActPlan')
     : issue === 'no-fee' ? t('attnActFee')
     : issue === 'reconfirm-plan' ? t('attnActPlanReview')
@@ -5981,7 +5998,7 @@ function membershipTargetDom(nav) {
 
 function membershipSummary(accounts) {
   const total = accounts.length
-  const withPlan = accounts.filter(a => a.plan_id && !['api_only', 'prepaid', 'unconfirmed'].includes(a.effective_arrangement)).length
+  const withPlan = accounts.filter(a => a.plan_id && !['api_only', 'prepaid', 'unconfirmed', 'no_plan', 'included', 'invalid', 'mixed'].includes(a.effective_arrangement)).length
   const exhausted = accounts.filter(a => a.quota?.account_exhausted).length
   const byCurrency = {}
   const byCurrencyPeriod = {}
@@ -6224,7 +6241,12 @@ function accountHolderMarked(account) {
 function arrangementLabel(arrangement, t) {
   return arrangement === 'subscription' ? t('memArrSubscription')
     : arrangement === 'prepaid' ? t('memArrPrepaid')
-    : arrangement === 'api_only' ? t('memArrMetered') : t('memArrUnconfirmed')
+    : arrangement === 'api_only' ? t('memArrMetered')
+    : arrangement === 'no_plan' ? t('memArrNoPlan')
+    : arrangement === 'included' ? t('memArrIncluded')
+    : arrangement === 'free_tier' ? t('memArrFree')
+    : ['invalid', 'mixed'].includes(arrangement) ? t('memArrRelationship')
+    : t('memArrUnconfirmed')
 }
 const MEMBERSHIP_PROVIDER_LABEL_KEYS = {
   anthropic: 'memProviderAnthropic',
@@ -6244,12 +6266,13 @@ function membershipAccountShortcutLabel(account, t = needsAttentionEn) {
   return account?.label && account.label !== account.family
     ? account.label : membershipProviderLabel(account?.family, t)
 }
-function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention }) {
+function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention }) {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const now = useValue($membershipClock)
   const rawPlanDraft = useValue($customPlanDraft)
   const rawExhaustionDraft = useValue($exhaustionDraft)
+  const rawEntitlementDraft = useValue($membershipEntitlementDraft)
   const rows = quotaRows(account, now, t)
   const readingStatus = membershipReadingStatus(rows, t)
   const fee = account.fee || {}
@@ -6260,6 +6283,17 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   const arrangement = account.effective_arrangement || (account.api_only ? 'api_only' : account.billing_arrangement || (planSaved ? 'subscription' : 'unconfirmed'))
   const apiOnly = arrangement === 'api_only'
   const subscription = arrangement === 'subscription'
+  const entitlementDraft = rawEntitlementDraft?.origin === identity && rawEntitlementDraft.account_id === account.id
+    ? rawEntitlementDraft : null
+  const ownerOptions = (accounts || []).filter(candidate => {
+    const declaredFee = candidate.fee?.effective?.amount
+    const hasKnownPaidFee = typeof declaredFee === 'number' && Number.isFinite(declaredFee) && declaredFee > 0
+    const hasPaidPlan = !!candidate.plan_id && candidate.plan?.billing_arrangement !== 'free_tier'
+    return candidate.id !== account.id && candidate.effective_arrangement === 'subscription'
+      && (hasPaidPlan || hasKnownPaidFee)
+  })
+  const selectedOwner = arrangement === 'included' ? (account.entitlement_owner_id || '')
+    : entitlementDraft?.owner_account_id || ''
   const seatRevision = (account.seat_revisions || []).filter(r => r.plan_id === account.plan_id && Date.parse(r.effective_from) <= now)
     .reduce((latest, item) => !latest || Date.parse(item.effective_from) >= Date.parse(latest.effective_from) ? item : latest, null)
   const seatPricing = account.plan?.seat_pricing
@@ -6429,7 +6463,11 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
   const identityLabel = membershipIdentityLabel(account, t)
   // API-only and prepaid accounts need no plan, so they never show the
   // "not confirmed yet" prompt. Mirrors the arrangement skip in needsAttention.
-  const planName = planSaved ? (account.plan?.name || account.plan_id)
+  const planName = arrangement === 'included'
+    ? t('memIncludedVia', account.entitlement_owner?.label || account.entitlement_owner?.family || t('memOwnerUnknown'))
+    : ['invalid', 'mixed'].includes(arrangement) ? t('memRelationshipNeedsReview')
+    : arrangement === 'no_plan' ? t('memNoCurrentPlan')
+    : planSaved ? (account.plan?.name || account.plan_id)
     : (apiOnly || arrangement === 'prepaid') ? t('econNoPlan') : t('attnNoPlan')
   return jsxs('article', { className: 'wm-card', 'data-account': account.id, children: keyedElementChildren([
     jsxs('div', { className: 'wm-row-head', children: [
@@ -6470,14 +6508,30 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     jsxs('div', { className: 'wm-seg', role: 'group', 'aria-label': t('memBillingTypeFor', identityLabel),
       'data-nav': 'arrangement', children:
         [['subscription', t('memArrSubscription')], ['prepaid', t('memArrPrepaid')],
-         ['api_only', t('memArrMetered')], ['unconfirmed', t('memArrUnconfirmed')]].map(([value, label]) =>
-          jsx('button', { type: 'button', 'aria-pressed': arrangement === value, disabled: !!busy,
+         ['api_only', t('memArrMetered')], ['no_plan', t('memArrNoPlan')],
+         ['included', t('memArrIncluded')], ['unconfirmed', t('memArrUnconfirmed')]].map(([value, label]) =>
+          jsx('button', { type: 'button', 'aria-pressed': arrangement === value || (value === 'subscription' && arrangement === 'free_tier'), disabled: !!busy,
             onClick: () => { if (value !== arrangement) onAction('arrangement', account, value) },
             children: label }, value)) }),
-    jsx('p', { className: 'wm-note', children: apiOnly
-      ? t('memArrNoteMetered')
+    jsx('p', { className: 'wm-note', children: arrangement === 'included'
+      ? t('memIncludedHint')
+      : ['invalid', 'mixed'].includes(arrangement) ? t('memRelationshipNeedsReview')
+      : arrangement === 'no_plan' ? t('memNoPlanHint')
+      : apiOnly ? t('memArrNoteMetered')
       : arrangement === 'prepaid' ? t('memArrNotePrepaid')
+      : arrangement === 'free_tier' ? t('memArrNoteFree')
       : arrangement === 'subscription' ? t('memArrNoteSubscription') : t('memArrNoteUnconfirmed') }),
+    arrangement === 'included' || entitlementDraft ? jsxs('label', { className: 'wm-filter', children: [
+      jsx('span', { children: t('memEntitlementOwner') }),
+      jsx('select', { value: selectedOwner, disabled: !!busy,
+        onChange: event => { if (event.target.value) onAction('arrangement', account,
+          { arrangement: 'included', owner_account_id: event.target.value }) },
+        children: [
+          jsx('option', { value: '', children: t('memChooseOwner') }, 'empty'),
+          ...ownerOptions.map(owner => jsx('option', { value: owner.id,
+            children: `${membershipIdentityLabel(owner, t)} · ${owner.plan?.name || owner.plan_id || t('memOwnerDeclaredFee')}` }, owner.id))
+        ] })
+    ] }) : null,
     busy === account.id ? jsx('p', { role: 'status', className: 'wm-note', children: t('memSavingChanges') }) : null,
     notice?.accountId === account.id && notice.tone === 'good'
       ? jsx('p', { role: 'status', className: 'wm-note', children: notice.text }) : null,
@@ -6489,10 +6543,10 @@ function MembershipCard({ account, plans, busy, onAction, draft, saveFee, catalo
     subscription && reconfirmation ? jsx('p', { className: 'wm-note wm-accent-note', 'data-plan-reconfirmation': 'true', children: reconfirmation }) : null,
     subscription && excluded ? jsx('p', { className: 'wm-note', 'data-excluded': 'true', children: excluded }) : null,
     subscription && account.plan?.notes ? jsx('p', { className: 'wm-note', children: account.plan.notes }) : null,
-    subscription || apiOnly ? jsxs('label', { className: 'wm-filter', children: [
+    subscription || apiOnly || arrangement === 'free_tier' ? jsxs('label', { className: 'wm-filter', children: [
       jsx('span', { children: t('memPlanForAccount') }),
       jsxs('select', {
-        value: account.plan_id || '', disabled: !subscription || !!busy, 'data-nav': 'plan',
+        value: account.plan_id || '', disabled: !(subscription || arrangement === 'free_tier') || !!busy, 'data-nav': 'plan',
         onChange: event => onAction('plan', account, event.target.value),
         children: [
           jsx('option', { value: '', children: planSaved ? t('memPlanClear') : t('memPlanConfirm') }, 'unselected'),
@@ -6859,15 +6913,21 @@ function MembershipsPage() {
     // kind must prove one. An allowlist (not a writer denylist) so a future
     // mutating kind fails closed instead of sending a PUT that must 409.
     if (!account?.rev && kind !== 'fee' && kind !== 'edit-custom-plan' &&
-        kind !== 'exhaust') return refuseUnversioned(account?.id)
+        kind !== 'exhaust' && !(kind === 'arrangement' && value === 'included')) return refuseUnversioned(account?.id)
     if (kind === 'arrangement') {
-      // One write for the segmented control: Metered API sets the api_only
-      // flag and preserves the stored billing arrangement for switching back;
-      // every other choice clears the flag and stores its own arrangement.
-      // Plan, fees and overrides ride along untouched via the spread.
-      const update = value === 'api_only' ? { api_only: true } : { api_only: false, billing_arrangement: value }
-      return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
-                 { ...account, ...update }, 'PUT')
+      if (value === 'included') {
+        $membershipEntitlementDraft.set({ origin: identity, account_id: account.id,
+          owner_account_id: account.entitlement_owner_id || '' })
+        return
+      }
+      const arrangement = typeof value === 'object' ? value.arrangement : value
+      const ownerId = typeof value === 'object' ? value.owner_account_id : null
+      if (arrangement === 'included' && !ownerId) return
+      $membershipEntitlementDraft.set(null)
+      return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}/arrangement`, {
+        arrangement, owner_account_id: ownerId || null, rev: account.rev,
+        route_rev: account.route_entitlement_rev
+      }, 'PUT')
     }
     if (kind === 'plan') {
       return run(account.id, `/membership/accounts/${encodeURIComponent(account.id)}`,
@@ -7132,6 +7192,7 @@ function MembershipsPage() {
           : accountsReady && displayed.length
             ? displayed.map(account => jsx(MembershipCard, {
                 account,
+                accounts: list,
                 plans: accountPlanChoices(account),
                 busy, onAction, draft, saveFee, catalogue, notice,
                 weather: weatherById.get(account.id) || null, weatherError,
@@ -8032,6 +8093,7 @@ const I18N = {
     econFlagProgress: 'in progress',
     econFlagRecording: 'partial recording',
     econFlagPricing: 'partial pricing',
+    econFlagAttribution: 'partial attribution',
     econNoFees: 'No fees',
     econTrendUsage: (f, u) => `${f} · ${u} usage`,
     econTrendAria: (m, f, u, d) => `${m}: fees ${f}, usage ${u}, difference ${d}`,
@@ -8081,6 +8143,7 @@ const I18N = {
     attnAhead: label => `${label}: ahead of pace.`,
     attnReached: label => `${label}: reached its allowance.`,
     attnUnconfirmed: 'Billing arrangement not confirmed.',
+    attnRelationship: 'The route entitlement relationship is stale or inconsistent. Review it before comparing fees or usage.',
     attnReconfirmPlan: label => `Hermes now reports "${label}" — reconfirm the saved plan.`,
     attnNoPlan: 'No plan confirmed yet.',
     attnNoFee: 'No fee set for the chosen plan.',
@@ -8121,10 +8184,23 @@ const I18N = {
     memArrSubscription: 'Subscription',
     memArrPrepaid: 'Prepaid credits',
     memArrMetered: 'Metered API',
+    memArrNoPlan: 'No current plan',
+    memArrIncluded: 'Included via another subscription',
+    memArrFree: 'Free access',
+    memArrRelationship: 'Relationship needs review',
     memArrUnconfirmed: 'Not confirmed',
     memBillingType: 'Billing type',
     memBillingTypeFor: account => `Billing type for ${account}`,
-    memBillingTip: 'Subscription: a recurring fee you declare. Prepaid credits: top-ups, not a recurring fee. Metered API: pay-as-you-go, no recurring fee. Usage is always tracked.',
+    memBillingTip: 'Subscription: a recurring fee you declare. Included: explicitly linked to another account’s paid subscription, whose fee is counted once. No current plan, Not confirmed, Free access, Prepaid credits and Metered API are separate states. Usage is always tracked.',
+    memEntitlementOwner: 'Owning paid subscription',
+    memChooseOwner: 'Choose the account that pays for this route',
+    memOwnerDeclaredFee: 'Declared recurring fee',
+    memOwnerUnknown: 'owner not verified',
+    memIncludedVia: owner => `Included via ${owner}`,
+    memIncludedHint: 'Choose the account whose paid subscription explicitly covers this route. Provider and model names are not used to guess ownership.',
+    memNoCurrentPlan: 'No current plan',
+    memNoPlanHint: 'Confirmed: this route has no current plan. This is different from unconfirmed billing.',
+    memRelationshipNeedsReview: 'The route relationship is stale or inconsistent. No fee or usage has been assigned through it.',
     memRefresh: 'Refresh provider usage',
     memRefreshNote: 'Refresh checks provider-reported usage where supported; it never changes saved plans, fees or marks.',
     memFeesLabel: 'Membership fees',
@@ -8202,6 +8278,10 @@ const I18N = {
     memFeeMetered: 'Metered API · no recurring membership fee',
     memFeePrepaid: 'Prepaid credits · no recurring membership fee',
     memFeeUnconfirmed: 'No confirmed billing arrangement',
+    memFeeIncluded: 'Included in another account’s subscription · no duplicate fee',
+    memFeeFree: 'Free access · no membership fee',
+    memFeeNoCurrentPlan: 'No current plan',
+    memFeeRelationshipUnknown: 'Route ownership needs review · fee not assigned',
     memFeeYourPrice: (amount, period, tail) => `Your price: ${amount}${period}${tail}`,
     memFeeTail: (source, money) => ` (${source} ${money})`,
     memFeeSrcCustom: 'plan default',
@@ -8253,6 +8333,7 @@ const I18N = {
     // Backend failures.
     memErrStorage: 'The membership store could not be read, so nothing was changed. The file is preserved; fix or restore it before saving.',
     memErrSeatWriteUncertain: 'The seat data may have been saved, but the write could not be confirmed. Reload memberships before trying again.',
+    memErrEntitlementWriteUncertain: 'The route relationship may have been saved, but the write could not be confirmed. Reload memberships before trying again.',
     memErrAuth: 'Your Desktop session has expired. Sign in again, then retry.',
     memErrNamespace: 'The membership plugin is not available on this connection and profile. Choose the right connection, or check that the plugin is enabled here.',
     memErrConflict: 'This membership changed since you loaded it. Reload, then save again.',
@@ -8293,6 +8374,7 @@ const I18N = {
     memArrNoteMetered: 'Metered API: no recurring membership fee. Usage and API cost estimates remain available.',
     memArrNotePrepaid: 'Prepaid credit account. Top-ups are not recurring membership fees; configure cost rules separately in Costs.',
     memArrNoteSubscription: 'Subscription account.',
+    memArrNoteFree: 'This is a catalogue-listed free tier. Its recurring fee is zero and does not imply a paid subscription.',
     memArrNoteUnconfirmed: 'No confirmed billing arrangement.',
     memCredConfigured: 'configured credential',
     memCredMissing: 'credential not found',
@@ -8729,7 +8811,7 @@ const I18N = {
     tabListLabel: 'SpendSense sections',
     settingsNotifyPrefsReset: 'SpendSense display preferences were reset. Hermes saved pane placement is unchanged.',
     settingsNotifyPrefsFailed: f => `Preferences could not be reset: ${f}`,
-    settingsNotifyDataCleared: 'Memberships, budgets and advanced billing rules were cleared for this profile. Captured usage records were retained.',
+    settingsNotifyDataCleared: 'Memberships, route entitlement relationships, budgets and advanced billing rules were cleared for this profile. Captured usage records were retained.',
     settingsNotifyDataFailed: f => `User-entered data was not reset: ${f}`,
     settingsNotifyModelsOk: 'Hermes model availability was refreshed. This does not force a pricing catalogue refresh.',
     settingsNotifyModelsFailed: f => `Hermes could not refresh model availability: ${f}`,
@@ -8793,8 +8875,8 @@ const I18N = {
     settingsRecoveryPrefsConfirmText: 'Reset the SpendSense display preferences to their defaults?',
     settingsRecoveryPrefsConfirm: 'Confirm preference reset',
     settingsResetPrefs: 'Reset display preferences',
-    settingsRecoveryDataExplain: 'User-data recovery covers Memberships, seat history, budgets and advanced billing rules. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.',
-    settingsRecoveryBackupText: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership, seat history, budget and advanced-rule data.',
+    settingsRecoveryDataExplain: 'User-data recovery covers Memberships, seat history, route entitlement relationships, budgets and advanced billing rules. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.',
+    settingsRecoveryBackupText: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership, seat history, route entitlement relationships, budget and advanced-rule data.',
     settingsRecoveryDataConfirm: 'Confirm and clear user-entered data',
     settingsCopyBackup: 'Copy recovery backup before reset',
     settingsAboutHeading: 'About and support',
@@ -9198,6 +9280,7 @@ const I18N = {
     econFlagProgress: '进行中',
     econFlagRecording: '记录不完整',
     econFlagPricing: '定价不完整',
+    econFlagAttribution: '归属不完整',
     econNoFees: '无费用',
     econTrendUsage: (f, u) => `${f} · 用量 ${u}`,
     econTrendAria: (m, f, u, d) => `${m}：费用 ${f}，用量 ${u}，差值 ${d}`,
@@ -9247,6 +9330,7 @@ const I18N = {
     attnAhead: label => `${label}：消耗偏快。`,
     attnReached: label => `${label}：已达到额度。`,
     attnUnconfirmed: '账单安排未确认。',
+    attnRelationship: '线路的权益关系已过期或不一致。请先检查，再比较费用或用量。',
     attnReconfirmPlan: label => `Hermes 当前显示“${label}”——请重新确认已保存的方案。`,
     attnNoPlan: '尚未确认方案。',
     attnNoFee: '所选方案尚未设置费用。',
@@ -9287,10 +9371,23 @@ const I18N = {
     memArrSubscription: '订阅',
     memArrPrepaid: '预付额度',
     memArrMetered: '按量 API',
+    memArrNoPlan: '当前无方案',
+    memArrIncluded: '由另一订阅提供',
+    memArrFree: '免费访问',
+    memArrRelationship: '需检查权益关系',
     memArrUnconfirmed: '未确认',
     memBillingType: '账单类型',
     memBillingTypeFor: account => `${account} 的账单类型`,
-    memBillingTip: '订阅：您申报的周期性费用。预付额度：充值，非周期性费用。按量 API：按用量付费，无周期性费用。用量始终会被跟踪。',
+    memBillingTip: '订阅：您申报的周期性费用。包含：明确关联到另一账户的付费订阅，该费用只计一次。当前无方案、未确认、免费访问、预付额度和按量 API 是不同状态。用量始终会被跟踪。',
+    memEntitlementOwner: '付费订阅所属账户',
+    memChooseOwner: '选择为此线路付费的账户',
+    memOwnerDeclaredFee: '已申报的周期费用',
+    memOwnerUnknown: '所属账户未验证',
+    memIncludedVia: owner => `由 ${owner} 提供`,
+    memIncludedHint: '选择明确覆盖此线路的付费订阅账户。不会根据服务商或模型名称推测归属。',
+    memNoCurrentPlan: '当前无方案',
+    memNoPlanHint: '已确认：此线路当前没有方案。这不同于账单安排未确认。',
+    memRelationshipNeedsReview: '线路的权益关系已过期或不一致。未通过此关系分配费用或用量。',
     memRefresh: '刷新服务商用量',
     memRefreshNote: '在服务商支持时刷新其上报用量；不会更改已保存的方案、费用或标记。',
     memFeesLabel: '会员费用',
@@ -9368,6 +9465,10 @@ const I18N = {
     memFeeMetered: '按量 API · 无固定会员费',
     memFeePrepaid: '预付额度 · 无固定会员费',
     memFeeUnconfirmed: '未确认计费方式',
+    memFeeIncluded: '包含在另一账户的订阅中 · 不重复计费',
+    memFeeFree: '免费访问 · 无会员费',
+    memFeeNoCurrentPlan: '当前无方案',
+    memFeeRelationshipUnknown: '线路归属需检查 · 未分配费用',
     memFeeYourPrice: (amount, period, tail) => `你的价格：${amount}${period}${tail}`,
     memFeeTail: (source, money) => `（${source} ${money}）`,
     memFeeSrcCustom: '方案默认',
@@ -9419,6 +9520,7 @@ const I18N = {
     // 后端失败。
     memErrStorage: '会员数据无法读取，没有任何内容被更改。文件已保留；保存前请先修复或恢复。',
     memErrSeatWriteUncertain: '席位数据可能已保存，但无法确认写入是否完成。请先重新加载会员，再重试。',
+    memErrEntitlementWriteUncertain: '线路关系可能已保存，但无法确认写入是否完成。请先重新加载会员，再重试。',
     memErrAuth: 'Desktop 会话已过期，请重新登录后再试。',
     memErrNamespace: '该连接和档案下没有会员插件。请选择正确的连接，或检查插件是否已启用。',
     memErrConflict: '该会员在你加载后发生了变化，请重新加载再保存。',
@@ -9459,6 +9561,7 @@ const I18N = {
     memArrNoteMetered: '按量 API：无固定会员费。用量与 API 费用估算仍然可用。',
     memArrNotePrepaid: '预付额度账户。充值不是固定会员费；请在“费用”中单独配置成本规则。',
     memArrNoteSubscription: '订阅账户。',
+    memArrNoteFree: '这是目录中列出的免费档位。周期费用为零，不代表付费订阅。',
     memArrNoteUnconfirmed: '未确认计费方式。',
     memCredConfigured: '凭证已配置',
     memCredMissing: '未找到凭证',
@@ -9895,7 +9998,7 @@ const I18N = {
     tabListLabel: 'SpendSense 选项卡',
     settingsNotifyPrefsReset: 'SpendSense 显示偏好已重置。Hermes 已保存的面板位置不变。',
     settingsNotifyPrefsFailed: f => `偏好设置未能重置：${f}`,
-    settingsNotifyDataCleared: '已清除此配置文件的会员、预算与高级计费规则。已捕获的用量记录予以保留。',
+    settingsNotifyDataCleared: '已清除此配置文件的会员、线路权益关系、预算与高级计费规则。已捕获的用量记录予以保留。',
     settingsNotifyDataFailed: f => `用户数据未能重置：${f}`,
     settingsNotifyModelsOk: 'Hermes 模型可用性已刷新。这不会强制刷新价格目录。',
     settingsNotifyModelsFailed: f => `Hermes 未能刷新模型可用性：${f}`,
@@ -9959,8 +10062,8 @@ const I18N = {
     settingsRecoveryPrefsConfirmText: '将 SpendSense 显示偏好重置为默认值吗？',
     settingsRecoveryPrefsConfirm: '确认重置偏好',
     settingsResetPrefs: '重置显示偏好',
-    settingsRecoveryDataExplain: '用户数据恢复涵盖会员、席位历史、预算和高级计费规则。已捕获的桌面用量账本、Hermes 数据与供应商凭据不受影响。',
-    settingsRecoveryBackupText: '备份已复制到剪贴板。在清除配置文件会员、席位历史、预算与高级规则数据前，请将其保存到安全位置。',
+    settingsRecoveryDataExplain: '用户数据恢复涵盖会员、席位历史、线路权益关系、预算和高级计费规则。已捕获的桌面用量账本、Hermes 数据与供应商凭据不受影响。',
+    settingsRecoveryBackupText: '备份已复制到剪贴板。在清除配置文件会员、席位历史、线路权益关系、预算与高级规则数据前，请将其保存到安全位置。',
     settingsRecoveryDataConfirm: '确认并清除用户输入的数据',
     settingsCopyBackup: '重置前复制恢复备份',
     settingsAboutHeading: '关于与支持',

@@ -43,6 +43,7 @@ import math
 import os
 import tempfile
 import time
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -365,6 +366,107 @@ def attribution_note(basis: str) -> str:
     }.get(basis, "")
 
 
+def _move_included_routes(mapping: dict[str, Any], included_by_route: Mapping[str, Mapping[str, Any]],
+                          eligible_since: float | None) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    """Move observed routes to their included owner only with exact active evidence."""
+    pending: dict[str, list[str]] = {}
+    for route, relationship in included_by_route.items():
+        route_key = str(route or "").strip().lower()
+        observed = any(
+            str(item.get("route") or "").strip().lower() == route_key
+            for entry in mapping.get("by_account", {}).values()
+            for item in entry.get("routes", [])
+        ) or any(str(name or "").strip().lower() == route_key
+                 for name in mapping.get("ambiguous", {})) \
+            or any(str(name or "").strip().lower() == route_key
+                   for name in mapping.get("unattributed", []))
+        if not observed:
+            continue
+        active = mem._epoch(relationship.get("effective_from"))
+        source_id = str(relationship.get("account_id") or "")
+        owner_id = str(relationship.get("owner_account_id") or "")
+        if active is None or eligible_since is None or active > eligible_since:
+            pending.setdefault(owner_id, []).append(route)
+            continue
+        source = mapping["by_account"].get(source_id)
+        exact = next((item for item in (source or {}).get("routes", [])
+                      if item.get("route") == route and item.get("basis") == "route"), None)
+        if exact is None:
+            pending.setdefault(owner_id, []).append(route)
+            continue
+        source["routes"] = [item for item in source["routes"] if item is not exact]
+        if source["routes"]:
+            bases = {item.get("basis") for item in source["routes"]}
+            source["basis"] = next(iter(bases)) if len(bases) == 1 else "mixed"
+        else:
+            source["basis"] = "route"
+        owner = mapping["by_account"].setdefault(owner_id, {"routes": [], "basis": "route"})
+        owner["routes"].append({"route": route, "basis": "route", "included_via": source_id})
+        bases = {item.get("basis") for item in owner["routes"]}
+        owner["basis"] = next(iter(bases)) if len(bases) == 1 else "mixed"
+    return mapping, pending
+
+
+def _included_route_transitions(accounts: list[Mapping[str, Any]],
+                                route_store: Mapping[str, Any],
+                                plans: Mapping[str, Any],
+                                observed_routes: Iterable[str],
+                                start: float, end: float) -> tuple[set[str], set[str]]:
+    """Return observed routes with ownership changes and invalid saved relationships."""
+    observed = {str(route or "").strip().lower() for route in observed_routes
+                if str(route or "").strip()}
+    if not observed:
+        return set(), set()
+
+    history = route_store.get("routes") or {}
+    timestamps = {
+        stamp
+        for route in observed
+        for item in (history.get(route, {}).get("history") or [])
+        if (stamp := mem._epoch(item.get("effective_from"))) is not None
+        and start < stamp < end
+    }
+
+    def included_at(moment: float) -> dict[str, Mapping[str, Any]]:
+        """Resolve valid included-route owners at one effective time."""
+        resolved = mstore.resolve_route_entitlements(accounts, route_store, plans, moment)
+        return {str(route).strip().lower(): relation
+                for route, relation in (resolved.get("included_by_route") or {}).items()}
+
+    def invalid_included_at(moment: float, valid: Mapping[str, Mapping[str, Any]]) -> set[str]:
+        """Find saved included relationships that do not validate at this time."""
+        invalid: set[str] = set()
+        for route in observed:
+            entry = history.get(route)
+            if not isinstance(entry, Mapping):
+                continue
+            revision = mstore._route_revision_at(entry, moment)
+            if revision.get("arrangement") == "included" and route not in valid:
+                invalid.add(route)
+        return invalid
+
+    def owner_signature(relation: Mapping[str, Any] | None) -> tuple[str, str] | None:
+        """Return the source and owner identity for a valid relationship."""
+        if not relation or relation.get("status") != "valid":
+            return None
+        return (str(relation.get("account_id") or ""),
+                str(relation.get("owner_account_id") or ""))
+
+    state = included_at(start)
+    changed: set[str] = set()
+    invalid = invalid_included_at(start, state)
+    for stamp in sorted(timestamps):
+        next_state = included_at(stamp)
+        invalid.update(invalid_included_at(stamp, next_state))
+        for route in observed:
+            before = owner_signature(state.get(route))
+            after = owner_signature(next_state.get(route))
+            if before != after and (before is not None or after is not None):
+                changed.add(route)
+        state = next_state
+    return changed, invalid
+
+
 # ---------------------------------------------------------------------------
 # User-supplied FX rates (the only conversion source)
 # ---------------------------------------------------------------------------
@@ -559,7 +661,11 @@ def build_economics_report(
     stored = mstore.load_with_seats(membership_path)
     if stored.get("error"):
         raise mstore.StoreUnreadable(str(stored["error"]))
-    accounts = stored.get("accounts", [])
+    route_resolution = mstore.resolve_route_entitlements(
+        stored.get("accounts", []), stored.get("entitlement_store") or {}, plans, moment)
+    accounts = route_resolution.get("accounts", [])
+    included_by_route = route_resolution.get("included_by_route") or {}
+    route_store = stored.get("entitlement_store") or {"version": mstore.ENTITLEMENT_STORE_VERSION, "routes": {}}
 
     fx_doc = load_fx(fx_file)
     fx_by_currency = {r["currency"]: r for r in fx_doc.get("rates", [])}
@@ -569,6 +675,8 @@ def build_economics_report(
         catalogue=book, pricing_mode="strict", profiles_path=profiles_path)
     by_route = {str(r.get("provider") or ""): r for r in analytics.get("by_route", [])}
     mapping = attribute_routes(accounts, sorted(by_route))
+    mapping, pending_shared_routes = _move_included_routes(mapping, included_by_route,
+                                                           mem._epoch((analytics.get("window") or {}).get("since")))
 
     recording = analytics.get("recording") or {}
     window = analytics.get("window") or {}
@@ -587,8 +695,8 @@ def build_economics_report(
     other_rows: list[dict[str, Any]] = []
     for account in accounts:
         aid = str(account.get("id") or "")
-        arrangement = mem.billing_arrangement(account)
         plan = _plan_for(account, plans)
+        arrangement = str(account.get("route_arrangement") or mem.billing_arrangement(account))
         fee = mem.resolve_fee(account, plans, moment)
         routes = mapping["by_account"].get(aid, {"routes": [], "basis": "route"})
         usage = _sum_usage([by_route[item["route"]] for item in routes["routes"]
@@ -606,7 +714,14 @@ def build_economics_report(
                                 "balances, not against a recurring fee."),
                     "unconfirmed": ("Billing arrangement not confirmed: confirm whether this "
                                     "account is a subscription before comparing."),
+                    "no_plan": "No current plan: this route has no confirmed recurring plan.",
+                    "included": "Included route: the owning subscription is counted once on its account.",
+                    "invalid": "Route ownership could not be verified; usage and fees remain outside subscription totals.",
+                    "mixed": "Routes on this account have different billing states; resolve them before comparing.",
+                    "free_tier": "Free access: API-equivalent value is shown for context, not as paid subscription value.",
                 }.get(arrangement, "Not a subscription; excluded from the comparison."),
+                "entitlement_owner_id": account.get("entitlement_owner_id"),
+                "route_entitlements": account.get("route_entitlements") or [],
             })
             continue
 
@@ -615,6 +730,10 @@ def build_economics_report(
         currency = str(effective.get("currency") or "").upper() or None
         renewal = _renewal_for(account, fee, plan, moment)
         notes: list[str] = []
+        if pending_shared_routes.get(aid):
+            notes.append("Included route usage is not allocated because its ownership was confirmed during "
+                         "this reporting window or exact route evidence is incomplete: "
+                         + ", ".join(sorted(pending_shared_routes[aid])) + ".")
         for line in fee.get("notes") or []:
             notes.append(str(line))
 
@@ -685,6 +804,8 @@ def build_economics_report(
             notes.append(attribution_note(routes["basis"]))
         else:
             status = "ok"
+        if pending_shared_routes.get(aid) and status == "ok":
+            status = "partial"
         if usage["tokens"] == 0 and monthly is not None and status == "ok":
             notes.append("No usage was observed for this subscription in this window.")
 
@@ -702,6 +823,8 @@ def build_economics_report(
             "fx": rate,
             "renewal": renewal,
             "usage": usage, "usage_basis": "API-equivalent list value (strict catalogue pricing)",
+            "included_routes": [route for route, relation in included_by_route.items()
+                                if relation.get("owner_account_id") == aid],
             "attribution": {**routes, "note": attribution_note(routes["basis"])},
             "difference_usd": difference,
             "status": status, "notes": notes,
@@ -818,7 +941,7 @@ def build_economics_report(
 
     trend = _build_trend(accounts, plans, book, moment, trend_months,
                          recording_since, event_db_path, fx_by_currency,
-                         history_plans=history_plans)
+                         history_plans=history_plans, route_store=route_store)
 
     return {
         "ok": True,
@@ -877,12 +1000,12 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
                  recording_since: float | None,
                  event_db_path: Path | str | None,
                  fx_by_currency: Mapping[str, Mapping[str, Any]],
-                 history_plans: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                 history_plans: Mapping[str, Any] | None = None,
+                 route_store: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Per-calendar-month fees vs usage, with partial-month flags.
 
-    Attribution is rebuilt from the routes observed across the whole trend
-    window: a route used in September but silent since still backs its
-    September usage, independently of the headline's trailing window.
+    Attribution is resolved for each month's observed routes using the
+    relationship history effective at that month's start.
     """
     now_dt = datetime.fromtimestamp(moment, timezone.utc)
     months: list[dict[str, Any]] = []
@@ -921,10 +1044,7 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
             else:
                 entry["unpriced_tokens"] += priced["_tokens"]
 
-    observed_routes = sorted({route for bucket in usage_by_month.values() for route in bucket})
-    trend_mapping = attribute_routes(accounts, observed_routes)
-    account_routes = {aid: [item["route"] for item in entry.get("routes", [])]
-                      for aid, entry in trend_mapping["by_account"].items()}
+    route_store = route_store or {"version": mstore.ENTITLEMENT_STORE_VERSION, "routes": {}}
     entries = []
     excluded_before_recording = 0
     for spec in months:
@@ -936,12 +1056,41 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
                                  and spec["start_ts"] < recording_since < spec["end_ts"])
         in_progress = spec["start_ts"] <= moment < spec["end_ts"]
         month_plans = plans if in_progress else (history_plans or plans)
+        bucket = usage_by_month.get(spec["month"], {})
+        month_routes = sorted(bucket)
+        month_relationships = mstore.resolve_route_entitlements(
+            accounts, route_store, month_plans, spec["start_ts"])
+        month_mapping, pending_shared_routes = _move_included_routes(
+            attribute_routes(accounts, month_routes),
+            month_relationships.get("included_by_route") or {}, spec["start_ts"])
+        transition_routes, unverified_routes = _included_route_transitions(
+            accounts, route_store, month_plans, month_routes,
+            spec["start_ts"], spec["end_ts"])
+        pending_routes = {str(route).strip().lower()
+                          for routes in pending_shared_routes.values() for route in routes}
+        ownership_partial_routes = ({route.strip().lower() for route in transition_routes}
+                                     | unverified_routes | pending_routes)
+        if ownership_partial_routes:
+            for route_entry in month_mapping["by_account"].values():
+                route_entry["routes"] = [item for item in route_entry.get("routes", [])
+                                          if str(item.get("route") or "").strip().lower()
+                                          not in ownership_partial_routes]
+                bases = {item.get("basis") for item in route_entry["routes"]}
+                route_entry["basis"] = (next(iter(bases)) if len(bases) == 1
+                                         else "mixed" if bases else "route")
+        account_routes = {aid: [item["route"] for item in entry.get("routes", [])]
+                          for aid, entry in month_mapping["by_account"].items()}
+        ownership_transition = bool(ownership_partial_routes)
         fees_by_currency: dict[str, float] = {}
         unknown_fees = 0
         for account in accounts:
-            if mem.billing_arrangement(account) not in SUBSCRIPTION_ARRANGEMENTS:
+            arrangement = mstore.account_route_arrangement(account, route_store, midpoint)
+            if arrangement not in SUBSCRIPTION_ARRANGEMENTS:
                 continue
-            fee = mem.resolve_fee(account, month_plans, midpoint)
+            fee_account = account
+            if mem.billing_arrangement(account) != "subscription":
+                fee_account = {**account, "billing_arrangement": "subscription", "api_only": False}
+            fee = mem.resolve_fee(fee_account, month_plans, midpoint)
             effective = fee.get("effective") or {}
             monthly = monthly_equivalent(effective.get("amount"), effective.get("period"))
             currency = str(effective.get("currency") or "").upper() or None
@@ -949,7 +1098,6 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
                 unknown_fees += 1
                 continue
             fees_by_currency[currency] = round(fees_by_currency.get(currency, 0.0) + monthly, 6)
-        bucket = usage_by_month.get(spec["month"], {})
         usage_total = 0.0
         usage_calls = 0
         priced_tokens = 0
@@ -957,7 +1105,10 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
         has_unpriced = False
         for aid, routes in account_routes.items():
             account = next((a for a in accounts if str(a.get("id")) == aid), None)
-            if account is None or mem.billing_arrangement(account) not in SUBSCRIPTION_ARRANGEMENTS:
+            if account is None:
+                continue
+            arrangement = mstore.account_route_arrangement(account, route_store, midpoint)
+            if arrangement not in SUBSCRIPTION_ARRANGEMENTS:
                 continue
             for route in routes:
                 entry = bucket.get(route)
@@ -970,14 +1121,20 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
                 usage_calls += entry["calls"]
                 priced_tokens += entry["priced_tokens"]
                 total_tokens += entry["tokens"]
+        unattributed_usage_calls = sum(
+            usage.get("calls", 0) for route, usage in bucket.items()
+            if str(route).strip().lower() in ownership_partial_routes)
         coverage = round(priced_tokens / total_tokens, 6) if total_tokens else None
         if total_tokens and not priced_tokens:
             # Observed but entirely unpriced: unknown value, never zero.
             usage_value: float | None = None
+        elif ownership_partial_routes and not usage_calls:
+            usage_value = None
         else:
             usage_value = round(usage_total, 6)
         mixed_pricing = bool(total_tokens and priced_tokens and has_unpriced)
-        if not fees_by_currency and not total_tokens and not unknown_fees:
+        if not fees_by_currency and not total_tokens and not unknown_fees \
+                and not ownership_partial_routes:
             continue
         # A historical month converts only with a rate dated inside it; a
         # current-month rate must not rewrite what an earlier month was worth.
@@ -985,14 +1142,13 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
         # client never has to sum mixed currencies itself.
         difference = None
         fees_usd: float | None = None
-        difference_note = ""
+        difference_notes: list[str] = []
         if unknown_fees:
-            difference_note = f"{unknown_fees} subscription(s) have no fee for this month."
-        elif usage_value is None:
-            difference_note = "Usage in this month has no published price."
+            difference_notes.append(f"{unknown_fees} subscription(s) have no fee for this month.")
+        elif ownership_transition or usage_value is None:
+            pass
         elif len(fees_by_currency) == 1 and "USD" in fees_by_currency:
             fees_usd = fees_by_currency["USD"]
-            difference = round(usage_value - fees_usd, 6)
         elif fees_by_currency:
             convertible = True
             converted = 0.0
@@ -1009,21 +1165,43 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
                 converted += amount * rate["usd_per_unit"]
             if convertible:
                 fees_usd = round(converted, 6)
-                difference = round(usage_value - fees_usd, 6)
             else:
-                difference_note = "Non-USD fees with no FX rate dated in this month."
-        if difference is not None and mixed_pricing:
-            difference_note = (f"Only {coverage * 100:.1f}% of this month's usage is priced; "
-                               "the value is a lower bound.")
+                difference_notes.append("Non-USD fees with no FX rate dated in this month.")
+        if ownership_partial_routes:
+            route_names = ", ".join(sorted(ownership_partial_routes))
+            if unverified_routes.intersection(ownership_partial_routes):
+                difference_notes.append(
+                    "Included route ownership could not be verified; observed usage on affected "
+                    f"routes was excluded from this comparison: {route_names}.")
+            elif transition_routes:
+                difference_notes.append(
+                    "Shared route ownership changed during this month; observed usage on affected "
+                    f"routes was excluded from this comparison: {route_names}.")
+            else:
+                difference_notes.append(
+                    "Included route usage was excluded because exact route evidence is incomplete: "
+                    f"{route_names}.")
+        if usage_value is None and total_tokens and not priced_tokens:
+            difference_notes.append("Usage in this month has no published price.")
+        if not unknown_fees and not ownership_transition and usage_value is not None and fees_usd is not None:
+            difference = round(usage_value - fees_usd, 6)
+        if mixed_pricing:
+            difference_notes.append(
+                f"Only {coverage * 100:.1f}% of this month's attributed usage is priced; "
+                "the value is a lower bound.")
+        difference_note = " ".join(difference_notes)
         entries.append({
             "month": spec["month"], "start": spec["start"], "end": spec["end"],
             "in_progress": in_progress, "recording_partial": recording_partial,
-            "partial": mixed_pricing,
+            "partial": mixed_pricing or ownership_transition,
+            "partial_pricing": mixed_pricing,
+            "partial_attribution": ownership_transition,
             "fees_by_currency": [{"currency": c, "amount": a}
                                  for c, a in sorted(fees_by_currency.items())],
             "fees_usd": fees_usd,
             "unknown_fee_accounts": unknown_fees,
             "usage_usd": usage_value, "usage_calls": usage_calls,
+            "unattributed_usage_calls": unattributed_usage_calls,
             "usage_coverage": coverage, "has_unpriced_usage": has_unpriced,
             "difference_usd": difference, "difference_note": difference_note,
         })

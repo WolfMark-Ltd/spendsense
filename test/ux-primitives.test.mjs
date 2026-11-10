@@ -358,6 +358,14 @@ test('every attention (attn*) string exists in both en and zh, and zh renders', 
   }], null, zhT)
   assert.equal(items.length, 1)
   assert.match(items[0].text, /未确认/, 'the zh attention message renders through the translator')
+
+  const relationship = T.needsAttention([{
+    id: 'shared', label: 'Shared route', effective_arrangement: 'invalid',
+    route_relationship_status: 'stale', quota: { windows: [] },
+  }], null, zhT)
+  assert.equal(relationship[0].issue, 'relationship')
+  assert.equal(T.attentionActionLabel(relationship[0].issue, enT), 'Confirm arrangement')
+  assert.equal(T.attentionActionLabel(relationship[0].issue, zhT), '确认账单安排')
 })
 
 test('every Memberships layout (mem*) string exists in both en and zh', () => {

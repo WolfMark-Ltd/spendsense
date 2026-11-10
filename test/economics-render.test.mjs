@@ -342,6 +342,22 @@ test('a partially priced trend month keeps its bars and warns it is a lower boun
   assert.match(text(), /lower bound/)
 })
 
+test('a route ownership transition is labelled as partial attribution', async () => {
+  const data = econFixture()
+  data.trend = { months: [{
+    month: '2026-10', fees_by_currency: [{ currency: 'USD', amount: 20 }], fees_usd: 20,
+    usage_usd: null, usage_calls: 0, unattributed_usage_calls: 1, difference_usd: null,
+    in_progress: false, partial: true, partial_pricing: false, partial_attribution: true,
+    recording_partial: false,
+    difference_note: 'Shared route ownership changed during this month; observed usage on affected routes was excluded from this comparison: route-anthropic.',
+  }], excluded_before_recording: 0, note: '' }
+  const { container, text } = await renderSection(data)
+  assert.equal(container.querySelector('.wm-econ-trend-bars'), null)
+  assert.match(text(), /partial attribution/)
+  assert.doesNotMatch(text(), /partial pricing/)
+  assert.match(text(), /observed usage on affected routes was excluded from this comparison/)
+})
+
 test('a fully unpriced trend month shows no value and no bars', async () => {
   const data = econFixture()
   data.trend = { months: [{

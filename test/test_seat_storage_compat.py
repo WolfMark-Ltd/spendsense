@@ -76,6 +76,35 @@ class SeatStorageCompatibilityTests(unittest.TestCase):
         self.assertEqual(mem.resolve_fee(upgraded, self.book, '2026-11-09T00:00:00Z')['effective']['amount'], 330)
         self.assertEqual(mem.resolve_fee(upgraded, self.book, '2026-11-09T00:00:00Z')['calculated']['amount'], 375)
 
+    def test_included_route_sidecar_keeps_060_memberships_and_seat_history_compatible(self):
+        self.append(3, '2026-11-06T00:00:00Z', 'three')
+        source = {"id": "anthropic:default", "family": "anthropic", "identity": "anthropic-test",
+                  "label": "Anthropic", "route_slugs": ["anthropic"], "plan_id": "anthropic.claude-pro",
+                  "billing_arrangement": "subscription", "fee_overrides": [
+                      {"id": "source-fee", "amount": 17, "currency": "GBP", "period": "month"}],
+                  "manual_exhaustions": []}
+        store.save_account(source, self.path)
+        card = next(row for row in api.accounts_payload(
+            path=self.path, catalogue=self.book, data_dir=self.path.parent,
+            at='2026-11-10T12:00:00Z')["accounts"] if row["id"] == source["id"])
+        seats_before = store.seat_store_path(self.path).read_bytes()
+        owner = next(row for row in store.load_store(self.path)["accounts"]
+                     if row["id"] == self.saved["id"])
+        store.set_account_arrangement(
+            source["id"], "included", owner_account_id=owner["id"],
+            if_rev=card["rev"], if_route_rev=card["route_entitlement_rev"],
+            path=self.path, catalogue=self.book, at='2026-11-10T12:00:00Z')
+
+        old_accounts = legacy_store.load_store(self.path, strict=True)["accounts"]
+        self.assertFalse(legacy_membership.validation_errors({k: v for k, v in old_accounts[1].items() if k != 'rev'}))
+        upgraded_source = next(row for row in store.load_with_seats(self.path)["accounts"]
+                               if row["id"] == source["id"])
+        self.assertEqual(upgraded_source["billing_arrangement"], "unconfirmed")
+        self.assertEqual(upgraded_source["plan_id"], source["plan_id"])
+        self.assertEqual(upgraded_source["fee_overrides"], source["fee_overrides"])
+        self.assertEqual(store.seat_store_path(self.path).read_bytes(), seats_before)
+        self.assertIn("anthropic", store.load_entitlement_store(self.path)["routes"])
+
     def test_ordinary_save_strips_echoed_seats_and_preserves_history(self):
         """Verify ordinary save strips echoed seats and preserves history."""
         self.append(3, '2026-11-06T00:00:00Z', 'three')

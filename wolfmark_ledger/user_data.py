@@ -34,8 +34,9 @@ def reset_user_data(membership_path: Path | str | None = None,
     members = Path(membership_path) if membership_path else membership_store.store_path()
     profiles = Path(billing_path) if billing_path else billing.profiles_path()
     seats = membership_store.seat_store_path(members)
+    entitlements = membership_store.entitlement_store_path(members)
     budget_path = profiles.with_name('budgets.json')
-    targets = [members, profiles, seats, budget_path]
+    targets = [members, profiles, seats, budget_path, entitlements]
     locks = {members: membership_store._locked, profiles: billing._locked, budget_path: budgets.locked}
     ordered = sorted(locks.items(), key=lambda item: str(item[0]))
     with ExitStack() as stack:
@@ -44,6 +45,7 @@ def reset_user_data(membership_path: Path | str | None = None,
         membership = membership_store.load_store(members, strict=True)
         billing_doc = billing._load_profiles(profiles, strict=True)
         membership_store.load_seat_store(members)
+        membership_store.load_entitlement_store(members)
         budgets.load(budget_path)
         replacements = {
             budget_path: json.dumps({'version': 1, 'budgets': [], 'dismissals': {}}).encode('utf-8'),
@@ -53,6 +55,8 @@ def reset_user_data(membership_path: Path | str | None = None,
                                  indent=2, sort_keys=True).encode("utf-8"),
             seats: json.dumps({"version": membership_store.SEAT_STORE_VERSION, "accounts": {}},
                               indent=2, sort_keys=True).encode("utf-8"),
+            entitlements: json.dumps({"version": membership_store.ENTITLEMENT_STORE_VERSION, "routes": {}},
+                                     indent=2, sort_keys=True).encode("utf-8"),
         }
         original = {path: path.read_bytes() if path.exists() else None for path in targets}
         replaced: list[Path] = []
@@ -78,4 +82,5 @@ def reset_user_data(membership_path: Path | str | None = None,
                     f"user data reset failed and rollback could not be confirmed for: {failed_paths}"
                 ) from rollback_errors[0][1]
             raise
-    return {"memberships_cleared": True, "seat_history_cleared": True, "advanced_rules_cleared": True, "budgets_cleared": True}
+    return {"memberships_cleared": True, "seat_history_cleared": True,
+            "entitlements_cleared": True, "advanced_rules_cleared": True, "budgets_cleared": True}

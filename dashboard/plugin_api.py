@@ -39,7 +39,8 @@ from wolfmark_ledger import user_data  # noqa: E402
 from wolfmark_ledger import membership_api as members  # noqa: E402
 from wolfmark_ledger import monitoring, news as news_mod  # noqa: E402
 from wolfmark_ledger.membership import CatalogueError  # noqa: E402
-from wolfmark_ledger.membership_store import MembershipConflict, SeatStoreDurabilityError, StoreUnreadable  # noqa: E402
+from wolfmark_ledger.membership_store import (EntitlementStoreDurabilityError, MembershipConflict,
+                                              SeatStoreDurabilityError, StoreUnreadable)  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -313,6 +314,22 @@ def membership_save(account_id: str, account: dict[str, Any],
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except SeatStoreDurabilityError as exc:
         raise HTTPException(status_code=503, detail="seat_write_uncertain: reload membership data before retrying") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.put("/membership/accounts/{account_id}/arrangement")
+def membership_arrangement_save(account_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return members.save_arrangement_payload(account_id, body)
+    except StoreUnreadable as exc:
+        raise _store_unreadable(exc) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="no such membership in this store") from exc
+    except MembershipConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except EntitlementStoreDurabilityError as exc:
+        raise HTTPException(status_code=503, detail="entitlement_write_uncertain: reload membership data before retrying") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

@@ -124,7 +124,7 @@ const account = (id, extra = {}) => ({
   id, family: 'openai-codex', label: id, route_slugs: ['openai-codex'],
   billing_arrangement: 'subscription', plan_id: null, plan: null, fee: { basis: 'no_plan', effective: { amount: null } },
   quota: { windows: [] }, manual_exhaustions: [], fee_overrides: [],
-  plan_choices: [], excluded_plans: [], rev: 'r1', ...extra,
+  plan_choices: [], excluded_plans: [], rev: 'r1', route_entitlement_rev: 'route-r1', ...extra,
 })
 
 const roots = []
@@ -469,8 +469,9 @@ test('Metered API persists, disables subscription controls and restores the save
   transportCtl.respond(call => {
     if (call.path.startsWith('/membership/plans')) return plansOk()
     if (call.method === 'PUT') {
-      saved = { ...call.body, effective_arrangement: call.body.api_only ? 'api_only' : 'subscription',
-        fee: call.body.api_only ? { basis: 'api_only', effective: { amount: null } }
+      saved = { ...saved, billing_arrangement: call.body.arrangement,
+        api_only: call.body.arrangement === 'api_only', effective_arrangement: call.body.arrangement,
+        fee: call.body.arrangement === 'api_only' ? { basis: 'api_only', effective: { amount: null } }
           : { basis: 'declared', effective: { amount: 17, currency: 'GBP', period: 'year' } } }
       return { ok: true, account: saved }
     }
@@ -500,7 +501,8 @@ test('unconfirmed and prepaid accounts show their arrangements without subscript
   transportCtl.respond(call => {
     if (call.path.startsWith('/membership/plans')) return plansOk()
     if (call.method === 'PUT') {
-      saved = { ...call.body, effective_arrangement: call.body.billing_arrangement }
+      saved = { ...saved, billing_arrangement: call.body.arrangement,
+        api_only: call.body.arrangement === 'api_only', effective_arrangement: call.body.arrangement }
       return { ok: true }
     }
     return { ok: true, accounts: [saved] }
@@ -519,6 +521,40 @@ test('unconfirmed and prepaid accounts show their arrangements without subscript
   assert.match(card.textContent, /Prepaid credit account/)
   assert.doesNotMatch(card.textContent, /Plan for this provider account/)
   assert.doesNotMatch(card.textContent, /Edit fee/)
+})
+
+test('Included can explicitly link to a plan-less account with a declared paid fee', async () => {
+  $testConnectionId.set('gateway-a'); $testProfile.set('default'); transportCtl.reset()
+  const owner = account('commandcode:default', {
+    family: 'commandcode', label: 'CommandCode', route_slugs: ['commandcode'],
+    billing_arrangement: 'subscription', effective_arrangement: 'subscription',
+    fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } },
+  })
+  const source = account('anthropic:default', {
+    family: 'anthropic', label: 'Anthropic', route_slugs: ['anthropic'],
+    billing_arrangement: 'subscription', effective_arrangement: 'subscription',
+  })
+  let write = null
+  transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
+    : call.method === 'PUT'
+      ? (write = call, { ok: true, accounts: [owner, source] })
+      : { ok: true, accounts: [owner, source], store: { loaded: true, error: '' }, notes: [] })
+  const { container } = await boot(); await flush(3)
+  const card = container.querySelector('[data-account="anthropic:default"]')
+  await React.act(async () => {
+    [...card.querySelectorAll('[data-nav="arrangement"] button')]
+      .find(button => button.textContent === 'Included via another subscription').click()
+  })
+  const ownerSelect = card.querySelector('label select')
+  assert.ok(ownerSelect, 'the Included choice opens an explicit owner selector')
+  assert.equal([...ownerSelect.options].some(option => option.value === owner.id), true,
+    'a declared positive fee makes this confirmed subscription available as an owner')
+  await setField(card, 'Owning paid subscription', owner.id)
+  await flush(4)
+  assert.ok(write, 'choosing an owner sends the relationship write')
+  assert.equal(write.path, '/membership/accounts/anthropic%3Adefault/arrangement')
+  assert.equal(write.body.owner_account_id, owner.id)
+  assert.equal(write.body.arrangement, 'included')
 })
 
 test('cancelling an inline fee edit does not save the draft', async () => {
@@ -1757,12 +1793,15 @@ test('selecting Metered API sends the card revision and confirms the save', asyn
   assert.equal(seg.getAttribute('role'), 'group')
   const buttons = [...seg.querySelectorAll('button')]
   assert.deepEqual(buttons.map(b => b.textContent),
-    ['Subscription', 'Prepaid credits', 'Metered API', 'Not confirmed'])
+    ['Subscription', 'Prepaid credits', 'Metered API', 'No current plan',
+      'Included via another subscription', 'Not confirmed'])
   await React.act(async () => { buttons.find(b => b.textContent === 'Metered API').click() })
   await flush(6)
   const write = transportCtl.calls.find(call => call.method === 'PUT')
   assert.ok(write, 'selecting sends a PUT')
-  assert.equal(write.body.api_only, true)
+  assert.deepEqual(write.body, {
+    arrangement: 'api_only', owner_account_id: null, rev: 'r1', route_rev: 'route-r1',
+  })
   assert.equal(write.body.rev, 'r1', 'the PUT carries the revision served by GET')
   assert.match(text(), /Saved\./, 'a successful edit shows clear feedback')
 })
@@ -2935,9 +2974,11 @@ test('recovery clipboard includes raw seat history and membership documents', as
   const seatStore = { version: 1, accounts: { account: { family: 'test', identity: null, revisions: [
     { id: 's', plan_id: 'plan', quantity: 3, period: 'month', effective_from: '2026-01-01T00:00:00Z' }
   ] } } }
+  const entitlementStore = { version: 1, routes: {} }
   const membershipStore = { version: 1, accounts: [{ id: 'account', family: 'test' }] }
   transportCtl.respond(call => call.path === '/membership/accounts'
-    ? { ok: true, accounts: [account('account')], membership_store: membershipStore, seat_store: seatStore, store: {} }
+    ? { ok: true, accounts: [account('account')], membership_store: membershipStore,
+        seat_store: seatStore, entitlement_store: entitlementStore, store: {} }
     : call.path === '/budgets' ? { ok: true, version: 1, budgets: [], dismissals: {}, rev: 'fixture' }
     : call.path === '/membership/plans' ? plansOk()
       : { ok: true, profiles: [], loaded: true, error: '' })
@@ -2952,6 +2993,7 @@ test('recovery clipboard includes raw seat history and membership documents', as
     const bundle = JSON.parse(copied)
     assert.deepEqual(bundle.membership_store, membershipStore)
     assert.deepEqual(bundle.seat_history, seatStore)
+    assert.deepEqual(bundle.route_entitlements, entitlementStore)
     assert.deepEqual(bundle.budget_guardrails.budgets, [])
     assert.equal(bundle.budget_guardrails.rev, 'fixture')
   } finally { delete navigator.clipboard }
