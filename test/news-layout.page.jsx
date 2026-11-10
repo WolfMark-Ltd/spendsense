@@ -699,12 +699,12 @@ async function probeCandidate(c, pane) {
   out.focusables = focusables
   const indexOf = match => focusables.findIndex(el => match.test(el.label))
   out.keyboard = {
-    scopeIndex: indexOf(/for you|为你推荐/),
-    categoryIndex: indexOf(/new models|新模型/),
+    scopeIndex: indexOf(/for you|为你推荐/i),
+    categoryIndex: indexOf(/new models|新模型/i),
     searchIndex: focusables.findIndex(el => el.tag === 'input'),
     detailsIndex: focusables.findIndex(el => el.tag === 'button'
       && /details|详情/i.test(el.label)),
-    loadMoreIndex: indexOf(/load more|加载更多/),
+    loadMoreIndex: indexOf(/load more|加载更多/i),
   }
   const detailsToggle = pane.querySelector(SELECTORS.details)
   if (detailsToggle) {
