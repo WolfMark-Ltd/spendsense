@@ -8371,9 +8371,12 @@ const NEWS_CSS = `
   .wm-news-offer{flex-direction:column;align-items:stretch;gap:6px}
   .wm-news-chips{flex:0 1 auto;width:100%}
   .wm-news-controls{flex-direction:column;align-items:stretch}
-  .wm-news-controls button,.wm-news-search,.wm-news-select{min-height:38px;width:100%}
-  .wm-news-seg{width:100%;flex-wrap:wrap}
-  .wm-news-segbtn{flex:1 1 auto;min-height:38px}
+  /* Full width is for non-segment controls only: segment buttons keep the
+     compact wrapping segment row (a 100% button stacks its segment into
+     full-row ovals). */
+  .wm-news-controls > button,.wm-news-search,.wm-news-select{min-height:38px;width:100%}
+  .wm-news-seg,.wm-news-controls .wm-segments{width:100%;flex-wrap:wrap}
+  .wm-news-segbtn,.wm-news-controls .wm-segments button{flex:1 1 auto;min-height:38px}
   .wm-news-more,.wm-news-clear{width:100%;min-height:38px}
 }
 `

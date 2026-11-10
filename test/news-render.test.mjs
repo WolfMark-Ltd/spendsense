@@ -451,8 +451,28 @@ test('the control row has no inflexible width at 380px', () => {
     'no inflexible control min-width in NEWS_CSS')
   // At narrow widths the scope, category and date segments wrap their buttons
   // instead of overflowing the page.
-  assert.match(T.NEWS_CSS, /@container\(max-width:560px\)\{[\s\S]*\.wm-news-seg\{width:100%;flex-wrap:wrap\}/,
+  assert.match(T.NEWS_CSS, /@container\(max-width:560px\)\{[\s\S]*\.wm-news-seg,\.wm-news-controls \.wm-segments\{width:100%;flex-wrap:wrap\}/,
     'the segment groups wrap inside the narrow container')
+})
+
+test('narrow controls stretch only non-segment controls; segments stay compact', () => {
+  // Full-width buttons are for the search/select and direct control buttons
+  // only; a bare `.wm-news-controls button` rule captured the scope and date
+  // segment buttons and stacked each into a full-row 99-radius oval.
+  assert.match(T.NEWS_CSS,
+    /\.wm-news-controls > button,\.wm-news-search,\.wm-news-select\{min-height:38px;width:100%\}/,
+    'the narrow full-width rule targets non-segment controls')
+  assert.doesNotMatch(T.NEWS_CSS, /\.wm-news-controls button,\.wm-news-search/,
+    'the capture-all segment-stacking rule is gone')
+  // The scope, date and category segments share one wrapping compact row;
+  // the category AnalyticsSegments row wraps with them instead of
+  // overflowing or stacking.
+  assert.match(T.NEWS_CSS,
+    /\.wm-news-seg,\.wm-news-controls \.wm-segments\{width:100%;flex-wrap:wrap\}/,
+    'all three segments wrap inside the narrow container')
+  assert.match(T.NEWS_CSS,
+    /\.wm-news-segbtn,\.wm-news-controls \.wm-segments button\{flex:1 1 auto;min-height:38px\}/,
+    'segment buttons share the wrapping row instead of stacking')
 })
 
 // --- WP11 corrections: hooks, official rates, card kinds, NUL guard ----------
