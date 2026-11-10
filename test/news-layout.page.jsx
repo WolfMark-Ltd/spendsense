@@ -753,35 +753,42 @@ async function probeCandidate(c, pane) {
   // Full structure, reachability and presence over the COMPLETE list.
   captureStructure()
 
-  // Ring persistence: select a category, switch scope and back; the ring must
-  // survive on the category AND the scope must carry its own ring.
+  // Ring persistence: select a category, switch scope For You and back to
+  // All; the ring must survive on the category across a REAL scope switch
+  // and the pressed scope must carry its own ring. The probe starts and must
+  // END on All — `endScope` records the pressed scope so a future state leak
+  // fails loudly here instead of corrupting the captures below.
   const scopeButtons = [...pane.querySelectorAll(`${SELECTORS.scope} button`)]
   const categoryButtons = [...pane.querySelectorAll(`${SELECTORS.category} button`)]
   const reductions = categoryButtons.find(b => /reductions|降价/i.test(b.textContent || ''))
-  if (reductions && scopeButtons.length >= 2) {
+  const allScope = scopeButtons.find(b => b.getAttribute('value') === 'all')
+  const forYouTab = scopeButtons.find(b => b.getAttribute('value') === 'foryou')
+  if (reductions && allScope && forYouTab) {
+    // 1) on All, select the Reductions category
     reductions.click()
     await tick(80)
-    const selectedCategory = selectedState(categoryButtons.find(b => b.getAttribute('aria-pressed') === 'true'))
-    const allScope = scopeButtons.find(b => /all updates|全部动态/i.test(b.textContent || ''))
-    const forYouTab = scopeButtons.find(b => /for you|为你推荐/i.test(b.textContent || ''))
-    allScope?.click()
+    const categoryOnSelect = selectedState(categoryButtons.find(b => b.getAttribute('aria-pressed') === 'true'))
+    // 2) switch to For You: the category ring must survive the real switch
+    forYouTab.click()
     await tick(80)
-    const afterSwitchAll = selectedState(categoryButtons.find(b => (b.textContent || '').match(/reductions|降价/i)))
-    const scopeRingOnAll = selectedState(scopeButtons.find(b => b.getAttribute('aria-pressed') === 'true'))
-    forYouTab?.click()
+    const categoryAfterScopeSwitch = selectedState(categoryButtons.find(b => (b.textContent || '').match(/reductions|降价/i)))
+    const scopeRing = selectedState(scopeButtons.find(b => b.getAttribute('aria-pressed') === 'true'))
+    // 3) switch back to All
+    allScope.click()
     await tick(80)
-    const afterSwitchBack = selectedState(categoryButtons.find(b => (b.textContent || '').match(/reductions|降价/i)))
+    const categoryAfterSwitchBack = selectedState(categoryButtons.find(b => (b.textContent || '').match(/reductions|降价/i)))
     out.ring = {
-      categoryOnSelect: selectedCategory,
-      categoryAfterScopeSwitch: afterSwitchAll,
-      scopeRing: scopeRingOnAll,
-      categoryAfterSwitchBack: afterSwitchBack,
-      survives: afterSwitchAll.pressed === 'true'
-        && afterSwitchBack.pressed === 'true'
-        && afterSwitchAll.outline?.style !== 'none'
-        && Number.parseFloat(afterSwitchAll.outline?.width || '0') > 0,
+      categoryOnSelect,
+      categoryAfterScopeSwitch,
+      scopeRing,
+      categoryAfterSwitchBack,
+      endScope: scopeButtons.find(b => b.getAttribute('aria-pressed') === 'true')?.getAttribute('value') || '',
+      survives: categoryAfterScopeSwitch.pressed === 'true'
+        && categoryAfterSwitchBack.pressed === 'true'
+        && categoryAfterScopeSwitch.outline?.style !== 'none'
+        && Number.parseFloat(categoryAfterScopeSwitch.outline?.width || '0') > 0,
     }
-    // restore
+    // 4) restore the category filter
     categoryButtons.find(b => /all|全部/i.test(b.textContent || ''))?.click()
     await tick(60)
   } else {

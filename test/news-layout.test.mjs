@@ -652,6 +652,8 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
     assert.equal(probe.loadMore.focusInsideList, true, 'load-more keeps focus inside the list')
   }
   // persistent selected ring on scope AND category, surviving switches
+  assert.equal(probe.ring.endScope, 'all',
+    `the ring interaction must end back on All (got ${JSON.stringify(probe.ring)})`)
   assert.equal(probe.ring.survives, true, `category ring survives scope switches: ${JSON.stringify(probe.ring)}`)
   assert.equal(probe.ring.scopeRing?.pressed, 'true', 'scope carries its own selected ring')
   assert.ok(Number.parseFloat(probe.ring.scopeRing?.outline?.width || '0') > 0
