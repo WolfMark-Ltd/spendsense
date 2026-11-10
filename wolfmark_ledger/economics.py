@@ -43,6 +43,7 @@ import math
 import os
 import tempfile
 import time
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional
