@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 // Loads desktop/plugin.js with the host SDK and React stubbed out, then
 // exercises the pure accounting internals exported as `__test`.
 import assert from 'node:assert/strict'

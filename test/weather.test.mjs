@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // Allowance weather helper regressions through the same stub loader the
 // other suites use (no React needed). Rendered-section tests live in

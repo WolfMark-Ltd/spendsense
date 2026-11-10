@@ -7902,11 +7902,15 @@ function newsTierComparison(item) {
   if (!before && !after) return { status: 'unavailable', reason: 'tier_unavailable', rows: [], dir: null }
   // Captured empty lists establish that no tiers exist: a fresh untiered
   // price event ([] and []) and an untiered new listing (after only, before
-  // never captured) are tierless — no tier chip, warning or caveat. A
-  // retained empty before with a missing after stays unavailable: the current
-  // tiers are the open question there.
-  if ((!before && after && !after.length) || (before && after && !before.length && !after.length))
+  // never existed) are tierless — no tier chip, warning or caveat. Any other
+  // missing-before with an empty after stays tierless only when normalised
+  // tiers confirm none existed; when has_tiers says tiers existed, the
+  // before rates are the open question and stay unavailable.
+  if ((!before && after && !after.length && (item?.category === 'new_model' || !item?.has_tiers)) ||
+      (before && after && !before.length && !after.length))
     return { status: 'none', reason: null, rows: [], dir: null }
+  if (!before && after && !after.length && item?.has_tiers)
+    return { status: 'unavailable', reason: 'tier_unavailable', rows: [], dir: null }
   const rowsKnown = detail === 'known' && [...(before || []), ...(after || [])]
     .every(row => typeof row?.type === 'string' && row.type.trim() !== '')
   if (!rowsKnown) return { status: 'unknown', reason: 'tier_type_unknown', rows: [], dir: null }

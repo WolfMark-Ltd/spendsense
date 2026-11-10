@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // Browser layout test for the Memberships summary strip: real Chrome
 // geometry with synthetic long mixed-currency fees. Asserts two columns at

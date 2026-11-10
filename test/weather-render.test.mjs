@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // Allowance weather rendering regressions — real React, synthetic fixtures.
 // Renders AllowanceWeather directly with canned report entries. Must stay a

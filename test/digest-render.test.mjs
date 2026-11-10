@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // Local digest rendering and Reports page regressions — real React with a
 // mocked transport. Must stay a separate file from test/digest.test.mjs:

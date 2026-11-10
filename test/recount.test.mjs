@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // Synthetic regression for cumulative counters and rounded cache estimates.
 import assert from 'node:assert/strict'

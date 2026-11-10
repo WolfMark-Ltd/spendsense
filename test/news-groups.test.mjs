@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // WP11 model-first grouping: pure helpers over the existing flat /news item
 // shape (local + central items, impacts, settings). No new payload contract —
@@ -1087,6 +1087,32 @@ test('captured empty tier arrays establish untiered, not unknown or unchanged', 
   // The untiered event drives no tiers_only class: the rate move classifies.
   assert.equal(S.newsOfferClass(evt({ has_tiers: true, tiers_detail: 'known',
     tiers_before: [], tiers_after: [] })), 'reduction')
+})
+
+test('a missing before with an empty after keeps unavailable when tiers existed', () => {
+  // A legacy price event: the old snapshot kept normalised tiers but no raw
+  // rows, while the new side captured an empty list. The before rates are the
+  // open question, so the tier chip stays with its unavailable caveat.
+  const removed = evt({ has_tiers: true, tiers_detail: 'unknown', tiers_after: [] })
+  const cmp = S.newsTierComparison(removed)
+  assert.equal(cmp.status, 'unavailable')
+  assert.equal(cmp.reason, 'tier_unavailable')
+  assert.deepEqual(cmp.rows, [])
+  // The same gap under a known detail reads the same way: the before list is
+  // still missing, so no tierless claim is made.
+  assert.equal(S.newsTierComparison(evt({ has_tiers: true, tiers_detail: 'known',
+    tiers_after: [] })).reason, 'tier_unavailable')
+  // Preserved: a new listing has no before to miss, and normalised tiers
+  // confirming none exist still reads as tierless.
+  assert.equal(S.newsTierComparison(evt({ category: 'new_model', has_tiers: true,
+    tiers_detail: 'known', tiers_after: [] })).status, 'none')
+  assert.equal(S.newsTierComparison(evt({ has_tiers: false, tiers_detail: 'unknown',
+    tiers_after: [] })).status, 'none')
+  // The restored caveat classifies: flat base rates become tiers_only, while
+  // a base-rate move keeps its direction with the tier chip alongside.
+  assert.equal(S.newsOfferClass(evt({ has_tiers: true, tiers_detail: 'unknown', tiers_after: [],
+    previous: { input: 5.0, output: 25.0 }, current: { input: 5.0, output: 25.0 } })), 'tiers_only')
+  assert.equal(S.newsOfferClass(removed), 'reduction')
 })
 
 test('the optional news_rate_changed code classifies neutrally', () => {
