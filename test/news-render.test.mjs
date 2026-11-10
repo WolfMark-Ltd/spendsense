@@ -276,7 +276,7 @@ test('group details open, show the audit trail and History, in both locales', as
     assert.match(panel.textContent, /Observed|观察于/)
     assert.match(panel.textContent, source)
     assert.match(panel.textContent, /g1/)
-    const history = panel.querySelector('.wm-news-history')
+    const history = panel.querySelector('[data-news-history]')
     assert.ok(history, 'History lists older events')
     assert.match(history.textContent, /g-old/)
     assert.ok(history.querySelector('a[href="https://example.com/pricing"]'), 'history keeps its source link')
@@ -585,12 +585,73 @@ test('comparable tier rows render per row, with a directional tier chip', async 
   assert.match(tierChip.textContent, /−50%/, 'the largest comparable tier move, concise')
   const button = view.container.querySelector('button[data-news-details]')
   await React.act(async () => { button.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
-  const rows = [...view.container.querySelectorAll('[data-news-details-panel] .wm-news-history li')]
+  const rows = [...view.container.querySelectorAll('[data-news-details-panel] [data-news-tier-list] li')]
   assert.equal(rows.length, 2, 'each tier row is listed separately')
   assert.match(rows[0].textContent, /up_to_200k/)
   assert.match(rows[0].textContent, /Input −50%/)
   assert.match(rows[1].textContent, /up_to_1m/)
   assert.match(rows[1].textContent, /unchanged/)
+})
+
+test('a single unmerged event exposes exact evidence and raw tiers in Details, EN and zh', async () => {
+  const item = {
+    id: 'exact-1', origin: 'local', category: 'price_reduction', provider: 'P', model: 'm1',
+    previous: { input: 5.0, output: 25.0, cache_read: null, cache_write: null },
+    current: { input: 2.3456789, output: 12.345678, cache_read: null, cache_write: null },
+    has_tiers: true, tiers_detail: 'known',
+    // Mismatched tier types and thresholds: no row pairs up, so nothing is
+    // comparable — the raw rows still render exactly as supplied.
+    tiers_before: [{ type: 'context', size: 200000, input: 3.14159, output: 15.9265 }],
+    tiers_after: [{ type: 'long_context', size: 1000000, input: 2.71828, cache_write: 0.75 }],
+    observed_at: '2026-11-03T14:26:31Z', effective_at: '2026-11-10T00:09:00Z',
+    source_url: 'https://example.com/exact', provenance: 'Exact scan', confidence: 'observed',
+    relevance: { relevant: false, reasons: [] },
+  }
+  const group = T.newsGroupModels([item]).groups[0]
+  assert.equal(group.offers[0].tierStatus, 'mismatch', 'the mismatched tiers are not comparable')
+  for (const [locale, origin, evidence] of [['en', 'Local', 'Evidence sources'], ['zh', '本地', '证据来源']]) {
+    T.$newsDetailsOpen.set([])
+    const view = await renderNode(React.createElement(T.NewsModelGroup, {
+      group, impacts: {}, t: translator(locale), matchedOffers: null, detailsId: `wse-${locale}` }), locale)
+    const button = view.container.querySelector('button[data-news-details]')
+    await React.act(async () => { button.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    const panel = view.container.querySelector('[data-news-details-panel]')
+    assert.equal(button.getAttribute('aria-expanded'), 'true')
+    assert.ok(!panel.hidden)
+    // The rounded was/now summary table stays, but the exact record is now
+    // reachable too, behind a native details disclosure.
+    assert.match(panel.querySelector('.wm-news-rates').textContent, /\$2\.3457/,
+      'the summary rate table stays rounded')
+    const disclosure = panel.querySelector('details[data-news-single-evidence]')
+    assert.ok(disclosure, 'the single unmerged event exposes an exact-evidence disclosure')
+    assert.equal(disclosure.querySelector('summary').textContent, evidence)
+    assert.ok(!panel.querySelector('.wm-news-evidence'), 'no merged evidence block for one source')
+    const row = disclosure.querySelector('[data-news-evidence] [data-news-source-id]')
+    assert.equal(row.getAttribute('data-news-source-id'), 'exact-1', 'the exact stored id is reachable')
+    assert.equal(row.querySelector('[data-news-source]').getAttribute('data-news-source'), 'local')
+    assert.match(row.querySelector('[data-news-source]').textContent, new RegExp(origin))
+    assert.match(row.textContent, new RegExp('Observed 2026-11-03T14:26:31Z|观察于2026-11-03T14:26:31Z'),
+      'the exact ISO observed timestamp, not the rounded day')
+    assert.match(row.textContent, new RegExp('Effective 2026-11-10T00:09:00Z|生效于2026-11-10T00:09:00Z'),
+      'the exact ISO effective timestamp')
+    assert.ok(row.querySelector('a[href="https://example.com/exact"]'), 'the exact source URL is linked')
+    const table = row.querySelector('.wm-news-rates')
+    assert.match(table.textContent, /\$5/, 'the exact was rate')
+    assert.match(table.textContent, /\$2\.3456789/, 'the exact now input rate, full precision')
+    assert.match(table.textContent, /\$12\.345678/, 'the exact now output rate, full precision')
+    // Raw tier rows exactly as supplied — mismatched types and thresholds
+    // keep their own values, with no invented percentages anywhere.
+    const before = row.querySelector('[data-news-tier-rows="before"]')
+    const after = row.querySelector('[data-news-tier-rows="after"]')
+    assert.match(before.textContent, /context \(200000\)/)
+    assert.match(before.textContent, /\$3\.14159/)
+    assert.match(before.textContent, /\$15\.9265/)
+    assert.match(after.textContent, /long_context \(1000000\)/)
+    assert.match(after.textContent, /\$2\.71828/)
+    assert.match(after.textContent, /\$0\.75/, 'a field missing before renders only where supplied')
+    assert.ok(!row.querySelector('[data-news-tier-blocks]').textContent.includes('%'),
+      'raw tier rows carry no invented percentages')
+  }
 })
 
 test('official rates render as text with every window as its own row, never a link', async () => {
@@ -832,17 +893,21 @@ test('fixture unknown-recurrence: m1 keeps four events with the newest class', a
   assert.equal(c.querySelector('[data-news-model-id]').textContent, 'm1')
   const panel = await openDetails(view)
   // No cross-origin merge happened, so no merged evidence block exists; the
-  // History disclosure instead renders every history event's OWN record,
-  // each tagged local — full evidence, never a summary-only row.
+  // single unmerged latest event exposes its OWN record behind the exact
+  // evidence disclosure, and the History disclosure renders every history
+  // event's OWN record — full evidence, never a summary-only row.
   const ownRecords = [...panel.querySelectorAll('[data-news-evidence] [data-news-source-id]')]
   assert.deepEqual(ownRecords.map(el => el.getAttribute('data-news-source-id')),
-    ['local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-rf2ea95',
+    ['md-c312c6eae578',
+      'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-rf2ea95',
       'local-price-reduction-acme-m1--r-----cache-read---null---cache-writ-8f80b1eeda',
       'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22'],
-    'every history event keeps its own original record reachable')
-  assert.ok(ownRecords.every(el =>
+    'the latest event and every history event keep their own original record reachable')
+  assert.equal(ownRecords[0].querySelector('[data-news-source]').getAttribute('data-news-source'),
+    'central', 'the unmerged latest record is exposed with its own origin tag')
+  assert.ok(ownRecords.slice(1).every(el =>
     el.querySelector('[data-news-source]').getAttribute('data-news-source') === 'local'),
-    'no cross-origin merge: every record stays local')
+    'no cross-origin merge: every history record stays local')
   assert.ok(!panel.querySelector('.wm-news-evidence'),
     'no merged evidence block: the recurrence stayed separate')
   const history = panel.querySelector('[data-news-history]')

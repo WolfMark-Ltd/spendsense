@@ -8552,6 +8552,11 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
   const reasons = newsRelevanceText(latest, t)
   const sources = Array.isArray(latest?.merged_sources) && latest.merged_sources.length > 1
     ? latest.merged_sources : null
+  // A single unmerged event gets the same full evidence in Details: its exact
+  // stored record — high-precision rates, exact timestamps and raw tier rows —
+  // behind the same accessible disclosure the History uses. Nothing is
+  // invented: incompatible tier rows keep their own values or '—'.
+  const singleEvidence = !sources ? newsEvidenceRecords(latest)[0] ?? null : null
   const allChips = tierChip ? [...chips, tierChip] : chips
   return jsxs('div', { className: 'wm-news-offer', 'data-news-offer': 'true',
     'data-news-provider': offer.provider || '', 'data-news-model': offer.model || '',
@@ -8587,7 +8592,8 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
         (offer.tierStatus === 'match' && (offer.tierRows || []).length)
           ? jsxs('div', { children: [
               jsx('p', { className: 'wm-news-historytitle', children: t('newsFieldTiers') }),
-              jsx('ul', { className: 'wm-news-history', children: offer.tierRows.map((row, index) =>
+              jsx('ul', { className: 'wm-news-history', 'data-news-tier-list': 'true',
+                children: offer.tierRows.map((row, index) =>
                 jsxs('li', { children: [
                   jsx('span', { className: 'wm-news-historycode', children: `${row.type || ''}${row.size != null ? ` (${fmtTokens(row.size)})` : ''}` }),
                   jsx('span', { children: row.deltas
@@ -8605,7 +8611,13 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
           jsx('p', { className: 'wm-news-historytitle', children: t('newsEvidence') }),
           jsx('ul', { className: 'wm-news-history', children: sources.map((source, index) =>
             jsx(NewsEvidenceRow, { source, t }, index)) }),
-        ] }) : null,
+        ] })
+        : singleEvidence ? jsxs('details', { className: 'wm-news-histevidence',
+            'data-news-single-evidence': 'true', children: [
+            jsx('summary', { children: t('newsEvidence') }),
+            jsx('ul', { className: 'wm-news-history', 'data-news-evidence': 'true',
+              children: jsx(NewsEvidenceRow, { source: singleEvidence, t }) }),
+          ] }) : null,
         latest?.conditions ? jsx('p', { className: 'wm-news-conditions', children: newsConditionsText(latest, t) }) : null,
         reasons ? jsx('p', { className: 'wm-news-reasons', children: reasons }) : null,
         (latest?.related_routes?.length)
