@@ -7826,6 +7826,18 @@ function newsSameEventProof(a, b) {
 }
 
 /**
+ * Every original record that backs one event: the event's own record first,
+ * then each additional record retained during grouping or merging. Records
+ * come back exactly as they arrived — different origin, URL, provenance or
+ * timestamps are never dropped or rewritten — so no evidence is lost.
+ */
+function newsEvidenceRecords(event) {
+  const records = Array.isArray(event?.merged_sources)
+    ? event.merged_sources.filter(rec => rec && typeof rec === 'object') : []
+  return records.length ? records : event ? [event] : []
+}
+
+/**
  * Cross-origin dedupe beyond exact ids: a local item and a central item with
  * DIFFERENT ids merge into one event only when both hold an identical
  * transition (newsTransitionKey) and an explicit same-event proof
@@ -7852,7 +7864,9 @@ function newsMergeEvents(events) {
       out.push({
         ...event,
         observed_at: newest.observed_at || event.observed_at,
-        merged_sources: [event, partner],
+        // Evidence stays flat: the event's own original record(s) first, then
+        // the merged partner — never nested, never rewritten.
+        merged_sources: newsEvidenceRecords(event).concat(newsEvidenceRecords(partner)),
       })
     } else {
       out.push(event)
@@ -7888,8 +7902,18 @@ function newsGroupModels(items) {
     const provider = String(item.provider || '')
     let events = group.offers.get(provider)
     if (!events) { events = []; group.offers.set(provider, events) }
-    // Deduped by exact id; the first occurrence wins and is never mutated.
-    if (!events.some(event => event?.id === item.id)) events.push(item)
+    // Deduped by exact stored id: one event per id, and every later
+    // occurrence with that id is kept as an additional original evidence
+    // record on the single event — a same id from local and central with
+    // different URLs, provenance or timestamps keeps BOTH records. The first
+    // occurrence drives the event's own fields; nothing incoming is mutated
+    // (the wrapper is a fresh object that only adds evidence).
+    const existing = events.findIndex(event => event?.id === item.id)
+    if (existing === -1) events.push(item)
+    else events[existing] = {
+      ...events[existing],
+      merged_sources: newsEvidenceRecords(events[existing]).concat([item]),
+    }
   }
   const groups = []
   for (const { model, offers } of byModel.values()) {
@@ -8325,7 +8349,8 @@ const NEWS_CSS = `
 }
 `
 
-function NewsRateTable({ previous, current, t }) {
+function NewsRateTable({ previous, current, t, exact = false }) {
+  const rate = value => exact && Number.isFinite(value) ? `$${value}` : fmtRate(value)
   const rows = [
     ['newsRateInput', 'input'], ['newsRateOutput', 'output'],
     ['newsRateCacheRead', 'cache_read'], ['newsRateCacheWrite', 'cache_write'],
@@ -8340,9 +8365,60 @@ function NewsRateTable({ previous, current, t }) {
     ].filter(Boolean) }) }),
     jsx('tbody', { children: rows.map(([label, key]) => jsxs('tr', { children: [
       jsx('td', { children: t(label) }),
-      compare ? jsx('td', { children: previous[key] == null ? '—' : fmtRate(previous[key]) }) : null,
-      jsx('td', { children: current[key] == null ? '—' : fmtRate(current[key]) }),
+      compare ? jsx('td', { children: previous[key] == null ? '—' : rate(previous[key]) }) : null,
+      jsx('td', { children: current[key] == null ? '—' : rate(current[key]) }),
     ].filter(Boolean) }, key)) }),
+  ] })
+}
+
+/**
+ * Full evidence of one original source record: the origin tag, the exact
+ * stored id, the observed/effective dates, the provenance string and the
+ * exact source URL as the link target. Nothing is invented or normalised.
+ */
+function NewsEvidenceRow({ source, t }) {
+  const origin = String(source?.origin || 'local') === 'central' ? 'central' : 'local'
+  return jsxs('li', { 'data-news-source-id': source?.id || '', children: [
+    jsx('span', { className: 'wm-news-evidencetag', 'data-news-source': origin,
+      children: origin === 'central' ? t('newsSourceCentral') : t('newsSourceLocal') }),
+    jsx('span', { className: 'wm-news-itemid', children: source?.id || '' }),
+    jsx('span', { children: t('newsObserved', source?.observed_at || '—') }),
+    source?.effective_at ? jsx('span', { children: t('newsEffective', source.effective_at) }) : null,
+    source?.provenance ? jsx('span', { children: source.provenance }) : null,
+    source?.source_url
+      ? jsx('a', { href: source.source_url, target: '_blank', rel: 'noreferrer',
+          className: 'wm-source-link', children: t('newsSource') })
+      : null,
+    jsx(NewsRateTable, { previous: source?.previous, current: source?.current, t, exact: true }),
+    jsx(NewsTierBlocks, { event: source, t }),
+  ] })
+}
+
+/**
+ * Raw tier rows of one event, exactly as supplied: when tiers_detail is
+ * 'known' and the arrays are present, every before/after row keeps its own
+ * type, size and rates — never averaged, compared or fabricated.
+ */
+function NewsTierBlocks({ event, t }) {
+  if (event?.tiers_detail !== 'known') return null
+  const before = Array.isArray(event.tiers_before) ? event.tiers_before : []
+  const after = Array.isArray(event.tiers_after) ? event.tiers_after : []
+  if (!before.length && !after.length) return null
+  const rowCells = row => NEWS_RATE_FIELDS
+    .filter(key => row?.[key] != null)
+    .map(key => `${t(NEWS_FIELD_KEYS[key])} ${Number.isFinite(row[key]) ? `$${row[key]}` : '—'}`)
+  const list = (rows, label, tag) => rows.length ? jsxs('div', { children: [
+    jsx('p', { className: 'wm-news-historytitle', children: label }),
+    jsx('ul', { className: 'wm-news-history', 'data-news-tier-rows': tag, children:
+      rows.map((row, index) => jsxs('li', { children: [
+        jsx('span', { className: 'wm-news-historycode',
+          children: `${row?.type || ''}${row?.size != null ? ` (${row.size})` : ''}` }),
+        jsx('span', { children: rowCells(row).join(' · ') }),
+      ] }, `${row?.type || ''}:${row?.size ?? ''}:${index}`)) }),
+  ] }, tag) : null
+  return jsxs('div', { 'data-news-tier-blocks': 'true', children: [
+    list(before, t('newsTierBefore'), 'before'),
+    list(after, t('newsTierAfter'), 'after'),
   ] })
 }
 
@@ -8527,20 +8603,8 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
           : null,
         sources ? jsxs('div', { className: 'wm-news-evidence', children: [
           jsx('p', { className: 'wm-news-historytitle', children: t('newsEvidence') }),
-          jsx('ul', { className: 'wm-news-history', children: sources.map(source => jsxs('li', { children: [
-            jsx('span', { className: 'wm-news-evidencetag', 'data-news-source':
-              String(source.origin || 'local') === 'central' ? 'central' : 'local',
-              children: String(source.origin || 'local') === 'central'
-                ? t('newsSourceCentral') : t('newsSourceLocal') }),
-            jsx('span', { className: 'wm-news-itemid', children: source?.id || '' }),
-            jsx('span', { children: t('newsObserved', fmtDay(source?.observed_at)) }),
-            source?.effective_at ? jsx('span', { children: t('newsEffective', fmtDay(source.effective_at)) }) : null,
-            source?.provenance ? jsx('span', { children: source.provenance }) : null,
-            source?.source_url
-              ? jsx('a', { href: source.source_url, target: '_blank', rel: 'noreferrer',
-                  className: 'wm-source-link', children: t('newsSource') })
-              : null,
-          ] }, source?.id || source?.observed_at || 'source')) }),
+          jsx('ul', { className: 'wm-news-history', children: sources.map((source, index) =>
+            jsx(NewsEvidenceRow, { source, t }, index)) }),
         ] }) : null,
         latest?.conditions ? jsx('p', { className: 'wm-news-conditions', children: newsConditionsText(latest, t) }) : null,
         reasons ? jsx('p', { className: 'wm-news-reasons', children: reasons }) : null,
@@ -8563,16 +8627,20 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
             jsx('span', { className: 'wm-news-historycode', children: event?.id || '' }),
             jsx('span', { children: t('newsObserved', fmtDay(event?.observed_at)) }),
             jsx('span', { children: newsSummaryText(event, t) }),
-            (Array.isArray(event?.merged_sources) && event.merged_sources.length > 1
-              ? event.merged_sources : [])
-              .map(source => jsx('span', { className: 'wm-news-evidencetag', 'data-news-source':
-                String(source.origin || 'local') === 'central' ? 'central' : 'local',
-                children: String(source.origin || 'local') === 'central'
-                  ? t('newsSourceCentral') : t('newsSourceLocal') }, source?.id)),
             event?.source_url
               ? jsx('a', { href: event.source_url, target: '_blank', rel: 'noreferrer',
                   className: 'wm-source-link', children: t('newsSource') })
               : null,
+            // The full audit trail of one historical event: the exact
+            // was/now rates, the raw tier rows and every original source
+            // record with its exact id, dates, provenance and URL — nested
+            // in an accessible disclosure, nothing summarised away.
+            jsxs('details', { className: 'wm-news-histevidence', children: [
+              jsx('summary', { children: t('newsEvidence') }),
+              jsx('ul', { className: 'wm-news-history', 'data-news-evidence': 'true', children:
+                newsEvidenceRecords(event).map((source, sourceIndex) =>
+                  jsx(NewsEvidenceRow, { source, t }, sourceIndex)) }),
+            ] }, 'evidence'),
           ] }, event?.id || event?.observed_at || 'event')) }),
         ] }) : null,
       ] }),
@@ -9586,6 +9654,8 @@ const I18N = {
     newsOfficialWindow: days => `${days}-day window`,
     newsOfficialDays: 'Days',
     newsEvidence: 'Evidence sources',
+    newsTierBefore: 'Tiers before',
+    newsTierAfter: 'Tiers after',
     newsSourceLocal: 'Local',
     newsSourceCentral: 'Central',
     ovNoteWindow: 'Only timestamped calls in [since, until) are counted; no historical usage is inferred. Buckets follow local calendar boundaries and carry explicit UTC timestamps, including across DST.',
@@ -10829,6 +10899,8 @@ const I18N = {
     newsOfficialWindow: days => `${days} 天窗口`,
     newsOfficialDays: '天数',
     newsEvidence: '证据来源',
+    newsTierBefore: '之前分层',
+    newsTierAfter: '之后分层',
     newsSourceLocal: '本地',
     newsSourceCentral: '中心',
     ovNoteWindow: '仅统计 [since, until) 区间内带时间戳的调用，不推断历史用量。分桶遵循本地日历边界并带有明确的 UTC 时间戳，夏令时切换期间亦然。',
@@ -11582,6 +11654,7 @@ export const __test = {
   NEWS_FOR_YOU_INITIAL, NEWS_EVENT_LINK_FIELDS, NEWS_RATE_CLASS_BY_CODE,
   newsUsedRecently, newsLastUsedMs, newsItemReasonCodes, newsGroupReasonCodes,
   newsMergeEvents, newsSameEventProof, newsTransitionKey, newsTransitionBase, newsSameTransition,
+  newsEvidenceRecords, NewsEvidenceRow, NewsTierBlocks,
   analyticsNoteText, analyticsNotesText, ANALYTICS_NOTE_KEYS, analyticsGapReasonLabel, OV_GAP_REASON_KEYS,
   econNoteText, econNotesText, econSingularNoteText, econExplanationText, ECON_NOTE_KEYS, ECON_EXPLANATION_KEYS,
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,

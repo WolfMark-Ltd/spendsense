@@ -6,11 +6,13 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
 import { after, test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const HARNESS_MODULES = join(ROOT, 'test', 'harness', 'node_modules')
+const harnessRequire = createRequire(join(ROOT, 'test', 'harness', 'package.json'))
 
 if (!existsSync(join(HARNESS_MODULES, '@tanstack', 'react-query'))) {
   throw new Error('real-query harness is not installed: run `npm ci --prefix test/harness`')
@@ -36,10 +38,15 @@ await esbuild.build({
   outfile: bundle,
   alias: {
     '@hermes/plugin-sdk': join(ROOT, 'test', 'harness', 'real-sdk.mjs'),
-    react: join(HARNESS_MODULES, 'react'),
-    'react-dom': join(HARNESS_MODULES, 'react-dom'),
   },
   nodePaths: [HARNESS_MODULES],
+  // Keep React's native CommonJS module.require: bundling it makes act()
+  // fall back to MessageChannels whose referenced ports keep Node alive.
+  plugins: [{ name: 'native-react', setup(build) {
+    build.onResolve({ filter: /^react(?:-dom)?(?:\/|$)/ }, args => ({
+      path: harnessRequire.resolve(args.path), external: true,
+    }))
+  } }],
   logLevel: 'warning',
 })
 
@@ -96,11 +103,11 @@ const renderCard = async (item, impact, locale, options = {}) => {
   return { container, text: () => container.textContent, show }
 }
 
-after(() => { queryClient.clear(); dom.window.close() })
+after(() => { queryClient.clear(); dom.window.close(); esbuild.stop() })
 test.afterEach(async () => {
   while (roots.length) {
     const root = roots.pop()
-    try { await React.act(async () => { root.unmount() }) } catch { /* already gone */ }
+    await React.act(async () => { root.unmount() })
   }
   queryClient.clear()
 })
@@ -201,9 +208,9 @@ const renderNode = async (element, locale) => {
   document.body.appendChild(container)
   const root = ReactDOMClient.createRoot(container)
   roots.push(root)
-  const show = async (nextLocale) => {
+  const show = async (nextLocale, nextElement = element) => {
     await React.act(async () => {
-      root.render(React.cloneElement(element, { t: translator(nextLocale) }))
+      root.render(React.cloneElement(nextElement, { t: translator(nextLocale) }))
     })
   }
   await show(locale)
@@ -276,6 +283,125 @@ test('group details open, show the audit trail and History, in both locales', as
   }
 })
 
+test('a demoted merged event keeps full evidence and raw tiers in History, EN and zh', async () => {
+  const tiersBefore = [{ type: 'context', size: 200000, input: 2.0, output: 10.0, cache_read: 0.2 }]
+  const tiersAfter = [{ type: 'context', size: 200000, input: 1.6, output: 8.0, cache_read: 0.2 }]
+  // Proof (b): distinct IDs, identical transition, equal nonempty effective_at
+  // and URL. Different observed timestamps must survive the later demotion.
+  const l1 = groupItem({ id: 'l1', provider: 'Acme', model: 'm1',
+    observed_at: '2026-11-03T00:00:00Z', effective_at: '2026-11-05T00:00:00Z',
+    source_url: 'https://example.com/local-scan', provenance: 'Hermes local scan',
+    tiers_detail: 'known', tiers_before: tiersBefore, tiers_after: tiersAfter })
+  const c1 = groupItem({ id: 'c1', origin: 'central', provider: 'Acme', model: 'm1',
+    observed_at: '2026-11-04T12:34:56Z', effective_at: '2026-11-05T00:00:00Z',
+    source_url: 'https://example.com/local-scan', provenance: 'models.dev central feed',
+    tiers_detail: 'known', tiers_before: tiersBefore, tiers_after: tiersAfter })
+  const l2 = groupItem({ id: 'l2', provider: 'Acme', model: 'm1',
+    observed_at: '2026-11-05T00:00:00Z',
+    current: { input: 6.0, output: 30.0, cache_read: 0.6, cache_write: 7.0 } })
+  const group = groupFrom([l1, c1, l2])
+  assert.equal(group.offers[0].events.length, 2, 'no inflated event count')
+  for (const [locale, labels] of [
+    ['en', { evidence: 'Evidence sources', before: 'Tiers before', after: 'Tiers after' }],
+    ['zh', { evidence: '证据来源', before: '之前分层', after: '之后分层' }],
+  ]) {
+    T.$newsDetailsOpen.set([])
+    const node = React.createElement(T.NewsModelGroup, { group: groupFrom([l1, c1]), impacts: {}, t: translator(locale),
+      matchedOffers: null, detailsId: `wh-${locale}` })
+    const view = await renderNode(node, locale)
+    const button = view.container.querySelector('button.wm-news-details')
+    await React.act(async () => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    assert.ok(!view.container.querySelector('[data-news-history]'), 'merged pair starts as latest')
+    assert.deepEqual([...view.container.querySelectorAll('[data-news-source-id]')]
+      .map(row => row.getAttribute('data-news-source-id')), ['l1', 'c1'])
+    await view.show(locale, React.cloneElement(node, { group }))
+    const history = view.container.querySelector('[data-news-history]')
+    assert.ok(history, 'History renders')
+    const events = history.querySelectorAll('[data-news-event]')
+    assert.equal(events.length, 1, 'the merged pair stays one history event')
+    assert.equal(events[0].getAttribute('data-news-event'), 'l1',
+      'the merged event stays reachable under its primary id')
+    const disclosure = events[0].querySelector('details.wm-news-histevidence')
+    assert.ok(disclosure, 'a nested accessible disclosure holds the full audit trail')
+    assert.equal(disclosure.querySelector('summary').textContent, labels.evidence)
+    disclosure.open = true
+    const text = disclosure.textContent
+    assert.match(text, new RegExp(labels.before), `tier before label (${locale})`)
+    assert.match(text, new RegExp(labels.after), `tier after label (${locale})`)
+    // Both original records with their exact ids and exact source anchors.
+    const rows = [...disclosure.querySelectorAll('[data-news-evidence] [data-news-source-id]')]
+    assert.deepEqual(rows.map(row => row.getAttribute('data-news-source-id')), ['l1', 'c1'])
+    const anchors = [...disclosure.querySelectorAll('a.wm-source-link')]
+      .map(a => a.getAttribute('href'))
+    assert.ok(anchors.includes('https://example.com/local-scan'), 'local anchor exact')
+    assert.deepEqual(anchors, [l1.source_url, c1.source_url], 'both original anchors exact')
+    for (const [index, source] of [l1, c1].entries()) {
+      const row = rows[index]
+      assert.ok(row.textContent.includes(source.observed_at), 'full original observed timestamp')
+      assert.ok(row.textContent.includes(source.effective_at), 'full original effective timestamp')
+      assert.ok(row.textContent.includes(source.provenance), 'original provenance')
+      assert.deepEqual([...row.querySelectorAll('.wm-news-rates tbody tr')].map(tr =>
+        [...tr.querySelectorAll('td')].slice(1).map(td => td.textContent)),
+        ['input', 'output', 'cache_read', 'cache_write'].map(key =>
+          [`$${source.previous[key]}`, `$${source.current[key]}`]), 'every exact previous/current rate')
+      assert.equal(row.querySelector('[data-news-tier-rows="before"]').textContent,
+        `context (200000)${locale === 'en' ? 'Input $2 · Output $10 · Cache read $0.2' : '输入 $2 · 输出 $10 · 缓存读取 $0.2'}`)
+      assert.equal(row.querySelector('[data-news-tier-rows="after"]').textContent,
+        `context (200000)${locale === 'en' ? 'Input $1.6 · Output $8 · Cache read $0.2' : '输入 $1.6 · 输出 $8 · 缓存读取 $0.2'}`)
+    }
+    // Observed/effective dates and provenance of BOTH records.
+    assert.match(text, /2026-11-03/, 'observed dates reachable')
+    assert.match(text, /2026-11-05/, 'effective dates reachable')
+    assert.match(text, /Hermes local scan/, 'local provenance reachable')
+    assert.match(text, /models\.dev central feed/, 'central provenance reachable')
+    // Exact was/now rates of the historical event, not a summary.
+    const rates = disclosure.querySelector('.wm-news-rates')
+    assert.ok(rates, 'the historical was/now table is present')
+    assert.match(rates.textContent, /\$5/, 'previous input exact')
+    assert.match(rates.textContent, /\$4/, 'current input exact')
+    assert.match(rates.textContent, /\$0\.5/, 'previous cache_read exact')
+    assert.match(rates.textContent, /\$0\.4/, 'current cache_read exact')
+    // Raw tier rows exactly as supplied, before and after.
+    const beforeRows = disclosure.querySelector('[data-news-tier-rows="before"]')
+    const afterRows = disclosure.querySelector('[data-news-tier-rows="after"]')
+    assert.ok(beforeRows && afterRows, 'both raw tier blocks render')
+    assert.match(beforeRows.textContent, /\$2/, 'tier before input exact')
+    assert.match(beforeRows.textContent, /context/, 'tier row type exact')
+    assert.match(afterRows.textContent, /\$1\.6/, 'tier after input exact')
+    assert.match(afterRows.textContent, /\$8/, 'tier after output exact')
+  }
+})
+
+test('a same-id pair renders both original records as evidence', async () => {
+  const local = groupItem({ id: 'md-shared', provider: 'Acme', model: 'm1',
+    source_url: 'https://example.com/local', provenance: 'Hermes local scan' })
+  const central = groupItem({ id: 'md-shared', origin: 'central', provider: 'Acme', model: 'm1',
+    observed_at: '2026-11-04T00:00:00Z',
+    source_url: 'https://example.com/central', provenance: 'models.dev central feed' })
+  const group = groupFrom([local, central])
+  assert.equal(group.offers[0].events.length, 1, 'one event for one stored id')
+  T.$newsDetailsOpen.set([])
+  const node = React.createElement(T.NewsModelGroup, { group, impacts: {}, t: translator('en'),
+    matchedOffers: null, detailsId: 'ws1' })
+  const view = await renderNode(node, 'en')
+  const button = view.container.querySelector('button.wm-news-details')
+  await React.act(async () => {
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+  const evidence = view.container.querySelector('.wm-news-evidence')
+  assert.ok(evidence, 'the latest event exposes its evidence block')
+  const rows = [...evidence.querySelectorAll('[data-news-source-id]')]
+  assert.deepEqual(rows.map(row => row.getAttribute('data-news-source-id')),
+    ['md-shared', 'md-shared'], 'both original records render')
+  const hrefs = [...evidence.querySelectorAll('a.wm-source-link')].map(a => a.getAttribute('href'))
+  assert.deepEqual(hrefs, ['https://example.com/local', 'https://example.com/central'],
+    'each record keeps its exact URL')
+  assert.match(evidence.textContent, /Hermes local scan/)
+  assert.match(evidence.textContent, /models\.dev central feed/)
+})
+
 test('a group without model_name shows the exact ID alone', async () => {
   const group = groupFrom([groupItem({ id: 'g1', model_name: '' })])
   const { container } = await renderNode(
@@ -283,7 +409,7 @@ test('a group without model_name shows the exact ID alone', async () => {
       matchedOffers: null, detailsId: 'wn1' }), 'en')
   const heading = container.querySelector('h3')
   assert.equal(heading.textContent, 'claude-sonnet-4-5-20250929')
-  assert.equal(heading.querySelector('.wm-news-groupid'), null, 'no duplicated ID line')
+  assert.ok(!heading.querySelector('.wm-news-groupid'), 'no duplicated ID line')
 })
 
 test('the same group renders translated Chinese and keeps the ID unchanged', async () => {
@@ -362,7 +488,7 @@ test('the group and offer markup carries the full DOM hook contract', async () =
   const card = c.querySelector('article[data-news-group]')
   assert.equal(card.getAttribute('data-news-group'), 'claude-sonnet-4-5-20250929')
   assert.equal(card.getAttribute('data-news-classes'), 'reduction')
-  assert.equal(card.querySelector('[data-news-model-name]'), null,
+  assert.ok(!card.querySelector('[data-news-model-name]'),
     'model_name is absent, so the attribute is absent too')
   assert.equal(card.querySelector('[data-news-model-id]').textContent, 'claude-sonnet-4-5-20250929')
   const offer = card.querySelector('[data-news-offer]')
@@ -383,9 +509,11 @@ test('the group and offer markup carries the full DOM hook contract', async () =
   assert.ok(button.getAttribute('aria-controls'))
   const panel = offer.querySelector('[data-news-details-panel]')
   assert.equal(panel.id, button.getAttribute('aria-controls'))
-  // Evidence sources of the merged event, each with its origin.
+  // Evidence sources of the merged event, each with its origin. The history
+  // disclosure additionally renders the historical event's own record.
   await React.act(async () => { button.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
-  const sources = [...panel.querySelectorAll('[data-news-source]')]
+  const evidenceBlock = panel.querySelector('.wm-news-evidence')
+  const sources = [...evidenceBlock.querySelectorAll('[data-news-source]')]
   assert.deepEqual(sources.map(el => el.getAttribute('data-news-source')), ['local', 'central'])
   assert.match(panel.textContent, /loc-1/)
   assert.match(panel.textContent, /cen-1/)
@@ -513,12 +641,12 @@ test('official rates render as text with every window as its own row, never a li
 test('cards carry their kind: plan, listing and the flat fallback', async () => {
   const plan = await renderCard({ id: 'p', category: 'subscription', provider: 'Acme', model: '' }, null, 'en')
   assert.ok(plan.container.querySelector('[data-news-plan]'), 'a subscription item is a plan card')
-  assert.equal(plan.container.querySelector('[data-news-impact]'), null, 'no impact, no hook')
+  assert.ok(!plan.container.querySelector('[data-news-impact]'), 'no impact, no hook')
   const listing = await renderCard({ id: 'l', category: 'new_model', provider: 'Acme', model: 'm9' }, null, 'en')
   assert.ok(listing.container.querySelector('[data-news-listing]'), 'a new_model item is a listing card')
   const flat = await renderCard({ id: 'f', category: 'price_reduction', provider: 'Acme', model: 'm1' }, null, 'en')
-  assert.equal(flat.container.querySelector('[data-news-plan]'), null)
-  assert.equal(flat.container.querySelector('[data-news-listing]'), null)
+  assert.ok(!flat.container.querySelector('[data-news-plan]'))
+  assert.ok(!flat.container.querySelector('[data-news-listing]'))
   // The degraded flat fallback marks every card.
   const flatMarked = await renderCard(
     { id: 'f2', category: 'subscription', provider: 'Acme', model: '' }, null, 'en', { flat: true })
@@ -703,8 +831,20 @@ test('fixture unknown-recurrence: m1 keeps four events with the newest class', a
     'the friendly sourced name is shown over the exact ID')
   assert.equal(c.querySelector('[data-news-model-id]').textContent, 'm1')
   const panel = await openDetails(view)
-  assert.equal(panel.querySelectorAll('[data-news-source]').length, 0,
-    'no merged evidence: the recurrence stayed separate')
+  // No cross-origin merge happened, so no merged evidence block exists; the
+  // History disclosure instead renders every history event's OWN record,
+  // each tagged local — full evidence, never a summary-only row.
+  const ownRecords = [...panel.querySelectorAll('[data-news-evidence] [data-news-source-id]')]
+  assert.deepEqual(ownRecords.map(el => el.getAttribute('data-news-source-id')),
+    ['local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-rf2ea95',
+      'local-price-reduction-acme-m1--r-----cache-read---null---cache-writ-8f80b1eeda',
+      'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22'],
+    'every history event keeps its own original record reachable')
+  assert.ok(ownRecords.every(el =>
+    el.querySelector('[data-news-source]').getAttribute('data-news-source') === 'local'),
+    'no cross-origin merge: every record stays local')
+  assert.ok(!panel.querySelector('.wm-news-evidence'),
+    'no merged evidence block: the recurrence stayed separate')
   const history = panel.querySelector('[data-news-history]')
   assert.deepEqual([...history.querySelectorAll('[data-news-event]')].map(el => el.getAttribute('data-news-event')), [
     'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-rf2ea95',

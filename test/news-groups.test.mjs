@@ -665,23 +665,120 @@ test('observed-at proof needs matching effective_at and non-conflicting URLs', (
     evt({ observed_at: NOW, effective_at: '2026-11-06T00:00:00Z', source_url: '' })), false)
 })
 
-test('an exact same stored ID dedupes with all source evidence kept', () => {
-  // The same stored id from both origins collapses to one event without any
-  // proof dance: the first occurrence wins and keeps every evidence field of
-  // its own — effective_at, source_url, provenance — untouched.
+test('an exact same stored ID dedupes to one event with all evidence kept', () => {
+  // The same stored id from both origins collapses to one event, and BOTH
+  // original records stay reachable as evidence — a later same-id occurrence
+  // with a different origin, URL, provenance or timestamps is never dropped.
   const local = evt({ id: 'md-shared', origin: 'local',
-    effective_at: '2026-11-05T00:00:00Z', source_url: 'https://example.com/local' })
+    observed_at: '2026-11-03T00:00:00Z',
+    effective_at: '2026-11-05T00:00:00Z', source_url: 'https://example.com/local',
+    provenance: 'Hermes local scan' })
   const central = evt({ id: 'md-shared', origin: 'central',
-    effective_at: '2026-11-06T00:00:00Z', source_url: 'https://example.com/central' })
+    observed_at: '2026-11-04T00:00:00Z',
+    effective_at: '2026-11-06T00:00:00Z', source_url: 'https://example.com/central',
+    provenance: 'models.dev central feed' })
+  const originals = structuredClone([local, central])
+  Object.freeze(local)
+  Object.freeze(central)
   const { groups } = S.newsGroupModels([local, central])
   const offer = groups[0].offers[0]
   assert.equal(offer.events.length, 1, 'one event for one stored id')
   assert.equal(offer.latest.id, 'md-shared')
+  // The event's own fields stay the untouched first occurrence.
   assert.equal(offer.latest.effective_at, '2026-11-05T00:00:00Z', 'effective_at is kept, not overwritten')
   assert.equal(offer.latest.source_url, 'https://example.com/local')
+  assert.equal(offer.latest.observed_at, '2026-11-03T00:00:00Z')
   assert.equal(offer.latest.origin, 'local')
-  assert.ok(!Array.isArray(offer.latest.merged_sources), 'no fabricated cross-origin merge for identical ids')
-  assert.equal(offer.latest, local, 'the first occurrence wins and is never mutated')
+  assert.equal(offer.latest.provenance, 'Hermes local scan')
+  // Both original records are retained, by identity, in arrival order.
+  assert.deepEqual(offer.latest.merged_sources, [local, central],
+    'every original record is retained as evidence, originals unchanged')
+  assert.deepEqual(offer.history, [])
+  // The incoming payload objects themselves are never mutated.
+  assert.equal(central.effective_at, '2026-11-06T00:00:00Z')
+  assert.equal(central.source_url, 'https://example.com/central')
+  assert.ok(!('merged_sources' in central), 'no evidence field is written back into the payload')
+  // The real grouping entry point (not only newsMergeEvents) keeps the
+  // evidence through ordering and enrichment.
+  assert.equal(offer.events[0].merged_sources.length, 2)
+  assert.equal(offer.events[0].merged_sources[0], local)
+  assert.equal(offer.events[0].merged_sources[1], central)
+  assert.deepEqual([local, central], originals, 'both frozen input records stay unchanged')
+})
+
+const TIERS_BEFORE = [{ type: 'context', size: 200000, input: 2.0, output: 10.0, cache_read: 0.2 }]
+const TIERS_AFTER = [{ type: 'context', size: 200000, input: 1.6, output: 8.0, cache_read: 0.2 }]
+
+test('a proven merged event demoted to History keeps every original record', () => {
+  // Intermediate state first: local l1 and central c1 (different ids, equal
+  // observed_at, known tiers on both sides) are merged as the offer latest.
+  const l1 = evt({ id: 'l1', origin: 'local', observed_at: '2026-11-03T00:00:00Z',
+    effective_at: '2026-11-05T00:00:00Z', source_url: 'https://example.com/local-scan',
+    provenance: 'Hermes local scan', tiers_detail: 'known',
+    tiers_before: TIERS_BEFORE, tiers_after: TIERS_AFTER })
+  const c1 = evt({ id: 'c1', origin: 'central', observed_at: '2026-11-03T00:00:00Z',
+    effective_at: '2026-11-05T00:00:00Z', source_url: 'https://example.com/local-scan',
+    provenance: 'models.dev central feed', tiers_detail: 'known',
+    tiers_before: TIERS_BEFORE, tiers_after: TIERS_AFTER })
+  const before = S.newsGroupModels([l1, c1]).groups[0].offers[0]
+  assert.equal(before.events.length, 1)
+  assert.deepEqual(before.latest.merged_sources, [l1, c1])
+  assert.equal(before.latest.tiers_detail, 'known')
+
+  // A newer event for the same offer demotes the merged event to History.
+  const l2 = evt({ id: 'l2', origin: 'local', observed_at: '2026-11-05T00:00:00Z',
+    current: { input: 6.0, output: 30.0, cache_read: 0.6, cache_write: 7.0 } })
+  const offer = S.newsGroupModels([l1, c1, l2]).groups[0].offers[0]
+  assert.equal(offer.events.length, 2, 'the newer event does not inflate the count')
+  assert.equal(offer.latest.id, 'l2')
+  assert.deepEqual(offer.history.map(event => event.id), ['l1'])
+  const merged = offer.history[0]
+  assert.deepEqual(merged.merged_sources, [l1, c1],
+    'both original records survive the demotion, by identity')
+  assert.equal(merged.observed_at, '2026-11-03T00:00:00Z')
+  assert.equal(merged.effective_at, '2026-11-05T00:00:00Z')
+  assert.equal(merged.source_url, 'https://example.com/local-scan')
+  assert.equal(merged.provenance, 'Hermes local scan')
+  assert.equal(merged.tiers_detail, 'known')
+  assert.deepEqual(merged.tiers_before, TIERS_BEFORE, 'raw tier blocks stay exact')
+  assert.deepEqual(merged.tiers_after, TIERS_AFTER)
+  assert.deepEqual(merged.previous, l1.previous, 'was/now rates stay exact')
+  assert.deepEqual(merged.current, l1.current)
+  // All three payload objects stay untouched.
+  for (const original of [l1, c1, l2]) assert.ok(!('merged_sources' in original))
+})
+
+test('a same-id wrapper still merges 1:1 with a different-id partner', () => {
+  // l1 and its same-id central copy collapse into one event; that event then
+  // still merges with the differently-id c2 under the ordinary proof (a
+  // shared event_id, which also tolerates the two differing URLs) — the
+  // evidence list stays flat and keeps all three original records.
+  const l1 = evt({ id: 'l1', origin: 'local', observed_at: '2026-11-03T00:00:00Z',
+    event_id: 'ev-9' })
+  const sameIdCentral = evt({ id: 'l1', origin: 'central',
+    observed_at: '2026-11-04T00:00:00Z', source_url: 'https://example.com/central',
+    event_id: 'ev-9' })
+  const c2 = evt({ id: 'c2', origin: 'central', observed_at: '2026-11-03T00:00:00Z',
+    source_url: 'https://example.com/central-mirror', event_id: 'ev-9' })
+  const offer = S.newsGroupModels([l1, sameIdCentral, c2]).groups[0].offers[0]
+  assert.equal(offer.events.length, 1, 'one event, three original records')
+  assert.deepEqual(offer.latest.merged_sources, [l1, sameIdCentral, c2])
+  assert.equal(offer.latest.id, 'l1')
+  assert.equal(offer.latest.observed_at, '2026-11-03T00:00:00Z',
+    'the merge is observed at the newest of the merged pair')
+})
+
+test('a central same-id wrapper retains every record when merged with a local partner', () => {
+  const local = evt({ id: 'local', origin: 'local', source_url: 'https://example.com/pricing',
+    effective_at: '2026-11-05T00:00:00Z' })
+  const central = evt({ ...local, id: 'central', origin: 'central' })
+  const copy = evt({ ...central, provenance: 'central second observation',
+    observed_at: '2026-11-04T12:34:56Z' })
+  const originals = structuredClone([central, copy, local])
+  const offer = S.newsGroupModels([central, copy, local]).groups[0].offers[0]
+  assert.equal(offer.events.length, 1)
+  assert.deepEqual(offer.latest.merged_sources, [local, central, copy], 'flat evidence on both sides')
+  assert.deepEqual([central, copy, local], originals, 'neither wrapper mutates incoming records')
 })
 
 // --- WP11 fixture tests: the real generated payloads -------------------------
