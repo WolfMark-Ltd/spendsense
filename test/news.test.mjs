@@ -200,16 +200,23 @@ test('newsRelevanceReasons localises truthful reasons in display order', () => {
   assert.deepEqual(S.newsRelevanceReasons({ for_you: false }, t), [])
 })
 
-test('a valid last_used_at earns Used recently; malformed or old ones do not', () => {
+test('a valid last_used_at earns Used recently; malformed or future ones do not', () => {
   const NOW = Date.parse('2026-11-05T00:00:00Z')
   const base = { for_you: true, relevance: { relevant: true, reasons: ['configured_provider'] } }
   const fresh = { ...base, last_used_at: '2026-11-04T00:00:00Z' }
   assert.deepEqual(S.newsRelevanceReasons(fresh, t, NOW),
     ['newsReasonUsedRecently()', 'newsReasonConfigured()'])
   assert.equal(S.newsRelevanceText(fresh, t, NOW), 'newsReasonUsedRecently() · newsReasonConfigured()')
-  for (const last_used_at of ['not-a-date', '2027-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '']) {
+  // Malformed and future values earn no use claim at all.
+  for (const last_used_at of ['not-a-date', '2027-01-01T00:00:00Z', '']) {
     assert.deepEqual(S.newsRelevanceReasons({ ...base, last_used_at }, t, NOW),
       ['newsReasonConfigured()'], `no Used recently for ${last_used_at || 'an empty value'}`)
+  }
+  // A valid but out-of-window last_used_at is the truthful "Used before",
+  // never recency — even for a use many months old.
+  for (const last_used_at of ['2026-10-05T00:00:00Z', '2026-01-01T00:00:00Z']) {
+    assert.deepEqual(S.newsRelevanceReasons({ ...base, last_used_at }, t, NOW),
+      ['newsReasonUsedBefore()', 'newsReasonConfigured()'], `Used before for ${last_used_at}`)
   }
 })
 
@@ -231,7 +238,7 @@ test('newsEmptyText mirrors backend empty states, with a legacy fallback', () =>
 test('new news labels exist in English and Chinese', () => {
   const keys = ['newsEmptyBaseline', 'newsEmptyNoChanges', 'newsEmptyNoMatches',
     'newsEmptyNoConfig', 'newsWhyRelevant', 'newsReasonConfigured',
-    'newsReasonUsedProvider', 'newsReasonUsedRecently', 'newsReasonRelated',
+    'newsReasonUsedProvider', 'newsReasonUsedRecently', 'newsReasonUsedBefore', 'newsReasonRelated',
     'newsReasonSelectedPlan']
   for (const [locale, table] of Object.entries(S.I18N)) {
     for (const key of keys) assert.ok(table[key] !== undefined, `${locale} is missing ${key}`)

@@ -183,8 +183,8 @@ test('tier rows must match exactly to compare; tiers never average', () => {
   assert.equal(unknown.status, 'unknown')
   assert.equal(unknown.reason, 'tier_type_unknown')
   assert.deepEqual(unknown.rows, [])
-  // Missing detail counts as unknown too.
-  assert.equal(S.newsTierComparison(evt({ has_tiers: true })).reason, 'tier_type_unknown')
+  // Missing detail with no captured arrays -> unavailable, not a type guess.
+  assert.equal(S.newsTierComparison(evt({ has_tiers: true })).reason, 'tier_unavailable')
   // Known detail but a missing array -> unavailable, never fabricated rows.
   assert.equal(S.newsTierComparison(evt({ has_tiers: true, tiers_detail: 'known', tiers_after: [tier()] })).reason,
     'tier_unavailable')
@@ -200,7 +200,7 @@ test('tier rows must match exactly to compare; tiers never average', () => {
   // No tier signal at all stays out of the way.
   assert.equal(S.newsTierComparison(evt()).status, 'none')
   assert.equal(S.newsTierComparison(evt({ previous: { tiers: [tier()] }, current: { tiers: [tier()] }, has_tiers: true })).reason,
-    'tier_type_unknown', 'legacy nested tiers arrays are never read')
+    'tier_unavailable', 'legacy nested tiers arrays are never read')
   // Same keys but equal rates -> comparable and unchanged.
   const same = S.newsTierComparison(evt({ has_tiers: true, tiers_detail: 'known',
     tiers_before: [tier()], tiers_after: [tier()] }))
@@ -312,10 +312,11 @@ test('a fuzzy used_model reason never claims the model was used recently', () =>
     assert.deepEqual(S.newsRelevanceReasons(item, t, NOW), ['newsReasonRelated()'])
     assert.equal(S.newsRelevanceText(item, t, NOW), 'newsReasonRelated()')
   }
-  // Even with an out-of-window last_used_at the fuzzy code stays neutral.
+  // Even with an out-of-window last_used_at the fuzzy code stays neutral —
+  // the old use is reported truthfully as "Used before", never as recency.
   const stale = evt({ id: 'sx', model: 'a/x', relevance: { relevant: true, reasons: ['used_model'] },
     last_used_at: '2026-01-01T00:00:00Z' })
-  assert.deepEqual(S.newsItemReasonCodes(stale, NOW), ['used_model'])
+  assert.deepEqual(S.newsItemReasonCodes(stale, NOW), ['used_before', 'used_model'])
   // A valid recent last_used_at earns "Used recently" alongside the codes.
   const fresh = evt({ id: 'fx', model: 'a/x', relevance: { relevant: true, reasons: ['used_model'] },
     last_used_at: '2026-11-04T00:00:00Z' })
@@ -645,4 +646,207 @@ test('every verifier export exists with the required values', () => {
   assert.equal(S.NEWS_FOR_YOU_INITIAL, 5)
   const grouped = S.newsGroupModels([evt({ id: 'g1' })])
   for (const key of ['groups', 'plans', 'listings']) assert.ok(Array.isArray(grouped[key]), key)
+})
+
+test('observed-at proof needs matching effective_at and non-conflicting URLs', () => {
+  const NOW = '2026-11-03T00:00:00Z'
+  // Equal observed, equal effective (both empty), one URL missing: proof.
+  assert.equal(S.newsSameEventProof(
+    evt({ observed_at: NOW, effective_at: '', source_url: '' }),
+    evt({ observed_at: NOW, effective_at: '', source_url: 'https://models.dev' })), true,
+    'a missing URL does not conflict with a present one')
+  // Conflicting non-empty URLs: no proof even with equal observed_at.
+  assert.equal(S.newsSameEventProof(
+    evt({ observed_at: NOW, effective_at: '', source_url: 'https://a' }),
+    evt({ observed_at: NOW, effective_at: '', source_url: 'https://b' })), false)
+  // Conflicting effective dates: no proof.
+  assert.equal(S.newsSameEventProof(
+    evt({ observed_at: NOW, effective_at: '2026-11-05T00:00:00Z', source_url: '' }),
+    evt({ observed_at: NOW, effective_at: '2026-11-06T00:00:00Z', source_url: '' })), false)
+})
+
+test('an exact same stored ID dedupes with all source evidence kept', () => {
+  // The same stored id from both origins collapses to one event without any
+  // proof dance: the first occurrence wins and keeps every evidence field of
+  // its own — effective_at, source_url, provenance — untouched.
+  const local = evt({ id: 'md-shared', origin: 'local',
+    effective_at: '2026-11-05T00:00:00Z', source_url: 'https://example.com/local' })
+  const central = evt({ id: 'md-shared', origin: 'central',
+    effective_at: '2026-11-06T00:00:00Z', source_url: 'https://example.com/central' })
+  const { groups } = S.newsGroupModels([local, central])
+  const offer = groups[0].offers[0]
+  assert.equal(offer.events.length, 1, 'one event for one stored id')
+  assert.equal(offer.latest.id, 'md-shared')
+  assert.equal(offer.latest.effective_at, '2026-11-05T00:00:00Z', 'effective_at is kept, not overwritten')
+  assert.equal(offer.latest.source_url, 'https://example.com/local')
+  assert.equal(offer.latest.origin, 'local')
+  assert.ok(!Array.isArray(offer.latest.merged_sources), 'no fabricated cross-origin merge for identical ids')
+  assert.equal(offer.latest, local, 'the first occurrence wins and is never mutated')
+})
+
+// --- WP11 fixture tests: the real generated payloads -------------------------
+
+const readFixture = name => JSON.parse(
+  readFileSync(new URL(`../test/fixtures/news/${name}`, import.meta.url), 'utf8'))
+
+test('payload-local-central: every model pair merges under the proof rules', () => {
+  const payload = readFixture('payload-local-central.json')
+  const combined = [...payload.local.items, ...payload.central.items]
+  const { groups, plans, listings, entries } = S.newsGroupModels(combined)
+  // Seven exact model identities, one merged offer event each.
+  assert.deepEqual(groups.map(g => g.model).sort(), [
+    'anthropic/claude-haiku-4-5', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001',
+    'claude-opus-4', 'claude-sonnet-4', 'glm-large', 'text-plain',
+  ].sort())
+  for (const group of groups) {
+    assert.equal(group.offers.length, 1, `${group.model}: one provider offer`)
+    const offer = group.offers[0]
+    assert.equal(offer.events.length, 1, `${group.model}: local+central merged`)
+    assert.equal(offer.latest.merged_sources.length, 2)
+    assert.equal(offer.latest.merged_sources[0].origin, 'local')
+    assert.equal(offer.latest.merged_sources[1].origin, 'central')
+    assert.deepEqual(offer.history, [])
+  }
+  // The sonnet pair merged on equal observed_at with a missing local URL.
+  const sonnet = groups.find(g => g.model === 'claude-sonnet-4')
+  assert.deepEqual(sonnet.offers[0].latest.merged_sources.map(s => s.id),
+    ['local-price-reduction-anthropic-claude-sonnet-4--r-----cache-read---0-3--2ea96cf7f1',
+      'md-cca3c3148481'])
+  assert.equal(sonnet.model_name, 'Claude Sonnet 4')
+  // Cards stay unmerged by origin: plans and provider listings.
+  assert.equal(plans.length, 1)
+  assert.equal(listings.length, 2)
+  assert.equal(entries.length, 10)
+})
+
+test('payload-local-central: coded classes and honest per-field chips', () => {
+  const payload = readFixture('payload-local-central.json')
+  const { groups } = S.newsGroupModels([...payload.local.items, ...payload.central.items])
+  const classOf = model => groups.find(g => g.model === model).offers[0].news_class
+  // rate_change_code news_rate_mixed agreed by the comparable fields.
+  assert.equal(classOf('claude-sonnet-4'), 'mixed')
+  // news_rate_tiers_only with unchanged base rates and a comparable tier row.
+  assert.equal(classOf('glm-large'), 'tiers_only')
+  assert.equal(classOf('claude-opus-4'), 'increase')
+  for (const model of ['text-plain', 'anthropic/claude-haiku-4-5', 'claude-haiku-4-5',
+    'claude-haiku-4-5-20251001']) {
+    assert.equal(classOf(model), 'new_listing')
+  }
+  // glm-large tiers: known detail, matching keys, per-row deltas kept.
+  const glm = groups.find(g => g.model === 'glm-large').offers[0]
+  assert.equal(glm.tierStatus, 'match')
+  assert.equal(glm.tierDir, 'down')
+  assert.equal(glm.tierRows.length, 1)
+  assert.equal(glm.tierRows[0].type, 'context')
+  // The backend impact of the merged sonnet event is keyed by its primary id.
+  const impact = payload.impacts[sonnetId()]
+  assert.equal(impact.basis, 'full')
+  function sonnetId() {
+    return 'local-price-reduction-anthropic-claude-sonnet-4--r-----cache-read---0-3--2ea96cf7f1'
+  }
+})
+
+test('payload-local-central: For You ranks by exact recency then materiality', () => {
+  const payload = readFixture('payload-local-central.json')
+  const { groups } = S.newsGroupModels([...payload.local.items, ...payload.central.items])
+  const nowMs = Date.parse('2027-01-01T06:00:00Z')
+  const ranked = S.newsRankForYou(groups, nowMs)
+  assert.deepEqual(ranked.map(g => g.model), [
+    'claude-sonnet-4',            // used 00:08:52 — the newest exact use
+    'anthropic/claude-haiku-4-5', // used 00:07:12
+    'claude-haiku-4-5',           // used 00:03:52
+    'claude-opus-4',              // no recency; strong configured_provider; +20% materiality
+    'claude-haiku-4-5-20251001',  // no recency; strong reason; no comparable change
+  ])
+  // for_you false booleans stay out of For You entirely.
+  assert.ok(!ranked.some(g => g.model === 'glm-large' || g.model === 'text-plain'))
+})
+
+test('payload-unknown-recurrence: recurrence stays separate; the newest drives the class', () => {
+  const payload = readFixture('payload-unknown-recurrence.json')
+  const { groups } = S.newsGroupModels([...payload.local.items, ...payload.central.items])
+  assert.deepEqual(groups.map(g => g.model).sort(), ['m1', 'm2', 'm4'])
+  const m1 = groups.find(g => g.model === 'm1').offers[0]
+  // Up, down, up (local, hourly) and the central up an hour later: no proof
+  // anywhere (observed differ, effective_at empty), so four separate events.
+  assert.equal(m1.events.length, 4)
+  assert.ok(m1.events.every(event => !Array.isArray(event.merged_sources)))
+  assert.deepEqual(m1.events.map(event => event.observed_at), [
+    '2027-01-01T05:03:52+00:00', '2027-01-01T04:03:52+00:00',
+    '2027-01-01T03:03:52+00:00', '2027-01-01T02:03:52+00:00',
+  ])
+  // The newest event (the central one) drives the class: a plain rise, the
+  // legacy category of the older events never leaks in.
+  assert.equal(m1.latest.id, 'md-c312c6eae578')
+  assert.equal(m1.news_class, 'increase')
+  assert.deepEqual(m1.history.map(event => event.id), [
+    'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-rf2ea95',
+    'local-price-reduction-acme-m1--r-----cache-read---null---cache-writ-8f80b1eeda',
+    'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22',
+  ])
+  // m2 and m4 share the same observation, so their central counterparts merge.
+  const m2 = groups.find(g => g.model === 'm2').offers[0]
+  assert.equal(m2.events.length, 1)
+  assert.deepEqual(m2.latest.merged_sources.map(s => s.origin), ['local', 'central'])
+  assert.equal(m2.news_class, 'reduction')
+  const m4 = groups.find(g => g.model === 'm4').offers[0]
+  assert.equal(m4.events.length, 1)
+  assert.equal(m4.news_class, 'new_listing')
+  // Every item in this payload is for_you false: For You is empty.
+  assert.deepEqual(S.newsRankForYou(groups, Date.parse('2027-01-01T06:00:00Z')), [])
+})
+
+test('payload-unknown-recurrence: unknown tiers degrade to the unavailable caveat', () => {
+  const payload = readFixture('payload-unknown-recurrence.json')
+  const { groups } = S.newsGroupModels([...payload.local.items, ...payload.central.items])
+  const m2 = groups.find(g => g.model === 'm2').offers[0]
+  assert.equal(m2.tierStatus, 'unavailable')
+  assert.equal(m2.tierReason, 'tier_unavailable')
+  assert.deepEqual(m2.tierRows, [], 'no fabricated rows')
+  // The merged m2 event keeps the local item's model_name "" — the exact ID
+  // stands alone; same for m4.
+  assert.equal(groups.find(g => g.model === 'm2').model_name, '')
+  assert.equal(groups.find(g => g.model === 'm4').model_name, '')
+})
+
+test('case-variant legacy used_model matches never claim model use', () => {
+  const NOW = Date.parse('2027-01-01T06:00:00Z')
+  // acme/M1 locally, m1 centrally: the loose legacy match must not become a
+  // use claim for either, with no exact last_used_at present.
+  const upper = evt({ id: 'u1', model: 'acme/M1', provider: 'acme',
+    relevance: { relevant: true, reasons: ['used_model'] } })
+  const lower = evt({ id: 'u2', model: 'm1', provider: 'acme',
+    relevance: { relevant: true, reasons: ['used_model'] } })
+  for (const item of [upper, lower]) {
+    assert.equal(S.newsUsedRecently(item, NOW), false, 'no exact last_used_at, no recency')
+    assert.deepEqual(S.newsItemReasonCodes(item, NOW), ['used_model'])
+    assert.deepEqual(S.newsRelevanceReasons(item, t, NOW), ['newsReasonRelated()'])
+  }
+  const group = { offers: [{ latest: upper }, { latest: lower }] }
+  assert.deepEqual(S.newsGroupReasons(group, t, NOW), ['newsReasonRelated()'])
+})
+
+test('exact last_used_at 31-90 days old says Used before; 30 days says Used recently', () => {
+  const NOW = Date.parse('2027-01-01T06:00:00Z')
+  const reasonsOf = last_used_at => S.newsItemReasonCodes(
+    evt({ relevance: { relevant: true, reasons: [] }, last_used_at }), NOW)
+  assert.deepEqual(reasonsOf('2027-01-01T00:00:00Z')[0], 'used_recently')
+  assert.deepEqual(reasonsOf('2026-12-03T00:00:00Z')[0], 'used_recently', '29 days')
+  assert.deepEqual(reasonsOf('2026-12-02T00:00:00Z')[0], 'used_before', '30 days + a moment')
+  assert.deepEqual(reasonsOf('2026-10-05T00:00:00Z')[0], 'used_before', '88 days')
+  // Malformed, future or empty values earn neither wording.
+  for (const bad of ['not-a-date', '2027-06-01T00:00:00Z', '']) {
+    assert.ok(!reasonsOf(bad).includes('used_recently'), bad)
+    assert.ok(!reasonsOf(bad).includes('used_before'), bad)
+  }
+  // The truthful non-recent label exists in both locales and never claims recency.
+  assert.equal(S.I18N.en.newsReasonUsedBefore, 'Used before')
+  assert.ok(S.I18N.zh.newsReasonUsedBefore.includes('之前'))
+  const enT = (key, ...args) => {
+    const entry = S.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  assert.deepEqual(S.newsRelevanceReasons(
+    evt({ relevance: { relevant: true, reasons: [] }, last_used_at: '2026-10-05T00:00:00Z' }), enT, NOW),
+    ['Used before'])
 })

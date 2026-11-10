@@ -7660,7 +7660,10 @@ function newsTierComparison(item) {
   const tierSignal = !!item?.has_tiers || !!before || !!after
     || detail === 'known' || detail === 'unknown'
   if (!tierSignal) return { status: 'none', reason: null, rows: [], dir: null }
-  const rowsKnown = detail === 'known' && [...before || [], ...after || []]
+  // No raw arrays at all: nothing was captured, so the rows are unavailable —
+  // never fabricated, whatever the detail field says.
+  if (!before && !after) return { status: 'unavailable', reason: 'tier_unavailable', rows: [], dir: null }
+  const rowsKnown = detail === 'known' && [...(before || []), ...(after || [])]
     .every(row => typeof row?.type === 'string' && row.type.trim() !== '')
   if (!rowsKnown) return { status: 'unknown', reason: 'tier_type_unknown', rows: [], dir: null }
   if (!before || !after) return { status: 'unavailable', reason: 'tier_unavailable', rows: [], dir: null }
@@ -7767,22 +7770,45 @@ const NEWS_EVENT_LINK_FIELDS = ['event_id', 'event_key', 'dedupe_key', 'provenan
  * category, identical previous and current rates, and — only when
  * tiers_detail is 'known' — identical tiers_before/tiers_after.
  */
-function newsTransitionKey(item) {
+function newsTransitionBase(item) {
   if (!item || typeof item !== 'object') return ''
   return [
     String(item.provider || ''), String(item.model || ''), String(item.category || ''),
     newsCanonicalRates(item.previous), newsCanonicalRates(item.current),
-    item.tiers_detail === 'known'
-      ? `${newsCanonicalTiers(item.tiers_before)}>>${newsCanonicalTiers(item.tiers_after)}`
-      : '',
   ].join('§')
+}
+
+function newsTransitionKey(item) {
+  if (!item || typeof item !== 'object') return ''
+  return `${newsTransitionBase(item)}§${item.tiers_detail === 'known'
+    ? `${newsCanonicalTiers(item.tiers_before)}>>${newsCanonicalTiers(item.tiers_after)}`
+    : ''}`
+}
+
+/**
+ * Transition equality for merging: the base must match exactly; known tiers
+ * block a merge only when BOTH sides declare tiers_detail 'known' and their
+ * rows differ — a side without tier knowledge stays mergeable (additive
+ * detail, not a different transition).
+ */
+function newsSameTransition(a, b) {
+  if (!a || !b) return false
+  if (newsTransitionBase(a) !== newsTransitionBase(b)) return false
+  if (a.tiers_detail === 'known' && b.tiers_detail === 'known') {
+    return `${newsCanonicalTiers(a.tiers_before)}>>${newsCanonicalTiers(a.tiers_after)}` ===
+      `${newsCanonicalTiers(b.tiers_before)}>>${newsCanonicalTiers(b.tiers_after)}`
+  }
+  return true
 }
 
 /**
  * Explicit same-event proof between two items with identical transitions:
- * a shared non-empty event/provenance link field, or an exactly equal
- * non-empty effective_at plus an equal non-empty source_url, or an exactly
- * equal non-empty observed_at string. Nearby time alone is never proof.
+ * a shared non-empty event/provenance link field; or an exactly equal
+ * non-empty effective_at plus an equal non-empty source_url; or an exactly
+ * equal non-empty observed_at whose effective_at values also match (both may
+ * be empty) and whose source URLs do not conflict (both non-empty and
+ * different conflicts; a missing URL does not). Nearby time alone is never
+ * proof.
  */
 function newsSameEventProof(a, b) {
   if (!a || !b) return false
@@ -7794,7 +7820,9 @@ function newsSameEventProof(a, b) {
   const urlA = String(a.source_url || ''), urlB = String(b.source_url || '')
   if (effectiveA && effectiveA === effectiveB && urlA && urlA === urlB) return true
   const observedA = String(a.observed_at || '')
-  return !!observedA && observedA === String(b.observed_at || '')
+  const urlsConflict = urlA !== '' && urlB !== '' && urlA !== urlB
+  return !!observedA && observedA === String(b.observed_at || '') &&
+    effectiveA === effectiveB && !urlsConflict
 }
 
 /**
@@ -7813,10 +7841,10 @@ function newsMergeEvents(events) {
   const taken = new Set()
   const out = []
   for (const event of locals) {
-    const key = newsTransitionKey(event)
+    const key = newsTransitionBase(event)
     const partner = key
       ? centrals.find(central => !taken.has(central) &&
-          newsTransitionKey(central) === key && newsSameEventProof(event, central))
+          newsSameTransition(event, central) && newsSameEventProof(event, central))
       : null
     if (partner) {
       taken.add(partner)
@@ -7939,24 +7967,27 @@ function newsUsedRecently(item, nowMs = Date.now()) {
 }
 
 /**
- * Display reason codes for one item: exact recent use first, then the
+ * Display reason codes for one item: exact recent use first, then a valid but
+ * older last_used_at as the truthful non-recent "Used before", then the
  * backend's codes. The fuzzy used_model code stays a code — its label is the
  * neutral "Related update", never "you used this model" and never "Used
- * recently", which only a valid last_used_at earns.
+ * recently"/"Used before", which only a valid last_used_at earns.
  */
 function newsItemReasonCodes(item, nowMs = Date.now()) {
   if (!newsIsRelevant(item)) return []
   const codes = newsItemReasons(item)
-  return newsUsedRecently(item, nowMs)
-    ? ['used_recently', ...codes.filter(code => code !== 'used_recently')]
-    : codes
+  const rest = codes.filter(code => code !== 'used_recently' && code !== 'used_before')
+  if (newsUsedRecently(item, nowMs)) return ['used_recently', ...rest]
+  if (newsLastUsedMs(item, nowMs) != null) return ['used_before', ...rest]
+  return codes
 }
 
 /** Display order of reason codes for groups and items. */
-const NEWS_GROUP_REASON_ORDER = ['used_recently', 'configured_provider', 'selected_plan_family', 'used_provider', 'used_model']
+const NEWS_GROUP_REASON_ORDER = ['used_recently', 'used_before', 'configured_provider', 'selected_plan_family', 'used_provider', 'used_model']
 
 const NEWS_REASON_KEYS = {
   used_recently: 'newsReasonUsedRecently',
+  used_before: 'newsReasonUsedBefore',
   configured_provider: 'newsReasonConfigured',
   selected_plan_family: 'newsReasonSelectedPlan',
   used_provider: 'newsReasonUsedProvider',
@@ -8161,7 +8192,13 @@ function NewsOfficial({ official, t }) {
         .map(key => `${t(NEWS_FIELD_KEYS[key])} ${fmtRate(win[key])}`)
       const span = win.start_minute == null || win.end_minute == null ? ''
         : ` ${hhmm(win.start_minute)}–${hhmm(win.end_minute)}`
-      const parts = [win.days != null ? t('newsOfficialWindow', win.days) : '', span.trim(), bits.join(' · ')]
+      // days is a number of days, or the source's weekday list copied exactly.
+      const daysLabel = typeof win.days === 'number' && Number.isFinite(win.days)
+        ? t('newsOfficialWindow', win.days)
+        : Array.isArray(win.days) && win.days.length
+          ? `${t('newsOfficialDays')} ${win.days.join(', ')}`
+          : ''
+      const parts = [daysLabel, span.trim(), bits.join(' · ')]
       return jsx('p', { className: 'wm-news-officialrow', children: parts.filter(Boolean).join(' · ') }, `win${index}`)
     }),
   ]
@@ -8235,7 +8272,7 @@ const NEWS_CSS = `
 .wm-news-segbtn{border:0;background:transparent;border-radius:99px;padding:5px 12px;font:inherit;font-size:12.5px;color:var(--ui-text-secondary);cursor:pointer;min-height:32px;white-space:nowrap}
 .wm-news-segbtn:hover{background:var(--ui-fill-tertiary);color:var(--ui-text-primary)}
 .wm-news-segcount{color:var(--ui-text-tertiary);font-variant-numeric:tabular-nums}
-.wm-news-search,.wm-news-select{border:1px solid var(--ui-stroke-secondary);border-radius:6px;background:var(--ui-fill-primary);color:var(--ui-text-primary);font:inherit;font-size:12.5px;padding:6px 10px;min-height:32px;min-width:170px}
+.wm-news-search,.wm-news-select{border:1px solid var(--ui-stroke-secondary);border-radius:6px;background:var(--ui-fill-primary);color:var(--ui-text-primary);font:inherit;font-size:12.5px;padding:6px 10px;min-height:32px;min-width:0}
 .wm-news-clear,.wm-news-more{border:1px solid var(--ui-stroke-secondary);background:transparent;border-radius:6px;padding:6px 12px;font:inherit;font-size:12.5px;color:var(--ui-text-secondary);cursor:pointer;min-height:32px}
 .wm-news-clear:hover,.wm-news-more:hover{background:var(--ui-fill-secondary);color:var(--ui-text-primary)}
 .wm-news-group{padding:13px 17px 7px}
@@ -8282,7 +8319,7 @@ const NEWS_CSS = `
   .wm-news-chips{flex:0 1 auto;width:100%}
   .wm-news-controls{flex-direction:column;align-items:stretch}
   .wm-news-controls button,.wm-news-search,.wm-news-select{min-height:38px;width:100%}
-  .wm-news-seg{width:100%}
+  .wm-news-seg{width:100%;flex-wrap:wrap}
   .wm-news-segbtn{flex:1 1 auto;min-height:38px}
   .wm-news-more,.wm-news-clear{width:100%;min-height:38px}
 }
@@ -9455,6 +9492,7 @@ const I18N = {
     newsEmptyNoConfig: 'Nothing to personalise yet: no providers are configured, no usage is recorded, and no plans are selected.',
     newsWhyRelevant: reasons => `For you because it ${reasons}.`,
     newsReasonUsedRecently: 'Used recently',
+    newsReasonUsedBefore: 'Used before',
     newsReasonConfigured: 'Configured provider',
     newsReasonUsedProvider: 'Provider you use',
     newsReasonRelated: 'Related update',
@@ -9546,6 +9584,7 @@ const I18N = {
     newsOfficialVerified: date => `Official rates verified ${date}`,
     newsOfficialNote: 'Source note',
     newsOfficialWindow: days => `${days}-day window`,
+    newsOfficialDays: 'Days',
     newsEvidence: 'Evidence sources',
     newsSourceLocal: 'Local',
     newsSourceCentral: 'Central',
@@ -10696,6 +10735,7 @@ const I18N = {
     newsEmptyNoConfig: '暂无可个性化的内容：未配置供应商、未记录用量，也未选择套餐。',
     newsWhyRelevant: reasons => `与您相关：${reasons}。`,
     newsReasonUsedRecently: '最近使用过',
+    newsReasonUsedBefore: '之前使用过',
     newsReasonConfigured: '已配置的供应商',
     newsReasonUsedProvider: '在用的供应商',
     newsReasonRelated: '相关动态',
@@ -10787,6 +10827,7 @@ const I18N = {
     newsOfficialVerified: date => `官方价格核实于${date}`,
     newsOfficialNote: '来源说明',
     newsOfficialWindow: days => `${days} 天窗口`,
+    newsOfficialDays: '天数',
     newsEvidence: '证据来源',
     newsSourceLocal: '本地',
     newsSourceCentral: '中心',
@@ -11540,7 +11581,7 @@ export const __test = {
   newsSearchFilter, newsPage, NewsOfferRow, NewsOfficial, $newsExpanded: $newsDetailsOpen,
   NEWS_FOR_YOU_INITIAL, NEWS_EVENT_LINK_FIELDS, NEWS_RATE_CLASS_BY_CODE,
   newsUsedRecently, newsLastUsedMs, newsItemReasonCodes, newsGroupReasonCodes,
-  newsMergeEvents, newsSameEventProof, newsTransitionKey,
+  newsMergeEvents, newsSameEventProof, newsTransitionKey, newsTransitionBase, newsSameTransition,
   analyticsNoteText, analyticsNotesText, ANALYTICS_NOTE_KEYS, analyticsGapReasonLabel, OV_GAP_REASON_KEYS,
   econNoteText, econNotesText, econSingularNoteText, econExplanationText, ECON_NOTE_KEYS, ECON_EXPLANATION_KEYS,
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,

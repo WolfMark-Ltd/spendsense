@@ -3,7 +3,7 @@
 // Model News localisation rendering — real React, synthetic fixtures.
 // Renders NewsCard directly with coded backend items in both locales.
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
@@ -319,12 +319,22 @@ test('the scope control carries the persistent selected ring markup', async () =
     'the ring rule is page-local CSS, weight 600')
 })
 
+test('the control row has no inflexible width at 380px', () => {
+  // The search no longer carries a fixed floor: it can shrink with the row.
+  assert.match(T.NEWS_CSS, /\.wm-news-search,\.wm-news-select\{[^}]*min-width:0\}/,
+    'no inflexible control min-width in NEWS_CSS')
+  // At narrow widths the scope, category and date segments wrap their buttons
+  // instead of overflowing the page.
+  assert.match(T.NEWS_CSS, /@container\(max-width:560px\)\{[\s\S]*\.wm-news-seg\{width:100%;flex-wrap:wrap\}/,
+    'the segment groups wrap inside the narrow container')
+})
+
 // --- WP11 corrections: hooks, official rates, card kinds, NUL guard ----------
 
 const hookGroup = () => {
-  // A local/central pair with an identical transition and the same
-  // observed_at merges into one event with two evidence sources; an older
-  // event stays in History.
+  // A local/central pair with an identical transition, the same observed_at
+  // and matching (non-conflicting) URLs merges into one event with two
+  // evidence sources; an older event stays in History.
   const base = {
     category: 'price_reduction', provider: 'Anthropic', model: 'claude-sonnet-4-5-20250929',
     previous: { input: 5.0, output: 25.0, cache_read: 0.5, cache_write: 6.25 },
@@ -335,7 +345,7 @@ const hookGroup = () => {
   return T.newsGroupModels([
     { ...base, id: 'loc-1', origin: 'local', source_url: 'https://example.com/a',
       provenance: 'local snapshot' },
-    { ...base, id: 'cen-1', origin: 'central', source_url: 'https://example.com/b',
+    { ...base, id: 'cen-1', origin: 'central', source_url: 'https://example.com/a',
       provenance: 'SpendSense announcements' },
     { ...base, id: 'old-1', origin: 'local', source_url: '',
       observed_at: '2026-11-01T00:00:00Z', effective_at: '' },
@@ -379,8 +389,9 @@ test('the group and offer markup carries the full DOM hook contract', async () =
   assert.deepEqual(sources.map(el => el.getAttribute('data-news-source')), ['local', 'central'])
   assert.match(panel.textContent, /loc-1/)
   assert.match(panel.textContent, /cen-1/)
-  assert.ok(panel.querySelector('a[href="https://example.com/a"]'), 'local evidence keeps its link')
-  assert.ok(panel.querySelector('a[href="https://example.com/b"]'), 'central evidence keeps its link')
+  assert.ok(panel.querySelector('a[href="https://example.com/a"]'), 'both evidence sources keep their link')
+  assert.equal(panel.querySelectorAll('a[href="https://example.com/a"]').length, 3,
+    'two evidence links plus the merged event meta link, all to the shared source')
   const history = panel.querySelector('[data-news-history]')
   assert.ok(history, 'History is marked')
   const events = [...history.querySelectorAll('[data-news-event]')]
@@ -410,8 +421,17 @@ test('not-comparable chips carry their reason; tiers render their status', async
   const tierChip = view.container.querySelector('[data-news-chip="tiers"]')
   assert.ok(tierChip, 'a tier signal renders a tier chip')
   assert.equal(tierChip.getAttribute('data-news-dir'), 'na')
-  assert.equal(tierChip.getAttribute('data-news-reason'), 'tier_type_unknown')
+  // No captured arrays at all: the caveat is tier_unavailable.
+  assert.equal(tierChip.getAttribute('data-news-reason'), 'tier_unavailable')
   assert.match(tierChip.textContent, /Not comparable/)
+  // Unknown detail WITH captured rows: the tier type is what is unknown.
+  const typed = T.newsGroupModels([{ ...item, tiers_detail: 'unknown',
+    tiers_before: [{ type: 'context', size: 200000, input: 1, output: 2 }],
+    tiers_after: [{ type: 'context', size: 200000, input: 1, output: 2 }] }]).groups[0]
+  const typedView = await renderNode(React.createElement(T.NewsModelGroup, {
+    group: typed, impacts: {}, t: translator('en'), matchedOffers: null, detailsId: 'wt1b' }), 'en')
+  const typedChip = typedView.container.querySelector('[data-news-chip="tiers"]')
+  assert.equal(typedChip.getAttribute('data-news-reason'), 'tier_type_unknown')
 })
 
 test('comparable tier rows render per row, with a directional tier chip', async () => {
@@ -614,4 +634,111 @@ test('NewsPage carries the scope, category, search, days, count and paging hooks
       assert.ok(!attr.value.includes('\u0000'), `no NUL in ${attr.name}`)
     }
   }
+})
+
+// --- WP11 fixture rendering: the real generated payloads ---------------------
+
+const readFixture = name => JSON.parse(readFileSync(
+  new URL(`../test/fixtures/news/${name}`, import.meta.url), 'utf8'))
+
+const fixtureGroup = (name, model) => {
+  const payload = readFixture(name)
+  const groups = T.newsGroupModels([...payload.local.items, ...payload.central.items]).groups
+  return { payload, group: groups.find(g => g.model === model) }
+}
+
+const openDetails = async (view) => {
+  const button = view.container.querySelector('button[data-news-details]')
+  await React.act(async () => { button.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  return view.container.querySelector('[data-news-details-panel]')
+}
+
+test('fixture local-central: the sonnet group renders name, mixed class, evidence and official', async () => {
+  T.$newsDetailsOpen.set([])
+  const { group } = fixtureGroup('payload-local-central.json', 'claude-sonnet-4')
+  const view = await renderNode(React.createElement(T.NewsModelGroup, {
+    group, impacts: { 'local-price-reduction-anthropic-claude-sonnet-4--r-----cache-read---0-3--2ea96cf7f1':
+      { basis: 'full', delta_usd: -0.465, window_days: 30 } },
+    t: translator('en'), matchedOffers: null, detailsId: 'wf-sonnet' }), 'en')
+  const c = view.container
+  assert.equal(c.querySelector('[data-news-group]').getAttribute('data-news-group'), 'claude-sonnet-4')
+  assert.equal(c.querySelector('[data-news-model-name]').textContent, 'Claude Sonnet 4')
+  assert.equal(c.querySelector('[data-news-model-id]').textContent, 'claude-sonnet-4-5'.replace('4-5', '4'))
+  assert.equal(c.querySelector('.wm-news-badge[data-class]').getAttribute('data-class'), 'mixed',
+    'the coded news_rate_mixed drives the class')
+  const panel = await openDetails(view)
+  const sources = [...panel.querySelectorAll('[data-news-source]')]
+  assert.deepEqual(sources.map(el => el.getAttribute('data-news-source')), ['local', 'central'])
+  assert.match(panel.textContent, /Anthropic pricing page, Sonnet 4 row/)
+  assert.match(panel.textContent, /Official rates verified 2026-01-02/)
+  const impact = c.querySelector('[data-news-impact]')
+  assert.equal(impact.getAttribute('data-news-impact'), 'full')
+  assert.match(impact.textContent, /not a bill or guaranteed saving/)
+})
+
+test('fixture local-central: the haiku window renders the weekday list as text', async () => {
+  T.$newsDetailsOpen.set([])
+  const { group } = fixtureGroup('payload-local-central.json', 'claude-haiku-4-5')
+  const view = await renderNode(React.createElement(T.NewsModelGroup, {
+    group, impacts: {}, t: translator('en'), matchedOffers: null, detailsId: 'wf-haiku' }), 'en')
+  const panel = await openDetails(view)
+  const row = panel.querySelector('.wm-news-officialrow')
+  assert.ok(row, 'the official window renders as its own row')
+  assert.match(row.textContent, /Days 0, 1, 2, 3, 4/)
+  assert.match(row.textContent, /08:00–17:00/)
+  assert.match(row.textContent, /Input \$1\.25/)
+  assert.equal(panel.querySelector('.wm-news-officialblock').querySelectorAll('a').length, 0)
+})
+
+test('fixture unknown-recurrence: m1 keeps four events with the newest class', async () => {
+  T.$newsDetailsOpen.set([])
+  const { group } = fixtureGroup('payload-unknown-recurrence.json', 'm1')
+  const view = await renderNode(React.createElement(T.NewsModelGroup, {
+    group, impacts: {}, t: translator('en'), matchedOffers: null, detailsId: 'wf-m1' }), 'en')
+  const c = view.container
+  assert.equal(c.querySelector('.wm-news-badge[data-class]').getAttribute('data-class'), 'increase')
+  // m1's local events supply the friendly name "M One"; the newest central
+  // event supplies none, so the newest SUPPLIED name is shown, never invented.
+  assert.equal(c.querySelector('[data-news-model-name]')?.textContent, 'M One',
+    'the friendly sourced name is shown over the exact ID')
+  assert.equal(c.querySelector('[data-news-model-id]').textContent, 'm1')
+  const panel = await openDetails(view)
+  assert.equal(panel.querySelectorAll('[data-news-source]').length, 0,
+    'no merged evidence: the recurrence stayed separate')
+  const history = panel.querySelector('[data-news-history]')
+  assert.deepEqual([...history.querySelectorAll('[data-news-event]')].map(el => el.getAttribute('data-news-event')), [
+    'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-rf2ea95',
+    'local-price-reduction-acme-m1--r-----cache-read---null---cache-writ-8f80b1eeda',
+    'local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22',
+  ])
+})
+
+test('fixture unknown-recurrence: m2 shows the tier_unavailable caveat and the exact ID', async () => {
+  T.$newsDetailsOpen.set([])
+  const { group } = fixtureGroup('payload-unknown-recurrence.json', 'm2')
+  const view = await renderNode(React.createElement(T.NewsModelGroup, {
+    group, impacts: {}, t: translator('en'), matchedOffers: null, detailsId: 'wf-m2' }), 'en')
+  const c = view.container
+  const tierChip = c.querySelector('[data-news-chip="tiers"]')
+  assert.ok(tierChip, 'the tier signal renders a tier chip')
+  assert.equal(tierChip.getAttribute('data-news-reason'), 'tier_unavailable')
+  assert.equal(tierChip.getAttribute('data-news-dir'), 'na')
+  assert.match(tierChip.textContent, /Not comparable/)
+  assert.ok(!c.querySelector('[data-news-model-name]'),
+    'model_name is absent, so the exact ID stands alone')
+  assert.equal(c.querySelector('[data-news-model-id]').textContent, 'm2')
+  const panel = await openDetails(view)
+  // The only ul.wm-news-history in the panel is the merged event's evidence
+  // list; no tier rows list is fabricated for the unavailable tiers, and a
+  // single merged event has no separate event History list.
+  const historyLists = [...panel.querySelectorAll('ul.wm-news-history')]
+  assert.equal(historyLists.length, 1,
+    'only the merged event evidence list renders; no tier rows list is fabricated')
+  assert.ok(!historyLists[0].hasAttribute('data-news-history'),
+    'the single merged event has no separate event History list')
+  assert.ok(!panel.textContent.includes('Tiers'),
+    'no tier rows are fabricated for the unavailable tiers')
+  const sources = [...panel.querySelectorAll('[data-news-source]')]
+  assert.deepEqual(sources.map(el => el.getAttribute('data-news-source')), ['local', 'central'],
+    'the m2 pair merged under the proof rules and shows both sources')
 })
