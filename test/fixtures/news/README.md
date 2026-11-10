@@ -145,11 +145,13 @@ matrix and never written to these JSON files — no fixture churn):
   dedupe to exactly one event, while both records' source URL, full
   `observed_at`, `effective_at` and provenance must stay recoverable in
   Details.
-- `hist-model`: a proven distinct-ID pair (identical transition plus a
-  shared `event_key`) collapsed into one event, which becomes History once a
-  newer update lands in the same offer; the historical event must keep every
-  original id, both origin evidences, full timestamps, provenance, its exact
-  previous/current four rates and its raw tier type/size recoverable.
+- `hist-model`: a proven distinct-ID pair (identical transition plus the
+  settled proof — the same NONEMPTY `source_url` AND the same NONEMPTY
+  `effective_at`; no invented link field) collapsed into one event, which
+  becomes History once a newer update lands in the same offer; the
+  historical event must keep every original id, both origin evidences, full
+  timestamps, provenance, its exact previous/current four rates and its raw
+  tier type/size recoverable.
 
 ## Consumers
 

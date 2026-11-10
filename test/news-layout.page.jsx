@@ -118,11 +118,12 @@ const ERROR_FIXTURE = VARIANTS.error
 //    dedupes to exactly one event — but the two records stay distinguishable
 //    by source_url, observed_at, effective_at and provenance, and Details
 //    must keep BOTH recoverable.
-// 2) A proven distinct-ID pair (identical transition + shared event_key)
-//    collapsed into one event, which becomes HISTORY once a newer update
-//    lands in the same offer: the historical event must keep every original
-//    id, both source evidences, full timestamps, provenance, its exact
-//    previous/current rates and its raw tier rows recoverable.
+// 2) A proven distinct-ID pair (identical transition + the settled proof:
+//    same NONEMPTY source_url AND same NONEMPTY effective_at) collapsed into
+//    one event, which becomes HISTORY once a newer update lands in the same
+//    offer: the historical event must keep every original id, both source
+//    evidences, full timestamps, provenance, its exact previous/current
+//    rates and its raw tier rows recoverable.
 const EVIDENCE_SHARED_ID = 'evidence-shared-event-1'
 const evidenceSharedLocal = {
   id: EVIDENCE_SHARED_ID, origin: 'local', category: 'price_reduction',
@@ -160,9 +161,8 @@ const evidenceHistLocal = {
   tiers_detail: 'known',
   tiers_before: EVIDENCE_HIST_TIERS_BEFORE, tiers_after: EVIDENCE_HIST_TIERS_AFTER,
   observed_at: '2026-11-08T11:00:00Z', effective_at: '2026-11-07',
-  source_url: 'https://announcements.spend-sense.example/feed/hist-local',
+  source_url: 'https://announcements.spend-sense.example/feed/hist-pair',
   provenance: 'Synthetic local diff (history variant)', confidence: 'observed',
-  event_key: 'evidence-hist-event-key',
   relevance: { relevant: false, reasons: [] },
 }
 const evidenceHistCentral = {
@@ -173,9 +173,8 @@ const evidenceHistCentral = {
   tiers_detail: 'known',
   tiers_before: EVIDENCE_HIST_TIERS_BEFORE, tiers_after: EVIDENCE_HIST_TIERS_AFTER,
   observed_at: '2026-11-08T09:30:00Z', effective_at: '2026-11-07',
-  source_url: 'https://announcements.spend-sense.example/feed/hist-central',
+  source_url: 'https://announcements.spend-sense.example/feed/hist-pair',
   provenance: 'Synthetic central feed (history variant)', confidence: 'curated',
-  event_key: 'evidence-hist-event-key',
   relevance: { relevant: false, reasons: [] },
 }
 const evidenceHistNewer = {

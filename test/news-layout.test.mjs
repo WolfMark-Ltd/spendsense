@@ -508,8 +508,9 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
     `the historical event keeps both origin evidences (${JSON.stringify(histLi.sourceTags)})`)
   const HIST_LI_TOKENS = [
     EVIDENCE_HIST_CENTRAL_ID,
-    'https://announcements.spend-sense.example/feed/hist-local',
-    'https://announcements.spend-sense.example/feed/hist-central',
+    // The settled proof: same NONEMPTY source_url AND same NONEMPTY
+    // effective_at (no invented link field) — one shared URL for the pair.
+    'https://announcements.spend-sense.example/feed/hist-pair',
     '2026-11-08T11:00:00Z', '2026-11-08T09:30:00Z',
     '2026-11-07',
     'Synthetic local diff (history variant)', 'Synthetic central feed (history variant)',
