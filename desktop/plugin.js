@@ -2409,12 +2409,15 @@ function analyticsPricing(row, t = needsAttentionEn) {
     if (num(gaps.provider_not_in_catalogue)) return t('usagePricingProviderUnpriced', num(gaps.provider_not_in_catalogue))
     if (num(gaps.model_not_in_catalogue)) return t('usagePricingModelUnpriced', num(gaps.model_not_in_catalogue))
     if (!num(row.tokens)) return t('usagePricingCallsNoTokens', calls)
-    if (finiteValue(row.list_usd) == null || !num(row.priced_tokens)) return t('usagePricingCallsUnknown', calls)
+    if (finiteValue(row.list_usd) == null || !num(row.priced_tokens) || !num(row.unpriced_tokens))
+      return t('usagePricingCallsUnknown', calls)
   }
   if (!num(row.tokens)) return t('usagePricingNone')
   if (finiteValue(row.list_usd) == null || !num(row.priced_tokens)) return t('usagePricingUnpriced')
   const fallback = num(row.fallback_calls)
-  if (num(row.unpriced_tokens) || calls) return t('usagePricingPartial', ((num(row.priced_tokens) / num(row.tokens)) * 100).toFixed(1), fallback)
+  if (calls) return t('usagePricingPartialCalls',
+    ((num(row.priced_tokens) / num(row.tokens)) * 100).toFixed(1), calls, fallback)
+  if (num(row.unpriced_tokens)) return t('usagePricingPartial', ((num(row.priced_tokens) / num(row.tokens)) * 100).toFixed(1), fallback)
   if (fallback) return t('usagePricingFallback', fallback)
   return t('usagePricingComplete')
 }
@@ -2797,7 +2800,8 @@ const ANALYTICS_CORE_COLUMNS = ['model','provider','calls','tokens','input_token
 function explorerUnitCosts(row) {
   if (!row || num(row.unpriced_tokens)) return { per_call: null, per_million: null }
   return {
-    per_call: finiteValue(row.list_usd) != null && num(row.calls) ? num(row.list_usd) / num(row.calls) : null,
+    per_call: !num(row.unpriced_calls) && finiteValue(row.list_usd) != null && num(row.calls)
+      ? num(row.list_usd) / num(row.calls) : null,
     per_million: finiteValue(row.list_usd) != null && num(row.tokens) ? num(row.list_usd) / num(row.tokens) * 1_000_000 : null
   }
 }
@@ -2850,14 +2854,18 @@ function AnalyticsExplorer({data,state,dispatch}) {
       jsx('thead',{children:jsx('tr',{children:columns.map(([key])=>jsx('th',{scope:'col','aria-sort':state.sortKey===key?(state.sortDirection==='asc'?'ascending':'descending'):'none',children:jsx('button',{type:'button','aria-label':t('usageExplorerSortBy', t(EXPLORER_COLUMN_KEYS[key])),onClick:()=>dispatch({type:'sort',key}),children:t('usageExplorerSortLabel', t(EXPLORER_COLUMN_KEYS[key]), state.sortKey===key?(state.sortDirection==='desc'?' ↓':' ↑'):'')})},key))})}),
       jsx('tbody',{children:visible.map(row=>jsx('tr',{children:columns.map(([key])=>{
         let content
+        const partial = num(row.unpriced_tokens) || num(row.unpriced_calls)
         if(key==='model') content=jsx('button',{type:'button',className:'wm-modelbutton',title:row.model,'aria-label':t('usageLegendFilter', row.model, row.provider),onClick:()=>dispatch({type:'select',group:'model',row}),children:row.model || t('usageUnknownModel')})
         else if(key==='provider') content=jsx('span',{className:'wm-subtle',children:row.provider || t('usageUnknown')})
         else if(key==='billing') content=jsx('span',{className:'wm-badge',title:t('usageExplorerBillingTitle'),children:Object.keys(row.billing_mix || {}).filter(kind=>row.billing_mix[kind]>0).sort().join(' + ') || t('unknown')})
         else if(key==='cache_hit_rate') content=jsxs('div',{title:t('usageExplorerCacheTitle', row.cache_known_calls || 0, row.cache_unknown_calls || 0),children:[percent(row.cache_hit_rate),row.cache_hit_rate!=null?jsx('div',{className:'wm-meter',children:jsx('span',{style:{width:`${Math.max(0,Math.min(1,row.cache_hit_rate))*100}%`}})}):null]})
         else if(key==='savings') content=jsx('span',{className:row.economics?.savings_usd<0?'wm-warn':row.economics?.savings_usd>0?'wm-good':'wm-dim',children:analyticMoney(row.economics?.savings_usd)})
-        else if(key==='list_usd') content=jsxs('span',{className:num(row.unpriced_tokens)?'wm-warn':'',children:[analyticMoney(row.list_usd),num(row.unpriced_tokens)&&row.list_usd!=null?jsx('small',{children:t('usageExplorerPartial')}):null]})
-        else if(key==='per_call'||key==='per_million') content=jsx('span',{title:num(row.unpriced_tokens)?t('usageExplorerUnitUnknown'):undefined,children:row[key]==null?'—':`$${num(row[key]).toFixed(num(row[key])<1?4:2)}`})
-        else if(key==='pricing') content=jsx('span',{className:cn('wm-badge',num(row.unpriced_tokens)&&'wm-warn'),title:t('usageExplorerPricingTitle', exactTokens(row.priced_tokens), exactTokens(row.tokens)),children:analyticsPricing(row, t)})
+        else if(key==='list_usd') content=jsxs('span',{className:partial?'wm-warn':'',children:[analyticMoney(row.list_usd),partial&&row.list_usd!=null?jsx('small',{children:t('usageExplorerPartial')}):null]})
+        else if(key==='per_call'||key==='per_million') {
+          const unitCoverageUnknown = num(row.unpriced_tokens) || (key==='per_call' && num(row.unpriced_calls))
+          content=jsx('span',{title:unitCoverageUnknown?t('usageExplorerUnitUnknown'):undefined,children:row[key]==null?'—':`$${num(row[key]).toFixed(num(row[key])<1?4:2)}`})
+        }
+        else if(key==='pricing') content=jsx('span',{className:cn('wm-badge',partial&&'wm-warn'),title:t('usageExplorerPricingTitle', exactTokens(row.priced_tokens), exactTokens(row.tokens)),children:analyticsPricing(row, t)})
         else content=jsx('span',{title:exactTokens(row[key]),children:key==='calls'?exactTokens(row[key]):fmtTokens(row[key])})
         return jsx('td',{className:['model','provider','pricing'].includes(key)?'':'wm-mono',children:content},key)
       })},analyticsId(row)))})]})}),rows.length>25?jsx('p',{className:'wm-subtle',style:{marginTop:10},children:state.showAllModels?t('usageExplorerShowingAll', rows.length):t('usageExplorerShowingTop', rows.length)}):null]}),
@@ -3253,8 +3261,13 @@ const ANALYTICS_NOTE_KEYS = {
 const OV_GAP_REASON_KEYS = {
   call_failed: 'ovGapCallFailed',
   usage_missing: 'ovGapUsageMissing',
+  provider_unidentified: 'ovGapProviderMissing',
+  model_unidentified: 'ovGapModelMissing',
   cache_provenance_unknown: 'ovGapCacheProvenance',
+  provider_price_catalogue_missing: 'ovGapProviderPrice',
+  price_evidence_missing: 'ovGapModelPrice',
   rate_unavailable: 'ovGapRateUnavailable',
+  tier_rate_unavailable: 'ovGapTierRate',
   missing_base_rate: 'ovGapMissingBaseRate',
   missing_cache_read_rate: 'ovGapMissingCacheRead',
   missing_cache_write_rate: 'ovGapMissingCacheWrite',
@@ -3311,6 +3324,9 @@ function econNoteText(entry, fallback, t) {
     return t('econGroupNoFx', params.currency)
   if (code === 'econ_head_fx_error' && params.error !== undefined)
     return t('econHeadFxError', params.error)
+  if (code === 'econ_group_window_history_missing')
+    return t('econGroupWindowHistory', Number.isSafeInteger(params.count) && params.count >= 0
+      ? params.count : null)
   const key = code ? ECON_NOTE_KEYS[code] : null
   return key ? t(key) : fallback
 }
@@ -4702,7 +4718,7 @@ function OverviewPage() {
                 jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
                 jsxs('div', { className: 'wm-attn-main', children: [
                   jsx('strong', { children: t('ovPricingTitle') }),
-                  jsx('span', { children: t('ovUnpriced', unpriced.toLocaleString('en-GB')) })
+                  jsx('span', { children: t('ovUnpriced', unpricedTokens, unpricedCalls) })
                 ] }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
                   onClick: () => goLedgerTab('usage'), children: t('ovOpenUsage') })
@@ -9678,7 +9694,9 @@ const I18N = {
     econGroupsTitle: 'Fees vs usage by currency',
     econNoComparison: 'No comparison available.',
     econGroupHead: (m, w, u, st) => `${m}/mo fees · ${w} in window · ${u} usage · ${st}`,
-    econGroupWindowHistory: count => `Known monthly fees are shown, but historical fee evidence is missing for ${count} account(s); their window amounts are unavailable.`,
+    econGroupWindowHistory: count => Number.isSafeInteger(count) && count >= 0
+      ? `Known monthly fees are shown, but historical fee evidence is missing for ${count} account(s); their window amounts are unavailable.`
+      : 'Known monthly fees are shown, but some accounts lack historical fee evidence; their window amounts are unavailable.',
     econGroupHistory: 'Recorded history does not cover the full comparison window.',
     econAccountsTitle: 'Provider and account breakdown',
     econColAccount: 'Account',
@@ -10059,7 +10077,12 @@ const I18N = {
     ovAttentionHint: 'Each item names the account and the action.',
     ovNothingToDo: 'Nothing needs confirming right now.',
     ovPricingTitle: 'Usage pricing',
-    ovUnpriced: u => `${u} tokens in the last 30 days have no published price, so API-equivalent totals are partial.`,
+    ovUnpriced: (tokens, calls) => {
+      const gaps = []
+      if (Number(tokens) > 0) gaps.push(`${Number(tokens).toLocaleString('en-GB')} tokens have no published price`)
+      if (Number(calls) > 0) gaps.push(`${Number(calls).toLocaleString('en-GB')} call(s) lack complete usage or price evidence`)
+      return `${gaps.join('; ')} in the last 30 days, so API-equivalent totals are partial.`
+    },
     ovWeatherStale: 'Refresh failed — weather warnings may be stale.',
     ovStrip: n => `${n} need attention`,
     ovStripReview: 'Review',
@@ -10249,13 +10272,18 @@ const I18N = {
     ovNoteBilling: 'Billing mix is the latest route/model classification, not a per-call invoice. Only included routes have known $0 marginal billing.',
     ovNotePrevious: 'Previous totals cover the equal-length window immediately before this one under the same filters, for comparison only; deltas are omitted when that window has no recorded calls and it may predate recording.',
     ovNoteGap: (count, reason) => `Economics excluded ${count} calls: ${reason}.`,
-    ovGapCallFailed: 'call_failed',
-    ovGapUsageMissing: 'usage_missing',
-    ovGapCacheProvenance: 'cache_provenance_unknown',
-    ovGapRateUnavailable: 'rate_unavailable',
-    ovGapMissingBaseRate: 'missing_base_rate',
-    ovGapMissingCacheRead: 'missing_cache_read_rate',
-    ovGapMissingCacheWrite: 'missing_cache_write_rate',
+    ovGapCallFailed: 'Call failed, so usage could not be valued',
+    ovGapUsageMissing: 'Usage data is missing',
+    ovGapProviderMissing: 'Provider is not recorded',
+    ovGapModelMissing: 'Model is not recorded',
+    ovGapCacheProvenance: 'Cache source cannot be determined',
+    ovGapProviderPrice: 'No published price catalogue is available for this provider',
+    ovGapModelPrice: 'No price evidence is available for this model',
+    ovGapRateUnavailable: 'Price rate is unavailable',
+    ovGapTierRate: 'The tiered rate cannot be determined for this usage',
+    ovGapMissingBaseRate: 'Base input or output rate is missing',
+    ovGapMissingCacheRead: 'Cache-read rate is missing',
+    ovGapMissingCacheWrite: 'Cache-write rate is missing',
     econHeadNoFees: 'No subscription has a known fee; declare fees in Memberships.',
     econHeadUnpriced: count => `${count} subscription(s) have no fee; the headline cannot be compared.`,
     econHeadIncomparable: 'At least one subscription cannot be compared (missing price, coverage or FX rate); see the rows.',
@@ -10618,6 +10646,7 @@ const I18N = {
     usagePricingNone: 'No usage',
     usagePricingUnpriced: 'Unpriced',
     usagePricingPartial: (pct, fallback) => `Partial · ${pct}%${fallback ? ' · fallback rates' : ''}`,
+    usagePricingPartialCalls: (pct, calls, fallback) => `Partial · ${pct}% of tokens priced · ${calls} call(s) lack price evidence${fallback ? ' · fallback rates' : ''}`,
     usagePricingCallsNoTokens: count => `${count} call(s) have no token usage; value cannot be confirmed. Review Usage evidence.`,
     usagePricingCallsUnknown: count => `Price evidence incomplete · ${count} call(s). Check provider, model and captured usage in Usage.`,
     usagePricingProviderUnknown: count => `Provider unidentified · ${count} call(s). Confirm provider in Usage.`,
@@ -10973,7 +11002,9 @@ const I18N = {
     econGroupsTitle: '按货币对比费用与用量',
     econNoComparison: '无可用的比较。',
     econGroupHead: (m, w, u, st) => `${m}/月费用 · ${w}（窗口内）· 用量 ${u} · ${st}`,
-    econGroupWindowHistory: count => `已显示已知月费，但有 ${count} 个账户缺少历史费用证据；其窗口金额不可用。`,
+    econGroupWindowHistory: count => Number.isSafeInteger(count) && count >= 0
+      ? `已显示已知月费，但有 ${count} 个账户缺少历史费用证据；其窗口金额不可用。`
+      : '已显示已知月费，但部分账户缺少历史费用证据；其窗口金额不可用。',
     econGroupHistory: '已记录历史未覆盖完整的比较窗口。',
     econAccountsTitle: '按供应商和账户明细',
     econColAccount: '账户',
@@ -11354,7 +11385,12 @@ const I18N = {
     ovAttentionHint: '每一项都列出账户与操作。',
     ovNothingToDo: '目前没有需要确认的事项。',
     ovPricingTitle: '用量定价',
-    ovUnpriced: u => `过去 30 天有 ${u} 个 token 没有公布价格，因此 API 等价总额为部分数据。`,
+    ovUnpriced: (tokens, calls) => {
+      const gaps = []
+      if (Number(tokens) > 0) gaps.push(`${Number(tokens).toLocaleString('zh-CN')} 个 token 没有公布价格`)
+      if (Number(calls) > 0) gaps.push(`${Number(calls).toLocaleString('zh-CN')} 次调用缺少完整用量或价格证据`)
+      return `过去 30 天${gaps.join('；')}，因此 API 等价总额为部分数据。`
+    },
     ovWeatherStale: '刷新失败——额度预警可能已过期。',
     ovStrip: n => `有 ${n} 项需要注意`,
     ovStripReview: '查看',
@@ -11544,13 +11580,18 @@ const I18N = {
     ovNoteBilling: 'Billing mix 是最新的路由/模型分类，不是逐调用账单。只有 included 路由的边际账单确认为 $0。',
     ovNotePrevious: 'Previous 总量覆盖同一过滤条件下紧邻的前一个等长窗口，仅用于对比；当前一窗口无记录调用时省略差值，且该窗口可能早于记录起点。',
     ovNoteGap: (count, reason) => `Economics 已排除 ${count} 次调用：${reason}。`,
-    ovGapCallFailed: '调用失败',
-    ovGapUsageMissing: '用量缺失',
-    ovGapCacheProvenance: '缓存来源未知',
-    ovGapRateUnavailable: '价格不可用',
-    ovGapMissingBaseRate: '缺失基础价格',
-    ovGapMissingCacheRead: '缺失缓存读取价格',
-    ovGapMissingCacheWrite: '缺失缓存写入价格',
+    ovGapCallFailed: '调用失败，无法估值用量',
+    ovGapUsageMissing: '缺少用量数据',
+    ovGapProviderMissing: '未记录供应商',
+    ovGapModelMissing: '未记录模型',
+    ovGapCacheProvenance: '无法确定缓存来源',
+    ovGapProviderPrice: '缺少此供应商的已发布价格目录',
+    ovGapModelPrice: '缺少此模型的价格证据',
+    ovGapRateUnavailable: '价格费率不可用',
+    ovGapTierRate: '无法确定此用量对应的分档费率',
+    ovGapMissingBaseRate: '缺少基础输入或输出费率',
+    ovGapMissingCacheRead: '缺少缓存读取费率',
+    ovGapMissingCacheWrite: '缺少缓存写入费率',
     econHeadNoFees: '没有订阅登记了已知费用；请在会员中登记费用。',
     econHeadUnpriced: count => `${count} 个订阅没有费用；无法对比汇总数字。`,
     econHeadIncomparable: '至少一个订阅无法对比（缺失价格、覆盖或汇率）；请查看各行。',
@@ -11913,6 +11954,7 @@ const I18N = {
     usagePricingNone: '无用量',
     usagePricingUnpriced: '未定价',
     usagePricingPartial: (pct, fallback) => `部分 · ${pct}%${fallback ? ' · 回退单价' : ''}`,
+    usagePricingPartialCalls: (pct, calls, fallback) => `部分 · ${pct}% 的 token 已定价 · ${calls} 次调用缺少价格证据${fallback ? ' · 回退单价' : ''}`,
     usagePricingCallsNoTokens: count => `${count} 次调用没有令牌用量；无法确认价值。请检查“用量”证据。`,
     usagePricingCallsUnknown: count => `价格证据不完整 · ${count} 次调用。请在“用量”中检查供应商、模型和捕获的用量。`,
     usagePricingProviderUnknown: count => `供应商未知 · ${count} 次调用。请在“用量”中确认供应商。`,

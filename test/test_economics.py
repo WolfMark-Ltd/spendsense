@@ -279,6 +279,35 @@ class ComparisonTests(EconomicsCase):
         self.assertAlmostEqual(row["difference_usd"],
                                round(2.0 - self.windowed(20.0, result), 6))
 
+    def test_override_with_unknown_period_does_not_borrow_published_period(self):
+        self.anchor_coverage()
+        self.write_store([account("a", "test", plan_id="test.plus",
+                                  fee_overrides=[override(40, "USD", None,
+                                                          effective_from=NOW - 60 * 86400)])])
+        self.create_events([{"ts": NOW - 100, "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=0)
+        row = result["accounts"][0]
+        self.assertEqual(row["fee"]["amount"], 40)
+        self.assertIsNone(row["fee"]["period"])
+        self.assertIsNone(row["monthly_equivalent"]["amount"])
+        self.assertIsNone(row["window_expenditure"]["amount"])
+        self.assertEqual(row["status"], "unavailable")
+
+    def test_window_split_keeps_unknown_override_period_unallocated(self):
+        self.anchor_coverage()
+        change = NOW - 15 * 86400
+        self.write_store([account("a", "test", plan_id="test.plus",
+                                  fee_overrides=[override(40, "USD", None,
+                                                          effective_from=change)])])
+        self.create_events([{"ts": NOW - 100, "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=0)
+        row = result["accounts"][0]
+        self.assertIsNone(row["fee"]["period"])
+        self.assertIsNone(row["monthly_equivalent"]["amount"])
+        self.assertIsNone(row["window_expenditure"]["amount"])
+        self.assertIsNone(row["difference_usd"])
+        self.assertEqual(row["status"], "unavailable")
+
     def test_missing_fee_is_unavailable_not_zero(self):
         self.anchor_coverage()
         self.write_store([account("a", "test", plan_id="test.plus",

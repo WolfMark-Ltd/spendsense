@@ -637,6 +637,27 @@ test('explorer unit costs stay unknown while any tokens are unpriced', () => {
  assert.deepEqual(T.explorerUnitCosts({calls:10,tokens:100,list_usd:null,unpriced_tokens:0}),{per_call:null,per_million:null})
 })
 
+test('unpriced zero-token calls withhold per-call cost and mark the API subtotal partial', () => {
+ const row = {model:'m',provider:'p',calls:10,tokens:100,list_usd:1,
+  priced_tokens:100,unpriced_tokens:0,unpriced_calls:1}
+ assert.deepEqual(T.explorerUnitCosts(row),{per_call:null,per_million:10000},
+  'per-call cost cannot divide a known subtotal by calls whose value is incomplete')
+ const tree = render(T.AnalyticsExplorer({data:{by_model:[row]},
+  state:{...T.analyticsInitialState(),showAllModels:true,columnMode:'all'},dispatch:()=>{}}))
+ const apiCell = nodes(tree,n=>n.type==='span' && n.props?.className==='wm-warn'
+  && text(n).includes('$1.00'))[0]
+ assert.ok(apiCell,'the known API-equivalent subtotal is visibly partial when a call is unpriced')
+ assert.ok(text(apiCell).includes('partial'))
+ const cells = nodes(tree,n=>n.type==='td')
+ const rowCells = cells.slice(0,T.ANALYTICS_COLUMNS.length)
+ const perCallIndex = T.ANALYTICS_COLUMNS.findIndex(([key])=>key==='per_call')
+ const perMillionIndex = T.ANALYTICS_COLUMNS.findIndex(([key])=>key==='per_million')
+ const pricingIndex = T.ANALYTICS_COLUMNS.findIndex(([key])=>key==='pricing')
+ assert.equal(text(rowCells[perCallIndex]),'—')
+ assert.equal(text(rowCells[perMillionIndex]),'$10000.00')
+ assert.match(text(rowCells[pricingIndex]),/Price evidence incomplete · 1 call\(s\)/)
+})
+
 test('explorer CSV keeps price coverage beside the unit costs', () => {
  const csv=T.analyticsExplorerCsv([{model:'m',provider:'p',calls:10,tokens:100,list_usd:1,per_call:null,per_million:null,
    priced_tokens:10,unpriced_tokens:90,cache_hit_rate:.5}])
@@ -654,6 +675,41 @@ const noteZh = (key, ...args) => {
  const entry = T.I18N.zh[key]
  return typeof entry === 'function' ? entry(...args) : entry ?? key
 }
+
+test('every emitted analytics economics gap reason has a readable English and Chinese label', () => {
+ const reasons = ['call_failed','usage_missing','provider_unidentified','model_unidentified',
+  'cache_provenance_unknown','provider_price_catalogue_missing','price_evidence_missing',
+  'rate_unavailable','tier_rate_unavailable','missing_base_rate',
+  'missing_cache_read_rate','missing_cache_write_rate']
+ for (const reason of reasons) {
+  const key = T.OV_GAP_REASON_KEYS[reason]
+  assert.ok(key, `mapped reason ${reason}`)
+  assert.notEqual(noteEn(key), reason, `English translates ${reason}`)
+  assert.notEqual(noteZh(key), reason, `Chinese translates ${reason}`)
+  assert.notEqual(T.analyticsGapReasonLabel(reason, noteEn), reason)
+  assert.notEqual(T.analyticsGapReasonLabel(reason, noteZh), reason)
+ }
+})
+
+test('analytics pricing keeps token coverage separate from calls lacking evidence in both locales', () => {
+ for (const language of ['en','zh']) {
+  const t = (key, ...args) => {
+   const entry = T.I18N[language][key]
+   return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const allTokensPriced = T.analyticsPricing({tokens:100,calls:10,priced_tokens:100,
+   unpriced_tokens:0,unpriced_calls:1,list_usd:1},t)
+  assert.match(allTokensPriced,/1/)
+  assert.match(allTokensPriced,/evidence|证据/)
+  const mixed = T.analyticsPricing({tokens:100,calls:10,priced_tokens:90,
+   unpriced_tokens:10,unpriced_calls:1,list_usd:0.9},t)
+  assert.match(mixed,/90\.0%/)
+  assert.match(mixed,/1/)
+  const overview = T.I18N[language].ovUnpriced(0,1)
+  assert.match(overview,language==='en'?/1 call\(s\)/:/1 次调用/)
+  assert.doesNotMatch(overview,language==='en'?/0 tokens/:/0 个 token/)
+ }
+})
 
 test('analytics notes render backend-identical English from codes', () => {
  const notes = [

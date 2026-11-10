@@ -186,6 +186,43 @@ class CostArithmeticTests(LedgerTestCase):
         self.assertEqual(route["list_usd_upper"], route["list_usd"])
         self.assertEqual(route["tier_possible_tokens"], 0)
 
+    def test_token_evidence_without_call_counts_stays_unpriced_not_empty_or_zero(self):
+        self.insert(session_id="s2", billing_provider="xai-oauth", model="unlisted-model",
+                    input_tokens=1_000_000, api_call_count=0)
+        route = next(r for r in self.report()["by_route"] if r["name"] == "xai-oauth")
+        self.assertEqual(route["tokens"], 1_000_000)
+        self.assertEqual(route["calls"], 0)
+        self.assertEqual(route["unpriced_tokens"], 1_000_000)
+        self.assertEqual(route["call_count_missing_rows"], 1)
+        self.assertEqual(route["status"], "unpriced")
+        self.assertIsNone(route["list_usd"])
+
+    def test_known_token_subtotal_survives_an_unpriced_call_without_tokens(self):
+        self.insert(session_id="s1", billing_provider="openai", model="gpt-6.1-sol",
+                    input_tokens=1_000_000, api_call_count=0)
+        self.insert(session_id="s2", billing_provider="openai", model="unlisted-model",
+                    input_tokens=500_000, api_call_count=1)
+        route = next(r for r in self.report()["by_route"] if r["name"] == "openai")
+        self.assertEqual(route["priced_tokens"], 1_000_000)
+        self.assertEqual(route["unpriced_tokens"], 500_000)
+        self.assertEqual(route["priced_calls"], 0)
+        self.assertEqual(route["unpriced_calls"], 1)
+        self.assertEqual(route["call_count_missing_rows"], 1)
+        self.assertEqual(route["status"], "partial")
+        self.assertAlmostEqual(route["list_usd"], 2.0)
+
+    def test_token_buckets_without_call_counts_prevent_complete_status(self):
+        self.insert(session_id="s1", billing_provider="openai", model="gpt-6.1-sol",
+                    input_tokens=1_000_000, api_call_count=0)
+        self.insert(session_id="s2", billing_provider="openai", model="gpt-6.1-sol",
+                    input_tokens=1_000, api_call_count=1)
+        route = next(r for r in self.report()["by_route"] if r["name"] == "openai")
+        self.assertEqual(route["priced_tokens"], 1_001_000)
+        self.assertEqual(route["priced_calls"], 1)
+        self.assertEqual(route["unpriced_calls"], 0)
+        self.assertEqual(route["call_count_missing_rows"], 1)
+        self.assertEqual(route["status"], "partial")
+
     def test_cache_write_uses_catalogue_rate_when_present(self):
         self.insert(billing_provider="openai-codex", model="gpt-6.1-sol",
                     cache_write_tokens=1_000_000, api_call_count=10)

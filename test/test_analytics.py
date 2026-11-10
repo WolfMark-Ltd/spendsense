@@ -403,20 +403,21 @@ class AnalyticsTests(unittest.TestCase):
             "provider_unidentified", "model_unidentified", "price_evidence_missing"})
 
     def test_previous_window_distinguishes_no_calls_from_insufficient_history(self):
-        self.create_events([{"input_tokens": 100}])
-        no_previous = self.report(days=1)
-        self.assertFalse(no_previous["previous"]["comparable"])
-        self.assertEqual(no_previous["previous"]["reason"], "no_previous_calls")
+        with local_zone("UTC"):
+            self.create_events([{"input_tokens": 100}])
+            no_previous = self.report(days=1)
+            self.assertFalse(no_previous["previous"]["comparable"])
+            self.assertEqual(no_previous["previous"]["reason"], "no_previous_calls")
 
-        self.events.unlink()
-        self.create_events([
-            {"event_id": "prior", "ts": NOW - 20 * 3600, "input_tokens": 100},
-            {"event_id": "current", "ts": NOW - 3600, "input_tokens": 100},
-        ])
-        with closing(sqlite3.connect(self.events)) as conn, conn:
-            conn.execute("INSERT INTO baseline(id, captured_at, total_tokens, main_tokens, aux_tokens)"
-                         " VALUES (1, ?, 0, 0, 0)", (NOW - 12 * 3600,))
-        insufficient = self.report(days=1)
+            self.events.unlink()
+            self.create_events([
+                {"event_id": "prior", "ts": NOW - 20 * 3600, "input_tokens": 100},
+                {"event_id": "current", "ts": NOW - 3600, "input_tokens": 100},
+            ])
+            with closing(sqlite3.connect(self.events)) as conn, conn:
+                conn.execute("INSERT INTO baseline(id, captured_at, total_tokens, main_tokens, aux_tokens)"
+                             " VALUES (1, ?, 0, 0, 0)", (NOW - 12 * 3600,))
+            insufficient = self.report(days=1)
         self.assertFalse(insufficient["previous"]["comparable"])
         self.assertEqual(insufficient["previous"]["reason"], "insufficient_history")
 

@@ -102,7 +102,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_api_theoretical": "API-equivalent value is a theoretical public price, not an invoice.",
         "note_lower_bound": "Values marked ≥ are lower bounds: some usage is unpriced.",
         "note_unpriced_calls": "{calls} call(s) lack complete usage or price evidence; an unpriced token count of zero does not make their value zero.",
-        "note_billing_rule_missing": "Some calls have no matching billing rule; this is separate from API pricing coverage.",
+        "note_billing_rule_missing": "{calls} call(s) have no matching billing rule; review the rules in Costs.",
+        "note_billing_evidence_missing": "A billing rule matched {calls} call(s), but API price or provider charge evidence is missing; check the price catalogue and recorded charges.",
+        "note_billing_rules_unreadable": "Billing rules could not be read, so a match could not be checked for {calls} call(s); repair the rules file and retry.",
+        "note_billing_reason_unknown": "{calls} call(s) are unclassified; the record does not say whether no rule matched or price/charge evidence was missing. Review both in Costs.",
         "note_actual_not_recorded": "Actual provider charges are incomplete: some calls lack confirmed per-call records or complete recording coverage.",
         "note_known_monthly_fees": "Known monthly fees are saved subscription declarations, not confirmed payments.",
         "note_unknown_fee_accounts": "{count} subscription fee(s) are unknown; the known subtotal excludes them.",
@@ -193,7 +196,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_api_theoretical": "API 等值是理论公开价格，不是账单。",
         "note_lower_bound": "标有 ≥ 的数值为下限：部分用量未定价。",
         "note_unpriced_calls": "{calls} 次调用缺少完整用量或价格证据；未定价令牌为零不代表其价值为零。",
-        "note_billing_rule_missing": "部分调用没有匹配的计费规则；这与 API 定价覆盖率是不同问题。",
+        "note_billing_rule_missing": "有 {calls} 次调用没有匹配的计费规则；请检查“费用”中的规则。",
+        "note_billing_evidence_missing": "有 {calls} 次调用匹配了计费规则，但缺少 API 价格或供应商费用记录证据；请检查价格目录和已记录费用。",
+        "note_billing_rules_unreadable": "无法读取计费规则，因此无法检查 {calls} 次调用是否匹配；请修复规则文件后重试。",
+        "note_billing_reason_unknown": "有 {calls} 次调用未分类；现有记录无法说明是没有匹配规则，还是缺少价格/费用记录证据。请在“费用”中检查两者。",
         "note_actual_not_recorded": "实际服务商费用不完整：部分调用缺少逐次确认记录，或记录未覆盖整个周期。",
         "note_known_monthly_fees": "已知月度费用来自已保存的订阅声明，并非已确认付款。",
         "note_unknown_fee_accounts": "有 {count} 个订阅的费用未知；已知小计不包含这些费用。",
@@ -489,7 +495,19 @@ def _spending_section(S: Mapping[str, str], window_label: str,
         if unclassified_tokens:
             notes.append(S["note_lower_bound"])
         if unclassified_calls:
-            notes.append(S["note_billing_rule_missing"])
+            explained_calls = 0
+            for field, note_key in (
+                ("unclassified_missing_rule_calls", "note_billing_rule_missing"),
+                ("unclassified_missing_evidence_calls", "note_billing_evidence_missing"),
+                ("unclassified_rule_state_unknown_calls", "note_billing_rules_unreadable"),
+            ):
+                count = billing.get(field)
+                if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+                    notes.append(S[note_key].format(calls=count))
+                    explained_calls += count
+            if explained_calls < unclassified_calls:
+                notes.append(S["note_billing_reason_unknown"].format(
+                    calls=unclassified_calls - explained_calls))
         lines.append({"label": S["label_unvalued"], "value": str(unclassified_calls)})
     if calls > 0 and not covers:
         notes.append(S["note_partial"])

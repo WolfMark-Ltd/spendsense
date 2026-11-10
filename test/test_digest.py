@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from wolfmark_ledger import analytics
+from wolfmark_ledger import billing
 from wolfmark_ledger import digest as D
 from wolfmark_ledger import economics
 from wolfmark_ledger import membership as M
@@ -451,6 +452,33 @@ class DigestReviewFixesTests(DigestCase):
                  if line["label"] == "Provider-reported charges"), "—")
         self.assertTrue(any("Actual provider charges are incomplete" in note
                             for note in section["notes"]))
+
+    def test_matching_billing_rule_without_price_or_charge_has_specific_explanation(self):
+        row = {
+            "provider": "test", "model": "m", "list_usd": None,
+            "_provider_cost_usd": None, "_tokens": 50, "last_seen": NOW - 1,
+            "_input": 50, "_output": 0, "_cache_read": 0, "_cache_write": 0,
+            "_failure": False, "_missing": False, "outcome": "ok",
+        }
+        for lang, matched_text, evidence_text in (
+            ("en", "a billing rule matched", "price or provider charge evidence"),
+            ("zh", "匹配了计费规则", "价格或供应商费用记录证据"),
+        ):
+            matched = billing.classify([row], {
+                "profiles": [{"id": "api", "provider": "test", "kind": "api"}],
+                "defaults": {}, "loaded": True})
+            section = D._spending_section(D.STRINGS[lang], "Last 7 days", matched, True, 1)
+            notes = " ".join(section["notes"]).lower()
+            self.assertIn(matched_text, notes)
+            self.assertIn(evidence_text, notes)
+            if lang == "en":
+                self.assertNotIn("no matching billing rule", notes)
+
+        unmatched = billing.classify([row], {"profiles": [], "defaults": {}, "loaded": True})
+        notes = " ".join(D._spending_section(
+            D.STRINGS["en"], "Last 7 days", unmatched, True, 1)["notes"]).lower()
+        self.assertIn("no matching billing rule", notes)
+        self.assertNotIn("a billing rule matched", notes)
 
     def test_provider_reported_charge_keeps_its_own_basis_and_currency_line(self):
         billing = {

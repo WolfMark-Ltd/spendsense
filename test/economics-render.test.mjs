@@ -70,6 +70,22 @@ i18nBackend.t = (key, ...args) => {
   return typeof entry === 'function' ? entry(...args) : entry ?? key
 }
 
+test('historical fee note passes its account count in English and Simplified Chinese', () => {
+  for (const language of ['en', 'zh']) {
+    const t = (key, ...args) => {
+      const entry = T.I18N[language][key]
+      return typeof entry === 'function' ? entry(...args) : entry ?? key
+    }
+    const counted = T.econNoteText({ code: 'econ_group_window_history_missing',
+      params: { count: 3 } }, 'fallback', t)
+    assert.match(counted, /3/)
+    const withoutCount = T.econNoteText({ code: 'econ_group_window_history_missing',
+      params: {} }, 'fallback', t)
+    assert.doesNotMatch(withoutCount, /undefined/)
+    assert.notEqual(withoutCount, 'fallback')
+  }
+})
+
 function controller() {
   const calls = []
   let responder = () => ({ ok: true })

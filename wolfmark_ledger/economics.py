@@ -131,7 +131,7 @@ def _split_window_expenditure(account: Mapping[str, Any], plans: Mapping[str, An
         effective = fee.get("effective") or {}
         published = fee.get("published") or {}
         fee_currency = effective.get("currency") or published.get("currency")
-        fee_period = effective.get("period") or published.get("period")
+        fee_period = effective.get("period")
         monthly = monthly_equivalent(effective.get("amount"), fee_period)
         currency = str(fee_currency or "").upper() or None
         if monthly is None or currency is None:
@@ -741,7 +741,7 @@ def build_economics_report(
 
         effective = fee.get("effective") or {}
         published = fee.get("published") or {}
-        fee_period = effective.get("period") or published.get("period")
+        fee_period = effective.get("period")
         fee_currency = effective.get("currency") or published.get("currency")
         monthly = monthly_equivalent(effective.get("amount"), fee_period)
         currency = str(fee_currency or "").upper() or None

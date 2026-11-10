@@ -106,6 +106,7 @@ class Acc:
     cache_write: int = 0
     reasoning: int = 0
     calls: int = 0
+    call_count_missing_rows: int = 0
     rows: int = 0
     billed: float = 0.0
     billed_rows: int = 0
@@ -140,6 +141,8 @@ class Acc:
         self.cache_write += row["_cache_write"]
         self.reasoning += row["_reasoning"]
         self.calls += row["_calls"]
+        if row["_calls"] == 0 and row["_tokens"] > 0:
+            self.call_count_missing_rows += 1
         self.rows += 1
         self.kinds[billed_kind] += 1
         self.basis_kinds[basis_kind] += 1
@@ -176,12 +179,16 @@ class Acc:
     def as_dict(self) -> dict[str, Any]:
         tokens = self.tokens
         coverage = (self.priced_tokens / tokens) if tokens else 0.0
-        if self.calls == 0:
+        has_usage = bool(tokens or self.calls)
+        has_priced_evidence = bool(self.priced_tokens or self.priced_calls)
+        if not has_usage:
             status = "empty"
-        elif self.unpriced_calls == 0:
-            status = "complete"
-        elif self.priced_calls == 0:
+        elif not has_priced_evidence:
             status = "unpriced"
+        elif (self.calls > 0 and self.call_count_missing_rows == 0
+              and self.unpriced_calls == 0
+              and self.unpriced_tokens == 0):
+            status = "complete"
         else:
             status = "partial"
         return {
@@ -192,11 +199,12 @@ class Acc:
             "reasoning_tokens": self.reasoning,
             "tokens": tokens,
             "calls": self.calls,
+            "call_count_missing_rows": self.call_count_missing_rows,
             "rows": self.rows,
             "billed_usd": round(self.billed, 6) if (self.rows > 0 and self.billed_rows == self.rows) else None,
             "billed_complete": self.rows > 0 and self.billed_rows == self.rows,
-            "list_usd": round(self.list, 6) if self.priced_calls or self.calls == 0 else None,
-            "list_usd_upper": round(self.list_upper, 6) if self.priced_calls or self.calls == 0 else None,
+            "list_usd": round(self.list, 6) if has_priced_evidence or not has_usage else None,
+            "list_usd_upper": round(self.list_upper, 6) if has_priced_evidence or not has_usage else None,
             "tier_possible_tokens": self.tier_tokens,
             "basis_usd": round(self.basis, 6) if (self.rows > 0 and self.basis_rows == self.rows) else None,
             "basis_complete": self.basis_rows == self.rows,

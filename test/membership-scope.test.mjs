@@ -1622,7 +1622,7 @@ test('Overview attention rows route to Memberships and Usage', async () => {
     fee: { basis: 'declared', effective: { amount: 20, currency: 'USD', period: 'month' } }
   })
   transportCtl.respond(call => call.path.startsWith('/analytics')
-    ? { ok: true, totals: { list_usd: 47.9, calls: 5, unpriced_tokens: 18240 } }
+    ? { ok: true, totals: { list_usd: 47.9, calls: 5, unpriced_tokens: 18240, unpriced_calls: 1 } }
     : call.path === '/membership/accounts'
       ? { ok: true, accounts: [xai, codex], store: { loaded: true, error: '' }, notes: [] }
       : { ok: true })
@@ -1653,6 +1653,9 @@ test('Overview attention rows route to Memberships and Usage', async () => {
   assert.equal(queued.focus, 'arrangement')
   T.$ledgerTab.set('overview'); await flush(3)
   assert.match(rows[1].textContent, /Usage pricing/)
+  assert.match(rows[1].textContent, /18,240 tokens/)
+  assert.match(rows[1].textContent, /1 call\(s\)/)
+  assert.doesNotMatch(rows[1].textContent, /true tokens/)
   await clickByText(rows[1], 'Open Usage')
   assert.equal(T.$ledgerTab.get(), 'usage')
   T.$membershipTarget.set(null)

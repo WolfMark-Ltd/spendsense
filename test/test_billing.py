@@ -79,8 +79,18 @@ class BillingTests(unittest.TestCase):
         report = billing.classify([row(value=None, tokens=50)], loaded)
         self.assertEqual(report["unclassified_tokens"], 50)
         self.assertEqual(report["unclassified_calls"], 1)
+        self.assertEqual(report["unclassified_missing_rule_calls"], 1)
+        self.assertEqual(report["unclassified_missing_evidence_calls"], 0)
         self.assertIsNone(report["api_equivalent_usd"])
         self.assertEqual(report["evidence"]["api_equivalent"]["basis"], "unpriced")
+
+    def test_matching_rule_with_no_price_or_charge_is_not_a_missing_rule(self):
+        loaded = self.profiles({"profiles": [
+            {"id": "api", "provider": "commandcode", "kind": "api"}]})
+        report = billing.classify([row(value=None, tokens=50)], loaded)
+        self.assertEqual(report["unclassified_calls"], 1)
+        self.assertEqual(report["unclassified_missing_rule_calls"], 0)
+        self.assertEqual(report["unclassified_missing_evidence_calls"], 1)
 
     def test_presentation_is_echoed_and_invalid_falls_back(self):
         self.assertEqual(billing.classify([], {}, "spend")["presentation"], "spend")
