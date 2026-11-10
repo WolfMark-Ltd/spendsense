@@ -184,18 +184,33 @@ test('newsHasSignals mirrors the backend signal check', () => {
   assert.equal(S.newsHasSignals({ configured_families: ['openai'] }), true)
 })
 
-test('newsRelevanceReasons localises reasons in backend order', () => {
+test('newsRelevanceReasons localises truthful reasons in display order', () => {
   assert.deepEqual(S.NEWS_RELEVANCE_ORDER,
     ['configured_provider', 'used_provider', 'used_model', 'selected_plan_family'])
   const item = { for_you: true, relevance: { relevant: true,
     reasons: ['selected_plan_family', 'used_model', 'unknown_future_code'] } }
+  // The fuzzy used_model code renders the neutral "Related update", never a
+  // claim that this exact model was used.
   assert.deepEqual(S.newsRelevanceReasons(item, t),
-    ['newsReasonUsedModel()', 'newsReasonSelectedPlan()'])
+    ['newsReasonSelectedPlan()', 'newsReasonRelated()'])
   assert.equal(S.newsRelevanceText(item, t),
-    'newsWhyRelevant(newsReasonUsedModel() · newsReasonSelectedPlan())')
+    'newsReasonSelectedPlan() · newsReasonRelated()')
   assert.deepEqual(S.newsRelevanceReasons({ for_you: true }, t), [])
   assert.equal(S.newsRelevanceText({ for_you: true }, t), null)
   assert.deepEqual(S.newsRelevanceReasons({ for_you: false }, t), [])
+})
+
+test('a valid last_used_at earns Used recently; malformed or old ones do not', () => {
+  const NOW = Date.parse('2026-11-05T00:00:00Z')
+  const base = { for_you: true, relevance: { relevant: true, reasons: ['configured_provider'] } }
+  const fresh = { ...base, last_used_at: '2026-11-04T00:00:00Z' }
+  assert.deepEqual(S.newsRelevanceReasons(fresh, t, NOW),
+    ['newsReasonUsedRecently()', 'newsReasonConfigured()'])
+  assert.equal(S.newsRelevanceText(fresh, t, NOW), 'newsReasonUsedRecently() · newsReasonConfigured()')
+  for (const last_used_at of ['not-a-date', '2027-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '']) {
+    assert.deepEqual(S.newsRelevanceReasons({ ...base, last_used_at }, t, NOW),
+      ['newsReasonConfigured()'], `no Used recently for ${last_used_at || 'an empty value'}`)
+  }
 })
 
 test('newsEmptyText mirrors backend empty states, with a legacy fallback', () => {
@@ -216,12 +231,20 @@ test('newsEmptyText mirrors backend empty states, with a legacy fallback', () =>
 test('new news labels exist in English and Chinese', () => {
   const keys = ['newsEmptyBaseline', 'newsEmptyNoChanges', 'newsEmptyNoMatches',
     'newsEmptyNoConfig', 'newsWhyRelevant', 'newsReasonConfigured',
-    'newsReasonUsedProvider', 'newsReasonUsedModel', 'newsReasonSelectedPlan']
+    'newsReasonUsedProvider', 'newsReasonUsedRecently', 'newsReasonRelated',
+    'newsReasonSelectedPlan']
   for (const [locale, table] of Object.entries(S.I18N)) {
     for (const key of keys) assert.ok(table[key] !== undefined, `${locale} is missing ${key}`)
   }
   assert.equal(S.I18N.en.newsWhyRelevant('x'), 'For you because it x.')
   assert.ok(String(S.I18N.zh.newsWhyRelevant('x')).includes('x'))
+  // The neutral reason labels in both locales, per the hook contract.
+  assert.equal(S.I18N.en.newsReasonUsedRecently, 'Used recently')
+  assert.equal(S.I18N.en.newsReasonRelated, 'Related update')
+  assert.equal(S.I18N.en.newsReasonConfigured, 'Configured provider')
+  assert.equal(S.I18N.en.newsReasonSelectedPlan, 'Selected plan')
+  assert.equal(S.I18N.en.newsReasonUsedProvider, 'Provider you use')
+  assert.ok(S.I18N.zh.newsReasonRelated.includes('相关'))
 })
 
 // --- PR28: backend summary/conditions/impact codes ---------------------------

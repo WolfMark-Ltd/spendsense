@@ -7554,15 +7554,8 @@ function newsCentralAlert(central, t) {
   return central.error || t('newsCentralStale')
 }
 
-/** Relevance reason codes from monitoring.match_relevance, in display order. */
+/** Relevance reason codes from monitoring.match_relevance, in backend order. */
 const NEWS_RELEVANCE_ORDER = ['configured_provider', 'used_provider', 'used_model', 'selected_plan_family']
-
-const NEWS_REASON_KEYS = {
-  configured_provider: 'newsReasonConfigured',
-  used_provider: 'newsReasonUsedProvider',
-  used_model: 'newsReasonUsedModel',
-  selected_plan_family: 'newsReasonSelectedPlan',
-}
 
 /** Mirror of monitoring._is_relevant: read-time relevance wins, the stored flag fills in. */
 function newsIsRelevant(item) {
@@ -7577,20 +7570,6 @@ function newsHasSignals(signals) {
   if (!signals || typeof signals !== 'object') return false
   return ['configured_families', 'used_providers', 'used_models', 'plan_ids', 'plan_families']
     .some(key => Array.isArray(signals[key]) ? signals[key].length > 0 : !!signals[key])
-}
-
-/** Localised relevance reasons for one item, in backend display order. Unknown codes are skipped. */
-function newsRelevanceReasons(item, t) {
-  if (!newsIsRelevant(item)) return []
-  const reasons = item.relevance && typeof item.relevance === 'object' && Array.isArray(item.relevance.reasons)
-    ? item.relevance.reasons : []
-  return NEWS_RELEVANCE_ORDER.filter(code => reasons.includes(code)).map(code => t(NEWS_REASON_KEYS[code]))
-}
-
-function newsRelevanceText(item, t) {
-  const labels = newsRelevanceReasons(item, t)
-  if (!labels.length) return null
-  return t('newsWhyRelevant', labels.join(' · '))
 }
 
 /**
@@ -7629,7 +7608,8 @@ const NEWS_FIELD_KEYS = {
 
 /** Page size of the All Updates list, and how many For You groups show first. */
 const NEWS_PAGE_SIZE = 10
-const NEWS_FOR_YOU_LIMIT = 5
+const NEWS_FOR_YOU_INITIAL = 5
+const NEWS_FOR_YOU_LIMIT = NEWS_FOR_YOU_INITIAL
 
 /**
  * Comparison of one field's previous vs current rate. pct exists only when
@@ -7645,36 +7625,80 @@ function newsFieldDelta(before, after) {
   return { pct: (to - from) / from * 100, reason: null }
 }
 
-/** Canonical tier-row key: a tier is named by `type` or `threshold`. */
-function newsTierKey(row) {
+/** Canonical, order-insensitive identity of one object's scalar fields. */
+function newsCanonicalRates(obj) {
+  if (!obj || typeof obj !== 'object') return ''
+  return Object.keys(obj).filter(key => obj[key] !== undefined).sort()
+    .map(key => `${key}=${String(obj[key])}`).join(';')
+}
+
+/** Canonical tier-row key: a tier row is named by `type` plus `size`. */
+function newsTierRowKey(row) {
   if (!row || typeof row !== 'object') return ''
-  return [row.type ?? row.threshold ?? '', row.size ?? '', row.input ?? '',
-    row.output ?? '', row.cache_read ?? '', row.cache_write ?? ''].join('|')
+  return `${row.type ?? ''}|${row.size ?? ''}`
+}
+
+/** Order-insensitive identity of a tier list, for exact key-set comparison. */
+function newsCanonicalTiers(rows) {
+  if (!Array.isArray(rows)) return 'null'
+  return rows.map(row => `${newsTierRowKey(row)}=${newsCanonicalRates(row)}`).sort().join('|')
 }
 
 /**
- * Tier comparability for a has_tiers event: the tier rows must exist on both
- * sides and match exactly. Rows are never averaged or approximated.
+ * Tier comparability for one event, from the root-level optional fields
+ * `tiers_detail` ('known' | 'unknown') and `tiers_before` / `tiers_after`
+ * (arrays of raw {type, size, input, output, cache_read, cache_write}, or
+ * null). Tiers compare only when tiers_detail is 'known', both arrays are
+ * present, every row carries a known type and the type+size key sets match
+ * exactly; rows are never averaged or fabricated — each comparable row keeps
+ * its own per-field deltas.
  */
-function newsTierStatus(previous, current, hasTiers) {
-  if (!hasTiers) return 'none'
-  const before = Array.isArray(previous?.tiers) ? previous.tiers : null
-  const after = Array.isArray(current?.tiers) ? current.tiers : null
-  if (!before || !after) return 'changed'
-  const a = before.map(newsTierKey).sort().join('|')
-  const b = after.map(newsTierKey).sort().join('|')
-  return a !== '' && a === b ? 'match' : 'changed'
+function newsTierComparison(item) {
+  const detail = item?.tiers_detail
+  const before = Array.isArray(item?.tiers_before) ? item.tiers_before : null
+  const after = Array.isArray(item?.tiers_after) ? item.tiers_after : null
+  const tierSignal = !!item?.has_tiers || !!before || !!after
+    || detail === 'known' || detail === 'unknown'
+  if (!tierSignal) return { status: 'none', reason: null, rows: [], dir: null }
+  const rowsKnown = detail === 'known' && [...before || [], ...after || []]
+    .every(row => typeof row?.type === 'string' && row.type.trim() !== '')
+  if (!rowsKnown) return { status: 'unknown', reason: 'tier_type_unknown', rows: [], dir: null }
+  if (!before || !after) return { status: 'unavailable', reason: 'tier_unavailable', rows: [], dir: null }
+  const aKeys = before.map(newsTierRowKey)
+  const bKeys = after.map(newsTierRowKey)
+  const sameSet = aKeys.length === bKeys.length &&
+    [...aKeys].sort().join('|') === [...bKeys].sort().join('|')
+  if (!sameSet) return { status: 'mismatch', reason: 'tier_mismatch', rows: [], dir: null }
+  const rows = before.map(beforeRow => {
+    const afterRow = after.find(row => newsTierRowKey(row) === newsTierRowKey(beforeRow))
+    const deltas = NEWS_RATE_FIELDS
+      .filter(key => beforeRow[key] != null || afterRow[key] != null)
+      .map(key => ({ key, ...newsFieldDelta(beforeRow[key], afterRow[key]) }))
+    return { type: beforeRow.type, size: beforeRow.size, deltas }
+  })
+  const all = rows.flatMap(row => row.deltas)
+  const moves = all.filter(delta => delta.pct != null && delta.pct !== 0)
+  const firstReason = all.find(delta => delta.reason)?.reason || null
+  const dir = moves.length
+    ? moves.every(d => d.pct < 0) ? 'down' : moves.every(d => d.pct > 0) ? 'up' : 'na'
+    : firstReason ? 'na' : 'same'
+  return { status: 'match', reason: firstReason, rows, dir }
+}
+
+/** Status-string view of newsTierComparison (kept under its existing name). */
+function newsTierStatus(item) {
+  return newsTierComparison(item).status
 }
 
 /**
  * Per-field deltas of one event's previous vs current rates, plus the tier
- * status. New-model events carry no deltas at all; fields with no rate on
+ * comparison. New-model events carry no deltas at all; fields with no rate on
  * either side are omitted.
  */
 function newsEventDeltas(item) {
   const previous = item?.previous && typeof item.previous === 'object' ? item.previous : null
   const current = item?.current && typeof item.current === 'object' ? item.current : null
-  const tierStatus = newsTierStatus(previous, current, !!item?.has_tiers)
+  const tiers = newsTierComparison(item)
   const fields = []
   if (previous && current && item?.category !== 'new_model') {
     for (const key of NEWS_RATE_FIELDS) {
@@ -7682,31 +7706,138 @@ function newsEventDeltas(item) {
       fields.push({ key, ...newsFieldDelta(previous[key], current[key]) })
     }
   }
-  return { fields, tierStatus, newListing: item?.category === 'new_model' }
+  return {
+    fields, tierStatus: tiers.status, tierReason: tiers.reason,
+    tierDir: tiers.dir, tierRows: tiers.rows,
+    newListing: item?.category === 'new_model',
+  }
+}
+
+/** Backend rate_change_code → offer class, when the fields do not contradict. */
+const NEWS_RATE_CLASS_BY_CODE = {
+  news_rate_down: 'reduction', news_rate_up: 'increase',
+  news_rate_mixed: 'mixed', news_rate_tiers_only: 'tiers_only',
+}
+
+/** Directional classes that contradict a coded class (per-field values win). */
+const NEWS_CODE_CONTRADICTS = {
+  reduction: ['increase', 'mixed'],
+  increase: ['reduction', 'mixed'],
+  mixed: ['reduction', 'increase'],
+  tiers_only: ['reduction', 'increase', 'mixed'],
 }
 
 /**
  * Offer class from the latest event only. Older events never fill gaps: an
  * unusable newest comparison is null (visible under All only), never rebuilt
- * from history. new_listing comes from the new_model category; reduction or
- * increase need every comparable non-zero field moving the same way; base
- * rates that did not move while the tiers changed are tiers_only.
+ * from history. rate_change_code wins when present, unless the comparable
+ * per-field values contradict it — then the class stays neutral and the chips
+ * show the actual values. The legacy category only ever produces new_listing
+ * (a tiers-only change can carry price_increase, and a mixed change either
+ * side); it never drives reduction or increase.
  */
 function newsOfferClass(item) {
   if (!item || typeof item !== 'object') return null
   if (item.category === 'new_model') return 'new_listing'
-  const { fields, tierStatus } = newsEventDeltas(item)
+  const { fields, tierStatus, tierDir } = newsEventDeltas(item)
   const moves = fields.filter(field => field.pct != null && field.pct !== 0)
-  if (!moves.length) return tierStatus === 'changed' ? 'tiers_only' : null
-  if (moves.every(field => field.pct < 0)) return 'reduction'
-  if (moves.every(field => field.pct > 0)) return 'increase'
-  return 'mixed'
+  let derived = null
+  if (moves.length)
+    derived = moves.every(field => field.pct < 0) ? 'reduction'
+      : moves.every(field => field.pct > 0) ? 'increase' : 'mixed'
+  else if (tierStatus === 'match')
+    derived = tierDir === 'same' ? null : 'tiers_only'
+  else if (tierStatus !== 'none')
+    derived = 'tiers_only'
+  const coded = NEWS_RATE_CLASS_BY_CODE[String(item.rate_change_code || '')]
+  if (!coded) return derived
+  return derived && NEWS_CODE_CONTRADICTS[coded]?.includes(derived) ? null : coded
 }
 
 /** Event order inside an offer: newest first, exact id as the tie-break. */
 const newsNewestFirst = (a, b) =>
   String(b?.observed_at || '').localeCompare(String(a?.observed_at || '')) ||
   String(a?.id || '').localeCompare(String(b?.id || ''))
+
+/** Explicit event/provenance link fields that can prove two items one event. */
+const NEWS_EVENT_LINK_FIELDS = ['event_id', 'event_key', 'dedupe_key', 'provenance_id']
+
+/**
+ * Canonical identity of one item's transition: exact provider, model and
+ * category, identical previous and current rates, and — only when
+ * tiers_detail is 'known' — identical tiers_before/tiers_after.
+ */
+function newsTransitionKey(item) {
+  if (!item || typeof item !== 'object') return ''
+  return [
+    String(item.provider || ''), String(item.model || ''), String(item.category || ''),
+    newsCanonicalRates(item.previous), newsCanonicalRates(item.current),
+    item.tiers_detail === 'known'
+      ? `${newsCanonicalTiers(item.tiers_before)}>>${newsCanonicalTiers(item.tiers_after)}`
+      : '',
+  ].join('§')
+}
+
+/**
+ * Explicit same-event proof between two items with identical transitions:
+ * a shared non-empty event/provenance link field, or an exactly equal
+ * non-empty effective_at plus an equal non-empty source_url, or an exactly
+ * equal non-empty observed_at string. Nearby time alone is never proof.
+ */
+function newsSameEventProof(a, b) {
+  if (!a || !b) return false
+  for (const field of NEWS_EVENT_LINK_FIELDS) {
+    const left = a[field], right = b[field]
+    if (typeof left === 'string' && left && left === right) return true
+  }
+  const effectiveA = String(a.effective_at || ''), effectiveB = String(b.effective_at || '')
+  const urlA = String(a.source_url || ''), urlB = String(b.source_url || '')
+  if (effectiveA && effectiveA === effectiveB && urlA && urlA === urlB) return true
+  const observedA = String(a.observed_at || '')
+  return !!observedA && observedA === String(b.observed_at || '')
+}
+
+/**
+ * Cross-origin dedupe beyond exact ids: a local item and a central item with
+ * DIFFERENT ids merge into one event only when both hold an identical
+ * transition (newsTransitionKey) and an explicit same-event proof
+ * (newsSameEventProof). Pairing is 1:1 local↔central, never within one
+ * origin, never by nearby time; without proof the items stay distinct events.
+ * A merged event keeps both items as evidence sources (merged_sources) and is
+ * observed at the newest of the two observations. Originals stay untouched.
+ */
+function newsMergeEvents(events) {
+  const list = Array.isArray(events) ? events.filter(item => item && typeof item === 'object') : []
+  const locals = list.filter(item => String(item.origin || 'local') !== 'central')
+  const centrals = list.filter(item => String(item.origin || 'local') === 'central')
+  const taken = new Set()
+  const out = []
+  for (const event of locals) {
+    const key = newsTransitionKey(event)
+    const partner = key
+      ? centrals.find(central => !taken.has(central) &&
+          newsTransitionKey(central) === key && newsSameEventProof(event, central))
+      : null
+    if (partner) {
+      taken.add(partner)
+      const newest = newsNewestFirst(event, partner) <= 0 ? event : partner
+      out.push({
+        ...event,
+        observed_at: newest.observed_at || event.observed_at,
+        merged_sources: [event, partner],
+      })
+    } else {
+      out.push(event)
+    }
+  }
+  for (const central of centrals) if (!taken.has(central)) out.push(central)
+  return out
+}
+
+/** The events of one offer, newest first (tests and verifier entry point). */
+function newsOfferEvents(offer) {
+  return Array.isArray(offer?.events) ? offer.events : offer?.latest ? [offer.latest] : []
+}
 
 /**
  * Model-first grouping of the flat /news items. The group key is the exact
@@ -7735,7 +7866,8 @@ function newsGroupModels(items) {
   const groups = []
   for (const { model, offers } of byModel.values()) {
     const offerList = [...offers.entries()].map(([provider, events]) => {
-      const sorted = events.slice().sort(newsNewestFirst)
+      // Cross-origin proof-based merge first, then newest-first ordering.
+      const sorted = newsMergeEvents(events).sort(newsNewestFirst)
       return { provider, model, latest: sorted[0] || null, history: sorted.slice(1), events: sorted }
     }).sort((a, b) => newsNewestFirst(a.latest, b.latest) || a.provider.localeCompare(b.provider))
     let model_name = ''
@@ -7744,8 +7876,11 @@ function newsGroupModels(items) {
       if (named) { model_name = named.model_name; break }
     }
     const enriched = offerList.map(offer => {
-      const { fields, tierStatus, newListing } = newsEventDeltas(offer.latest)
-      return { ...offer, deltas: fields, tierStatus, newListing, news_class: newsOfferClass(offer.latest) }
+      const { fields, tierStatus, tierReason, tierDir, tierRows, newListing } = newsEventDeltas(offer.latest)
+      return {
+        ...offer, deltas: fields, tierStatus, tierReason, tierDir, tierRows, newListing,
+        news_class: newsOfferClass(offer.latest),
+      }
     })
     const latest = enriched[0]?.latest || null
     groups.push({
@@ -7757,6 +7892,10 @@ function newsGroupModels(items) {
   }
   groups.sort((a, b) => newsNewestFirst(a.latest, b.latest) || a.model.localeCompare(b.model))
   cards.sort(newsNewestFirst)
+  // Cards split by their legacy category: subscription plans vs provider
+  // listings. Other empty-model items (if any) stay in cards and entries only.
+  const plans = cards.filter(item => item?.category === 'subscription')
+  const listings = cards.filter(item => item?.category === 'new_model')
   const entries = [
     ...groups,
     ...cards.map(item => ({ kind: 'card', item, observed_at: item?.observed_at || '', sort_id: item?.id || '' })),
@@ -7764,11 +7903,8 @@ function newsGroupModels(items) {
   entries.sort((a, b) =>
     String(b.observed_at || '').localeCompare(String(a.observed_at || '')) ||
     String(a.sort_id || '').localeCompare(String(b.sort_id || '')))
-  return { groups, cards, entries }
+  return { groups, cards, plans, listings, entries }
 }
-
-/** Ranking tiers for For You: used model/provider first, then plan family. */
-const NEWS_RANK_TIERS = { used_model: 0, used_provider: 0, configured_provider: 1, selected_plan_family: 2 }
 
 /** Backend-supplied relevance codes of one item, in backend display order. */
 function newsItemReasons(item) {
@@ -7778,35 +7914,126 @@ function newsItemReasons(item) {
   return NEWS_RELEVANCE_ORDER.filter(code => reasons.includes(code))
 }
 
-/** Localised relevance labels for a whole group; only backend-supplied codes. */
-function newsGroupReasons(group, t) {
-  const codes = new Set()
-  for (const offer of group?.offers || []) for (const code of newsItemReasons(offer.latest)) codes.add(code)
-  return NEWS_RELEVANCE_ORDER.filter(code => codes.has(code)).map(code => t(NEWS_REASON_KEYS[code]))
+/** How long a valid last_used_at stays "used recently". */
+const NEWS_RECENT_MS = 30 * 86_400_000
+
+/**
+ * Parseable, non-future last_used_at of one item, or null. Anything
+ * malformed, empty or in the future is not a usable recency signal.
+ */
+function newsLastUsedMs(item, nowMs = Date.now()) {
+  const raw = typeof item?.last_used_at === 'string' ? item.last_used_at.trim() : ''
+  if (!raw) return null
+  const when = Date.parse(raw)
+  if (!Number.isFinite(when)) return null
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now()
+  if (when > now) return null
+  return when
+}
+
+/** True only for a valid last_used_at within the last 30 days of nowMs. */
+function newsUsedRecently(item, nowMs = Date.now()) {
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now()
+  const when = newsLastUsedMs(item, now)
+  return when != null && now - when <= NEWS_RECENT_MS
 }
 
 /**
- * For You order: relevant groups only, ranked by the backend's own reasons —
- * used model/provider first, then configured provider, then selected plan —
- * with the largest absolute comparable change as the tie-break, then the
- * newest observation, then the exact model ID.
+ * Display reason codes for one item: exact recent use first, then the
+ * backend's codes. The fuzzy used_model code stays a code — its label is the
+ * neutral "Related update", never "you used this model" and never "Used
+ * recently", which only a valid last_used_at earns.
  */
-function newsRankGroups(groups) {
+function newsItemReasonCodes(item, nowMs = Date.now()) {
+  if (!newsIsRelevant(item)) return []
+  const codes = newsItemReasons(item)
+  return newsUsedRecently(item, nowMs)
+    ? ['used_recently', ...codes.filter(code => code !== 'used_recently')]
+    : codes
+}
+
+/** Display order of reason codes for groups and items. */
+const NEWS_GROUP_REASON_ORDER = ['used_recently', 'configured_provider', 'selected_plan_family', 'used_provider', 'used_model']
+
+const NEWS_REASON_KEYS = {
+  used_recently: 'newsReasonUsedRecently',
+  configured_provider: 'newsReasonConfigured',
+  selected_plan_family: 'newsReasonSelectedPlan',
+  used_provider: 'newsReasonUsedProvider',
+  used_model: 'newsReasonRelated',
+}
+
+/** Localised relevance labels for one item, in display order. */
+function newsRelevanceReasons(item, t, nowMs = Date.now()) {
+  const codes = newsItemReasonCodes(item, nowMs)
+  return NEWS_GROUP_REASON_ORDER.filter(code => codes.includes(code)).map(code => t(NEWS_REASON_KEYS[code]))
+}
+
+function newsRelevanceText(item, t, nowMs = Date.now()) {
+  const labels = newsRelevanceReasons(item, t, nowMs)
+  if (!labels.length) return null
+  return labels.join(' · ')
+}
+
+/** Reason codes of a whole group: the union over its offers' latest items. */
+function newsGroupReasonCodes(group, nowMs = Date.now()) {
+  const codes = new Set()
+  for (const offer of group?.offers || [])
+    for (const code of newsItemReasonCodes(offer.latest, nowMs)) codes.add(code)
+  return [...codes]
+}
+
+/** Localised relevance labels for a whole group; only truthful codes. */
+function newsGroupReasons(group, t, nowMs = Date.now()) {
+  const codes = newsGroupReasonCodes(group, nowMs)
+  return NEWS_GROUP_REASON_ORDER.filter(code => codes.includes(code)).map(code => t(NEWS_REASON_KEYS[code]))
+}
+
+/** The largest single-field absolute comparable % across a group's offers. */
+function newsGroupMateriality(group) {
+  return Math.max(0, ...group.offers.map(offer =>
+    Math.max(0, ...offer.deltas.map(delta => delta.pct == null ? 0 : Math.abs(delta.pct)))))
+}
+
+/**
+ * For You order: relevant groups only. Rank order is (1) a valid last_used_at
+ * descending — anything malformed, future or older than 30 days is not
+ * recent and never claims use; (2) the strong truthful signals
+ * configured_provider / selected_plan_family / used_provider; (3) materiality
+ * as the largest single-field absolute comparable %, never blended; (4) the
+ * newest observation; (5) the exact model ID.
+ */
+function newsRankForYou(groups, nowMs = Date.now()) {
   const list = (Array.isArray(groups) ? groups : []).filter(group =>
     group?.kind === 'group' && group.offers.some(offer => newsIsRelevant(offer.latest)))
-  const rank = group => {
-    let tier = 3
-    for (const offer of group.offers)
-      for (const code of newsItemReasons(offer.latest)) tier = Math.min(tier, NEWS_RANK_TIERS[code] ?? 3)
-    return tier
+  const recency = group => {
+    let best = null
+    for (const offer of group.offers) {
+      const when = newsUsedRecently(offer.latest, nowMs) ? newsLastUsedMs(offer.latest, nowMs) : null
+      if (when != null && (best == null || when > best)) best = when
+    }
+    return best
   }
-  const material = group => Math.max(0, ...group.offers.map(offer =>
-    Math.max(0, ...offer.deltas.map(delta => delta.pct == null ? 0 : Math.abs(delta.pct)))))
-  return list.slice().sort((a, b) =>
-    rank(a) - rank(b) ||
-    material(b) - material(a) ||
-    String(b.latest?.observed_at || '').localeCompare(String(a.latest?.observed_at || '')) ||
-    String(a.model || '').localeCompare(String(b.model || '')))
+  const strong = group => newsGroupReasonCodes(group, nowMs).some(code =>
+    code === 'configured_provider' || code === 'selected_plan_family' || code === 'used_provider')
+  return list.slice().sort((a, b) => {
+    const usedA = recency(a), usedB = recency(b)
+    if (usedA != null || usedB != null) {
+      if (usedA == null) return 1
+      if (usedB == null) return -1
+      if (usedA !== usedB) return usedB - usedA
+    }
+    const strongA = strong(a) ? 0 : 1, strongB = strong(b) ? 0 : 1
+    if (strongA !== strongB) return strongA - strongB
+    return newsGroupMateriality(b) - newsGroupMateriality(a) ||
+      String(b.latest?.observed_at || '').localeCompare(String(a.latest?.observed_at || '')) ||
+      String(a.model || '').localeCompare(String(b.model || ''))
+  })
+}
+
+/** Kept under its existing name: newsRankForYou at the current time. */
+function newsRankGroups(groups) {
+  return newsRankForYou(groups, Date.now())
 }
 
 /**
@@ -7869,6 +8096,18 @@ function newsFilterEntries(entries, { category = 'all', search = '', days = null
     })
 }
 
+/** newsFilterEntries under the verifier's names: query is the search text. */
+function newsSearchFilter(entries, { query = '', days = null, category = 'all', nowMs = Date.now() } = {}) {
+  return newsFilterEntries(entries, { category, search: query, days, nowMs })
+}
+
+/** One load-more page slice of a list, with the remaining count. */
+function newsPage(list, shown) {
+  const items = Array.isArray(list) ? list : []
+  const visible = items.slice(0, Math.max(0, shown))
+  return { visible, remaining: Math.max(0, items.length - visible.length), total: items.length }
+}
+
 /**
  * Hypothetical, API-equivalent impact wording for a group row: never claims a
  * bill, a charge or a saving; an unavailable estimate falls back to the
@@ -7891,6 +8130,44 @@ function newsFmtPct(pct) {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
 }
 
+/** Direction glyph for chips and rows: down, up, or the neutral dot. */
+const newsGlyph = dir => dir === 'down' ? '▼' : dir === 'up' ? '▲' : '●'
+
+/**
+ * Official rates block: the verified date, the source note as plain text
+ * (never a link) and each official window as its own row.
+ */
+function NewsOfficial({ official, t }) {
+  if (!official || typeof official !== 'object') return null
+  const windows = Array.isArray(official.windows)
+    ? official.windows.filter(win => win && typeof win === 'object') : []
+  if (!windows.length && !official.source_note && !official.verified_at) return null
+  const hhmm = minute => {
+    const value = Number(minute)
+    if (!Number.isFinite(value)) return ''
+    return `${String(Math.floor(value / 60) % 24).padStart(2, '0')}:${String(Math.round(value) % 60).padStart(2, '0')}`
+  }
+  const children = [
+    official.verified_at
+      ? jsx('p', { className: 'wm-news-official', children: t('newsOfficialVerified', fmtDay(official.verified_at)) }, 'verified')
+      : null,
+    // Plain text on purpose: a source note is never rendered as a link.
+    official.source_note
+      ? jsx('p', { className: 'wm-news-official', children: `${t('newsOfficialNote')}: ${String(official.source_note)}` }, 'note')
+      : null,
+    ...windows.map((win, index) => {
+      const bits = NEWS_RATE_FIELDS
+        .filter(key => win[key] != null)
+        .map(key => `${t(NEWS_FIELD_KEYS[key])} ${fmtRate(win[key])}`)
+      const span = win.start_minute == null || win.end_minute == null ? ''
+        : ` ${hhmm(win.start_minute)}–${hhmm(win.end_minute)}`
+      const parts = [win.days != null ? t('newsOfficialWindow', win.days) : '', span.trim(), bits.join(' · ')]
+      return jsx('p', { className: 'wm-news-officialrow', children: parts.filter(Boolean).join(' · ') }, `win${index}`)
+    }),
+  ]
+  return jsx('div', { className: 'wm-news-officialblock', children: children.filter(Boolean) })
+}
+
 function newsClassLabel(news_class, t) {
   if (news_class === 'new_listing') return t('newsClassNewListing')
   if (news_class === 'reduction') return t('newsClassReduction')
@@ -7904,6 +8181,10 @@ const NEWS_DELTA_REASON_KEYS = {
   missing_before: 'newsNoPrev',
   missing_after: 'newsNoAfter',
   zero_before: 'newsZeroBefore',
+  new_listing: 'newsDirNew',
+  tier_type_unknown: 'newsTierUnknown',
+  tier_mismatch: 'newsTierMismatch',
+  tier_unavailable: 'newsTierUnavailable',
 }
 
 function newsClearFilters() {
@@ -7962,7 +8243,7 @@ const NEWS_CSS = `
 .wm-news-groupid{display:block;margin-top:2px;font-family:var(--font-mono,ui-monospace,monospace);font-size:12px;font-weight:400;color:var(--ui-text-tertiary);overflow-wrap:anywhere}
 .wm-news-offer{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--ui-stroke-secondary)}
 .wm-news-offer:first-of-type{border-top:0;padding-top:12px}
-.wm-news-offer[data-match="true"]{background:color-mix(in srgb,var(--ui-accent) 7%,transparent);border-radius:6px;padding-left:8px;padding-right:8px;margin-left:-8px;margin-right:-8px}
+.wm-news-offer[data-news-match="true"]{background:color-mix(in srgb,var(--ui-accent) 7%,transparent);border-radius:6px;padding-left:8px;padding-right:8px;margin-left:-8px;margin-right:-8px}
 .wm-news-provider{font-size:13px;font-weight:600;min-width:0;overflow-wrap:anywhere;flex:0 1 auto}
 .wm-news-dir{flex:none;font-size:11px;line-height:1.6;font-variant-numeric:tabular-nums}
 .wm-news-dir [data-dir]{display:inline-block}
@@ -7991,6 +8272,11 @@ const NEWS_CSS = `
 .wm-news-history li{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline;padding:6px 0;border-top:1px solid var(--ui-stroke-secondary);font-size:12px;color:var(--ui-text-secondary)}
 .wm-news-historycode{font-family:var(--font-mono,ui-monospace,monospace);font-size:11px;color:var(--ui-text-tertiary);overflow-wrap:anywhere}
 .wm-news-itemid{font-family:var(--font-mono,ui-monospace,monospace);font-size:11px;overflow-wrap:anywhere}
+.wm-news-official{margin:8px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-secondary)}
+.wm-news-officialrow{margin:3px 0 0;font-size:11.5px;line-height:1.5;color:var(--ui-text-tertiary);font-variant-numeric:tabular-nums}
+.wm-news-evidence{margin-top:8px}
+.wm-news-evidencetag{flex:none;font-size:10.5px;font-weight:600;border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:1px 8px;color:var(--ui-text-tertiary)}
+.wm-news-counts{margin:8px 0 0;font-size:11.5px;color:var(--ui-text-tertiary);display:flex;gap:6px;flex-wrap:wrap}
 @container(max-width:560px){
   .wm-news-offer{flex-direction:column;align-items:stretch;gap:6px}
   .wm-news-chips{flex:0 1 auto;width:100%}
@@ -8023,7 +8309,7 @@ function NewsRateTable({ previous, current, t }) {
   ] })
 }
 
-function NewsCard({ item, impact, t }) {
+function NewsCard({ item, impact, t, flat = false }) {
   const title = item.model || item.provider
   const subtitle = item.model ? item.provider : null
   const impactText = newsImpactText(impact, t)
@@ -8032,7 +8318,13 @@ function NewsCard({ item, impact, t }) {
   const dates = [t('newsObserved', fmtDay(item.observed_at))]
   if (item.effective_at) dates.push(t('newsEffective', fmtDay(item.effective_at)))
   const reasons = newsRelevanceText(item, t)
-  return jsxs('article', { className: 'wm-news-card', children: [
+  // Card kind hooks: the degraded flat fallback wins, otherwise the legacy
+  // category names the card — subscription plans and provider listings.
+  const kindAttrs = flat ? { 'data-news-flat': 'true' }
+    : item.category === 'subscription' ? { 'data-news-plan': 'true' }
+    : item.category === 'new_model' ? { 'data-news-listing': 'true' }
+    : {}
+  return jsxs('article', { className: 'wm-news-card', ...kindAttrs, children: [
     jsxs('div', { className: 'wm-news-top', children: [
       jsxs('h3', { children: [title, subtitle ? jsx('small', { children: subtitle }) : null] }),
       jsx('span', { className: 'wm-news-badge', 'data-cat': item.category,
@@ -8042,7 +8334,9 @@ function NewsCard({ item, impact, t }) {
     jsx('p', { className: 'wm-news-summary', children: newsSummaryText(item, t) }),
     reasons ? jsx('p', { className: 'wm-news-reasons', children: reasons }) : null,
     jsx(NewsRateTable, { previous: item.previous, current: item.current, t }),
-    impactText ? jsx('p', { className: 'wm-news-impact', 'data-tone': tone, children: impactText }) : null,
+    item.official ? jsx(NewsOfficial, { official: item.official, t }) : null,
+    impactText ? jsx('p', { className: 'wm-news-impact', 'data-tone': tone,
+      'data-news-impact': impact?.basis || 'unavailable', children: impactText }) : null,
     item.conditions ? jsx('p', { className: 'wm-news-conditions', children: newsConditionsText(item, t) }) : null,
     (item.related_routes && item.related_routes.length)
       ? jsx('div', { className: 'wm-news-routes', children: [
@@ -8073,8 +8367,10 @@ function NewsScopeTabs({ scope, forYouCount, allCount, t, onChange }) {
     { id: 'foryou', label: t('newsForYou'), count: t('newsCountGroups', forYouCount) },
     { id: 'all', label: t('newsAllUpdates'), count: t('newsCountEntries', allCount) },
   ]
-  return jsx('div', { className: 'wm-news-seg', role: 'group', 'aria-label': t('newsScopeLabel'),
+  return jsx('div', { className: 'wm-news-seg', role: 'group', 'data-news-scope': 'true',
+    'aria-label': t('newsScopeLabel'),
     children: options.map(option => jsxs('button', { type: 'button', className: 'wm-news-segbtn',
+      value: option.id,
       'aria-pressed': scope === option.id,
       onClick: () => onChange(option.id),
       children: [option.label, ' ', jsx('span', { className: 'wm-news-segcount',
@@ -8090,28 +8386,64 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
   const cls = offer.news_class
   const dir = cls === 'reduction' ? 'down' : cls === 'increase' ? 'up'
     : cls === 'new_listing' ? 'new' : 'flat'
-  const glyph = dir === 'down' ? '▼' : dir === 'up' ? '▲' : '●'
+  const glyph = newsGlyph(dir === 'flat' ? 'na' : dir)
   const srText = dir === 'down' ? t('newsDirDown') : dir === 'up' ? t('newsDirUp')
     : dir === 'new' ? t('newsDirNew') : newsClassLabel(cls, t)
-  const chips = offer.newListing ? [] : offer.deltas.map(delta => {
-    const label = t(NEWS_FIELD_KEYS[delta.key])
-    if (delta.reason) {
-      const reason = t(NEWS_DELTA_REASON_KEYS[delta.reason])
-      return jsxs('span', { className: 'wm-news-chip', 'data-tone': 'na', title: reason, children: [
-        `${label} ${t('newsChipNotComparable')}`,
-        jsx('span', { className: 'wm-news-sr', children: ` — ${reason}` }),
-      ] }, delta.key)
-    }
-    if (delta.pct === 0)
-      return jsx('span', { className: 'wm-news-chip', children: `${label} ${t('newsChipUnchanged')}` }, delta.key)
-    return jsx('span', { className: 'wm-news-chip', 'data-tone': delta.pct < 0 ? 'down' : 'up',
-      children: `${label} ${delta.pct < 0 ? '−' : '+'}${newsFmtPct(delta.pct)}%` }, delta.key)
-  })
   const latest = offer.latest
+  // Per-field chips always show the actual comparable values, even when the
+  // coded class disagrees; a not-comparable field carries its reason.
+  const chipOf = (key, dirWord, text, reason) => jsxs('span', {
+    className: 'wm-news-chip',
+    'data-tone': dirWord === 'down' ? 'down' : dirWord === 'up' ? 'up' : 'na',
+    'data-news-chip': key, 'data-news-dir': dirWord,
+    ...(reason ? { 'data-news-reason': reason } : {}),
+    children: [
+      text,
+      reason ? jsx('span', { className: 'wm-news-sr',
+        children: ` — ${t(NEWS_DELTA_REASON_KEYS[reason] || reason)}` }) : null,
+    ],
+  }, key)
+  const chips = offer.newListing
+    ? NEWS_RATE_FIELDS
+        .filter(key => latest?.current?.[key] != null)
+        .map(key => chipOf(key, 'new', `${t(NEWS_FIELD_KEYS[key])} ${newsGlyph('new')} ${fmtRate(latest.current[key])}`, 'new_listing'))
+    : offer.deltas.map(delta => {
+        const label = t(NEWS_FIELD_KEYS[delta.key])
+        if (delta.reason) return chipOf(delta.key, 'na',
+          `${label} ${t('newsChipNotComparable')}`, delta.reason)
+        if (delta.pct === 0) return chipOf(delta.key, 'same',
+          `${label} ${newsGlyph('same')} ${t('newsChipUnchanged')}`)
+        return chipOf(delta.key, delta.pct < 0 ? 'down' : 'up',
+          `${label} ${newsGlyph(delta.pct < 0 ? 'down' : 'up')} ${delta.pct < 0 ? '−' : '+'}${newsFmtPct(delta.pct)}%`)
+      })
+  // One tier chip whenever the event carries a tier signal: comparable rows
+  // summarise direction and magnitude (each row is listed in Details);
+  // otherwise the chip is not comparable with its reason.
+  const tierDeltas = (offer.tierRows || []).flatMap(row => row.deltas)
+  const tierMove = tierDeltas.filter(delta => delta.pct != null && delta.pct !== 0)
+  const tierPct = tierMove.length
+    ? Math.max(...tierMove.map(delta => Math.abs(delta.pct)))
+    : null
+  const tierDirWord = offer.tierDir === 'down' ? 'down' : offer.tierDir === 'up' ? 'up'
+    : offer.tierDir === 'same' ? 'same' : 'na'
+  const tierText = offer.tierStatus === 'match' && tierDirWord !== 'na' && !offer.tierReason
+    ? `${t('newsFieldTiers')} ${newsGlyph(tierDirWord)}${tierPct != null ? ` ${tierDirWord === 'down' ? '−' : '+'}${newsFmtPct(tierPct)}%` : ''}`
+    : offer.tierStatus === 'match' && !offer.tierReason
+      ? `${t('newsFieldTiers')} ${newsGlyph('same')} ${t('newsChipUnchanged')}`
+      : `${t('newsFieldTiers')} ${t('newsChipNotComparable')}`
+  const tierChip = offer.tierStatus && offer.tierStatus !== 'none'
+    ? chipOf('tiers', tierDirWord, tierText, offer.tierReason || undefined)
+    : null
   const dates = [t('newsObserved', fmtDay(latest?.observed_at))]
   if (latest?.effective_at) dates.push(t('newsEffective', fmtDay(latest.effective_at)))
   const reasons = newsRelevanceText(latest, t)
-  return jsxs('div', { className: 'wm-news-offer', 'data-match': matched ? 'true' : null, children: [
+  const sources = Array.isArray(latest?.merged_sources) && latest.merged_sources.length > 1
+    ? latest.merged_sources : null
+  const allChips = tierChip ? [...chips, tierChip] : chips
+  return jsxs('div', { className: 'wm-news-offer', 'data-news-offer': 'true',
+    'data-news-provider': offer.provider || '', 'data-news-model': offer.model || '',
+    'data-news-class': cls || 'none',
+    'data-news-match': matched ? 'true' : null, children: [
     jsx('span', { className: 'wm-news-provider', children: offer.provider || offer.model }),
     jsxs('span', { className: 'wm-news-dir', children: [
       jsx('span', { 'aria-hidden': 'true', 'data-dir': dir, children: glyph }),
@@ -8119,13 +8451,17 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
     ] }),
     jsx('span', { className: 'wm-news-badge', 'data-class': cls || 'none', children: newsClassLabel(cls, t) }),
     matched ? jsx('span', { className: 'wm-news-badge', 'data-class': 'match', children: t('newsFilterMatch') }) : null,
-    chips.length ? jsx('span', { className: 'wm-news-chips', children: chips }) : null,
-    impactText ? jsx('p', { className: 'wm-news-offerimpact', 'data-tone': tone, children: impactText }) : null,
+    allChips.length ? jsx('span', { className: 'wm-news-chips', children: allChips }) : null,
+    impactText ? jsx('p', { className: 'wm-news-offerimpact', 'data-tone': tone,
+      'data-news-impact': impact?.basis || 'unavailable', children: impactText }) : null,
     jsxs('div', { className: 'wm-news-offerfoot', children: [
-      jsx('button', { type: 'button', className: 'wm-news-details', 'aria-expanded': open,
-        'aria-controls': panelId, onClick: () => newsToggleDetails(panelId), children: t('wxDetails') }),
-      jsxs('div', { id: panelId, className: 'wm-news-detailspanel', hidden: !open, children: [
+      jsx('button', { type: 'button', className: 'wm-news-details', 'data-news-details': 'true',
+        'aria-expanded': open, 'aria-controls': panelId,
+        onClick: () => newsToggleDetails(panelId), children: t('wxDetails') }),
+      jsxs('div', { id: panelId, className: 'wm-news-detailspanel', 'data-news-details-panel': 'true',
+        hidden: !open, children: [
         jsx(NewsRateTable, { previous: latest?.previous, current: latest?.current, t }),
+        latest?.official ? jsx(NewsOfficial, { official: latest.official, t }) : null,
         jsx('p', { className: 'wm-news-dates', children: dates.join(' · ') }),
         jsxs('p', { className: 'wm-news-meta', children: [
           `${latest?.provenance || ''} · ${latest?.confidence || ''}`,
@@ -8134,6 +8470,41 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
                 rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
             : null,
         ] }),
+        // Tier rows are listed one by one when they are known; never averaged.
+        (offer.tierStatus === 'match' && (offer.tierRows || []).length)
+          ? jsxs('div', { children: [
+              jsx('p', { className: 'wm-news-historytitle', children: t('newsFieldTiers') }),
+              jsx('ul', { className: 'wm-news-history', children: offer.tierRows.map((row, index) =>
+                jsxs('li', { children: [
+                  jsx('span', { className: 'wm-news-historycode', children: `${row.type || ''}${row.size != null ? ` (${fmtTokens(row.size)})` : ''}` }),
+                  jsx('span', { children: row.deltas
+                    .filter(delta => delta.reason || delta.pct != null)
+                    .map(delta => delta.reason
+                      ? `${t(NEWS_FIELD_KEYS[delta.key])}: ${t(NEWS_DELTA_REASON_KEYS[delta.reason])}`
+                      : delta.pct === 0
+                        ? `${t(NEWS_FIELD_KEYS[delta.key])} ${t('newsChipUnchanged')}`
+                        : `${t(NEWS_FIELD_KEYS[delta.key])} ${delta.pct < 0 ? '−' : '+'}${newsFmtPct(delta.pct)}%`)
+                    .join(' · ') || t('newsChipUnchanged') }),
+                ] }, `${row.type}:${row.size}:${index}`)) }),
+            ] })
+          : null,
+        sources ? jsxs('div', { className: 'wm-news-evidence', children: [
+          jsx('p', { className: 'wm-news-historytitle', children: t('newsEvidence') }),
+          jsx('ul', { className: 'wm-news-history', children: sources.map(source => jsxs('li', { children: [
+            jsx('span', { className: 'wm-news-evidencetag', 'data-news-source':
+              String(source.origin || 'local') === 'central' ? 'central' : 'local',
+              children: String(source.origin || 'local') === 'central'
+                ? t('newsSourceCentral') : t('newsSourceLocal') }),
+            jsx('span', { className: 'wm-news-itemid', children: source?.id || '' }),
+            jsx('span', { children: t('newsObserved', fmtDay(source?.observed_at)) }),
+            source?.effective_at ? jsx('span', { children: t('newsEffective', fmtDay(source.effective_at)) }) : null,
+            source?.provenance ? jsx('span', { children: source.provenance }) : null,
+            source?.source_url
+              ? jsx('a', { href: source.source_url, target: '_blank', rel: 'noreferrer',
+                  className: 'wm-source-link', children: t('newsSource') })
+              : null,
+          ] }, source?.id || source?.observed_at || 'source')) }),
+        ] }) : null,
         latest?.conditions ? jsx('p', { className: 'wm-news-conditions', children: newsConditionsText(latest, t) }) : null,
         reasons ? jsx('p', { className: 'wm-news-reasons', children: reasons }) : null,
         (latest?.related_routes?.length)
@@ -8150,10 +8521,17 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
         offer.history.length ? jsxs('div', { children: [
           jsx('p', { className: 'wm-news-historytitle', children:
             `${t('newsHistory')} (${t('newsCountEvents', offer.history.length)})` }),
-          jsx('ul', { className: 'wm-news-history', children: offer.history.map(event => jsxs('li', { children: [
+          jsx('ul', { className: 'wm-news-history', 'data-news-history': 'true', children:
+            offer.history.map(event => jsxs('li', { 'data-news-event': event?.id || '', children: [
             jsx('span', { className: 'wm-news-historycode', children: event?.id || '' }),
             jsx('span', { children: t('newsObserved', fmtDay(event?.observed_at)) }),
             jsx('span', { children: newsSummaryText(event, t) }),
+            (Array.isArray(event?.merged_sources) && event.merged_sources.length > 1
+              ? event.merged_sources : [])
+              .map(source => jsx('span', { className: 'wm-news-evidencetag', 'data-news-source':
+                String(source.origin || 'local') === 'central' ? 'central' : 'local',
+                children: String(source.origin || 'local') === 'central'
+                  ? t('newsSourceCentral') : t('newsSourceLocal') }, source?.id)),
             event?.source_url
               ? jsx('a', { href: event.source_url, target: '_blank', rel: 'noreferrer',
                   className: 'wm-source-link', children: t('newsSource') })
@@ -8175,13 +8553,18 @@ function NewsModelGroup({ group, impacts, t, matchedOffers = null, detailsId }) 
   const openDetails = useValue($newsDetailsOpen)
   const anyNew = group.offers.some(offer => offer.news_class === 'new_listing')
   const reasonLabels = newsGroupReasons(group, t)
-  const reasons = reasonLabels.length ? t('newsWhyRelevant', reasonLabels.join(' · ')) : null
+  const reasons = reasonLabels.length ? reasonLabels.join(' · ') : null
+  const classes = [...new Set(group.offers.map(offer => offer.news_class || 'none'))].join(' ')
   const matchSet = Array.isArray(matchedOffers) ? new Set(matchedOffers) : null
-  return jsxs('article', { className: 'wm-news-card wm-news-group', 'data-model': group.model, children: [
+  return jsxs('article', { className: 'wm-news-card wm-news-group', 'data-model': group.model,
+    'data-news-group': group.model, 'data-news-classes': classes, children: [
     jsxs('div', { className: 'wm-news-grouphead', children: [
       jsxs('h3', { children: [
-        group.model_name || group.model,
-        group.model_name ? jsx('small', { className: 'wm-news-groupid', children: group.model }) : null,
+        group.model_name
+          ? jsx('span', { 'data-news-model-name': 'true', children: group.model_name })
+          : null,
+        jsx('span', { className: group.model_name ? 'wm-news-groupid' : '',
+          'data-news-model-id': 'true', children: group.model }),
       ] }),
       anyNew ? jsx('span', { className: 'wm-news-badge', 'data-cat': 'new_model',
         children: t('newsClassNewListing') }) : null,
@@ -8232,10 +8615,10 @@ function NewsPage() {
   let grouped = null
   try { grouped = newsGroupModels(combined) } catch { grouped = null }
   if (grouped && !grouped.entries.length && combined.length) grouped = null
-  const relevantGroups = grouped ? newsRankGroups(grouped.groups) : []
+  const nowMs = Date.now()
+  const relevantGroups = grouped ? newsRankForYou(grouped.groups, nowMs) : []
   const forYouCount = grouped ? relevantGroups.length : combined.filter(newsIsRelevant).length
   const allCount = grouped ? grouped.entries.length : combined.length
-  const nowMs = Date.now()
   // The category filter is semantic at offer level in both scopes; search and
   // the observed-at window apply to All Updates only.
   const forYouEntries = grouped
@@ -8248,6 +8631,13 @@ function NewsPage() {
   const flatVisible = newsFilter(combined, scope, category)
   const filteredEmpty = !!grouped && scope === 'all' && grouped.entries.length > 0 && !filtered.length
   const hasFilters = search.trim() !== '' || days != null || category !== 'all'
+  // Count summary: groups on For You, events under All (every offer event and
+  // every card counts as one event).
+  const totalEvents = grouped
+    ? grouped.entries.reduce((count, entry) => entry.kind === 'group'
+        ? count + entry.offers.reduce((sum, offer) => sum + offer.events.length, 0)
+        : count + 1, 0)
+    : combined.length
   const changeScope = id => {
     if (id === scope) return
     $newsScope.set(id)
@@ -8258,7 +8648,7 @@ function NewsPage() {
   const listNode = !grouped
     ? (flatVisible.length
         ? jsx('div', { className: 'wm-news-list', role: 'list', children:
-            flatVisible.map(item => jsx(NewsCard, { item, impact: impacts[item.id], t }, item.id)) })
+            flatVisible.map(item => jsx(NewsCard, { item, impact: impacts[item.id], t, flat: true }, item.id)) })
         : jsx('div', { className: 'wm-empty', role: 'status', children: jsx('p', { children: emptyText }) }))
     : scope === 'foryou'
       ? (forYouEntries.length
@@ -8267,7 +8657,7 @@ function NewsPage() {
                 matchedOffers: category === 'all' ? null : group.matchedOffers,
                 detailsId: `wm-news-fy-${index}` }, `g:${group.model}`)),
               !showAll && forYouEntries.length > NEWS_FOR_YOU_LIMIT
-                ? jsx('button', { type: 'button', className: 'wm-news-more',
+                ? jsx('button', { type: 'button', className: 'wm-news-more', 'data-news-show-all': 'true',
                     onClick: () => $newsShowAll.set(true), children: t('newsShowAll', forYouEntries.length) })
                 : null,
             ] })
@@ -8275,7 +8665,7 @@ function NewsPage() {
       : filteredEmpty && hasFilters
         ? jsxs('div', { className: 'wm-empty', role: 'status', children: [
             jsx('p', { children: t('newsNoResults') }),
-            jsx('button', { type: 'button', className: 'wm-news-clear',
+            jsx('button', { type: 'button', className: 'wm-news-clear', 'data-news-clear': 'true',
               onClick: newsClearFilters, children: t('newsClearFilters') }),
           ] })
         : filtered.length
@@ -8287,7 +8677,7 @@ function NewsPage() {
                 : jsx(NewsCard, { item: entry.item, impact: impacts[entry.item?.id], t },
                     `c:${entry.item?.id || index}`)),
               remaining > 0
-                ? jsx('button', { type: 'button', className: 'wm-news-more',
+                ? jsx('button', { type: 'button', className: 'wm-news-more', 'data-news-load-more': 'true',
                     onClick: () => $newsShown.set(shown + NEWS_PAGE_SIZE),
                     children: t('newsLoadMore', remaining) })
                 : null,
@@ -8314,22 +8704,31 @@ function NewsPage() {
         children: centralAlert }) : null,
       jsxs('div', { className: 'wm-news-controls', children: [
         jsx(NewsScopeTabs, { scope, forYouCount, allCount, t, onChange: changeScope }),
-        jsx(AnalyticsSegments, { label: t('newsCatAll'), value: category,
-          options: NEWS_CATEGORIES.map(id => [id, id === 'all' ? t('newsCatAll') : newsCategoryLabel(id, t)]),
-          onChange: id => { $newsCategory.set(id); $newsShown.set(NEWS_PAGE_SIZE) } }),
+        jsx('div', { 'data-news-category': 'true', children:
+          jsx(AnalyticsSegments, { label: t('newsCatAll'), value: category,
+            options: NEWS_CATEGORIES.map(id => [id, id === 'all' ? t('newsCatAll') : newsCategoryLabel(id, t)]),
+            onChange: id => { $newsCategory.set(id); $newsShown.set(NEWS_PAGE_SIZE) } }) }),
         scope === 'all' ? jsx('input', { type: 'search', className: 'wm-news-search',
-          value: search, 'aria-label': t('newsSearchLabel'), placeholder: t('newsSearchPlaceholder'),
+          'data-news-search': 'true', value: search, 'aria-label': t('newsSearchLabel'),
+          placeholder: t('newsSearchPlaceholder'),
           onChange: e => { $newsSearch.set(e.target.value); $newsShown.set(NEWS_PAGE_SIZE) } }) : null,
-        scope === 'all' ? jsx('select', { className: 'wm-news-select', value: days == null ? 'all' : String(days),
-          'aria-label': t('newsDateLabel'),
-          onChange: e => {
-            const value = e.target.value
-            $newsDays.set(value === 'all' ? null : Number(value))
-            $newsShown.set(NEWS_PAGE_SIZE)
-          },
+        scope === 'all' ? jsxs('div', { className: 'wm-news-seg', role: 'group',
+          'data-news-days': 'true', 'aria-label': t('newsDateLabel'),
           children: [['7', 'newsDays7'], ['30', 'newsDays30'], ['90', 'newsDays90'], ['all', 'newsDaysAll']]
-            .map(([value, key]) => jsx('option', { value, children: t(key) }, value)) }) : null,
+            .map(([value, key]) => jsxs('button', { type: 'button', className: 'wm-news-segbtn', value,
+              'aria-pressed': (days == null ? 'all' : String(days)) === value,
+              onClick: () => {
+                $newsDays.set(value === 'all' ? null : Number(value))
+                $newsShown.set(NEWS_PAGE_SIZE)
+              },
+              children: [t(key)] }, value)) }) : null,
       ] }),
+      grouped ? jsx('p', { className: 'wm-news-counts', children: [
+        jsx('span', { 'data-news-count': 'groups',
+          children: t('newsCountGroups', scope === 'foryou' ? forYouEntries.length : grouped.groups.length) }),
+        ' · ',
+        jsx('span', { 'data-news-count': 'events', children: t('newsCountEvents', totalEvents) }),
+      ] }) : null,
       current?.local?.baseline && current.local.snapshot_at
         ? jsx('p', { className: 'wm-news-note', children: t('newsBaseline', fmtDay(current.local.snapshot_at)) })
         : null,
@@ -9055,10 +9454,11 @@ const I18N = {
     newsEmptyNoMatches: 'There is news, but none of it mentions your configured providers, recorded usage or selected plans.',
     newsEmptyNoConfig: 'Nothing to personalise yet: no providers are configured, no usage is recorded, and no plans are selected.',
     newsWhyRelevant: reasons => `For you because it ${reasons}.`,
-    newsReasonConfigured: 'matches a configured provider',
-    newsReasonUsedProvider: 'matches a provider you used',
-    newsReasonUsedModel: 'matches a model you used',
-    newsReasonSelectedPlan: 'matches your selected plan',
+    newsReasonUsedRecently: 'Used recently',
+    newsReasonConfigured: 'Configured provider',
+    newsReasonUsedProvider: 'Provider you use',
+    newsReasonRelated: 'Related update',
+    newsReasonSelectedPlan: 'Selected plan',
     newsBaseline: date => `Catalogue baseline taken ${date}. Changes observed from the next refresh will appear here.`,
     newsRemoved: n => `${n} model(s) are no longer listed.`,
     newsLiveOffText: 'Local catalogue news is shown. Turn on SpendSense Live Updates in Settings for public announcements from SpendSense.',
@@ -9074,8 +9474,8 @@ const I18N = {
     newsRateCacheRead: 'Cache read / MTok',
     newsRateCacheWrite: 'Cache write / MTok',
     newsListedAt: 'Listed at',
-    newsImpactFull: (money, days) => `API-equivalent estimate: ${money} over your last ${days} days of usage. Not savings on a subscription.`,
-    newsImpactPartial: (money, days, reason) => `Partial API-equivalent estimate: ${money} over your last ${days} days of usage${reason ? ` (${reason})` : ''}. Not savings on a subscription.`,
+    newsImpactFull: (money, days) => `Hypothetical API-equivalent: ≈ ${money} over your last ${days} days of usage — not a bill or guaranteed saving.`,
+    newsImpactPartial: (money, days, reason) => `Partial hypothetical API-equivalent: ≈ ${money} over your last ${days} days of usage${reason ? ` (${reason})` : ''} — not a bill or guaranteed saving.`,
     newsImpactUnavailable: reason => `Personal estimate unavailable: ${reason}.`,
     newsCaveatCache: 'cache rates unavailable for comparison; cache tokens excluded',
     newsCaveatTiers: 'tiered pricing applies; base rates compared',
@@ -9139,6 +9539,16 @@ const I18N = {
     newsImpactUnchanged: 'unchanged',
     newsHistory: 'History',
     newsItemLabel: 'Item',
+    newsFieldTiers: 'Tiers',
+    newsTierUnknown: 'tier type unknown',
+    newsTierMismatch: 'tier rows do not match',
+    newsTierUnavailable: 'tier rates unavailable',
+    newsOfficialVerified: date => `Official rates verified ${date}`,
+    newsOfficialNote: 'Source note',
+    newsOfficialWindow: days => `${days}-day window`,
+    newsEvidence: 'Evidence sources',
+    newsSourceLocal: 'Local',
+    newsSourceCentral: 'Central',
     ovNoteWindow: 'Only timestamped calls in [since, until) are counted; no historical usage is inferred. Buckets follow local calendar boundaries and carry explicit UTC timestamps, including across DST.',
     ovNoteOptions: 'Options describe the unfiltered selected window; recording describes all retained calls, independent of filters. The collector retains calls for 180 days, so longer windows may be incomplete.',
     ovNotePrices: 'Prices use the current catalogue, not historical invoices. Economics applies whole-context tiers per call, including tiers that decrease rates; list_usd preserves existing accounting tier/fallback semantics.',
@@ -10285,10 +10695,11 @@ const I18N = {
     newsEmptyNoMatches: '已有动态，但均未涉及您配置的供应商、已记录的用量或已选的套餐。',
     newsEmptyNoConfig: '暂无可个性化的内容：未配置供应商、未记录用量，也未选择套餐。',
     newsWhyRelevant: reasons => `与您相关：${reasons}。`,
-    newsReasonConfigured: '匹配已配置的供应商',
-    newsReasonUsedProvider: '匹配您用过的供应商',
-    newsReasonUsedModel: '匹配您用过的模型',
-    newsReasonSelectedPlan: '匹配您选择的套餐',
+    newsReasonUsedRecently: '最近使用过',
+    newsReasonConfigured: '已配置的供应商',
+    newsReasonUsedProvider: '在用的供应商',
+    newsReasonRelated: '相关动态',
+    newsReasonSelectedPlan: '已选套餐',
     newsBaseline: date => `目录基线已于${date}建立。从下次刷新起观察到的变化将显示在这里。`,
     newsRemoved: n => `${n} 个模型已不再收录。`,
     newsLiveOffText: '当前显示本地目录动态。在“设置”中开启 SpendSense 实时更新，可获取 SpendSense 的公开公告。',
@@ -10304,8 +10715,8 @@ const I18N = {
     newsRateCacheRead: '缓存读取 / 百万Token',
     newsRateCacheWrite: '缓存写入 / 百万Token',
     newsListedAt: '收录价格',
-    newsImpactFull: (money, days) => `API 等效估算：过去 ${days} 天用量对应 ${money}。并非订阅节省额。`,
-    newsImpactPartial: (money, days, reason) => `部分 API 等效估算：过去 ${days} 天用量对应 ${money}${reason ? `（${reason}）` : ''}。并非订阅节省额。`,
+    newsImpactFull: (money, days) => `假设的 API 等效估算：按您过去 ${days} 天的用量约 ${money} —— 并非账单，也不保证节省。`,
+    newsImpactPartial: (money, days, reason) => `部分假设的 API 等效估算：按您过去 ${days} 天的用量约 ${money}${reason ? `（${reason}）` : ''} —— 并非账单，也不保证节省。`,
     newsImpactUnavailable: reason => `无法给出个人估算：${reason}。`,
     newsCaveatCache: '缓存价格无法对比；已排除缓存 Token',
     newsCaveatTiers: '适用阶梯价格；按基准价格对比',
@@ -10369,6 +10780,16 @@ const I18N = {
     newsImpactUnchanged: '持平',
     newsHistory: '历史',
     newsItemLabel: '事件',
+    newsFieldTiers: '阶梯',
+    newsTierUnknown: '阶梯类型未知',
+    newsTierMismatch: '阶梯行不匹配',
+    newsTierUnavailable: '阶梯价格不可比',
+    newsOfficialVerified: date => `官方价格核实于${date}`,
+    newsOfficialNote: '来源说明',
+    newsOfficialWindow: days => `${days} 天窗口`,
+    newsEvidence: '证据来源',
+    newsSourceLocal: '本地',
+    newsSourceCentral: '中心',
     ovNoteWindow: '仅统计 [since, until) 区间内带时间戳的调用，不推断历史用量。分桶遵循本地日历边界并带有明确的 UTC 时间戳，夏令时切换期间亦然。',
     ovNoteOptions: '选项描述未过滤的所选窗口；recording 描述所有保留的调用，与过滤条件无关。采集器保留 180 天的调用，因此更长窗口的数据可能不完整。',
     ovNotePrices: '价格采用当前目录，而非历史账单。Economics 对每次调用采用整上下文阶梯价格，包括降价阶梯；list_usd 保留现有的会计阶梯/回退语义。',
@@ -11114,6 +11535,12 @@ export const __test = {
   newsFmtPct, newsClassLabel, newsClearFilters, newsToggleDetails, NewsScopeTabs, NewsModelGroup,
   NEWS_RATE_FIELDS, NEWS_CATEGORY_CLASSES, NEWS_PAGE_SIZE, NEWS_FOR_YOU_LIMIT,
   $newsSearch, $newsDays, $newsShown, $newsShowAll, $newsDetailsOpen,
+  // WP11 verifier-facing aliases and additions: same behaviour, stable names.
+  newsOfferEvents, newsFieldDeltas: newsEventDeltas, newsTierComparison, newsRankForYou,
+  newsSearchFilter, newsPage, NewsOfferRow, NewsOfficial, $newsExpanded: $newsDetailsOpen,
+  NEWS_FOR_YOU_INITIAL, NEWS_EVENT_LINK_FIELDS, NEWS_RATE_CLASS_BY_CODE,
+  newsUsedRecently, newsLastUsedMs, newsItemReasonCodes, newsGroupReasonCodes,
+  newsMergeEvents, newsSameEventProof, newsTransitionKey,
   analyticsNoteText, analyticsNotesText, ANALYTICS_NOTE_KEYS, analyticsGapReasonLabel, OV_GAP_REASON_KEYS,
   econNoteText, econNotesText, econSingularNoteText, econExplanationText, ECON_NOTE_KEYS, ECON_EXPLANATION_KEYS,
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
