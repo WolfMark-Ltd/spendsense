@@ -970,3 +970,115 @@ test('exact last_used_at 31-90 days old says Used before; 30 days says Used rece
     evt({ relevance: { relevant: true, reasons: [] }, last_used_at: '2026-10-05T00:00:00Z' }), enT, NOW),
     ['Used before'])
 })
+
+// --- WP11 final triage batch: reproduced defects (RED before GREEN) ---------
+
+test('newsNewestFirst compares parsed instants, not timestamp text', () => {
+  // 10:00+08:00 is 02:00Z — an hour OLDER than 03:00Z, yet the text compare
+  // sorts it first.
+  const older = evt({ id: 'off-1', observed_at: '2026-11-10T10:00:00+08:00' })
+  const newer = evt({ id: 'off-2', observed_at: '2026-11-10T03:00:00Z' })
+  assert.ok(S.newsNewestFirst(newer, older) < 0, 'the later instant sorts first')
+  assert.ok(S.newsNewestFirst(older, newer) > 0)
+  // Equal instants in different offsets tie deterministically by id.
+  const tieA = evt({ id: 'a', observed_at: '2026-11-10T03:00:00Z' })
+  const tieB = evt({ id: 'b', observed_at: '2026-11-10T05:00:00+02:00' })
+  assert.ok(S.newsNewestFirst(tieA, tieB) < 0)
+  assert.ok(S.newsNewestFirst(tieB, tieA) > 0)
+  // Missing or invalid timestamps never produce NaN and stay deterministic.
+  const missing = evt({ id: 'm', observed_at: '' })
+  const bad = evt({ id: 'x', observed_at: 'not-a-date' })
+  const ord1 = S.newsNewestFirst(missing, bad)
+  assert.ok(Number.isFinite(ord1), 'no NaN from unparseable timestamps')
+  assert.equal(ord1, -S.newsNewestFirst(bad, missing), 'the fallback is antisymmetric')
+})
+
+test('grouping picks the true newest event across UTC offsets', () => {
+  // Different transitions, so the two events stay separate in one offer; the
+  // offer's latest (which drives rates and the change class) must be the
+  // chronologically newest instant, not the lexicographically largest text.
+  const earlier = evt({ id: 'h1', observed_at: '2026-11-10T10:00:00+08:00',
+    current: { input: 3.0, output: 15.0, cache_read: null, cache_write: null } })
+  const later = evt({ id: 'h2', observed_at: '2026-11-10T03:00:00Z' })
+  const { groups } = S.newsGroupModels([earlier, later])
+  assert.equal(groups.length, 1)
+  const offer = groups[0].offers[0]
+  assert.equal(offer.latest.id, 'h2', '03:00Z is newer than 10:00+08:00 (=02:00Z)')
+  assert.deepEqual(offer.history.map(event => event.id), ['h1'],
+    'history keeps chronological order behind the latest')
+})
+
+test('For You ranks relevant cards alongside groups; filters keep plan cards', () => {
+  const plan = evt({ id: 'plan-1', model: '', category: 'subscription', provider: 'Acme',
+    summary_code: 'news_sum_plan_change',
+    summary_params: { plan: 'Team', fee_before: '$100/month', fee_after: '$200/month' },
+    previous: null, current: null,
+    relevance: { relevant: true, reasons: ['selected_plan_family'] },
+    last_used_at: '2026-11-04T00:00:00Z' })
+  const groupEvt = evt({ id: 'grp-1', model: 'acme/m1',
+    relevance: { relevant: true, reasons: ['configured_provider'] } })
+  const grouped = S.newsGroupModels([plan, groupEvt])
+  const ranked = S.newsRankForYou(grouped.entries, NOW)
+  assert.equal(ranked.length, 2, 'the relevant plan card is not dropped from For You')
+  assert.ok(ranked.some(entry => entry.kind === 'card' && entry.item.id === 'plan-1'),
+    'the relevant subscription card ranks alongside the groups')
+  // The subscription filter keeps the plan card and drops the group.
+  const subs = S.newsFilterEntries(ranked, { category: 'subscription', nowMs: NOW })
+  assert.deepEqual(subs.map(entry => entry.kind), ['card'])
+  assert.equal(subs[0].item.id, 'plan-1')
+  // The reductions filter keeps the group and drops the plan card.
+  const reds = S.newsFilterEntries(ranked, { category: 'price_reduction', nowMs: NOW })
+  assert.deepEqual(reds.map(entry => entry.kind), ['group'])
+})
+
+test('a plan-only payload still yields a For You entry', () => {
+  const plan = evt({ id: 'plan-only', model: '', category: 'subscription', provider: 'Acme',
+    summary_code: 'news_sum_plan_change',
+    summary_params: { plan: 'Team', fee: '$25/month' },
+    previous: null, current: null,
+    relevance: { relevant: true, reasons: ['selected_plan_family'] } })
+  const grouped = S.newsGroupModels([plan])
+  const ranked = S.newsRankForYou(grouped.entries, NOW)
+  assert.equal(ranked.length, 1, 'a relevant plan alone is a For You entry')
+  assert.equal(ranked[0].kind, 'card')
+  assert.equal(ranked[0].item.id, 'plan-only')
+})
+
+test('captured empty tier arrays establish untiered, not unknown or unchanged', () => {
+  // A fresh untiered price event: both captured lists are known-empty.
+  const untiered = S.newsTierComparison(evt({ has_tiers: true, tiers_detail: 'known',
+    tiers_before: [], tiers_after: [] }))
+  assert.equal(untiered.status, 'none')
+  assert.equal(untiered.reason, null)
+  assert.equal(untiered.dir, null)
+  // An untiered new listing: after is a known-empty list, before never existed.
+  const fresh = S.newsTierComparison(evt({ category: 'new_model', has_tiers: true,
+    tiers_detail: 'known', tiers_after: [] }))
+  assert.equal(fresh.status, 'none')
+  // Genuinely unknown tier state keeps its caveat: unknown row types with
+  // captured rows stay 'unknown'; nothing captured stays 'unavailable'.
+  assert.equal(S.newsTierComparison(evt({ has_tiers: true, tiers_detail: 'unknown',
+    tiers_before: [{ type: 'a', size: 1 }], tiers_after: [{ type: 'a', size: 1 }] })).status, 'unknown')
+  assert.equal(S.newsTierComparison(evt({ has_tiers: true })).reason, 'tier_unavailable')
+  // The untiered event drives no tiers_only class: the rate move classifies.
+  assert.equal(S.newsOfferClass(evt({ has_tiers: true, tiers_detail: 'known',
+    tiers_before: [], tiers_after: [] })), 'reduction')
+})
+
+test('the optional news_rate_changed code classifies neutrally', () => {
+  const cacheOnly = {
+    previous: { input: 4.0, output: 25.0, cache_read: null, cache_write: 6.25 },
+    current: { input: 4.0, output: 25.0, cache_read: 0.4, cache_write: 6.25 },
+  }
+  assert.equal(S.newsOfferClass(evt({ ...cacheOnly, rate_change_code: 'news_rate_changed' })),
+    'rate_changed', 'null→number cache availability with the optional code')
+  assert.equal(S.newsClassLabel('rate_changed', t), 'newsClassRateChanged()')
+  // Without the code the same event stays honestly neutral (no class).
+  assert.equal(S.newsOfferClass(evt({ ...cacheOnly })), null)
+  // The coded neutral class wins over a derived direction (rates did change);
+  // missing codes keep the derived fallback.
+  assert.equal(S.newsOfferClass(evt({ rate_change_code: 'news_rate_changed' })), 'rate_changed')
+  // Localised honest labels in both locales.
+  assert.equal(S.I18N.en.newsClassRateChanged, 'Rates changed')
+  assert.equal(S.I18N.zh.newsClassRateChanged, '费率已变更')
+})

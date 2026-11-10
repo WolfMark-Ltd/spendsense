@@ -7900,6 +7900,13 @@ function newsTierComparison(item) {
   // No raw arrays at all: nothing was captured, so the rows are unavailable —
   // never fabricated, whatever the detail field says.
   if (!before && !after) return { status: 'unavailable', reason: 'tier_unavailable', rows: [], dir: null }
+  // Captured empty lists establish that no tiers exist: a fresh untiered
+  // price event ([] and []) and an untiered new listing (after only, before
+  // never captured) are tierless — no tier chip, warning or caveat. A
+  // retained empty before with a missing after stays unavailable: the current
+  // tiers are the open question there.
+  if ((!before && after && !after.length) || (before && after && !before.length && !after.length))
+    return { status: 'none', reason: null, rows: [], dir: null }
   const rowsKnown = detail === 'known' && [...(before || []), ...(after || [])]
     .every(row => typeof row?.type === 'string' && row.type.trim() !== '')
   if (!rowsKnown) return { status: 'unknown', reason: 'tier_type_unknown', rows: [], dir: null }
@@ -7957,6 +7964,9 @@ function newsEventDeltas(item) {
 const NEWS_RATE_CLASS_BY_CODE = {
   news_rate_down: 'reduction', news_rate_up: 'increase',
   news_rate_mixed: 'mixed', news_rate_tiers_only: 'tiers_only',
+  // Optional neutral code for a non-directional rate change (e.g. a cache
+  // rate moving between null and a number) with no comparable movement.
+  news_rate_changed: 'rate_changed',
 }
 
 /** Directional classes that contradict a coded class (per-field values win). */
@@ -7965,6 +7975,8 @@ const NEWS_CODE_CONTRADICTS = {
   increase: ['reduction', 'mixed'],
   mixed: ['reduction', 'increase'],
   tiers_only: ['reduction', 'increase', 'mixed'],
+  // The neutral code claims only "rates changed": no direction contradicts it.
+  rate_changed: [],
 }
 
 /**
@@ -7994,10 +8006,32 @@ function newsOfferClass(item) {
   return derived && NEWS_CODE_CONTRADICTS[coded]?.includes(derived) ? null : coded
 }
 
-/** Event order inside an offer: newest first, exact id as the tie-break. */
-const newsNewestFirst = (a, b) =>
-  String(b?.observed_at || '').localeCompare(String(a?.observed_at || '')) ||
-  String(a?.id || '').localeCompare(String(b?.id || ''))
+/** Parsed epoch ms of one event's observed_at, or null when absent/invalid. */
+function newsObservedMs(item) {
+  const raw = String(item?.observed_at || '').trim()
+  if (!raw) return null
+  const when = Date.parse(raw)
+  return Number.isFinite(when) ? when : null
+}
+
+/**
+ * Event order inside an offer: newest first by parsed instant — the feed
+ * accepts different UTC offsets, so timestamp text never decides the order
+ * and an older offset-bearing stamp can never appear current. Missing or
+ * invalid timestamps, and exact instants, fall back to the previous
+ * deterministic text order and then the exact id.
+ */
+const newsNewestFirst = (a, b) => {
+  const aMs = newsObservedMs(a)
+  const bMs = newsObservedMs(b)
+  if (aMs != null && bMs != null) {
+    if (aMs !== bMs) return bMs - aMs
+    // Equal instants (any offsets) are a tie: the exact id decides.
+    return String(a?.id || '').localeCompare(String(b?.id || ''))
+  }
+  return String(b?.observed_at || '').localeCompare(String(a?.observed_at || '')) ||
+    String(a?.id || '').localeCompare(String(b?.id || ''))
+}
 
 /** Explicit event/provenance link fields that can prove two items one event. */
 const NEWS_EVENT_LINK_FIELDS = ['event_id', 'event_key', 'dedupe_key', 'provenance_id']
@@ -8288,38 +8322,52 @@ function newsGroupMateriality(group) {
 }
 
 /**
- * For You order: relevant groups only. Rank order is (1) a valid last_used_at
- * descending — anything malformed, future or older than 30 days is not
- * recent and never claims use; (2) the strong truthful signals
- * configured_provider / selected_plan_family / used_provider; (3) materiality
- * as the largest single-field absolute comparable %, never blended; (4) the
- * newest observation; (5) the exact model ID.
+ * For You order: relevant groups and relevant cards (subscription plans,
+ * provider listings — the same items the backend marks relevant). Rank order
+ * is (1) a valid last_used_at descending — anything malformed, future or
+ * older than 30 days is not recent and never claims use; (2) the strong
+ * truthful signals configured_provider / selected_plan_family /
+ * used_provider; (3) materiality as the largest single-field absolute
+ * comparable % for groups, never blended — cards carry no comparable token
+ * rates, so their materiality is 0 and nothing is invented; (4) the newest
+ * observation by parsed instant; (5) the exact model or item id.
  */
-function newsRankForYou(groups, nowMs = Date.now()) {
-  const list = (Array.isArray(groups) ? groups : []).filter(group =>
-    group?.kind === 'group' && group.offers.some(offer => newsIsRelevant(offer.latest)))
-  const recency = group => {
+function newsRankForYou(entries, nowMs = Date.now()) {
+  const list = (Array.isArray(entries) ? entries : []).filter(entry => entry?.kind === 'group'
+    ? entry.offers.some(offer => newsIsRelevant(offer.latest))
+    : entry?.kind === 'card' && newsIsRelevant(entry.item))
+  const recencyOf = entry => {
+    if (entry.kind !== 'group') {
+      return newsUsedRecently(entry.item, nowMs) ? newsLastUsedMs(entry.item, nowMs) : null
+    }
     let best = null
-    for (const offer of group.offers) {
+    for (const offer of entry.offers) {
       const when = newsUsedRecently(offer.latest, nowMs) ? newsLastUsedMs(offer.latest, nowMs) : null
       if (when != null && (best == null || when > best)) best = when
     }
     return best
   }
-  const strong = group => newsGroupReasonCodes(group, nowMs).some(code =>
-    code === 'configured_provider' || code === 'selected_plan_family' || code === 'used_provider')
+  const strongCode = code =>
+    code === 'configured_provider' || code === 'selected_plan_family' || code === 'used_provider'
+  const strongOf = entry => entry.kind === 'group'
+    ? newsGroupReasonCodes(entry, nowMs).some(strongCode)
+    : newsItemReasonCodes(entry.item, nowMs).some(strongCode)
+  const materialityOf = entry => entry.kind === 'group' ? newsGroupMateriality(entry) : 0
+  const newestFirst = (a, b) => newsNewestFirst(
+    { observed_at: a.kind === 'group' ? a.latest?.observed_at : a.item?.observed_at,
+      id: a.kind === 'group' ? a.model : a.item?.id },
+    { observed_at: b.kind === 'group' ? b.latest?.observed_at : b.item?.observed_at,
+      id: b.kind === 'group' ? b.model : b.item?.id })
   return list.slice().sort((a, b) => {
-    const usedA = recency(a), usedB = recency(b)
+    const usedA = recencyOf(a), usedB = recencyOf(b)
     if (usedA != null || usedB != null) {
       if (usedA == null) return 1
       if (usedB == null) return -1
       if (usedA !== usedB) return usedB - usedA
     }
-    const strongA = strong(a) ? 0 : 1, strongB = strong(b) ? 0 : 1
+    const strongA = strongOf(a) ? 0 : 1, strongB = strongOf(b) ? 0 : 1
     if (strongA !== strongB) return strongA - strongB
-    return newsGroupMateriality(b) - newsGroupMateriality(a) ||
-      String(b.latest?.observed_at || '').localeCompare(String(a.latest?.observed_at || '')) ||
-      String(a.model || '').localeCompare(String(b.model || ''))
+    return materialityOf(b) - materialityOf(a) || newestFirst(a, b)
   })
 }
 
@@ -8501,6 +8549,7 @@ function newsClassLabel(news_class, t) {
   if (news_class === 'increase') return t('newsClassIncrease')
   if (news_class === 'mixed') return t('newsClassMixed')
   if (news_class === 'tiers_only') return t('newsClassTiersOnly')
+  if (news_class === 'rate_changed') return t('newsClassRateChanged')
   return t('newsClassNotComparable')
 }
 
@@ -8664,14 +8713,15 @@ function NewsEvidenceRow({ source, t }) {
 }
 
 /**
- * Raw tier rows of one event, exactly as supplied: when tiers_detail is
- * 'known' and the arrays are present, every before/after row keeps its own
- * type, size and rates — never averaged, compared or fabricated.
+ * Raw tier rows of one event, exactly as supplied: every captured before or
+ * after row keeps its own type, size and rates — never averaged, compared or
+ * fabricated. Each captured side renders independently of the overall
+ * comparison status: an unknown tiers_detail never hides captured evidence,
+ * and a side that was not captured is simply absent — never invented.
  */
 function NewsTierBlocks({ event, t }) {
-  if (event?.tiers_detail !== 'known') return null
-  const before = Array.isArray(event.tiers_before) ? event.tiers_before : []
-  const after = Array.isArray(event.tiers_after) ? event.tiers_after : []
+  const before = Array.isArray(event?.tiers_before) ? event.tiers_before : []
+  const after = Array.isArray(event?.tiers_after) ? event.tiers_after : []
   if (!before.length && !after.length) return null
   const rowCells = row => NEWS_RATE_FIELDS
     .filter(key => row?.[key] != null)
@@ -8769,7 +8819,8 @@ const NEWS_CATEGORIES = ['all', 'new_model', 'price_reduction', 'price_increase'
  */
 function NewsScopeTabs({ scope, forYouCount, allCount, t, onChange }) {
   const options = [
-    { id: 'foryou', label: t('newsForYou'), count: t('newsCountGroups', forYouCount) },
+    // For You counts entries (groups plus relevant plan/listing cards).
+    { id: 'foryou', label: t('newsForYou'), count: t('newsCountEntries', forYouCount) },
     { id: 'all', label: t('newsAllUpdates'), count: t('newsCountEntries', allCount) },
   ]
   return jsx('div', { className: 'wm-news-seg', role: 'group', 'data-news-scope': 'true',
@@ -8831,11 +8882,15 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
     : null
   const tierDirWord = offer.tierDir === 'down' ? 'down' : offer.tierDir === 'up' ? 'up'
     : offer.tierDir === 'same' ? 'same' : 'na'
+  // Comparable tier rows can move in both directions; that is a real mixed
+  // change, never "unchanged", and no blended percentage is invented.
   const tierText = offer.tierStatus === 'match' && tierDirWord !== 'na' && !offer.tierReason
     ? `${t('newsFieldTiers')} ${newsGlyph(tierDirWord)}${tierPct != null ? ` ${tierDirWord === 'down' ? '−' : '+'}${newsFmtPct(tierPct)}%` : ''}`
-    : offer.tierStatus === 'match' && !offer.tierReason
-      ? `${t('newsFieldTiers')} ${newsGlyph('same')} ${t('newsChipUnchanged')}`
-      : `${t('newsFieldTiers')} ${t('newsChipNotComparable')}`
+    : offer.tierStatus === 'match' && !offer.tierReason && offer.tierDir === 'na'
+      ? `${t('newsFieldTiers')} ${newsGlyph('na')} ${t('newsClassMixed')}`
+      : offer.tierStatus === 'match' && !offer.tierReason
+        ? `${t('newsFieldTiers')} ${newsGlyph('same')} ${t('newsChipUnchanged')}`
+        : `${t('newsFieldTiers')} ${t('newsChipNotComparable')}`
   const tierChip = offer.tierStatus && offer.tierStatus !== 'none'
     ? chipOf('tiers', tierDirWord, tierText, offer.tierReason || undefined)
     : null
@@ -8953,12 +9008,21 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
 }
 
 /**
+ * Stable Details panel id for one offer: the exact model/provider identity,
+ * URL-encoded (no NUL, no whitespace, never a list position), so a search or
+ * filter reorder can never move an open panel to a different model or
+ * provider.
+ */
+const newsDetailsPanelId = offer =>
+  `wm-news-panel-${encodeURIComponent(`${offer?.model || ''}:${offer?.provider || ''}`)}`
+
+/**
  * A model group card: one model identity, one compact row per offer. The
  * heading is the friendly model_name when the payload supplies one, with the
  * exact model ID underneath in mono; without a supplied name the exact ID
  * stands alone — names are never synthesized from IDs.
  */
-function NewsModelGroup({ group, impacts, t, matchedOffers = null, detailsId }) {
+function NewsModelGroup({ group, impacts, t, matchedOffers = null }) {
   const openDetails = useValue($newsDetailsOpen)
   const anyNew = group.offers.some(offer => offer.news_class === 'new_listing')
   const reasonLabels = newsGroupReasons(group, t)
@@ -8979,12 +9043,15 @@ function NewsModelGroup({ group, impacts, t, matchedOffers = null, detailsId }) 
         children: t('newsClassNewListing') }) : null,
     ] }),
     reasons ? jsx('p', { className: 'wm-news-reasons', children: reasons }) : null,
-    group.offers.map((offer, index) => jsx(NewsOfferRow, {
-      offer, impacts, t,
-      matched: matchSet ? matchSet.has(index) : false,
-      panelId: `${detailsId}-${index}`,
-      open: openDetails.includes(`${detailsId}-${index}`),
-    }, `${offer.provider}:${offer.model}`)),
+    group.offers.map((offer, index) => {
+      const panelId = newsDetailsPanelId(offer)
+      return jsx(NewsOfferRow, {
+        offer, impacts, t,
+        matched: matchSet ? matchSet.has(index) : false,
+        panelId,
+        open: openDetails.includes(panelId),
+      }, `${offer.provider}:${offer.model}`)
+    }),
   ] })
 }
 
@@ -9058,13 +9125,13 @@ function NewsPage() {
   try { grouped = newsGroupModels(combined) } catch { grouped = null }
   if (grouped && !grouped.entries.length && combined.length) grouped = null
   const nowMs = Date.now()
-  const relevantGroups = grouped ? newsRankForYou(grouped.groups, nowMs) : []
-  const forYouCount = grouped ? relevantGroups.length : combined.filter(newsIsRelevant).length
+  const relevantEntries = grouped ? newsRankForYou(grouped.entries, nowMs) : []
+  const forYouCount = grouped ? relevantEntries.length : combined.filter(newsIsRelevant).length
   const allCount = grouped ? grouped.entries.length : combined.length
   // The category filter is semantic at offer level in both scopes; search and
   // the observed-at window apply to All Updates only.
   const forYouEntries = grouped
-    ? newsFilterEntries(relevantGroups, { category, nowMs }) : []
+    ? newsFilterEntries(relevantEntries, { category, nowMs }) : []
   const forYouVisible = showAll ? forYouEntries : forYouEntries.slice(0, NEWS_FOR_YOU_LIMIT)
   const filtered = grouped && scope === 'all'
     ? newsFilterEntries(grouped.entries, { category, search, days, nowMs }) : []
@@ -9095,9 +9162,12 @@ function NewsPage() {
     : scope === 'foryou'
       ? (forYouEntries.length
           ? jsxs('div', { className: 'wm-news-list', role: 'list', children: [
-              ...forYouVisible.map((group, index) => jsx(NewsModelGroup, { group, impacts, t,
-                matchedOffers: category === 'all' ? null : group.matchedOffers,
-                detailsId: `wm-news-fy-${index}` }, `g:${group.model}`)),
+              ...forYouVisible.map((entry, index) => entry.kind === 'group'
+                ? jsx(NewsModelGroup, { group: entry, impacts, t,
+                    matchedOffers: category === 'all' ? null : entry.matchedOffers },
+                  `g:${entry.model}`)
+                : jsx(NewsCard, { item: entry.item, impact: impacts[entry.item?.id], t },
+                    `c:${entry.item?.id || index}`)),
               !showAll && forYouEntries.length > NEWS_FOR_YOU_LIMIT
                 ? jsx('button', { type: 'button', className: 'wm-news-more', 'data-news-show-all': 'true',
                     onClick: () => {
@@ -9106,7 +9176,11 @@ function NewsPage() {
                     }, children: t('newsShowAll', forYouEntries.length) }, 'show-all')
                 : null,
             ] })
-          : jsx('div', { className: 'wm-empty', role: 'status', children: jsx('p', { children: emptyText }) }))
+          : jsx('div', { className: 'wm-empty', role: 'status',
+              // The flat pool can disagree with the filtered For You list (a
+              // legacy category vs the latest offer's class); the message is
+              // then chosen from the actually filtered entries, never blank.
+              children: jsx('p', { children: emptyText || t('newsNoResults') }) }))
       : filteredEmpty && hasFilters
         ? jsxs('div', { className: 'wm-empty', role: 'status', children: [
             jsx('p', { children: t('newsNoResults') }),
@@ -9117,8 +9191,8 @@ function NewsPage() {
           ? jsxs('div', { className: 'wm-news-list', role: 'list', children: [
               ...visibleEntries.map((entry, index) => entry.kind === 'group'
                 ? jsx(NewsModelGroup, { group: entry, impacts, t,
-                    matchedOffers: category === 'all' ? null : entry.matchedOffers,
-                    detailsId: `wm-news-au-${index}` }, `g:${entry.model}`)
+                    matchedOffers: category === 'all' ? null : entry.matchedOffers },
+                  `g:${entry.model}`)
                 : jsx(NewsCard, { item: entry.item, impact: impacts[entry.item?.id], t },
                     `c:${entry.item?.id || index}`)),
               remaining > 0
@@ -9178,8 +9252,13 @@ function NewsPage() {
               children: [t(key)] }, value)) }) : null,
       ] }),
       grouped ? jsxs('p', { className: 'wm-news-counts', children: [
-        jsx('span', { 'data-news-count': 'groups',
-          children: t('newsCountGroups', scope === 'foryou' ? forYouEntries.length : grouped.groups.length) }),
+        // For You counts entries (groups plus relevant plan/listing cards);
+        // All counts model groups.
+        scope === 'foryou'
+          ? jsx('span', { 'data-news-count': 'entries',
+              children: t('newsCountEntries', forYouEntries.length) })
+          : jsx('span', { 'data-news-count': 'groups',
+              children: t('newsCountGroups', grouped.groups.length) }),
         ' · ',
         jsx('span', { 'data-news-count': 'events', children: t('newsCountEvents', totalEvents) }),
       ] }) : null,
@@ -9977,6 +10056,7 @@ const I18N = {
     newsClassIncrease: 'Price up',
     newsClassMixed: 'Mixed change',
     newsClassTiersOnly: 'Tiers changed',
+    newsClassRateChanged: 'Rates changed',
     newsClassNotComparable: 'Not comparable',
     newsDirDown: 'rates decreased',
     newsDirUp: 'rates increased',
@@ -11236,6 +11316,7 @@ const I18N = {
     newsClassIncrease: '价格上调',
     newsClassMixed: '涨跌互现',
     newsClassTiersOnly: '阶梯已变更',
+    newsClassRateChanged: '费率已变更',
     newsClassNotComparable: '无法对比',
     newsDirDown: '价格已下调',
     newsDirUp: '价格已上调',
@@ -12043,6 +12124,7 @@ export const __test = {
   $newsSearch, $newsDays, $newsShown, $newsShowAll, $newsDetailsOpen,
   // WP11 verifier-facing aliases and additions: same behaviour, stable names.
   newsOfferEvents, newsFieldDeltas: newsEventDeltas, newsTierComparison, newsRankForYou,
+  newsNewestFirst, newsObservedMs,
   newsSearchFilter, newsPage, NewsOfferRow, NewsOfficial, $newsExpanded: $newsDetailsOpen,
   NEWS_FOR_YOU_INITIAL, NEWS_EVENT_LINK_FIELDS, NEWS_RATE_CLASS_BY_CODE,
   newsUsedRecently, newsLastUsedMs, newsItemReasonCodes, newsGroupReasonCodes,

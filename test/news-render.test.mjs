@@ -439,7 +439,8 @@ test('the scope control carries the persistent selected ring markup', async () =
   assert.equal(buttons[0].getAttribute('aria-pressed'), 'true')
   assert.equal(buttons[1].getAttribute('aria-pressed'), 'false')
   assert.match(buttons[0].textContent, /For You/)
-  assert.match(buttons[0].textContent, /3 groups/, 'scope counts are labelled as groups')
+  // For You counts entries: groups plus relevant plan/listing cards.
+  assert.match(buttons[0].textContent, /3 updates/, 'the For You count is labelled as entries')
   assert.match(buttons[1].textContent, /8 updates/, 'the All count is labelled too')
   assert.match(T.NEWS_CSS, /wm-news-controls \[aria-pressed="true"\][^}]*outline:2px solid var\(--ui-accent\)/,
     'the ring rule is page-local CSS, weight 600')
@@ -906,7 +907,9 @@ test('NewsPage carries the scope, category, search, days, count and paging hooks
   assert.ok(category && category.querySelectorAll('button[aria-pressed]').length >= 5,
     'the category segments render inside the page-local wrapper')
   const counts = [...c().querySelectorAll('[data-news-count]')]
-  assert.deepEqual(counts.map(el => el.getAttribute('data-news-count')).sort(), ['events', 'groups'])
+  // For You counts entries (groups plus relevant plan/listing cards).
+  assert.deepEqual(counts.map(el => el.getAttribute('data-news-count')).sort(),
+    ['entries', 'events'])
   const showAll = c().querySelector('button[data-news-show-all]')
   assert.ok(showAll, 'more than five For You groups offer Show all')
   assert.match(showAll.textContent, /7/)
@@ -1253,4 +1256,263 @@ test('fixture unknown-recurrence: m2 shows the tier_unavailable caveat and the e
   const sources = [...panel.querySelectorAll('[data-news-source]')]
   assert.deepEqual(sources.map(el => el.getAttribute('data-news-source')), ['local', 'central'],
     'the m2 pair merged under the proof rules and shows both sources')
+})
+
+// --- WP11 final triage batch: reproduced defects (RED before GREEN) ---------
+
+test('mixed comparable tier moves render a mixed label, never "unchanged"', async () => {
+  const item = {
+    id: 'tm1', origin: 'local', category: 'price_reduction', provider: 'P', model: 'm1',
+    summary: 'Rates changed.', summary_code: '', summary_params: null,
+    previous: { input: 5.0, output: 25.0, cache_read: null, cache_write: null },
+    current: { input: 4.0, output: 25.0, cache_read: null, cache_write: null },
+    has_tiers: true, tiers_detail: 'known',
+    // Row 1 moves both ways (input down, output up); row 2 input rises while
+    // output stays. Every field is comparable, the directions conflict.
+    tiers_before: [{ type: 'up_to_200k', size: 200000, input: 2, output: 4 },
+      { type: 'up_to_1m', size: 1000000, input: 1, output: 3 }],
+    tiers_after: [{ type: 'up_to_200k', size: 200000, input: 1, output: 5 },
+      { type: 'up_to_1m', size: 1000000, input: 2, output: 3 }],
+    observed_at: '2026-11-03T00:00:00Z', effective_at: '', source_url: '',
+    provenance: '', confidence: 'observed', relevance: { relevant: false, reasons: [] },
+  }
+  const group = T.newsGroupModels([item]).groups[0]
+  assert.equal(group.offers[0].tierDir, 'na')
+  assert.equal(group.offers[0].tierReason, null)
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  const en = await renderNode(React.createElement(T.NewsModelGroup, {
+    group, impacts: {}, t: translator('en'), matchedOffers: null }), 'en')
+  const tierChip = en.container.querySelector('[data-news-chip="tiers"]')
+  assert.ok(tierChip, 'a comparable mixed tier change still carries a tier chip')
+  assert.equal(tierChip.getAttribute('data-news-dir'), 'na')
+  assert.equal(tierChip.getAttribute('data-news-reason'), null)
+  assert.doesNotMatch(tierChip.textContent, /unchanged/,
+    'a mixed movement is never labelled unchanged')
+  assert.match(tierChip.textContent, /Mixed change/, 'the honest mixed label')
+  assert.doesNotMatch(tierChip.textContent, /%/, 'no blended percentage is invented')
+  const zh = await renderNode(React.createElement(T.NewsModelGroup, {
+    group, impacts: {}, t: translator('zh'), matchedOffers: null }), 'zh')
+  const zhChip = zh.container.querySelector('[data-news-chip="tiers"]')
+  assert.doesNotMatch(zhChip.textContent, /未变/, 'zh: a mixed movement is never 未变')
+  assert.match(zhChip.textContent, /涨跌互现/, 'zh: the honest mixed label')
+})
+
+test('raw tier rows render per available side even when the comparison is unknown', async () => {
+  const source = {
+    id: 'tb1', origin: 'local', category: 'price_reduction', provider: 'P', model: 'm1',
+    previous: { input: 5.0, output: 25.0 }, current: { input: 4.0, output: 25.0 },
+    has_tiers: true, tiers_detail: 'unknown',
+    // The backend retained the previous raw tiers; the new read failed, so
+    // the overall comparison is unknown — the captured side is still evidence.
+    tiers_before: [{ type: 'context', size: 200000, input: 2.0, output: 10.0 }],
+    observed_at: '2026-11-03T00:00:00Z', effective_at: '', source_url: '',
+    provenance: '', confidence: 'observed', relevance: { relevant: false, reasons: [] },
+  }
+  const view = await renderNode(React.createElement(T.NewsEvidenceRow, { source, t: translator('en') }), 'en')
+  const blocks = view.container.querySelector('[data-news-tier-blocks]')
+  assert.ok(blocks, 'captured raw tiers render despite the unknown comparison')
+  const before = blocks.querySelector('[data-news-tier-rows="before"]')
+  assert.ok(before, 'the known before side renders')
+  assert.match(before.textContent, /context/)
+  assert.match(before.textContent, /\$2/)
+  assert.equal(blocks.querySelector('[data-news-tier-rows="after"]') === null, true,
+    'no after side is invented')
+  // A record with no captured arrays still renders no tier block.
+  const bare = await renderNode(React.createElement(T.NewsEvidenceRow, {
+    source: { ...source, tiers_before: undefined, tiers_after: undefined },
+    t: translator('en') }), 'en')
+  assert.equal(bare.container.querySelector('[data-news-tier-blocks]') === null, true,
+    'nothing is fabricated for records without captured tiers')
+})
+
+test('details panel ids follow the model/provider identity, not the list position', async () => {
+  const mk = (id, provider, over = {}) => groupItem({ id, provider, model: 'acme/m1', ...over })
+  const forward = T.newsGroupModels([
+    mk('a1', 'Anthropic'),
+    mk('a2', 'Bedrock', { observed_at: '2026-11-04T00:00:00Z' }),
+  ]).groups[0]
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  const node = group => React.createElement(T.NewsModelGroup, {
+    group, impacts: {}, t: translator('en'), matchedOffers: null })
+  const view = await renderNode(node(forward), 'en')
+  const panelIdOf = provider => [...view.container.querySelectorAll('[data-news-offer]')]
+    .find(offer => offer.getAttribute('data-news-provider') === provider)
+    .querySelector('button[data-news-details]').getAttribute('aria-controls')
+  const anthropicId = panelIdOf('Anthropic')
+  const bedrockId = panelIdOf('Bedrock')
+  assert.notEqual(anthropicId, bedrockId, 'each offer owns its own panel id')
+  assert.ok(anthropicId.includes(encodeURIComponent('acme/m1:Anthropic')),
+    'the panel id carries the exact model/provider identity')
+  assert.ok(bedrockId.includes(encodeURIComponent('acme/m1:Bedrock')))
+  // Open the Anthropic offer's panel, then reorder the offers the way a
+  // search or filter reorder would: the open state must stay with Anthropic.
+  await React.act(async () => { T.$newsDetailsOpen.set([anthropicId]) })
+  await view.show('en', node(forward))
+  const expandedOf = provider => [...view.container.querySelectorAll('[data-news-offer]')]
+    .find(offer => offer.getAttribute('data-news-provider') === provider)
+    .querySelector('button[data-news-details]').getAttribute('aria-expanded')
+  assert.equal(expandedOf('Anthropic'), 'true', 'the opened offer stays open')
+  assert.equal(expandedOf('Bedrock'), 'false')
+  const reversed = T.newsGroupModels([
+    mk('a2', 'Bedrock', { observed_at: '2026-11-04T00:00:00Z' }),
+    mk('a1', 'Anthropic'),
+  ]).groups[0]
+  await view.show('en', node(reversed))
+  assert.equal(expandedOf('Anthropic'), 'true',
+    'after a reorder the same model/provider keeps its open panel')
+  assert.equal(expandedOf('Bedrock'), 'false',
+    'the offer that moved into the old position does not inherit the state')
+})
+
+test('a known-untiered event renders no tier chip', async () => {
+  const item = {
+    id: 'ut1', origin: 'local', category: 'price_reduction', provider: 'P', model: 'm1',
+    summary: 'Rate changed.', summary_code: '', summary_params: null,
+    previous: { input: 5.0, output: 25.0, cache_read: null, cache_write: null },
+    current: { input: 4.0, output: 25.0, cache_read: null, cache_write: null },
+    has_tiers: true, tiers_detail: 'known', tiers_before: [], tiers_after: [],
+    observed_at: '2026-11-03T00:00:00Z', effective_at: '', source_url: '',
+    provenance: '', confidence: 'observed', relevance: { relevant: false, reasons: [] },
+  }
+  const group = T.newsGroupModels([item]).groups[0]
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  const view = await renderNode(React.createElement(T.NewsModelGroup, {
+    group, impacts: {}, t: translator('en'), matchedOffers: null }), 'en')
+  assert.equal(view.container.querySelector('[data-news-chip="tiers"]') === null, true,
+    'captured empty tier arrays establish untiered: no tier chip, no warning')
+})
+
+test('the optional rate-changed class renders as an honest neutral badge', async () => {
+  const item = {
+    id: 'rc1', origin: 'local', category: 'price_reduction', provider: 'P', model: 'm1',
+    summary: 'Cache availability changed.', summary_code: '', summary_params: null,
+    previous: { input: 4.0, output: 25.0, cache_read: null, cache_write: 6.25 },
+    current: { input: 4.0, output: 25.0, cache_read: 0.4, cache_write: 6.25 },
+    has_tiers: false, rate_change_code: 'news_rate_changed',
+    observed_at: '2026-11-03T00:00:00Z', effective_at: '', source_url: '',
+    provenance: '', confidence: 'observed', relevance: { relevant: false, reasons: [] },
+  }
+  const group = T.newsGroupModels([item]).groups[0]
+  assert.equal(group.offers[0].news_class, 'rate_changed')
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  const en = await renderNode(React.createElement(T.NewsModelGroup, {
+    group, impacts: {}, t: translator('en'), matchedOffers: null }), 'en')
+  const badge = en.container.querySelector('.wm-news-badge[data-class]')
+  assert.equal(badge.getAttribute('data-class'), 'rate_changed')
+  assert.equal(badge.textContent, 'Rates changed')
+  assert.ok(en.container.querySelector('[data-dir="flat"]'),
+    'the neutral glyph: no up, down or tier claim')
+  const zh = await renderNode(React.createElement(T.NewsModelGroup, {
+    group, impacts: {}, t: translator('zh'), matchedOffers: null }), 'zh')
+  assert.equal(zh.container.querySelector('.wm-news-badge[data-class]').textContent, '费率已变更')
+})
+
+test('a relevant plan-only payload renders the plan card in For You', async () => {
+  const payload = {
+    ok: true,
+    local: {
+      baseline: true, snapshot_at: '2026-11-01T00:00:00Z', removed_model_count: 0,
+      items: [{
+        id: 'plan-page-1', origin: 'local', category: 'subscription', provider: 'Acme', model: '',
+        summary: 'Team: fee $100/month → $200/month.', summary_code: 'news_sum_plan_change',
+        summary_params: { plan: 'Team', fee_before: '$100/month', fee_after: '$200/month' },
+        previous: null, current: null, has_tiers: false,
+        observed_at: '2026-11-03T00:00:00Z', effective_at: '', source_url: '',
+        provenance: '', confidence: 'observed',
+        relevance: { relevant: true, reasons: ['selected_plan_family'] },
+      }],
+    },
+    central: { items: [] }, impacts: {}, settings: { live_updates: true },
+    signals: { plan_families: ['team'] },
+  }
+  T.setRest(async path => path === '/news/refresh' ? payload : { ok: true })
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => { T.$newsScope.set('foryou') })
+  await React.act(async () => { T.$newsCategory.set('all') })
+  await React.act(async () => { T.$newsSearch.set('') })
+  await React.act(async () => { T.$newsDays.set(null) })
+  await React.act(async () => { T.$newsShown.set(T.NEWS_PAGE_SIZE) })
+  await React.act(async () => { T.$newsShowAll.set(false) })
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  await React.act(async () => {
+    root.render(React.createElement(QueryClientProvider, { client: queryClient },
+      React.createElement(T.NewsPage)))
+  })
+  await React.act(async () => {
+    for (let i = 0; i < 6; i += 1) await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  const c = () => container
+  // Category segment buttons are found by their visible localised label.
+  const segmentButton = label => [...c().querySelectorAll('[data-news-category] button')]
+    .find(button => button.textContent.includes(label))
+  assert.ok(c().querySelector('[data-news-plan]'),
+    'the relevant plan card appears in For You')
+  assert.ok(!c().querySelector('.wm-empty'), 'no empty state while the plan is shown')
+  // The subscription category keeps the plan card.
+  const subsButton = segmentButton('Subscription Updates')
+  assert.ok(subsButton, 'the Subscription Updates segment renders')
+  await React.act(async () => { subsButton.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  assert.ok(c().querySelector('[data-news-plan]'),
+    'the subscription filter keeps the relevant plan card')
+  assert.ok(!c().querySelector('.wm-empty'))
+  // An empty filter result states a message; it is never blank.
+  const redButton = segmentButton('Reductions')
+  assert.ok(redButton, 'the Reductions segment renders')
+  await React.act(async () => { redButton.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  const empty = c().querySelector('.wm-empty[role="status"]')
+  assert.ok(empty, 'an empty filtered For You still renders the status region')
+  assert.match(empty.textContent, /No updates match|Nothing in this category/,
+    'the empty state carries honest text, never a blank page')
+})
+
+test('a For You category filter with no matching entries shows a message, not a blank page', async () => {
+  // A relevant group whose legacy category says price_reduction but whose
+  // latest comparison is a rise: the flat pool is non-empty (so the old
+  // newsEmptyText returns null) while the filtered For You list is empty.
+  const payload = {
+    ok: true,
+    local: {
+      baseline: true, snapshot_at: '2026-11-01T00:00:00Z', removed_model_count: 0,
+      items: [{
+        id: 'mis-1', origin: 'local', category: 'price_reduction',
+        provider: 'Acme', model: 'acme/m1',
+        summary: 'Rates changed.', summary_code: '', summary_params: null,
+        previous: { input: 4.0, output: 25.0, cache_read: null, cache_write: null },
+        current: { input: 5.0, output: 25.0, cache_read: null, cache_write: null },
+        has_tiers: false, observed_at: '2026-11-03T00:00:00Z', effective_at: '',
+        source_url: '', provenance: '', confidence: 'observed',
+        relevance: { relevant: true, reasons: ['configured_provider'] },
+      }],
+    },
+    central: { items: [] }, impacts: {}, settings: { live_updates: true },
+    signals: { configured_families: ['acme'] },
+  }
+  T.setRest(async path => path === '/news/refresh' ? payload : { ok: true })
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => { T.$newsScope.set('foryou') })
+  await React.act(async () => { T.$newsCategory.set('price_reduction') })
+  await React.act(async () => { T.$newsSearch.set('') })
+  await React.act(async () => { T.$newsDays.set(null) })
+  await React.act(async () => { T.$newsShown.set(T.NEWS_PAGE_SIZE) })
+  await React.act(async () => { T.$newsShowAll.set(false) })
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  await React.act(async () => {
+    root.render(React.createElement(QueryClientProvider, { client: queryClient },
+      React.createElement(T.NewsPage)))
+  })
+  await React.act(async () => {
+    for (let i = 0; i < 6; i += 1) await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  const empty = container.querySelector('.wm-empty[role="status"]')
+  assert.ok(empty, 'the empty state region renders')
+  assert.ok(empty.textContent.trim().length > 0,
+    'the empty state is never blank when the flat pool disagrees with the filter')
+  assert.match(empty.textContent, /No updates match/,
+    'the message reflects the actually filtered For You entries')
 })
