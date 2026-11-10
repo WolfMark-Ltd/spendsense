@@ -21,7 +21,7 @@ _MAX_ANCESTRY = 32
 _TOTAL_FIELDS = (
     "tokens", "calls", "input_tokens", "output_tokens", "cache_read_tokens",
     "cache_write_tokens", "reasoning_tokens", "list_usd", "priced_tokens", "unpriced_tokens",
-    "coverage", "billed_usd", "billed_complete", "billing_mix",
+    "priced_calls", "unpriced_calls", "coverage", "billed_usd", "billed_complete", "billing_mix",
 )
 
 
@@ -33,17 +33,23 @@ def _call_economics(row: dict[str, Any], book: Catalogue, *,
         return None, "call_failed"
     if row["_missing"]:
         return None, "usage_missing"
+    if row.get("_provider") in (None, "", "(unattributed)"):
+        return None, "provider_unidentified"
+    if row.get("_model") in (None, "", "(unknown)"):
+        return None, "model_unidentified"
     if not (row["_cache_read"] or row["_cache_write"]):
         return None, "cache_provenance_unknown"
     lookup = book.lookup(row["provider"], row["model"], allow_third_party=allow_third_party,
                          allow_approximate=allow_approximate,
                          at=row.get("last_seen"))
     if lookup is None:
-        return None, "rate_unavailable"
+        if row.get("pricing_miss") == "provider_not_in_catalogue":
+            return None, "provider_price_catalogue_missing"
+        return None, "price_evidence_missing"
     prompt = row["_input"] + row["_cache_read"] + row["_cache_write"]
     rate, _ = _effective_rate(lookup.rate, prompt)
     if rate.input is None or rate.output is None:
-        return None, "missing_base_rate"
+        return None, "tier_rate_unavailable" if lookup.rate.tiers else "missing_base_rate"
     if row["_cache_read"] and rate.cache_read is None:
         return None, "missing_cache_read_rate"
     if row["_cache_write"] and rate.cache_write is None:
@@ -68,6 +74,7 @@ class _AnalyticsAcc:
         self.covered_tokens = 0
         self.covered_calls = 0
         self.economics_gaps: Counter[str] = Counter()
+        self.pricing_gaps: Counter[str] = Counter()
 
     def add(self, row: dict[str, Any]) -> None:
         pricing = row.get("pricing") or {}
@@ -81,6 +88,8 @@ class _AnalyticsAcc:
             self.cached_usd += economics[1]
             self.covered_tokens += row["_tokens"]
             self.covered_calls += 1
+        if row.get("list_usd") is None:
+            self.pricing_gaps[row.get("pricing_miss") or "price_evidence_missing"] += 1
         self.total_prompt_tokens += row["_input"] + row["_cache_read"] + row["_cache_write"]
         if not row["_failure"] and not row["_missing"] and (row["_cache_read"] > 0 or row["_cache_write"] > 0):
             self.cache_known_calls += 1
@@ -95,6 +104,7 @@ class _AnalyticsAcc:
         return {**{key: base[key] for key in _TOTAL_FIELDS},
                 "pricing_provenance": base.get("pricing_provenance", "unpriced"),
                 "pricing_mix": base.get("pricing_mix", {}),
+                "pricing_gaps": dict(self.pricing_gaps),
                 "fallback_calls": self.fallback_calls,
                 "cache_hit_rate": (round(self.known_read_tokens / self.known_prompt_tokens, 6)
                                    if self.known_prompt_tokens else None),
@@ -113,6 +123,7 @@ class _AnalyticsAcc:
                     "coverage": round(self.covered_tokens / base["tokens"], 6) if base["tokens"] else 0.0,
                     "covered_calls": self.covered_calls,
                     "excluded_calls": base["calls"] - self.covered_calls,
+                    "gap_reasons": dict(self.economics_gaps),
                 }}
 
 
@@ -321,7 +332,11 @@ def build_analytics_report(
     # marks observation start; an old store without one is judged on
     # retention alone rather than hiding the comparison).
     observed_since = max(now - store.RETENTION_DAYS * 86_400, recording.get("baseline_at") or 0)
-    comparable = bool(prev_totals.get("calls")) and prev_since >= observed_since
+    previous_observed = prev_since >= observed_since
+    comparable = bool(prev_totals.get("calls")) and previous_observed
+    previous_reason = (None if comparable else
+                       "no_previous_calls" if not prev_totals.get("calls") and previous_observed
+                       else "insufficient_history")
     deltas = {"list_usd": _delta("list_usd"), "tokens": _delta("tokens"),
               "calls": _delta("calls")} if comparable else {"list_usd": None, "tokens": None, "calls": None}
     previous = {
@@ -329,6 +344,7 @@ def build_analytics_report(
         "totals": prev_totals,
         "deltas": deltas,
         "comparable": comparable,
+        "reason": previous_reason,
     }
     coverage: dict[str, int] = {}
     for row in results_kept:
@@ -345,6 +361,10 @@ def build_analytics_report(
         "models_dev_route_tokens": route,
         "estimated_tokens": estimated,
         "unpriced_tokens": unpriced,
+        "priced_calls": totals.get("priced_calls", 0),
+        "unpriced_calls": totals.get("unpriced_calls", 0),
+        "call_coverage": (round(totals["priced_calls"] / totals["calls"], 6)
+                          if totals.get("calls") else None),
         "official_ratio": round(official / covered, 6) if covered else 0.0,
         "models_dev_ratio": round(route / covered, 6) if covered else 0.0,
         "estimated_ratio": round(estimated / covered, 6) if covered else 0.0,

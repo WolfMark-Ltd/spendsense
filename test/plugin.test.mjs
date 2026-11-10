@@ -349,6 +349,19 @@ test('applyUsage: unpriced tokens tracked, not silently zero', () => {
   assert.equal(s.rows[0].cost, null)
 })
 
+test('applyUsage: an unpriced zero-token call stays visible as incomplete evidence', () => {
+  const led = T.applyUsage(T.emptyLedger(), { now: NOW, provider: 'x', sessionId: 's', usage: {
+    model: 'no-such-model-zz', input: 0, output: 0, calls: 1
+  } })
+  const s = T.summarize(led, () => true, null)
+  assert.equal(s.rows[0].calls, 1)
+  assert.equal(s.rows[0].unpricedTokens, 0)
+  assert.equal(s.rows[0].unpricedCalls, 1)
+  assert.equal(s.totals.unpricedCalls, 1)
+  assert.equal(s.rows[0].cost, null)
+  assert.equal(s.totals.known, false)
+})
+
 test('applyUsage: gateway cost_usd preferred and diffed', () => {
   const args = { now: NOW, provider: 'openrouter', sessionId: 's' }
   let led = T.applyUsage(T.emptyLedger(), { ...args, usage: { model: 'm', input: 10, cost_usd: 0.5 } })

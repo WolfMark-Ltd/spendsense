@@ -129,8 +129,11 @@ def _split_window_expenditure(account: Mapping[str, Any], plans: Mapping[str, An
     for start, end in zip(points, points[1:]):
         fee = mem.resolve_fee(account, plans, (start + end) / 2)
         effective = fee.get("effective") or {}
-        monthly = monthly_equivalent(effective.get("amount"), effective.get("period"))
-        currency = str(effective.get("currency") or "").upper() or None
+        published = fee.get("published") or {}
+        fee_currency = effective.get("currency") or published.get("currency")
+        fee_period = effective.get("period") or published.get("period")
+        monthly = monthly_equivalent(effective.get("amount"), fee_period)
+        currency = str(fee_currency or "").upper() or None
         if monthly is None or currency is None:
             return None, None, ["The fee changed within the window and one part has "
                                 "no known fee, so spending cannot be allocated."], True
@@ -613,12 +616,23 @@ def _sum_usage(entries: list[Mapping[str, Any]]) -> dict[str, Any]:
     calls = sum(int(e.get("calls") or 0) for e in entries)
     priced = sum(int(e.get("priced_tokens") or 0) for e in entries)
     unpriced = sum(int(e.get("unpriced_tokens") or 0) for e in entries)
+    priced_calls = sum(int(e.get("priced_calls") or 0) for e in entries)
+    unpriced_calls = sum(int(e.get("unpriced_calls") or 0) for e in entries)
     values = [e.get("list_usd") for e in entries if e.get("list_usd") is not None]
     total = round(sum(values), 6) if values else None
-    if not tokens and total is None:
+    if not calls and total is None:
         total = 0.0
+    pricing_gaps: dict[str, int] = {}
+    economics_gaps: dict[str, int] = {}
+    for entry in entries:
+        for reason, count in (entry.get("pricing_gaps") or {}).items():
+            pricing_gaps[str(reason)] = pricing_gaps.get(str(reason), 0) + int(count or 0)
+        for reason, count in (((entry.get("economics") or {}).get("gap_reasons")) or {}).items():
+            economics_gaps[str(reason)] = economics_gaps.get(str(reason), 0) + int(count or 0)
     return {"list_usd": total, "tokens": tokens, "calls": calls,
             "priced_tokens": priced, "unpriced_tokens": unpriced,
+            "priced_calls": priced_calls, "unpriced_calls": unpriced_calls,
+            "pricing_gaps": pricing_gaps, "economics_gap_reasons": economics_gaps,
             "coverage": round(priced / tokens, 6) if tokens else None}
 
 
@@ -726,8 +740,11 @@ def build_economics_report(
             continue
 
         effective = fee.get("effective") or {}
-        monthly = monthly_equivalent(effective.get("amount"), effective.get("period"))
-        currency = str(effective.get("currency") or "").upper() or None
+        published = fee.get("published") or {}
+        fee_period = effective.get("period") or published.get("period")
+        fee_currency = effective.get("currency") or published.get("currency")
+        monthly = monthly_equivalent(effective.get("amount"), fee_period)
+        currency = str(fee_currency or "").upper() or None
         renewal = _renewal_for(account, fee, plan, moment)
         notes: list[str] = []
         if pending_shared_routes.get(aid):
@@ -766,9 +783,44 @@ def build_economics_report(
         if window_usd is not None and usage_value is not None:
             difference = round(usage_value - window_usd, 6)
 
+        blockers: list[dict[str, Any]] = []
+        if monthly is None:
+            blockers.append({"code": "subscription_fee_missing"})
+        if currency and currency != "USD" and rate is None:
+            blockers.append({"code": "dated_fx_rate_missing", "currency": currency})
+        if monthly is not None and window_gap:
+            blockers.append({"code": "window_fee_history_missing"})
+        elif monthly is not None and window_fee is None:
+            blockers.append({"code": "window_fee_allocation_unavailable"})
+        if usage["calls"] == 0:
+            if recording_covers_window:
+                blockers.append({"code": "no_usage_recorded"})
+            else:
+                blockers.append({"code": "insufficient_comparison_history"})
+        else:
+            reason_map = {
+                "provider_not_recorded": "provider_unidentified",
+                "provider_not_in_catalogue": "provider_price_catalogue_missing",
+                "model_not_in_catalogue": "price_evidence_missing",
+            }
+            for reason, count in sorted(usage["pricing_gaps"].items()):
+                blockers.append({"code": reason_map.get(reason, reason), "count": count})
+            if (usage["unpriced_calls"] or usage["unpriced_tokens"]) and not usage["pricing_gaps"]:
+                blockers.append({"code": "usage_price_incomplete",
+                                 "count": usage["unpriced_calls"]})
+        if not recording_covers_window and not any(
+                item["code"] == "insufficient_comparison_history" for item in blockers):
+            blockers.append({"code": "insufficient_comparison_history"})
+        if routes["basis"] in ("family", "mixed") or pending_shared_routes.get(aid):
+            blockers.append({"code": "historical_ownership_billing_rule_incomplete"})
+
         if monthly is None:
             status = "unavailable"
             notes.append("No fee is set for this subscription, so no comparison is possible.")
+        elif currency != "USD" and rate is None:
+            status = "unavailable"
+            notes.append(f"Fee is in {currency or 'an unknown currency'} and usage is valued in USD with no dated FX rate: "
+                         "add a dated rate to compare.")
         elif window_gap:
             # The split allocator already explained itself in notes.
             status = "unavailable"
@@ -778,24 +830,24 @@ def build_economics_report(
                          "allocated to it for comparison.")
         elif usage_value is None:
             status = "unavailable"
-            notes.append("Attributed usage has no published price, so no comparison is possible.")
-        elif currency != "USD" and rate is None:
-            status = "unavailable"
-            notes.append(f"Fee is in {currency} and usage is valued in USD with no FX rate: "
-                         "add a dated rate to compare.")
-        elif (usage.get("unpriced_tokens") or 0) > 0:
+            notes.append("Attributed usage has no API-equivalent price evidence, so no comparison is possible.")
+        elif (usage.get("unpriced_tokens") or usage.get("unpriced_calls")):
             # The exact count, not the rounded ratio: coverage rounds to six
             # decimals, so a large account with one unpriced token reads 1.0.
             status = "partial"
-            share = usage["coverage"] * 100 if usage["coverage"] is not None else 0.0
-            # Decide on the displayed one-decimal figure: 99.95%+ prints as
-            # 100.0%, and "Only 100.0%" would contradict the partial status.
-            if f"{share:.1f}" != "100.0":
-                notes.append(f"Only {share:.1f}% of attributed tokens are priced; "
-                             "the value is a lower bound.")
+            if usage.get("unpriced_tokens"):
+                share = usage["coverage"] * 100 if usage["coverage"] is not None else 0.0
+                # Decide on the displayed one-decimal figure: 99.95%+ prints
+                # as 100.0%, which would contradict a partial status.
+                if f"{share:.1f}" != "100.0":
+                    notes.append(f"Only {share:.1f}% of attributed tokens are priced; "
+                                 "the value is a lower bound.")
+                else:
+                    notes.append("Nearly all attributed tokens are priced; "
+                                 "the value is a lower bound.")
             else:
-                notes.append("Nearly all attributed tokens are priced; "
-                             "the value is a lower bound.")
+                notes.append(f"{usage['unpriced_calls']} attributed call(s) lack complete usage or "
+                             "price evidence; the known API-equivalent subtotal is incomplete.")
         elif not recording_covers_window:
             status = "partial"
             notes.append("Recording started inside this window, so usage is incomplete.")
@@ -806,15 +858,15 @@ def build_economics_report(
             status = "ok"
         if pending_shared_routes.get(aid) and status == "ok":
             status = "partial"
-        if usage["tokens"] == 0 and monthly is not None and status == "ok":
+        if usage["calls"] == 0 and monthly is not None and status == "ok":
             notes.append("No usage was observed for this subscription in this window.")
 
         subscription_rows.append({
             "account_id": aid, "label": account.get("label") or account.get("family"),
             "family": account.get("family"), "arrangement": arrangement,
             "plan_id": account.get("plan_id"), "plan_name": (plan or {}).get("name"),
-            "fee": {"amount": effective.get("amount"), "currency": effective.get("currency"),
-                    "period": effective.get("period"), "basis": fee.get("basis"),
+            "fee": {"amount": effective.get("amount"), "currency": currency,
+                    "period": fee_period, "basis": fee.get("basis"),
                     "confidence": _fee_confidence(fee)},
             "monthly_equivalent": {"amount": monthly, "currency": currency},
             "monthly_equivalent_usd": fee_usd,
@@ -827,7 +879,7 @@ def build_economics_report(
                                 if relation.get("owner_account_id") == aid],
             "attribution": {**routes, "note": attribution_note(routes["basis"])},
             "difference_usd": difference,
-            "status": status, "notes": notes,
+            "status": status, "notes": notes, "blockers": blockers,
         })
 
     subscription_rows.sort(key=lambda r: (r["family"] or "", r["label"] or ""))
@@ -843,11 +895,14 @@ def build_economics_report(
         rows = by_currency[currency]
         known = [r for r in rows if (r["monthly_equivalent"] or {}).get("amount") is not None]
         unknown = [r["account_id"] for r in rows if r not in known]
-        fees = round(sum(r["monthly_equivalent"]["amount"] for r in known), 6)
+        fees = round(sum(r["monthly_equivalent"]["amount"] for r in known), 6) if known else None
+        fee_complete = not unknown
         window_known = [r for r in known
                         if (r["window_expenditure"] or {}).get("amount") is not None]
         window_fees = round(sum(r["window_expenditure"]["amount"] for r in window_known), 6) \
-            if len(window_known) == len(known) else None
+            if window_known else None
+        unallocated_window = [r["account_id"] for r in known if r not in window_known]
+        window_fee_complete = fee_complete and not unallocated_window
         group_usage = [r["usage"]["list_usd"] for r in rows]
         if any(v is None for v in group_usage):
             usage_total = None
@@ -859,19 +914,30 @@ def build_economics_report(
             difference: float | None = None
         else:
             difference = round(sum(differences), 6)  # type: ignore[arg-type]
+        blockers = [{"account_id": r["account_id"], **blocker}
+                    for r in rows for blocker in r.get("blockers", [])]
         if currency == "unknown":
             status, note = "unavailable", "Fee currency is unknown."
             group_code: dict[str, Any] = {"code": "econ_group_unknown_currency", "params": {}}
         elif unknown:
-            status, note = "unavailable", (f"{len(unknown)} subscription(s) have no fee; "
+            status, note = "unavailable", (f"{len(unknown)} subscription(s) have no known fee; "
                                            "the group cannot be compared.")
             group_code = {"code": "econ_group_unpriced", "params": {"count": len(unknown)}}
-        elif difference is None and currency != "USD" and rate is None:
+        elif currency != "USD" and rate is None:
             status, note = "unavailable", ("Fees are in {0} with no FX rate; add a dated rate "
                                            "to compare against USD-valued usage.").format(currency)
             group_code = {"code": "econ_group_no_fx", "params": {"currency": currency}}
+        elif unallocated_window:
+            status, note = "unavailable", (f"Known monthly fees are shown, but historical fee evidence "
+                                           f"is missing for {len(unallocated_window)} subscription(s); "
+                                           "their reporting-window amounts are unavailable.")
+            group_code = {"code": "econ_group_window_history_missing",
+                          "params": {"count": len(unallocated_window)}}
+        elif not recording_covers_window:
+            status, note = "partial", "Recording does not cover the full comparison window."
+            group_code = {"code": "econ_group_insufficient_history", "params": {}}
         elif difference is None:
-            status, note = "unavailable", "Usage or fees are missing for this group."
+            status, note = "unavailable", "Usage price evidence or window allocation is missing; see the account blockers."
             group_code = {"code": "econ_group_missing", "params": {}}
         elif any(r["status"] == "partial" for r in known):
             status, note = "partial", "At least one account comparison is partial; see the rows."
@@ -881,18 +947,22 @@ def build_economics_report(
             group_code = {}
         groups.append({
             "currency": currency, "monthly_fees": fees, "window_fees": window_fees,
-            "fee_accounts": len(known),
+            "fee_accounts": len(known), "fee_complete": fee_complete,
+            "known_fee_accounts": [r["account_id"] for r in known],
             "unknown_fee_accounts": unknown, "usage_usd": usage_total,
+            "window_fee_accounts": len(window_known),
+            "window_fee_complete": window_fee_complete,
+            "unallocated_window_accounts": unallocated_window,
             "difference_usd": difference, "converted": bool(rate) and currency != "USD",
             "fx": rate, "status": status, "notes": [note] if note else [],
             "note_codes": [group_code] if note else [],
+            "blockers": blockers,
         })
 
     headline_fees = [{"currency": g["currency"], "amount": g["monthly_fees"]}
-                     for g in groups if g["currency"] != "unknown"]
+                     for g in groups]
     headline_window = [{"currency": g["currency"], "amount": g["window_fees"]}
-                       for g in groups
-                       if g["currency"] != "unknown" and g["window_fees"] is not None]
+                       for g in groups]
     headline_values = [r["usage"]["list_usd"] for r in subscription_rows]
     if not subscription_rows or any(v is None for v in headline_values):
         headline_usage = None

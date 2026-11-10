@@ -245,7 +245,19 @@ class DigestContentTests(DigestCase):
                            baseline_at=NOW - 40 * DAY)
         self.create_state(1_000_000)
         result = self.report()
-        self.assertNotIn("changes", [s["id"] for s in result["sections"]])
+        changes = self.section(result, "changes")
+        self.assertTrue(all(line["value"].startswith("—") for line in changes["lines"]))
+        self.assertTrue(any("No calls were recorded in the previous" in note
+                            for note in changes["notes"]))
+
+    def test_insufficient_previous_history_has_a_distinct_reason(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([{"input_tokens": 1_000_000}], baseline_at=NOW - 10 * DAY)
+        self.create_state(1_000_000)
+        changes = self.section(self.report(), "changes")
+        self.assertTrue(all(line["value"].startswith("—") for line in changes["lines"]))
+        self.assertTrue(any("Not enough recorded history" in note for note in changes["notes"]))
 
     def test_genuine_zero_when_recording_covers_an_empty_window(self):
         self.write_store([account("test:default", "test", plan_id="test.plus")])
@@ -356,9 +368,11 @@ class DigestReviewFixesTests(DigestCase):
         self.create_state(0)
         result = self.report()
         spending = self.section(result, "spending")
-        values = self.values_text(spending)
-        self.assertNotIn("—", values)
-        self.assertIn("$0.00", values)
+        by_label = {line["label"]: line["value"] for line in spending["lines"]}
+        self.assertEqual(by_label["Metered (allowance) spending"], "$0.00")
+        self.assertEqual(by_label["Extra cash (incremental) spending"], "$0.00")
+        self.assertEqual(by_label["Credits consumed"], "$0.00")
+        self.assertEqual(by_label["Provider-reported charges"], "—")
 
     def test_spending_scope_follows_billing_exclusions(self):
         self.standard_fixture()
@@ -411,9 +425,49 @@ class DigestReviewFixesTests(DigestCase):
         self.assertEqual(by_label["Metered (allowance) spending"], "≥$2.00")
         # One call has no price at all: extra cash is unknown, never $0.00.
         self.assertEqual(by_label["Extra cash (incremental) spending"], "—")
-        self.assertIn("Unvalued usage", by_label)
+        self.assertEqual(by_label["Unclassified calls"], "1")
         notes = " ".join(spending["notes"])
         self.assertIn("lower bound", notes.lower())
+
+    def test_unclassified_calls_do_not_claim_that_pricing_is_missing(self):
+        billing = {
+            "metered_usd": 2.0, "excluded_out_of_cycle": 0,
+            "unclassified_tokens": 0, "unclassified_calls": 1,
+            "evidence": {
+                "provider_reported": {"usd": None, "basis": "none", "calls": 0},
+                "incremental_cash": {"usd": None, "basis": "unknown"},
+                "credits_consumed": {"usd": None},
+            },
+        }
+        section = D._spending_section(D.STRINGS["en"], "Last 7 days", billing, True, 10)
+        notes = " ".join(section["notes"]).lower()
+        self.assertIn("billing rule", notes)
+        self.assertNotIn("some usage is unpriced", notes)
+        self.assertEqual(
+            next(line["value"] for line in section["lines"]
+                 if line["label"] == "Metered (allowance) spending"), "≥$2.00")
+        self.assertEqual(
+            next(line["value"] for line in section["lines"]
+                 if line["label"] == "Provider-reported charges"), "—")
+        self.assertTrue(any("Actual provider charges are unavailable" in note
+                            for note in section["notes"]))
+
+    def test_provider_reported_charge_keeps_its_own_basis_and_currency_line(self):
+        billing = {
+            "metered_usd": 2.0, "excluded_out_of_cycle": 0,
+            "unclassified_tokens": 0, "unclassified_calls": 0,
+            "evidence": {
+                "provider_reported": {"usd": 3.25, "basis": "confirmed", "calls": 1},
+                "incremental_cash": {"usd": 2.0, "basis": "inferred"},
+                "credits_consumed": {"usd": 1.0},
+            },
+        }
+        section = D._spending_section(D.STRINGS["en"], "Last 7 days", billing, True, 1)
+        by_label = {line["label"]: line["value"] for line in section["lines"]}
+        self.assertEqual(by_label["Provider-reported charges"], "$3.25")
+        self.assertEqual(by_label["Metered (allowance) spending"], "$2.00")
+        self.assertEqual(by_label["Extra cash (incremental) spending"], "$2.00")
+        self.assertEqual(by_label["Credits consumed"], "$1.00")
 
     def test_value_comparison_withheld_when_current_window_partly_priced(self):
         self.standard_fixture()
@@ -546,6 +600,34 @@ class DigestFeesCoverageTests(DigestCase):
         self.assertEqual(by_label["Attributed usage value"], "$0.00")
         for value in by_label.values():
             self.assertNotIn("≥", value, value)
+        self.assertTrue(any("No calls were recorded" in note for note in fees["notes"]))
+        spending = self.section(result, "spending")
+        provider_line = next(line for line in spending["lines"]
+                             if line["label"] == "Provider-reported charges")
+        self.assertEqual(provider_line["value"], "—")
+
+    def test_report_keeps_known_monthly_fee_when_window_allocation_is_unavailable(self):
+        plans = plans_doc(
+            {"id": "test.unknown-history", "provider_family": "test", "name": "Test Plus",
+             "price": {"amount": None, "currency": "USD", "period": "month"}},
+        )
+        self.write_store([account(
+            "test:default", "test", plan_id="test.unknown-history",
+            fee_overrides=[{"id": "current", "amount": 30.0, "currency": "USD",
+                            "period": "month",
+                            "effective_from": datetime.fromtimestamp(
+                                NOW - 3 * DAY).strftime("%Y-%m-%dT%H:%M:%SZ")}])])
+        self.write_profiles([])
+        self.create_events([{"input_tokens": 1_000_000}], baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report(plans=plans)
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(by_label["Known monthly fees (USD)"], "$30.00/mo")
+        self.assertEqual(by_label["Fees in window (USD)"], "—")
+        notes = " ".join(fees["notes"]).lower()
+        self.assertIn("historical fee evidence", notes)
+        self.assertNotIn("estimated effective date", notes)
 
     def test_fees_exact_when_fully_priced_and_covered(self):
         self.standard_fixture()

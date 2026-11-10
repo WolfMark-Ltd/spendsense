@@ -387,6 +387,47 @@ class AnalyticsTests(unittest.TestCase):
         self.assertTrue(any("missing_cache_read_rate" in note for note in report["notes"]))
         self.assertTrue(any("missing_cache_write_rate" in note for note in report["notes"]))
 
+    def test_economics_names_unidentified_provider_model_and_missing_price_evidence(self):
+        self.create_events([
+            {"provider": "", "model": "m", "input_tokens": 100,
+             "cache_read_tokens": 100},
+            {"provider": "test", "model": "", "input_tokens": 100,
+             "cache_read_tokens": 100},
+            {"provider": "test", "model": "not-listed", "input_tokens": 100,
+             "cache_read_tokens": 100},
+        ])
+        report = self.report(days=1)
+        reasons = {entry["params"]["reason"] for entry in report["note_codes"]
+                   if entry.get("code") == "ov_note_gap"}
+        self.assertEqual(reasons, {
+            "provider_unidentified", "model_unidentified", "price_evidence_missing"})
+
+    def test_previous_window_distinguishes_no_calls_from_insufficient_history(self):
+        self.create_events([{"input_tokens": 100}])
+        no_previous = self.report(days=1)
+        self.assertFalse(no_previous["previous"]["comparable"])
+        self.assertEqual(no_previous["previous"]["reason"], "no_previous_calls")
+
+        self.events.unlink()
+        self.create_events([
+            {"event_id": "prior", "ts": NOW - 20 * 3600, "input_tokens": 100},
+            {"event_id": "current", "ts": NOW - 3600, "input_tokens": 100},
+        ])
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.execute("INSERT INTO baseline(id, captured_at, total_tokens, main_tokens, aux_tokens)"
+                         " VALUES (1, ?, 0, 0, 0)", (NOW - 12 * 3600,))
+        insufficient = self.report(days=1)
+        self.assertFalse(insufficient["previous"]["comparable"])
+        self.assertEqual(insufficient["previous"]["reason"], "insufficient_history")
+
+    def test_zero_token_failed_call_does_not_create_a_zero_api_value(self):
+        self.create_events([{"outcome": "error", "input_tokens": 0, "output_tokens": 0}])
+        totals = self.report(days=1)["totals"]
+        self.assertEqual(totals["calls"], 1)
+        self.assertEqual(totals["tokens"], 0)
+        self.assertIsNone(totals["list_usd"])
+        self.assertEqual(totals["unpriced_calls"], 1)
+
     def test_economics_applies_tiers_per_call_to_all_buckets_even_when_rates_decrease(self):
         self.book = Catalogue({"test": {"m": Rate(2, 4, .5, 3, (
             Tier(100, 6, 8, 1, 9), Tier(200, 1, 2, 0, 0),
