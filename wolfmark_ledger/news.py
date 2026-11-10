@@ -232,7 +232,201 @@ def _source_urls(doc: Mapping[str, Any]) -> dict[str, str]:
     return urls
 
 
-def snapshot_catalogue(book: Catalogue, plans_doc: Optional[Mapping[str, Any]]) -> dict[str, Any]:
+def _cache_filename(source: Any) -> str:
+    """Filename embedded in a "models.dev cache (<file>)" source string."""
+    text = str(source or "")
+    if not _is_cache_source(text):
+        return ""
+    start, end = text.find("("), text.rfind(")")
+    if start == -1 or end <= start:
+        return ""
+    return text[start + 1:end].strip()
+
+
+def _raw_tiers(raw_row: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Copy a raw model row's tier blocks exactly, or [] when it has none.
+
+    Raw tiers keep ``type``/``size`` next to the rates; pricing's Tier drops
+    the type, so this is the only place the tariff kind survives. The legacy
+    ``context_over_200k`` key becomes one row, mirroring the pricing reader.
+    """
+    cost = raw_row.get("cost")
+    if cost is None and any(key in raw_row for key in ("input", "output")):
+        cost = raw_row
+    if not isinstance(cost, dict):
+        return []
+    rows: list[dict[str, Any]] = []
+    for tier in cost.get("tiers") or []:
+        if not isinstance(tier, dict):
+            continue
+        nested = tier.get("tier") if isinstance(tier.get("tier"), dict) else {}
+        rows.append({
+            "type": nested["type"] if "type" in nested else tier.get("type"),
+            "size": nested["size"] if "size" in nested else tier.get("size"),
+            "input": tier.get("input"),
+            "output": tier.get("output"),
+            "cache_read": tier.get("cache_read"),
+            "cache_write": tier.get("cache_write"),
+        })
+    over = cost.get("context_over_200k")
+    if not rows and isinstance(over, dict):
+        rows.append({"type": "context_over_200k", "size": None,
+                     "input": over.get("input"), "output": over.get("output"),
+                     "cache_read": over.get("cache_read"),
+                     "cache_write": over.get("cache_write")})
+    return rows
+
+
+def capture_raw_rows(book: Catalogue, *, raw_doc: Any = None,
+                     raw_path: Optional[Path | str] = None,
+                     ) -> Optional[dict[tuple[str, str], dict[str, Any]]]:
+    """Read-only raw models.dev rows for the catalogue just snapshotted.
+
+    Returns ``{(provider, model): {"name", "tiers_raw"}}`` for the rows in
+    ``book.providers``, reading the same source file the book was built from
+    at most once. Any unreadable, unparseable or mismatched source returns
+    None: raw detail is then unknown and never guessed.
+
+    Tier detail is only served when it is numerically coherent with the book:
+    on a file read, every raw row must re-normalise (via pricing's own
+    parser) to the very Rate the book holds, and the file stat must be
+    unchanged across the read; otherwise every row is returned with
+    ``tiers_raw`` None (name kept) so tier detail reads as unknown. Rows
+    injected via ``raw_doc`` (tests) bypass the coherence check so a
+    deliberately divergent injected source keeps working. Residual: a
+    replacement whose base and normalised tier numbers are all identical but
+    whose raw tier type/name differs cannot be detected — numeric coherence
+    and a stable capture are checked, source version identity is not proven.
+    """
+    from .pricing import _rate_from_cost
+
+    if not _is_cache_source(book.source):
+        return None
+    check_coherence = False
+    if raw_doc is not None:
+        doc = raw_doc
+        captured_stably = True
+    else:
+        target = Path(raw_path) if raw_path else None
+        if target is None:
+            filename = _cache_filename(book.source)
+            if not filename:
+                return None
+            from .pricing import _default_cache_path
+            candidate = Path(os.environ.get("HERMES_MODELS_DEV_CACHE")
+                             or _default_cache_path())
+            if candidate.name != filename:
+                return None
+            target = candidate
+        try:
+            before = target.stat()
+        except OSError:
+            return None
+        try:
+            doc = json.loads(target.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            return None
+        try:
+            after = target.stat()
+        except OSError:
+            return None
+        captured_stably = (before.st_mtime_ns, before.st_size, before.st_ino) \
+            == (after.st_mtime_ns, after.st_size, after.st_ino)
+        check_coherence = True
+    if not isinstance(doc, dict):
+        return None
+    data = doc.get("data") if isinstance(doc.get("data"), dict) else doc
+    if not isinstance(data, dict):
+        return None
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    consistent = captured_stably
+    for provider, models in (book.providers or {}).items():
+        entry = data.get(str(provider))
+        model_rows = entry.get("models") if isinstance(entry, dict) else None
+        if not isinstance(model_rows, dict):
+            continue
+        for model in (models or {}):
+            raw_row = model_rows.get(str(model))
+            if not isinstance(raw_row, dict):
+                continue
+            name = raw_row.get("name")
+            if check_coherence:
+                try:
+                    # Mirror pricing._parse_catalogue's cost-block selection.
+                    cost = raw_row.get("cost")
+                    if cost is None and any(key in raw_row for key in ("input", "output")):
+                        cost = raw_row
+                    normalised = _rate_from_cost(cost)
+                except Exception:
+                    consistent = False
+                    normalised = None
+                if normalised is None or normalised != models.get(model):
+                    consistent = False
+            rows[(str(provider), str(model))] = {
+                "name": name if isinstance(name, str) else "",
+                "tiers_raw": _raw_tiers(raw_row),
+            }
+    if not consistent:
+        # The raw detail cannot be tied to the book it will be compared
+        # against; downgrade to unknown instead of guessing.
+        return {key: {"name": row["name"], "tiers_raw": None}
+                for key, row in rows.items()}
+    return rows
+
+
+def _official_rows(path: Optional[Path | str] = None) -> dict[tuple[str, str], dict[str, Any]]:
+    """Editorial verification notes, read-only, keyed by exact (provider, model)."""
+    target = Path(path) if path else \
+        Path(__file__).resolve().parent.parent / "catalogue" / "official-verified.json"
+    try:
+        raw = json.loads(target.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in raw.get("verified") or []:
+        if not isinstance(row, dict):
+            continue
+        provider = str(row.get("provider") or "").strip().lower()
+        model = str(row.get("model") or "").strip()
+        if not provider or not model:
+            continue
+        windows: list[dict[str, Any]] = []
+        for window in row.get("windows") or []:
+            if not isinstance(window, dict) or "start_minute" not in window \
+                    or "end_minute" not in window:
+                continue
+            days = window.get("days")
+            windows.append({
+                "days": list(days) if isinstance(days, list) else None,
+                "start_minute": window.get("start_minute"),
+                "end_minute": window.get("end_minute"),
+                "input": window.get("input"),
+                "output": window.get("output"),
+                "cache_read": window.get("cache_read"),
+                "cache_write": window.get("cache_write"),
+            })
+        out[(provider, model)] = {
+            "verified_at": str(row.get("verified_at") or ""),
+            "source_note": str(row.get("source_url") or ""),
+            "windows": windows,
+        }
+    return out
+
+
+def _official_for(official: Optional[Mapping[tuple[str, str], Mapping[str, Any]]],
+                  provider: str, model: str) -> Optional[dict[str, Any]]:
+    row = (official or {}).get((str(provider or "").strip().lower(), str(model or "").strip()))
+    if not isinstance(row, Mapping):
+        return None
+    return {"verified_at": row.get("verified_at"), "source_note": row.get("source_note"),
+            "windows": [dict(window) for window in row.get("windows") or []]}
+
+
+def snapshot_catalogue(book: Catalogue, plans_doc: Optional[Mapping[str, Any]],
+                       raw_rows: Optional[Mapping[tuple[str, str], Mapping[str, Any]]] = None,
+                       ) -> dict[str, Any]:
     """Capture the priced catalogue rows plus plan fees/terms for later diffing."""
     providers: dict[str, dict[str, dict[str, Any]]] = {}
     for provider, models in (book.providers or {}).items():
@@ -243,10 +437,16 @@ def snapshot_catalogue(book: Catalogue, plans_doc: Optional[Mapping[str, Any]]) 
             if getattr(rate, "input", None) is None or getattr(rate, "output", None) is None:
                 continue
             rows[model] = _rate_entry(rate)
+            raw = (raw_rows or {}).get((str(provider), str(model)))
+            name = raw.get("name") if isinstance(raw, Mapping) else None
+            tiers_raw = raw.get("tiers_raw") if isinstance(raw, Mapping) else None
+            rows[model]["name"] = name if isinstance(name, str) else ""
+            rows[model]["tiers_raw"] = tiers_raw if isinstance(tiers_raw, list) else None
         if rows:
             providers[str(provider)] = rows
     return {
         "version": NEWS_VERSION,
+        "raw_tiers_v": 1,
         "catalogue_source": book.source,
         "catalogue_as_of": book.as_of,
         "providers": providers,
@@ -364,8 +564,46 @@ def _tiers_changed(old: Mapping[str, Any], new: Mapping[str, Any]) -> bool:
     return json.dumps(old.get("tiers") or [], sort_keys=True) != json.dumps(new.get("tiers") or [], sort_keys=True)
 
 
+def _raw_tiers_changed(old: Mapping[str, Any], new: Mapping[str, Any]) -> bool:
+    """Raw tier difference; only countable when BOTH sides were captured."""
+    old_raw, new_raw = old.get("tiers_raw"), new.get("tiers_raw")
+    if not isinstance(old_raw, list) or not isinstance(new_raw, list):
+        return False
+    return old_raw != new_raw
+
+
+def _rate_change_code(old: Mapping[str, Any], new: Mapping[str, Any],
+                      tiers_changed: bool) -> str:
+    """Honest per-field classification of a local rate change.
+
+    Unlike ``rate_direction`` this looks at every base field, so a tiers-only
+    change is never presented as an increase. A base-field presence change
+    (None↔number) moves no comparable number pair, so with tiers unchanged it
+    is reported as ``news_rate_changed`` rather than misattributed to tiers.
+    """
+    fell = rose = False
+    for key in ("input", "output", "cache_read", "cache_write"):
+        old_value, new_value = old.get(key), new.get(key)
+        if not isinstance(old_value, (int, float)) or not isinstance(new_value, (int, float)):
+            continue
+        if new_value < old_value:
+            fell = True
+        elif new_value > old_value:
+            rose = True
+    if fell and rose:
+        return "news_rate_mixed"
+    if fell:
+        return "news_rate_down"
+    if rose:
+        return "news_rate_up"
+    if tiers_changed:
+        return "news_rate_tiers_only"
+    return "news_rate_changed"
+
+
 def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
-                   observed_at: str, plans_doc: Optional[Mapping[str, Any]] = None
+                   observed_at: str, plans_doc: Optional[Mapping[str, Any]] = None,
+                   official: Optional[Mapping[tuple[str, str], Mapping[str, Any]]] = None,
                    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Pure diff: catalogue rows and plan terms. Returns (items, meta)."""
     items: list[dict[str, Any]] = []
@@ -404,7 +642,7 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
             entry = after[model]
             if not isinstance(entry, dict):
                 continue
-            items.append({
+            item = {
                 "id": _stable_id("new-model", str(provider), str(model)),
                 "origin": "local", "category": "new_model",
                 "provider": str(provider), "model": str(model),
@@ -415,28 +653,53 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
                                    "input": _money(entry.get('input')),
                                    "output": _money(entry.get('output'))},
                 "previous": None, "current": _slim(entry),
+                "model_name": entry.get("name") if isinstance(entry.get("name"), str) else "",
+                "tiers_detail": "known" if isinstance(entry.get("tiers_raw"), list) else "unknown",
+                "tiers_after": entry.get("tiers_raw") if isinstance(entry.get("tiers_raw"), list) else None,
                 "observed_at": observed_at, "effective_at": "",
                 "source_url": "", "confidence": "observed",
                 "provenance": "Hermes models.dev cache",
                 "conditions": "Catalogue listing only; not confirmed available on your accounts.",
                 "conditions_code": "news_cond_listing_accounts",
-            })
+            }
+            verified = _official_for(official, str(provider), str(model))
+            if verified is not None:
+                item["official"] = verified
+            items.append(item)
         for model in sorted(set(before) - set(after)):
             removed_models.append({"provider": str(provider), "model": str(model)})
         for model in sorted(set(before) & set(after)):
             old_entry, new_entry = before[model], after[model]
             if not isinstance(old_entry, dict) or not isinstance(new_entry, dict):
                 continue
-            if _slim(old_entry) == _slim(new_entry) and not _tiers_changed(old_entry, new_entry):
+            tiers_changed = _tiers_changed(old_entry, new_entry) \
+                or _raw_tiers_changed(old_entry, new_entry)
+            if _slim(old_entry) == _slim(new_entry) and not tiers_changed:
                 continue
             category = rate_direction(old_entry, new_entry)
             old_sig = json.dumps({"r": _slim(old_entry), "t": old_entry.get("tiers") or []}, sort_keys=True)
             new_sig = json.dumps({"r": _slim(new_entry), "t": new_entry.get("tiers") or []}, sort_keys=True)
             conditions = "Tiered/context pricing changed; base rates compared." \
-                if _tiers_changed(old_entry, new_entry) else ""
+                if tiers_changed else ""
+            old_raw = old_entry.get("tiers_raw") if isinstance(old_entry.get("tiers_raw"), list) else None
+            new_raw = new_entry.get("tiers_raw") if isinstance(new_entry.get("tiers_raw"), list) else None
+            # A raw tier change (e.g. the tariff kind) is a real transition
+            # even when the normalised tiers are identical; without raw
+            # material in the id the reverse transition collapses onto the
+            # same id and is dropped as an already-known observation. Raw
+            # material joins the id only for such raw-only transitions: when
+            # the normalised tiers or base rates moved, the legacy signature
+            # already distinguishes the transition and existing ids stay.
+            raw_only = _raw_tiers_changed(old_entry, new_entry) \
+                and _slim(old_entry) == _slim(new_entry) \
+                and not _tiers_changed(old_entry, new_entry)
+            raw_material = json.dumps([old_raw, new_raw], sort_keys=True) \
+                if raw_only else ""
+            model_name = new_entry.get("name")
             verb = "reduced to" if category == "price_reduction" else "changed to"
-            items.append({
-                "id": _stable_id(category, str(provider), str(model) + old_sig + new_sig),
+            item = {
+                "id": _stable_id(category, str(provider),
+                                 str(model) + old_sig + new_sig + raw_material),
                 "origin": "local", "category": category,
                 "provider": str(provider), "model": str(model),
                 "summary": (f"{model} ({provider}) {verb} "
@@ -447,12 +710,21 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
                                    "output": _money(new_entry.get('output'))},
                 "previous": _slim(old_entry), "current": _slim(new_entry),
                 "has_tiers": bool(old_entry.get("tiers") or new_entry.get("tiers")),
+                "model_name": model_name if isinstance(model_name, str) else "",
+                "tiers_detail": "known" if old_raw is not None and new_raw is not None else "unknown",
+                "tiers_before": old_raw,
+                "tiers_after": new_raw,
+                "rate_change_code": _rate_change_code(old_entry, new_entry, tiers_changed),
                 "observed_at": observed_at, "effective_at": "",
                 "source_url": "", "confidence": "observed",
                 "provenance": "Hermes models.dev cache",
                 "conditions": conditions,
                 "conditions_code": "news_cond_tiers_changed" if conditions else "",
-            })
+            }
+            verified = _official_for(official, str(provider), str(model))
+            if verified is not None:
+                item["official"] = verified
+            items.append(item)
 
     # Plan catalogue: fees and allowance terms change with catalogue updates.
     old_plans = old.get("plans") if isinstance(old.get("plans"), dict) else {}
@@ -535,14 +807,27 @@ def load_items(path: Optional[Path | str] = None) -> dict[str, Any]:
     return {"items": kept, "loaded": True, "error": ""}
 
 
+def _observed_before(observed_at: Any, captured_at: str) -> bool:
+    """True when a stored observed_at is strictly earlier than captured_at."""
+    try:
+        return datetime.fromisoformat(str(observed_at)) < datetime.fromisoformat(captured_at)
+    except (TypeError, ValueError):
+        return False
+
+
 def refresh_local(*, data_dir: Optional[Path | str] = None,
                   catalogue: Optional[Catalogue] = None,
                   plans_doc: Optional[Mapping[str, Any]] = None,
-                  now: Optional[float] = None) -> dict[str, Any]:
+                  now: Optional[float] = None,
+                  raw_doc: Any = None,
+                  raw_cache_path: Optional[Path | str] = None,
+                  official_path: Optional[Path | str] = None) -> dict[str, Any]:
     """Snapshot the catalogues and persist newly detected local news.
 
     The first snapshot only establishes the baseline. Never touches the
-    network; safe to call on every News page view.
+    network; safe to call on every News page view. ``raw_doc``/``raw_cache_path``
+    inject the raw models.dev source for tests; otherwise it is resolved from
+    the catalogue source. Raw and official reads are read-only.
     """
     from .pricing import load_catalogue
 
@@ -556,7 +841,9 @@ def refresh_local(*, data_dir: Optional[Path | str] = None,
         plans, _plans_source = active_catalogue(data_dir=data_dir)
         plans = dict(plans)
     observed_at = _now_iso(now)
-    fresh = snapshot_catalogue(book, plans)
+    raw_rows = capture_raw_rows(book, raw_doc=raw_doc, raw_path=raw_cache_path)
+    official_rows = _official_rows(official_path)
+    fresh = snapshot_catalogue(book, plans, raw_rows=raw_rows)
     fresh["captured_at"] = observed_at
 
     ordered = sorted([snapshot_target, items_target], key=str)
@@ -591,13 +878,38 @@ def refresh_local(*, data_dir: Optional[Path | str] = None,
             compare_old: Mapping[str, Any] = {**previous, "providers": fresh["providers"]}
         else:
             compare_old = previous
-        found, meta = diff_snapshots(compare_old, fresh, observed_at=observed_at, plans_doc=plans)
-        known = {str(item.get("id")) for item in stored["items"] if isinstance(item, dict)}
+        found, meta = diff_snapshots(compare_old, fresh, observed_at=observed_at,
+                                     plans_doc=plans, official=official_rows)
+        stored_by_id = {str(item.get("id")): item for item in stored["items"]
+                        if isinstance(item, dict) and item.get("id")}
+        known = set(stored_by_id)
         merged = list(stored["items"])
+        prev_captured = str(previous.get("captured_at") or "")
         for item in found:
-            if str(item.get("id")) not in known:
-                known.add(str(item.get("id")))
+            item_id = str(item.get("id"))
+            if item_id not in known:
+                known.add(item_id)
                 merged.append(item)
+                continue
+            # The id is already stored. If the stored observation predates the
+            # snapshot this diff ran against, the transition genuinely
+            # recurred (A→B, B→A, A→B) and earns a recurrence id; a re-emit
+            # against a snapshot the stored item postdates is the same
+            # observation (e.g. a crash between the two writes) and is dropped.
+            if not prev_captured \
+                    or not _observed_before(stored_by_id[item_id].get("observed_at"),
+                                            prev_captured):
+                continue
+            # The suffix derives from the compared snapshot, not the fresh
+            # observation: a retried refresh against the same snapshot
+            # (crash between the two writes) computes the same recurrence id
+            # and is skipped below instead of stacking duplicates.
+            recurrence_id = f"{item_id}-r" \
+                + hashlib.sha1(prev_captured.encode("utf-8")).hexdigest()[:6]
+            if recurrence_id in known:
+                continue
+            known.add(recurrence_id)
+            merged.append({**item, "id": recurrence_id})
         merged.sort(key=lambda item: str(item.get("observed_at") or ""), reverse=True)
         merged = merged[:MAX_STORED_ITEMS]
         _atomic_write_json(items_target, {"version": NEWS_VERSION, "items": merged})
@@ -786,8 +1098,12 @@ def canonical_route_provider(route: str) -> str:
 
 
 def usage_summary(event_db: Optional[Path | str] = None, *, days: int = IMPACT_DAYS,
-                  now: Optional[float] = None) -> dict[tuple[str, str], dict[str, int]]:
-    """Read-only token sums per (recorded route, model) over a trailing window."""
+                  now: Optional[float] = None) -> dict[tuple[str, str], dict[str, Any]]:
+    """Read-only token sums per (recorded route, model) over a trailing window.
+
+    ``last_ts`` (MAX(ts)) is additive evidence; existing callers that total
+    only the token buckets are unaffected.
+    """
     import time as _time
 
     moment = now if now is not None else _time.time()
@@ -804,7 +1120,7 @@ def usage_summary(event_db: Optional[Path | str] = None, *, days: int = IMPACT_D
                 "SELECT provider, model, "
                 "COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), "
                 "COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_write_tokens),0), "
-                "COUNT(*) FROM calls WHERE ts >= ? AND ts < ? AND outcome = 'ok' "
+                "COUNT(*), COALESCE(MAX(ts),0) FROM calls WHERE ts >= ? AND ts < ? AND outcome = 'ok' "
                 "GROUP BY provider, model",
                 (since, moment),
             ).fetchall()
@@ -812,12 +1128,12 @@ def usage_summary(event_db: Optional[Path | str] = None, *, days: int = IMPACT_D
             return {}
     finally:
         conn.close()
-    out: dict[tuple[str, str], dict[str, int]] = {}
-    for provider, model, prompt, completion, read, write, calls in rows:
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for provider, model, prompt, completion, read, write, calls, last_ts in rows:
         out[(str(provider or ""), str(model or ""))] = {
             "input": int(prompt or 0), "output": int(completion or 0),
             "cache_read": int(read or 0), "cache_write": int(write or 0),
-            "calls": int(calls or 0),
+            "calls": int(calls or 0), "last_ts": float(last_ts or 0),
         }
     return out
 
@@ -841,15 +1157,22 @@ def configured_tokens(home: Optional[Path | str] = None) -> set[str]:
 
 
 def _models_match(recorded: str, item_model: str) -> bool:
-    if not recorded or not item_model:
-        return False
-    if recorded == item_model:
-        return True
-    return recorded.split("/")[-1] == item_model.split("/")[-1]
+    """Exact model identity only.
+
+    A shared last path segment is pricing convenience, not evidence of the
+    same model: "claude-haiku-4-5" and "anthropic/claude-haiku-4-5" are
+    different ids, as are "openai/gpt-x" and "azure/gpt-x".
+    """
+    return bool(recorded) and bool(item_model) and recorded == item_model
 
 
 def _usage_for_item(item: Mapping[str, Any],
                     usage: Mapping[tuple[str, str], dict[str, int]]) -> dict[str, int]:
+    """Token totals for one item: canonical route provider, then exact model.
+
+    Provider-only items (no model) keep the provider-wide totals; model items
+    sum only rows that recorded the item's model id exactly.
+    """
     provider = str(item.get("provider") or "").lower()
     model = str(item.get("model") or "")
     total = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "calls": 0}
@@ -863,14 +1186,41 @@ def _usage_for_item(item: Mapping[str, Any],
     return total
 
 
+def _last_used_at(item: Mapping[str, Any],
+                  usage: Mapping[tuple[str, str], Mapping[str, Any]]) -> str:
+    """ISO timestamp of the newest exact (provider, model) usage row.
+
+    Exact recorded model only: a last-segment match is pricing convenience,
+    not evidence this item's model ran. Empty when there is nothing honest
+    to report.
+    """
+    provider = str(item.get("provider") or "").lower()
+    model = str(item.get("model") or "")
+    if not provider or not model:
+        return ""
+    best: Optional[float] = None
+    for (route, recorded), buckets in usage.items():
+        if canonical_route_provider(route) != provider or recorded != model:
+            continue
+        last_ts = buckets.get("last_ts") if isinstance(buckets, Mapping) else None
+        if isinstance(last_ts, (int, float)) and (best is None or last_ts > best):
+            best = float(last_ts)
+    return _now_iso(best) if best is not None else ""
+
+
 def rank_items(items: list[dict[str, Any]], *,
                usage: Optional[Mapping[tuple[str, str], dict[str, int]]] = None,
                tokens: Optional[set[str]] = None) -> list[dict[str, Any]]:
-    """Annotate news with For You evidence. Never promises account access."""
+    """Annotate news with For You evidence. Never promises account access.
+
+    Model evidence is the exact (provider, model) pair: a model recorded
+    under another provider, or a shared last path segment, never sets
+    ``for_you`` or ``related_routes`` on its own. Provider-used and
+    configured-provider signals stay provider-level.
+    """
     usage = usage if usage is not None else {}
     tokens = tokens if tokens is not None else set()
     used_providers = {canonical_route_provider(route) for route, _ in usage}
-    used_models = {model for _, model in usage} | {model.split("/")[-1] for _, model in usage}
     ranked: list[dict[str, Any]] = []
     for item in items:
         provider = str(item.get("provider") or "").lower()
@@ -879,11 +1229,14 @@ def rank_items(items: list[dict[str, Any]], *,
                           if canonical_route_provider(route) == provider
                           and (not model or _models_match(recorded, model))})[:5]
         configured = bool(provider) and provider in tokens
+        model_used = bool(model) and any(
+            canonical_route_provider(route) == provider and recorded == model
+            for (route, recorded) in usage)
         for_you = bool(provider) and (
-            provider in used_providers or provider in tokens
-            or (model and (model in used_models or model.split("/")[-1] in used_models)))
+            provider in used_providers or provider in tokens or model_used)
         ranked.append({**item, "for_you": for_you, "configured_provider": configured,
-                       "related_routes": related})
+                       "related_routes": related,
+                       "last_used_at": _last_used_at(item, usage)})
     return ranked
 
 

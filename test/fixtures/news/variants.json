@@ -1,0 +1,2970 @@
+{
+  "empty": {
+    "ok": true,
+    "settings": {
+      "live_updates": true
+    },
+    "catalogue": {
+      "source": "models.dev cache (synthetic fixture)",
+      "as_of": "2026-11-09",
+      "snapshot_at": "2026-11-10T09:15:00Z"
+    },
+    "providers_configured": [
+      "anthropic",
+      "openai"
+    ],
+    "impact_window_days": 30,
+    "local": {
+      "items": [],
+      "baseline": false,
+      "store_error": "",
+      "snapshot_at": "2026-11-10T09:15:00Z",
+      "removed_models": [],
+      "removed_model_count": 0,
+      "removed_plan_count": 0
+    },
+    "central": {
+      "state": "fresh",
+      "items": [],
+      "fetched_at": "2026-11-10T06:40:00Z",
+      "error": ""
+    },
+    "for_you_count": 0,
+    "impacts": {},
+    "signals": {
+      "configured_families": [
+        "anthropic",
+        "openai"
+      ],
+      "used_providers": [
+        "anthropic",
+        "openai-codex",
+        "fixturelabs"
+      ],
+      "used_models": [
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-4-5"
+        },
+        {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-sol"
+        },
+        {
+          "provider": "fixturelabs",
+          "model": "M1"
+        },
+        {
+          "provider": "fixturelabs",
+          "model": "x2"
+        }
+      ],
+      "plan_ids": [
+        "claude-max-20x"
+      ],
+      "plan_families": [
+        "anthropic"
+      ]
+    },
+    "sources": {
+      "observed_usage": {
+        "kind": "observed_usage",
+        "label": "Observed usage",
+        "explanation": "Spend recorded by Hermes on this machine. It shows what was actually used, never what remains."
+      },
+      "provider_allowance": {
+        "kind": "provider_allowance",
+        "label": "Provider-reported allowance",
+        "explanation": "Quota windows reported live by the provider. Read at view time, never stored, and never confused with observed spend."
+      },
+      "public_plan_info": {
+        "kind": "public_plan_info",
+        "label": "Public plan information",
+        "explanation": "Advertised plan terms from the membership catalogue. A reference for what a plan includes, not a measurement of remaining use."
+      }
+    },
+    "empty": {
+      "state": "no_changes",
+      "message": "Catalogues unchanged since the last check. New models, prices, and plans will appear here."
+    }
+  },
+  "partial": {
+    "ok": true,
+    "settings": {
+      "live_updates": false
+    },
+    "catalogue": {
+      "source": "models.dev cache (synthetic fixture)",
+      "as_of": "2026-11-09",
+      "snapshot_at": "2026-11-10T09:15:00Z"
+    },
+    "providers_configured": [
+      "anthropic",
+      "openai"
+    ],
+    "impact_window_days": 30,
+    "local": {
+      "items": [
+        {
+          "id": "local-price-reduction-openai-gpt-5-6-sol--r-----cache-read---0-25---c-bed1f77339",
+          "origin": "local",
+          "category": "price_reduction",
+          "provider": "openai",
+          "model": "gpt-5.6-sol",
+          "summary": "gpt-5.6-sol (openai) reduced to $1.25/$5 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "gpt-5.6-sol",
+            "provider": "openai",
+            "input": "$1.25",
+            "output": "$5"
+          },
+          "previous": {
+            "input": 2.5,
+            "output": 10.0,
+            "cache_read": 0.25,
+            "cache_write": 2.5
+          },
+          "current": {
+            "input": 1.25,
+            "output": 5.0,
+            "cache_read": 0.125,
+            "cache_write": 1.25
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_down",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": true,
+          "configured_provider": true,
+          "related_routes": [
+            "openai-codex"
+          ],
+          "last_used_at": "2026-11-04T13:46:40+00:00",
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "configured_provider",
+              "used_provider",
+              "used_model"
+            ]
+          }
+        },
+        {
+          "id": "local-price-reduction-anthropic-claude-sonnet-4-5--r-----cache-read---nu-bfb95db87b",
+          "origin": "local",
+          "category": "price_reduction",
+          "provider": "anthropic",
+          "model": "claude-sonnet-4-5",
+          "summary": "claude-sonnet-4-5 (anthropic) reduced to $0.9/$4.5 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "claude-sonnet-4-5",
+            "provider": "anthropic",
+            "input": "$0.9",
+            "output": "$4.5"
+          },
+          "previous": {
+            "input": 1.2,
+            "output": 6.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "current": {
+            "input": 0.9,
+            "output": 4.5,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_down",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": true,
+          "configured_provider": true,
+          "related_routes": [
+            "anthropic"
+          ],
+          "last_used_at": "2026-11-03T10:00:00+00:00",
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "configured_provider",
+              "used_provider",
+              "used_model",
+              "selected_plan_family"
+            ]
+          }
+        },
+        {
+          "id": "local-plan-change-claude-max-20x---amount---100---currency----USD----peri-2884b79e6c",
+          "origin": "local",
+          "category": "subscription",
+          "provider": "anthropic",
+          "model": "",
+          "summary": "Claude Max 20x: fee USD 100/month → USD 200/month; allowances/terms changed.",
+          "summary_code": "news_sum_plan_change",
+          "summary_params": {
+            "plan": "Claude Max 20x",
+            "fee_before": "USD 100/month",
+            "fee_after": "USD 200/month",
+            "fee_changed": true,
+            "terms_changed": true
+          },
+          "previous": null,
+          "current": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "https://announcements.spend-sense.example/plans/claude-max-20x",
+          "confidence": "observed",
+          "provenance": "bundled membership catalogue",
+          "conditions": "",
+          "for_you": true,
+          "configured_provider": true,
+          "related_routes": [
+            "anthropic"
+          ],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "configured_provider",
+              "used_provider",
+              "selected_plan_family"
+            ]
+          }
+        },
+        {
+          "id": "local-new-model-openai-gpt-5-6-sol-pro-e0949ff877",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "openai",
+          "model": "gpt-5.6-sol-pro",
+          "summary": "gpt-5.6-sol-pro newly listed under openai at $3/$15 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "gpt-5.6-sol-pro",
+            "provider": "openai",
+            "input": "$3",
+            "output": "$15"
+          },
+          "previous": null,
+          "current": {
+            "input": 3.0,
+            "output": 15.0,
+            "cache_read": 0.375,
+            "cache_write": 3.75
+          },
+          "model_name": "GPT-5.6 Sol Pro",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": true,
+          "configured_provider": true,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "configured_provider",
+              "used_provider"
+            ]
+          }
+        }
+      ],
+      "baseline": false,
+      "store_error": "",
+      "snapshot_at": "2026-11-10T09:15:00Z",
+      "removed_models": [],
+      "removed_model_count": 0,
+      "removed_plan_count": 0
+    },
+    "central": {
+      "state": "disabled",
+      "items": [],
+      "fetched_at": "",
+      "error": ""
+    },
+    "for_you_count": 4,
+    "impacts": {
+      "local-price-reduction-openai-gpt-5-6-sol--r-----cache-read---0-25---c-bed1f77339": {
+        "basis": "full",
+        "reason": "",
+        "reason_codes": [],
+        "window_days": 30,
+        "tokens": {
+          "input": 900000,
+          "output": 60000,
+          "cache_read": 4000000,
+          "cache_write": 120000
+        },
+        "calls": 214,
+        "old_usd": 4.15,
+        "new_usd": 2.075,
+        "delta_usd": -2.075
+      },
+      "local-price-reduction-anthropic-claude-sonnet-4-5--r-----cache-read---nu-bfb95db87b": {
+        "basis": "partial",
+        "reason": "cache rates unavailable for comparison; cache tokens excluded",
+        "reason_codes": [
+          "news_impact_cache_excluded"
+        ],
+        "window_days": 30,
+        "tokens": {
+          "input": 1200000,
+          "output": 80000,
+          "cache_read": 3500000,
+          "cache_write": 0
+        },
+        "calls": 189,
+        "old_usd": 1.92,
+        "new_usd": 1.44,
+        "delta_usd": -0.48
+      }
+    },
+    "signals": {
+      "configured_families": [
+        "anthropic",
+        "openai"
+      ],
+      "used_providers": [
+        "anthropic",
+        "openai-codex",
+        "fixturelabs"
+      ],
+      "used_models": [
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-4-5"
+        },
+        {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-sol"
+        },
+        {
+          "provider": "fixturelabs",
+          "model": "M1"
+        },
+        {
+          "provider": "fixturelabs",
+          "model": "x2"
+        }
+      ],
+      "plan_ids": [
+        "claude-max-20x"
+      ],
+      "plan_families": [
+        "anthropic"
+      ]
+    },
+    "sources": {
+      "observed_usage": {
+        "kind": "observed_usage",
+        "label": "Observed usage",
+        "explanation": "Spend recorded by Hermes on this machine. It shows what was actually used, never what remains."
+      },
+      "provider_allowance": {
+        "kind": "provider_allowance",
+        "label": "Provider-reported allowance",
+        "explanation": "Quota windows reported live by the provider. Read at view time, never stored, and never confused with observed spend."
+      },
+      "public_plan_info": {
+        "kind": "public_plan_info",
+        "label": "Public plan information",
+        "explanation": "Advertised plan terms from the membership catalogue. A reference for what a plan includes, not a measurement of remaining use."
+      }
+    },
+    "empty": {
+      "state": "has_news",
+      "message": ""
+    }
+  },
+  "stale": {
+    "ok": true,
+    "settings": {
+      "live_updates": true
+    },
+    "catalogue": {
+      "source": "models.dev cache (synthetic fixture)",
+      "as_of": "2026-11-09",
+      "snapshot_at": "2026-11-10T09:15:00Z"
+    },
+    "providers_configured": [
+      "anthropic",
+      "openai"
+    ],
+    "impact_window_days": 30,
+    "local": {
+      "items": [
+        {
+          "id": "local-price-reduction-openai-gpt-5-6-sol--r-----cache-read---0-25---c-bed1f77339",
+          "origin": "local",
+          "category": "price_reduction",
+          "provider": "openai",
+          "model": "gpt-5.6-sol",
+          "summary": "gpt-5.6-sol (openai) reduced to $1.25/$5 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "gpt-5.6-sol",
+            "provider": "openai",
+            "input": "$1.25",
+            "output": "$5"
+          },
+          "previous": {
+            "input": 2.5,
+            "output": 10.0,
+            "cache_read": 0.25,
+            "cache_write": 2.5
+          },
+          "current": {
+            "input": 1.25,
+            "output": 5.0,
+            "cache_read": 0.125,
+            "cache_write": 1.25
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_down",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": true,
+          "configured_provider": true,
+          "related_routes": [
+            "openai-codex"
+          ],
+          "last_used_at": "2026-11-04T13:46:40+00:00",
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "configured_provider",
+              "used_provider",
+              "used_model"
+            ]
+          }
+        },
+        {
+          "id": "local-price-reduction-moonshotai-kimi-k2-5--r-----cache-read---0-06---cac-a5db338fa9",
+          "origin": "local",
+          "category": "price_reduction",
+          "provider": "moonshotai",
+          "model": "kimi-k2.5",
+          "summary": "kimi-k2.5 (moonshotai) reduced to $0.45/$1.9 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "kimi-k2.5",
+            "provider": "moonshotai",
+            "input": "$0.45",
+            "output": "$1.9"
+          },
+          "previous": {
+            "input": 0.6,
+            "output": 2.5,
+            "cache_read": 0.06,
+            "cache_write": 0.6
+          },
+          "current": {
+            "input": 0.45,
+            "output": 1.9,
+            "cache_read": 0.045,
+            "cache_write": 0.475
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_down",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "2026-11-07",
+          "source_url": "https://announcements.spend-sense.example/feed/moonshotai-kimi-k2-5-rate-cut",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "official": {
+            "verified_at": "2026-11-07T08:40:00Z",
+            "source_note": "vendor announcement page (synthetic fixture note)",
+            "windows": []
+          },
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-price-reduction-fixturelabs-x2--r-----cache-read---null---cache-writ-15360c2a46",
+          "origin": "local",
+          "category": "price_reduction",
+          "provider": "fixturelabs",
+          "model": "x2",
+          "summary": "x2 (fixturelabs) reduced to $0.4/$1.6 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "x2",
+            "provider": "fixturelabs",
+            "input": "$0.4",
+            "output": "$1.6"
+          },
+          "previous": {
+            "input": 0.5,
+            "output": 2.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "current": {
+            "input": 0.4,
+            "output": 1.6,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_down",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "last_used_at": "2026-11-09T18:30:00Z",
+          "for_you": true,
+          "configured_provider": false,
+          "related_routes": [
+            "fixturelabs"
+          ],
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "used_provider",
+              "used_model"
+            ]
+          }
+        },
+        {
+          "id": "local-price-reduction-anthropic-claude-sonnet-4-5--r-----cache-read---nu-bfb95db87b",
+          "origin": "local",
+          "category": "price_reduction",
+          "provider": "anthropic",
+          "model": "claude-sonnet-4-5",
+          "summary": "claude-sonnet-4-5 (anthropic) reduced to $0.9/$4.5 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "claude-sonnet-4-5",
+            "provider": "anthropic",
+            "input": "$0.9",
+            "output": "$4.5"
+          },
+          "previous": {
+            "input": 1.2,
+            "output": 6.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "current": {
+            "input": 0.9,
+            "output": 4.5,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_down",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": true,
+          "configured_provider": true,
+          "related_routes": [
+            "anthropic"
+          ],
+          "last_used_at": "2026-11-03T10:00:00+00:00",
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "configured_provider",
+              "used_provider",
+              "used_model",
+              "selected_plan_family"
+            ]
+          }
+        },
+        {
+          "id": "local-price-increase-xai-grok-5-fast--r-----cache-read---null---c-fdffff6c8b",
+          "origin": "local",
+          "category": "price_increase",
+          "provider": "xai",
+          "model": "grok-5-fast",
+          "summary": "grok-5-fast (xai) changed to $0.3/$1.8 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "grok-5-fast",
+            "provider": "xai",
+            "input": "$0.3",
+            "output": "$1.8"
+          },
+          "previous": {
+            "input": 0.2,
+            "output": 1.2,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "current": {
+            "input": 0.3,
+            "output": 1.8,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_up",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-price-increase-openrouter-anthropic-claude-opus-4-1--r-----cache-r-6abd483ba1",
+          "origin": "local",
+          "category": "price_increase",
+          "provider": "openrouter",
+          "model": "anthropic/claude-opus-4.1",
+          "summary": "anthropic/claude-opus-4.1 (openrouter) changed to $6/$30 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "anthropic/claude-opus-4.1",
+            "provider": "openrouter",
+            "input": "$6",
+            "output": "$30"
+          },
+          "previous": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": null,
+            "cache_write": 3.0
+          },
+          "current": {
+            "input": 6.0,
+            "output": 30.0,
+            "cache_read": null,
+            "cache_write": 3.6
+          },
+          "has_tiers": true,
+          "model_name": "",
+          "tiers_detail": "known",
+          "tiers_before": [
+            {
+              "type": "standard",
+              "size": 200000,
+              "input": 4.0,
+              "output": 20.0,
+              "cache_read": null,
+              "cache_write": 2.0
+            }
+          ],
+          "tiers_after": [
+            {
+              "type": "standard",
+              "size": 200000,
+              "input": 4.8,
+              "output": 24.0,
+              "cache_read": null,
+              "cache_write": 2.4
+            }
+          ],
+          "rate_change_code": "news_rate_up",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Tiered/context pricing changed; base rates compared.",
+          "conditions_code": "news_cond_tiers_changed",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-plan-change-claude-max-20x---amount---100---currency----USD----peri-2884b79e6c",
+          "origin": "local",
+          "category": "subscription",
+          "provider": "anthropic",
+          "model": "",
+          "summary": "Claude Max 20x: fee USD 100/month → USD 200/month; allowances/terms changed.",
+          "summary_code": "news_sum_plan_change",
+          "summary_params": {
+            "plan": "Claude Max 20x",
+            "fee_before": "USD 100/month",
+            "fee_after": "USD 200/month",
+            "fee_changed": true,
+            "terms_changed": true
+          },
+          "previous": null,
+          "current": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "https://announcements.spend-sense.example/plans/claude-max-20x",
+          "confidence": "observed",
+          "provenance": "bundled membership catalogue",
+          "conditions": "",
+          "for_you": true,
+          "configured_provider": true,
+          "related_routes": [
+            "anthropic"
+          ],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "configured_provider",
+              "used_provider",
+              "selected_plan_family"
+            ]
+          }
+        },
+        {
+          "id": "local-new-provider-perplexity-2-30e6397db1",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "perplexity",
+          "model": "",
+          "summary": "perplexity is newly listed with 2 priced model(s).",
+          "summary_code": "news_sum_new_provider",
+          "summary_params": {
+            "provider": "perplexity",
+            "count": 2
+          },
+          "previous": null,
+          "current": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-plan-gemini-code-assist-pro---amount---19---currency----USD----perio-0540544813",
+          "origin": "local",
+          "category": "subscription",
+          "provider": "google",
+          "model": "",
+          "summary": "New plan listed: Gemini Code Assist Pro (USD 19/month).",
+          "summary_code": "news_sum_new_plan",
+          "summary_params": {
+            "plan": "Gemini Code Assist Pro",
+            "fee": "USD 19/month"
+          },
+          "previous": null,
+          "current": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "https://announcements.spend-sense.example/plans/gemini-code-assist-pro",
+          "confidence": "observed",
+          "provenance": "bundled membership catalogue",
+          "conditions": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-openai-gpt-5-6-sol-pro-e0949ff877",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "openai",
+          "model": "gpt-5.6-sol-pro",
+          "summary": "gpt-5.6-sol-pro newly listed under openai at $3/$15 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "gpt-5.6-sol-pro",
+            "provider": "openai",
+            "input": "$3",
+            "output": "$15"
+          },
+          "previous": null,
+          "current": {
+            "input": 3.0,
+            "output": 15.0,
+            "cache_read": 0.375,
+            "cache_write": 3.75
+          },
+          "model_name": "GPT-5.6 Sol Pro",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": true,
+          "configured_provider": true,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "configured_provider",
+              "used_provider"
+            ]
+          }
+        },
+        {
+          "id": "local-new-model-github-copilot-gpt-5-6-sol-fdfdfe2f78",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "github-copilot",
+          "model": "gpt-5.6-sol",
+          "summary": "gpt-5.6-sol newly listed under github-copilot at $2/$10 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "gpt-5.6-sol",
+            "provider": "github-copilot",
+            "input": "$2",
+            "output": "$10"
+          },
+          "previous": null,
+          "current": {
+            "input": 2.0,
+            "output": 10.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-fixturelabs-ts-malformed-73c4b9d39b",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "fixturelabs",
+          "model": "ts-malformed",
+          "summary": "ts-malformed newly listed under fixturelabs at $0.22/$0.9 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "ts-malformed",
+            "provider": "fixturelabs",
+            "input": "$0.22",
+            "output": "$0.9"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.22,
+            "output": 0.9,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "last_used_at": "not-a-timestamp",
+          "for_you": true,
+          "configured_provider": false,
+          "related_routes": [],
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "used_provider"
+            ]
+          }
+        },
+        {
+          "id": "local-new-model-fixturelabs-ts-future-5ceeb4c797",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "fixturelabs",
+          "model": "ts-future",
+          "summary": "ts-future newly listed under fixturelabs at $0.18/$0.75 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "ts-future",
+            "provider": "fixturelabs",
+            "input": "$0.18",
+            "output": "$0.75"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.18,
+            "output": 0.75,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "last_used_at": "2027-06-01T00:00:00Z",
+          "for_you": true,
+          "configured_provider": false,
+          "related_routes": [],
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "used_provider"
+            ]
+          }
+        },
+        {
+          "id": "local-new-model-fixturelabs-ts-empty-4f15a1136e",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "fixturelabs",
+          "model": "ts-empty",
+          "summary": "ts-empty newly listed under fixturelabs at $0.12/$0.5 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "ts-empty",
+            "provider": "fixturelabs",
+            "input": "$0.12",
+            "output": "$0.5"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.12,
+            "output": 0.5,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "last_used_at": "",
+          "for_you": true,
+          "configured_provider": false,
+          "related_routes": [],
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "used_provider"
+            ]
+          }
+        },
+        {
+          "id": "local-new-model-fixturelabs-m1-0896a9539a",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "fixturelabs",
+          "model": "m1",
+          "summary": "m1 newly listed under fixturelabs at $0.2/$0.8 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "m1",
+            "provider": "fixturelabs",
+            "input": "$0.2",
+            "output": "$0.8"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.2,
+            "output": 0.8,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": true,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "used_provider",
+              "used_model"
+            ]
+          }
+        },
+        {
+          "id": "local-new-model-deepseek-deepseek-v4-5ddfff1ce6",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "deepseek",
+          "model": "deepseek-v4",
+          "summary": "deepseek-v4 newly listed under deepseek at $0.28/$1.15 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "deepseek-v4",
+            "provider": "deepseek",
+            "input": "$0.28",
+            "output": "$1.15"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.28,
+            "output": 1.15,
+            "cache_read": 0.028,
+            "cache_write": 0.28
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-azure-openai-gpt-5-6-sol-0231bbf7ee",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "azure-openai",
+          "model": "gpt-5.6-sol",
+          "summary": "gpt-5.6-sol newly listed under azure-openai at $1.4/$5.6 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "gpt-5.6-sol",
+            "provider": "azure-openai",
+            "input": "$1.4",
+            "output": "$5.6"
+          },
+          "previous": null,
+          "current": {
+            "input": 1.4,
+            "output": 5.6,
+            "cache_read": 0.14,
+            "cache_write": 1.4
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-amazon-bedrock-claude-sonnet-4-5-20250929-9aff2f677c",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "amazon-bedrock",
+          "model": "claude-sonnet-4-5-20250929",
+          "summary": "claude-sonnet-4-5-20250929 newly listed under amazon-bedrock at $1.8/$9 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "claude-sonnet-4-5-20250929",
+            "provider": "amazon-bedrock",
+            "input": "$1.8",
+            "output": "$9"
+          },
+          "previous": null,
+          "current": {
+            "input": 1.8,
+            "output": 9.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-price-reduction-google-gemini-3-flash--r-----cache-read---0-05--65896e02e5",
+          "origin": "local",
+          "category": "price_reduction",
+          "provider": "google",
+          "model": "gemini-3-flash",
+          "summary": "gemini-3-flash (google) reduced to $0.3/$1.2 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "gemini-3-flash",
+            "provider": "google",
+            "input": "$0.3",
+            "output": "$1.2"
+          },
+          "previous": {
+            "input": 0.5,
+            "output": 2.0,
+            "cache_read": 0.05,
+            "cache_write": null
+          },
+          "current": {
+            "input": 0.3,
+            "output": 1.2,
+            "cache_read": 0.03,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_down",
+          "observed_at": "2026-11-10T07:59:50Z",
+          "effective_at": "",
+          "source_url": "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-a",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-fixturelabs-ts-old90day-a8833a2a2b",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "fixturelabs",
+          "model": "ts-old90day",
+          "summary": "ts-old90day newly listed under fixturelabs at $0.35/$1.4 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "ts-old90day",
+            "provider": "fixturelabs",
+            "input": "$0.35",
+            "output": "$1.4"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.35,
+            "output": 1.4,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-10-05T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "last_used_at": "2026-08-01T12:00:00Z",
+          "for_you": true,
+          "configured_provider": false,
+          "related_routes": [],
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "used_provider"
+            ]
+          }
+        }
+      ],
+      "baseline": false,
+      "store_error": "",
+      "snapshot_at": "2026-11-10T09:15:00Z",
+      "removed_models": [],
+      "removed_model_count": 0,
+      "removed_plan_count": 0
+    },
+    "central": {
+      "state": "stale",
+      "items": [
+        {
+          "id": "central-2026-11-10-deepseek-deepseek-v4-listing",
+          "origin": "central",
+          "category": "new_model",
+          "provider": "deepseek",
+          "model": "deepseek-v4",
+          "summary": "deepseek-v4 newly listed under deepseek on models.dev.",
+          "summary_code": "news_sum_new_model_feed",
+          "summary_params": {
+            "model": "deepseek-v4",
+            "provider": "deepseek"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.28,
+            "output": 1.15,
+            "cache_read": 0.028,
+            "cache_write": 0.28
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "https://announcements.spend-sense.example/feed/deepseek-v4-listing",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-10-google-gemini-3-flash-cut-0843",
+          "origin": "central",
+          "category": "price_reduction",
+          "provider": "google",
+          "model": "gemini-3-flash",
+          "summary": "gemini-3-flash (google) list price changed on models.dev.",
+          "summary_code": "news_sum_price_change_feed",
+          "summary_params": {
+            "model": "gemini-3-flash",
+            "provider": "google"
+          },
+          "previous": {
+            "input": 0.5,
+            "output": 2.0,
+            "cache_read": 0.05,
+            "cache_write": null
+          },
+          "current": {
+            "input": 0.3,
+            "output": 1.2,
+            "cache_read": 0.03,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-10T07:59:50Z",
+          "effective_at": "",
+          "source_url": "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-b",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-09-openrouter-anthropic-claude-sonnet-4-5",
+          "origin": "central",
+          "category": "new_model",
+          "provider": "openrouter",
+          "model": "openrouter/anthropic/claude-sonnet-4.5",
+          "summary": "openrouter/anthropic/claude-sonnet-4.5 newly listed under openrouter on models.dev.",
+          "summary_code": "news_sum_new_model_feed",
+          "summary_params": {
+            "model": "openrouter/anthropic/claude-sonnet-4.5",
+            "provider": "openrouter"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.9,
+            "output": 4.5,
+            "cache_read": 0.09,
+            "cache_write": 0.9
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-09T21:30:00Z",
+          "effective_at": "2026-11-08",
+          "source_url": "https://announcements.spend-sense.example/feed/openrouter-claude-sonnet-4-5",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-09-deepinfra-deepseek-v4-pro",
+          "origin": "central",
+          "category": "new_model",
+          "provider": "deepinfra",
+          "model": "deepseek-ai/deepseek-v4-pro",
+          "summary": "deepseek-ai/deepseek-v4-pro newly listed under deepinfra on models.dev.",
+          "summary_code": "news_sum_new_model_feed",
+          "summary_params": {
+            "model": "deepseek-ai/deepseek-v4-pro",
+            "provider": "deepinfra"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.27,
+            "output": 1.1,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-09T18:00:00Z",
+          "effective_at": "2026-11-09",
+          "source_url": "https://announcements.spend-sense.example/feed/deepseek-v4-pro",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-09-anthropic-claude-opus-4-1-20250805-thinking",
+          "origin": "central",
+          "category": "new_model",
+          "provider": "anthropic",
+          "model": "claude-opus-4-1-20250805-thinking",
+          "summary": "claude-opus-4-1-20250805-thinking newly listed under anthropic on models.dev.",
+          "summary_code": "news_sum_new_model_feed",
+          "summary_params": {
+            "model": "claude-opus-4-1-20250805-thinking",
+            "provider": "anthropic"
+          },
+          "previous": null,
+          "current": {
+            "input": 4.5,
+            "output": 22.5,
+            "cache_read": 0.45,
+            "cache_write": 4.5
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-09T16:05:00Z",
+          "effective_at": "2026-11-09",
+          "source_url": "https://announcements.spend-sense.example/feed/claude-opus-4-1-20250805-thinking",
+          "confidence": "verified",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": true,
+          "configured_provider": true,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": true,
+            "reasons": [
+              "configured_provider",
+              "used_provider",
+              "selected_plan_family"
+            ]
+          }
+        },
+        {
+          "id": "central-2026-11-07-moonshotai-kimi-k2-5-rate-cut",
+          "origin": "central",
+          "category": "price_reduction",
+          "provider": "moonshotai",
+          "model": "kimi-k2.5",
+          "summary": "kimi-k2.5 (moonshotai) list price changed on models.dev.",
+          "summary_code": "news_sum_price_change_feed",
+          "summary_params": {
+            "model": "kimi-k2.5",
+            "provider": "moonshotai"
+          },
+          "previous": {
+            "input": 0.6,
+            "output": 2.5,
+            "cache_read": 0.06,
+            "cache_write": 0.6
+          },
+          "current": {
+            "input": 0.45,
+            "output": 1.9,
+            "cache_read": 0.045,
+            "cache_write": 0.475
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-07T08:40:00Z",
+          "effective_at": "2026-11-07",
+          "source_url": "https://announcements.spend-sense.example/feed/moonshotai-kimi-k2-5-rate-cut",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-06-mistral-large-3-pricing-update-2",
+          "origin": "central",
+          "category": "price_increase",
+          "provider": "mistral",
+          "model": "mistral-large-3",
+          "summary": "mistral-large-3 (mistral) list price changed on models.dev.",
+          "summary_code": "news_sum_price_change_feed",
+          "summary_params": {
+            "model": "mistral-large-3",
+            "provider": "mistral"
+          },
+          "previous": {
+            "input": 2.5,
+            "output": 7.5,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "current": {
+            "input": 3.0,
+            "output": 9.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-06T12:00:30Z",
+          "effective_at": "2026-11-05",
+          "source_url": "https://announcements.spend-sense.example/feed/mistral-large-3-pricing-update-2",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-06-mistral-large-3-pricing-update",
+          "origin": "central",
+          "category": "price_increase",
+          "provider": "mistral",
+          "model": "mistral-large-3",
+          "summary": "mistral-large-3 (mistral) list price changed on models.dev.",
+          "summary_code": "news_sum_price_change_feed",
+          "summary_params": {
+            "model": "mistral-large-3",
+            "provider": "mistral"
+          },
+          "previous": {
+            "input": 2.5,
+            "output": 7.5,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "current": {
+            "input": 3.0,
+            "output": 9.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-06T12:00:00Z",
+          "effective_at": "2026-11-01",
+          "source_url": "https://announcements.spend-sense.example/feed/mistral-large-3-pricing-update",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        }
+      ],
+      "fetched_at": "2026-11-07T03:12:00Z",
+      "error": "central feed unavailable (URLError)"
+    },
+    "for_you_count": 11,
+    "impacts": {
+      "local-price-reduction-openai-gpt-5-6-sol--r-----cache-read---0-25---c-bed1f77339": {
+        "basis": "full",
+        "reason": "",
+        "reason_codes": [],
+        "window_days": 30,
+        "tokens": {
+          "input": 900000,
+          "output": 60000,
+          "cache_read": 4000000,
+          "cache_write": 120000
+        },
+        "calls": 214,
+        "old_usd": 4.15,
+        "new_usd": 2.075,
+        "delta_usd": -2.075
+      },
+      "local-price-reduction-fixturelabs-x2--r-----cache-read---null---cache-writ-15360c2a46": {
+        "basis": "full",
+        "reason": "",
+        "reason_codes": [],
+        "window_days": 30,
+        "tokens": {
+          "input": 50000,
+          "output": 5000,
+          "cache_read": 0,
+          "cache_write": 0
+        },
+        "calls": 12,
+        "old_usd": 0.035,
+        "new_usd": 0.028,
+        "delta_usd": -0.007000000000000003
+      },
+      "local-price-reduction-anthropic-claude-sonnet-4-5--r-----cache-read---nu-bfb95db87b": {
+        "basis": "partial",
+        "reason": "cache rates unavailable for comparison; cache tokens excluded",
+        "reason_codes": [
+          "news_impact_cache_excluded"
+        ],
+        "window_days": 30,
+        "tokens": {
+          "input": 1200000,
+          "output": 80000,
+          "cache_read": 3500000,
+          "cache_write": 0
+        },
+        "calls": 189,
+        "old_usd": 1.92,
+        "new_usd": 1.44,
+        "delta_usd": -0.48
+      }
+    },
+    "signals": {
+      "configured_families": [
+        "anthropic",
+        "openai"
+      ],
+      "used_providers": [
+        "anthropic",
+        "openai-codex",
+        "fixturelabs"
+      ],
+      "used_models": [
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-4-5"
+        },
+        {
+          "provider": "openai-codex",
+          "model": "gpt-5.6-sol"
+        },
+        {
+          "provider": "fixturelabs",
+          "model": "M1"
+        },
+        {
+          "provider": "fixturelabs",
+          "model": "x2"
+        }
+      ],
+      "plan_ids": [
+        "claude-max-20x"
+      ],
+      "plan_families": [
+        "anthropic"
+      ]
+    },
+    "sources": {
+      "observed_usage": {
+        "kind": "observed_usage",
+        "label": "Observed usage",
+        "explanation": "Spend recorded by Hermes on this machine. It shows what was actually used, never what remains."
+      },
+      "provider_allowance": {
+        "kind": "provider_allowance",
+        "label": "Provider-reported allowance",
+        "explanation": "Quota windows reported live by the provider. Read at view time, never stored, and never confused with observed spend."
+      },
+      "public_plan_info": {
+        "kind": "public_plan_info",
+        "label": "Public plan information",
+        "explanation": "Advertised plan terms from the membership catalogue. A reference for what a plan includes, not a measurement of remaining use."
+      }
+    },
+    "empty": {
+      "state": "has_news",
+      "message": ""
+    }
+  },
+  "nosignals": {
+    "ok": true,
+    "settings": {
+      "live_updates": true
+    },
+    "catalogue": {
+      "source": "models.dev cache (synthetic fixture)",
+      "as_of": "2026-11-09",
+      "snapshot_at": "2026-11-10T09:15:00Z"
+    },
+    "providers_configured": [],
+    "impact_window_days": 30,
+    "local": {
+      "items": [
+        {
+          "id": "local-price-reduction-openai-gpt-5-6-sol--r-----cache-read---0-25---c-bed1f77339",
+          "origin": "local",
+          "category": "price_reduction",
+          "provider": "openai",
+          "model": "gpt-5.6-sol",
+          "summary": "gpt-5.6-sol (openai) reduced to $1.25/$5 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "gpt-5.6-sol",
+            "provider": "openai",
+            "input": "$1.25",
+            "output": "$5"
+          },
+          "previous": {
+            "input": 2.5,
+            "output": 10.0,
+            "cache_read": 0.25,
+            "cache_write": 2.5
+          },
+          "current": {
+            "input": 1.25,
+            "output": 5.0,
+            "cache_read": 0.125,
+            "cache_write": 1.25
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_down",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-price-reduction-moonshotai-kimi-k2-5--r-----cache-read---0-06---cac-a5db338fa9",
+          "origin": "local",
+          "category": "price_reduction",
+          "provider": "moonshotai",
+          "model": "kimi-k2.5",
+          "summary": "kimi-k2.5 (moonshotai) reduced to $0.45/$1.9 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "kimi-k2.5",
+            "provider": "moonshotai",
+            "input": "$0.45",
+            "output": "$1.9"
+          },
+          "previous": {
+            "input": 0.6,
+            "output": 2.5,
+            "cache_read": 0.06,
+            "cache_write": 0.6
+          },
+          "current": {
+            "input": 0.45,
+            "output": 1.9,
+            "cache_read": 0.045,
+            "cache_write": 0.475
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_down",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "2026-11-07",
+          "source_url": "https://announcements.spend-sense.example/feed/moonshotai-kimi-k2-5-rate-cut",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "official": {
+            "verified_at": "2026-11-07T08:40:00Z",
+            "source_note": "vendor announcement page (synthetic fixture note)",
+            "windows": []
+          },
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-price-reduction-fixturelabs-x2--r-----cache-read---null---cache-writ-15360c2a46",
+          "origin": "local",
+          "category": "price_reduction",
+          "provider": "fixturelabs",
+          "model": "x2",
+          "summary": "x2 (fixturelabs) reduced to $0.4/$1.6 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "x2",
+            "provider": "fixturelabs",
+            "input": "$0.4",
+            "output": "$1.6"
+          },
+          "previous": {
+            "input": 0.5,
+            "output": 2.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "current": {
+            "input": 0.4,
+            "output": 1.6,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_down",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "last_used_at": "2026-11-09T18:30:00Z",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-price-reduction-anthropic-claude-sonnet-4-5--r-----cache-read---nu-bfb95db87b",
+          "origin": "local",
+          "category": "price_reduction",
+          "provider": "anthropic",
+          "model": "claude-sonnet-4-5",
+          "summary": "claude-sonnet-4-5 (anthropic) reduced to $0.9/$4.5 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "claude-sonnet-4-5",
+            "provider": "anthropic",
+            "input": "$0.9",
+            "output": "$4.5"
+          },
+          "previous": {
+            "input": 1.2,
+            "output": 6.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "current": {
+            "input": 0.9,
+            "output": 4.5,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_down",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-price-increase-xai-grok-5-fast--r-----cache-read---null---c-fdffff6c8b",
+          "origin": "local",
+          "category": "price_increase",
+          "provider": "xai",
+          "model": "grok-5-fast",
+          "summary": "grok-5-fast (xai) changed to $0.3/$1.8 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "grok-5-fast",
+            "provider": "xai",
+            "input": "$0.3",
+            "output": "$1.8"
+          },
+          "previous": {
+            "input": 0.2,
+            "output": 1.2,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "current": {
+            "input": 0.3,
+            "output": 1.8,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_up",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-price-increase-openrouter-anthropic-claude-opus-4-1--r-----cache-r-6abd483ba1",
+          "origin": "local",
+          "category": "price_increase",
+          "provider": "openrouter",
+          "model": "anthropic/claude-opus-4.1",
+          "summary": "anthropic/claude-opus-4.1 (openrouter) changed to $6/$30 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "anthropic/claude-opus-4.1",
+            "provider": "openrouter",
+            "input": "$6",
+            "output": "$30"
+          },
+          "previous": {
+            "input": 5.0,
+            "output": 25.0,
+            "cache_read": null,
+            "cache_write": 3.0
+          },
+          "current": {
+            "input": 6.0,
+            "output": 30.0,
+            "cache_read": null,
+            "cache_write": 3.6
+          },
+          "has_tiers": true,
+          "model_name": "",
+          "tiers_detail": "known",
+          "tiers_before": [
+            {
+              "type": "standard",
+              "size": 200000,
+              "input": 4.0,
+              "output": 20.0,
+              "cache_read": null,
+              "cache_write": 2.0
+            }
+          ],
+          "tiers_after": [
+            {
+              "type": "standard",
+              "size": 200000,
+              "input": 4.8,
+              "output": 24.0,
+              "cache_read": null,
+              "cache_write": 2.4
+            }
+          ],
+          "rate_change_code": "news_rate_up",
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Tiered/context pricing changed; base rates compared.",
+          "conditions_code": "news_cond_tiers_changed",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-plan-change-claude-max-20x---amount---100---currency----USD----peri-2884b79e6c",
+          "origin": "local",
+          "category": "subscription",
+          "provider": "anthropic",
+          "model": "",
+          "summary": "Claude Max 20x: fee USD 100/month → USD 200/month; allowances/terms changed.",
+          "summary_code": "news_sum_plan_change",
+          "summary_params": {
+            "plan": "Claude Max 20x",
+            "fee_before": "USD 100/month",
+            "fee_after": "USD 200/month",
+            "fee_changed": true,
+            "terms_changed": true
+          },
+          "previous": null,
+          "current": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "https://announcements.spend-sense.example/plans/claude-max-20x",
+          "confidence": "observed",
+          "provenance": "bundled membership catalogue",
+          "conditions": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-provider-perplexity-2-30e6397db1",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "perplexity",
+          "model": "",
+          "summary": "perplexity is newly listed with 2 priced model(s).",
+          "summary_code": "news_sum_new_provider",
+          "summary_params": {
+            "provider": "perplexity",
+            "count": 2
+          },
+          "previous": null,
+          "current": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-plan-gemini-code-assist-pro---amount---19---currency----USD----perio-0540544813",
+          "origin": "local",
+          "category": "subscription",
+          "provider": "google",
+          "model": "",
+          "summary": "New plan listed: Gemini Code Assist Pro (USD 19/month).",
+          "summary_code": "news_sum_new_plan",
+          "summary_params": {
+            "plan": "Gemini Code Assist Pro",
+            "fee": "USD 19/month"
+          },
+          "previous": null,
+          "current": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "https://announcements.spend-sense.example/plans/gemini-code-assist-pro",
+          "confidence": "observed",
+          "provenance": "bundled membership catalogue",
+          "conditions": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-openai-gpt-5-6-sol-pro-e0949ff877",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "openai",
+          "model": "gpt-5.6-sol-pro",
+          "summary": "gpt-5.6-sol-pro newly listed under openai at $3/$15 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "gpt-5.6-sol-pro",
+            "provider": "openai",
+            "input": "$3",
+            "output": "$15"
+          },
+          "previous": null,
+          "current": {
+            "input": 3.0,
+            "output": 15.0,
+            "cache_read": 0.375,
+            "cache_write": 3.75
+          },
+          "model_name": "GPT-5.6 Sol Pro",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-github-copilot-gpt-5-6-sol-fdfdfe2f78",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "github-copilot",
+          "model": "gpt-5.6-sol",
+          "summary": "gpt-5.6-sol newly listed under github-copilot at $2/$10 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "gpt-5.6-sol",
+            "provider": "github-copilot",
+            "input": "$2",
+            "output": "$10"
+          },
+          "previous": null,
+          "current": {
+            "input": 2.0,
+            "output": 10.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-fixturelabs-ts-malformed-73c4b9d39b",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "fixturelabs",
+          "model": "ts-malformed",
+          "summary": "ts-malformed newly listed under fixturelabs at $0.22/$0.9 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "ts-malformed",
+            "provider": "fixturelabs",
+            "input": "$0.22",
+            "output": "$0.9"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.22,
+            "output": 0.9,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "last_used_at": "not-a-timestamp",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-fixturelabs-ts-future-5ceeb4c797",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "fixturelabs",
+          "model": "ts-future",
+          "summary": "ts-future newly listed under fixturelabs at $0.18/$0.75 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "ts-future",
+            "provider": "fixturelabs",
+            "input": "$0.18",
+            "output": "$0.75"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.18,
+            "output": 0.75,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "last_used_at": "2027-06-01T00:00:00Z",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-fixturelabs-ts-empty-4f15a1136e",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "fixturelabs",
+          "model": "ts-empty",
+          "summary": "ts-empty newly listed under fixturelabs at $0.12/$0.5 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "ts-empty",
+            "provider": "fixturelabs",
+            "input": "$0.12",
+            "output": "$0.5"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.12,
+            "output": 0.5,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "last_used_at": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-fixturelabs-m1-0896a9539a",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "fixturelabs",
+          "model": "m1",
+          "summary": "m1 newly listed under fixturelabs at $0.2/$0.8 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "m1",
+            "provider": "fixturelabs",
+            "input": "$0.2",
+            "output": "$0.8"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.2,
+            "output": 0.8,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-deepseek-deepseek-v4-5ddfff1ce6",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "deepseek",
+          "model": "deepseek-v4",
+          "summary": "deepseek-v4 newly listed under deepseek at $0.28/$1.15 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "deepseek-v4",
+            "provider": "deepseek",
+            "input": "$0.28",
+            "output": "$1.15"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.28,
+            "output": 1.15,
+            "cache_read": 0.028,
+            "cache_write": 0.28
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-azure-openai-gpt-5-6-sol-0231bbf7ee",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "azure-openai",
+          "model": "gpt-5.6-sol",
+          "summary": "gpt-5.6-sol newly listed under azure-openai at $1.4/$5.6 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "gpt-5.6-sol",
+            "provider": "azure-openai",
+            "input": "$1.4",
+            "output": "$5.6"
+          },
+          "previous": null,
+          "current": {
+            "input": 1.4,
+            "output": 5.6,
+            "cache_read": 0.14,
+            "cache_write": 1.4
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-amazon-bedrock-claude-sonnet-4-5-20250929-9aff2f677c",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "amazon-bedrock",
+          "model": "claude-sonnet-4-5-20250929",
+          "summary": "claude-sonnet-4-5-20250929 newly listed under amazon-bedrock at $1.8/$9 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "claude-sonnet-4-5-20250929",
+            "provider": "amazon-bedrock",
+            "input": "$1.8",
+            "output": "$9"
+          },
+          "previous": null,
+          "current": {
+            "input": 1.8,
+            "output": 9.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-price-reduction-google-gemini-3-flash--r-----cache-read---0-05--65896e02e5",
+          "origin": "local",
+          "category": "price_reduction",
+          "provider": "google",
+          "model": "gemini-3-flash",
+          "summary": "gemini-3-flash (google) reduced to $0.3/$1.2 per MTok in/out.",
+          "summary_code": "news_sum_price_change",
+          "summary_params": {
+            "model": "gemini-3-flash",
+            "provider": "google",
+            "input": "$0.3",
+            "output": "$1.2"
+          },
+          "previous": {
+            "input": 0.5,
+            "output": 2.0,
+            "cache_read": 0.05,
+            "cache_write": null
+          },
+          "current": {
+            "input": 0.3,
+            "output": 1.2,
+            "cache_read": 0.03,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_before": null,
+          "tiers_after": null,
+          "rate_change_code": "news_rate_down",
+          "observed_at": "2026-11-10T07:59:50Z",
+          "effective_at": "",
+          "source_url": "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-a",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "local-new-model-fixturelabs-ts-old90day-a8833a2a2b",
+          "origin": "local",
+          "category": "new_model",
+          "provider": "fixturelabs",
+          "model": "ts-old90day",
+          "summary": "ts-old90day newly listed under fixturelabs at $0.35/$1.4 per MTok in/out.",
+          "summary_code": "news_sum_new_model",
+          "summary_params": {
+            "model": "ts-old90day",
+            "provider": "fixturelabs",
+            "input": "$0.35",
+            "output": "$1.4"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.35,
+            "output": 1.4,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "model_name": "",
+          "tiers_detail": "unknown",
+          "tiers_after": null,
+          "observed_at": "2026-10-05T09:15:00Z",
+          "effective_at": "",
+          "source_url": "",
+          "confidence": "observed",
+          "provenance": "Hermes models.dev cache",
+          "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+          "conditions_code": "news_cond_listing_accounts",
+          "last_used_at": "2026-08-01T12:00:00Z",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        }
+      ],
+      "baseline": false,
+      "store_error": "",
+      "snapshot_at": "2026-11-10T09:15:00Z",
+      "removed_models": [],
+      "removed_model_count": 0,
+      "removed_plan_count": 0
+    },
+    "central": {
+      "state": "fresh",
+      "items": [
+        {
+          "id": "central-2026-11-10-deepseek-deepseek-v4-listing",
+          "origin": "central",
+          "category": "new_model",
+          "provider": "deepseek",
+          "model": "deepseek-v4",
+          "summary": "deepseek-v4 newly listed under deepseek on models.dev.",
+          "summary_code": "news_sum_new_model_feed",
+          "summary_params": {
+            "model": "deepseek-v4",
+            "provider": "deepseek"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.28,
+            "output": 1.15,
+            "cache_read": 0.028,
+            "cache_write": 0.28
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-10T09:15:00Z",
+          "effective_at": "",
+          "source_url": "https://announcements.spend-sense.example/feed/deepseek-v4-listing",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-10-google-gemini-3-flash-cut-0843",
+          "origin": "central",
+          "category": "price_reduction",
+          "provider": "google",
+          "model": "gemini-3-flash",
+          "summary": "gemini-3-flash (google) list price changed on models.dev.",
+          "summary_code": "news_sum_price_change_feed",
+          "summary_params": {
+            "model": "gemini-3-flash",
+            "provider": "google"
+          },
+          "previous": {
+            "input": 0.5,
+            "output": 2.0,
+            "cache_read": 0.05,
+            "cache_write": null
+          },
+          "current": {
+            "input": 0.3,
+            "output": 1.2,
+            "cache_read": 0.03,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-10T07:59:50Z",
+          "effective_at": "",
+          "source_url": "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-b",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-09-openrouter-anthropic-claude-sonnet-4-5",
+          "origin": "central",
+          "category": "new_model",
+          "provider": "openrouter",
+          "model": "openrouter/anthropic/claude-sonnet-4.5",
+          "summary": "openrouter/anthropic/claude-sonnet-4.5 newly listed under openrouter on models.dev.",
+          "summary_code": "news_sum_new_model_feed",
+          "summary_params": {
+            "model": "openrouter/anthropic/claude-sonnet-4.5",
+            "provider": "openrouter"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.9,
+            "output": 4.5,
+            "cache_read": 0.09,
+            "cache_write": 0.9
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-09T21:30:00Z",
+          "effective_at": "2026-11-08",
+          "source_url": "https://announcements.spend-sense.example/feed/openrouter-claude-sonnet-4-5",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-09-deepinfra-deepseek-v4-pro",
+          "origin": "central",
+          "category": "new_model",
+          "provider": "deepinfra",
+          "model": "deepseek-ai/deepseek-v4-pro",
+          "summary": "deepseek-ai/deepseek-v4-pro newly listed under deepinfra on models.dev.",
+          "summary_code": "news_sum_new_model_feed",
+          "summary_params": {
+            "model": "deepseek-ai/deepseek-v4-pro",
+            "provider": "deepinfra"
+          },
+          "previous": null,
+          "current": {
+            "input": 0.27,
+            "output": 1.1,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-09T18:00:00Z",
+          "effective_at": "2026-11-09",
+          "source_url": "https://announcements.spend-sense.example/feed/deepseek-v4-pro",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-09-anthropic-claude-opus-4-1-20250805-thinking",
+          "origin": "central",
+          "category": "new_model",
+          "provider": "anthropic",
+          "model": "claude-opus-4-1-20250805-thinking",
+          "summary": "claude-opus-4-1-20250805-thinking newly listed under anthropic on models.dev.",
+          "summary_code": "news_sum_new_model_feed",
+          "summary_params": {
+            "model": "claude-opus-4-1-20250805-thinking",
+            "provider": "anthropic"
+          },
+          "previous": null,
+          "current": {
+            "input": 4.5,
+            "output": 22.5,
+            "cache_read": 0.45,
+            "cache_write": 4.5
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-09T16:05:00Z",
+          "effective_at": "2026-11-09",
+          "source_url": "https://announcements.spend-sense.example/feed/claude-opus-4-1-20250805-thinking",
+          "confidence": "verified",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-07-moonshotai-kimi-k2-5-rate-cut",
+          "origin": "central",
+          "category": "price_reduction",
+          "provider": "moonshotai",
+          "model": "kimi-k2.5",
+          "summary": "kimi-k2.5 (moonshotai) list price changed on models.dev.",
+          "summary_code": "news_sum_price_change_feed",
+          "summary_params": {
+            "model": "kimi-k2.5",
+            "provider": "moonshotai"
+          },
+          "previous": {
+            "input": 0.6,
+            "output": 2.5,
+            "cache_read": 0.06,
+            "cache_write": 0.6
+          },
+          "current": {
+            "input": 0.45,
+            "output": 1.9,
+            "cache_read": 0.045,
+            "cache_write": 0.475
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-07T08:40:00Z",
+          "effective_at": "2026-11-07",
+          "source_url": "https://announcements.spend-sense.example/feed/moonshotai-kimi-k2-5-rate-cut",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-06-mistral-large-3-pricing-update-2",
+          "origin": "central",
+          "category": "price_increase",
+          "provider": "mistral",
+          "model": "mistral-large-3",
+          "summary": "mistral-large-3 (mistral) list price changed on models.dev.",
+          "summary_code": "news_sum_price_change_feed",
+          "summary_params": {
+            "model": "mistral-large-3",
+            "provider": "mistral"
+          },
+          "previous": {
+            "input": 2.5,
+            "output": 7.5,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "current": {
+            "input": 3.0,
+            "output": 9.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-06T12:00:30Z",
+          "effective_at": "2026-11-05",
+          "source_url": "https://announcements.spend-sense.example/feed/mistral-large-3-pricing-update-2",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        },
+        {
+          "id": "central-2026-11-06-mistral-large-3-pricing-update",
+          "origin": "central",
+          "category": "price_increase",
+          "provider": "mistral",
+          "model": "mistral-large-3",
+          "summary": "mistral-large-3 (mistral) list price changed on models.dev.",
+          "summary_code": "news_sum_price_change_feed",
+          "summary_params": {
+            "model": "mistral-large-3",
+            "provider": "mistral"
+          },
+          "previous": {
+            "input": 2.5,
+            "output": 7.5,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "current": {
+            "input": 3.0,
+            "output": 9.0,
+            "cache_read": null,
+            "cache_write": null
+          },
+          "has_tiers": false,
+          "observed_at": "2026-11-06T12:00:00Z",
+          "effective_at": "2026-11-01",
+          "source_url": "https://announcements.spend-sense.example/feed/mistral-large-3-pricing-update",
+          "confidence": "curated",
+          "provenance": "SpendSense announcements",
+          "conditions": "",
+          "conditions_code": "",
+          "for_you": false,
+          "configured_provider": false,
+          "related_routes": [],
+          "last_used_at": "",
+          "relevance": {
+            "relevant": false,
+            "reasons": []
+          }
+        }
+      ],
+      "fetched_at": "2026-11-10T06:40:00Z",
+      "error": ""
+    },
+    "for_you_count": 0,
+    "impacts": {},
+    "signals": {
+      "configured_families": [],
+      "used_providers": [],
+      "used_models": [],
+      "plan_ids": [],
+      "plan_families": []
+    },
+    "sources": {
+      "observed_usage": {
+        "kind": "observed_usage",
+        "label": "Observed usage",
+        "explanation": "Spend recorded by Hermes on this machine. It shows what was actually used, never what remains."
+      },
+      "provider_allowance": {
+        "kind": "provider_allowance",
+        "label": "Provider-reported allowance",
+        "explanation": "Quota windows reported live by the provider. Read at view time, never stored, and never confused with observed spend."
+      },
+      "public_plan_info": {
+        "kind": "public_plan_info",
+        "label": "Public plan information",
+        "explanation": "Advertised plan terms from the membership catalogue. A reference for what a plan includes, not a measurement of remaining use."
+      }
+    },
+    "empty": {
+      "state": "no_config",
+      "message": "Nothing to personalise yet: no providers are configured, no usage is recorded, and no plans are selected. For-you news appears once SpendSense knows what you use."
+    }
+  },
+  "error": {
+    "ok": false,
+    "detail": "Synthetic refresh failure (verification fixture): the news service is unreachable."
+  }
+}
