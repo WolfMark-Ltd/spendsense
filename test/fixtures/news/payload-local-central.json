@@ -1,0 +1,625 @@
+{
+  "catalogue": {
+    "as_of": "2027-01-01T01:02:52+00:00",
+    "snapshot_at": "2027-01-01T02:03:52+00:00",
+    "source": "models.dev cache (models_dev_cache.json)"
+  },
+  "central": {
+    "error": "",
+    "fetched_at": "2027-01-01T02:03:52+00:00",
+    "items": [
+      {
+        "category": "new_model",
+        "conditions": "Catalogue listing only; not confirmed available on any account.",
+        "conditions_code": "news_cond_listing_any_account",
+        "confidence": "observed",
+        "configured_provider": true,
+        "current": {
+          "cache_read": 0.1,
+          "cache_write": null,
+          "input": 1.0,
+          "output": 5.0
+        },
+        "effective_at": "",
+        "for_you": true,
+        "has_tiers": false,
+        "id": "md-d8ddebe56810",
+        "model": "claude-haiku-4-5-20251001",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "central",
+        "previous": null,
+        "provenance": "models.dev",
+        "provider": "anthropic",
+        "related_routes": [],
+        "source_url": "https://models.dev",
+        "summary": "claude-haiku-4-5-20251001 newly listed under anthropic on models.dev.",
+        "summary_code": "news_sum_new_model_feed",
+        "summary_params": {
+          "model": "claude-haiku-4-5-20251001",
+          "provider": "anthropic"
+        }
+      },
+      {
+        "category": "price_increase",
+        "conditions": "Tiered/context pricing changed; base rates compared.",
+        "conditions_code": "news_cond_tiers_changed",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": {
+          "cache_read": 0.11,
+          "cache_write": 0.22,
+          "input": 0.6,
+          "output": 2.2
+        },
+        "effective_at": "",
+        "for_you": false,
+        "has_tiers": true,
+        "id": "md-d799fdcc4a9c",
+        "model": "glm-large",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "central",
+        "previous": {
+          "cache_read": 0.11,
+          "cache_write": 0.22,
+          "input": 0.6,
+          "output": 2.2
+        },
+        "provenance": "models.dev",
+        "provider": "vercel",
+        "related_routes": [],
+        "source_url": "https://models.dev",
+        "summary": "glm-large (vercel) list price changed on models.dev.",
+        "summary_code": "news_sum_price_change_feed",
+        "summary_params": {
+          "model": "glm-large",
+          "provider": "vercel"
+        }
+      },
+      {
+        "category": "new_model",
+        "conditions": "Catalogue listing only; not confirmed available on any account.",
+        "conditions_code": "news_cond_listing_any_account",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": null,
+        "effective_at": "",
+        "for_you": "",
+        "has_tiers": false,
+        "id": "md-d1d5a12e68c9",
+        "model": "",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "central",
+        "previous": null,
+        "provenance": "models.dev",
+        "provider": "zhipu",
+        "related_routes": [],
+        "source_url": "https://models.dev",
+        "summary": "zhipu newly listed on models.dev with 1 priced model(s).",
+        "summary_code": "news_sum_new_provider_feed",
+        "summary_params": {
+          "count": 1,
+          "provider": "zhipu"
+        }
+      },
+      {
+        "category": "price_reduction",
+        "conditions": "",
+        "conditions_code": "",
+        "confidence": "observed",
+        "configured_provider": true,
+        "current": {
+          "cache_read": 0.3,
+          "cache_write": 4.5,
+          "input": 2.0,
+          "output": 14.0
+        },
+        "effective_at": "",
+        "for_you": true,
+        "has_tiers": false,
+        "id": "md-cca3c3148481",
+        "model": "claude-sonnet-4",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "central",
+        "previous": {
+          "cache_read": 0.3,
+          "cache_write": 3.75,
+          "input": 3.0,
+          "output": 15.0
+        },
+        "provenance": "models.dev",
+        "provider": "anthropic",
+        "related_routes": [
+          "anthropic"
+        ],
+        "source_url": "https://models.dev",
+        "summary": "claude-sonnet-4 (anthropic) list price changed on models.dev.",
+        "summary_code": "news_sum_price_change_feed",
+        "summary_params": {
+          "model": "claude-sonnet-4",
+          "provider": "anthropic"
+        }
+      },
+      {
+        "category": "new_model",
+        "conditions": "Catalogue listing only; not confirmed available on any account.",
+        "conditions_code": "news_cond_listing_any_account",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 0.2,
+          "output": 0.8
+        },
+        "effective_at": "",
+        "for_you": false,
+        "has_tiers": false,
+        "id": "md-c813aecc4517",
+        "model": "text-plain",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "central",
+        "previous": null,
+        "provenance": "models.dev",
+        "provider": "vercel",
+        "related_routes": [],
+        "source_url": "https://models.dev",
+        "summary": "text-plain newly listed under vercel on models.dev.",
+        "summary_code": "news_sum_new_model_feed",
+        "summary_params": {
+          "model": "text-plain",
+          "provider": "vercel"
+        }
+      },
+      {
+        "category": "new_model",
+        "conditions": "Catalogue listing only; not confirmed available on any account.",
+        "conditions_code": "news_cond_listing_any_account",
+        "confidence": "observed",
+        "configured_provider": true,
+        "current": {
+          "cache_read": 0.1,
+          "cache_write": 0.125,
+          "input": 1.0,
+          "output": 5.0
+        },
+        "effective_at": "",
+        "for_you": true,
+        "has_tiers": false,
+        "id": "md-65e50764b396",
+        "model": "anthropic/claude-haiku-4-5",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "central",
+        "previous": null,
+        "provenance": "models.dev",
+        "provider": "openrouter",
+        "related_routes": [
+          "openrouter"
+        ],
+        "source_url": "https://models.dev",
+        "summary": "anthropic/claude-haiku-4-5 newly listed under openrouter on models.dev.",
+        "summary_code": "news_sum_new_model_feed",
+        "summary_params": {
+          "model": "anthropic/claude-haiku-4-5",
+          "provider": "openrouter"
+        }
+      },
+      {
+        "category": "new_model",
+        "conditions": "Catalogue listing only; not confirmed available on any account.",
+        "conditions_code": "news_cond_listing_any_account",
+        "confidence": "observed",
+        "configured_provider": true,
+        "current": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 1.0,
+          "output": 5.0
+        },
+        "effective_at": "",
+        "for_you": true,
+        "has_tiers": false,
+        "id": "md-560364661e93",
+        "model": "claude-haiku-4-5",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "central",
+        "previous": null,
+        "provenance": "models.dev",
+        "provider": "anthropic",
+        "related_routes": [
+          "anthropic"
+        ],
+        "source_url": "https://models.dev",
+        "summary": "claude-haiku-4-5 newly listed under anthropic on models.dev.",
+        "summary_code": "news_sum_new_model_feed",
+        "summary_params": {
+          "model": "claude-haiku-4-5",
+          "provider": "anthropic"
+        }
+      },
+      {
+        "category": "price_increase",
+        "conditions": "",
+        "conditions_code": "",
+        "confidence": "observed",
+        "configured_provider": true,
+        "current": {
+          "cache_read": 1.5,
+          "cache_write": 1.5,
+          "input": 15.0,
+          "output": 75.0
+        },
+        "effective_at": "",
+        "for_you": true,
+        "has_tiers": false,
+        "id": "md-24899fccd5fb",
+        "model": "claude-opus-4",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "central",
+        "previous": {
+          "cache_read": 1.5,
+          "cache_write": 1.25,
+          "input": 15.0,
+          "output": 75.0
+        },
+        "provenance": "models.dev",
+        "provider": "anthropic",
+        "related_routes": [],
+        "source_url": "https://models.dev",
+        "summary": "claude-opus-4 (anthropic) list price changed on models.dev.",
+        "summary_code": "news_sum_price_change_feed",
+        "summary_params": {
+          "model": "claude-opus-4",
+          "provider": "anthropic"
+        }
+      }
+    ],
+    "state": "ok"
+  },
+  "for_you_count": 10,
+  "impact_window_days": 30,
+  "impacts": {
+    "local-price-reduction-anthropic-claude-sonnet-4--r-----cache-read---0-3--2ea96cf7f1": {
+      "basis": "full",
+      "calls": 1,
+      "delta_usd": -0.46499999999999986,
+      "new_usd": 2.04,
+      "old_usd": 2.505,
+      "reason": "",
+      "reason_codes": [],
+      "tokens": {
+        "cache_read": 100000,
+        "cache_write": 20000,
+        "input": 400000,
+        "output": 80000
+      },
+      "window_days": 30
+    },
+    "md-cca3c3148481": {
+      "basis": "full",
+      "calls": 1,
+      "delta_usd": -0.46499999999999986,
+      "new_usd": 2.04,
+      "old_usd": 2.505,
+      "reason": "",
+      "reason_codes": [],
+      "tokens": {
+        "cache_read": 100000,
+        "cache_write": 20000,
+        "input": 400000,
+        "output": 80000
+      },
+      "window_days": 30
+    }
+  },
+  "local": {
+    "baseline": false,
+    "items": [
+      {
+        "category": "price_reduction",
+        "conditions": "",
+        "conditions_code": "",
+        "confidence": "observed",
+        "configured_provider": true,
+        "current": {
+          "cache_read": 0.3,
+          "cache_write": 4.5,
+          "input": 2.0,
+          "output": 14.0
+        },
+        "effective_at": "",
+        "for_you": true,
+        "has_tiers": false,
+        "id": "local-price-reduction-anthropic-claude-sonnet-4--r-----cache-read---0-3--2ea96cf7f1",
+        "model": "claude-sonnet-4",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "local",
+        "previous": {
+          "cache_read": 0.3,
+          "cache_write": 3.75,
+          "input": 3.0,
+          "output": 15.0
+        },
+        "provenance": "Hermes models.dev cache",
+        "provider": "anthropic",
+        "related_routes": [
+          "anthropic"
+        ],
+        "source_url": "",
+        "summary": "claude-sonnet-4 (anthropic) reduced to $2/$14 per MTok in/out.",
+        "summary_code": "news_sum_price_change",
+        "summary_params": {
+          "input": "$2",
+          "model": "claude-sonnet-4",
+          "output": "$14",
+          "provider": "anthropic"
+        }
+      },
+      {
+        "category": "price_increase",
+        "conditions": "Tiered/context pricing changed; base rates compared.",
+        "conditions_code": "news_cond_tiers_changed",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": {
+          "cache_read": 0.11,
+          "cache_write": 0.22,
+          "input": 0.6,
+          "output": 2.2
+        },
+        "effective_at": "",
+        "for_you": false,
+        "has_tiers": true,
+        "id": "local-price-increase-vercel-glm-large--r-----cache-read---0-11---cac-0da875e862",
+        "model": "glm-large",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "local",
+        "previous": {
+          "cache_read": 0.11,
+          "cache_write": 0.22,
+          "input": 0.6,
+          "output": 2.2
+        },
+        "provenance": "Hermes models.dev cache",
+        "provider": "vercel",
+        "related_routes": [],
+        "source_url": "",
+        "summary": "glm-large (vercel) changed to $0.6/$2.2 per MTok in/out.",
+        "summary_code": "news_sum_price_change",
+        "summary_params": {
+          "input": "$0.6",
+          "model": "glm-large",
+          "output": "$2.2",
+          "provider": "vercel"
+        }
+      },
+      {
+        "category": "price_increase",
+        "conditions": "",
+        "conditions_code": "",
+        "confidence": "observed",
+        "configured_provider": true,
+        "current": {
+          "cache_read": 1.5,
+          "cache_write": 1.5,
+          "input": 15.0,
+          "output": 75.0
+        },
+        "effective_at": "",
+        "for_you": true,
+        "has_tiers": false,
+        "id": "local-price-increase-anthropic-claude-opus-4--r-----cache-read---1-5----55e25bc43f",
+        "model": "claude-opus-4",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "local",
+        "previous": {
+          "cache_read": 1.5,
+          "cache_write": 1.25,
+          "input": 15.0,
+          "output": 75.0
+        },
+        "provenance": "Hermes models.dev cache",
+        "provider": "anthropic",
+        "related_routes": [],
+        "source_url": "",
+        "summary": "claude-opus-4 (anthropic) changed to $15/$75 per MTok in/out.",
+        "summary_code": "news_sum_price_change",
+        "summary_params": {
+          "input": "$15",
+          "model": "claude-opus-4",
+          "output": "$75",
+          "provider": "anthropic"
+        }
+      },
+      {
+        "category": "new_model",
+        "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+        "conditions_code": "news_cond_listing_accounts",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": null,
+        "effective_at": "",
+        "for_you": "",
+        "id": "local-new-provider-zhipu-1-2500b9f8b8",
+        "model": "",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "local",
+        "previous": null,
+        "provenance": "Hermes models.dev cache",
+        "provider": "zhipu",
+        "related_routes": [],
+        "source_url": "",
+        "summary": "zhipu is newly listed with 1 priced model(s).",
+        "summary_code": "news_sum_new_provider",
+        "summary_params": {
+          "count": 1,
+          "provider": "zhipu"
+        }
+      },
+      {
+        "category": "subscription",
+        "conditions": "",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": null,
+        "effective_at": "",
+        "for_you": "",
+        "id": "local-new-plan-demo-max---amount---100-0---currency----USD----pe-0691726473",
+        "model": "",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "local",
+        "previous": null,
+        "provenance": "bundled membership catalogue",
+        "provider": "demo",
+        "related_routes": [],
+        "source_url": "https://example.com/demo/plans",
+        "summary": "New plan listed: demo max (USD 100/month).",
+        "summary_code": "news_sum_new_plan",
+        "summary_params": {
+          "fee": "USD 100/month",
+          "plan": "demo max"
+        }
+      },
+      {
+        "category": "new_model",
+        "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+        "conditions_code": "news_cond_listing_accounts",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 0.2,
+          "output": 0.8
+        },
+        "effective_at": "",
+        "for_you": false,
+        "id": "local-new-model-vercel-text-plain-aaee27c15d",
+        "model": "text-plain",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "local",
+        "previous": null,
+        "provenance": "Hermes models.dev cache",
+        "provider": "vercel",
+        "related_routes": [],
+        "source_url": "",
+        "summary": "text-plain newly listed under vercel at $0.2/$0.8 per MTok in/out.",
+        "summary_code": "news_sum_new_model",
+        "summary_params": {
+          "input": "$0.2",
+          "model": "text-plain",
+          "output": "$0.8",
+          "provider": "vercel"
+        }
+      },
+      {
+        "category": "new_model",
+        "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+        "conditions_code": "news_cond_listing_accounts",
+        "confidence": "observed",
+        "configured_provider": true,
+        "current": {
+          "cache_read": 0.1,
+          "cache_write": 0.125,
+          "input": 1.0,
+          "output": 5.0
+        },
+        "effective_at": "",
+        "for_you": true,
+        "id": "local-new-model-openrouter-anthropic-claude-haiku-4-5-2a86dacbd2",
+        "model": "anthropic/claude-haiku-4-5",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "local",
+        "previous": null,
+        "provenance": "Hermes models.dev cache",
+        "provider": "openrouter",
+        "related_routes": [
+          "openrouter"
+        ],
+        "source_url": "",
+        "summary": "anthropic/claude-haiku-4-5 newly listed under openrouter at $1/$5 per MTok in/out.",
+        "summary_code": "news_sum_new_model",
+        "summary_params": {
+          "input": "$1",
+          "model": "anthropic/claude-haiku-4-5",
+          "output": "$5",
+          "provider": "openrouter"
+        }
+      },
+      {
+        "category": "new_model",
+        "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+        "conditions_code": "news_cond_listing_accounts",
+        "confidence": "observed",
+        "configured_provider": true,
+        "current": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 1.0,
+          "output": 5.0
+        },
+        "effective_at": "",
+        "for_you": true,
+        "id": "local-new-model-anthropic-claude-haiku-4-5-c240360d9a",
+        "model": "claude-haiku-4-5",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "local",
+        "previous": null,
+        "provenance": "Hermes models.dev cache",
+        "provider": "anthropic",
+        "related_routes": [
+          "anthropic"
+        ],
+        "source_url": "",
+        "summary": "claude-haiku-4-5 newly listed under anthropic at $1/$5 per MTok in/out.",
+        "summary_code": "news_sum_new_model",
+        "summary_params": {
+          "input": "$1",
+          "model": "claude-haiku-4-5",
+          "output": "$5",
+          "provider": "anthropic"
+        }
+      },
+      {
+        "category": "new_model",
+        "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+        "conditions_code": "news_cond_listing_accounts",
+        "confidence": "observed",
+        "configured_provider": true,
+        "current": {
+          "cache_read": 0.1,
+          "cache_write": null,
+          "input": 1.0,
+          "output": 5.0
+        },
+        "effective_at": "",
+        "for_you": true,
+        "id": "local-new-model-anthropic-claude-haiku-4-5-20251001-d44902558e",
+        "model": "claude-haiku-4-5-20251001",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "local",
+        "previous": null,
+        "provenance": "Hermes models.dev cache",
+        "provider": "anthropic",
+        "related_routes": [],
+        "source_url": "",
+        "summary": "claude-haiku-4-5-20251001 newly listed under anthropic at $1/$5 per MTok in/out.",
+        "summary_code": "news_sum_new_model",
+        "summary_params": {
+          "input": "$1",
+          "model": "claude-haiku-4-5-20251001",
+          "output": "$5",
+          "provider": "anthropic"
+        }
+      }
+    ],
+    "store_error": ""
+  },
+  "ok": true,
+  "providers_configured": [
+    "anthropic",
+    "openrouter"
+  ],
+  "settings": {
+    "live_updates": true
+  }
+}

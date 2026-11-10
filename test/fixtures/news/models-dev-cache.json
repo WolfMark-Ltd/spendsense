@@ -1,0 +1,46 @@
+{
+  "data": {
+    "anthropic": {
+      "models": {
+        "claude-sonnet-4": {
+          "name": "Claude Sonnet 4",
+          "cost": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75}
+        },
+        "claude-opus-4": {
+          "name": "Claude Opus 4",
+          "cost": {"input": 15.0, "output": 75.0, "cache_read": 1.5, "cache_write": 1.25}
+        }
+      }
+    },
+    "openrouter": {
+      "models": {
+        "meta-llama/llama-3-70b": {
+          "name": "Meta: Llama 3 70B Instruct",
+          "cost": {"input": 0.1, "output": 0.25}
+        }
+      }
+    },
+    "vercel": {
+      "models": {
+        "glm-large": {
+          "name": "GLM Large",
+          "cost": {
+            "input": 0.6,
+            "output": 2.2,
+            "cache_read": 0.11,
+            "cache_write": 0.22,
+            "tiers": [
+              {
+                "input": 0.3,
+                "output": 1.1,
+                "cache_read": 0.05,
+                "cache_write": 0.11,
+                "tier": {"type": "context", "size": 200001}
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
