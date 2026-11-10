@@ -511,7 +511,9 @@ const selectedState = button => ({
  * or the candidate gate forces probing; on baseline this never runs.
  * All hooks come from the final candidate UI (wp11/model-news-final). */
 async function probeCandidate(c, pane) {
-  const out = { selectors: SELECTORS }
+  // The generated page pins Date.now to the fixture era (see the test's
+  // PAGE_NOW_MS); recording it proves the probe ran on that clock.
+  const out = { selectors: SELECTORS, nowMs: Date.now() }
   const groupEls = () => [...pane.querySelectorAll(SELECTORS.group)]
 
   const groupSummaries = () => groupEls().map(group => ({

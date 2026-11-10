@@ -49,10 +49,14 @@ sides are non-null, so a pre-raw upgrade with identical rates emits nothing.
 `refresh_local` previously dropped a re-diffed item whose id was already
 stored, losing A→B, B→A, A→B. If the stored item's `observed_at` is strictly
 earlier than the previous snapshot's `captured_at`, the transition genuinely
-recurred and is stored as `"<id>-r" + sha1(observed_at)[:6]` (skipped if
-that id is also known). A re-emit against a snapshot the stored item
-postdates (a crash between the writes) or without `captured_at` is skipped
-as before; stored ids are never altered.
+recurred and is stored as
+`"<id>-r" + sha1(<previous snapshot's captured_at>)[:6]` (skipped if that id
+is also known). The suffix hashes that compared snapshot's `captured_at`,
+never the item's `observed_at`, so a retry against the same compared
+snapshot (a crash after the items write but before the snapshot write)
+computes the same recurrence id and is skipped instead of duplicated. A
+re-emit against a snapshot the stored item postdates, or without
+`captured_at`, is skipped as before; stored ids are never altered.
 
 ## Fixtures and rollback
 

@@ -8223,9 +8223,16 @@ function newsGroupModels(items) {
     ...groups,
     ...cards.map(item => ({ kind: 'card', item, observed_at: item?.observed_at || '', sort_id: item?.id || '' })),
   ]
-  entries.sort((a, b) =>
-    String(b.observed_at || '').localeCompare(String(a.observed_at || '')) ||
-    String(a.sort_id || '').localeCompare(String(b.sort_id || '')))
+  // Entries carry observed_at and sort_id but no id: parsed instants decide
+  // like newsNewestFirst, and equal/invalid instants keep the previous text
+  // order, then the exact sort_id.
+  entries.sort((a, b) => {
+    const aMs = newsObservedMs(a)
+    const bMs = newsObservedMs(b)
+    if (aMs != null && bMs != null && aMs !== bMs) return bMs - aMs
+    return String(b.observed_at || '').localeCompare(String(a.observed_at || '')) ||
+      String(a.sort_id || '').localeCompare(String(b.sort_id || ''))
+  })
   return { groups, cards, plans, listings, entries }
 }
 

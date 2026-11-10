@@ -602,6 +602,30 @@ test('newsGroupModels returns plans and listings alongside groups and cards', ()
   assert.equal(entries.length, 3)
 })
 
+test('entries order compares parsed instants, never timestamp text across offsets', () => {
+  // 12:00+09:00 is 03:00Z — OLDER than 05:00Z even though its text sorts
+  // higher, so an offset-bearing stamp can never outrank a newer instant.
+  const { entries } = S.newsGroupModels([
+    evt({ id: 'offset', model: '', observed_at: '2026-11-03T12:00:00+09:00' }),
+    evt({ id: 'grouped', observed_at: '2026-11-03T05:00:00Z' }),
+  ])
+  assert.deepEqual(entries.map(entry => entry.sort_id), ['claude-sonnet-4-5-20250929', 'offset'])
+  // Equal instants written in different offsets are a tie: the previous
+  // text order decides, exactly as it did before parsed instants existed.
+  const tied = S.newsGroupModels([
+    evt({ id: 'a', model: '', observed_at: '2026-11-03T00:00:00-05:00' }),
+    evt({ id: 'b', model: '', observed_at: '2026-11-03T05:00:00Z' }),
+  ]).entries
+  assert.deepEqual(tied.map(entry => entry.sort_id), ['b', 'a'])
+  // Missing and invalid instants keep the old text order, then sort_id.
+  const invalid = S.newsGroupModels([
+    evt({ id: 'zz', model: '', observed_at: 'not-a-time' }),
+    evt({ id: 'aa', model: '', observed_at: 'not-a-time' }),
+    evt({ id: 'dated', model: '', observed_at: '2026-11-01T00:00:00Z' }),
+  ]).entries
+  assert.deepEqual(invalid.map(entry => entry.sort_id), ['aa', 'zz', 'dated'])
+})
+
 test('newsOfferEvents, newsPage and newsSearchFilter exist with their contracts', () => {
   const { groups, entries } = S.newsGroupModels([
     evt({ id: 'g1' }), evt({ id: 'g0', observed_at: '2026-11-01T00:00:00Z' }),

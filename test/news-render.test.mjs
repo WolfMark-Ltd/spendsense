@@ -1658,6 +1658,17 @@ const prefixPayload = () => ({
   signals: { configured_families: ['acme'], plan_families: ['team'] },
 })
 
+// The payload above carries fixed 2026-11 stamps, and newsUsedRecently reads
+// Date.now: pin the render to a fixed instant just after those stamps so the
+// 30-day recency window cannot expire with the real wall clock. Scoped to one
+// call, so no other test sees the fake time.
+const PINNED_NOW_MS = Date.parse('2026-11-10T12:00:00Z')
+const atPinnedNow = async fn => {
+  const realNow = Date.now
+  Date.now = () => PINNED_NOW_MS
+  try { return await fn() } finally { Date.now = realNow }
+}
+
 /** Render the settled For You page over `payload`; scope preset to For You. */
 const renderPrefixPage = async payload => {
   T.setRest(async path => path === '/news/refresh' ? payload : { ok: true })
@@ -1684,7 +1695,7 @@ const renderPrefixPage = async payload => {
   return { c, list }
 }
 
-test('For You shows the ranked prefix through the fifth model group, with the plan in place', async () => {
+test('For You shows the ranked prefix through the fifth model group, with the plan in place', () => atPinnedNow(async () => {
   const { c, list } = await renderPrefixPage(prefixPayload())
   // The initial page is the smallest ranked prefix through the FIFTH model
   // group: the plan card keeps its original rank ahead of it, so five model
@@ -1725,9 +1736,9 @@ test('For You shows the ranked prefix through the fifth model group, with the pl
     'the focused entry is the first one the expansion revealed')
   assert.equal(c().querySelector('button[data-news-show-all]') === null, true,
     'no Show All remains once every entry is visible')
-})
+}))
 
-test('a groups-only For You keeps the exact five-group page with no Show All', async () => {
+test('a groups-only For You keeps the exact five-group page with no Show All', () => atPinnedNow(async () => {
   const payload = prefixPayload()
   payload.local.items = payload.local.items.filter(item => item.model).slice(0, 5)
   const { c } = await renderPrefixPage(payload)
@@ -1739,4 +1750,26 @@ test('a groups-only For You keeps the exact five-group page with no Show All', a
     'five groups with no cards leave nothing behind: no Show All')
   assert.match(c().querySelector('[data-news-scope]').textContent, /5 updates/,
     'the honest entries count')
+}))
+
+test('the ranked prefix holds when the surrounding clock is far from the fixture dates', async () => {
+  // Simulate a real clock long after the 2026-11 fixture stamps: without the
+  // pinned render the plan loses its recency rank signal and the prefix
+  // changes. The pin must decide, and the surrounding clock must come back.
+  const realNow = Date.now
+  const farFuture = Date.parse('2027-06-01T00:00:00Z')
+  Date.now = () => farFuture
+  try {
+    await atPinnedNow(async () => {
+      const { c, list } = await renderPrefixPage(prefixPayload())
+      assert.equal(list().children[0].getAttribute('data-news-plan') !== null, true,
+        'the plan keeps its rank under a clock far from the fixture dates')
+      assert.equal([...c().querySelectorAll('[data-news-group]')].length, 5,
+        'the fifth model group still renders under a far-future clock')
+    })
+    assert.equal(Date.now(), farFuture,
+      'the pinned render restores the surrounding clock')
+  } finally {
+    Date.now = realNow
+  }
 })

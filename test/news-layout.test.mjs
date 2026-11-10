@@ -16,6 +16,10 @@ const CHROME_CANDIDATES = [
   '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
 ]
 const CHROME = CHROME_CANDIDATES.find(existsSync)
+// The committed fixtures carry fixed 2026-11 stamps and the UI measures its
+// 30-day recency window against Date.now: every generated page runs on this
+// pinned instant instead of the wall clock, so the assertions cannot expire.
+const PAGE_NOW_MS = Date.parse('2026-11-10T12:00:00Z')
 
 // Realistic-fixture identities the candidate assertions reason about, derived
 // from the committed fixture so regenerated data never desynchronises tests.
@@ -133,6 +137,7 @@ body[data-single]{display:block;padding:0}body[data-single="dark"]{background:#1
 body[data-single] .case{margin:0}
 #news-layout-result{display:none}
 </style></head><body><div id="news-layout-cases"></div><div id="news-layout-result"></div>
+<script>Date.now = () => ${PAGE_NOW_MS}</script>
 <script src="page.js"></script></body></html>`)
   const url = pathToFileURL(html).href
   // One Chrome run per (fixture, scope, locale) combo, chunked so no single
@@ -455,6 +460,10 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
   const forYou = await runProbe(h, 'realistic__foryou__1200__dark__en')
   const noSignals = await runProbe(h, 'nosignals__foryou__1200__dark__en')
   const probe = all.probe
+  // Recency and age depend on Date.now: the page must run on the pinned
+  // fixture era, never the real wall clock, or these assertions expire.
+  assert.equal(probe.nowMs, PAGE_NOW_MS,
+    `the probe runs on the pinned fixture clock (got ${probe.nowMs})`)
 
   // B) initial All pagination semantics: the first NEWS_PAGE_SIZE entries
   // render with a load-more control; the expanded snapshot below carries
