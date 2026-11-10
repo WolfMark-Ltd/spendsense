@@ -167,3 +167,141 @@ test('switching locales never persists translated labels', async () => {
   await card.show('en')
   assert.equal(card.text(), before, 'returning to English restores byte-identical output')
 })
+
+// --- WP11: model-first group rendering ---------------------------------------
+
+/** Items shaped like the real /news payload, grouped by the production helper. */
+const groupFrom = (items) => T.newsGroupModels(items).groups[0]
+
+const groupItem = (over = {}) => ({
+  id: 'g1', origin: 'local', category: 'price_reduction',
+  provider: 'Anthropic', model: 'claude-sonnet-4-5-20250929',
+  summary: 'Rate change.', summary_code: 'news_sum_price_change',
+  summary_params: { model: 'claude-sonnet-4-5-20250929', provider: 'Anthropic', input: '$4.00', output: '$25.00' },
+  previous: { input: 5.0, output: 25.0, cache_read: 0.5, cache_write: 6.25 },
+  current: { input: 4.0, output: 25.0, cache_read: 0.4, cache_write: 6.25 },
+  has_tiers: false, conditions: '', conditions_code: '',
+  observed_at: '2026-11-03T00:00:00Z', effective_at: '2026-11-03T00:00:00Z',
+  source_url: 'https://example.com/pricing', provenance: 'Hermes models.dev cache',
+  confidence: 'observed', related_routes: ['acme/claude-sonnet-4-5'],
+  relevance: { relevant: true, reasons: ['used_model'] },
+  ...over,
+})
+
+const renderNode = async (element, locale) => {
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  const show = async (nextLocale) => {
+    await React.act(async () => {
+      root.render(React.cloneElement(element, { t: translator(nextLocale) }))
+    })
+  }
+  await show(locale)
+  return { container, text: () => container.textContent, show }
+}
+
+test('a model group renders the friendly name over the exact ID, EN', async () => {
+  const group = groupFrom([
+    groupItem({ id: 'g1' }),
+    groupItem({ id: 'g0', provider: 'Bedrock', model_name: 'Claude Sonnet 4.5',
+      observed_at: '2026-11-04T00:00:00Z' }),
+    groupItem({ id: 'g-old', observed_at: '2026-11-01T00:00:00Z' }),
+  ])
+  const { container, text } = await renderNode(
+    React.createElement(T.NewsModelGroup, { group, impacts: { g0: { basis: 'full', delta_usd: -3.10, window_days: 30 } },
+      t: translator('en'), matchedOffers: null, detailsId: 'wg1' }), 'en')
+  const heading = container.querySelector('h3')
+  assert.equal(heading.firstChild.textContent, 'Claude Sonnet 4.5', 'friendly name is primary')
+  assert.equal(heading.querySelector('.wm-news-groupid').textContent, 'claude-sonnet-4-5-20250929',
+    'the exact model ID sits underneath in mono')
+  assert.match(text(), /For you because it matches a model you used\./)
+  const down = container.querySelector('.wm-news-chip[data-tone="down"]')
+  assert.match(down.textContent, /Input −20%/)
+  assert.match(container.textContent, /Output ±0%|Output unchanged/)
+  const badge = container.querySelector('.wm-news-badge[data-class]')
+  assert.equal(badge.textContent, 'Price down')
+  const impact = container.querySelector('.wm-news-offerimpact')
+  assert.match(impact.textContent, /Hypothetical API-equivalent/)
+  assert.match(impact.textContent, /not a bill or guaranteed saving/)
+  assert.doesNotMatch(impact.textContent, /save|charged|billed/)
+})
+
+test('group details open, show the audit trail and History, in both locales', async () => {
+  const group = groupFrom([
+    groupItem({ id: 'g1' }),
+    groupItem({ id: 'g-old', observed_at: '2026-11-01T00:00:00Z',
+      relevance: { relevant: false, reasons: [] } }),
+  ])
+  for (const [locale, dir, source] of [['en', /Price down/, /Source/], ['zh', /价格下调/, /来源/]]) {
+    T.$newsDetailsOpen.set([])
+    const node = React.createElement(T.NewsModelGroup, { group, impacts: {}, t: translator(locale),
+      matchedOffers: null, detailsId: `wd-${locale}` })
+    const view = await renderNode(node, locale)
+    assert.match(view.container.querySelector('.wm-news-badge[data-class]').textContent, dir)
+    const button = view.container.querySelector('button.wm-news-details')
+    assert.equal(button.getAttribute('aria-expanded'), 'false')
+    assert.ok(button.getAttribute('aria-controls'), 'the button names its panel')
+    const panelBefore = view.container.querySelector('.wm-news-detailspanel')
+    assert.equal(panelBefore.id, button.getAttribute('aria-controls'))
+    assert.ok(panelBefore.hidden)
+    await React.act(async () => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const panel = view.container.querySelector('.wm-news-detailspanel')
+    assert.equal(button.getAttribute('aria-expanded'), 'true')
+    assert.ok(!panel.hidden)
+    assert.ok(panel.querySelector('.wm-news-rates'), 'the was/now rate table is present')
+    assert.match(panel.textContent, /Observed|观察于/)
+    assert.match(panel.textContent, source)
+    assert.match(panel.textContent, /g1/)
+    const history = panel.querySelector('.wm-news-history')
+    assert.ok(history, 'History lists older events')
+    assert.match(history.textContent, /g-old/)
+    assert.ok(history.querySelector('a[href="https://example.com/pricing"]'), 'history keeps its source link')
+  }
+})
+
+test('a group without model_name shows the exact ID alone', async () => {
+  const group = groupFrom([groupItem({ id: 'g1', model_name: '' })])
+  const { container } = await renderNode(
+    React.createElement(T.NewsModelGroup, { group, impacts: {}, t: translator('en'),
+      matchedOffers: null, detailsId: 'wn1' }), 'en')
+  const heading = container.querySelector('h3')
+  assert.equal(heading.textContent, 'claude-sonnet-4-5-20250929')
+  assert.equal(heading.querySelector('.wm-news-groupid'), null, 'no duplicated ID line')
+})
+
+test('the same group renders translated Chinese and keeps the ID unchanged', async () => {
+  const group = groupFrom([
+    groupItem({ id: 'g1', model_name: 'Claude Sonnet 4.5' }),
+  ])
+  const { container, text } = await renderNode(
+    React.createElement(T.NewsModelGroup, { group, impacts: { g1: { basis: 'full', delta_usd: -3.10, window_days: 30 } },
+      t: translator('zh'), matchedOffers: null, detailsId: 'wz1' }), 'zh')
+  const heading = container.querySelector('h3')
+  assert.equal(heading.firstChild.textContent, 'Claude Sonnet 4.5', 'proper names stay untranslated')
+  assert.equal(heading.querySelector('.wm-news-groupid').textContent, 'claude-sonnet-4-5-20250929')
+  assert.match(container.querySelector('.wm-news-badge[data-class]').textContent, /价格下调/)
+  assert.match(container.querySelector('.wm-news-chip[data-tone="down"]').textContent, /输入 −20%/)
+  const impact = container.querySelector('.wm-news-offerimpact')
+  assert.match(impact.textContent, /假设的 API 等效估算/)
+  assert.match(impact.textContent, /并非账单/)
+  assert.match(text(), /匹配您用过的模型/)
+})
+
+test('the scope control carries the persistent selected ring markup', async () => {
+  const { container } = await renderNode(
+    React.createElement(T.NewsScopeTabs, { scope: 'foryou', forYouCount: 3, allCount: 8,
+      t: translator('en'), onChange: () => {} }), 'en')
+  const buttons = [...container.querySelectorAll('button')]
+  assert.equal(buttons.length, 2)
+  assert.equal(buttons[0].getAttribute('aria-pressed'), 'true')
+  assert.equal(buttons[1].getAttribute('aria-pressed'), 'false')
+  assert.match(buttons[0].textContent, /For You/)
+  assert.match(buttons[0].textContent, /3 groups/, 'scope counts are labelled as groups')
+  assert.match(buttons[1].textContent, /8 updates/, 'the All count is labelled too')
+  assert.match(T.NEWS_CSS, /wm-news-controls \[aria-pressed="true"\][^}]*outline:2px solid var\(--ui-accent\)/,
+    'the ring rule is page-local CSS, weight 600')
+})
