@@ -195,9 +195,14 @@ const countLabelRegex = n => new RegExp(`\\(${n} (groups?|updates?|个分组|条
 
 test('Model News baseline invariants and WCAG contrast (real NewsPage, committed fixtures)', {
   skip: CHROME ? false : 'No Chromium binary available for real Model News layout checks',
-}, async () => {
+}, async t => {
   const h = await harness()
   const results = h.results
+  const worstContrast = results.filter(r => r.contrast.min != null)
+    .sort((a, b) => a.contrast.min - b.contrast.min)[0]
+  t.diagnostic(`Minimum badge/chip/impact contrast: ${JSON.stringify({
+    case: worstContrast?.id, ...worstContrast?.contrast,
+  })}`)
   assert.equal(results.length, 24)
   const realistic = results.filter(r => r.fixture === 'realistic')
   assert.equal(realistic.length, 16)
@@ -649,6 +654,7 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
     `All time restores the dropped item: ${JSON.stringify(probe.dateFilter.restored)}`)
   // load-more keeps focus inside the list (only assertable when present)
   if (probe.loadMore.present) {
+    t.diagnostic(`Load-more focus after activation: ${JSON.stringify(probe.loadMore)}`)
     assert.equal(probe.loadMore.focusInsideList, true, 'load-more keeps focus inside the list')
   }
   // persistent selected ring on scope AND category, surviving switches
@@ -661,8 +667,11 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
 
   // For You shows the initial page of ranked groups, with show-all for the rest
   const forYouGroups = [...new Set(NEWS_ITEMS.filter(isRelevant).map(item => item.model).filter(Boolean))]
-  assert.equal(forYou.probe.groups.length, Math.min(5, forYouGroups.length),
-    `For You shows the initial page of groups (got ${forYou.probe.groups.length})`)
+  assert.equal(forYou.probe.forYou.visible, Math.min(5, forYouGroups.length),
+    `For You shows the initial page of groups (got ${forYou.probe.forYou.visible})`)
+  assert.equal(forYou.probe.groups.length,
+    forYou.probe.forYou.showAllPresent ? forYouGroups.length : Math.min(5, forYouGroups.length),
+    `For You structure captures the post-show-all total (got ${forYou.probe.groups.length})`)
   if (forYouGroups.length > 5) {
     assert.equal(forYou.probe.forYou.showAllPresent, true, 'show-all is offered for the remaining groups')
     assert.equal(forYou.probe.forYou.afterShowAll, forYouGroups.length,

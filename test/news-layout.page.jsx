@@ -738,17 +738,25 @@ async function probeCandidate(c, pane) {
     return groupEls().map(groupIdOf)
   }
   const loadMore = pane.querySelector(SELECTORS.loadMore)
-  out.loadMore = loadMore
-    ? (() => {
-        loadMore.click()
-        return {
-          present: true,
-          label: loadMore.textContent.trim(),
-          focusInsideList: !!pane.querySelector(SELECTORS.list)?.contains(document.activeElement),
-        }
-      })()
-    : { present: false }
-  await tick(80)
+  if (loadMore) {
+    const label = loadMore.textContent.trim()
+    document.activeElement?.blur()
+    loadMore.focus()
+    loadMore.click()
+    await tick(80)
+    const active = document.activeElement
+    out.loadMore = {
+      present: true,
+      label,
+      focusInsideList: !!pane.querySelector(SELECTORS.list)?.contains(active),
+      activeElement: {
+        tag: active?.tagName.toLowerCase() || '',
+        label: (active?.getAttribute('aria-label') || active?.textContent || '').trim().slice(0, 40),
+      },
+    }
+  } else {
+    out.loadMore = { present: false }
+  }
   out.expanded = { groups: await expandAll() }
   // Full structure, reachability and presence over the COMPLETE list.
   captureStructure()
@@ -821,6 +829,7 @@ async function probeCandidate(c, pane) {
     const before = groupEls().map(groupIdOf)
     thirty.click()
     await tick(120)
+    await expandAll()
     out.dateFilter = {
       before,
       after: groupEls().map(groupIdOf),
@@ -925,7 +934,11 @@ async function measureCase(c) {
     errors: [...errors.splice(0), ...(globalThis.__newsQueryErrors || []).splice(0)].slice(0, 6),
     text: text.slice(0, 40000),
   }
-  if (PROBE && candidateDetected) result.probe = await probeCandidate(c, pane)
+  // Empty candidate For You has no group cards, but retains the grouped
+  // count hook. It must still run the no-signals navigation probe.
+  if (PROBE && (candidateDetected || pane.querySelector(SELECTORS.countGroups))) {
+    result.probe = await probeCandidate(c, pane)
+  }
   else if (PROBE) result.probe = { skipped: 'candidate DOM not detected ([data-news-group] absent)' }
   return result
 }
