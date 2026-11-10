@@ -77,6 +77,15 @@ OLD_PROVIDERS = {
     "azure-openai": {"azure-gpt-5.3": rate(1.50, 6.00, 0.15, 1.50)},
     "github-copilot": {"copilot-gpt-5.3": rate(2.10, 10.50, 0.21, 2.10)},
     "amazon-bedrock": {"claude-3-5-haiku": rate(0.80, 4.00, 0.08, 0.80)},
+    # Present on both sides so the gemini cut is a local model-level event.
+    "google": {"gemini-3-flash": rate(0.50, 2.00, 0.05, None)},
+    # Present on both sides so deepseek-v4 is a local model-level event.
+    "deepseek": {"deepseek-v3.2": rate(0.28, 1.10, 0.03, 0.28)},
+    # Identity-variant provider: usage records "M1" while the item model is
+    # "m1" (case-only difference), plus an exact-match control "x2" (a real
+    # price transition so the exact usage match prices an impact).
+    "fixturelabs": {"fixturelabs-m0": rate(0.40, 1.60, None, None),
+                    "x2": rate(0.50, 2.00, None, None)},
 }
 
 NEW_PROVIDERS = {
@@ -99,6 +108,24 @@ NEW_PROVIDERS = {
     "amazon-bedrock": {
         "claude-3-5-haiku": rate(0.80, 4.00, 0.08, 0.80),
         "claude-sonnet-4-5-20250929": rate(1.80, 9.00, None, None),
+    },
+    "google": {"gemini-3-flash": rate(0.30, 1.20, 0.03, None)},
+    "deepseek": {
+        "deepseek-v3.2": rate(0.28, 1.10, 0.03, 0.28),
+        "deepseek-v4": rate(0.28, 1.15, 0.028, 0.28),
+    },
+    "fixturelabs": {
+        "fixturelabs-m0": rate(0.40, 1.60, None, None),
+        "m1": rate(0.20, 0.80, None, None),
+        "x2": rate(0.40, 1.60, None, None),
+        # Recency-timestamp variants: four listings whose hand-written
+        # last_used_at can never earn recency wording (older than 30 days,
+        # malformed, in the future, empty). None has an exact usage row, so
+        # none may carry a numeric personal estimate either.
+        "ts-old90day": rate(0.35, 1.40, None, None),
+        "ts-malformed": rate(0.22, 0.90, None, None),
+        "ts-future": rate(0.18, 0.75, None, None),
+        "ts-empty": rate(0.12, 0.50, None, None),
     },
     # Genuinely new provider: exercises the provider-level listing summary.
     "perplexity": {
@@ -187,11 +214,14 @@ def feed_entry(item_id, category, provider, model, observed, url, *,
 
 FEED_ITEMS = [
     # The same kimi price cut the local diff also found (duplicate event).
+    # The LOCAL twin is hand-equalised below (same nonempty effective_at and
+    # source_url), which is the explicit same-event proof the final merger
+    # requires; without it the pair would stay two events.
     feed_entry(
         "central-2026-11-07-moonshotai-kimi-k2-5-rate-cut", "price_reduction",
         "moonshotai", "kimi-k2.5", "2026-11-07T08:40:00Z",
         "https://announcements.spend-sense.example/feed/moonshotai-kimi-k2-5-rate-cut",
-        summary_code="news_sum_price_change_feed",
+        summary_code="news_sum_price_change_feed", effective="2026-11-07",
         previous=rate(0.60, 2.50, 0.06, 0.60), current=rate(0.45, 1.90, 0.045, 0.475)),
     # claude-opus thinking variant, newly listed on the announcements feed.
     feed_entry(
@@ -213,22 +243,28 @@ FEED_ITEMS = [
         "https://announcements.spend-sense.example/feed/deepseek-v4-pro",
         summary_code="news_sum_new_model_feed", effective="2026-11-09",
         current=rate(0.27, 1.10, None, None)),
-    # Near-duplicates seconds apart with different source IDs: a naive
-    # dedupe would merge these; the verified behaviour keeps both.
-    feed_entry(
-        "central-2026-11-10-google-gemini-3-flash-cut-0842", "price_reduction",
-        "google", "gemini-3-flash", "2026-11-10T07:59:10Z",
-        "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-a",
-        summary_code="news_sum_price_change_feed",
-        previous=rate(0.50, 2.00, 0.05, None), current=rate(0.30, 1.20, 0.03, None)),
+    # Near-duplicate control, cross-origin: the LOCAL diff found the same
+    # gemini cut (observed_at hand-equalised below) with a conflicting
+    # nonempty source_url — proof is impossible, so both stay distinct events.
     feed_entry(
         "central-2026-11-10-google-gemini-3-flash-cut-0843", "price_reduction",
         "google", "gemini-3-flash", "2026-11-10T07:59:50Z",
         "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-b",
         summary_code="news_sum_price_change_feed",
         previous=rate(0.50, 2.00, 0.05, None), current=rate(0.30, 1.20, 0.03, None)),
+    # Same-event variant: identical transition observed at the SAME instant as
+    # the local diff, effective dates empty, source URL only on the central
+    # side (absent URL never conflicts) → the two merge into one event.
+    feed_entry(
+        "central-2026-11-10-deepseek-deepseek-v4-listing", "new_model",
+        "deepseek", "deepseek-v4", OBSERVED,
+        "https://announcements.spend-sense.example/feed/deepseek-v4-listing",
+        summary_code="news_sum_new_model_feed",
+        current=rate(0.28, 1.15, 0.028, 0.28)),
     # Repeated identical before→after transition with a different source and
-    # effective date: distinct events, must never be merged.
+    # effective date: distinct events, must never be merged. Both sides are
+    # central, so this is also the same-origin control (same-origin items with
+    # different ids never merge, by construction).
     feed_entry(
         "central-2026-11-06-mistral-large-3-pricing-update", "price_increase",
         "mistral", "mistral-large-3", "2026-11-06T12:00:00Z",
@@ -254,10 +290,10 @@ FEED_SUMMARIES = {
         "openrouter/anthropic/claude-sonnet-4.5 newly listed under openrouter on models.dev.",
     "central-2026-11-09-deepinfra-deepseek-v4-pro":
         "deepseek-ai/deepseek-v4-pro newly listed under deepinfra on models.dev.",
-    "central-2026-11-10-google-gemini-3-flash-cut-0842":
-        "gemini-3-flash (google) list price changed on models.dev.",
     "central-2026-11-10-google-gemini-3-flash-cut-0843":
         "gemini-3-flash (google) list price changed on models.dev.",
+    "central-2026-11-10-deepseek-deepseek-v4-listing":
+        "deepseek-v4 newly listed under deepseek on models.dev.",
     "central-2026-11-06-mistral-large-3-pricing-update":
         "mistral-large-3 (mistral) list price changed on models.dev.",
     "central-2026-11-06-mistral-large-3-pricing-update-2":
@@ -271,10 +307,14 @@ for entry in FEED_ITEMS:
 # one openai credential, recorded usage on two routes, and a selected plan.
 SIGNALS = {
     "configured_families": ["anthropic", "openai"],
-    "used_providers": ["anthropic", "openai-codex"],
+    "used_providers": ["anthropic", "openai-codex", "fixturelabs"],
     "used_models": [
         {"provider": "anthropic", "model": "claude-sonnet-4-5"},
         {"provider": "openai-codex", "model": "gpt-5.6-sol"},
+        # Case-only identity variant: usage recorded as "M1", item model "m1".
+        {"provider": "fixturelabs", "model": "M1"},
+        # Exact-match control for the identity variant.
+        {"provider": "fixturelabs", "model": "x2"},
     ],
     "plan_ids": ["claude-max-20x"],
     "plan_families": ["anthropic"],
@@ -283,14 +323,27 @@ SIGNALS = {
 EMPTY_SIGNALS = {key: [] for key in SIGNALS}
 
 # Token buckets as usage_summary would return them, keyed by (route, model).
+# last_ts is the newest successful call per row (final news._last_used_at
+# derives an item's last_used_at from the exact (provider, model) row only).
 USAGE = {
     ("openai-codex", "gpt-5.6-sol"): {
         "input": 900_000, "output": 60_000, "cache_read": 4_000_000,
-        "cache_write": 120_000, "calls": 214,
+        "cache_write": 120_000, "calls": 214, "last_ts": 1_793_800_000.0,
     },
     ("anthropic", "claude-sonnet-4-5"): {
         "input": 1_200_000, "output": 80_000, "cache_read": 3_500_000,
-        "cache_write": 0, "calls": 189,
+        "cache_write": 0, "calls": 189, "last_ts": 1_793_700_000.0,
+    },
+    # Case-only recording: "M1" never equals the item model "m1" exactly, so
+    # no impact may be priced from it and no honest last_used_at exists.
+    ("fixturelabs", "M1"): {
+        "input": 10_000, "output": 1_000, "cache_read": 0, "cache_write": 0,
+        "calls": 3, "last_ts": 1_793_600_000.0,
+    },
+    # Exact-match control row for "x2".
+    ("fixturelabs", "x2"): {
+        "input": 50_000, "output": 5_000, "cache_read": 0, "cache_write": 0,
+        "calls": 12, "last_ts": 1_793_760_000.0,
     },
 }
 
@@ -339,9 +392,82 @@ def base_payload(local_items, central_items, *, live=True, central_state="fresh"
     return personalise_payload(payload, signals=signals)
 
 
+def relevant_items(payload):
+    return payload["local"]["items"] + payload["central"]["items"]
+
+
 def main():
     local_items, meta = build_local_items()
     central_items = build_central_items()
+
+    # --- hand-written fields the worktree diff cannot generate (documented in
+    # --- README.md). Everything else stays backend-generated.
+
+    # Proven same-event pair: the local kimi twin carries the SAME nonempty
+    # effective_at and source_url as the central entry — the explicit proof
+    # the final merger (newsSameEventProof) requires to fuse them.
+    central_kimi = next(item for item in central_items if item["model"] == "kimi-k2.5")
+    local_kimi = next(item for item in local_items if item["model"] == "kimi-k2.5")
+    local_kimi["effective_at"] = central_kimi["effective_at"]      # 2026-11-07
+    local_kimi["source_url"] = central_kimi["source_url"]
+
+    # Cross-origin source-url conflict control: the local gemini cut keeps a
+    # conflicting nonempty source_url and its observed_at is hand-equalised to
+    # the central twin's instant — with identical transitions and empty
+    # effective dates, ONLY the conflicting URLs keep the two events distinct.
+    central_cut = next(item for item in central_items if item["model"] == "gemini-3-flash")
+    local_cut = next(item for item in local_items if item["model"] == "gemini-3-flash")
+    local_cut["observed_at"] = central_cut["observed_at"]          # 07:59:50Z
+    local_cut["source_url"] = ("https://announcements.spend-sense.example"
+                               "/feed/gemini-3-flash-cut-a")
+
+    # Friendly display name, exactly as the final backend copies it from the
+    # catalogue entry (model_name); the exact ID must still render beside it.
+    next(item for item in local_items if item["model"] == "gpt-5.6-sol-pro")[
+        "model_name"] = "GPT-5.6 Sol Pro"
+
+    # In-window last_used_at for the exact-match control (the final backend
+    # derives this from the newest exact (provider, model) usage row). The
+    # case-only "m1" item deliberately gets NO last_used_at: its recorded
+    # usage is "M1", which is pricing-case-equal but never usage evidence.
+    next(item for item in local_items if item["model"] == "x2")[
+        "last_used_at"] = "2026-11-09T18:30:00Z"
+
+    # Recency-timestamp variants on the same provider. Every value below is
+    # one the final recency rules must REJECT: a valid timestamp older than
+    # the 30-day window (the UI may say "Used before", never "recently"), a
+    # malformed string, a future date and an empty string. The older item's
+    # observed_at is also moved past the 30-day window so the All Updates day
+    # filter has something to drop.
+    ts_old = next(item for item in local_items if item["model"] == "ts-old90day")
+    ts_old["observed_at"] = "2026-10-05T09:15:00Z"   # ~36 days before 2026-11-10
+    ts_old["last_used_at"] = "2026-08-01T12:00:00Z"  # valid but ~101 days old
+    next(item for item in local_items if item["model"] == "ts-malformed")[
+        "last_used_at"] = "not-a-timestamp"
+    next(item for item in local_items if item["model"] == "ts-future")[
+        "last_used_at"] = "2027-06-01T00:00:00Z"
+    next(item for item in local_items if item["model"] == "ts-empty")[
+        "last_used_at"] = ""
+
+    # Root-level tier fields (the final contract reads tiers_detail plus
+    # tiers_before/tiers_after at the item root): the openrouter opus increase
+    # declares its tier rows KNOWN, so the UI must render one comparable tier
+    # chip and list each row in Details — never average or fabricate rows.
+    opus = next(item for item in local_items if item["model"] == "anthropic/claude-opus-4.1")
+    opus["tiers_detail"] = "known"
+    opus["tiers_before"] = [{"type": "standard", "size": 200000, "input": 4.00,
+                             "output": 20.00, "cache_read": None, "cache_write": 2.00}]
+    opus["tiers_after"] = [{"type": "standard", "size": 200000, "input": 4.80,
+                            "output": 24.00, "cache_read": None, "cache_write": 2.40}]
+
+    # Official-verification block on the local kimi twin (the merge keeps the
+    # local item's fields). The source note is plain text by contract — the
+    # UI must never turn it into a link.
+    local_kimi["official"] = {
+        "verified_at": "2026-11-07T08:40:00Z",
+        "source_note": "vendor announcement page (synthetic fixture note)",
+        "windows": [],
+    }
 
     realistic = base_payload(local_items, central_items)
     realistic["local"].update({
@@ -352,13 +478,47 @@ def main():
     relevant = [item["id"] for item in
                 realistic["local"]["items"] + realistic["central"]["items"]
                 if item.get("relevance", {}).get("relevant")]
-    # The three gpt-5.6-sol items share one model: rank_items marks all three
-    # for_you (model match ignores provider), so the payload's for_you_count
-    # is 7, while read-time relevance (exact provider+model pairs) marks 5 —
-    # which is what the page's For You scope and count render. Under the
-    # candidate model-first grouping those 5 render as 5 groups.
-    assert realistic["for_you_count"] == 7, realistic["for_you_count"]
-    assert len(relevant) == 5, relevant
+    # This worktree's rank_items marks a model as used on ANY provider with a
+    # matching last path segment, so the three gpt-5.6-sol offers plus the
+    # fixturelabs pair give for_you_count 9. Read-time relevance (exact
+    # provider+model pairs) marks 7 — what the page's For You scope renders;
+    # the FINAL backend narrows the rank flag to exact pairs as well. Under
+    # the candidate model-first grouping the relevant model groups render
+    # For You (plan/provider cards stay out of For You).
+    assert realistic["for_you_count"] == 13, realistic["for_you_count"]
+    assert len(relevant) == 11, relevant
+    assert len(realistic["local"]["items"]) == 20
+    assert len(realistic["central"]["items"]) == 8
+    # Case-only identity variant: the backend emits used_model for the m1 item
+    # (match_relevance lowercases) but no impact may exist for it, while the
+    # exact-match control x2 is priced.
+    m1 = next(item for item in relevant_items(realistic) if item["model"] == "m1")
+    x2 = next(item for item in relevant_items(realistic) if item["model"] == "x2")
+    assert "used_model" in m1["relevance"]["reasons"], m1["relevance"]
+    assert "used_model" in x2["relevance"]["reasons"], x2["relevance"]
+    assert m1.get("last_used_at", "") == "", m1
+    assert x2.get("last_used_at") == "2026-11-09T18:30:00Z", x2
+    assert not any(key.startswith("local-") and "m1" in key for key in realistic["impacts"]), \
+        sorted(realistic["impacts"])
+    assert any(key.startswith("local-") and "x2" in key for key in realistic["impacts"]), \
+        sorted(realistic["impacts"])
+    # Recency-timestamp variants: relevant (so the UI renders their reasons)
+    # but never priceable — no exact usage row means no numeric estimate.
+    for model, stamp in (("ts-old90day", "2026-08-01T12:00:00Z"),
+                         ("ts-malformed", "not-a-timestamp"),
+                         ("ts-future", "2027-06-01T00:00:00Z"),
+                         ("ts-empty", "")):
+        ts_item = next(item for item in relevant_items(realistic) if item["model"] == model)
+        assert ts_item.get("last_used_at") == stamp, ts_item
+        assert "used_provider" in ts_item["relevance"]["reasons"], ts_item["relevance"]
+        assert not any("ts-" in key for key in realistic["impacts"]), sorted(realistic["impacts"])
+    # Root tier fields and the official note landed on their items.
+    opus = next(item for item in relevant_items(realistic)
+                if item["model"] == "anthropic/claude-opus-4.1")
+    assert opus["tiers_detail"] == "known" and opus["tiers_before"] and opus["tiers_after"], opus
+    kimi_local_item = next(item for item in relevant_items(realistic) if item["model"] == "kimi-k2.5"
+                           and item["origin"] == "local")
+    assert kimi_local_item["official"]["source_note"], kimi_local_item
     print("for-you items:", *relevant, sep="\n  ")
     print("impacts:", {key: round(value["delta_usd"], 4)
                        for key, value in realistic["impacts"].items()})

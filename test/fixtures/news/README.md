@@ -26,9 +26,18 @@ fixtures cannot drift from the payload contract:
   `openai-codex/gpt-5.6-sol` and `anthropic/claude-sonnet-4-5`, and the
   `claude-max-20x` plan selected).
 - **Impacts** — `compute_impacts` pricing the synthetic token buckets against
-  the fixture rates (`full` for the openai cut, `partial` with the
-  cache-excluded caveat for the anthropic cut; items without usage get none,
-  exactly as the backend behaves).
+  the fixture rates (`full` for the openai cut and the fixturelabs x2 cut,
+  `partial` with the cache-excluded caveat for the anthropic cut; items
+  without usage get none, exactly as the backend behaves).
+- **Hand-written fields** (documented here because the worktree diff cannot
+  generate them): the kimi local twin's `effective_at`/`source_url`/`official`
+  and the gemini local event's `observed_at`/`source_url` (the same-event proof
+  and conflict controls), one `model_name` (as the final backend copies it from
+  the catalogue entry), the control item's `last_used_at` (the final backend
+  derives it from the newest exact `(provider, model)` usage row; the
+  case-only `m1` item deliberately gets none), the `ts-*` items'
+  `last_used_at`/`observed_at` (recency-rejection variants), and the opus
+  item's root `tiers_detail`/`tiers_before`/`tiers_after`.
 
 Regenerate from the repo root:
 
@@ -42,20 +51,49 @@ page drifts as real time passes; no assertion depends on it.
 
 ## realistic.json — the populated payload
 
-12 local + 8 central items (payload `for_you_count` 7 from `rank_items`
-model-matching; read-time relevance marks 5, which is what the page's For You
-scope renders, and under the candidate model-first grouping those render as
-5 groups). Deliberately included:
+20 local + 8 central items (payload `for_you_count` 13 from this worktree's
+`rank_items`, which marks a model as used on any provider with a matching
+last path segment; read-time relevance marks 11 — what the page's For You
+scope renders; the final backend narrows the rank flag to exact pairs too).
+Deliberately included:
 
-- **Local + central duplicate**: the `moonshotai` / `kimi-k2.5` reduction
-  appears as a local diff item and as a central feed entry for the same
-  before→after transition — the merge candidate.
-- **Repeated identical transition that must stay distinct**: two central
-  `mistral-large-3` increases with identical rates but different sources and
-  effective dates (`2026-11-01` vs `2026-11-05`).
-- **Near-duplicates seconds apart** with different source ids: the two
-  `google` / `gemini-3-flash` reductions (07:59:10 vs 07:59:50, distinct feed
-  ids and mirror URLs).
+- **Same-event proof controls** (the final `newsSameEventProof` /
+  `newsMergeEvents` contract):
+  - *proven pair*: `moonshotai` / `kimi-k2.5` — local diff item and central
+    feed entry, distinct ids, identical transition, same nonempty
+    `effective_at` (2026-11-07) and same nonempty `source_url` → one event.
+  - *variant*: `deepseek` / `deepseek-v4` — identical transition observed at
+    the same instant, both `effective_at` empty, `source_url` only on the
+    central side (an absent URL never conflicts) → one event.
+  - *source-url conflict control*: `google` / `gemini-3-flash` — local and
+    central events with `observed_at` hand-equalised (07:59:50Z), both
+    `effective_at` empty, but conflicting nonempty `source_url`s → two events.
+  - *effective-date conflict control*: two central `mistral-large-3`
+    increases with identical transitions but conflicting nonempty
+    `effective_at` (2026-11-01 vs 2026-11-05) → two events; both sides are
+    central, so this doubles as the same-origin control (same-origin items
+    with different ids never merge).
+- **Case-only identity variant**: usage records `M1` under `fixturelabs`
+  while the item model is `m1`. `match_relevance` lowercases, so the backend
+  emits `used_model` for the m1 item — but the exact-pair usage never prices
+  an impact and no `last_used_at` exists, so the UI must render only the
+  neutral "Related update" wording, never model-use or recency claims. The
+  exact-match control `x2` (same provider, exactly recorded model) carries
+  an in-window `last_used_at` (2026-11-09T18:30:00Z) and a priced impact.
+- **Recency-timestamp variants** (`fixturelabs` / `ts-*`, all relevant via
+  `used_provider`, none with an exact usage row, so none may carry a numeric
+  estimate): `ts-old90day` carries a valid `last_used_at` ~101 days old (its
+  `observed_at` also sits ~36 days back, past the All Updates day window),
+  `ts-malformed` a non-parseable string, `ts-future` a future date and
+  `ts-empty` an empty string — none may ever earn "Used recently"; only the
+  valid old stamp may earn the truthful "Used before".
+- **Root-level tier fields**: the `openrouter` / `anthropic/claude-opus-4.1`
+  increase carries `tiers_detail: "known"` with `tiers_before`/`tiers_after`
+  (one `standard` row, +20% on every comparable field), so the UI renders a
+  comparable tier chip and lists the row in Details.
+- **Official verification block**: the local kimi twin carries `official`
+  with `verified_at`, an empty `windows` list and a `source_note` — the note
+  is plain text by contract and must never render as a link.
 - **Missing rates**: `github-copilot` / `gpt-5.6-sol` is a new listing with
   no previous rates; the anthropic sonnet cut carries null cache rates on
   both sides (rendered as `—`); several rows have only one cache side.
@@ -81,10 +119,10 @@ scope renders, and under the candidate model-first grouping those render as
   the plan items; central `effective_at` values vary.
 - **`summary_code`/`summary_params` everywhere**, so zh renders translated
   summaries with ASCII model IDs intact.
-- **Signals/usage** making For You non-empty (5 relevant items), an impact
-  item (`openai` full, `anthropic` partial) and no-usage items (`xai`,
-  `google`, `mistral` changes have no personal estimate, exactly as
-  `compute_impacts` omits them).
+- **Signals/usage** making For You non-empty (11 relevant items), impact items
+  (`openai` full, `anthropic` partial, `fixturelabs/x2` full) and no-usage
+  items (`xai`, `google`, `mistral`, `m1` and the `ts-*` changes have no
+  personal estimate, exactly as `compute_impacts` omits them).
 - One removed-model note (`cohere/command-r7b-12-2024`, count 1).
 
 ## variants.json — state variants
@@ -93,7 +131,7 @@ scope renders, and under the candidate model-first grouping those render as
 | --- | --- |
 | `empty` | No items in either origin, Live Updates on, baseline recorded, signals present; For You and All both render the "unchanged since last check" empty state. |
 | `partial` | Live Updates off: local-only items (4), central `state: "disabled"` with empty `fetched_at`; the live-off note with the Open Settings action shows. |
-| `stale` | Live Updates on but the fetch failed: central `state: "stale"` retains the cached items and reports `central feed unavailable (URLError)`, which the page surfaces in its alert (For You still shows the 5 relevant cached items). |
+| `stale` | Live Updates on but the fetch failed: central `state: "stale"` retains the cached items and reports `central feed unavailable (URLError)`, which the page surfaces in its alert (For You still shows the 11 relevant cached items). |
 | `nosignals` | Full item list but empty signals: relevance/`for_you` all false, no impacts, For You empty with the "nothing to personalise" state while All stays complete. |
 | `error` | Transport-level failure: `rest('/news/refresh')` resolves `{ok:false, detail: …}` so the query rejects and the page shows its error + Retry state. This one is not a payload — it is what the harness transport returns. |
 

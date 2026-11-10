@@ -16,7 +16,20 @@ const CHROME = [
 // Realistic-fixture identities the candidate assertions reason about, derived
 // from the committed fixture so regenerated data never desynchronises tests.
 const REALISTIC = JSON.parse(readFileSync(join(ROOT, 'test/fixtures/news/realistic.json'), 'utf8'))
+const VARIANTS = JSON.parse(readFileSync(join(ROOT, 'test/fixtures/news/variants.json'), 'utf8'))
 const NEWS_ITEMS = [...REALISTIC.local.items, ...REALISTIC.central.items]
+// Mirror of the UI's newsIsRelevant: read-time relevance wins, the stored
+// flag fills in. These counts drive the For You / All card expectations so
+// regenerated fixtures cannot desynchronise the baseline assertions.
+const isRelevant = item => (item.relevance && typeof item.relevance === 'object')
+  ? !!item.relevance.relevant
+  : !!item.for_you
+const RELEVANT_COUNT = NEWS_ITEMS.filter(isRelevant).length
+const TOTAL_COUNT = NEWS_ITEMS.length
+const PARTIAL_ITEMS = [
+  ...VARIANTS.partial.local.items, ...VARIANTS.partial.central.items,
+]
+const PARTIAL_RELEVANT = PARTIAL_ITEMS.filter(isRelevant).length
 const uniqueId = predicate => {
   const hits = NEWS_ITEMS.filter(predicate)
   assert.equal(hits.length, 1, `fixture lookup unique: ${hits.map(hit => hit.id).join(', ')}`)
@@ -24,10 +37,24 @@ const uniqueId = predicate => {
 }
 const KIMI_LOCAL = uniqueId(item => item.origin === 'local' && item.model === 'kimi-k2.5')
 const KIMI_CENTRAL_PREFIX = 'central-2026-11-07-moonshotai'
+const KIMI_CENTRAL = uniqueId(item => item.id.startsWith(KIMI_CENTRAL_PREFIX))
 const GEMINI_CUT_A = uniqueId(item => item.model === 'gemini-3-flash' && item.source_url.endsWith('cut-a'))
 const GEMINI_CUT_B = uniqueId(item => item.model === 'gemini-3-flash' && item.source_url.endsWith('cut-b'))
 const MISTRAL_FIRST = uniqueId(item => item.model === 'mistral-large-3' && item.effective_at === '2026-11-01')
 const MISTRAL_REPEAT = uniqueId(item => item.model === 'mistral-large-3' && item.effective_at === '2026-11-05')
+const DEEPSEEK_LOCAL = uniqueId(item => item.model === 'deepseek-v4' && item.origin === 'local')
+const DEEPSEEK_CENTRAL = uniqueId(item => item.model === 'deepseek-v4' && item.origin === 'central')
+// Recency-timestamp variants: every stamp the recency rules must reject.
+const TS_OLD = uniqueId(item => item.model === 'ts-old90day')
+const TS_MALFORMED = uniqueId(item => item.model === 'ts-malformed')
+const TS_FUTURE = uniqueId(item => item.model === 'ts-future')
+const TS_EMPTY = uniqueId(item => item.model === 'ts-empty')
+
+// Mandatory candidate verification: either explicit flag requires the
+// candidate DOM hooks — a mandatory run must FAIL, never skip, when the
+// hooks are missing from the rendered page.
+const MANDATORY = process.env.WP11_REQUIRE_CANDIDATE === '1'
+  || process.env.WP11_CANDIDATE === '1'
 
 const decode = text => text
   .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'")
@@ -120,7 +147,8 @@ const runProbe = async (h, caseId) => {
 // A) known baseline defects. Entries here keep the strict assertion in place
 // while documenting product bugs that exist on current origin/main. When the
 // WP11 candidate layout fixes a defect, its matches() stops firing and the
-// entry becomes inert — remove it then.
+// entry becomes inert — remove it then. Under a mandatory candidate run the
+// waivers are disabled entirely: the candidate must clear the strict bar.
 const KNOWN_BASELINE_DEFECTS = [{
   id: 'news-category-segments-overflow-380en',
   reason: 'Baseline defect: the real category AnalyticsSegments row cannot wrap '
@@ -147,6 +175,9 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
   const realistic = results.filter(r => r.fixture === 'realistic')
   assert.equal(realistic.length, 16)
 
+  // Under a mandatory candidate run no baseline-defect waiver may soften the
+  // strict bar.
+  const defects = MANDATORY ? [] : KNOWN_BASELINE_DEFECTS
   for (const r of results) {
     const label = r.id
     if (r.fixture === 'error') {
@@ -159,7 +190,7 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
     }
     // A) no horizontal overflow in any card or control, except documented
     // known baseline defects (see KNOWN_BASELINE_DEFECTS above)
-    const knownDefect = KNOWN_BASELINE_DEFECTS.find(defect => defect.matches(r))
+    const knownDefect = defects.find(defect => defect.matches(r))
     assert.deepEqual(knownDefect ? [] : r.overflow, [],
       `${label} has no overflowing card or control content: ${JSON.stringify(r.overflow)}`)
     if (knownDefect) {
@@ -194,12 +225,15 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
       assert.deepEqual(r.presence.missingSource, [], `${label} links every source URL`)
       const forYouLabel = r.labels.find(text => /for you|为你推荐/i.test(text))
       const allLabel = r.labels.find(text => /all updates|全部动态/i.test(text))
-      assert.match(forYouLabel || '', /\(5\)/, `${label} For You count`)
+      assert.match(forYouLabel || '',
+        new RegExp(`\\(${RELEVANT_COUNT}\\)`), `${label} For You count`)
       if (r.scope === 'foryou') {
-        assert.equal(r.cards, 5, `${label} shows the five relevant items`)
+        assert.equal(r.cards, RELEVANT_COUNT,
+          `${label} shows the ${RELEVANT_COUNT} relevant items`)
       } else {
-        assert.equal(r.cards, 20, `${label} shows every item in All Updates`)
-        assert.match(allLabel || '', /\(20\)/, `${label} All Updates count`)
+        assert.equal(r.cards, TOTAL_COUNT, `${label} shows every item in All Updates`)
+        assert.match(allLabel || '',
+          new RegExp(`\\(${TOTAL_COUNT}\\)`), `${label} All Updates count`)
       }
     }
     if (r.locale === 'zh-CN') {
@@ -213,18 +247,18 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
     }
     if (r.fixture === 'partial') {
       assert.match(r.text, /Local catalogue news is shown/i, `${label} live-updates-off note`)
-      assert.equal(r.cards, 4, label)
+      assert.equal(r.cards, PARTIAL_RELEVANT, label)
     }
     if (r.fixture === 'stale') {
       assert.match(r.text, /central feed unavailable/, `${label} central stale alert`)
-      assert.equal(r.cards, 5, `${label} stale cache still serves the For You items`)
+      assert.equal(r.cards, RELEVANT_COUNT, `${label} stale cache still serves the relevant items`)
     }
     if (r.fixture === 'nosignals') {
       if (r.scope === 'foryou') {
         assert.match(r.text, /Nothing to personalise yet/i, `${label} no-signals empty state`)
         assert.equal(r.cards, 0, label)
       } else {
-        assert.equal(r.cards, 20, `${label} All still complete without signals`)
+        assert.equal(r.cards, TOTAL_COUNT, `${label} All still complete without signals`)
       }
     }
     if (r.fixture === 'error') {
@@ -260,20 +294,26 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
   }
 })
 
-test('Model News candidate-design assertions (gated on DOM hooks or WP11_CANDIDATE=1)', {
+test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQUIRE_CANDIDATE=1 or WP11_CANDIDATE=1 makes them mandatory)', {
   skip: CHROME ? false : 'No Chromium binary available for real Model News layout checks',
 }, async t => {
   const h = await harness()
   const detected = h.results.some(r => r.candidateDetected)
-  if (!detected && process.env.WP11_CANDIDATE !== '1') {
-    t.skip('Candidate design not detected on baseline: no [data-news-group] in the rendered DOM '
-      + 'and WP11_CANDIDATE is unset. Group B runs once the UI agent publishes its DOM hooks.')
+  if (!detected) {
+    const message = 'Candidate design not detected: no [data-news-group] in the rendered DOM. '
+      + (MANDATORY
+        ? 'WP11_REQUIRE_CANDIDATE=1 or WP11_CANDIDATE=1 is set, so the candidate DOM hooks are '
+          + 'mandatory and this is a FAILURE, never a skip.'
+        : 'Neither mandatory flag is set; baseline may skip until the candidate UI publishes its hooks.')
+    if (MANDATORY) assert.fail(message)
+    t.skip(message)
     return
   }
   const all = await runProbe(h, 'realistic__all__1200__dark__en')
   if (all.probe.skipped) {
-    t.skip('WP11_CANDIDATE=1 is set but no candidate DOM hooks ([data-news-group]) were detected '
-      + 'in the rendered DOM; the baseline UI has no group hooks to probe.')
+    const message = `Candidate DOM hooks absent in the probed page (${all.id}).`
+    if (MANDATORY) assert.fail(message)
+    t.skip(message)
     return
   }
   const forYou = await runProbe(h, 'realistic__foryou__1200__dark__en')
@@ -287,11 +327,21 @@ test('Model News candidate-design assertions (gated on DOM hooks or WP11_CANDIDA
     'openrouter/anthropic/claude-sonnet-4.5', 'deepseek-ai/deepseek-v4-pro']) {
     assert.ok(groupIds.includes(id), `one group per exact model ID: ${id} (groups: ${groupIds.join(', ')})`)
   }
-  // a friendly name with the exact ID immediately below
+  // friendly sourced model_name is primary with the exact ID immediately
+  // below; without a supplied name the exact ID stands alone — names are
+  // never synthesized from IDs.
   for (const group of probe.groups) {
-    if (group.name) assert.equal(group.exactIdBelowName, true,
-      `group ${group.id}: exact ID sits directly below the friendly name`)
+    if (group.name) {
+      assert.equal(group.exactIdBelowName, true,
+        `group ${group.id}: exact ID sits directly below the friendly name`)
+    } else {
+      assert.equal(group.idText, group.id,
+        `group ${group.id}: without a friendly name the exact ID stands alone`)
+    }
   }
+  const solPro = probe.groups.find(group => group.id === 'gpt-5.6-sol-pro')
+  assert.equal(solPro?.name, 'GPT-5.6 Sol Pro',
+    'the fixture model_name renders as the friendly group heading')
   // per-field % chips with no repeated direction word inside each chip
   assert.deepEqual(probe.chipDirectionIssues, [],
     `chips carry one direction each: ${JSON.stringify(probe.chipDirectionIssues)}`)
@@ -299,34 +349,129 @@ test('Model News candidate-design assertions (gated on DOM hooks or WP11_CANDIDA
   assert.ok(probe.impactWording, 'impact line states the estimate is hypothetical/API-equivalent')
   // a provider row per offer: gpt-5.6-sol exists on three providers
   const solGroup = probe.groups.find(group => group.id === 'gpt-5.6-sol')
-  assert.ok(solGroup && solGroup.providerRows >= 3,
-    `gpt-5.6-sol group lists a row per provider offer (${solGroup?.providerRows})`)
+  assert.ok(solGroup && solGroup.offers.length >= 3,
+    `gpt-5.6-sol group lists a row per provider offer (${solGroup?.offers.length})`)
   // All Updates is complete: every original id reachable in Details
-  const reachable = new Set(probe.idElements.map(entry => entry.id))
+  const reachable = new Set([...probe.idReach.itemIds, ...probe.idReach.events])
   const fixtureIds = [...all.ids.matched, ...all.ids.missing]
   assert.deepEqual(fixtureIds.filter(id => !reachable.has(id)), [],
     `every original id reachable in Details: missing ${JSON.stringify(fixtureIds.filter(id => !reachable.has(id)))}`)
-  // dedupe merges the local+central duplicate…
-  const kimiGroup = probe.idElements.find(entry => entry.id === KIMI_LOCAL)?.group
-  assert.ok(kimiGroup, 'kimi local entry reachable')
-  assert.equal(kimiGroup, probe.idElements.find(entry => entry.id.startsWith('central-2026-11-07-moonshotai'))?.group,
-    'local+central duplicate renders as one group')
-  // …but keeps the repeated transition distinct
-  const mistralGroup = probe.groups.find(group => group.itemIds.includes(MISTRAL_FIRST))
-  assert.ok(mistralGroup, 'repeated-transition group found')
-  assert.ok(mistralGroup.itemIds.includes(MISTRAL_REPEAT),
-    'repeated identical transition stays a distinct entry in its group')
-  // …and the near-duplicates distinct
-  const geminiGroup = probe.groups.find(group => group.itemIds.includes(GEMINI_CUT_A))
-  assert.ok(geminiGroup?.itemIds.includes(GEMINI_CUT_B),
-    'near-duplicates seconds apart stay distinct entries')
+
+  // --- dedupe proof --------------------------------------------------------
+  // Shared precondition for every pair below: identical transition (exact
+  // provider/model/category, previous/current signatures, known tier rows
+  // when declared). Merging then needs an explicit same-event proof and is
+  // strictly local↔central 1:1 — never within one origin, never by nearby
+  // time. Every original id and both source evidences survive a collapse.
+  const offerEvents = offer => [...offer.itemIds, ...offer.eventIds]
+  const findOfferWith = id =>
+    probe.groups.flatMap(group => group.offers).find(offer => offerEvents(offer).includes(id))
+  // proven pair (same nonempty effective_at + same nonempty source_url): merge
+  const kimiOffer = findOfferWith(KIMI_LOCAL)
+  assert.ok(kimiOffer, 'kimi proven pair: local twin reachable')
+  assert.ok(kimiOffer.itemIds.includes(KIMI_CENTRAL),
+    'kimi proven pair merges: the central id is retained as evidence')
+  assert.ok(kimiOffer.sources.includes('local') && kimiOffer.sources.includes('central'),
+    `kimi merged event keeps both source evidences (${JSON.stringify(kimiOffer.sources)})`)
+  // variant (equal nonempty observed_at, effective both empty, one URL
+  // missing — an absent URL never conflicts): merge
+  const deepseekOffer = findOfferWith(DEEPSEEK_LOCAL)
+  assert.ok(deepseekOffer, 'deepseek variant pair: local twin reachable')
+  assert.ok(deepseekOffer.itemIds.includes(DEEPSEEK_CENTRAL),
+    'deepseek observed/equal pair merges: the central id is retained as evidence')
+  assert.ok(deepseekOffer.sources.includes('local') && deepseekOffer.sources.includes('central'),
+    `deepseek merged event keeps both source evidences (${JSON.stringify(deepseekOffer.sources)})`)
+  // both URLs nonempty and different → distinct events
+  const geminiOffer = findOfferWith(GEMINI_CUT_A)
+  assert.ok(geminiOffer, 'gemini conflict control: local event reachable')
+  assert.ok(offerEvents(geminiOffer).includes(GEMINI_CUT_B),
+    'conflicting source URLs keep the near-duplicates as two events')
+  assert.ok(!geminiOffer.itemIds.includes(GEMINI_CUT_A),
+    'the conflicting pair is NOT collapsed into merged evidence')
+  assert.ok(!geminiOffer.sources.includes('central'),
+    'distinct events carry no cross-origin merged evidence')
+  // conflicting nonempty effective dates → distinct; both twins are central,
+  // so this is also the same-origin control (same-origin different-id items
+  // never merge) and there is no temporal-proximity heuristic to exploit.
+  const mistralOffer = findOfferWith(MISTRAL_REPEAT)
+  assert.ok(mistralOffer, 'mistral conflict/same-origin control: newest event reachable')
+  assert.ok(mistralOffer.eventIds.includes(MISTRAL_FIRST),
+    'conflicting effective dates keep the repeated transition as two events')
+  assert.ok(!mistralOffer.itemIds.includes(MISTRAL_FIRST),
+    'the repeated transition is NOT collapsed into merged evidence')
+  // cross-origin merging is 1:1: exactly the two proven pairs merged
+  const mergedOffers = probe.groups.flatMap(group => group.offers)
+    .filter(offer => offer.sources.includes('local') && offer.sources.includes('central'))
+  assert.equal(mergedOffers.length, 2,
+    `exactly the two proven pairs merged across origins (${mergedOffers.length})`)
+
+  // --- case-only identity + recency ---------------------------------------
+  // The backend's fuzzy used_model reason (usage "M1" vs item "m1") stays
+  // neutral: only "Related update" wording and no numeric personal estimate.
+  // The exact control x2 with a valid in-window last_used_at earns "Used
+  // recently" and a priced impact. Valid-but-old earns the truthful "Used
+  // before"; malformed, future and empty stamps earn neither.
+  const offerOf = (groupId, provider) =>
+    probe.groups.find(group => group.id === groupId)?.offers.find(offer => offer.provider === provider)
+  const m1Offer = offerOf('m1', 'fixturelabs')
+  assert.ok(m1Offer, 'm1 (case-only identity) offer found')
+  assert.match(m1Offer.reasons, /Related update/i,
+    `m1 keeps the neutral used_model wording (${m1Offer.reasons})`)
+  assert.doesNotMatch(m1Offer.reasons, /Used recently|Used before/i,
+    `m1 never claims recency from the fuzzy match (${m1Offer.reasons})`)
+  assert.ok(m1Offer.impact === null || m1Offer.impact === 'unavailable',
+    `m1 carries no priced impact (basis ${m1Offer.impact})`)
+  assert.ok(!/[≈$]/.test(m1Offer.impactText || ''),
+    `m1 impact text stays non-numeric: ${m1Offer.impactText}`)
+  const x2Offer = offerOf('x2', 'fixturelabs')
+  assert.ok(x2Offer, 'x2 (exact-match control) offer found')
+  assert.match(x2Offer.reasons, /Used recently/i,
+    `a valid in-window last_used_at earns the recency label (${x2Offer.reasons})`)
+  assert.equal(x2Offer.impact, 'full', 'the exact-control usage prices a full impact')
+  assert.match(x2Offer.impactText, /≈/, `the exact-control impact is numeric (${x2Offer.impactText})`)
+  const reasonsOf = id => findOfferWith(id)?.reasons || ''
+  const oldReasons = reasonsOf(TS_OLD)
+  assert.match(oldReasons, /Used before/i,
+    `a valid ~101-day-old last_used_at earns "Used before" (${oldReasons})`)
+  assert.doesNotMatch(oldReasons, /Used recently/i,
+    'a ~101-day-old last_used_at never earns "Used recently"')
+  for (const [id, kind] of [[TS_MALFORMED, 'malformed'], [TS_FUTURE, 'future'], [TS_EMPTY, 'empty']]) {
+    const reasons = reasonsOf(id)
+    assert.doesNotMatch(reasons, /Used recently|Used before/i,
+      `a ${kind} last_used_at earns no recency wording (${reasons})`)
+    const offer = findOfferWith(id)
+    assert.ok(offer.impact === null || offer.impact === 'unavailable',
+      `${kind} timestamp item carries no numeric impact (basis ${offer.impact})`)
+    assert.ok(!/[≈$]/.test(offer.impactText || ''),
+      `${kind} timestamp item impact stays non-numeric: ${offer.impactText}`)
+  }
+
+  // --- tiers and official note --------------------------------------------
+  // Root tiers_detail 'known' renders one comparable tier chip and lists
+  // every row in Details; the official source note is plain text, never a
+  // link; the exact 30-day recency window is exercised above via x2/TS_OLD.
+  const opusGroup = probe.groups.find(group => group.id === 'anthropic/claude-opus-4.1')
+  const opusTierChip = opusGroup?.offers.flatMap(offer => offer.chips)
+    .find(chip => chip.field === 'tiers')
+  assert.ok(opusTierChip, 'known tiers render a tier chip')
+  assert.equal(opusTierChip.dir, 'up', `tier chip direction (${opusTierChip.text})`)
+  assert.match(opusTierChip.text, /\+20%/, `tier chip magnitude (${opusTierChip.text})`)
+  assert.match(all.text, /standard/, 'tier rows are listed one by one in Details')
+  assert.ok(probe.officialNote, 'the official verification block renders its source note')
+  assert.equal(probe.officialNote.linked, false,
+    `the official source note is plain text, never a link (${probe.officialNote?.text})`)
+
   // search is a full-ID substring match
   assert.deepEqual([...probe.search.after].sort(), ['gpt-5.6-sol', 'gpt-5.6-sol-pro'].sort(),
     `"sol" matches the sol groups: ${JSON.stringify(probe.search)}`)
-  // date filter works
-  assert.ok(probe.dateFilter.before.includes('mistral-large-3')
-    && !probe.dateFilter.after.includes('mistral-large-3'),
-    `date filter drops the older items: ${JSON.stringify(probe.dateFilter)}`)
+  // date filter works: the item observed ~36 days ago drops from the 30-day
+  // window and comes back under All time
+  assert.ok(probe.dateFilter.before.includes('ts-old90day'),
+    `date filter precondition: the old item is listed (${JSON.stringify(probe.dateFilter.before)})`)
+  assert.ok(!probe.dateFilter.after.includes('ts-old90day'),
+    `the 30-day window drops the ~36-day-old item: ${JSON.stringify(probe.dateFilter.after)}`)
+  assert.ok(probe.dateFilter.restored.includes('ts-old90day'),
+    `All time restores the dropped item: ${JSON.stringify(probe.dateFilter.restored)}`)
   // load-more keeps focus inside the list (only assertable when present)
   if (probe.loadMore.present) {
     assert.equal(probe.loadMore.focusInsideList, true, 'load-more keeps focus inside the list')
@@ -337,9 +482,15 @@ test('Model News candidate-design assertions (gated on DOM hooks or WP11_CANDIDA
   assert.ok(Number.parseFloat(probe.ring.scopeRing?.outline?.width || '0') > 0
     && probe.ring.scopeRing.outline.style !== 'none', 'scope ring is visible')
 
-  // For You shows 5 initial groups
-  assert.equal(forYou.probe.groups.length, 5,
-    `For You shows 5 initial groups (got ${forYou.probe.groups.length})`)
+  // For You shows the initial page of ranked groups, with show-all for the rest
+  const forYouGroups = [...new Set(NEWS_ITEMS.filter(isRelevant).map(item => item.model).filter(Boolean))]
+  assert.equal(forYou.probe.groups.length, Math.min(5, forYouGroups.length),
+    `For You shows the initial page of groups (got ${forYou.probe.groups.length})`)
+  if (forYouGroups.length > 5) {
+    assert.equal(forYou.probe.forYou.showAllPresent, true, 'show-all is offered for the remaining groups')
+    assert.equal(forYou.probe.forYou.afterShowAll, forYouGroups.length,
+      `show-all reveals every relevant group (${forYou.probe.forYou.afterShowAll})`)
+  }
   // keyboard: tab order reaches scope, category, search, details, load-more
   const k = probe.keyboard
   for (const [name, index] of Object.entries(k)) {
@@ -352,9 +503,9 @@ test('Model News candidate-design assertions (gated on DOM hooks or WP11_CANDIDA
   assert.equal(k.toggle.toggled, true, 'toggle activates')
   assert.equal(k.toggle.focusVisible, true, 'focus-visible outline present on the toggle')
 
-  // no-signals variant: empty For You with a visible link to All
+  // no-signals variant: empty For You with a visible navigation path to All
   const empty = noSignals.probe.emptyForYou
   assert.equal(empty.present, true, 'no-signals For You shows its empty state')
-  assert.equal(empty.hasLinkToAll && empty.linkVisible, true, 'empty For You links to All Updates')
-  assert.ok((empty.groupsAfterClick || 0) > 0, 'following the All link shows the full list')
+  assert.equal(empty.hasPathToAll, true, 'empty For You offers a visible path to All Updates')
+  assert.ok((empty.groupsAfterClick || 0) > 0, 'following the path shows the full list')
 })

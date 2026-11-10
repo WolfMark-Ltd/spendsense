@@ -91,18 +91,71 @@
         },
         "has_tiers": false,
         "observed_at": "2026-11-10T09:15:00Z",
-        "effective_at": "",
-        "source_url": "",
+        "effective_at": "2026-11-07",
+        "source_url": "https://announcements.spend-sense.example/feed/moonshotai-kimi-k2-5-rate-cut",
         "confidence": "observed",
         "provenance": "Hermes models.dev cache",
         "conditions": "",
         "conditions_code": "",
+        "official": {
+          "verified_at": "2026-11-07T08:40:00Z",
+          "source_note": "vendor announcement page (synthetic fixture note)",
+          "windows": []
+        },
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
         "relevance": {
           "relevant": false,
           "reasons": []
+        }
+      },
+      {
+        "id": "local-price-reduction-fixturelabs-x2--r-----cache-read---null---cache-writ-15360c2a46",
+        "origin": "local",
+        "category": "price_reduction",
+        "provider": "fixturelabs",
+        "model": "x2",
+        "summary": "x2 (fixturelabs) reduced to $0.4/$1.6 per MTok in/out.",
+        "summary_code": "news_sum_price_change",
+        "summary_params": {
+          "model": "x2",
+          "provider": "fixturelabs",
+          "input": "$0.4",
+          "output": "$1.6"
+        },
+        "previous": {
+          "input": 0.5,
+          "output": 2.0,
+          "cache_read": null,
+          "cache_write": null
+        },
+        "current": {
+          "input": 0.4,
+          "output": 1.6,
+          "cache_read": null,
+          "cache_write": null
+        },
+        "has_tiers": false,
+        "observed_at": "2026-11-10T09:15:00Z",
+        "effective_at": "",
+        "source_url": "",
+        "confidence": "observed",
+        "provenance": "Hermes models.dev cache",
+        "conditions": "",
+        "conditions_code": "",
+        "last_used_at": "2026-11-09T18:30:00Z",
+        "for_you": true,
+        "configured_provider": false,
+        "related_routes": [
+          "fixturelabs"
+        ],
+        "relevance": {
+          "relevant": true,
+          "reasons": [
+            "used_provider",
+            "used_model"
+          ]
         }
       },
       {
@@ -230,6 +283,27 @@
         "provenance": "Hermes models.dev cache",
         "conditions": "Tiered/context pricing changed; base rates compared.",
         "conditions_code": "news_cond_tiers_changed",
+        "tiers_detail": "known",
+        "tiers_before": [
+          {
+            "type": "standard",
+            "size": 200000,
+            "input": 4.0,
+            "output": 20.0,
+            "cache_read": null,
+            "cache_write": 2.0
+          }
+        ],
+        "tiers_after": [
+          {
+            "type": "standard",
+            "size": 200000,
+            "input": 4.8,
+            "output": 24.0,
+            "cache_read": null,
+            "cache_write": 2.4
+          }
+        ],
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
@@ -360,6 +434,7 @@
         "provenance": "Hermes models.dev cache",
         "conditions": "Catalogue listing only; not confirmed available on your accounts.",
         "conditions_code": "news_cond_listing_accounts",
+        "model_name": "GPT-5.6 Sol Pro",
         "for_you": true,
         "configured_provider": true,
         "related_routes": [],
@@ -400,6 +475,198 @@
         "conditions": "Catalogue listing only; not confirmed available on your accounts.",
         "conditions_code": "news_cond_listing_accounts",
         "for_you": true,
+        "configured_provider": false,
+        "related_routes": [],
+        "relevance": {
+          "relevant": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "local-new-model-fixturelabs-ts-malformed-73c4b9d39b",
+        "origin": "local",
+        "category": "new_model",
+        "provider": "fixturelabs",
+        "model": "ts-malformed",
+        "summary": "ts-malformed newly listed under fixturelabs at $0.22/$0.9 per MTok in/out.",
+        "summary_code": "news_sum_new_model",
+        "summary_params": {
+          "model": "ts-malformed",
+          "provider": "fixturelabs",
+          "input": "$0.22",
+          "output": "$0.9"
+        },
+        "previous": null,
+        "current": {
+          "input": 0.22,
+          "output": 0.9,
+          "cache_read": null,
+          "cache_write": null
+        },
+        "observed_at": "2026-11-10T09:15:00Z",
+        "effective_at": "",
+        "source_url": "",
+        "confidence": "observed",
+        "provenance": "Hermes models.dev cache",
+        "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+        "conditions_code": "news_cond_listing_accounts",
+        "last_used_at": "not-a-timestamp",
+        "for_you": true,
+        "configured_provider": false,
+        "related_routes": [],
+        "relevance": {
+          "relevant": true,
+          "reasons": [
+            "used_provider"
+          ]
+        }
+      },
+      {
+        "id": "local-new-model-fixturelabs-ts-future-5ceeb4c797",
+        "origin": "local",
+        "category": "new_model",
+        "provider": "fixturelabs",
+        "model": "ts-future",
+        "summary": "ts-future newly listed under fixturelabs at $0.18/$0.75 per MTok in/out.",
+        "summary_code": "news_sum_new_model",
+        "summary_params": {
+          "model": "ts-future",
+          "provider": "fixturelabs",
+          "input": "$0.18",
+          "output": "$0.75"
+        },
+        "previous": null,
+        "current": {
+          "input": 0.18,
+          "output": 0.75,
+          "cache_read": null,
+          "cache_write": null
+        },
+        "observed_at": "2026-11-10T09:15:00Z",
+        "effective_at": "",
+        "source_url": "",
+        "confidence": "observed",
+        "provenance": "Hermes models.dev cache",
+        "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+        "conditions_code": "news_cond_listing_accounts",
+        "last_used_at": "2027-06-01T00:00:00Z",
+        "for_you": true,
+        "configured_provider": false,
+        "related_routes": [],
+        "relevance": {
+          "relevant": true,
+          "reasons": [
+            "used_provider"
+          ]
+        }
+      },
+      {
+        "id": "local-new-model-fixturelabs-ts-empty-4f15a1136e",
+        "origin": "local",
+        "category": "new_model",
+        "provider": "fixturelabs",
+        "model": "ts-empty",
+        "summary": "ts-empty newly listed under fixturelabs at $0.12/$0.5 per MTok in/out.",
+        "summary_code": "news_sum_new_model",
+        "summary_params": {
+          "model": "ts-empty",
+          "provider": "fixturelabs",
+          "input": "$0.12",
+          "output": "$0.5"
+        },
+        "previous": null,
+        "current": {
+          "input": 0.12,
+          "output": 0.5,
+          "cache_read": null,
+          "cache_write": null
+        },
+        "observed_at": "2026-11-10T09:15:00Z",
+        "effective_at": "",
+        "source_url": "",
+        "confidence": "observed",
+        "provenance": "Hermes models.dev cache",
+        "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+        "conditions_code": "news_cond_listing_accounts",
+        "last_used_at": "",
+        "for_you": true,
+        "configured_provider": false,
+        "related_routes": [],
+        "relevance": {
+          "relevant": true,
+          "reasons": [
+            "used_provider"
+          ]
+        }
+      },
+      {
+        "id": "local-new-model-fixturelabs-m1-0896a9539a",
+        "origin": "local",
+        "category": "new_model",
+        "provider": "fixturelabs",
+        "model": "m1",
+        "summary": "m1 newly listed under fixturelabs at $0.2/$0.8 per MTok in/out.",
+        "summary_code": "news_sum_new_model",
+        "summary_params": {
+          "model": "m1",
+          "provider": "fixturelabs",
+          "input": "$0.2",
+          "output": "$0.8"
+        },
+        "previous": null,
+        "current": {
+          "input": 0.2,
+          "output": 0.8,
+          "cache_read": null,
+          "cache_write": null
+        },
+        "observed_at": "2026-11-10T09:15:00Z",
+        "effective_at": "",
+        "source_url": "",
+        "confidence": "observed",
+        "provenance": "Hermes models.dev cache",
+        "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+        "conditions_code": "news_cond_listing_accounts",
+        "for_you": true,
+        "configured_provider": false,
+        "related_routes": [],
+        "relevance": {
+          "relevant": true,
+          "reasons": [
+            "used_provider",
+            "used_model"
+          ]
+        }
+      },
+      {
+        "id": "local-new-model-deepseek-deepseek-v4-5ddfff1ce6",
+        "origin": "local",
+        "category": "new_model",
+        "provider": "deepseek",
+        "model": "deepseek-v4",
+        "summary": "deepseek-v4 newly listed under deepseek at $0.28/$1.15 per MTok in/out.",
+        "summary_code": "news_sum_new_model",
+        "summary_params": {
+          "model": "deepseek-v4",
+          "provider": "deepseek",
+          "input": "$0.28",
+          "output": "$1.15"
+        },
+        "previous": null,
+        "current": {
+          "input": 0.28,
+          "output": 1.15,
+          "cache_read": 0.028,
+          "cache_write": 0.28
+        },
+        "observed_at": "2026-11-10T09:15:00Z",
+        "effective_at": "",
+        "source_url": "",
+        "confidence": "observed",
+        "provenance": "Hermes models.dev cache",
+        "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+        "conditions_code": "news_cond_listing_accounts",
+        "for_you": false,
         "configured_provider": false,
         "related_routes": [],
         "relevance": {
@@ -478,6 +745,87 @@
           "relevant": false,
           "reasons": []
         }
+      },
+      {
+        "id": "local-price-reduction-google-gemini-3-flash--r-----cache-read---0-05--65896e02e5",
+        "origin": "local",
+        "category": "price_reduction",
+        "provider": "google",
+        "model": "gemini-3-flash",
+        "summary": "gemini-3-flash (google) reduced to $0.3/$1.2 per MTok in/out.",
+        "summary_code": "news_sum_price_change",
+        "summary_params": {
+          "model": "gemini-3-flash",
+          "provider": "google",
+          "input": "$0.3",
+          "output": "$1.2"
+        },
+        "previous": {
+          "input": 0.5,
+          "output": 2.0,
+          "cache_read": 0.05,
+          "cache_write": null
+        },
+        "current": {
+          "input": 0.3,
+          "output": 1.2,
+          "cache_read": 0.03,
+          "cache_write": null
+        },
+        "has_tiers": false,
+        "observed_at": "2026-11-10T07:59:50Z",
+        "effective_at": "",
+        "source_url": "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-a",
+        "confidence": "observed",
+        "provenance": "Hermes models.dev cache",
+        "conditions": "",
+        "conditions_code": "",
+        "for_you": false,
+        "configured_provider": false,
+        "related_routes": [],
+        "relevance": {
+          "relevant": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "local-new-model-fixturelabs-ts-old90day-a8833a2a2b",
+        "origin": "local",
+        "category": "new_model",
+        "provider": "fixturelabs",
+        "model": "ts-old90day",
+        "summary": "ts-old90day newly listed under fixturelabs at $0.35/$1.4 per MTok in/out.",
+        "summary_code": "news_sum_new_model",
+        "summary_params": {
+          "model": "ts-old90day",
+          "provider": "fixturelabs",
+          "input": "$0.35",
+          "output": "$1.4"
+        },
+        "previous": null,
+        "current": {
+          "input": 0.35,
+          "output": 1.4,
+          "cache_read": null,
+          "cache_write": null
+        },
+        "observed_at": "2026-10-05T09:15:00Z",
+        "effective_at": "",
+        "source_url": "",
+        "confidence": "observed",
+        "provenance": "Hermes models.dev cache",
+        "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+        "conditions_code": "news_cond_listing_accounts",
+        "last_used_at": "2026-08-01T12:00:00Z",
+        "for_you": true,
+        "configured_provider": false,
+        "related_routes": [],
+        "relevance": {
+          "relevant": true,
+          "reasons": [
+            "used_provider"
+          ]
+        }
       }
     ],
     "baseline": false,
@@ -495,6 +843,41 @@
   "central": {
     "state": "fresh",
     "items": [
+      {
+        "id": "central-2026-11-10-deepseek-deepseek-v4-listing",
+        "origin": "central",
+        "category": "new_model",
+        "provider": "deepseek",
+        "model": "deepseek-v4",
+        "summary": "deepseek-v4 newly listed under deepseek on models.dev.",
+        "summary_code": "news_sum_new_model_feed",
+        "summary_params": {
+          "model": "deepseek-v4",
+          "provider": "deepseek"
+        },
+        "previous": null,
+        "current": {
+          "input": 0.28,
+          "output": 1.15,
+          "cache_read": 0.028,
+          "cache_write": 0.28
+        },
+        "has_tiers": false,
+        "observed_at": "2026-11-10T09:15:00Z",
+        "effective_at": "",
+        "source_url": "https://announcements.spend-sense.example/feed/deepseek-v4-listing",
+        "confidence": "curated",
+        "provenance": "SpendSense announcements",
+        "conditions": "",
+        "conditions_code": "",
+        "for_you": false,
+        "configured_provider": false,
+        "related_routes": [],
+        "relevance": {
+          "relevant": false,
+          "reasons": []
+        }
+      },
       {
         "id": "central-2026-11-10-google-gemini-3-flash-cut-0843",
         "origin": "central",
@@ -523,46 +906,6 @@
         "observed_at": "2026-11-10T07:59:50Z",
         "effective_at": "",
         "source_url": "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-b",
-        "confidence": "curated",
-        "provenance": "SpendSense announcements",
-        "conditions": "",
-        "conditions_code": "",
-        "for_you": false,
-        "configured_provider": false,
-        "related_routes": [],
-        "relevance": {
-          "relevant": false,
-          "reasons": []
-        }
-      },
-      {
-        "id": "central-2026-11-10-google-gemini-3-flash-cut-0842",
-        "origin": "central",
-        "category": "price_reduction",
-        "provider": "google",
-        "model": "gemini-3-flash",
-        "summary": "gemini-3-flash (google) list price changed on models.dev.",
-        "summary_code": "news_sum_price_change_feed",
-        "summary_params": {
-          "model": "gemini-3-flash",
-          "provider": "google"
-        },
-        "previous": {
-          "input": 0.5,
-          "output": 2.0,
-          "cache_read": 0.05,
-          "cache_write": null
-        },
-        "current": {
-          "input": 0.3,
-          "output": 1.2,
-          "cache_read": 0.03,
-          "cache_write": null
-        },
-        "has_tiers": false,
-        "observed_at": "2026-11-10T07:59:10Z",
-        "effective_at": "",
-        "source_url": "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-a",
         "confidence": "curated",
         "provenance": "SpendSense announcements",
         "conditions": "",
@@ -710,7 +1053,7 @@
         },
         "has_tiers": false,
         "observed_at": "2026-11-07T08:40:00Z",
-        "effective_at": "",
+        "effective_at": "2026-11-07",
         "source_url": "https://announcements.spend-sense.example/feed/moonshotai-kimi-k2-5-rate-cut",
         "confidence": "curated",
         "provenance": "SpendSense announcements",
@@ -808,7 +1151,7 @@
     "fetched_at": "2026-11-10T06:40:00Z",
     "error": ""
   },
-  "for_you_count": 7,
+  "for_you_count": 13,
   "impacts": {
     "local-price-reduction-openai-gpt-5-6-sol--r-----cache-read---0-25---c-bed1f77339": {
       "basis": "full",
@@ -825,6 +1168,22 @@
       "old_usd": 4.15,
       "new_usd": 2.075,
       "delta_usd": -2.075
+    },
+    "local-price-reduction-fixturelabs-x2--r-----cache-read---null---cache-writ-15360c2a46": {
+      "basis": "full",
+      "reason": "",
+      "reason_codes": [],
+      "window_days": 30,
+      "tokens": {
+        "input": 50000,
+        "output": 5000,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "calls": 12,
+      "old_usd": 0.035,
+      "new_usd": 0.028,
+      "delta_usd": -0.007000000000000003
     },
     "local-price-reduction-anthropic-claude-sonnet-4-5--r-----cache-read---nu-bfb95db87b": {
       "basis": "partial",
@@ -852,7 +1211,8 @@
     ],
     "used_providers": [
       "anthropic",
-      "openai-codex"
+      "openai-codex",
+      "fixturelabs"
     ],
     "used_models": [
       {
@@ -862,6 +1222,14 @@
       {
         "provider": "openai-codex",
         "model": "gpt-5.6-sol"
+      },
+      {
+        "provider": "fixturelabs",
+        "model": "M1"
+      },
+      {
+        "provider": "fixturelabs",
+        "model": "x2"
       }
     ],
     "plan_ids": [
