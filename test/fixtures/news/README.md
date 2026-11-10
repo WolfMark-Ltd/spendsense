@@ -56,13 +56,13 @@ final exact-pair `rank_items` semantics: a provider is For You when it is a
 configured token family (anthropic, openai), carries recorded usage (openai
 via the `openai-codex` route, anthropic, fixturelabs) or holds an exact
 `(provider, model)` usage row. Read-time relevance marks the same 11 — what
-the page's For You scope renders. The **frozen committed JSON still carries
-the older last-segment count 13**, which additionally marks the
+the page's For You scope renders. An earlier committed revision of this JSON
+carried the older last-segment count 13, which additionally marked the
 `azure-openai` and `github-copilot` listings of `gpt-5.6-sol`; both have no
 matching used or configured provider and read-time relevance `false` with
-empty reasons, so the current backend excludes them. Regenerating therefore
-does **not** reproduce the committed JSON byte-for-byte until the fixture is
-refreshed with approval (see the pending regeneration note in the review).
+empty reasons, so the exact-pair ranking excludes them. Regenerating with
+the current backend reproduces the committed JSON byte-for-byte (verified
+over repeated runs, including against the final news backend).
 Deliberately included:
 
 - **Same-event proof controls** (the final `newsSameEventProof` /

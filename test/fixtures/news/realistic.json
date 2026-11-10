@@ -42,6 +42,11 @@
           "cache_write": 1.25
         },
         "has_tiers": false,
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_before": null,
+        "tiers_after": null,
+        "rate_change_code": "news_rate_down",
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -54,6 +59,7 @@
         "related_routes": [
           "openai-codex"
         ],
+        "last_used_at": "2026-11-04T13:46:40+00:00",
         "relevance": {
           "relevant": true,
           "reasons": [
@@ -90,6 +96,11 @@
           "cache_write": 0.475
         },
         "has_tiers": false,
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_before": null,
+        "tiers_after": null,
+        "rate_change_code": "news_rate_down",
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "2026-11-07",
         "source_url": "https://announcements.spend-sense.example/feed/moonshotai-kimi-k2-5-rate-cut",
@@ -105,6 +116,7 @@
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -137,6 +149,11 @@
           "cache_write": null
         },
         "has_tiers": false,
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_before": null,
+        "tiers_after": null,
+        "rate_change_code": "news_rate_down",
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -185,6 +202,11 @@
           "cache_write": null
         },
         "has_tiers": false,
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_before": null,
+        "tiers_after": null,
+        "rate_change_code": "news_rate_down",
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -197,6 +219,7 @@
         "related_routes": [
           "anthropic"
         ],
+        "last_used_at": "2026-11-03T10:00:00+00:00",
         "relevance": {
           "relevant": true,
           "reasons": [
@@ -234,6 +257,11 @@
           "cache_write": null
         },
         "has_tiers": false,
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_before": null,
+        "tiers_after": null,
+        "rate_change_code": "news_rate_up",
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -244,6 +272,7 @@
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -276,13 +305,7 @@
           "cache_write": 3.6
         },
         "has_tiers": true,
-        "observed_at": "2026-11-10T09:15:00Z",
-        "effective_at": "",
-        "source_url": "",
-        "confidence": "observed",
-        "provenance": "Hermes models.dev cache",
-        "conditions": "Tiered/context pricing changed; base rates compared.",
-        "conditions_code": "news_cond_tiers_changed",
+        "model_name": "",
         "tiers_detail": "known",
         "tiers_before": [
           {
@@ -304,9 +327,18 @@
             "cache_write": 2.4
           }
         ],
+        "rate_change_code": "news_rate_up",
+        "observed_at": "2026-11-10T09:15:00Z",
+        "effective_at": "",
+        "source_url": "",
+        "confidence": "observed",
+        "provenance": "Hermes models.dev cache",
+        "conditions": "Tiered/context pricing changed; base rates compared.",
+        "conditions_code": "news_cond_tiers_changed",
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -340,6 +372,7 @@
         "related_routes": [
           "anthropic"
         ],
+        "last_used_at": "",
         "relevance": {
           "relevant": true,
           "reasons": [
@@ -370,9 +403,10 @@
         "provenance": "Hermes models.dev cache",
         "conditions": "Catalogue listing only; not confirmed available on your accounts.",
         "conditions_code": "news_cond_listing_accounts",
-        "for_you": "",
+        "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -398,9 +432,10 @@
         "confidence": "observed",
         "provenance": "bundled membership catalogue",
         "conditions": "",
-        "for_you": "",
+        "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -427,6 +462,9 @@
           "cache_read": 0.375,
           "cache_write": 3.75
         },
+        "model_name": "GPT-5.6 Sol Pro",
+        "tiers_detail": "unknown",
+        "tiers_after": null,
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -434,10 +472,10 @@
         "provenance": "Hermes models.dev cache",
         "conditions": "Catalogue listing only; not confirmed available on your accounts.",
         "conditions_code": "news_cond_listing_accounts",
-        "model_name": "GPT-5.6 Sol Pro",
         "for_you": true,
         "configured_provider": true,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": true,
           "reasons": [
@@ -467,6 +505,9 @@
           "cache_read": null,
           "cache_write": null
         },
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_after": null,
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -474,9 +515,10 @@
         "provenance": "Hermes models.dev cache",
         "conditions": "Catalogue listing only; not confirmed available on your accounts.",
         "conditions_code": "news_cond_listing_accounts",
-        "for_you": true,
+        "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -503,6 +545,9 @@
           "cache_read": null,
           "cache_write": null
         },
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_after": null,
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -542,6 +587,9 @@
           "cache_read": null,
           "cache_write": null
         },
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_after": null,
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -581,6 +629,9 @@
           "cache_read": null,
           "cache_write": null
         },
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_after": null,
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -620,6 +671,9 @@
           "cache_read": null,
           "cache_write": null
         },
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_after": null,
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -630,6 +684,7 @@
         "for_you": true,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": true,
           "reasons": [
@@ -659,6 +714,9 @@
           "cache_read": 0.028,
           "cache_write": 0.28
         },
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_after": null,
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -669,6 +727,7 @@
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -695,6 +754,9 @@
           "cache_read": 0.14,
           "cache_write": 1.4
         },
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_after": null,
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -702,9 +764,10 @@
         "provenance": "Hermes models.dev cache",
         "conditions": "Catalogue listing only; not confirmed available on your accounts.",
         "conditions_code": "news_cond_listing_accounts",
-        "for_you": true,
+        "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -731,6 +794,9 @@
           "cache_read": null,
           "cache_write": null
         },
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_after": null,
         "observed_at": "2026-11-10T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -741,6 +807,7 @@
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -773,6 +840,11 @@
           "cache_write": null
         },
         "has_tiers": false,
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_before": null,
+        "tiers_after": null,
+        "rate_change_code": "news_rate_down",
         "observed_at": "2026-11-10T07:59:50Z",
         "effective_at": "",
         "source_url": "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-a",
@@ -783,6 +855,7 @@
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -809,6 +882,9 @@
           "cache_read": null,
           "cache_write": null
         },
+        "model_name": "",
+        "tiers_detail": "unknown",
+        "tiers_after": null,
         "observed_at": "2026-10-05T09:15:00Z",
         "effective_at": "",
         "source_url": "",
@@ -873,6 +949,7 @@
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -913,6 +990,7 @@
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -948,6 +1026,7 @@
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -983,6 +1062,7 @@
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -1018,6 +1098,7 @@
         "for_you": true,
         "configured_provider": true,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": true,
           "reasons": [
@@ -1062,6 +1143,7 @@
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -1102,6 +1184,7 @@
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -1142,6 +1225,7 @@
         "for_you": false,
         "configured_provider": false,
         "related_routes": [],
+        "last_used_at": "",
         "relevance": {
           "relevant": false,
           "reasons": []
@@ -1151,7 +1235,7 @@
     "fetched_at": "2026-11-10T06:40:00Z",
     "error": ""
   },
-  "for_you_count": 13,
+  "for_you_count": 11,
   "impacts": {
     "local-price-reduction-openai-gpt-5-6-sol--r-----cache-read---0-25---c-bed1f77339": {
       "basis": "full",

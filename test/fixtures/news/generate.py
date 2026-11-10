@@ -516,7 +516,7 @@ def main():
     # configured token family (anthropic, openai), its provider carries
     # recorded usage (openai via the openai-codex route, anthropic,
     # fixturelabs), or the exact (provider, model) pair has a usage row.
-    # The frozen committed JSON still marks the azure-openai and
+    # An earlier committed revision of the JSON marked the azure-openai and
     # github-copilot listings of gpt-5.6-sol for_you under the older
     # last-segment semantics; both have no matching used or configured
     # provider and read-time relevance=false with empty reasons, so the
