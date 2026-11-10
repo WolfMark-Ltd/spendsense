@@ -1384,6 +1384,27 @@ test('a known-untiered event renders no tier chip', async () => {
     'captured empty tier arrays establish untiered: no tier chip, no warning')
 })
 
+test('a removed-tiers event keeps its unavailable tier chip, EN and zh', async () => {
+  const item = groupItem({
+    id: 'ut2', has_tiers: true, tiers_detail: 'unknown', tiers_after: [],
+  })
+  const group = groupFrom([item])
+  assert.equal(group.offers[0].tierStatus, 'unavailable')
+  assert.equal(group.offers[0].tierReason, 'tier_unavailable')
+  for (const [locale, chip, caveat] of [['en', 'Tiers Not comparable', 'tier rates unavailable'],
+      ['zh', '阶梯 无法对比', '阶梯价格不可比']]) {
+    await React.act(async () => { T.$newsDetailsOpen.set([]) })
+    const view = await renderNode(React.createElement(T.NewsModelGroup, {
+      group, impacts: {}, t: translator(locale), matchedOffers: null }), locale)
+    const tierChip = view.container.querySelector('[data-news-chip="tiers"]')
+    assert.ok(tierChip, `the unavailable tier chip renders (${locale})`)
+    assert.equal(tierChip.getAttribute('data-news-dir'), 'na')
+    assert.equal(tierChip.getAttribute('data-news-reason'), 'tier_unavailable')
+    assert.ok(tierChip.textContent.includes(chip), `visible chip text (${locale})`)
+    assert.ok(tierChip.textContent.includes(caveat), `screen-reader caveat (${locale})`)
+  }
+})
+
 test('the optional rate-changed class renders as an honest neutral badge', async () => {
   const item = {
     id: 'rc1', origin: 'local', category: 'price_reduction', provider: 'P', model: 'm1',
