@@ -36,11 +36,13 @@ ROUTE_ARRANGEMENTS = ("subscription", "prepaid", "api_only", "unconfirmed", "no_
 
 
 def entitlement_store_path(path: Optional[Path | str] = None) -> Path:
+    """Return the entitlement sidecar path beside this profile's membership store."""
     target = Path(path) if path else store_path()
     return target.with_name(ENTITLEMENT_STORE_NAME)
 
 
 def _route_history_errors(history: Any) -> list[str]:
+    """Return validation errors for persisted route-arrangement revisions."""
     errors: list[str] = []
     if not isinstance(history, list):
         return ["route arrangement history must be a list"]
@@ -71,6 +73,7 @@ def _route_history_errors(history: Any) -> list[str]:
 
 
 def load_entitlement_store(path: Optional[Path | str] = None) -> dict[str, Any]:
+    """Load and validate a profile's route history, defaulting a missing file to empty."""
     target = entitlement_store_path(path)
     try:
         doc = json.loads(target.read_text(encoding="utf-8"))
@@ -96,12 +99,14 @@ def load_entitlement_store(path: Optional[Path | str] = None) -> dict[str, Any]:
 
 
 def entitlement_revision(routes: Mapping[str, Any], slugs: Iterable[str]) -> str:
+    """Hash selected route records for arrangement-write concurrency checks."""
     keys = sorted({str(slug).strip().lower() for slug in slugs if str(slug).strip()})
     entry = {slug: routes.get(slug) for slug in keys}
     return hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:12]
 
 
 def _write_entitlement_store(routes: Mapping[str, Any], target: Path) -> None:
+    """Atomically persist validated route history beside the membership file."""
     sidecar = entitlement_store_path(target)
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     document = {"version": ENTITLEMENT_STORE_VERSION, "routes": dict(routes)}
@@ -131,10 +136,13 @@ def _write_entitlement_store(routes: Mapping[str, Any], target: Path) -> None:
 
 
 class EntitlementStoreDurabilityError(OSError):
+    """Signal that a membership or entitlement write could not be durably confirmed."""
+
     pass
 
 
 def _route_revision_at(entry: Mapping[str, Any], at: Any = None) -> dict[str, Any]:
+    """Resolve the latest route-arrangement revision effective at a given time."""
     moment = mem._now(at)
     revisions = [(index, item) for index, item in enumerate(entry.get("history") or [])
                  if mem._epoch(item.get("effective_from")) is not None
@@ -147,8 +155,11 @@ def _route_revision_at(entry: Mapping[str, Any], at: Any = None) -> dict[str, An
 
 
 def _paid_entitlement(account: Mapping[str, Any], catalogue: Mapping[str, Any] | None,
-                      at: Any = None) -> bool:
-    if mem.billing_arrangement(account) != "subscription":
+                      at: Any = None, *, effective_arrangement: str | None = None) -> bool:
+    """Check that a subscription arrangement carries a paid plan or positive fee."""
+    arrangement = (effective_arrangement if effective_arrangement is not None
+                   else mem.billing_arrangement(account))
+    if arrangement != "subscription":
         return False
     plan_id = str(account.get("plan_id") or "").strip()
     custom = mem.custom_plan_view(account)
@@ -168,6 +179,7 @@ def _paid_entitlement(account: Mapping[str, Any], catalogue: Mapping[str, Any] |
 
 
 def _raw_route_state(account: Mapping[str, Any], route_store: Mapping[str, Any], at: Any = None) -> dict[str, Any]:
+    """Read an account's route states at a time without validating included owners."""
     slugs = [str(slug).strip().lower() for slug in account.get("route_slugs") or [] if str(slug).strip()]
     if not slugs:
         return {"arrangement": mem.billing_arrangement(account), "effective_from": None,
@@ -190,6 +202,7 @@ def _raw_route_state(account: Mapping[str, Any], route_store: Mapping[str, Any],
 
 
 def _route_claims(accounts: Iterable[Mapping[str, Any]]) -> dict[str, list[str]]:
+    """Map each normalized configured route slug to the accounts claiming it."""
     claims: dict[str, list[str]] = {}
     for account in accounts:
         account_id = str(account.get("id") or "")
@@ -203,6 +216,7 @@ def _route_claims(accounts: Iterable[Mapping[str, Any]]) -> dict[str, list[str]]
 def _owner_valid(source: Mapping[str, Any], revision: Mapping[str, Any], accounts: Mapping[str, Mapping[str, Any]],
                  route_store: Mapping[str, Any], catalogue: Mapping[str, Any] | None,
                  claims: Mapping[str, list[str]], at: Any = None) -> tuple[bool, Mapping[str, Any] | None, str]:
+    """Validate an included-route owner against identity, effective state and paid-plan evidence."""
     owner_id = str(revision.get("owner_account_id") or "")
     if not owner_id or owner_id == str(source.get("id") or ""):
         return False, None, "self_or_missing_owner"
@@ -216,13 +230,17 @@ def _owner_valid(source: Mapping[str, Any], revision: Mapping[str, Any], account
     owner_arrangements = {item.get("arrangement") for item in owner_routes}
     if owner_arrangements and owner_arrangements != {"subscription"}:
         return False, owner, "owner_relationship_invalid"
-    if mem.billing_arrangement(owner) != "subscription" or not _paid_entitlement(owner, catalogue, at):
+    effective_arrangement = (next(iter(owner_arrangements)) if owner_arrangements
+                             else mem.billing_arrangement(owner))
+    if not _paid_entitlement(owner, catalogue, at,
+                             effective_arrangement=effective_arrangement):
         return False, owner, "owner_not_paid_subscription"
     return True, owner, ""
 
 
 def resolve_route_entitlements(accounts: list[Mapping[str, Any]], route_store: Mapping[str, Any],
                                catalogue: Mapping[str, Any] | None = None, at: Any = None) -> dict[str, Any]:
+    """Resolve route billing states and validate included owners at one effective time."""
     indexed = {str(account.get("id") or ""): account for account in accounts}
     claims = _route_claims(accounts)
     resolved_accounts: dict[str, dict[str, Any]] = {}
@@ -302,6 +320,7 @@ def resolve_route_entitlements(accounts: list[Mapping[str, Any]], route_store: M
 
 def account_route_arrangement(account: Mapping[str, Any], route_store: Mapping[str, Any],
                                at: Any = None) -> str:
+    """Return an account's common effective route arrangement, or mixed/invalid."""
     raw = _raw_route_state(account, route_store, at)
     states = raw.get("routes") or []
     if any(item.get("arrangement") == "invalid" for item in states):
@@ -315,6 +334,7 @@ def set_account_arrangement(account_id: str, arrangement: str, *, if_rev: str,
                             path: Optional[Path | str] = None,
                             catalogue: Mapping[str, Any] | None = None,
                             at: Any = None) -> dict[str, Any]:
+    """Validate and atomically record an arrangement for each configured route."""
     if arrangement not in ROUTE_ARRANGEMENTS:
         raise ValueError("billing arrangement is invalid")
     if arrangement == "included" and not owner_account_id:
@@ -409,6 +429,7 @@ def set_account_arrangement(account_id: str, arrangement: str, *, if_rev: str,
 
 
 def _restore_bytes(path: Path, value: bytes | None) -> None:
+    """Restore a previous file snapshot atomically, or remove a newly created file."""
     if value is None:
         path.unlink(missing_ok=True)
         if path.parent.exists():

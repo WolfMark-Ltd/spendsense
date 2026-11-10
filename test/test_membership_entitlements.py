@@ -194,6 +194,21 @@ class EntitlementStoreTests(unittest.TestCase):
         membership_store.save_account(changed, self.path, if_rev=linked["rev"])
         self.assertEqual(self.card(source["id"])["effective_arrangement"], "invalid")
 
+    def test_historical_relationship_uses_owner_arrangement_effective_at_that_time(self):
+        owner = self.save(account("commandcode:paid", "commandcode", ["commandcode-paid"],
+                                  plan_id="commandcode.pro", identity="paid"))
+        source = self.save(account("anthropic:source", "anthropic", ["anthropic-source"],
+                                    plan_id="anthropic.claude-pro", identity="source"))
+        self.arrange(source["id"], "included", owner["id"], at=SHARED_FROM)
+        self.arrange(owner["id"], "prepaid", at="2026-11-01T00:00:00Z")
+
+        historical = self.card(source["id"], at="2026-10-01T00:00:00Z")
+        current = self.card(source["id"], at="2026-11-10T12:00:00Z")
+
+        self.assertEqual(historical["effective_arrangement"], "included")
+        self.assertEqual(historical["entitlement_owner_id"], owner["id"])
+        self.assertEqual(current["effective_arrangement"], "invalid")
+
     def test_legacy_case_variants_can_be_explicitly_linked_and_store_is_profile_scoped(self):
         owner = self.save(account("commandcode:paid", "commandcode", ["commandcode-paid"],
                                   plan_id="commandcode.pro", identity="paid"))
@@ -437,6 +452,28 @@ class SharedRouteEconomicsTests(unittest.TestCase):
         self.assertFalse(after["partial"])
         self.assertFalse(after.get("partial_attribution", False))
         self.assertEqual(after["difference_note"], "")
+
+    def test_historical_trend_keeps_entitlement_after_owner_changes_to_prepaid(self):
+        owner = self.save(account("commandcode:paid", "commandcode", ["commandcode"],
+                                  plan_id="commandcode.pro", identity="paid"))
+        source = self.save(account("anthropic:shared", "anthropic", ["route-anthropic"],
+                                   plan_id="anthropic.claude-pro", identity="anthropic"))
+        self.arrange(source["id"], "included", owner["id"], at="2026-09-01T00:00:00Z")
+        event_db = self.create_events([
+            {"ts": membership._epoch("2026-01-01T00:00:00Z"), "input_tokens": 1},
+            {"ts": membership._epoch("2026-10-15T12:00:00Z"), "input_tokens": 1_000_000},
+        ])
+        self.arrange(owner["id"], "prepaid", at="2026-11-01T00:00:00Z")
+
+        result = self.economics_report(
+            event_db, now="2026-12-15T12:00:00Z", trend_months=4)
+        october = next(row for row in result["trend"]["months"] if row["month"] == "2026-10")
+
+        self.assertEqual(october["fees_by_currency"], [{"currency": "USD", "amount": 20.0}])
+        self.assertEqual(october["usage_usd"], 2.0)
+        self.assertEqual(october["difference_usd"], -18.0)
+        self.assertFalse(october["partial"])
+        self.assertEqual(october["difference_note"], "")
 
     def test_idle_included_route_does_not_make_current_or_monthly_comparison_partial(self):
         owner = self.save(account("commandcode:paid", "commandcode", ["commandcode"],

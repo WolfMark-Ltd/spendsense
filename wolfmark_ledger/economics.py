@@ -368,6 +368,7 @@ def attribution_note(basis: str) -> str:
 
 def _move_included_routes(mapping: dict[str, Any], included_by_route: Mapping[str, Mapping[str, Any]],
                           eligible_since: float | None) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    """Move observed routes to their included owner only with exact active evidence."""
     pending: dict[str, list[str]] = {}
     for route, relationship in included_by_route.items():
         route_key = str(route or "").strip().lower()
@@ -411,6 +412,7 @@ def _included_route_transitions(accounts: list[Mapping[str, Any]],
                                 plans: Mapping[str, Any],
                                 observed_routes: Iterable[str],
                                 start: float, end: float) -> tuple[set[str], set[str]]:
+    """Return observed routes with ownership changes and invalid saved relationships."""
     observed = {str(route or "").strip().lower() for route in observed_routes
                 if str(route or "").strip()}
     if not observed:
@@ -426,11 +428,13 @@ def _included_route_transitions(accounts: list[Mapping[str, Any]],
     }
 
     def included_at(moment: float) -> dict[str, Mapping[str, Any]]:
+        """Resolve valid included-route owners at one effective time."""
         resolved = mstore.resolve_route_entitlements(accounts, route_store, plans, moment)
         return {str(route).strip().lower(): relation
                 for route, relation in (resolved.get("included_by_route") or {}).items()}
 
     def invalid_included_at(moment: float, valid: Mapping[str, Mapping[str, Any]]) -> set[str]:
+        """Find saved included relationships that do not validate at this time."""
         invalid: set[str] = set()
         for route in observed:
             entry = history.get(route)
@@ -442,6 +446,7 @@ def _included_route_transitions(accounts: list[Mapping[str, Any]],
         return invalid
 
     def owner_signature(relation: Mapping[str, Any] | None) -> tuple[str, str] | None:
+        """Return the source and owner identity for a valid relationship."""
         if not relation or relation.get("status") != "valid":
             return None
         return (str(relation.get("account_id") or ""),
