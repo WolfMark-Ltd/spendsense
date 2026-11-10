@@ -38,7 +38,7 @@ import {
   useQuery,
   useValue
 } from '@hermes/plugin-sdk'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
@@ -196,10 +196,18 @@ function usagePriceEvidence(input, output, cache, write, flat, source) {
 
 function tableRates(table, names) {
   if (!table) return null
-  const row = r => ({ cache: r[2] ?? r[0], input: r[0], output: r[1] ?? 0, write: r[3] ?? null,
-    inputKnown: false, outputKnown: false, cacheKnown: false,
-    ...usagePriceEvidence(r[0], r[1], r[4] & 2 ? r[2] : null, r[4] & 4 ? r[3] : null,
-      Number.isInteger(r[4]) && !!(r[4] & 1), 'bundled_catalogue') })
+  // Flags mirror `toRates`: a table row is only "known" for a band the bundled
+  // catalogue actually publishes. Without them every bundled/fallback rate
+  // claimed an unknown input price, so net savings could never be computed
+  // from a table — even for a row that carries a verified cache-read rate.
+  const row = r => {
+    const read = Number.isInteger(r[4]) && !!(r[4] & 2) ? r[2] : null
+    const write = Number.isInteger(r[4]) && !!(r[4] & 4) ? r[3] : null
+    const flat = Number.isInteger(r[4]) && !!(r[4] & 1)
+    return { cache: r[2] ?? r[0], input: r[0], output: r[1] ?? 0, write,
+      inputKnown: r[0] != null && flat, outputKnown: r[1] != null, cacheKnown: read != null,
+      ...usagePriceEvidence(r[0], r[1], read, write, flat, 'bundled_catalogue') }
+  }
   for (const n of names) {
     const r = table[n]
     if (Array.isArray(r)) return row(r)
@@ -398,20 +406,95 @@ function grossCacheReadSavings(cacheRead, rates) {
   return rates ? num(cacheRead) * Math.max(0, rates.input - rates.cache) / M : null
 }
 
-function cacheSavings(cacheRead, rates, cacheWrite = 0) {
+/**
+ * What cache reads saved versus paying the full input rate for them.
+ *
+ * `derivedWrite` marks a cache-write figure the pane reconstructed from the
+ * gateway's rounded hit percentage rather than read from a provider counter.
+ * Such a write often has no published price (commandcode, xai), and voiding the
+ * whole increment blanked every conversation on those routes, so the residual
+ * is valued at the input rate — the convention `costOf` already uses.
+ *
+ * The direction of that substitution matters. It omits any write premium, so if
+ * the route charges one the saving is OVERSTATED by write x (write rate - input
+ * rate); a route that charged less than input for writes would be understated.
+ * The figure is exact only against the card the pane displays, which prices
+ * writes at the input rate too — not against an unpublished premium. This is
+ * not a general guarantee that a missing write price cannot overstate savings;
+ * it is warranted here because the affected routes report no cache writes at
+ * all. A provider-reported write still needs its published write price.
+ */
+function cacheSavings(cacheRead, rates, cacheWrite = 0, derivedWrite = false) {
+  const writeRate = Number.isFinite(rates?.write) ? rates.write
+    : derivedWrite && Number.isFinite(rates?.input) ? rates.input : null
   if (!rates || rates.inputKnown !== true || rates.outputKnown !== true ||
       !Number.isFinite(rates.input) || !Number.isFinite(rates.output) ||
       (num(cacheRead) && (rates.cacheKnown !== true || !Number.isFinite(rates.cache))) ||
-      (num(cacheWrite) && !Number.isFinite(rates.write))) return null
+      (num(cacheWrite) && writeRate == null)) return null
   const readSavings = num(cacheRead) ? num(cacheRead) * (rates.input - rates.cache) : 0
-  const writeSavings = num(cacheWrite) ? num(cacheWrite) * (rates.input - rates.write) : 0
+  const writeSavings = num(cacheWrite) ? num(cacheWrite) * (rates.input - writeRate) : 0
   return (readSavings + writeSavings) / M
+}
+
+/** True when a bucket's cache-write figure was reconstructed, never reported. */
+function derivedWrites(bucket) {
+  const b = bucket || {}
+  if (!num(b.cacheWrite)) return false
+  if (b.cacheSource) return b.cacheSource === 'estimated'
+  // Stored buckets keep no source: only an all-estimated bucket's writes are
+  // derived. Any exactly-counted prompt token means a provider counter exists.
+  return b.cacheEstimated === true && !num(b.cacheExactPrompt)
 }
 
 /** Strict single-bucket net value; unknown read/write prices stay unknown. */
 function liveSavings(bucket, rates) {
   if (!bucket || !rates) return null
-  return cacheSavings(bucket.cacheRead, rates, bucket.cacheWrite)
+  return cacheSavings(bucket.cacheRead, rates, bucket.cacheWrite, derivedWrites(bucket))
+}
+
+/**
+ * Why a net saving could not be established for this bucket and card.
+ * A blank is only honest alongside the reason it is blank; the pane names one
+ * of these instead of leaving the reader to guess.
+ */
+function savingsGapReason(bucket, rates) {
+  const b = bucket || {}
+  if (!num(b.cacheRead) && !num(b.cacheWrite)) return 'no_cache'
+  if (!rates) return 'no_rate'
+  if (rates.inputKnown !== true) return 'tiered'
+  if (num(b.cacheRead) && (rates.cacheKnown !== true || !Number.isFinite(rates.cache))) return 'no_cache_rate'
+  if (num(b.cacheWrite) && !Number.isFinite(rates.write) && !derivedWrites(b)) return 'no_write_rate'
+  // Prices are known, so what is missing is the split itself.
+  return 'split_unknown'
+}
+
+/**
+ * Net cache savings over the prompt tokens whose split and rates are known,
+ * with the coverage those tokens represent. The value is the measured part
+ * only: uncovered tokens are unknown, never zero. A pane must print the
+ * coverage beside the figure — the two surfaces that show it (the sidebar
+ * gauge and the ledger totals) both derive from this one rule.
+ */
+function savingsState(bucket, rates) {
+  const b = bucket || {}
+  // `summarize` totals carry `prompt` directly; a ledger bucket carries the
+  // three streams it is made of.
+  const prompt = num(b.prompt) || num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
+  const covered = num(b.netSavingsPrompt)
+  // `num` clamps at zero because it guards token counts; a net saving is
+  // signed, and a cache-write premium can exceed the read discount. Keep the
+  // sign (Greptile P1) and keep an absent value absent.
+  const amount = finiteValue(b.netSavings)
+  const value = covered > 0 && amount != null ? amount : null
+  const coverage = prompt ? Math.min(1, covered / prompt) : null
+  return {
+    value,
+    prompt,
+    covered,
+    coverage,
+    partial: value != null && coverage != null && coverage < 1,
+    reason: value == null ? savingsGapReason(b, rates) : null
+  }
 }
 
 /**
@@ -653,7 +736,7 @@ function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolv
     b.cacheCoveredRead = num(b.cacheCoveredRead) + num(delta.cacheRead)
     if (cur.cacheSource === 'exact') b.cacheExactPrompt = num(b.cacheExactPrompt) + prompt
     if (cur.cacheSource === 'estimated') b.cacheEstimatedPrompt = num(b.cacheEstimatedPrompt) + prompt
-    const net = cacheSavings(delta.cacheRead, resolved.rates, delta.cacheWrite)
+    const net = cacheSavings(delta.cacheRead, resolved.rates, delta.cacheWrite, cur.cacheSource === 'estimated')
     if (net != null) {
       b.netSavings = (Number.isFinite(b.netSavings) ? b.netSavings : 0) + net
       b.netSavingsPrompt = num(b.netSavingsPrompt) + prompt
@@ -990,7 +1073,10 @@ function summarize(led, filter, priceLegacy) {
   list.sort((a, b) => num(b.cost) - num(a.cost) || tokensOf(b) - tokensOf(a))
   totals.hitPct = hitPctOf(totals)
   totals.cacheCoverage = cacheCoverage({ input: totals.prompt, cacheCoveredPrompt: totals.cacheCoveredPrompt })
-  totals.netSavings = totals.prompt && totals.netSavingsPrompt === totals.prompt ? totals.netSavings : null
+  // The measured part of the range. Requiring every token to be covered hid
+  // the figure for every range that contains one unreported cold start, which
+  // is every range; `savingsState` carries the coverage with the value.
+  totals.netSavings = num(totals.netSavingsPrompt) ? totals.netSavings : null
   return { rows: list, totals }
 }
 
@@ -1360,6 +1446,10 @@ function useLive() {
     const histSource = !hist.pricedTokens ? 'none' : kinds.length === 1 ? kinds[0] : 'mixed'
     const histModel = hist.model || model
     const histRates = usage ? resolved : resolveRates({ model: histModel, payload, provider: hist.provider || provider, remembered: led.rates })
+    // The figure is the measured part of the conversation, not a complete
+    // total: print it with its coverage instead of hiding it because one
+    // increment (every conversation's cold start) had no cache evidence.
+    const savings = savingsState(hist, histRates.rates)
     return {
       bucket: hist,
       guardrailValue: hist,
@@ -1380,14 +1470,19 @@ function useLive() {
       provider: provider || (!usage ? (hist.provider || null) : null),
       providerUnknown: !(provider || (!usage && hist.provider)),
       rates: histRates.rates,
-      saved: num(hist.netSavingsPrompt) === num(hist.input) + num(hist.cacheRead) + num(hist.cacheWrite) && num(hist.netSavingsPrompt)
-        ? hist.netSavings : null,
+      saved: savings.value,
+      savedCoverage: savings.coverage,
+      savedPartial: savings.partial,
+      savedReason: savings.reason,
       cacheCoverage: cacheCoverage(hist),
       sinceAt: hist.firstAt,
       usage
     }
   }
 
+  const runState = bucket?.cacheSource !== 'unknown' && num(bucket?.calls) === 1
+    ? liveSavings(bucket, resolved.rates)
+    : null
   return {
     bucket,
     guardrailValue: led.snapshots[String(sessionId)]?.guardrail || null,
@@ -1402,8 +1497,12 @@ function useLive() {
     providerUnknown: !provider,
     rates: resolved.rates,
     // A cumulative run can span models; one current price cannot value it.
-    saved: bucket?.cacheSource !== 'unknown' && num(bucket?.calls) === 1
-      ? liveSavings(bucket, resolved.rates) : null,
+    saved: runState,
+    savedCoverage: runState != null ? 1 : null,
+    savedPartial: false,
+    savedReason: runState != null ? null
+      : bucket && num(bucket.calls) > 1 && bucket.cacheSource !== 'unknown' ? 'cumulative_run'
+        : savingsGapReason(bucket, resolved.rates),
     cacheCoverage: cacheCoverage(bucket),
     usage
   }
@@ -1598,6 +1697,9 @@ function snapshotLive(live) {
     providerUnknown: live.providerUnknown,
     rates: live.rates,
     saved: live.saved,
+    savedCoverage: live.savedCoverage,
+    savedPartial: live.savedPartial,
+    savedReason: live.savedReason,
     sinceAt: live.sinceAt
   }
 }
@@ -1644,17 +1746,101 @@ function useStableLive() {
 }
 
 /**
+ * Edge-aware placement for an open InfoTip popover. Pure geometry: given the
+ * anchor (the popover's offset parent), the popover's measured rect and the
+ * visible scope rect (nearest .wm-analytics/.wm-pane, else the viewport),
+ * keep the author's preferred alignment when it fits, flip onto a fitting
+ * edge when it does not, and otherwise clamp the popover into the scope (a
+ * mid-container trigger in a narrow scope fits neither pure alignment).
+ * Returns { x, y, left, top }: x/y drive the alignment classes, while left/
+ * top are pixel offsets relative to the anchor — null when the classes alone
+ * place the popover correctly. Layout-free environments (jsdom) report zero
+ * rects: the preference is kept with no offsets, so unit tests pin the static
+ * classes and only real browsers adjust.
+ */
+function infoTipPlacement(anchor, pop, scope, { dir = 'down', wide = false } = {}) {
+  const preferred = { x: wide ? 'right' : 'left', y: dir === 'up' ? 'up' : 'down', left: null, top: null }
+  const laidOut = [anchor, pop, scope].every(r => r && (r.width || r.height || r.right || r.bottom))
+  if (!laidOut) return preferred
+  const GAP = 6
+  const leftFor = x => (x === 'left' ? anchor.left : anchor.right - pop.width)
+  const topFor = y => (y === 'up' ? anchor.top - GAP - pop.height : anchor.bottom + GAP)
+  const fitsX = left => pop.width <= scope.width && left >= scope.left && left + pop.width <= scope.right
+  const fitsY = top => pop.height <= scope.height && top >= scope.top && top + pop.height <= scope.bottom
+  const clamp = (value, low, high) => Math.min(Math.max(value, low), high)
+  const next = { ...preferred }
+  if (!fitsX(leftFor(next.x))) {
+    const flipped = next.x === 'left' ? 'right' : 'left'
+    if (fitsX(leftFor(flipped))) next.x = flipped
+  }
+  if (!fitsX(leftFor(next.x)) && pop.width <= scope.width) {
+    next.left = clamp(leftFor(next.x), scope.left, scope.right - pop.width) - anchor.left
+  }
+  if (!fitsY(topFor(next.y))) {
+    const flipped = next.y === 'up' ? 'down' : 'up'
+    if (fitsY(topFor(flipped))) next.y = flipped
+  }
+  if (!fitsY(topFor(next.y)) && pop.height <= scope.height) {
+    next.top = clamp(topFor(next.y), scope.top, scope.bottom - pop.height) - anchor.top
+  }
+  return next
+}
+
+/**
  * Contextual explanation replacing a paragraph of permanent prose. One popover
  * is open at a time ($infoOpen), so narrow panes never stack explanations.
  * Opens on hover, focus and click; closes on leave, blur and Escape. Clicking
  * always opens (never toggles shut what hover just opened), and the button
- * keeps natural focus so Escape works after mouse interaction too.
+ * keeps natural focus so Escape works after mouse interaction too. On open the
+ * popover is measured once against its visible scope and flipped onto a
+ * fitting edge (clamped when neither pure alignment fits), so triggers near
+ * a container or viewport edge never overflow or grow scrollbars; the
+ * author's dir/wide props stay the preference.
  */
 function InfoTip({ dir = 'down', id, label, text, wide = false }) {
   const open = useValue($infoOpen)
   const isOpen = open === id
   const show = () => $infoOpen.set(id)
   const hide = () => { if ($infoOpen.get() === id) $infoOpen.set(null) }
+  const btnRef = useRef(null)
+  const popRef = useRef(null)
+  const [placed, setPlaced] = useState(null)
+  useEffect(() => {
+    if (!isOpen) { setPlaced(null); return }
+    const btn = btnRef.current
+    const pop = popRef.current
+    if (!btn || !pop || typeof btn.getBoundingClientRect !== 'function') return
+    const host = btn.closest('.wm-analytics,.wm-pane')
+    // Client box, not border box: classic (non-overlay) scrollbars occupy
+    // layout inside the border box, and scrollable overflow is measured
+    // against the client box — a popover parked in the gutter still grows
+    // scrollWidth/scrollHeight there. Neither scope surface has a border,
+    // and layout is ltr-only, so the client box starts at the border origin.
+    let scope
+    if (host) {
+      const box = host.getBoundingClientRect()
+      scope = { left: box.left, top: box.top, right: box.left + host.clientWidth,
+        bottom: box.top + host.clientHeight, width: host.clientWidth, height: host.clientHeight }
+    } else {
+      const width = document.documentElement.clientWidth || window.innerWidth
+      const height = document.documentElement.clientHeight || window.innerHeight
+      scope = { left: 0, top: 0, right: width, bottom: height, width, height }
+    }
+    const parent = pop.offsetParent
+    const anchor = parent && parent !== document.body && parent !== document.documentElement
+      && typeof parent.getBoundingClientRect === 'function'
+      ? parent.getBoundingClientRect() : btn.getBoundingClientRect()
+    setPlaced(infoTipPlacement(anchor, pop.getBoundingClientRect(), scope, { dir, wide }))
+  }, [isOpen, id, dir, wide, text])
+  const alignRight = placed ? placed.x === 'right' : wide
+  const openUp = placed ? placed.y === 'up' : dir === 'up'
+  // Clamp fallback: only when neither pure alignment fits (mid-container
+  // triggers in narrow scopes). Inline offsets beat the classes; the
+  // opposing edge resets so left/right and top/bottom never fight.
+  const popStyle = placed && (placed.left != null || placed.top != null) ? {
+    ...(placed.left != null ? { left: `${placed.left}px`, right: 'auto' } : null),
+    ...(placed.top != null ? { top: `${placed.top}px`, bottom: 'auto' } : null),
+  } : undefined
   return jsxs('span', {
     className: 'wm-info',
     onMouseLeave: hide,
@@ -1662,6 +1848,7 @@ function InfoTip({ dir = 'down', id, label, text, wide = false }) {
       jsx('button', {
         type: 'button',
         className: 'wm-info-btn',
+        ref: btnRef,
         'aria-label': label,
         'aria-expanded': isOpen,
         'aria-controls': `wm-info-${id}`,
@@ -1681,8 +1868,11 @@ function InfoTip({ dir = 'down', id, label, text, wide = false }) {
         children: 'i'
       }),
       isOpen
-        ? jsx('span', { id: `wm-info-${id}`, role: 'tooltip',
-            className: cn('wm-info-pop', dir === 'up' && 'wm-info-up', wide && 'wm-info-pop-wide'), children: text })
+        ? jsx('span', { id: `wm-info-${id}`, role: 'tooltip', ref: popRef, style: popStyle,
+            className: cn('wm-info-pop', openUp && 'wm-info-up',
+              wide && 'wm-info-pop-wide',
+              !wide && alignRight && 'wm-info-flip-x',
+              wide && !alignRight && 'wm-info-flip-left'), children: text })
         : null
     ].filter(Boolean), `info-${id}`)
   })
@@ -1804,6 +1994,40 @@ function TokenComposition({ t, view }) {
   ] })
 }
 
+/** Translation key per unresolved-savings reason. Never interpolate the key
+ *  itself: the host returns a missing key verbatim, so an unmapped reason would
+ *  render as `savedReason_…` beside the gauge. */
+const SAVED_REASON_KEYS = {
+  no_rate: 'savedReasonNoRate',
+  tiered: 'savedReasonTiered',
+  no_cache_rate: 'savedReasonNoCacheRate',
+  no_write_rate: 'savedReasonNoWriteRate',
+  split_unknown: 'savedReasonSplitUnknown',
+  no_cache: 'savedReasonNoCache',
+  cumulative_run: 'savedReasonCumulativeRun'
+}
+
+/** Coverage share as a whole percentage that never claims completeness. */
+function savedCoveragePct(view) {
+  const share = num(view && view.savedCoverage)
+  if (!share) return null
+  return Math.min(view && view.savedPartial ? 99 : 100, Math.max(0, Math.round(share * 100)))
+}
+
+/** The line under the gauge: exact, estimated, the coverage behind a partial
+ *  figure, or the reason none could be established. */
+function savedNote(t, view, estimated) {
+  if (view.saved != null) {
+    if (view.savedPartial) {
+      const covered = savedCoveragePct(view)
+      return covered == null ? `≈ ${t('estimatedLabel')}` : t('savedPartialNote', covered)
+    }
+    return estimated ? `≈ ${t('estimatedLabel')}` : t('exactLabel')
+  }
+  if (!view.savedReason) return null
+  return `${t('savedNotEstablished')} · ${t(SAVED_REASON_KEYS[view.savedReason] || 'savedReasonSplitUnknown')}`
+}
+
 const RING_R = 26
 const RING_C = 2 * Math.PI * RING_R
 
@@ -1813,6 +2037,7 @@ function CacheGauge({ t, view }) {
   const pct = view.cacheHitPct == null ? null : Math.max(0, Math.min(100, view.cacheHitPct))
   const approx = b.cacheEstimated ? '≈' : ''
   const estimated = !!b.cacheEstimated
+  const note = savedNote(t, view, estimated)
   const arc = pct == null ? 0 : (pct / 100) * RING_C
   return jsxs('section', { className: 'wm-card', 'aria-label': t('cacheTitle'), children: [
     jsxs('div', { className: 'wm-card-title', children: [
@@ -1852,10 +2077,10 @@ function CacheGauge({ t, view }) {
             jsx('span', { children: t('savedGauge') }, 't'),
             jsx(InfoTip, { id: 'savings-method', label: t('infoLabel'), text: t('savingsInfo'), wide: true, dir: 'up' }, 'info')
           ] }, 'l'),
-          jsx('span', { className: 'wm-metric-value', children: view.saved == null ? '—' : `${approx}${fmtUsd(view.saved)}` }, 'v')
+          jsx('span', { className: 'wm-metric-value',
+            children: view.saved == null ? '—' : `${view.savedPartial ? '≈' : approx}${fmtUsd(view.saved)}` }, 'v')
         ] }, 'saved'),
-        pct == null || view.saved == null ? null : jsx('div', { className: 'wm-gauge-note',
-          children: estimated ? `≈ ${t('estimatedLabel')}` : t('exactLabel') }, 'marker')
+        note == null ? null : jsx('div', { className: 'wm-gauge-note', children: note }, 'marker')
       ].filter(Boolean) }, 'stats')
     ] }, 'row')
   ] })
@@ -1986,7 +2211,9 @@ const SHARED_CSS = [
   '.wm-info-btn:focus-visible{outline:2px solid var(--wm-action);outline-offset:2px}',
   '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:auto;z-index:40;width:max-content;max-width:min(260px,calc(100vw - 32px));max-width:min(260px,calc(100cqi - 32px));background:var(--wm-surface-raised);border:1px solid var(--wm-border);border-radius:var(--wm-radius-nested);padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;white-space:normal;overflow-wrap:anywhere;color:var(--wm-text-secondary);box-shadow:0 8px 24px color-mix(in srgb,var(--wm-border) 55%,transparent)}',
   '.wm-info-pop.wm-info-up{top:auto;bottom:calc(100% + 6px)}',
-  '.wm-info-pop-wide{left:auto;right:0;width:max-content;max-width:min(260px,calc(100cqi - 32px))}'
+  '.wm-info-pop-wide{left:auto;right:0;width:max-content;max-width:min(260px,calc(100cqi - 32px))}',
+  '.wm-info-pop.wm-info-flip-x{left:auto;right:0}',
+  '.wm-info-pop-wide.wm-info-flip-left{left:0;right:auto}'
 ].join('');
 
 const METER_CSS = [
@@ -2361,11 +2588,21 @@ function ProductHeader({ title, subtitle, actions }) {
 }
 function ProductShell({ children, pageStyles = '' }) {
   const supplementalStyles = Array.isArray(pageStyles) ? pageStyles.join('') : pageStyles
-  return jsxs('div', { className: 'wm-analytics wm-product', children: [
-    jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + (supplementalStyles || '') }),
-    jsx(LedgerTabs, {}),
-    children
-  ].filter(Boolean) })
+  // Mirror the Meter pane: a hover-opened tip has no focused button to catch
+  // Escape, so dismiss it here on capture and keep the window-level ledger
+  // closer out of it. Plain Escape (no tip open) still propagates as before.
+  return jsxs('div', { className: 'wm-analytics wm-product',
+    onKeyDownCapture: event => {
+      if (event.key === 'Escape' && $infoOpen.get()) {
+        event.stopPropagation()
+        $infoOpen.set(null)
+      }
+    },
+    children: [
+      jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + (supplementalStyles || '') }),
+      jsx(LedgerTabs, {}),
+      children
+    ].filter(Boolean) })
 }
 function keyedElementChildren(children, prefix) {
   return children.map((child, index) => {
@@ -8980,12 +9217,17 @@ function LedgerPage() {
   useValue($membershipIdentity)
   const storageError = useValue($storageError)
   const { rows, totals } = useSummary(range)
+  // One rule for the figure and its coverage, shared with the sidebar gauge.
+  const totalSaved = savingsState(totals, null)
   const dayCount = Object.keys(led.days).length
 
-  // Esc closes the page, unless the user is typing somewhere.
+  // Esc closes the page, unless the user is typing somewhere. An open info
+  // tip dismisses first, so hover-opened tips with focus outside both scopes
+  // never close the page out from under the user.
   useEffect(() => {
     const onKey = e => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
+      if ($infoOpen.get()) { $infoOpen.set(null); return }
       const el = e.target
       if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return
       if (document.querySelector('[role="dialog"]')) return
@@ -9011,6 +9253,9 @@ function LedgerPage() {
     const pct = hitPctOf(r)
     const approx = r.cacheEstimated ? '≈' : ''
     const warn = r.legacy ? r.legacyOrigin === 'foreign' : num(r.sources.foreign) || r.unpricedTokens
+    // Coverage travels with the measured value; a measured figure does not
+    // depend on the card, so the row can state its share of prompt tokens.
+    const savedState = savingsState(r, null)
     return [
       jsxs('td', {
         className: 'py-1.5 pr-3',
@@ -9027,7 +9272,11 @@ function LedgerPage() {
       jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums text-(--ui-text-tertiary)', children: `${approx}${fmtTokens(r.cacheRead)}` }),
       jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums text-(--ui-text-tertiary)', children: String(r.calls) }),
       jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums', children: pct == null ? '—' : `${approx}${Math.round(pct)}%` }),
-      jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums text-(--ui-accent)', children: num(r.netSavingsPrompt) && num(r.netSavingsPrompt) === num(r.input) + num(r.cacheRead) + num(r.cacheWrite) ? `${approx}${fmtUsd(r.netSavings)}` : '—' }),
+      jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums text-(--ui-accent)',
+        title: savedState.partial
+          ? t('savedPartialNote', Math.min(99, Math.round(savedState.coverage * 100))) : undefined,
+        children: savedState.value == null ? '—'
+          : `${savedState.partial ? '≈' : approx}${fmtUsd(savedState.value)}` }),
       jsxs('td', {
         className: 'py-1.5 text-right tabular-nums',
         children: [
@@ -9091,7 +9340,11 @@ function LedgerPage() {
                 className: 'flex items-baseline justify-between text-xs text-(--ui-text-tertiary)',
                 children: [
                   jsx('span', { children: `${t('hitRate')} ${totals.cacheEstimated ? '≈' : ''}${Math.round(totals.hitPct)}%` }),
-                  jsx('span', { children: `${t('savedTotal')} ${totals.cacheEstimated ? '≈' : ''}${fmtUsd(totals.netSavings)}` })
+                  jsx('span', { children:
+                    `${t('savedTotal')} ${totals.cacheEstimated || totalSaved.partial ? '≈' : ''}${fmtUsd(totalSaved.value)}`
+                    + (totalSaved.partial
+                      ? ` · ${t('savedPartialShort', Math.min(99, Math.round(totalSaved.coverage * 100)))}`
+                      : '') })
                 ]
               }),
               jsx(CacheBar, { pct: totals.hitPct })
@@ -9222,7 +9475,7 @@ const I18N = {
     estimatedLabel: 'estimated',
     infoLabel: 'More information',
     coverageLabel: 'Coverage',
-    savingsInfo: 'Theoretical saving versus pricing the same covered prompt tokens at uncached input rates. Cache writes can cost extra, so this is an estimate, not a credit or refund.',
+    savingsInfo: 'Theoretical API-equivalent saving versus pricing the same covered prompt tokens at uncached input rates. Cache writes can cost more or less than the input rate, so this is an estimate, not a credit, refund or billed charge. Rates are the catalogue card for the route; a peak/off-peak window may price the same calls differently.',
     partialShort: n => `${n} unpriced`,
     // Subscription economics.
     econTitle: 'Subscription economics',
@@ -9925,6 +10178,16 @@ const I18N = {
     saved: 'Net savings',
     savedTotal: 'Theoretical net cache savings',
     savedGauge: 'Net cache savings',
+    savedPartialNote: n => `covers ${n}% of prompt tokens`,
+    savedPartialShort: n => `covers ${n}%`,
+    savedNotEstablished: 'not established',
+    savedReasonNoRate: 'no rate for this route',
+    savedReasonTiered: 'tiered pricing not modelled',
+    savedReasonNoCacheRate: 'no cache-read price',
+    savedReasonNoWriteRate: 'cache-write price missing',
+    savedReasonSplitUnknown: 'cache split not reported',
+    savedReasonNoCache: 'no cache evidence in this conversation',
+    savedReasonCumulativeRun: 'the live run may span models',
     sessionTokens: 'This session',
     src_backend: 'Hermes backend estimate',
     src_bundled: 'estimated from models.dev rates',
@@ -10471,7 +10734,7 @@ const I18N = {
     estimatedLabel: '估算',
     infoLabel: '更多信息',
     coverageLabel: '覆盖率',
-    savingsInfo: '与按未缓存输入价计算的理论差值。缓存写入可能产生额外费用，此为估算，不是退款或抵扣。',
+    savingsInfo: '与按未缓存输入价计算同一批已覆盖提示令牌的理论差值（API 等价估算）。缓存写入可能高于或低于输入价，此为估算，不是抵扣、退款或实际账单。费率取该线路的目录卡；峰谷时段可能对同一批调用给出不同价格。',
     partialShort: n => `${n} 未定价`,
     // 订阅经济分析。
     econTitle: '订阅经济分析',
@@ -11107,6 +11370,16 @@ const I18N = {
     saved: '净节省',
     savedTotal: '理论缓存净节省',
     savedGauge: '缓存净节省',
+    savedPartialNote: n => `覆盖 ${n}% 的提示令牌`,
+    savedPartialShort: n => `覆盖 ${n}%`,
+    savedNotEstablished: '无法确定',
+    savedReasonNoRate: '该线路无费率',
+    savedReasonTiered: '未建模阶梯价格',
+    savedReasonNoCacheRate: '缺少缓存读取价格',
+    savedReasonNoWriteRate: '缺少缓存写入价格',
+    savedReasonSplitUnknown: '未报告缓存拆分',
+    savedReasonNoCache: '本次对话没有缓存证据',
+    savedReasonCumulativeRun: '实时运行可能跨模型',
     scopeRun: '本轮',
     scopeConversation: '对话',
     scopeTotalsConversation: '对话总计',
@@ -11809,10 +12082,11 @@ export const __test = {
   readUsage, cacheCoverage, cacheCoverageDetail, cacheCoverageLine,
   resolveRates,
   summarize,
-  Meter, MeterHeader, CostKpi, TokenComposition, CacheGauge, RatesPanel, MeterEmpty, InfoTip,
+  Meter, MeterHeader, CostKpi, TokenComposition, CacheGauge, RatesPanel, MeterEmpty, InfoTip, infoTipPlacement,
   useStableLive, mergeStableLive, stableLive, resetStableLive, meterPresence, compositionShares,
   $ratesOpen, $infoOpen, METER_CSS, RING_R, RING_C,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
-  fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, liveSavings,
+  fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, liveSavings, costOf,
+  savingsState, savingsGapReason, derivedWrites, savedNote, savedCoveragePct, SAVED_REASON_KEYS,
   $ledger
 }

@@ -48,7 +48,8 @@ setTimeout(() => {
 `)
     const esbuild = (await import(pathToFileURL(join(modules, 'esbuild/lib/main.js')))).default
     await esbuild.build({ entryPoints: [entry], bundle: true, platform: 'browser', format: 'iife', outfile: join(dir, 'page.js'),
-      alias: { '@hermes/plugin-sdk': sdk }, nodePaths: [modules], logLevel: 'warning', jsx: 'automatic' })
+      alias: { '@hermes/plugin-sdk': sdk, react: join(modules, 'react'), 'react-dom': join(modules, 'react-dom') },
+      nodePaths: [modules], logLevel: 'warning', jsx: 'automatic' })
     const html = join(dir, 'page.html')
     writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><style>
 *{box-sizing:border-box}body{margin:0;font:13px/1.5 system-ui} .case{margin:10px;display:inline-block;vertical-align:top;background:var(--ui-fill-primary);color:var(--ui-text-primary)}
@@ -56,7 +57,7 @@ setTimeout(() => {
 .light{--ui-fill-primary:#fff;--ui-fill-secondary:#f2f4f7;--ui-fill-tertiary:#e3e5eb;--ui-stroke-secondary:#c5cbd5;--ui-text-primary:#151823;--ui-text-secondary:#414655;--ui-text-tertiary:#555b69;--ui-text-quaternary:#626877;--ui-accent:#3157c0;--ui-warning:#9a5e00;--ui-error:#b42318}
 .narrow{width:380px}.wide{width:1080px}#result{display:none}
 </style></head><body>${['narrow-dark','wide-dark','narrow-light','wide-light'].map(id => `<div id="${id}" class="case ${id.replace('-', ' ')}"></div>`).join('')}<div id="result"></div><script>${readFileSync(join(dir, 'page.js'), 'utf8')}</script></body></html>`)
-    const output = execFileSync(chrome, ['--headless', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=5000', '--dump-dom', `file://${html}`], { timeout: 60000, maxBuffer: 16*1024*1024, stdio: ['ignore', 'pipe', 'ignore'] }).toString()
+    const output = execFileSync(chrome, ['--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(dir, 'chrome-profile')}`, '--virtual-time-budget=5000', '--dump-dom', `file://${html}`], { timeout: 60000, maxBuffer: 16*1024*1024, stdio: ['ignore', 'pipe', 'ignore'] }).toString()
     const result = output.match(/<div id="result"[^>]*>([^<]*)<\/div>/)
     assert.ok(result?.[1], 'browser records layout results')
     const data = JSON.parse(result[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&gt;/g, '>').replace(/&lt;/g, '<'))

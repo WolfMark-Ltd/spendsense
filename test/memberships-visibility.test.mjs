@@ -52,7 +52,8 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
 </style></head><body><div id="app-short"></div><div id="app-wide"></div><div id="memberships-visibility-result"></div>
 <script>${readFileSync(bundle, 'utf8')}</script></body></html>`)
       const dom = execFileSync(chrome, [
-        '--headless', '--disable-gpu', '--no-sandbox', '--force-prefers-reduced-motion',
+        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, 'chrome-profile')}`,
+        '--force-prefers-reduced-motion',
         '--virtual-time-budget=15000', '--dump-dom', `file://${html}`,
       ], { maxBuffer: 64 * 1024 * 1024, timeout: 90000 }).toString()
       const match = dom.match(/<div id="memberships-visibility-result"[^>]*>([^<]*)<\/div>/)

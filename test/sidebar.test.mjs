@@ -347,8 +347,74 @@ test('a cache coverage change redraws the gauge in place', async () => {
   const estMetrics = [...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
     .map(el => el.textContent)
   assert.ok(estMetrics[0].startsWith('≈'), `reconstructed totals carry ≈: ${estMetrics}`)
-  assert.equal(container.querySelectorAll('.wm-gauge-stats .wm-gauge-note').length, 0,
-    'no exact/estimated label sits under the unavailable savings value')
+  // A reconstructed split is priced from the fallback card, so the saving is
+  // shown — marked estimated, never exact.
+  const estimatedNotes = [...container.querySelectorAll('.wm-gauge-stats .wm-gauge-note')].map(el => el.textContent)
+  assert.equal(estimatedNotes.length, 1)
+  assert.match(estimatedNotes[0], /estimatedLabel/)
+  assert.doesNotMatch(estimatedNotes[0], /exactLabel/)
+
+  // A route the catalogue cannot price has no figure at all; the note names
+  // the reason instead of leaving a bare dash.
+  host.state.focusedUsage.set({ input: 1000, prompt: 2000, cache_hit_pct: 50, output: 100, calls: 1, model: 'no-such-model-9z' })
+  await flush()
+  const notes = [...container.querySelectorAll('.wm-gauge-stats .wm-gauge-note')].map(el => el.textContent)
+  assert.equal(notes.length, 1, 'an unavailable saving names why it is unavailable')
+  assert.match(notes[0], /savedNotEstablished/)
+  assert.doesNotMatch(notes[0], /exactLabel|estimatedLabel/,
+    'no exact/estimated claim sits over an unavailable savings value')
+})
+
+test('a conversation whose cold start is unreported shows the measured saving', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedStoredSessionId.set('stored-partial')
+  const ledger = T.emptyLedger()
+  // 70% of the prompt tokens carry a priced, known cache split; the cold start
+  // never did. The figure is the measured part, never a complete total.
+  ledger.sessions['stored-partial'] = histBucket({
+    input: 400000, output: 50000, cacheRead: 600000, cacheWrite: 0, calls: 10,
+    pricedTokens: 1050000, unpricedTokens: 0, cost: 1.5,
+    sources: { bundled: 1050000 }, cacheEstimated: false, cacheSource: undefined,
+    cacheCoveredPrompt: 700000, cacheCoveredRead: 600000, cacheExactPrompt: 700000,
+    netSavingsPrompt: 700000, netSavings: 1.5,
+  })
+  T.$ledger.set(ledger)
+  host.state.focusedUsage.set(null)
+  const container = await renderMeter()
+  await flush()
+  const stats = container.querySelector('.wm-gauge-stats')
+  const values = [...stats.querySelectorAll('.wm-metric-value')].map(el => el.textContent)
+  assert.ok(values.includes('≈$1.50'), `the measured saving renders: ${values}`)
+  const note = stats.querySelector('.wm-gauge-note')
+  assert.ok(note, 'a partial figure carries a note')
+  assert.match(note.textContent, /savedPartialNote/, `coverage is stated: ${note.textContent}`)
+  assert.doesNotMatch(stats.textContent, /exactLabel/,
+    'a figure covering part of the conversation is never labelled exact')
+})
+
+test('a net cache loss renders as a signed figure, not $0.00', async () => {
+  // Greptile P1 on the sidebar surface: the write premium exceeds the read
+  // discount, so the conversation has a real net loss.
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedStoredSessionId.set('stored-loss')
+  const ledger = T.emptyLedger()
+  ledger.sessions['stored-loss'] = histBucket({
+    input: 100, output: 10, cacheRead: 200, cacheWrite: 1000, calls: 1,
+    pricedTokens: 1310, unpricedTokens: 0, cost: 0.002,
+    sources: { live: 1310 }, cacheEstimated: false, cacheSource: 'exact',
+    cacheCoveredPrompt: 1300, cacheCoveredRead: 200, cacheExactPrompt: 1300,
+    netSavingsPrompt: 1300, netSavings: -1.25,
+  })
+  T.$ledger.set(ledger)
+  host.state.focusedUsage.set(null)
+  const container = await renderMeter()
+  await flush()
+  const stats = container.querySelector('.wm-gauge-stats')
+  assert.match(stats.textContent, /−\$1\.25/, `signed saving: ${stats.textContent}`)
+  assert.doesNotMatch(stats.textContent, /\$0\.00/, 'a loss never renders as zero')
+  assert.match(stats.textContent, /exactLabel/, 'full coverage stays exact')
 })
 
 test('a cache-only frame renders as valid live usage', async () => {
