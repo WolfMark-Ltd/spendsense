@@ -8781,9 +8781,11 @@ function NewsPage() {
       if (document.activeElement !== button) button.focus()
       return
     }
-    // The button is gone: focus the first newly revealed entry.
+    // The button is gone: focus the first newly revealed entry. The inner
+    // lists all carry role="list"; the stale-error branch wraps its list in
+    // an outer .wm-news-list (alert + list), so target the role-marked list.
     const startIndex = demand === 'show-all' ? NEWS_FOR_YOU_LIMIT : prev.shown
-    const target = document.querySelector('.wm-news-list')?.children[startIndex]
+    const target = document.querySelector('.wm-news-list[role="list"]')?.children[startIndex]
     if (target) {
       if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1')
       target.focus()
@@ -8912,7 +8914,13 @@ function NewsPage() {
         jsx(NewsScopeTabs, { scope, forYouCount, allCount, t, onChange: changeScope }),
         jsx('div', { 'data-news-category': 'true', children:
           jsx(AnalyticsSegments, { label: t('newsCatAll'), value: category,
-            options: NEWS_CATEGORIES.map(id => [id, id === 'all' ? t('newsCatAll') : newsCategoryLabel(id, t)]),
+            // Three-tuple options: each button's accessible name is its own
+            // visible localised label, never the shared 'label + raw id'
+            // fallback ('All new_model').
+            options: NEWS_CATEGORIES.map(id => {
+              const text = id === 'all' ? t('newsCatAll') : newsCategoryLabel(id, t)
+              return [id, text, text]
+            }),
             onChange: id => { $newsCategory.set(id); $newsShown.set(NEWS_PAGE_SIZE) } }) }),
         scope === 'all' ? jsx('input', { type: 'search', className: 'wm-news-search',
           'data-news-search': 'true', value: search, 'aria-label': t('newsSearchLabel'),

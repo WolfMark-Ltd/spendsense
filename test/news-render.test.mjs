@@ -929,34 +929,36 @@ test('NewsPage carries the scope, category, search, days, count and paging hooks
   }
 })
 
-test('pagination keeps real focus: Load more stays focused, then the first new group does', async () => {
-  // 22 relevant model events: All pages 10 -> 20 -> 22, For You offers Show all.
-  const payload = {
-    ok: true,
-    local: {
-      baseline: true, snapshot_at: '2026-11-01T00:00:00Z', removed_model_count: 0,
-      items: Array.from({ length: 22 }, (_, i) => ({
-        id: `p${i}`, origin: 'local', category: 'price_reduction',
-        provider: 'Acme', model: `acme/model-${i}`,
-        summary_code: '', summary_params: null, summary: `model-${i} changed.`,
-        previous: { input: 5.0, output: 25.0, cache_read: null, cache_write: null },
-        current: { input: 4.0, output: 25.0, cache_read: null, cache_write: null },
-        has_tiers: false, observed_at: '2026-11-03T00:00:00Z', effective_at: '',
-        source_url: '', provenance: '', confidence: 'observed',
-        relevance: { relevant: true, reasons: ['configured_provider'] },
-      })),
-    },
-    central: { items: [] },
-    impacts: {},
-    settings: { live_updates: true },
-    signals: { configured_families: ['acme'] },
-  }
-  T.setRest(async path => path === '/news/refresh' ? payload : { ok: true })
+/** A paginated NewsPage payload: `count` relevant model events. */
+const newsPagePayload = count => ({
+  ok: true,
+  local: {
+    baseline: true, snapshot_at: '2026-11-01T00:00:00Z', removed_model_count: 0,
+    items: Array.from({ length: count }, (_, i) => ({
+      id: `p${i}`, origin: 'local', category: 'price_reduction',
+      provider: 'Acme', model: `acme/model-${i}`,
+      summary_code: '', summary_params: null, summary: `model-${i} changed.`,
+      previous: { input: 5.0, output: 25.0, cache_read: null, cache_write: null },
+      current: { input: 4.0, output: 25.0, cache_read: null, cache_write: null },
+      has_tiers: false, observed_at: '2026-11-03T00:00:00Z', effective_at: '',
+      source_url: '', provenance: '', confidence: 'observed',
+      relevance: { relevant: true, reasons: ['configured_provider'] },
+    })),
+  },
+  central: { items: [] },
+  impacts: {},
+  settings: { live_updates: true },
+  signals: { configured_families: ['acme'] },
+})
+
+/** Render the settled full NewsPage over a paginated payload; scope reset. */
+const renderNewsPage = async (count, scope = 'all') => {
+  T.setRest(async path => path === '/news/refresh' ? newsPagePayload(count) : { ok: true })
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = ReactDOMClient.createRoot(container)
   roots.push(root)
-  await React.act(async () => { T.$newsScope.set('all') })
+  await React.act(async () => { T.$newsScope.set(scope) })
   await React.act(async () => { T.$newsCategory.set('all') })
   await React.act(async () => { T.$newsSearch.set('') })
   await React.act(async () => { T.$newsDays.set(null) })
@@ -971,8 +973,16 @@ test('pagination keeps real focus: Load more stays focused, then the first new g
     for (let i = 0; i < 6; i += 1) await new Promise(resolve => setTimeout(resolve, 0))
   })
   const c = () => container
-  const list = () => c().querySelector('.wm-news-list')
-  const groups = () => c().querySelectorAll('[data-news-group]').length
+  return {
+    c,
+    list: () => c().querySelector('.wm-news-list[role="list"]'),
+    groups: () => c().querySelectorAll('[data-news-group]').length,
+  }
+}
+
+test('pagination keeps real focus: Load more stays focused, then the first new group does', async () => {
+  // 22 relevant model events: All pages 10 -> 20 -> 22, For You offers Show all.
+  const { c, list, groups } = await renderNewsPage(22)
   assert.equal(groups(), 10, 'All pages by ten')
   const loadMore = c().querySelector('button[data-news-load-more]')
   assert.ok(loadMore, '22 entries leave twelve behind')
@@ -1015,6 +1025,90 @@ test('pagination keeps real focus: Load more stays focused, then the first new g
   const firstNewGroup = list().children[T.NEWS_FOR_YOU_LIMIT]
   assert.equal(document.activeElement, firstNewGroup,
     'the first newly revealed For You group takes focus, never body')
+  assert.equal(document.activeElement.tagName, 'ARTICLE')
+})
+
+test('category segments label every option with its visible text, EN and zh', async () => {
+  for (const [locale, labels] of [
+    ['en', ['All', 'New Models', 'Reductions', 'Increases', 'Subscription Updates']],
+    ['zh', ['全部', '新模型', '降价', '涨价', '订阅更新']],
+  ]) {
+    const previousBackend = i18nBackend.t
+    i18nBackend.t = (key, ...args) => {
+      const entry = T.I18N[locale][key]
+      return typeof entry === 'function' ? entry(...args) : entry ?? key
+    }
+    try {
+      const { c } = await renderNewsPage(1)
+      const group = c().querySelector('[data-news-category] [role="group"]')
+      assert.ok(group, 'the category group renders')
+      assert.equal(group.getAttribute('aria-label'), labels[0],
+        `the category group keeps its ${locale} accessible name`)
+      const buttons = [...group.querySelectorAll('button[aria-pressed]')]
+      assert.equal(buttons.length, 5)
+      assert.deepEqual(buttons.map(b => b.textContent), labels,
+        `${locale}: every category renders in order with its localised label`)
+      for (const [index, button] of buttons.entries()) {
+        assert.equal(button.getAttribute('aria-label'), button.textContent,
+          `${locale}: the accessible name is the visible label`)
+        assert.doesNotMatch(button.getAttribute('aria-label'), /_(model|reduction|increase)$/,
+          `${locale}: no raw category id leaks into the accessible name`)
+      }
+    } finally {
+      i18nBackend.t = previousBackend
+    }
+  }
+})
+
+test('stale data after a failed refetch keeps pagination focus on the inner list', async () => {
+  // Load healthy, then the backend starts failing: the page keeps the last
+  // read (retained current) behind the stale alert — and pagination focus
+  // must still land on the inner role="list", never the outer wrapper.
+  const { c, list, groups } = await renderNewsPage(22)
+  assert.equal(groups(), 10)
+  T.setRest(async () => { throw new Error('backend down') })
+  await React.act(async () => {
+    await queryClient.invalidateQueries({ queryKey: T.newsQuery().queryKey })
+    for (let i = 0; i < 6; i += 1) await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  assert.ok(c().querySelector('.wm-alert[role="alert"]'), 'the stale alert renders')
+  assert.match(c().querySelector('.wm-alert[role="alert"]').textContent,
+    /Refresh failed — showing the last read\./)
+  assert.equal(groups(), 10, 'the retained current data keeps its ten groups')
+  assert.equal(c().querySelectorAll('.wm-news-list').length, 2,
+    'the stale branch wraps the inner list in an outer .wm-news-list')
+  const inner = list()
+  assert.ok(inner, 'the inner list is the role="list" element')
+  // Load more: 10 -> 20 keeps focus on the same element; 20 -> 22 (final
+  // page) hands focus to the first newly revealed group inside the inner list.
+  let loadMore = c().querySelector('button[data-news-load-more]')
+  assert.ok(loadMore, 'the stale page still pages')
+  await React.act(async () => { loadMore.focus() })
+  await React.act(async () => { loadMore.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  assert.equal(groups(), 20)
+  assert.equal(document.activeElement, loadMore,
+    'focus stays on the same Load more element through the stale page')
+  await React.act(async () => { loadMore.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  assert.equal(groups(), 22)
+  assert.ok(!c().querySelector('button[data-news-load-more]'))
+  const firstRevealed = inner.children[2 * T.NEWS_PAGE_SIZE]
+  assert.equal(document.activeElement, firstRevealed,
+    'the first newly revealed group in the inner list takes focus, never body')
+  assert.equal(firstRevealed.getAttribute('tabindex'), '-1')
+  // Show all under the same stale page: focus lands on the first new group.
+  const scopeButtons = [...c().querySelectorAll('[data-news-scope] button')]
+  await React.act(async () => {
+    scopeButtons.find(b => b.getAttribute('value') === 'foryou')
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+  const showAll = c().querySelector('button[data-news-show-all]')
+  assert.ok(showAll, 'the stale For You page still offers Show all')
+  await React.act(async () => { showAll.focus() })
+  await React.act(async () => { showAll.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  assert.ok(!c().querySelector('button[data-news-show-all]'))
+  const staleInner = list()
+  assert.equal(document.activeElement, staleInner.children[T.NEWS_FOR_YOU_LIMIT],
+    'the first newly revealed For You group takes focus inside the inner list')
   assert.equal(document.activeElement.tagName, 'ARTICLE')
 })
 
