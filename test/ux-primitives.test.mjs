@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 // Phase A shared primitives (design/proposal.md §3–§4): token roles, product
 // header, seven-tab navigation, opaque tooltips and async-button feedback.
 // Real React + jsdom harness, same as sidebar/membership tests. No production

@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // Shared tooltip/info-tip layout: real Chrome geometry (not jsdom),
 // synthetic data, no credentials, gateway or provider calls possible. Skips

@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // Model News localisation rendering — real React, synthetic fixtures.
 // Renders NewsCard directly with coded backend items in both locales.

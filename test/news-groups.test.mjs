@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // WP11 model-first grouping: pure helpers over the existing flat /news item
 // shape (local + central items, impacts, settings). No new payload contract —

@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // Live sidebar regressions — real React, real atoms, synthetic host state.
 // The hard requirement under test: the five sections stay mounted and keep

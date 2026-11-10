@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 // Focused regressions for WP06 — net cache savings reliability.
 //
 // The figure is the measured part of a conversation: a derived cache-write on a
