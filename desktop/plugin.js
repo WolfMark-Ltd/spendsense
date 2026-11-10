@@ -3376,7 +3376,8 @@ function econBlockerText(blocker, t) {
   if (code === 'usage_price_incomplete' || code === 'usage_unknown' || code === 'usage_missing') return t('econBlockUsageEvidence')
   if (code === 'missing_base_rate') return t('econBlockBaseRate')
   if (code === 'tier_rate_unavailable') return t('econBlockTierRate')
-  if (code === 'cache_rate_unavailable' || code === 'missing_cache_rate') return t('econBlockCacheRate')
+  if (['cache_rate_unavailable', 'missing_cache_rate', 'missing_cache_read_rate',
+    'missing_cache_write_rate'].includes(code)) return t('econBlockCacheRate')
   return code ? t('econBlockGeneric', code) : t('econBlockGeneric', t('econBlockUnknown'))
 }
 

@@ -276,16 +276,21 @@ test('missing fees, dated FX and historical window fees have per-account blocker
       blockers: [{ account_id: 'test:default', code: 'window_fee_history_missing' }] },
   ]
   data.accounts[0].window_expenditure.amount = null
-  data.accounts[0].blockers = [{ code: 'window_fee_history_missing' }]
+  data.accounts[0].blockers = [
+    { code: 'window_fee_history_missing' },
+    { code: 'missing_cache_read_rate' },
+  ]
   const previousTranslator = i18nBackend.t
   try {
     for (const [language, expected, knownFee] of [
       ['en', ['Set or confirm this account’s subscription fee in Memberships.',
         'Add a dated user-supplied GBP to USD rate in Costs.',
-        'Historical fee evidence is incomplete; add its effective date and amount in Memberships.'], '$30.00/mo'],
+        'Historical fee evidence is incomplete; add its effective date and amount in Memberships.',
+        'A cache rate is unavailable; check the provider’s cache price evidence.'], '$30.00/mo'],
       ['zh', ['请在“会员”中设置或确认此账户的订阅费用。',
         '请在“费用”中添加注明日期的 GBP 兑 USD 用户提供汇率。',
-        '历史费用证据不完整；请在“会员”中补充生效日期和金额。'], '$30.00/月'],
+        '历史费用证据不完整；请在“会员”中补充生效日期和金额。',
+        '缓存费率不可用；请检查供应商缓存价格证据。'], '$30.00/月'],
     ]) {
       i18nBackend.t = (key, ...args) => {
         const entry = T.I18N[language][key]
