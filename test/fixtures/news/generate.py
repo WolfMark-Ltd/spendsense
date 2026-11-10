@@ -15,7 +15,7 @@ Every item in ``realistic.json`` is produced by the real backend functions in
 Nothing here touches the network, the user's machine state, or real data:
 model IDs, prices and URLs are invented. Run from the repo root:
 
-    /Users/mark/Projects/spendsense/.venv/bin/python test/fixtures/news/generate.py
+    python3 test/fixtures/news/generate.py
 
 Writes ``realistic.json`` and ``variants.json`` next to this script.
 """
@@ -364,6 +364,32 @@ def build_central_items():
     return feed["items"]
 
 
+# Hand-written recency evidence (see README.md): the exact-match control's
+# in-window stamp and the four recency-rejection variants. ``rank_items``
+# derives ``last_used_at`` from the exact (provider, model) usage row and
+# would clobber these values, so they are (re-)applied AFTER ranking, on
+# every payload that carries the fixturelabs items (realistic, stale and
+# nosignals — partial holds no fixturelabs item and empty holds no items).
+# The pre-ranking assignments in main() stay: they only pin the key's
+# serialisation position (the committed fixtures carry ``last_used_at``
+# between ``conditions_code`` and ``for_you``); the values below are the
+# authoritative evidence.
+SYNTHETIC_LAST_USED_AT = {
+    "x2": "2026-11-09T18:30:00Z",
+    "ts-old90day": "2026-08-01T12:00:00Z",
+    "ts-malformed": "not-a-timestamp",
+    "ts-future": "2027-06-01T00:00:00Z",
+    "ts-empty": "",
+}
+
+
+def apply_synthetic_last_used(payload):
+    for item in payload["local"]["items"] + payload["central"]["items"]:
+        stamp = SYNTHETIC_LAST_USED_AT.get(item.get("model"))
+        if stamp is not None:
+            item["last_used_at"] = stamp
+
+
 def base_payload(local_items, central_items, *, live=True, central_state="fresh",
                  fetched_at=FETCHED, central_error="", impacts=None,
                  signals=SIGNALS, usage=USAGE, tokens=("anthropic", "openai")):
@@ -430,6 +456,9 @@ def main():
     # derives this from the newest exact (provider, model) usage row). The
     # case-only "m1" item deliberately gets NO last_used_at: its recorded
     # usage is "M1", which is pricing-case-equal but never usage evidence.
+    # Assigned here only to pin the key's serialisation position; rank_items
+    # overwrites the value, so SYNTHETIC_LAST_USED_AT is re-applied after
+    # ranking (apply_synthetic_last_used).
     next(item for item in local_items if item["model"] == "x2")[
         "last_used_at"] = "2026-11-09T18:30:00Z"
 
@@ -438,7 +467,9 @@ def main():
     # the 30-day window (the UI may say "Used before", never "recently"), a
     # malformed string, a future date and an empty string. The older item's
     # observed_at is also moved past the 30-day window so the All Updates day
-    # filter has something to drop.
+    # filter has something to drop. The last_used_at values are re-applied
+    # after ranking (see SYNTHETIC_LAST_USED_AT); the observed_at override
+    # survives ranking and also fixes the item's sort position.
     ts_old = next(item for item in local_items if item["model"] == "ts-old90day")
     ts_old["observed_at"] = "2026-10-05T09:15:00Z"   # ~36 days before 2026-11-10
     ts_old["last_used_at"] = "2026-08-01T12:00:00Z"  # valid but ~101 days old
@@ -470,6 +501,7 @@ def main():
     }
 
     realistic = base_payload(local_items, central_items)
+    apply_synthetic_last_used(realistic)
     realistic["local"].update({
         "removed_models": meta["removed_models"],
         "removed_model_count": meta["removed_model_count"],
@@ -541,9 +573,11 @@ def main():
     stale = base_payload(local_items, central_items, central_state="stale",
                          fetched_at=STALE_FETCHED,
                          central_error="central feed unavailable (URLError)")
+    apply_synthetic_last_used(stale)
 
     nosignals = base_payload(local_items, central_items, signals=EMPTY_SIGNALS,
                              usage={}, tokens=())
+    apply_synthetic_last_used(nosignals)
     assert nosignals["for_you_count"] == 0
     assert nosignals["impacts"] == {}
 

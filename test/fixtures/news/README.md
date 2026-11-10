@@ -42,7 +42,7 @@ fixtures cannot drift from the payload contract:
 Regenerate from the repo root:
 
 ```
-/Users/mark/Projects/spendsense/.venv/bin/python test/fixtures/news/generate.py
+python3 test/fixtures/news/generate.py
 ```
 
 Timestamps are fixed (2026-11-06 … 2026-11-10) so the committed JSON is

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -59,6 +59,21 @@ const EVIDENCE_HIST_CENTRAL_ID = 'evidence-hist-central-1'
 // hooks are missing from the rendered page.
 const MANDATORY = process.env.WP11_REQUIRE_CANDIDATE === '1'
   || process.env.WP11_CANDIDATE === '1'
+
+// NEWS_LAYOUT_SHOTS must point OUTSIDE the repository: screenshots are
+// generated artefacts and must never be written into the repo. The check is
+// a lexical resolve plus a path-relative boundary test, so a repo-relative
+// string or traversal cannot land inside the repo, the repo root itself is
+// rejected, and a sibling directory whose name merely shares the repo root's
+// prefix (e.g. `<root>-sibling`) is not falsely rejected.
+const shotsOutsideRepo = target => {
+  const resolved = resolve(String(target))
+  const rel = relative(ROOT, resolved)
+  const outside = rel !== '' && (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel))
+  assert.ok(outside,
+    `NEWS_LAYOUT_SHOTS must not point inside the repository: ${target} (resolved ${resolved})`)
+  return resolved
+}
 
 const decode = text => text
   .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'")
@@ -194,8 +209,13 @@ const FOR_YOU_EXACT = EXACT_IDS.filter(id =>
 const countLabelRegex = n => new RegExp(`\\(${n} (groups?|updates?|个分组|条动态)\\)`)
 
 test('Model News baseline invariants and WCAG contrast (real NewsPage, committed fixtures)', {
-  skip: CHROME ? false : 'No Chromium binary available for real Model News layout checks',
+  skip: CHROME || MANDATORY ? false : 'No Chromium binary available for real Model News layout checks',
 }, async t => {
+  if (!CHROME) {
+    assert.fail('No Chromium binary available for real Model News layout checks, but '
+      + 'WP11_REQUIRE_CANDIDATE=1 or WP11_CANDIDATE=1 makes the candidate verification '
+      + 'mandatory: FAILING, never skipping.')
+  }
   const h = await harness()
   const results = h.results
   const worstContrast = results.filter(r => r.contrast.min != null)
@@ -328,8 +348,7 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
   // Screenshot mode: only when NEWS_LAYOUT_SHOTS points outside the repo.
   const shots = process.env.NEWS_LAYOUT_SHOTS
   if (shots) {
-    const resolved = join(String(shots))
-    assert.ok(!resolved.startsWith(ROOT), 'NEWS_LAYOUT_SHOTS must not point inside the repository')
+    const resolved = shotsOutsideRepo(shots)
     mkdirSync(resolved, { recursive: true })
     for (const r of results) {
       const name = `news-${r.fixture}-${r.scope}-${r.w}-${r.theme}-${r.locale}.png`
@@ -352,9 +371,54 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
   }
 })
 
+test('NEWS_LAYOUT_SHOTS containment rejects paths that resolve inside the repository', () => {
+  // Absolute paths inside the repo, the repo root itself and an inside entry
+  // whose name merely starts with ".." must all be rejected.
+  assert.throws(() => shotsOutsideRepo(join(ROOT, 'test', 'shots')), /must not point inside/)
+  assert.throws(() => shotsOutsideRepo(ROOT), /must not point inside/)
+  assert.throws(() => shotsOutsideRepo(join(ROOT, '..weird-inside')), /must not point inside/)
+  // Repo-relative strings resolve against the process cwd: from the repo root
+  // they land inside and must be rejected — the raw string never starts with
+  // the absolute repo root, so a plain startsWith check accepts them.
+  const cwd = process.cwd()
+  process.chdir(ROOT)
+  try {
+    assert.throws(() => shotsOutsideRepo('test/fixtures/news'), /must not point inside/)
+    assert.throws(() => shotsOutsideRepo('test/../test/shots'), /must not point inside/)
+    // Traversal that escapes and re-enters the repo must be rejected too.
+    assert.throws(() => shotsOutsideRepo(`../${basename(ROOT)}/nested/shots`), /must not point inside/)
+  } finally {
+    process.chdir(cwd)
+  }
+})
+
+test('NEWS_LAYOUT_SHOTS containment accepts directories outside the repository', () => {
+  // Plain absolute directory outside the repo.
+  shotsOutsideRepo(join(tmpdir(), 'wp11-shots-outside'))
+  // A safe sibling directory: relative(ROOT, sibling) starts with "..", so it
+  // is outside even when its name shares the repo root's prefix — a plain
+  // startsWith(ROOT) check would falsely reject the prefix sibling.
+  shotsOutsideRepo(`${ROOT}-sibling-shots`)
+  shotsOutsideRepo(join(ROOT, '..', 'wp11-review-sibling-shots'))
+  shotsOutsideRepo(join(ROOT, '..', 'elsewhere-shots'))
+  // A repo-relative string that resolves outside the repo is fine.
+  const cwd = process.cwd()
+  process.chdir(ROOT)
+  try {
+    shotsOutsideRepo('..')
+  } finally {
+    process.chdir(cwd)
+  }
+})
+
 test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQUIRE_CANDIDATE=1 or WP11_CANDIDATE=1 makes them mandatory)', {
-  skip: CHROME ? false : 'No Chromium binary available for real Model News layout checks',
+  skip: CHROME || MANDATORY ? false : 'No Chromium binary available for real Model News layout checks',
 }, async t => {
+  if (!CHROME) {
+    assert.fail('No Chromium binary available for real Model News layout checks, but '
+      + 'WP11_REQUIRE_CANDIDATE=1 or WP11_CANDIDATE=1 makes the candidate verification '
+      + 'mandatory: FAILING, never skipping.')
+  }
   const h = await harness()
   const detected = h.results.some(r => r.candidateDetected)
   if (!detected) {
@@ -700,4 +764,57 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
   assert.equal(empty.present, true, 'no-signals For You shows its empty state')
   assert.equal(empty.hasPathToAll, true, 'empty For You offers a visible path to All Updates')
   assert.ok((empty.groupsAfterClick || 0) > 0, 'following the path shows the full list')
+})
+
+// Regression probe for the mandatory gate: re-runs THIS file in a child
+// process with Chrome discovery mocked away (node:test module mocking; no
+// real browser involved), so a missing Chromium can never silently skip a
+// mandatory candidate run. The child sets WP11_LAYOUT_PROBE_CHILD so this
+// probe skips itself there (no grandchild recursion).
+test('a mandatory candidate run fails instead of skipping when Chrome is missing', {
+  skip: process.env.WP11_LAYOUT_PROBE_CHILD ? 'probe child run' : false,
+}, async t => {
+  const work = mkdtempSync(join(tmpdir(), 'wm-news-probe-'))
+  process.on('exit', () => rmSync(work, { recursive: true, force: true }))
+  const stub = join(work, 'no-chrome.mjs')
+  writeFileSync(stub, [
+    "import { mock } from 'node:test'",
+    "import fs from 'node:fs'",
+    'const realExistsSync = fs.existsSync',
+    "mock.module('node:fs', { exports: { ...fs,",
+    '  existsSync: path => /chrome/i.test(String(path)) ? false : realExistsSync(path) } })',
+  ].join('\n'))
+  const self = fileURLToPath(import.meta.url)
+  const probeChild = flag => {
+    const env = { ...process.env, WP11_LAYOUT_PROBE_CHILD: '1' }
+    delete env.WP11_REQUIRE_CANDIDATE
+    delete env.WP11_CANDIDATE
+    if (flag) env[flag] = '1'
+    return spawnSync(process.execPath, [
+      '--experimental-test-module-mocks', '--import', pathToFileURL(stub).href, self,
+    ], { encoding: 'utf8', env })
+  }
+  for (const flag of ['WP11_REQUIRE_CANDIDATE', 'WP11_CANDIDATE', null]) {
+    const child = probeChild(flag)
+    const output = `${child.stdout}\n${child.stderr}`
+    if (typeof child.status !== 'number' || /mock\.module is not a function/.test(output)) {
+      t.skip(`node:test module mocking unavailable in this Node (${child.status}): ${output.slice(0, 400)}`)
+      return
+    }
+    if (flag) {
+      assert.notEqual(child.status, 0, `${flag}=1: a mandatory run without Chrome must FAIL`)
+      assert.match(child.stdout, /ℹ fail 2/,
+        `${flag}=1: both layout tests ran and failed (got ${child.stdout})`)
+      assert.match(child.stdout, /ℹ skipped 1/,
+        `${flag}=1: only the probe guard skips, never the layout tests (got ${child.stdout})`)
+      assert.match(output, /never skipp/i,
+        `${flag}=1: the failure must state it is mandatory, never a skip`)
+    } else {
+      assert.equal(child.status, 0,
+        'without a mandatory flag a missing Chrome keeps the optional skip')
+      assert.match(child.stdout, /ℹ fail 0/, 'no failures in the optional run')
+      assert.match(child.stdout, /ℹ skipped 3/,
+        'both layout tests and the probe guard skip in the optional run')
+    }
+  }
 })
