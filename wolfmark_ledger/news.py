@@ -528,11 +528,14 @@ def _raw_tiers_changed(old: Mapping[str, Any], new: Mapping[str, Any]) -> bool:
     return old_raw != new_raw
 
 
-def _rate_change_code(old: Mapping[str, Any], new: Mapping[str, Any]) -> str:
+def _rate_change_code(old: Mapping[str, Any], new: Mapping[str, Any],
+                      tiers_changed: bool) -> str:
     """Honest per-field classification of a local rate change.
 
     Unlike ``rate_direction`` this looks at every base field, so a tiers-only
-    change is never presented as an increase.
+    change is never presented as an increase. A base-field presence change
+    (None↔number) moves no comparable number pair, so with tiers unchanged it
+    is reported as ``news_rate_changed`` rather than misattributed to tiers.
     """
     fell = rose = False
     for key in ("input", "output", "cache_read", "cache_write"):
@@ -549,7 +552,9 @@ def _rate_change_code(old: Mapping[str, Any], new: Mapping[str, Any]) -> str:
         return "news_rate_down"
     if rose:
         return "news_rate_up"
-    return "news_rate_tiers_only"
+    if tiers_changed:
+        return "news_rate_tiers_only"
+    return "news_rate_changed"
 
 
 def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
@@ -634,10 +639,17 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
                 if tiers_changed else ""
             old_raw = old_entry.get("tiers_raw") if isinstance(old_entry.get("tiers_raw"), list) else None
             new_raw = new_entry.get("tiers_raw") if isinstance(new_entry.get("tiers_raw"), list) else None
+            # A raw tier change (e.g. the tariff kind) is a real transition
+            # even when the normalised tiers are identical; without raw
+            # material in the id the reverse transition collapses onto the
+            # same id and is dropped as an already-known observation.
+            raw_material = json.dumps([old_raw, new_raw], sort_keys=True) \
+                if _raw_tiers_changed(old_entry, new_entry) else ""
             model_name = new_entry.get("name")
             verb = "reduced to" if category == "price_reduction" else "changed to"
             item = {
-                "id": _stable_id(category, str(provider), str(model) + old_sig + new_sig),
+                "id": _stable_id(category, str(provider),
+                                 str(model) + old_sig + new_sig + raw_material),
                 "origin": "local", "category": category,
                 "provider": str(provider), "model": str(model),
                 "summary": (f"{model} ({provider}) {verb} "
@@ -652,7 +664,7 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
                 "tiers_detail": "known" if old_raw is not None and new_raw is not None else "unknown",
                 "tiers_before": old_raw,
                 "tiers_after": new_raw,
-                "rate_change_code": _rate_change_code(old_entry, new_entry),
+                "rate_change_code": _rate_change_code(old_entry, new_entry, tiers_changed),
                 "observed_at": observed_at, "effective_at": "",
                 "source_url": "", "confidence": "observed",
                 "provenance": "Hermes models.dev cache",
@@ -838,8 +850,12 @@ def refresh_local(*, data_dir: Optional[Path | str] = None,
                     or not _observed_before(stored_by_id[item_id].get("observed_at"),
                                             prev_captured):
                 continue
+            # The suffix derives from the compared snapshot, not the fresh
+            # observation: a retried refresh against the same snapshot
+            # (crash between the two writes) computes the same recurrence id
+            # and is skipped below instead of stacking duplicates.
             recurrence_id = f"{item_id}-r" \
-                + hashlib.sha1(observed_at.encode("utf-8")).hexdigest()[:6]
+                + hashlib.sha1(prev_captured.encode("utf-8")).hexdigest()[:6]
             if recurrence_id in known:
                 continue
             known.add(recurrence_id)
