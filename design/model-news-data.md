@@ -18,8 +18,14 @@ feed generator, dashboard API, desktop plugin and central items unchanged.
 - **`rate_change_code`** (price changes) — per-field over `input`, `output`,
   `cache_read`, `cache_write` where both sides are numbers: `news_rate_down`
   (fall only), `news_rate_up` (rise only), `news_rate_mixed` (both),
-  `news_rate_tiers_only` (no base field changed; tiers did). The historical
-  `category` is kept, so a tiers-only change is never shown as an increase.
+  `news_rate_tiers_only` (no base field changed; tiers did). A backend may
+  additionally send the optional `news_rate_changed` for a non-directional
+  rate change with no comparable movement — a base availability transition
+  such as a cache rate moving between `null` and a number, where no up/down
+  or tier change is established. The desktop renders it as the neutral
+  "Rates changed" classification (no new category, no direction claimed);
+  without the code such an event stays classless. The historical `category`
+  is kept, so a tiers-only change is never shown as an increase.
 - **`official`** — only on an exact (provider, model) match in
   `catalogue/official-verified.json`: `{verified_at, source_note (its free-text
   source_url), windows (exact copies, null if absent)}`; item `source_url`
