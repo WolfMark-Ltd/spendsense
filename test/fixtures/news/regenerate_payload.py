@@ -121,9 +121,12 @@ def build_payload(output: Path) -> dict:
                           _plan("demo.max", "demo max", 100.0)])
 
     news.refresh_local(data_dir=data_dir, catalogue=baseline,
-                       plans_doc=plans_before, now=NOW)
+                       plans_doc=plans_before, now=NOW,
+                       raw_cache_path=scratch / "snap1" / "models_dev_cache.json")
     result = news.refresh_local(data_dir=data_dir, catalogue=changed,
-                                plans_doc=plans_after, now=NOW + 3600)
+                                plans_doc=plans_after, now=NOW + 3600,
+                                raw_cache_path=scratch / "snap2" / "models_dev_cache.json",
+                                official_path=FIXTURE_DIR / "official-verified.json")
 
     news.save_settings(True, path=news.settings_path(data_dir))
     raw_feed, _problems = news_feed.build_feed(

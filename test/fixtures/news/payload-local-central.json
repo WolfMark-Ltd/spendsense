@@ -24,6 +24,7 @@
         "for_you": true,
         "has_tiers": false,
         "id": "md-d8ddebe56810",
+        "last_used_at": "",
         "model": "claude-haiku-4-5-20251001",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "central",
@@ -55,6 +56,7 @@
         "for_you": false,
         "has_tiers": true,
         "id": "md-d799fdcc4a9c",
+        "last_used_at": "",
         "model": "glm-large",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "central",
@@ -86,6 +88,7 @@
         "for_you": "",
         "has_tiers": false,
         "id": "md-d1d5a12e68c9",
+        "last_used_at": "",
         "model": "",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "central",
@@ -117,6 +120,7 @@
         "for_you": true,
         "has_tiers": false,
         "id": "md-cca3c3148481",
+        "last_used_at": "2027-01-01T00:08:52+00:00",
         "model": "claude-sonnet-4",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "central",
@@ -155,6 +159,7 @@
         "for_you": false,
         "has_tiers": false,
         "id": "md-c813aecc4517",
+        "last_used_at": "",
         "model": "text-plain",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "central",
@@ -186,6 +191,7 @@
         "for_you": true,
         "has_tiers": false,
         "id": "md-65e50764b396",
+        "last_used_at": "2027-01-01T00:07:12+00:00",
         "model": "anthropic/claude-haiku-4-5",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "central",
@@ -219,6 +225,7 @@
         "for_you": true,
         "has_tiers": false,
         "id": "md-560364661e93",
+        "last_used_at": "2027-01-01T00:03:52+00:00",
         "model": "claude-haiku-4-5",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "central",
@@ -252,6 +259,7 @@
         "for_you": true,
         "has_tiers": false,
         "id": "md-24899fccd5fb",
+        "last_used_at": "",
         "model": "claude-opus-4",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "central",
@@ -330,8 +338,15 @@
         "for_you": true,
         "has_tiers": false,
         "id": "local-price-reduction-anthropic-claude-sonnet-4--r-----cache-read---0-3--2ea96cf7f1",
+        "last_used_at": "2027-01-01T00:08:52+00:00",
         "model": "claude-sonnet-4",
+        "model_name": "Claude Sonnet 4",
         "observed_at": "2027-01-01T02:03:52+00:00",
+        "official": {
+          "source_note": "Anthropic pricing page, Sonnet 4 row",
+          "verified_at": "2026-01-02",
+          "windows": []
+        },
         "origin": "local",
         "previous": {
           "cache_read": 0.3,
@@ -341,6 +356,7 @@
         },
         "provenance": "Hermes models.dev cache",
         "provider": "anthropic",
+        "rate_change_code": "news_rate_mixed",
         "related_routes": [
           "anthropic"
         ],
@@ -352,7 +368,10 @@
           "model": "claude-sonnet-4",
           "output": "$14",
           "provider": "anthropic"
-        }
+        },
+        "tiers_after": [],
+        "tiers_before": [],
+        "tiers_detail": "known"
       },
       {
         "category": "price_increase",
@@ -370,7 +389,9 @@
         "for_you": false,
         "has_tiers": true,
         "id": "local-price-increase-vercel-glm-large--r-----cache-read---0-11---cac-0da875e862",
+        "last_used_at": "",
         "model": "glm-large",
+        "model_name": "GLM Large",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "local",
         "previous": {
@@ -381,6 +402,7 @@
         },
         "provenance": "Hermes models.dev cache",
         "provider": "vercel",
+        "rate_change_code": "news_rate_tiers_only",
         "related_routes": [],
         "source_url": "",
         "summary": "glm-large (vercel) changed to $0.6/$2.2 per MTok in/out.",
@@ -390,7 +412,28 @@
           "model": "glm-large",
           "output": "$2.2",
           "provider": "vercel"
-        }
+        },
+        "tiers_after": [
+          {
+            "cache_read": 0.05,
+            "cache_write": 0.11,
+            "input": 0.25,
+            "output": 1.1,
+            "size": 200001,
+            "type": "context"
+          }
+        ],
+        "tiers_before": [
+          {
+            "cache_read": 0.05,
+            "cache_write": 0.11,
+            "input": 0.3,
+            "output": 1.1,
+            "size": 200001,
+            "type": "context"
+          }
+        ],
+        "tiers_detail": "known"
       },
       {
         "category": "price_increase",
@@ -408,7 +451,9 @@
         "for_you": true,
         "has_tiers": false,
         "id": "local-price-increase-anthropic-claude-opus-4--r-----cache-read---1-5----55e25bc43f",
+        "last_used_at": "",
         "model": "claude-opus-4",
+        "model_name": "Claude Opus 4",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "local",
         "previous": {
@@ -419,6 +464,7 @@
         },
         "provenance": "Hermes models.dev cache",
         "provider": "anthropic",
+        "rate_change_code": "news_rate_up",
         "related_routes": [],
         "source_url": "",
         "summary": "claude-opus-4 (anthropic) changed to $15/$75 per MTok in/out.",
@@ -428,7 +474,10 @@
           "model": "claude-opus-4",
           "output": "$75",
           "provider": "anthropic"
-        }
+        },
+        "tiers_after": [],
+        "tiers_before": [],
+        "tiers_detail": "known"
       },
       {
         "category": "new_model",
@@ -440,6 +489,7 @@
         "effective_at": "",
         "for_you": "",
         "id": "local-new-provider-zhipu-1-2500b9f8b8",
+        "last_used_at": "",
         "model": "",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "local",
@@ -464,6 +514,7 @@
         "effective_at": "",
         "for_you": "",
         "id": "local-new-plan-demo-max---amount---100-0---currency----USD----pe-0691726473",
+        "last_used_at": "",
         "model": "",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "local",
@@ -494,7 +545,9 @@
         "effective_at": "",
         "for_you": false,
         "id": "local-new-model-vercel-text-plain-aaee27c15d",
+        "last_used_at": "",
         "model": "text-plain",
+        "model_name": "Text Plain",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "local",
         "previous": null,
@@ -509,7 +562,9 @@
           "model": "text-plain",
           "output": "$0.8",
           "provider": "vercel"
-        }
+        },
+        "tiers_after": [],
+        "tiers_detail": "known"
       },
       {
         "category": "new_model",
@@ -526,7 +581,9 @@
         "effective_at": "",
         "for_you": true,
         "id": "local-new-model-openrouter-anthropic-claude-haiku-4-5-2a86dacbd2",
+        "last_used_at": "2027-01-01T00:07:12+00:00",
         "model": "anthropic/claude-haiku-4-5",
+        "model_name": "Claude Haiku 4.5 (anthropic)",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "local",
         "previous": null,
@@ -543,7 +600,9 @@
           "model": "anthropic/claude-haiku-4-5",
           "output": "$5",
           "provider": "openrouter"
-        }
+        },
+        "tiers_after": [],
+        "tiers_detail": "known"
       },
       {
         "category": "new_model",
@@ -560,8 +619,31 @@
         "effective_at": "",
         "for_you": true,
         "id": "local-new-model-anthropic-claude-haiku-4-5-c240360d9a",
+        "last_used_at": "2027-01-01T00:03:52+00:00",
         "model": "claude-haiku-4-5",
+        "model_name": "Claude Haiku 4.5",
         "observed_at": "2027-01-01T02:03:52+00:00",
+        "official": {
+          "source_note": "Anthropic pricing page, Haiku 4.5 row (peak window checked 2026-01)",
+          "verified_at": "2026-01-02",
+          "windows": [
+            {
+              "cache_read": null,
+              "cache_write": null,
+              "days": [
+                0,
+                1,
+                2,
+                3,
+                4
+              ],
+              "end_minute": 1020,
+              "input": 1.25,
+              "output": 6.25,
+              "start_minute": 480
+            }
+          ]
+        },
         "origin": "local",
         "previous": null,
         "provenance": "Hermes models.dev cache",
@@ -577,7 +659,9 @@
           "model": "claude-haiku-4-5",
           "output": "$5",
           "provider": "anthropic"
-        }
+        },
+        "tiers_after": [],
+        "tiers_detail": "known"
       },
       {
         "category": "new_model",
@@ -594,7 +678,9 @@
         "effective_at": "",
         "for_you": true,
         "id": "local-new-model-anthropic-claude-haiku-4-5-20251001-d44902558e",
+        "last_used_at": "",
         "model": "claude-haiku-4-5-20251001",
+        "model_name": "Claude Haiku 4.5 (2025-10-01)",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "local",
         "previous": null,
@@ -609,7 +695,9 @@
           "model": "claude-haiku-4-5-20251001",
           "output": "$5",
           "provider": "anthropic"
-        }
+        },
+        "tiers_after": [],
+        "tiers_detail": "known"
       }
     ],
     "store_error": ""
