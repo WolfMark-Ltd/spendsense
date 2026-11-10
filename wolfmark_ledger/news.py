@@ -1091,15 +1091,22 @@ def configured_tokens(home: Optional[Path | str] = None) -> set[str]:
 
 
 def _models_match(recorded: str, item_model: str) -> bool:
-    if not recorded or not item_model:
-        return False
-    if recorded == item_model:
-        return True
-    return recorded.split("/")[-1] == item_model.split("/")[-1]
+    """Exact model identity only.
+
+    A shared last path segment is pricing convenience, not evidence of the
+    same model: "claude-haiku-4-5" and "anthropic/claude-haiku-4-5" are
+    different ids, as are "openai/gpt-x" and "azure/gpt-x".
+    """
+    return bool(recorded) and bool(item_model) and recorded == item_model
 
 
 def _usage_for_item(item: Mapping[str, Any],
                     usage: Mapping[tuple[str, str], dict[str, int]]) -> dict[str, int]:
+    """Token totals for one item: canonical route provider, then exact model.
+
+    Provider-only items (no model) keep the provider-wide totals; model items
+    sum only rows that recorded the item's model id exactly.
+    """
     provider = str(item.get("provider") or "").lower()
     model = str(item.get("model") or "")
     total = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "calls": 0}
@@ -1138,11 +1145,16 @@ def _last_used_at(item: Mapping[str, Any],
 def rank_items(items: list[dict[str, Any]], *,
                usage: Optional[Mapping[tuple[str, str], dict[str, int]]] = None,
                tokens: Optional[set[str]] = None) -> list[dict[str, Any]]:
-    """Annotate news with For You evidence. Never promises account access."""
+    """Annotate news with For You evidence. Never promises account access.
+
+    Model evidence is exact: a recorded id matches only itself, so a shared
+    last path segment never sets ``for_you`` or ``related_routes`` on its
+    own. Provider-used and configured-provider signals stay provider-level.
+    """
     usage = usage if usage is not None else {}
     tokens = tokens if tokens is not None else set()
     used_providers = {canonical_route_provider(route) for route, _ in usage}
-    used_models = {model for _, model in usage} | {model.split("/")[-1] for _, model in usage}
+    used_models = {model for _, model in usage}
     ranked: list[dict[str, Any]] = []
     for item in items:
         provider = str(item.get("provider") or "").lower()
@@ -1153,7 +1165,7 @@ def rank_items(items: list[dict[str, Any]], *,
         configured = bool(provider) and provider in tokens
         for_you = bool(provider) and (
             provider in used_providers or provider in tokens
-            or (model and (model in used_models or model.split("/")[-1] in used_models)))
+            or (model and model in used_models))
         ranked.append({**item, "for_you": for_you, "configured_provider": configured,
                        "related_routes": related,
                        "last_used_at": _last_used_at(item, usage)})

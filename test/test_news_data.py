@@ -680,5 +680,104 @@ class FixtureTests(NewsDataTestCase):
         self.assertTrue(haiku["last_used_at"])
 
 
+# ------------------------------------------------------------------ identity
+
+class ExactModelIdentityTests(NewsDataTestCase):
+    def impact_item(self, **overrides):
+        item = {"id": "x", "category": "price_reduction", "provider": "acme",
+                "model": "alpha",
+                "previous": {"input": 3.0, "output": 15.0, "cache_read": 0.3,
+                             "cache_write": None},
+                "current": {"input": 1.5, "output": 7.5, "cache_read": 0.15,
+                            "cache_write": None}}
+        item.update(overrides)
+        return item
+
+    def used(self, route, model, **tokens):
+        return {(route, model): {"input": 1_000_000, "output": 0,
+                                 "cache_read": 0, "cache_write": 0,
+                                 "calls": 1, "last_ts": NOW - 60, **tokens}}
+
+    def test_bare_vs_namespaced_matches_nothing(self):
+        news = news_module()
+        usage = self.used("anthropic", "claude-haiku-4-5")
+        for model in ("anthropic/claude-haiku-4-5",):
+            impacts = news.compute_impacts(
+                [self.impact_item(provider="anthropic", model=model)], usage)
+            self.assertEqual(impacts, {}, model)
+        ranked = news.rank_items(
+            [self.impact_item(provider="anthropic",
+                              model="anthropic/claude-haiku-4-5")],
+            usage=usage, tokens=set())
+        self.assertEqual(ranked[0]["related_routes"], [])
+        self.assertEqual(ranked[0]["last_used_at"], "")
+
+    def test_namespaced_recorded_vs_bare_item_matches_nothing(self):
+        news = news_module()
+        usage = self.used("anthropic", "anthropic/claude-haiku-4-5")
+        impacts = news.compute_impacts(
+            [self.impact_item(provider="anthropic", model="claude-haiku-4-5")],
+            usage)
+        self.assertEqual(impacts, {})
+        ranked = news.rank_items(
+            [self.impact_item(provider="anthropic", model="claude-haiku-4-5")],
+            usage=usage, tokens=set())
+        self.assertEqual(ranked[0]["related_routes"], [])
+
+    def test_cross_namespace_same_suffix_matches_nothing(self):
+        news = news_module()
+        usage = self.used("acme", "openai/gpt-x")
+        impacts = news.compute_impacts(
+            [self.impact_item(provider="acme", model="azure/gpt-x")], usage)
+        self.assertEqual(impacts, {})
+        ranked = news.rank_items(
+            [self.impact_item(provider="acme", model="azure/gpt-x")],
+            usage=usage, tokens=set())
+        self.assertEqual(ranked[0]["related_routes"], [])
+        # Provider-used still applies; the model must not add evidence.
+        self.assertTrue(ranked[0]["for_you"])
+
+    def test_suffix_match_never_sets_for_you(self):
+        news = news_module()
+        usage = self.used("openai", "openai/gpt-x")
+        ranked = news.rank_items(
+            [self.impact_item(provider="azure", model="azure/gpt-x")],
+            usage=usage, tokens=set())
+        self.assertFalse(ranked[0]["for_you"])
+        self.assertEqual(ranked[0]["related_routes"], [])
+
+    def test_provider_only_items_keep_provider_wide_totals(self):
+        news = news_module()
+        usage = {**self.used("acme", "alpha", input=100),
+                 **self.used("acme", "beta", input=200)}
+        totals = news._usage_for_item(
+            {"provider": "acme", "model": ""}, usage)
+        self.assertEqual(totals["input"], 300)
+
+    def test_exact_match_drives_impact_and_routes(self):
+        news = news_module()
+        usage = self.used("acme", "alpha")
+        impacts = news.compute_impacts([self.impact_item()], usage)
+        self.assertIn("x", impacts)
+        self.assertEqual(impacts["x"]["old_usd"], 3.0)
+        self.assertEqual(impacts["x"]["new_usd"], 1.5)
+        ranked = news.rank_items([self.impact_item()], usage=usage, tokens=set())
+        self.assertEqual(ranked[0]["related_routes"], ["acme"])
+        self.assertTrue(ranked[0]["for_you"])
+        self.assertEqual(ranked[0]["last_used_at"], news._now_iso(NOW - 60))
+
+    def test_different_suffix_matches_nothing(self):
+        news = news_module()
+        usage = self.used("acme", "alpha")
+        impacts = news.compute_impacts(
+            [self.impact_item(model="beta")], usage)
+        self.assertEqual(impacts, {})
+        ranked = news.rank_items([self.impact_item(model="beta")],
+                                 usage=usage, tokens=set())
+        self.assertEqual(ranked[0]["related_routes"], [])
+        # Provider-used remains; the differing model adds nothing.
+        self.assertTrue(ranked[0]["for_you"])
+
+
 if __name__ == "__main__":
     unittest.main()
