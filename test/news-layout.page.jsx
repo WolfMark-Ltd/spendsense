@@ -514,6 +514,9 @@ async function probeCandidate(c, pane) {
   const groupEls = () => [...pane.querySelectorAll(SELECTORS.group)]
 
   const groupSummaries = () => groupEls().map(group => ({
+    // The group identity IS the data-news-group attribute value; `id` is the
+    // canonical field the assertions read (`model` stays as an alias).
+    id: group.getAttribute('data-news-group'),
     model: group.getAttribute('data-news-group'),
     classes: group.getAttribute('data-news-classes') || '',
     name: group.querySelector(SELECTORS.groupName)?.textContent?.trim() || '',
@@ -551,25 +554,30 @@ async function probeCandidate(c, pane) {
     })),
   }))
 
-  // Static group structure.
-  out.groups = groupSummaries()
-  out.impactWording = /hypothetical|api-equivalent/i.test(paneText(pane))
-  // Reachability: history event ids, Details item-id texts, group identities.
-  out.idReach = {
-    events: [...pane.querySelectorAll(SELECTORS.historyEvent)]
-      .map(el => el.getAttribute('data-news-event')),
-    itemIds: [...pane.querySelectorAll(SELECTORS.itemId)].map(el => el.textContent.trim()),
-    groups: groupEls().map(group => group.getAttribute('data-news-group')),
+  // Structure, reachability and presence are captured lazily: the candidate
+  // All page paginates and For You truncates, so these must run over the
+  // fully expanded list (see the scope flows below).
+  const captureStructure = () => {
+    out.groups = groupSummaries()
+    out.impactWording = /hypothetical|api-equivalent/i.test(paneText(pane))
+    out.expandedText = paneText(pane)
+    out.idReach = {
+      events: [...pane.querySelectorAll(SELECTORS.historyEvent)]
+        .map(el => el.getAttribute('data-news-event')),
+      itemIds: [...pane.querySelectorAll(SELECTORS.itemId)].map(el => el.textContent.trim()),
+      groups: groupEls().map(group => group.getAttribute('data-news-group')),
+    }
+    out.presence = presenceGaps(pane, paneText(pane), fixturesForCase(c))
+    // Chip contract: one direction attribute per chip, never two direction
+    // glyphs inside one chip's visible text.
+    const chipIssues = []
+    for (const chip of pane.querySelectorAll(SELECTORS.fieldChip)) {
+      if (!chip.getAttribute(SELECTORS.chipDirAttr)) chipIssues.push(`no dir: ${chip.textContent.trim().slice(0, 40)}`)
+      const glyphs = (chip.textContent.match(/↓|↑|→|＝/g) || [])
+      if (glyphs.length > 1) chipIssues.push(chip.textContent.trim().slice(0, 60))
+    }
+    out.chipDirectionIssues = chipIssues
   }
-  // Chip contract: one direction attribute per chip, never two direction
-  // glyphs inside one chip's visible text.
-  const chipIssues = []
-  for (const chip of pane.querySelectorAll(SELECTORS.fieldChip)) {
-    if (!chip.getAttribute(SELECTORS.chipDirAttr)) chipIssues.push(`no dir: ${chip.textContent.trim().slice(0, 40)}`)
-    const glyphs = (chip.textContent.match(/↓|↑|→|＝/g) || [])
-    if (glyphs.length > 1) chipIssues.push(chip.textContent.trim().slice(0, 60))
-  }
-  out.chipDirectionIssues = chipIssues
 
   // Evidence-retention regressions (page-local payload): capture every
   // offer's full Details panel (HTML includes attributes, so values stored
@@ -619,7 +627,8 @@ async function probeCandidate(c, pane) {
 
   if (c.scope === 'foryou') {
     // For You initial page size: at most NEWS_FOR_YOU_LIMIT groups, with a
-    // show-all control when more exist.
+    // show-all control when more exist. Structure/presence are captured
+    // after show-all so coverage stays complete.
     const visible = groupEls().length
     const showAll = pane.querySelector(SELECTORS.showAll)
     out.forYou = { visible, showAllPresent: !!showAll, showAllLabel: showAll?.textContent?.trim() || '' }
@@ -627,13 +636,88 @@ async function probeCandidate(c, pane) {
       showAll.click()
       await tick(120)
       out.forYou.afterShowAll = groupEls().length
+      out.forYou.afterShowAllGroups = groupEls().map(groupIdOf)
     }
+    captureStructure()
     out.counts = {
       groups: pane.querySelector(SELECTORS.countGroups)?.textContent?.trim() || '',
       events: pane.querySelector(SELECTORS.countEvents)?.textContent?.trim() || '',
     }
     return out
   }
+
+  // All Updates paginates (NEWS_PAGE_SIZE entries per page). Snapshot the
+  // INITIAL pagination semantics first, then expand fully so every
+  // structure/evidence capture below sees the complete list.
+  out.initial = {
+    cards: pane.querySelectorAll('.wm-news-card').length,
+    loadMorePresent: !!pane.querySelector(SELECTORS.loadMore),
+    groups: groupEls().map(groupIdOf),
+    counts: {
+      groups: pane.querySelector(SELECTORS.countGroups)?.textContent?.trim() || '',
+      events: pane.querySelector(SELECTORS.countEvents)?.textContent?.trim() || '',
+    },
+  }
+
+  // Keyboard reachability: DOM order of the primary controls, captured on
+  // the initial page so the load-more control is still in the tab order.
+  const focusables = visibleFocusables(pane)
+  out.focusables = focusables
+  const indexOf = match => focusables.findIndex(el => match.test(el.label))
+  out.keyboard = {
+    scopeIndex: indexOf(/for you|为你推荐/),
+    categoryIndex: indexOf(/new models|新模型/),
+    searchIndex: focusables.findIndex(el => el.tag === 'input'),
+    detailsIndex: focusables.findIndex(el => el.tag === 'button'
+      && /details|详情/i.test(el.label)),
+    loadMoreIndex: indexOf(/load more|加载更多/),
+  }
+  const detailsToggle = pane.querySelector(SELECTORS.details)
+  if (detailsToggle) {
+    const panel = document.getElementById(detailsToggle.getAttribute('aria-controls') || '')
+    const before = detailsToggle.getAttribute('aria-expanded')
+    detailsToggle.click()
+    await tick(60)
+    const after = detailsToggle.getAttribute('aria-expanded')
+    detailsToggle.focus()
+    out.keyboard.toggle = {
+      tag: detailsToggle.tagName.toLowerCase(),
+      keyboardOperable: ['button', 'summary', 'input', 'a'].includes(detailsToggle.tagName.toLowerCase()),
+      toggled: before !== after,
+      panelHidden: panel ? panel.hidden : null,
+      focusVisible: detailsToggle.matches(':focus-visible'),
+    }
+    if (before === 'true') detailsToggle.click()
+  } else {
+    out.keyboard.toggle = { missing: true }
+  }
+
+  // Load-more keeps focus inside the list (checked on the first click, then
+  // every remaining page is loaded so the captures below see everything).
+  const expandAll = async () => {
+    for (let page = 0; page < 60; page += 1) {
+      const more = pane.querySelector(SELECTORS.loadMore)
+      if (!more) break
+      more.click()
+      await tick(60)
+    }
+    return groupEls().map(groupIdOf)
+  }
+  const loadMore = pane.querySelector(SELECTORS.loadMore)
+  out.loadMore = loadMore
+    ? (() => {
+        loadMore.click()
+        return {
+          present: true,
+          label: loadMore.textContent.trim(),
+          focusInsideList: !!pane.querySelector(SELECTORS.list)?.contains(document.activeElement),
+        }
+      })()
+    : { present: false }
+  await tick(80)
+  out.expanded = { groups: await expandAll() }
+  // Full structure, reachability and presence over the COMPLETE list.
+  captureStructure()
 
   // Ring persistence: select a category, switch scope and back; the ring must
   // survive on the category AND the scope must carry its own ring.
@@ -673,6 +757,7 @@ async function probeCandidate(c, pane) {
   // Search: full-ID substring match over the group identities.
   const search = pane.querySelector(SELECTORS.search)
   if (search) {
+    await expandAll()
     const before = groupEls().map(groupIdOf)
     setInputValue(search, 'sol')
     await tick(120)
@@ -685,11 +770,13 @@ async function probeCandidate(c, pane) {
 
   // Date filter: the [data-news-days] buttons narrow by observed age. The
   // 30-day window must drop the fixture item observed ~36 days back and let
-  // "All time" restore it.
+  // "All time" restore it. Every filter change resets pagination, so the
+  // list is re-expanded before each capture.
   const dayButtons = [...pane.querySelectorAll(`${SELECTORS.days} button`)]
   const thirty = dayButtons.find(b => b.getAttribute('value') === '30')
   const allTime = dayButtons.find(b => b.getAttribute('value') === 'all')
   if (thirty && allTime) {
+    await expandAll()
     const before = groupEls().map(groupIdOf)
     thirty.click()
     await tick(120)
@@ -700,7 +787,7 @@ async function probeCandidate(c, pane) {
     }
     allTime.click()
     await tick(120)
-    out.dateFilter.restored = groupEls().map(groupIdOf)
+    out.dateFilter.restored = await expandAll()
   } else {
     out.dateFilter = { missingSelector: true }
   }
@@ -716,51 +803,6 @@ async function probeCandidate(c, pane) {
           .some(a => (a.textContent || '').includes(note) || note.includes(a.getAttribute('href') || '')) }
       : null
   })()
-
-  // Load-more keeps focus inside the list.
-  const loadMore = pane.querySelector(SELECTORS.loadMore)
-  out.loadMore = loadMore
-    ? (() => {
-        loadMore.click()
-        return {
-          present: true,
-          label: loadMore.textContent.trim(),
-          focusInsideList: !!pane.querySelector(SELECTORS.list)?.contains(document.activeElement),
-        }
-      })()
-    : { present: false }
-
-  // Keyboard reachability: DOM order of the primary controls.
-  const focusables = visibleFocusables(pane)
-  out.focusables = focusables
-  const indexOf = match => focusables.findIndex(el => match.test(el.label))
-  out.keyboard = {
-    scopeIndex: indexOf(/for you|为你推荐/),
-    categoryIndex: indexOf(/new models|新模型/),
-    searchIndex: focusables.findIndex(el => el.tag === 'input'),
-    detailsIndex: focusables.findIndex(el => el.tag === 'button'
-      && /details|详情/i.test(el.label)),
-    loadMoreIndex: indexOf(/load more|加载更多/),
-  }
-  const detailsToggle = pane.querySelector(SELECTORS.details)
-  if (detailsToggle) {
-    const panel = document.getElementById(detailsToggle.getAttribute('aria-controls') || '')
-    const before = detailsToggle.getAttribute('aria-expanded')
-    detailsToggle.click()
-    await tick(60)
-    const after = detailsToggle.getAttribute('aria-expanded')
-    detailsToggle.focus()
-    out.keyboard.toggle = {
-      tag: detailsToggle.tagName.toLowerCase(),
-      keyboardOperable: ['button', 'summary', 'input', 'a'].includes(detailsToggle.tagName.toLowerCase()),
-      toggled: before !== after,
-      panelHidden: panel ? panel.hidden : null,
-      focusVisible: detailsToggle.matches(':focus-visible'),
-    }
-    if (before === 'true') detailsToggle.click()
-  } else {
-    out.keyboard.toggle = { missing: true }
-  }
   return out
 }
 
@@ -811,9 +853,20 @@ async function measureCase(c) {
   } else {
     ids = { mode: 'flat', ...annotateItems(pane, items) }
   }
-  // Exact-ID verbatim rendering is asserted against the items the current
-  // scope actually shows; the All scope must carry every entry.
-  const exactExpected = EXACT_IDS.filter(id => items.some(item => (item.model || '').includes(id)))
+  // Exact-ID verbatim rendering. Flat (baseline) pages show every relevant
+  // event in For You and every item in All, so the expectation is the full
+  // EXACT_IDS list present in the scope's items. The candidate design
+  // paginates (For You: initial group page; All: NEWS_PAGE_SIZE entries), so
+  // the expectation there is the subset the page actually rendered — full
+  // candidate coverage is asserted after load-more / show-all in the probe.
+  let exactExpected
+  if (candidateDetected) {
+    exactExpected = [...pane.querySelectorAll(SELECTORS.group)]
+      .map(group => group.getAttribute('data-news-group'))
+      .filter(id => EXACT_IDS.includes(id))
+  } else {
+    exactExpected = EXACT_IDS.filter(id => items.some(item => (item.model || '').includes(id)))
+  }
   const labels = [...pane.querySelectorAll('[data-news-scope] button, .wm-segments button')]
     .map(b => b.textContent)
   const result = {

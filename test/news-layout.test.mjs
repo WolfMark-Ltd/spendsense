@@ -170,6 +170,29 @@ const EXACT_IDS = [
   'openrouter/anthropic/claude-sonnet-4.5', 'deepseek-ai/deepseek-v4-pro',
 ]
 
+// Candidate pagination semantics. The final UI shows the first
+// NEWS_FOR_YOU_LIMIT ranked groups on For You and the first NEWS_PAGE_SIZE
+// entries on All; completeness is always asserted on the EXPANDED list
+// (after show-all / load-more), never redefined away. Grouping turns N
+// relevant events into one entry per distinct model (+ one per model-less
+// card), which is what the paginated counts below derive from.
+const NEWS_PAGE_SIZE = 10
+const NEWS_FOR_YOU_LIMIT = 5
+const FOR_YOU_GROUPS = new Set(NEWS_ITEMS.filter(isRelevant)
+  .map(item => item.model).filter(Boolean)).size
+const PARTIAL_FOR_YOU_GROUPS = new Set(PARTIAL_ITEMS.filter(isRelevant)
+  .map(item => item.model).filter(Boolean)).size
+const ALL_ENTRIES = new Set(NEWS_ITEMS.map(item => item.model).filter(Boolean)).size
+  + NEWS_ITEMS.filter(item => !item.model).length
+const PARTIAL_ENTRIES = new Set(PARTIAL_ITEMS.map(item => item.model).filter(Boolean)).size
+  + PARTIAL_ITEMS.filter(item => !item.model).length
+// Exact IDs that belong on For You at all (the relevant subset); the
+// remaining exact IDs are covered by the complete All list.
+const FOR_YOU_EXACT = EXACT_IDS.filter(id =>
+  NEWS_ITEMS.some(item => isRelevant(item) && item.model === id))
+// Localised "(N groups)" / "(N updates)" scope-tab count wording.
+const countLabelRegex = n => new RegExp(`\\(${n} (groups?|updates?|个分组|条动态)\\)`)
+
 test('Model News baseline invariants and WCAG contrast (real NewsPage, committed fixtures)', {
   skip: CHROME ? false : 'No Chromium binary available for real Model News layout checks',
 }, async () => {
@@ -214,30 +237,50 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
     assert.deepEqual(Object.keys(r.forbidden), [], `${label} keeps forbidden wording out: ${JSON.stringify(r.forbidden)}`)
 
     if (r.fixture === 'realistic') {
-      // A) exact model ID strings render verbatim
-      if (r.scope === 'all') {
+      // A) exact model ID strings render verbatim. The baseline flat list
+      // shows every relevant event on For You and every item on All, so it
+      // must carry every exact ID; the candidate design paginates (For You:
+      // initial ranked-group page; All: first NEWS_PAGE_SIZE entries), so
+      // there this scope asserts the rendered subset only — full candidate
+      // coverage is asserted after load-more / show-all in the candidate
+      // test, never weakened.
+      if (r.scope === 'all' && !r.candidateDetected) {
         assert.deepEqual(r.exactExpected, EXACT_IDS, `${label} expects every exact ID`)
+      } else {
+        assert.ok(r.exactExpected.length > 0
+          && r.exactExpected.every(id => EXACT_IDS.includes(id)),
+        `${label} exact expectations stay within the real ID set`)
       }
       assert.deepEqual(r.exactMissing, [], `${label} renders every exact model ID verbatim`)
-      // A) every fixture item maps to exactly one rendered card (the harness
-      // annotates cards with data-wp11-id; ids are reachable in Details once
-      // the candidate design lands — group B asserts that with real hooks)
-      assert.deepEqual(r.ids.missing, [], `${label} maps every fixture item to a card: missing ${JSON.stringify(r.ids.missing)}`)
+      if (!r.candidateDetected) {
+        // A) every fixture item maps to exactly one rendered card, and every
+        // model/provider/source is present (flat pages show everything)
+        assert.deepEqual(r.ids.missing, [], `${label} maps every fixture item to a card: missing ${JSON.stringify(r.ids.missing)}`)
+        assert.deepEqual(r.presence.missingModel, [], `${label} shows every model`)
+        assert.deepEqual(r.presence.missingProvider, [], `${label} shows every provider`)
+        assert.deepEqual(r.presence.missingSource, [], `${label} links every source URL`)
+      }
       assert.equal(r.ids.extraCards, 0, `${label} renders no unexplained cards`)
-      assert.deepEqual(r.presence.missingModel, [], `${label} shows every model`)
-      assert.deepEqual(r.presence.missingProvider, [], `${label} shows every provider`)
-      assert.deepEqual(r.presence.missingSource, [], `${label} links every source URL`)
       const forYouLabel = r.labels.find(text => /for you|为你推荐/i.test(text))
       const allLabel = r.labels.find(text => /all updates|全部动态/i.test(text))
-      assert.match(forYouLabel || '',
-        new RegExp(`\\(${RELEVANT_COUNT}\\)`), `${label} For You count`)
-      if (r.scope === 'foryou') {
-        assert.equal(r.cards, RELEVANT_COUNT,
-          `${label} shows the ${RELEVANT_COUNT} relevant items`)
+      if (r.candidateDetected) {
+        assert.match(forYouLabel || '',
+          countLabelRegex(FOR_YOU_GROUPS), `${label} For You count (grouped)`)
+        assert.match(allLabel || '',
+          countLabelRegex(ALL_ENTRIES), `${label} All Updates count (grouped)`)
       } else {
-        assert.equal(r.cards, TOTAL_COUNT, `${label} shows every item in All Updates`)
+        assert.match(forYouLabel || '',
+          new RegExp(`\\(${RELEVANT_COUNT}\\)`), `${label} For You count`)
         assert.match(allLabel || '',
           new RegExp(`\\(${TOTAL_COUNT}\\)`), `${label} All Updates count`)
+      }
+      if (r.scope === 'foryou') {
+        // candidate For You shows the initial ranked-group page, not all events
+        assert.equal(r.cards, r.candidateDetected ? Math.min(NEWS_FOR_YOU_LIMIT, FOR_YOU_GROUPS) : RELEVANT_COUNT,
+          `${label} For You initial page`)
+      } else {
+        assert.equal(r.cards, r.candidateDetected ? Math.min(NEWS_PAGE_SIZE, ALL_ENTRIES) : TOTAL_COUNT,
+          `${label} All Updates initial page`)
       }
     }
     if (r.locale === 'zh-CN') {
@@ -251,18 +294,24 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
     }
     if (r.fixture === 'partial') {
       assert.match(r.text, /Local catalogue news is shown/i, `${label} live-updates-off note`)
-      assert.equal(r.cards, PARTIAL_RELEVANT, label)
+      assert.equal(r.cards, r.candidateDetected
+        ? (r.scope === 'foryou'
+          ? Math.min(NEWS_FOR_YOU_LIMIT, PARTIAL_FOR_YOU_GROUPS)
+          : Math.min(NEWS_PAGE_SIZE, PARTIAL_ENTRIES))
+        : PARTIAL_RELEVANT, label)
     }
     if (r.fixture === 'stale') {
       assert.match(r.text, /central feed unavailable/, `${label} central stale alert`)
-      assert.equal(r.cards, RELEVANT_COUNT, `${label} stale cache still serves the relevant items`)
+      assert.equal(r.cards, r.candidateDetected ? Math.min(NEWS_FOR_YOU_LIMIT, FOR_YOU_GROUPS) : RELEVANT_COUNT,
+        `${label} stale cache still serves the relevant items`)
     }
     if (r.fixture === 'nosignals') {
       if (r.scope === 'foryou') {
         assert.match(r.text, /Nothing to personalise yet/i, `${label} no-signals empty state`)
         assert.equal(r.cards, 0, label)
       } else {
-        assert.equal(r.cards, TOTAL_COUNT, `${label} All still complete without signals`)
+        assert.equal(r.cards, r.candidateDetected ? Math.min(NEWS_PAGE_SIZE, ALL_ENTRIES) : TOTAL_COUNT,
+          `${label} All initial page without signals`)
       }
     }
     if (r.fixture === 'error') {
@@ -324,7 +373,16 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
   const noSignals = await runProbe(h, 'nosignals__foryou__1200__dark__en')
   const probe = all.probe
 
-  // B) model-first groups: one group per exact model ID
+  // B) initial All pagination semantics: the first NEWS_PAGE_SIZE entries
+  // render with a load-more control; the expanded snapshot below carries
+  // the complete list.
+  assert.equal(probe.initial.cards, Math.min(NEWS_PAGE_SIZE, ALL_ENTRIES),
+    `All starts paginated with ${Math.min(NEWS_PAGE_SIZE, ALL_ENTRIES)} entries (got ${probe.initial.cards})`)
+  assert.equal(probe.initial.loadMorePresent, true, 'load-more is offered on the initial All page')
+  assert.ok(probe.expanded.groups.length >= probe.initial.groups.length,
+    `load-more expands the group list (${probe.initial.groups.length} → ${probe.expanded.groups.length})`)
+
+  // B) model-first groups over the EXPANDED list: one group per exact model ID
   const groupIds = probe.groups.map(group => group.id)
   for (const id of ['gpt-5.6-sol', 'gpt-5.6-sol-pro', 'claude-sonnet-4-5',
     'claude-sonnet-4-5-20250929', 'claude-opus-4-1-20250805-thinking',
@@ -355,11 +413,21 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
   const solGroup = probe.groups.find(group => group.id === 'gpt-5.6-sol')
   assert.ok(solGroup && solGroup.offers.length >= 3,
     `gpt-5.6-sol group lists a row per provider offer (${solGroup?.offers.length})`)
-  // All Updates is complete: every original id reachable in Details
+  // All Updates is complete after load-more: every original model-item id
+  // reachable in Details over the fully expanded list (the static first page
+  // cannot carry them all; cards without a model are content-annotated).
   const reachable = new Set([...probe.idReach.itemIds, ...probe.idReach.events])
-  const fixtureIds = [...all.ids.matched, ...all.ids.missing]
-  assert.deepEqual(fixtureIds.filter(id => !reachable.has(id)), [],
-    `every original id reachable in Details: missing ${JSON.stringify(fixtureIds.filter(id => !reachable.has(id)))}`)
+  const modelItemIds = NEWS_ITEMS.filter(item => item.model).map(item => item.id)
+  assert.deepEqual(modelItemIds.filter(id => !reachable.has(id)), [],
+    `every original id reachable after load-more: missing ${JSON.stringify(modelItemIds.filter(id => !reachable.has(id)))}`)
+  // presence over the fully expanded list: every model, provider and source
+  // URL of the whole payload is on the page once pagination is exhausted
+  assert.deepEqual(probe.presence.missingModel, [],
+    `every model present after load-more: ${JSON.stringify(probe.presence.missingModel)}`)
+  assert.deepEqual(probe.presence.missingProvider, [],
+    `every provider present after load-more: ${JSON.stringify(probe.presence.missingProvider)}`)
+  assert.deepEqual(probe.presence.missingSource, [],
+    `every source URL linked after load-more: ${JSON.stringify(probe.presence.missingSource)}`)
 
   // --- dedupe proof --------------------------------------------------------
   // Shared precondition for every pair below: identical transition (exact
@@ -460,7 +528,7 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
   assert.ok(opusTierChip, 'known tiers render a tier chip')
   assert.equal(opusTierChip.dir, 'up', `tier chip direction (${opusTierChip.text})`)
   assert.match(opusTierChip.text, /\+20%/, `tier chip magnitude (${opusTierChip.text})`)
-  assert.match(all.text, /standard/, 'tier rows are listed one by one in Details')
+  assert.match(probe.expandedText, /standard/, 'tier rows are listed one by one in Details')
   assert.ok(probe.officialNote, 'the official verification block renders its source note')
   assert.equal(probe.officialNote.linked, false,
     `the official source note is plain text, never a link (${probe.officialNote?.text})`)
@@ -567,6 +635,12 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
     assert.equal(forYou.probe.forYou.showAllPresent, true, 'show-all is offered for the remaining groups')
     assert.equal(forYou.probe.forYou.afterShowAll, forYouGroups.length,
       `show-all reveals every relevant group (${forYou.probe.forYou.afterShowAll})`)
+    // For You after show-all covers every relevant exact ID (the relevant
+    // subset of EXACT_IDS; the rest are covered by the complete All list)
+    for (const id of FOR_YOU_EXACT) {
+      assert.ok(forYou.probe.forYou.afterShowAllGroups.includes(id),
+        `For You after show-all covers exact ID ${id} (got ${JSON.stringify(forYou.probe.forYou.afterShowAllGroups)})`)
+    }
   }
   // keyboard: tab order reaches scope, category, search, details, load-more
   const k = probe.keyboard
