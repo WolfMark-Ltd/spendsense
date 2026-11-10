@@ -1,0 +1,349 @@
+{
+  "catalogue": {
+    "as_of": "2027-01-01T01:02:52+00:00",
+    "snapshot_at": "2027-01-01T05:03:52+00:00",
+    "source": "models.dev cache (models_dev_cache.json)"
+  },
+  "central": {
+    "error": "",
+    "fetched_at": "2027-01-01T05:03:52+00:00",
+    "items": [
+      {
+        "category": "price_increase",
+        "conditions": "",
+        "conditions_code": "",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 3.0,
+          "output": 4.0
+        },
+        "effective_at": "",
+        "for_you": false,
+        "has_tiers": false,
+        "id": "md-c312c6eae578",
+        "last_used_at": "",
+        "model": "m1",
+        "observed_at": "2027-01-01T05:03:52+00:00",
+        "origin": "central",
+        "previous": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 1.0,
+          "output": 2.0
+        },
+        "provenance": "models.dev",
+        "provider": "acme",
+        "related_routes": [],
+        "source_url": "https://models.dev",
+        "summary": "m1 (acme) list price changed on models.dev.",
+        "summary_code": "news_sum_price_change_feed",
+        "summary_params": {
+          "model": "m1",
+          "provider": "acme"
+        }
+      },
+      {
+        "category": "new_model",
+        "conditions": "Catalogue listing only; not confirmed available on any account.",
+        "conditions_code": "news_cond_listing_any_account",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 0.25,
+          "output": 0.75
+        },
+        "effective_at": "",
+        "for_you": false,
+        "has_tiers": false,
+        "id": "md-975889460d2b",
+        "last_used_at": "",
+        "model": "m4",
+        "observed_at": "2027-01-01T05:03:52+00:00",
+        "origin": "central",
+        "previous": null,
+        "provenance": "models.dev",
+        "provider": "acme",
+        "related_routes": [],
+        "source_url": "https://models.dev",
+        "summary": "m4 newly listed under acme on models.dev.",
+        "summary_code": "news_sum_new_model_feed",
+        "summary_params": {
+          "model": "m4",
+          "provider": "acme"
+        }
+      },
+      {
+        "category": "price_reduction",
+        "conditions": "",
+        "conditions_code": "",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 1.5,
+          "output": 4.0
+        },
+        "effective_at": "",
+        "for_you": false,
+        "has_tiers": false,
+        "id": "md-967823a5b771",
+        "last_used_at": "",
+        "model": "m2",
+        "observed_at": "2027-01-01T05:03:52+00:00",
+        "origin": "central",
+        "previous": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 2.0,
+          "output": 4.0
+        },
+        "provenance": "models.dev",
+        "provider": "acme",
+        "related_routes": [],
+        "source_url": "https://models.dev",
+        "summary": "m2 (acme) list price changed on models.dev.",
+        "summary_code": "news_sum_price_change_feed",
+        "summary_params": {
+          "model": "m2",
+          "provider": "acme"
+        }
+      }
+    ],
+    "state": "ok"
+  },
+  "for_you_count": 0,
+  "impact_window_days": 30,
+  "impacts": {},
+  "local": {
+    "baseline": false,
+    "items": [
+      {
+        "category": "price_reduction",
+        "conditions": "",
+        "conditions_code": "",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 1.5,
+          "output": 4.0
+        },
+        "effective_at": "",
+        "for_you": false,
+        "has_tiers": false,
+        "id": "local-price-reduction-acme-m2--r-----cache-read---null---cache-writ-81e25c80a6",
+        "last_used_at": "",
+        "model": "m2",
+        "model_name": "",
+        "observed_at": "2027-01-01T05:03:52+00:00",
+        "origin": "local",
+        "previous": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 2.0,
+          "output": 4.0
+        },
+        "provenance": "Hermes models.dev cache",
+        "provider": "acme",
+        "rate_change_code": "news_rate_down",
+        "related_routes": [],
+        "source_url": "",
+        "summary": "m2 (acme) reduced to $1.5/$4 per MTok in/out.",
+        "summary_code": "news_sum_price_change",
+        "summary_params": {
+          "input": "$1.5",
+          "model": "m2",
+          "output": "$4",
+          "provider": "acme"
+        },
+        "tiers_after": null,
+        "tiers_before": null,
+        "tiers_detail": "unknown"
+      },
+      {
+        "category": "new_model",
+        "conditions": "Catalogue listing only; not confirmed available on your accounts.",
+        "conditions_code": "news_cond_listing_accounts",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 0.25,
+          "output": 0.75
+        },
+        "effective_at": "",
+        "for_you": false,
+        "id": "local-new-model-acme-m4-c28532e423",
+        "last_used_at": "",
+        "model": "m4",
+        "model_name": "",
+        "observed_at": "2027-01-01T05:03:52+00:00",
+        "origin": "local",
+        "previous": null,
+        "provenance": "Hermes models.dev cache",
+        "provider": "acme",
+        "related_routes": [],
+        "source_url": "",
+        "summary": "m4 newly listed under acme at $0.25/$0.75 per MTok in/out.",
+        "summary_code": "news_sum_new_model",
+        "summary_params": {
+          "input": "$0.25",
+          "model": "m4",
+          "output": "$0.75",
+          "provider": "acme"
+        },
+        "tiers_after": null,
+        "tiers_detail": "unknown"
+      },
+      {
+        "category": "price_increase",
+        "conditions": "",
+        "conditions_code": "",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 3.0,
+          "output": 4.0
+        },
+        "effective_at": "",
+        "for_you": false,
+        "has_tiers": false,
+        "id": "local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-rf2ea95",
+        "last_used_at": "",
+        "model": "m1",
+        "model_name": "M One",
+        "observed_at": "2027-01-01T04:03:52+00:00",
+        "origin": "local",
+        "previous": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 1.0,
+          "output": 2.0
+        },
+        "provenance": "Hermes models.dev cache",
+        "provider": "acme",
+        "rate_change_code": "news_rate_up",
+        "related_routes": [],
+        "source_url": "",
+        "summary": "m1 (acme) changed to $3/$4 per MTok in/out.",
+        "summary_code": "news_sum_price_change",
+        "summary_params": {
+          "input": "$3",
+          "model": "m1",
+          "output": "$4",
+          "provider": "acme"
+        },
+        "tiers_after": [],
+        "tiers_before": [],
+        "tiers_detail": "known"
+      },
+      {
+        "category": "price_reduction",
+        "conditions": "",
+        "conditions_code": "",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 1.0,
+          "output": 2.0
+        },
+        "effective_at": "",
+        "for_you": false,
+        "has_tiers": false,
+        "id": "local-price-reduction-acme-m1--r-----cache-read---null---cache-writ-8f80b1eeda",
+        "last_used_at": "",
+        "model": "m1",
+        "model_name": "M One",
+        "observed_at": "2027-01-01T03:03:52+00:00",
+        "origin": "local",
+        "previous": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 3.0,
+          "output": 4.0
+        },
+        "provenance": "Hermes models.dev cache",
+        "provider": "acme",
+        "rate_change_code": "news_rate_down",
+        "related_routes": [],
+        "source_url": "",
+        "summary": "m1 (acme) reduced to $1/$2 per MTok in/out.",
+        "summary_code": "news_sum_price_change",
+        "summary_params": {
+          "input": "$1",
+          "model": "m1",
+          "output": "$2",
+          "provider": "acme"
+        },
+        "tiers_after": [],
+        "tiers_before": [],
+        "tiers_detail": "known"
+      },
+      {
+        "category": "price_increase",
+        "conditions": "",
+        "conditions_code": "",
+        "confidence": "observed",
+        "configured_provider": false,
+        "current": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 3.0,
+          "output": 4.0
+        },
+        "effective_at": "",
+        "for_you": false,
+        "has_tiers": false,
+        "id": "local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22",
+        "last_used_at": "",
+        "model": "m1",
+        "model_name": "M One",
+        "observed_at": "2027-01-01T02:03:52+00:00",
+        "origin": "local",
+        "previous": {
+          "cache_read": null,
+          "cache_write": null,
+          "input": 1.0,
+          "output": 2.0
+        },
+        "provenance": "Hermes models.dev cache",
+        "provider": "acme",
+        "rate_change_code": "news_rate_up",
+        "related_routes": [],
+        "source_url": "",
+        "summary": "m1 (acme) changed to $3/$4 per MTok in/out.",
+        "summary_code": "news_sum_price_change",
+        "summary_params": {
+          "input": "$3",
+          "model": "m1",
+          "output": "$4",
+          "provider": "acme"
+        },
+        "tiers_after": [],
+        "tiers_before": [],
+        "tiers_detail": "known"
+      }
+    ],
+    "store_error": ""
+  },
+  "ok": true,
+  "providers_configured": [
+    "anthropic",
+    "openrouter"
+  ],
+  "settings": {
+    "live_updates": true
+  }
+}

@@ -606,12 +606,49 @@ class FixtureTests(NewsDataTestCase):
         spec.loader.exec_module(module)
         return module
 
-    def test_regen_script_reproduces_committed_fixture(self):
+    def test_regen_script_reproduces_committed_fixtures(self):
         module = self.load_regenerator()
-        output = Path(self.scratch.name) / "regenerated.json"
-        module.build_payload(output)
-        committed = (FIXTURES / "payload-local-central.json").read_text()
-        self.assertEqual(output.read_text(), committed)
+        for name in ("payload-local-central.json", "payload-unknown-recurrence.json"):
+            output = Path(self.scratch.name) / f"regenerated-{name}"
+            module.build_payload(output) if name == "payload-local-central.json" \
+                else module.build_unknown_recurrence_payload(output)
+            committed = (FIXTURES / name).read_text()
+            self.assertEqual(output.read_text(), committed, name)
+
+    def test_fixture_covers_unknown_and_recurrence_scenarios(self):
+        payload = json.loads(
+            (FIXTURES / "payload-unknown-recurrence.json").read_text())
+        local = payload["local"]["items"]
+        self.assertEqual(len(local), 5)
+        recurrence = [item for item in local if RECURRENCE_ID.search(item["id"])]
+        self.assertEqual(len(recurrence), 1)
+        original = [item for item in local
+                    if item["id"] == recurrence[0]["id"].rsplit("-r", 1)[0]]
+        self.assertEqual(len(original), 1)
+        self.assertEqual(recurrence[0]["category"], "price_increase")
+        self.assertEqual(original[0]["category"], "price_increase")
+        self.assertEqual(recurrence[0]["previous"], original[0]["previous"])
+        reverse = [item for item in local if item["category"] == "price_reduction"
+                   and item["model"] == "m1"]
+        self.assertEqual(len(reverse), 1)
+        unknown_price = [item for item in local
+                         if item["model"] == "m2" and "previous" in item]
+        self.assertEqual(unknown_price[0]["tiers_detail"], "unknown")
+        self.assertIsNone(unknown_price[0]["tiers_before"])
+        self.assertEqual(unknown_price[0]["model_name"], "")
+        unknown_new = [item for item in local if item["model"] == "m4"]
+        self.assertEqual(unknown_new[0]["tiers_detail"], "unknown")
+        self.assertIsNone(unknown_new[0]["tiers_after"])
+        self.assertEqual(unknown_new[0]["model_name"], "")
+        # A central md- item for the same m2 transition; both kept separate.
+        central = payload["central"]["items"]
+        matching = [item for item in central if item["id"].startswith("md-")
+                    and item["provider"] == "acme" and item["model"] == "m2"]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["category"], unknown_price[0]["category"])
+        self.assertEqual(matching[0]["effective_at"], "")
+        self.assertEqual(unknown_price[0]["effective_at"], "")
+        self.assertNotEqual(matching[0]["id"], unknown_price[0]["id"])
 
     def test_fixture_covers_required_scenarios(self):
         payload = json.loads((FIXTURES / "payload-local-central.json").read_text())
