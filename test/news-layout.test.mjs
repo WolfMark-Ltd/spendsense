@@ -8,10 +8,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const MODULES = join(ROOT, 'test/harness/node_modules')
-const CHROME = [
+// Every binary the real Chrome discovery may pick. The probe's discovery
+// mock must hide ALL of them (CHROME_MOCK_HIDE, below) so a browserless host
+// — including a Chromium-only one — always simulates absence.
+const CHROME_CANDIDATES = [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
-].find(existsSync)
+]
+const CHROME = CHROME_CANDIDATES.find(existsSync)
 
 // Realistic-fixture identities the candidate assertions reason about, derived
 // from the committed fixture so regenerated data never desynchronises tests.
@@ -766,6 +770,21 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
   assert.ok((empty.groupsAfterClick || 0) > 0, 'following the path shows the full list')
 })
 
+// The discovery mock's hide rule, shared by the generated stubs and the
+// regression test below. The earlier /chrome/i rule missed /usr/bin/chromium
+// and /usr/bin/chromium-browser: on a Chromium-only runtime the probe child
+// resolved CHROME and would have launched a real browser instead of
+// simulating absence. chrom(e|ium) covers every current and future
+// chrome/chromium-named discovery candidate.
+const CHROME_MOCK_HIDE = /chrom(e|ium)/i
+
+test('the Chrome-discovery mock hides every discovery candidate', () => {
+  for (const candidate of CHROME_CANDIDATES) {
+    assert.match(candidate, CHROME_MOCK_HIDE,
+      `${candidate} is hidden by the probe's discovery mock`)
+  }
+})
+
 // Regression probe for the mandatory gate: re-runs THIS file in a child
 // process with Chrome discovery mocked away (node:test module mocking; no
 // real browser involved), so a missing Chromium can never silently skip a
@@ -776,22 +795,29 @@ test('a mandatory candidate run fails instead of skipping when Chrome is missing
 }, async t => {
   const work = mkdtempSync(join(tmpdir(), 'wm-news-probe-'))
   process.on('exit', () => rmSync(work, { recursive: true, force: true }))
-  const stub = join(work, 'no-chrome.mjs')
   // namedExports (not exports): the older option key is deprecated on Node 24
   // but is the only one Node 22 honours, so one source works across both; no
   // `default` key — Node 24 rejects the mock when `default` is defined.
-  writeFileSync(stub, [
-    "import { mock } from 'node:test'",
-    "import fs from 'node:fs'",
-    'const realExistsSync = fs.existsSync',
-    "mock.module('node:fs', { namedExports: { ...fs,",
-    '  existsSync: path => /chrome/i.test(String(path)) ? false : realExistsSync(path),',
-    '  mkdirSync: fs.mkdirSync, mkdtempSync: fs.mkdtempSync,',
-    '  readFileSync: fs.readFileSync, rmSync: fs.rmSync,',
-    '  writeFileSync: fs.writeFileSync } })',
-  ].join('\n'))
+  // `hostRule` decides what the SIMULATED host filesystem contains beyond
+  // the hidden discovery candidates.
+  const writeDiscoveryStub = (name, hostRule) => {
+    const stub = join(work, name)
+    writeFileSync(stub, [
+      "import { mock } from 'node:test'",
+      "import fs from 'node:fs'",
+      'const realExistsSync = fs.existsSync',
+      `const simulatedHost = path => ${hostRule}`,
+      "mock.module('node:fs', { namedExports: { ...fs,",
+      `  existsSync: path => ${CHROME_MOCK_HIDE}.test(String(path)) ? false : simulatedHost(path),`,
+      '  mkdirSync: fs.mkdirSync, mkdtempSync: fs.mkdtempSync,',
+      '  readFileSync: fs.readFileSync, rmSync: fs.rmSync,',
+      '  writeFileSync: fs.writeFileSync } })',
+    ].join('\n'))
+    return stub
+  }
+  const standardStub = writeDiscoveryStub('no-chrome.mjs', 'realExistsSync(path)')
   const self = fileURLToPath(import.meta.url)
-  const probeChild = flag => {
+  const probeChild = (flag, stub = standardStub) => {
     const env = { ...process.env, WP11_LAYOUT_PROBE_CHILD: '1' }
     delete env.WP11_REQUIRE_CANDIDATE
     delete env.WP11_CANDIDATE
@@ -842,4 +868,34 @@ test('a mandatory candidate run fails instead of skipping when Chrome is missing
     assert.ok(guard?.startsWith('﹣') && guard.includes('probe child run'),
       `probe guard skips itself transparently in the child (got ${guard})`)
   }
+  // Chromium-only host simulation: the ONLY existing discovery candidates
+  // are the two chromium binaries. The mock must hide them too, so a
+  // mandatory run fails through the gate — never a real browser invocation —
+  // and the default run keeps its optional skip.
+  const chromiumOnlyStub = writeDiscoveryStub('chromium-only-host.mjs',
+    "['/usr/bin/chromium', '/usr/bin/chromium-browser'].includes(String(path))")
+  const mandatory = probeChild('WP11_REQUIRE_CANDIDATE', chromiumOnlyStub)
+  assert.notEqual(mandatory.status, 0,
+    'a Chromium-only host must FAIL a mandatory run, never launch a browser')
+  const mandatoryLines = mandatory.stdout.split('\n')
+  const mandatoryBaseline =
+    mandatoryLines.find(line => line.includes('Model News baseline invariants'))
+  const mandatoryCandidate =
+    mandatoryLines.find(line => line.includes('Model News candidate-design assertions'))
+  assert.ok(mandatoryBaseline?.startsWith('✖') && mandatoryCandidate?.startsWith('✖'),
+    `chromium-only mandatory run: both named browser tests FAIL via the gate `
+      + `(baseline: ${mandatoryBaseline}; candidate: ${mandatoryCandidate})`)
+  assert.match(`${mandatory.stdout}\n${mandatory.stderr}`, /FAILING, never skipping/,
+    'chromium-only mandatory run reports the mandatory gate, never a browser attempt')
+  const optional = probeChild(null, chromiumOnlyStub)
+  assert.equal(optional.status, 0,
+    'a Chromium-only host keeps the optional skip by default')
+  const optionalLines = optional.stdout.split('\n')
+  const optionalBaseline =
+    optionalLines.find(line => line.includes('Model News baseline invariants'))
+  const optionalCandidate =
+    optionalLines.find(line => line.includes('Model News candidate-design assertions'))
+  assert.ok(optionalBaseline?.startsWith('﹣') && optionalCandidate?.startsWith('﹣'),
+    `chromium-only default run: both named browser tests SKIP `
+      + `(baseline: ${optionalBaseline}; candidate: ${optionalCandidate})`)
 })
