@@ -411,11 +411,18 @@ function grossCacheReadSavings(cacheRead, rates) {
  *
  * `derivedWrite` marks a cache-write figure the pane reconstructed from the
  * gateway's rounded hit percentage rather than read from a provider counter.
- * Such a write has no published price on several routes (commandcode, xai):
- * instead of voiding the whole increment — which is what happened for every
- * conversation on those routes — the residual is valued at the input rate, the
- * same convention `costOf` already uses, so no write premium is claimed.
- * A provider-reported write still needs a published write price.
+ * Such a write often has no published price (commandcode, xai), and voiding the
+ * whole increment blanked every conversation on those routes, so the residual
+ * is valued at the input rate — the convention `costOf` already uses.
+ *
+ * The direction of that substitution matters. It omits any write premium, so if
+ * the route charges one the saving is OVERSTATED by write x (write rate - input
+ * rate); a route that charged less than input for writes would be understated.
+ * The figure is exact only against the card the pane displays, which prices
+ * writes at the input rate too — not against an unpublished premium. This is
+ * not a general guarantee that a missing write price cannot overstate savings;
+ * it is warranted here because the affected routes report no cache writes at
+ * all. A provider-reported write still needs its published write price.
  */
 function cacheSavings(cacheRead, rates, cacheWrite = 0, derivedWrite = false) {
   const writeRate = Number.isFinite(rates?.write) ? rates.write
@@ -8110,7 +8117,7 @@ const I18N = {
     estimatedLabel: 'estimated',
     infoLabel: 'More information',
     coverageLabel: 'Coverage',
-    savingsInfo: 'Theoretical API-equivalent saving versus pricing the same covered prompt tokens at uncached input rates. Cache writes can cost extra, so this is an estimate, not a credit, refund or billed charge. Rates are the catalogue card for the route; a peak/off-peak window may price the same calls differently.',
+    savingsInfo: 'Theoretical API-equivalent saving versus pricing the same covered prompt tokens at uncached input rates. Cache writes can cost more or less than the input rate, so this is an estimate, not a credit, refund or billed charge. Rates are the catalogue card for the route; a peak/off-peak window may price the same calls differently.',
     partialShort: n => `${n} unpriced`,
     // Subscription economics.
     econTitle: 'Subscription economics',
@@ -9286,7 +9293,7 @@ const I18N = {
     estimatedLabel: '估算',
     infoLabel: '更多信息',
     coverageLabel: '覆盖率',
-    savingsInfo: '与按未缓存输入价计算同一批已覆盖提示令牌的理论差值（API 等价估算）。缓存写入可能产生额外费用，此为估算，不是抵扣、退款或实际账单。费率取该线路的目录卡；峰谷时段可能对同一批调用给出不同价格。',
+    savingsInfo: '与按未缓存输入价计算同一批已覆盖提示令牌的理论差值（API 等价估算）。缓存写入可能高于或低于输入价，此为估算，不是抵扣、退款或实际账单。费率取该线路的目录卡；峰谷时段可能对同一批调用给出不同价格。',
     partialShort: n => `${n} 未定价`,
     // 订阅经济分析。
     econTitle: '订阅经济分析',

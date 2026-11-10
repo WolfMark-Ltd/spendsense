@@ -60,10 +60,10 @@ test('an exact cache-write with no published write price stays unvalued', () => 
   assert.equal(T.cacheSavings(200, rates, 1000), null, 'a provider-reported write needs its price')
 })
 
-test('a derived cache-write is valued at the input rate, claiming no premium', () => {
+test('a derived cache-write is valued at the input rate when no write price is published', () => {
   const rates = { input: 2, output: 4, cache: .5, write: null, inputKnown: true, outputKnown: true, cacheKnown: true }
   const value = T.cacheSavings(200, rates, 1000, true)
-  assert.equal(value, (200 * (2 - .5)) / 1e6, 'only the read discount is claimed')
+  assert.equal(value, (200 * (2 - .5)) / 1e6, 'the read discount is the only term; the write premium is omitted')
   const published = T.cacheSavings(200, { ...rates, write: 3 }, 1000, true)
   assert.equal(published, -.0007, 'a published write price still carries its premium')
 })
@@ -162,9 +162,10 @@ test('a provider-reported zero write needs no write price', () => {
 
 test('a derived write leaves the saving equal to the cost difference it claims', () => {
   // The pane shows a cost and a saving side by side. With no published write
-  // price both must charge the write at the input rate, so the saving is
-  // exactly uncached-prompt cost minus cached-prompt cost on the shown card —
-  // it cannot invent a discount the card does not publish.
+  // price both charge the write at the input rate, so the saving is exactly
+  // uncached-prompt cost minus cached-prompt cost on the shown card. That is
+  // internal coherence, not accuracy against an unpublished premium — the
+  // direction of that error is pinned in the next test.
   const rates = { input: 2, output: 4, cache: .5, write: null,
     inputKnown: true, outputKnown: true, cacheKnown: true }
   const input = 100, read = 200, write = 1000
@@ -184,6 +185,22 @@ test('a derived write leaves the saving equal to the cost difference it claims',
     assert.ok(Math.abs((u - c) - T.cacheSavings(read, card, write, true)) < 1e-12,
       `published write ${published} stays consistent`)
   }
+})
+
+test('the input-rate fallback overstates an unpublished write premium', () => {
+  // Direction, pinned so the reasoning cannot be reversed again: substituting
+  // the input rate omits a cost, so a real premium makes the claimed saving
+  // too high and a real discount makes it too low. Only the card's own rate is
+  // exact, and the fallback is warranted by zero recorded writes, never by a
+  // general claim that a missing price cannot overstate.
+  const card = { input: 2, output: 4, cache: .5, write: null,
+    inputKnown: true, outputKnown: true, cacheKnown: true }
+  const read = 200, write = 1000
+  const fallback = T.cacheSavings(read, card, write, true)
+  const truth = writeRate => read * (2 - .5) / 1e6 + write * (2 - writeRate) / 1e6
+  assert.ok(fallback > truth(2.5), 'an omitted write premium overstates the saving')
+  assert.ok(fallback < truth(1.5), 'an omitted write discount understates it')
+  assert.equal(fallback, truth(2), 'it is exact only at the input rate')
 })
 
 test('a published write discount is applied, never flattened to input', () => {
