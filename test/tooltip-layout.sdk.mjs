@@ -6,6 +6,7 @@ import { useSyncExternalStore } from 'react'
 import { jsx } from 'react/jsx-runtime'
 
 export const calls = (globalThis.__tooltipCalls = [])
+export const navigations = (globalThis.__tooltipNavigations = [])
 const atom = initial => {
   let value = initial
   const listeners = new Set()
@@ -42,7 +43,7 @@ export const host = {
     connectionId: atom('local'),
   },
   notify() {},
-  navigate() {},
+  navigate(target) { navigations.push(target) },
   async request(method, params = {}) {
     calls.push({ method, params })
     return { models: {} }
@@ -60,6 +61,14 @@ export function Button({ children, ...props }) {
 }
 export const usePluginI18n = () => (key, ...args) => {
   if (typeof key === 'function') return ''
+  const dict = globalThis.__tooltipDict
+  if (dict && key in dict) {
+    const entry = dict[key]
+    if (typeof entry === 'function') {
+      try { return entry(...args) } catch { return String(key) }
+    }
+    return entry
+  }
   if (key === 'ratesNote') {
     return 'Rates come from the WolfMark catalogue card, not the provider’s invoice. Hermes may show a different estimate when its own route or peak/off-peak pricing differs.'
   }

@@ -41,7 +41,8 @@ const name=new URLSearchParams(location.search).get('case');if(name){document.bo
 </script></body></html>`)
     const url = pathToFileURL(html).href
     const dom = execFileSync(CHROME, [
-      '--headless', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=5000', '--dump-dom', url,
+      '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, 'chrome-profile')}`,
+      '--virtual-time-budget=5000', '--dump-dom', url,
     ], { maxBuffer: 64 * 1024 * 1024, timeout: 90000 }).toString()
     const match = dom.match(/<div id="overview-layout-result"[^>]*>([^<]*)<\/div>/)
     assert.ok(match?.[1], 'Chromium records Overview layout results')
@@ -74,7 +75,8 @@ const name=new URLSearchParams(location.search).get('case');if(name){document.bo
         const width = id.startsWith('narrow') ? 420 : 1240
         const height = id.startsWith('narrow') ? 2400 : 1400
         execFileSync(CHROME, [
-          '--headless', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=5000',
+          '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-shot-${id}`)}`,
+          '--virtual-time-budget=5000',
           `--window-size=${width},${height}`, `--screenshot=${join(screenshotDir, `overview-${id}.png`)}`,
           `${url}?case=${id}`,
         ], { timeout: 90000, stdio: 'ignore' })

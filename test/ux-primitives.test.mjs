@@ -409,6 +409,174 @@ test('the methodology disclosure has a visible chevron for both states', () => {
   assert.match(T.PRODUCT_CSS, /summary::-[a-z]+-details-marker\{display:none\}/)
 })
 
+test('infoTipPlacement keeps the preferred alignment when it fits', () => {
+  const R = (l, t, w, h) => ({ left: l, top: t, right: l + w, bottom: t + h, width: w, height: h })
+  const scope = R(0, 0, 900, 700)
+  const anchor = R(100, 100, 24, 24)
+  const pop = R(100, 130, 260, 120)
+  assert.deepEqual(T.infoTipPlacement(anchor, pop, scope, {}),
+    { x: 'left', y: 'down', left: null, top: null })
+  const corner = R(600, 300, 24, 24)
+  assert.deepEqual(T.infoTipPlacement(corner, R(364, 174, 260, 120), scope, { dir: 'up', wide: true }),
+    { x: 'right', y: 'up', left: null, top: null })
+})
+
+test('infoTipPlacement flips onto fitting edges near scope edges', () => {
+  const R = (l, t, w, h) => ({ left: l, top: t, right: l + w, bottom: t + h, width: w, height: h })
+  const scope = R(0, 0, 900, 700)
+  // Right edge: left-aligned would run past the scope, right-aligned fits.
+  assert.deepEqual(
+    T.infoTipPlacement(R(700, 100, 24, 24), R(700, 130, 260, 120), scope, {}),
+    { x: 'right', y: 'down', left: null, top: null })
+  // Bottom edge: down would run past the scope, up fits.
+  assert.deepEqual(
+    T.infoTipPlacement(R(100, 620, 24, 24), R(100, 650, 260, 120), scope, {}),
+    { x: 'left', y: 'up', left: null, top: null })
+  // Left edge with a wide tip: right-aligned would run past the left edge.
+  assert.deepEqual(
+    T.infoTipPlacement(R(20, 100, 24, 24), R(-216, 130, 260, 120), scope, { wide: true }),
+    { x: 'left', y: 'down', left: null, top: null })
+  // Top edge with dir=up: up would run past the top, down fits.
+  assert.deepEqual(
+    T.infoTipPlacement(R(100, 20, 24, 24), R(100, -106, 260, 120), scope, { dir: 'up' }),
+    { x: 'left', y: 'down', left: null, top: null })
+})
+
+test('infoTipPlacement clamps mid-container triggers in narrow scopes', () => {
+  const R = (l, t, w, h) => ({ left: l, top: t, right: l + w, bottom: t + h, width: w, height: h })
+  // A 260px popover from a mid-row trigger in a 300px scope fits neither pure
+  // alignment: clamp its left edge to scope.right - width, relative to the anchor.
+  const clamped = T.infoTipPlacement(R(177, 100, 24, 24), R(177, 130, 260, 160), R(10, 0, 300, 440), {})
+  assert.equal(clamped.x, 'left')
+  assert.equal(clamped.y, 'down')
+  assert.equal(clamped.left, 50 - 177)
+  assert.equal(clamped.top, null)
+  // A tall popover with room neither below nor above clamps vertically.
+  const tall = T.infoTipPlacement(R(100, 200, 24, 24), R(100, 230, 200, 300), R(0, 0, 900, 400), {})
+  assert.equal(tall.y, 'down')
+  assert.equal(tall.top, 100 - 200)
+  assert.equal(tall.left, null)
+})
+
+test('infoTipPlacement keeps the preference without layout or without a fit', () => {
+  const R = (l, t, w, h) => ({ left: l, top: t, right: l + w, bottom: t + h, width: w, height: h })
+  const zero = R(0, 0, 0, 0)
+  assert.deepEqual(T.infoTipPlacement(zero, zero, zero, { dir: 'up', wide: true }),
+    { x: 'right', y: 'up', left: null, top: null })
+  // A popover wider than its scope cannot fit anywhere: no misleading offsets.
+  const wide = T.infoTipPlacement(R(10, 10, 24, 24), R(10, 40, 400, 100), R(0, 0, 300, 400), {})
+  assert.deepEqual(wide, { x: 'left', y: 'down', left: null, top: null })
+})
+
+test('shared tooltip styles carry the edge-flip alignments', () => {
+  assert.match(T.SHARED_CSS, /\.wm-info-pop\.wm-info-flip-x\{left:auto;right:0\}/)
+  assert.match(T.SHARED_CSS, /\.wm-info-pop-wide\.wm-info-flip-left\{left:0;right:auto\}/)
+})
+
+test('InfoTip keeps its preferred classes where there is no layout to measure', async () => {
+  T.$infoOpen.set(null)
+  const plain = await renderEl(React.createElement(T.InfoTip, { id: 'wp02-plain', label: 'More', text: 'Hello' }))
+  const btn = plain.querySelector('.wm-info-btn')
+  await React.act(async () => { btn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await flush(2)
+  const pop = plain.querySelector('.wm-info-pop')
+  assert.ok(pop, 'click opens the popover')
+  assert.equal(pop.classList.contains('wm-info-up'), false)
+  assert.equal(pop.classList.contains('wm-info-flip-x'), false)
+  assert.equal(pop.getAttribute('style'), null, 'no clamp offsets without layout')
+  T.$infoOpen.set(null)
+  await flush()
+
+  const edge = await renderEl(React.createElement(T.InfoTip,
+    { id: 'wp02-edge', label: 'More', text: 'Hello', dir: 'up', wide: true }))
+  const edgeBtn = edge.querySelector('.wm-info-btn')
+  await React.act(async () => { edgeBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await flush(2)
+  const edgePop = edge.querySelector('.wm-info-pop')
+  assert.ok(edgePop.classList.contains('wm-info-pop-wide'), 'the wide preference stays a class')
+  assert.ok(edgePop.classList.contains('wm-info-up'), 'the up preference stays a class')
+  assert.equal(edgePop.classList.contains('wm-info-flip-left'), false)
+  assert.equal(edgePop.getAttribute('style'), null)
+  T.$infoOpen.set(null)
+  await flush()
+})
+
+test('ProductShell dismisses a hover-opened tip on Escape without reaching the window closer', async () => {
+  T.$infoOpen.set(null)
+  T.$ledgerTab.set('overview')
+  const container = await renderEl(React.createElement(T.ProductShell, {
+    children: React.createElement('main', { className: 'wm-shell' },
+      React.createElement('h1', null, 'Page'),
+      React.createElement(T.InfoTip, { id: 'wp02-shell', label: 'More', text: 'Methodology' })),
+  }))
+  await flush(2)
+  const btn = container.querySelector('.wm-info-btn')
+  await React.act(async () => {
+    btn.dispatchEvent(new dom.window.MouseEvent('mouseover', { bubbles: true }))
+  })
+  await flush(2)
+  assert.ok(container.querySelector('.wm-info-pop'), 'hover opens the popover')
+  let windowCloses = 0
+  const spy = () => { windowCloses += 1 }
+  window.addEventListener('keydown', spy)
+  try {
+    await React.act(async () => {
+      container.querySelector('h1').dispatchEvent(
+        new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    await flush(2)
+    assert.equal(container.querySelector('.wm-info-pop'), null, 'the shell dismisses the tip')
+    assert.equal(T.$infoOpen.get(), null)
+    assert.equal(windowCloses, 0, 'the ledger closer never fires')
+    await React.act(async () => {
+      container.querySelector('h1').dispatchEvent(
+        new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    await flush(2)
+    assert.equal(windowCloses, 1, 'navigation is preserved when no tip is open')
+  } finally {
+    window.removeEventListener('keydown', spy)
+  }
+})
+
+test('LedgerPage dismisses an open tip on Escape before closing the page', async () => {
+  await resetDom()
+  T.$infoOpen.set(null)
+  T.$ledgerTab.set('overview')
+  const container = await renderEl(React.createElement(T.LedgerPage))
+  await flush(4)
+  const btn = container.querySelector('.wm-info-btn[aria-controls="wm-info-budgets-overview"]')
+  assert.ok(btn, 'the Overview budget help button renders')
+  await React.act(async () => {
+    btn.dispatchEvent(new dom.window.MouseEvent('mouseover', { bubbles: true }))
+  })
+  await flush(2)
+  assert.ok(container.querySelector('.wm-info-pop'), 'hover opens the tip')
+  // Focus outside both scopes: the Escape target is the body, so neither
+  // scope capture handler can fire and only the window fallback runs.
+  await React.act(async () => {
+    document.body.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+  })
+  await flush(2)
+  assert.equal(container.querySelector('.wm-info-pop'), null, 'the window fallback dismisses the tip first')
+  assert.equal(T.$infoOpen.get(), null)
+})
+
+test('every shared tooltip string exists in both en and zh and renders', () => {
+  for (const key of ['infoLabel', 'costSourceInfo', 'savingsInfo', 'ratesNote', 'budgetHelp', 'memBillingTip']) {
+    assert.ok(key in T.I18N.en, `en is missing tooltip key ${key}`)
+    assert.ok(key in T.I18N.zh, `zh is missing tooltip key ${key}`)
+    assert.equal(typeof T.I18N.zh[key], typeof T.I18N.en[key], `zh type matches en for ${key}`)
+    assert.ok(String(T.I18N.en[key]).length > 3, `en copy for ${key} is non-trivial`)
+    assert.ok(String(T.I18N.zh[key]).length > 1, `zh copy for ${key} is non-trivial`)
+    assert.notEqual(T.I18N.zh[key], T.I18N.en[key], `zh translates ${key}`)
+  }
+  for (const key of ['unpricedNote', 'cacheMethodInfo']) {
+    assert.ok(key in T.I18N.zh, `zh is missing tooltip key ${key}`)
+  }
+  assert.match(T.I18N.zh.ratesNote, /目录卡/, 'the zh rates note names the catalogue card')
+})
+
 test('membership fees are preserved per account; routes are never grouped or suppressed', () => {
   const acct = (id, amount, currency) => ({
     id, plan_id: `${id}-plan`, effective_arrangement: 'subscription',
