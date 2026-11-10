@@ -29,7 +29,7 @@ feed generator, dashboard API, desktop plugin and central items unchanged.
   exactly; `""` without a match (additive `last_ts` bucket; totals unchanged).
 
 Impact usage, `related_routes`, the `for_you` model signal and `last_used_at`
-need an exact recorded model id; a shared last segment never counts.
+need the exact (provider, model) pair — never a model match under another provider.
 
 ## Snapshot additions and upgrades
 

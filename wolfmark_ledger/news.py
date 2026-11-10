@@ -1147,14 +1147,14 @@ def rank_items(items: list[dict[str, Any]], *,
                tokens: Optional[set[str]] = None) -> list[dict[str, Any]]:
     """Annotate news with For You evidence. Never promises account access.
 
-    Model evidence is exact: a recorded id matches only itself, so a shared
-    last path segment never sets ``for_you`` or ``related_routes`` on its
-    own. Provider-used and configured-provider signals stay provider-level.
+    Model evidence is the exact (provider, model) pair: a model recorded
+    under another provider, or a shared last path segment, never sets
+    ``for_you`` or ``related_routes`` on its own. Provider-used and
+    configured-provider signals stay provider-level.
     """
     usage = usage if usage is not None else {}
     tokens = tokens if tokens is not None else set()
     used_providers = {canonical_route_provider(route) for route, _ in usage}
-    used_models = {model for _, model in usage}
     ranked: list[dict[str, Any]] = []
     for item in items:
         provider = str(item.get("provider") or "").lower()
@@ -1163,9 +1163,11 @@ def rank_items(items: list[dict[str, Any]], *,
                           if canonical_route_provider(route) == provider
                           and (not model or _models_match(recorded, model))})[:5]
         configured = bool(provider) and provider in tokens
+        model_used = bool(model) and any(
+            canonical_route_provider(route) == provider and recorded == model
+            for (route, recorded) in usage)
         for_you = bool(provider) and (
-            provider in used_providers or provider in tokens
-            or (model and model in used_models))
+            provider in used_providers or provider in tokens or model_used)
         ranked.append({**item, "for_you": for_you, "configured_provider": configured,
                        "related_routes": related,
                        "last_used_at": _last_used_at(item, usage)})

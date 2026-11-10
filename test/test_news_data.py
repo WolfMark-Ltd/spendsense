@@ -779,5 +779,50 @@ class ExactModelIdentityTests(NewsDataTestCase):
         self.assertTrue(ranked[0]["for_you"])
 
 
+    def test_model_used_under_other_provider_is_not_for_you(self):
+        news = news_module()
+        usage = self.used("alpha", "shared-model")
+        item = self.impact_item(provider="beta", model="shared-model")
+        ranked = news.rank_items([item], usage=usage, tokens=set())
+        self.assertFalse(ranked[0]["for_you"])
+        self.assertFalse(ranked[0]["configured_provider"])
+        self.assertEqual(ranked[0]["related_routes"], [])
+        self.assertEqual(ranked[0]["last_used_at"], "")
+        self.assertEqual(news.compute_impacts([item], usage), {})
+
+    def test_exact_pair_sets_for_you(self):
+        news = news_module()
+        usage = self.used("alpha", "shared-model")
+        ranked = news.rank_items(
+            [self.impact_item(provider="alpha", model="shared-model")],
+            usage=usage, tokens=set())
+        self.assertTrue(ranked[0]["for_you"])
+        self.assertEqual(ranked[0]["related_routes"], ["alpha"])
+
+    def test_configured_provider_sets_for_you_without_model_use(self):
+        news = news_module()
+        usage = self.used("alpha", "shared-model")
+        ranked = news.rank_items(
+            [self.impact_item(provider="beta", model="shared-model")],
+            usage=usage, tokens={"beta"})
+        self.assertTrue(ranked[0]["for_you"])
+        self.assertTrue(ranked[0]["configured_provider"])
+
+    def test_personalised_payload_gives_no_model_reason_cross_provider(self):
+        monitoring = importlib.import_module("wolfmark_ledger.monitoring")
+        signals = {"configured_families": [], "used_providers": ["alpha"],
+                   "used_models": [{"provider": "alpha", "model": "shared-model"}],
+                   "plan_families": []}
+        stranger = {"id": "s", "provider": "beta", "model": "shared-model"}
+        own = {"id": "o", "provider": "alpha", "model": "shared-model"}
+        personalised = monitoring.personalise_items([stranger, own], signals)
+        by_id = {item["id"]: item for item in personalised}
+        self.assertEqual(by_id["s"]["relevance"], {"relevant": False, "reasons": []})
+        # Positive control: the exact pair earns used_model (plus used_provider,
+        # since that provider was used at all).
+        self.assertEqual(by_id["o"]["relevance"],
+                         {"relevant": True, "reasons": ["used_provider", "used_model"]})
+
+
 if __name__ == "__main__":
     unittest.main()
