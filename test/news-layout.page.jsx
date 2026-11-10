@@ -42,7 +42,7 @@ import VARIANTS from './fixtures/news/variants.json'
 //                            button groups; buttons carry aria-pressed
 // - input[data-news-search]  search input (All scope only)
 // - [data-news-load-more] / [data-news-show-all] / [data-news-clear]
-// - [data-news-count]        groups | events
+// - [data-news-count]        entries (For You) | groups (All) | events
 // NOTE: the final UI has NO [data-news-empty-foryou] / [data-news-link-all]
 // hooks and no [data-news-list]; the For You empty state is .wm-empty and the
 // navigation path to All is the [data-news-scope] tab; the list container is
@@ -76,6 +76,7 @@ const SELECTORS = {
   showAll: '[data-news-show-all]',
   clear: '[data-news-clear]',
   countGroups: '[data-news-count="groups"]',
+  countEntries: '[data-news-count="entries"]',
   countEvents: '[data-news-count="events"]',
   list: '.wm-news-list',
   empty: '.wm-empty',
@@ -940,9 +941,10 @@ async function measureCase(c) {
     errors: [...errors.splice(0), ...(globalThis.__newsQueryErrors || []).splice(0)].slice(0, 6),
     text: text.slice(0, 40000),
   }
-  // Empty candidate For You has no group cards, but retains the grouped
-  // count hook. It must still run the no-signals navigation probe.
-  if (PROBE && (candidateDetected || pane.querySelector(SELECTORS.countGroups))) {
+  // Empty candidate For You has no group cards, but retains the entries
+  // count hook (All uses groups). Still run the no-signals navigation probe.
+  if (PROBE && (candidateDetected || pane.querySelector(SELECTORS.countGroups)
+    || pane.querySelector(SELECTORS.countEntries))) {
     result.probe = await probeCandidate(c, pane)
   }
   else if (PROBE) result.probe = { skipped: 'candidate DOM not detected ([data-news-group] absent)' }
