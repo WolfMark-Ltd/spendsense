@@ -1341,9 +1341,11 @@ test('details panel ids follow the model/provider identity, not the list positio
   const anthropicId = panelIdOf('Anthropic')
   const bedrockId = panelIdOf('Bedrock')
   assert.notEqual(anthropicId, bedrockId, 'each offer owns its own panel id')
-  assert.ok(anthropicId.includes(encodeURIComponent('acme/m1:Anthropic')),
-    'the panel id carries the exact model/provider identity')
-  assert.ok(bedrockId.includes(encodeURIComponent('acme/m1:Bedrock')))
+  // The id is an unambiguous JSON tuple of [connection, model, provider].
+  const tupleOf = id => JSON.parse(decodeURIComponent(id.replace(/^wm-news-panel-/, '')))
+  assert.deepEqual(tupleOf(anthropicId), ['', 'acme/m1', 'Anthropic'],
+    'the panel id carries the exact model/provider identity as an unambiguous tuple')
+  assert.deepEqual(tupleOf(bedrockId), ['', 'acme/m1', 'Bedrock'])
   // Open the Anthropic offer's panel, then reorder the offers the way a
   // search or filter reorder would: the open state must stay with Anthropic.
   await React.act(async () => { T.$newsDetailsOpen.set([anthropicId]) })
@@ -1515,4 +1517,104 @@ test('a For You category filter with no matching entries shows a message, not a 
     'the empty state is never blank when the flat pool disagrees with the filter')
   assert.match(empty.textContent, /No updates match/,
     'the message reflects the actually filtered For You entries')
+})
+
+// --- Details panel identity: unambiguous tuples, connection isolation -------
+
+test('details panel ids separate colliding model/provider tuples', async () => {
+  // 'a:b' + 'c' and 'a' + 'b:c' concatenate to the same model:provider text;
+  // the panel id must be an unambiguous tuple, never a joined string.
+  const g1 = T.newsGroupModels([groupItem({ id: 'col-1', provider: 'c', model: 'a:b' })]).groups[0]
+  const g2 = T.newsGroupModels([groupItem({ id: 'col-2', provider: 'b:c', model: 'a' })]).groups[0]
+  assert.equal(g1.model, 'a:b')
+  assert.equal(g2.model, 'a')
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  const view = await renderNode(React.createElement(React.Fragment, null,
+    React.createElement(T.NewsModelGroup, { group: g1, impacts: {}, t: translator('en'), matchedOffers: null }),
+    React.createElement(T.NewsModelGroup, { group: g2, impacts: {}, t: translator('en'), matchedOffers: null })), 'en')
+  const ids = [...view.container.querySelectorAll('button[data-news-details]')]
+    .map(button => button.getAttribute('aria-controls'))
+  assert.equal(new Set(ids).size, 2,
+    'the ambiguous model:provider concatenation must not collide')
+  // The encoded form is a JSON tuple; every field boundary stays recoverable.
+  const decoded = ids.map(id => JSON.parse(decodeURIComponent(id.replace(/^wm-news-panel-/, ''))))
+  assert.deepEqual(decoded[0], ['', 'a:b', 'c'])
+  assert.deepEqual(decoded[1], ['', 'a', 'b:c'])
+})
+
+test('an open Details panel never migrates to another connection', async () => {
+  // The same model/provider exists on two connections. Opening Details on
+  // connection A, then switching connections, must leave connection B's
+  // identical offer closed — and connection A's own state comes back intact.
+  let connection = 'gateway-a'
+  const payloadFor = key => ({
+    ok: true,
+    local: {
+      baseline: true, snapshot_at: '2026-11-01T00:00:00Z', removed_model_count: 0,
+      items: [{
+        id: `${key}-m1`, origin: 'local', category: 'price_reduction',
+        provider: 'Acme', model: 'acme/m1',
+        summary: 'Rates changed.', summary_code: '', summary_params: null,
+        previous: { input: 5.0, output: 25.0, cache_read: null, cache_write: null },
+        current: { input: 4.0, output: 25.0, cache_read: null, cache_write: null },
+        has_tiers: false, observed_at: '2026-11-03T00:00:00Z', effective_at: '',
+        source_url: '', provenance: '', confidence: 'observed',
+        relevance: { relevant: true, reasons: ['configured_provider'] },
+      }],
+    },
+    central: { items: [] }, impacts: {}, settings: { live_updates: true },
+    signals: { configured_families: ['acme'] },
+  })
+  T.setRest(async path => path === '/news/refresh' ? payloadFor(connection) : { ok: true })
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => { T.$newsScope.set('all') })
+  await React.act(async () => { T.$newsCategory.set('all') })
+  await React.act(async () => { T.$newsSearch.set('') })
+  await React.act(async () => { T.$newsDays.set(null) })
+  await React.act(async () => { T.$newsShown.set(T.NEWS_PAGE_SIZE) })
+  await React.act(async () => { T.$newsShowAll.set(false) })
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  await React.act(async () => {
+    root.render(React.createElement(QueryClientProvider, { client: queryClient },
+      React.createElement(T.NewsPage)))
+  })
+  const settle = async () => {
+    await React.act(async () => {
+      for (let i = 0; i < 6; i += 1) await new Promise(resolve => setTimeout(resolve, 0))
+    })
+  }
+  await settle()
+  try {
+    const detailsButton = () => container.querySelector('button[data-news-details]')
+    const opened = detailsButton()
+    assert.ok(opened, 'the connection-A offer renders with its Details control')
+    const idA = opened.getAttribute('aria-controls')
+    await React.act(async () => { opened.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    assert.equal(detailsButton().getAttribute('aria-expanded'), 'true',
+      'the panel opens on connection A')
+    // Switch the real connection atom the way the host does; the page
+    // refetches and renders connection B's identical model/provider.
+    connection = 'gateway-b'
+    await React.act(async () => { lib.$testConnectionId.set('gateway-b') })
+    await settle()
+    const buttonB = detailsButton()
+    assert.ok(buttonB, 'the connection-B offer renders')
+    const idB = buttonB.getAttribute('aria-controls')
+    assert.notEqual(idB, idA, 'another connection never shares the panel id')
+    assert.equal(buttonB.getAttribute('aria-expanded'), 'false',
+      'the open Details state never migrates to another connection')
+    // Back on connection A the user's own open panel is still there.
+    connection = 'gateway-a'
+    await React.act(async () => { lib.$testConnectionId.set('gateway-a') })
+    await settle()
+    assert.equal(detailsButton().getAttribute('aria-controls'), idA)
+    assert.equal(detailsButton().getAttribute('aria-expanded'), 'true',
+      'connection A keeps its own open panel')
+  } finally {
+    connection = 'gateway-a'
+    await React.act(async () => { lib.$testConnectionId.set('gateway-a') })
+  }
 })

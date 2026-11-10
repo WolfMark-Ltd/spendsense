@@ -9008,13 +9008,17 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
 }
 
 /**
- * Stable Details panel id for one offer: the exact model/provider identity,
- * URL-encoded (no NUL, no whitespace, never a list position), so a search or
- * filter reorder can never move an open panel to a different model or
- * provider.
+ * Stable Details panel id for one offer: an unambiguous JSON tuple of the
+ * connection identity, the exact model and the exact provider, URL-encoded —
+ * no NUL, no whitespace, no list position, no hash, and no ambiguous
+ * `model:provider` concatenation ('a:b'+'c' vs 'a'+'b:c'). Neither a search
+ * or filter reorder, nor another connection hosting the same model/provider,
+ * can ever share or inherit an open Details panel.
  */
-const newsDetailsPanelId = offer =>
-  `wm-news-panel-${encodeURIComponent(`${offer?.model || ''}:${offer?.provider || ''}`)}`
+const newsDetailsPanelId = (connectionKey, offer) =>
+  `wm-news-panel-${encodeURIComponent(JSON.stringify([
+    String(connectionKey || ''), String(offer?.model || ''), String(offer?.provider || ''),
+  ]))}`
 
 /**
  * A model group card: one model identity, one compact row per offer. The
@@ -9022,7 +9026,7 @@ const newsDetailsPanelId = offer =>
  * exact model ID underneath in mono; without a supplied name the exact ID
  * stands alone — names are never synthesized from IDs.
  */
-function NewsModelGroup({ group, impacts, t, matchedOffers = null }) {
+function NewsModelGroup({ group, impacts, t, matchedOffers = null, connectionKey = '' }) {
   const openDetails = useValue($newsDetailsOpen)
   const anyNew = group.offers.some(offer => offer.news_class === 'new_listing')
   const reasonLabels = newsGroupReasons(group, t)
@@ -9044,7 +9048,7 @@ function NewsModelGroup({ group, impacts, t, matchedOffers = null }) {
     ] }),
     reasons ? jsx('p', { className: 'wm-news-reasons', children: reasons }) : null,
     group.offers.map((offer, index) => {
-      const panelId = newsDetailsPanelId(offer)
+      const panelId = newsDetailsPanelId(connectionKey, offer)
       return jsx(NewsOfferRow, {
         offer, impacts, t,
         matched: matchSet ? matchSet.has(index) : false,
@@ -9164,7 +9168,8 @@ function NewsPage() {
           ? jsxs('div', { className: 'wm-news-list', role: 'list', children: [
               ...forYouVisible.map((entry, index) => entry.kind === 'group'
                 ? jsx(NewsModelGroup, { group: entry, impacts, t,
-                    matchedOffers: category === 'all' ? null : entry.matchedOffers },
+                    matchedOffers: category === 'all' ? null : entry.matchedOffers,
+                    connectionKey: identity },
                   `g:${entry.model}`)
                 : jsx(NewsCard, { item: entry.item, impact: impacts[entry.item?.id], t },
                     `c:${entry.item?.id || index}`)),
@@ -9191,7 +9196,8 @@ function NewsPage() {
           ? jsxs('div', { className: 'wm-news-list', role: 'list', children: [
               ...visibleEntries.map((entry, index) => entry.kind === 'group'
                 ? jsx(NewsModelGroup, { group: entry, impacts, t,
-                    matchedOffers: category === 'all' ? null : entry.matchedOffers },
+                    matchedOffers: category === 'all' ? null : entry.matchedOffers,
+                    connectionKey: identity },
                   `g:${entry.model}`)
                 : jsx(NewsCard, { item: entry.item, impact: impacts[entry.item?.id], t },
                     `c:${entry.item?.id || index}`)),
