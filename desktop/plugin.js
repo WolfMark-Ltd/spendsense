@@ -8141,6 +8141,10 @@ function newsFilterEntries(entries, { category = 'all', search = '', days = null
     .filter(entry => {
       if (category === 'all') return true
       if (entry.kind === 'card') return entry.item?.category === category
+      // Groups match only a mappable offer class: 'subscription' (and any
+      // other classless category) maps to no class, so a neutral null-class
+      // group — missing rates or a contradicting comparison — never leaks in.
+      if (wanted == null) return false
       return entry.offers.some(offer => offer.news_class === wanted)
     })
     .map(entry => {
@@ -8202,6 +8206,18 @@ function NewsOfficial({ official, t }) {
     if (!Number.isFinite(value)) return ''
     return `${String(Math.floor(value / 60) % 24).padStart(2, '0')}:${String(Math.round(value) % 60).padStart(2, '0')}`
   }
+  // Window semantics shared by the rounded rows and the exact disclosure:
+  // days is a number of days, or the source's weekday list copied exactly.
+  const windowHead = win => {
+    const span = win.start_minute == null || win.end_minute == null ? ''
+      : ` ${hhmm(win.start_minute)}–${hhmm(win.end_minute)}`
+    const daysLabel = typeof win.days === 'number' && Number.isFinite(win.days)
+      ? t('newsOfficialWindow', win.days)
+      : Array.isArray(win.days) && win.days.length
+        ? `${t('newsOfficialDays')} ${win.days.join(', ')}`
+        : ''
+    return [daysLabel, span.trim()]
+  }
   const children = [
     official.verified_at
       ? jsx('p', { className: 'wm-news-official', children: t('newsOfficialVerified', fmtDay(official.verified_at)) }, 'verified')
@@ -8211,22 +8227,35 @@ function NewsOfficial({ official, t }) {
       ? jsx('p', { className: 'wm-news-official', children: `${t('newsOfficialNote')}: ${String(official.source_note)}` }, 'note')
       : null,
     ...windows.map((win, index) => {
+      const [daysLabel, span] = windowHead(win)
       const bits = NEWS_RATE_FIELDS
         .filter(key => win[key] != null)
         .map(key => `${t(NEWS_FIELD_KEYS[key])} ${fmtRate(win[key])}`)
-      const span = win.start_minute == null || win.end_minute == null ? ''
-        : ` ${hhmm(win.start_minute)}–${hhmm(win.end_minute)}`
-      // days is a number of days, or the source's weekday list copied exactly.
-      const daysLabel = typeof win.days === 'number' && Number.isFinite(win.days)
-        ? t('newsOfficialWindow', win.days)
-        : Array.isArray(win.days) && win.days.length
-          ? `${t('newsOfficialDays')} ${win.days.join(', ')}`
-          : ''
-      const parts = [daysLabel, span.trim(), bits.join(' · ')]
-      return jsx('p', { className: 'wm-news-officialrow', children: parts.filter(Boolean).join(' · ') }, `win${index}`)
+      return jsx('p', { className: 'wm-news-officialrow',
+        children: [daysLabel, span, bits.join(' · ')].filter(Boolean).join(' · ') }, `win${index}`)
     }),
   ]
-  return jsx('div', { className: 'wm-news-officialblock', children: children.filter(Boolean) })
+  // Exact recoverable values behind a native disclosure: the verified ISO
+  // timestamp and every window's rates exactly as supplied — '—' where a
+  // field is absent, never invented. The source note stays plain text above.
+  const exact = !official.verified_at && !windows.length ? [] : [
+    jsxs('details', { className: 'wm-news-officialexact', 'data-news-official-exact': 'true', children: [
+      jsx('summary', { children: t('newsOfficialExact') }),
+      official.verified_at
+        ? jsx('p', { className: 'wm-news-official', children: t('newsOfficialVerified', official.verified_at) }, 'verified-exact')
+        : null,
+      ...windows.map((win, index) => {
+        const [daysLabel, span] = windowHead(win)
+        const bits = NEWS_RATE_FIELDS
+          .filter(key => win[key] != null)
+          .map(key => `${t(NEWS_FIELD_KEYS[key])} ${Number.isFinite(win[key]) ? `$${win[key]}` : '—'}`)
+        return jsx('p', { 'data-news-official-exactrow': 'true',
+          children: [daysLabel, span, bits.join(' · ')].filter(Boolean).join(' · ') }, `exact${index}`)
+      }),
+    ] }, 'exact'),
+  ]
+  return jsx('div', { className: 'wm-news-officialblock',
+    children: [...children.filter(Boolean), ...exact] })
 }
 
 function newsClassLabel(news_class, t) {
@@ -8431,6 +8460,19 @@ function NewsCard({ item, impact, t, flat = false }) {
   const dates = [t('newsObserved', fmtDay(item.observed_at))]
   if (item.effective_at) dates.push(t('newsEffective', fmtDay(item.effective_at)))
   const reasons = newsRelevanceText(item, t)
+  // The plan's own supplied fee strings: exact before/after (or the single
+  // new-plan fee) exactly as the payload carries them — currency and period
+  // included, never recalculated and never mapped into token-rate tables.
+  const planFees = item.category === 'subscription' && item.summary_params
+    && typeof item.summary_params === 'object' ? item.summary_params : null
+  const planFeeRows = !planFees ? [] : [
+    planFees.fee_before != null
+      ? jsx('li', { children: `${t('newsPlanFeeBefore')}: ${planFees.fee_before}` }, 'fee-before') : null,
+    planFees.fee_after != null
+      ? jsx('li', { children: `${t('newsPlanFeeAfter')}: ${planFees.fee_after}` }, 'fee-after') : null,
+    planFees.fee_before == null && planFees.fee_after == null && planFees.fee != null
+      ? jsx('li', { children: `${t('newsPlanFee')}: ${planFees.fee}` }, 'fee') : null,
+  ].filter(Boolean)
   // Card kind hooks: the degraded flat fallback wins, otherwise the legacy
   // category names the card — subscription plans and provider listings.
   const kindAttrs = flat ? { 'data-news-flat': 'true' }
@@ -8463,6 +8505,16 @@ function NewsCard({ item, impact, t, flat = false }) {
         ? jsxs('span', { children: [' · ', jsx('a', { href: item.source_url, target: '_blank',
             rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
         : null,
+    ] }),
+    // Compact exact-evidence disclosure: the card's own original record —
+    // exact id, ISO timestamps, provenance, URL, exact rates and raw tiers —
+    // plus the plan's supplied fee strings. Nothing is recalculated here.
+    jsxs('details', { className: 'wm-news-histevidence', 'data-news-card-evidence': 'true', children: [
+      jsx('summary', { children: t('newsEvidence') }),
+      jsx('ul', { className: 'wm-news-history', 'data-news-evidence': 'true', children: [
+        jsx(NewsEvidenceRow, { source: item, t }, 'record'),
+        ...planFeeRows,
+      ] }),
     ] }),
   ] })
 }
@@ -9665,11 +9717,15 @@ const I18N = {
     newsOfficialNote: 'Source note',
     newsOfficialWindow: days => `${days}-day window`,
     newsOfficialDays: 'Days',
+    newsOfficialExact: 'Exact official rates',
     newsEvidence: 'Evidence sources',
     newsTierBefore: 'Tiers before',
     newsTierAfter: 'Tiers after',
     newsSourceLocal: 'Local',
     newsSourceCentral: 'Central',
+    newsPlanFeeBefore: 'Fee before',
+    newsPlanFeeAfter: 'Fee after',
+    newsPlanFee: 'Fee',
     ovNoteWindow: 'Only timestamped calls in [since, until) are counted; no historical usage is inferred. Buckets follow local calendar boundaries and carry explicit UTC timestamps, including across DST.',
     ovNoteOptions: 'Options describe the unfiltered selected window; recording describes all retained calls, independent of filters. The collector retains calls for 180 days, so longer windows may be incomplete.',
     ovNotePrices: 'Prices use the current catalogue, not historical invoices. Economics applies whole-context tiers per call, including tiers that decrease rates; list_usd preserves existing accounting tier/fallback semantics.',
@@ -10910,11 +10966,15 @@ const I18N = {
     newsOfficialNote: '来源说明',
     newsOfficialWindow: days => `${days} 天窗口`,
     newsOfficialDays: '天数',
+    newsOfficialExact: '官方精确价格',
     newsEvidence: '证据来源',
     newsTierBefore: '之前分层',
     newsTierAfter: '之后分层',
     newsSourceLocal: '本地',
     newsSourceCentral: '中心',
+    newsPlanFeeBefore: '原费用',
+    newsPlanFeeAfter: '新费用',
+    newsPlanFee: '费用',
     ovNoteWindow: '仅统计 [since, until) 区间内带时间戳的调用，不推断历史用量。分桶遵循本地日历边界并带有明确的 UTC 时间戳，夏令时切换期间亦然。',
     ovNoteOptions: '选项描述未过滤的所选窗口；recording 描述所有保留的调用，与过滤条件无关。采集器保留 180 天的调用，因此更长窗口的数据可能不完整。',
     ovNotePrices: '价格采用当前目录，而非历史账单。Economics 对每次调用采用整上下文阶梯价格，包括降价阶梯；list_usd 保留现有的会计阶梯/回退语义。',

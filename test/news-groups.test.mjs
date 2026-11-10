@@ -254,6 +254,29 @@ test('category filter is semantic at offer level and keeps sibling offers', () =
     'grouped token-rate models never match the subscription filter')
 })
 
+test('subscription filter matches only real plan cards, never neutral null-class groups', () => {
+  // Both offers compare nothing: one missing usable before rates, one a
+  // contradicting zero-before comparison — both stay neutral null-class.
+  const items = [
+    evt({ id: 'n1', provider: 'Ghost',
+      previous: { input: null, output: null, cache_read: null, cache_write: null },
+      current: { input: 4.0, output: 25.0, cache_read: 0.4, cache_write: 6.25 } }),
+    evt({ id: 'z1', provider: 'Zero', observed_at: '2026-11-04T00:00:00Z',
+      previous: { input: 0, output: 25.0 }, current: { input: 4.0, output: 25.0 } }),
+  ]
+  const { groups, entries } = S.newsGroupModels(items)
+  assert.equal(groups.length, 1)
+  assert.deepEqual(groups[0].offer_classes, [null], 'both offers stay neutral null-class')
+  const plan = { kind: 'card', item: evt({ id: 'p1', model: '', category: 'subscription' }),
+    observed_at: '2026-11-02T00:00:00Z', sort_id: 'p1' }
+  const sub = S.newsFilterEntries([...entries, plan], { category: 'subscription', nowMs: NOW })
+  assert.deepEqual(sub.map(entry => entry.kind === 'card' ? entry.item.id : entry.model), ['p1'],
+    'only the true plan card matches Subscriptions; the null-class group never leaks in')
+  const all = S.newsFilterEntries([...entries, plan], { category: 'all', nowMs: NOW })
+  assert.deepEqual(all.map(entry => entry.kind === 'card' ? entry.item.id : entry.model),
+    ['claude-sonnet-4-5-20250929', 'p1'], 'All keeps both the group and the plan')
+})
+
 test('For You ranks by exact recency, strong reasons, materiality, recency, id', () => {
   const mk = (id, relevant, reasons, pct, observed, lastUsed = '') => ({
     kind: 'group', model: id, model_name: '', offers: [{

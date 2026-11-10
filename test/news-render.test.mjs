@@ -699,6 +699,110 @@ test('official rates render as text with every window as its own row, never a li
   assert.equal(zhPanel.querySelector('.wm-news-officialblock').querySelectorAll('a').length, 0)
 })
 
+test('official exact rates and the verified ISO stay recoverable, EN and zh', async () => {
+  const item = {
+    id: 'o2', origin: 'local', category: 'price_reduction', provider: 'P', model: 'm1',
+    previous: { input: 5.0, output: null, cache_read: null, cache_write: null },
+    current: { input: 4.0, output: null, cache_read: null, cache_write: null },
+    has_tiers: false, observed_at: '2026-11-03T00:00:00Z', effective_at: '',
+    source_url: '', provenance: '', confidence: 'observed',
+    official: {
+      verified_at: '2026-11-02T08:31:27Z',
+      source_note: 'https://not-a-link.example pricing page snapshot',
+      windows: [
+        { days: 7, start_minute: 510, end_minute: 1020, input: 4.123456, output: 20.987654, cache_read: 0.4, cache_write: null },
+        { days: 30, start_minute: 0, end_minute: 1439, input: 4, output: 20, cache_read: null, cache_write: 6 },
+      ],
+    },
+    relevance: { relevant: false, reasons: [] },
+  }
+  for (const [locale, verified, summary] of [
+    ['en', /Official rates verified 2026-11-02T08:31:27Z/, 'Exact official rates'],
+    ['zh', /官方价格核实于2026-11-02T08:31:27Z/, '官方精确价格'],
+  ]) {
+    const view = await renderCard(item, null, locale)
+    const block = view.container.querySelector('.wm-news-officialblock')
+    assert.equal(block.querySelectorAll('.wm-news-officialrow').length, 2,
+      'the compact rounded rows keep one row per window')
+    assert.equal(block.querySelectorAll('a').length, 0, 'the source note stays text, never a link')
+    const disclosure = block.querySelector('details[data-news-official-exact]')
+    assert.ok(disclosure, 'the exact official values are recoverable behind a disclosure')
+    assert.equal(disclosure.querySelector('summary').textContent, summary)
+    assert.match(disclosure.textContent, verified, 'the exact verified ISO timestamp')
+    const rows = [...disclosure.querySelectorAll('[data-news-official-exactrow]')]
+    assert.equal(rows.length, 2, 'each window keeps its own exact row')
+    assert.match(rows[0].textContent, /7-day window|7 天窗口/)
+    assert.match(rows[0].textContent, /08:30–17:00/)
+    assert.match(rows[0].textContent, /\$4\.123456/, 'exact input, full precision')
+    assert.match(rows[0].textContent, /\$20\.987654/, 'exact output, full precision')
+    assert.match(rows[0].textContent, /\$0\.4/, 'exact cache read')
+    assert.match(rows[1].textContent, /30-day window|30 天窗口/)
+    assert.match(rows[1].textContent, /00:00–23:59/)
+    assert.match(rows[1].textContent, /\$4 · [^·]+ \$20/, 'exact base rates stay exact')
+    assert.match(rows[1].textContent, /\$6/, 'exact cache write')
+    assert.match(rows[0].textContent, /Input|输入/, 'the rounded rows keep their field labels')
+  }
+})
+
+test('flat plan cards expose the exact record: id, ISO dates, fees, no token rates', async () => {
+  const plan = {
+    id: 'plan-exact-1', origin: 'local', category: 'subscription', provider: 'anthropic', model: '',
+    summary: 'Claude Max: fee USD 100/month → USD 200/month.',
+    summary_code: 'news_sum_plan_change',
+    summary_params: { plan: 'Claude Max', fee_before: 'USD 100/month', fee_after: 'USD 200/month', fee_changed: true },
+    previous: null, current: null,
+    observed_at: '2026-11-10T09:15:00Z', effective_at: '2026-12-01T00:00:00Z',
+    source_url: 'https://example.com/plans/max', provenance: 'bundled membership catalogue',
+    confidence: 'observed', conditions: '', conditions_code: '',
+  }
+  const card = await renderCard(plan, null, 'en')
+  assert.ok(card.container.querySelector('[data-news-plan]'), 'the plan card keeps its kind hook')
+  assert.ok(!card.container.querySelector('.wm-news-rates'), 'plans never map into token rate tables')
+  const disclosure = card.container.querySelector('details[data-news-card-evidence]')
+  assert.ok(disclosure, 'the plan card exposes an exact-evidence disclosure')
+  assert.equal(disclosure.querySelector('summary').textContent, 'Evidence sources')
+  const row = disclosure.querySelector('[data-news-evidence] [data-news-source-id]')
+  assert.equal(row.getAttribute('data-news-source-id'), 'plan-exact-1', 'the original item id is reachable')
+  assert.equal(row.querySelector('[data-news-source]').getAttribute('data-news-source'), 'local')
+  assert.match(row.textContent, /Observed 2026-11-10T09:15:00Z/, 'the exact ISO observed timestamp')
+  assert.match(row.textContent, /Effective 2026-12-01T00:00:00Z/, 'the exact ISO effective timestamp')
+  assert.ok(row.querySelector('a[href="https://example.com/plans/max"]'), 'the exact source URL is linked')
+  assert.match(disclosure.textContent, /bundled membership catalogue/, 'the exact provenance')
+  const fees = [...disclosure.querySelectorAll('li')].map(li => li.textContent)
+  assert.ok(fees.some(text => text.includes('Fee before: USD 100/month')), 'the exact before fee')
+  assert.ok(fees.some(text => text.includes('Fee after: USD 200/month')), 'the exact after fee')
+  assert.ok(!disclosure.textContent.includes('Cache'), 'no invented token fees')
+  await card.show('zh')
+  const zhDisclosure = card.container.querySelector('details[data-news-card-evidence]')
+  const zhFees = [...zhDisclosure.querySelectorAll('li')].map(li => li.textContent)
+  assert.ok(zhFees.some(text => text.includes('原费用: USD 100/month')), 'zh before fee, values unchanged')
+  assert.ok(zhFees.some(text => text.includes('新费用: USD 200/month')), 'zh after fee, values unchanged')
+})
+
+test('provider-only listing cards expose the exact record without invented fees', async () => {
+  const listing = {
+    id: 'listing-exact-1', origin: 'central', category: 'new_model', provider: 'Acme', model: '',
+    summary: 'New provider listing.', summary_code: '', summary_params: null,
+    previous: null, current: null,
+    observed_at: '2026-11-09T23:59:59Z', effective_at: '',
+    source_url: 'https://example.com/listing', provenance: 'central feed', confidence: 'observed',
+  }
+  const { container } = await renderCard(listing, null, 'en')
+  assert.ok(container.querySelector('[data-news-listing]'), 'the listing card keeps its kind hook')
+  assert.ok(!container.querySelector('.wm-news-rates'), 'no invented token rates')
+  const disclosure = container.querySelector('details[data-news-card-evidence]')
+  assert.ok(disclosure, 'the listing card exposes an exact-evidence disclosure')
+  const row = disclosure.querySelector('[data-news-evidence] [data-news-source-id]')
+  assert.equal(row.getAttribute('data-news-source-id'), 'listing-exact-1')
+  assert.equal(row.querySelector('[data-news-source]').getAttribute('data-news-source'), 'central')
+  assert.match(row.textContent, /Central/)
+  assert.match(row.textContent, /Observed 2026-11-09T23:59:59Z/, 'the exact ISO observed timestamp')
+  assert.ok(row.querySelector('a[href="https://example.com/listing"]'))
+  assert.match(disclosure.textContent, /central feed/)
+  assert.equal(disclosure.querySelectorAll('li').length, 1,
+    'a non-plan card adds no fee rows')
+})
+
 test('cards carry their kind: plan, listing and the flat fallback', async () => {
   const plan = await renderCard({ id: 'p', category: 'subscription', provider: 'Acme', model: '' }, null, 'en')
   assert.ok(plan.container.querySelector('[data-news-plan]'), 'a subscription item is a plan card')
