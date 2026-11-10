@@ -5323,8 +5323,8 @@ const MEMBERSHIP_CSS = `
 .wm-fee-fields{border:0;margin:0;padding:0;min-width:0}
 .wm-billing-head{display:flex;align-items:center;gap:8px;position:relative}
 .wm-billing-label{font-size:12px;font-weight:600;color:var(--ui-text-secondary)}
-.wm-seg{display:flex;flex-wrap:wrap;border:1px solid var(--ui-stroke-secondary);border-radius:6px;overflow:hidden;width:fit-content;max-width:100%}
-.wm-seg button{border:0;border-left:1px solid var(--ui-stroke-secondary);background:transparent;color:var(--ui-text-tertiary);padding:7px 11px;min-height:34px;font-size:12px;cursor:pointer}
+.wm-seg{box-sizing:border-box;display:flex;flex-wrap:wrap;border:1px solid var(--ui-stroke-secondary);border-radius:6px;overflow:hidden;width:100%;max-width:100%;min-width:0}
+.wm-seg button{box-sizing:border-box;flex:0 1 auto;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;border:0;border-left:1px solid var(--ui-stroke-secondary);background:transparent;color:var(--ui-text-tertiary);padding:7px 11px;min-height:34px;font-size:12px;cursor:pointer}
 .wm-seg button:first-child{border-left:0}
 .wm-seg button:hover:not([disabled]){color:var(--ui-text-primary);background:var(--ui-fill-secondary)}
 .wm-seg button[aria-pressed="true"]{background:var(--ui-fill-tertiary);color:var(--ui-text-primary);font-weight:600}
