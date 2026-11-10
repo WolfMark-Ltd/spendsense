@@ -152,6 +152,46 @@ test('a bundled table rate carries the evidence its row publishes', () => {
     'so a saving is computable when the backend card is unavailable')
 })
 
+test('a provider-reported zero write needs no write price', () => {
+  // Zero writes are a measurement, not an unknown price: no premium exists to
+  // value, so the read discount is the whole saving.
+  const rates = { input: 2, output: 4, cache: .5, write: null,
+    inputKnown: true, outputKnown: true, cacheKnown: true }
+  assert.equal(T.cacheSavings(200, rates, 0), (200 * (2 - .5)) / 1e6)
+})
+
+test('a derived write leaves the saving equal to the cost difference it claims', () => {
+  // The pane shows a cost and a saving side by side. With no published write
+  // price both must charge the write at the input rate, so the saving is
+  // exactly uncached-prompt cost minus cached-prompt cost on the shown card —
+  // it cannot invent a discount the card does not publish.
+  const rates = { input: 2, output: 4, cache: .5, write: null,
+    inputKnown: true, outputKnown: true, cacheKnown: true }
+  const input = 100, read = 200, write = 1000
+  const prompt = input + read + write
+  const uncached = T.costOf({ input: prompt, output: 0, cacheRead: 0, cacheWrite: 0 }, rates).total
+  const cached = T.costOf({ input, output: 0, cacheRead: read, cacheWrite: write }, rates).total
+  const claimed = T.cacheSavings(read, rates, write, true)
+  assert.ok(Math.abs((uncached - cached) - claimed) < 1e-12,
+    `cost difference ${uncached - cached} vs claimed ${claimed}`)
+
+  // A published write price is carried through identically on both sides, so a
+  // real premium (or discount) is never replaced by the zero-premium rule.
+  for (const published of [3, 1]) {
+    const card = { ...rates, write: published }
+    const u = T.costOf({ input: prompt, output: 0, cacheRead: 0, cacheWrite: 0 }, card).total
+    const c = T.costOf({ input, output: 0, cacheRead: read, cacheWrite: write }, card).total
+    assert.ok(Math.abs((u - c) - T.cacheSavings(read, card, write, true)) < 1e-12,
+      `published write ${published} stays consistent`)
+  }
+})
+
+test('a published write discount is applied, never flattened to input', () => {
+  const rates = { input: 2, output: 4, cache: .5, write: 1,
+    inputKnown: true, outputKnown: true, cacheKnown: true }
+  assert.equal(T.cacheSavings(200, rates, 1000, true), (200 * 1.5 + 1000 * 1) / 1e6)
+})
+
 test('the gauge note names an unavailable figure and never claims exactness', () => {
   const t = (key, ...args) => (args.length ? `${key}:${args.join(',')}` : key)
   const missing = T.savedNote(t, { saved: null, savedReason: 'tiered' }, false)

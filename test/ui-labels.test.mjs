@@ -186,9 +186,14 @@ test('savings are labelled as theoretical, not cash', () => {
   assert.doesNotMatch(en.savedGauge, /refund|credit|billed|cash/i)
   // The compact gauge label leans on its tooltip for the methodology.
   assert.match(en.savingsInfo, /theoretical/i)
-  assert.match(en.savingsInfo, /not a credit or refund/i)
+  assert.match(en.savingsInfo, /api-equivalent/i)
+  assert.match(en.savingsInfo, /not a credit, refund or billed charge/i)
+  assert.match(en.savingsInfo, /peak\/off-peak/i)
   assert.ok(zh.savingsInfo && !zh.savingsInfo.startsWith('savingsInfo'))
   assert.ok(zh.savedGauge && !zh.savedGauge.startsWith('savedGauge'))
+  // A partial figure states its coverage and never borrows cash wording.
+  assert.match(en.savedPartialNote(42), /42%/)
+  assert.doesNotMatch(en.savedPartialNote(42), /cash|billed|charge|refund|credit/i)
   // The ledger keeps the self-explanatory label: it shows no tooltip.
   assert.match(en.savedTotal, /theoretical/i)
   assert.match(zh.savedTotal, /理论/)

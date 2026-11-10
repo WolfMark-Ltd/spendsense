@@ -8110,7 +8110,7 @@ const I18N = {
     estimatedLabel: 'estimated',
     infoLabel: 'More information',
     coverageLabel: 'Coverage',
-    savingsInfo: 'Theoretical saving versus pricing the same covered prompt tokens at uncached input rates. Cache writes can cost extra, so this is an estimate, not a credit or refund.',
+    savingsInfo: 'Theoretical API-equivalent saving versus pricing the same covered prompt tokens at uncached input rates. Cache writes can cost extra, so this is an estimate, not a credit, refund or billed charge. Rates are the catalogue card for the route; a peak/off-peak window may price the same calls differently.',
     partialShort: n => `${n} unpriced`,
     // Subscription economics.
     econTitle: 'Subscription economics',
@@ -9286,7 +9286,7 @@ const I18N = {
     estimatedLabel: '估算',
     infoLabel: '更多信息',
     coverageLabel: '覆盖率',
-    savingsInfo: '与按未缓存输入价计算的理论差值。缓存写入可能产生额外费用，此为估算，不是退款或抵扣。',
+    savingsInfo: '与按未缓存输入价计算同一批已覆盖提示令牌的理论差值（API 等价估算）。缓存写入可能产生额外费用，此为估算，不是抵扣、退款或实际账单。费率取该线路的目录卡；峰谷时段可能对同一批调用给出不同价格。',
     partialShort: n => `${n} 未定价`,
     // 订阅经济分析。
     econTitle: '订阅经济分析',
@@ -10543,7 +10543,7 @@ export const __test = {
   useStableLive, mergeStableLive, stableLive, resetStableLive, meterPresence, compositionShares,
   $ratesOpen, $infoOpen, METER_CSS, RING_R, RING_C,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
-  fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, liveSavings,
+  fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, liveSavings, costOf,
   savingsState, savingsGapReason, derivedWrites, savedNote, savedCoveragePct, SAVED_REASON_KEYS,
   $ledger
 }
