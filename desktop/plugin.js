@@ -3874,9 +3874,12 @@ function EconomicsTrend({ trend, t }) {
   return jsx('div', { className: 'wm-econ-trend', children: months.map(entry => {
     const difference = finiteValue(entry.difference_usd)
     const feeUsd = finiteValue(entry.fees_usd)
+    const partialPricing = entry.partial_pricing == null
+      ? !!entry.partial && !entry.partial_attribution : !!entry.partial_pricing
     const flags = [entry.in_progress ? t('econFlagProgress') : null,
       entry.recording_partial ? t('econFlagRecording') : null,
-      entry.partial ? t('econFlagPricing') : null].filter(Boolean).join(' · ')
+      partialPricing ? t('econFlagPricing') : null,
+      entry.partial_attribution ? t('econFlagAttribution') : null].filter(Boolean).join(' · ')
     const feesText = (entry.fees_by_currency || []).map(({ amount, currency }) =>
       t('econPerMonth', fmtMoney(amount, currency))).join(' + ') || t('econNoFees')
     // Bars need the backend's converted fee total; without it (or without a
@@ -5882,7 +5885,7 @@ function needsAttention(accounts, weatherById, t = needsAttentionEn) {
 
 /** Action label for an attention issue; never parsed from the warning text. */
 function attentionActionLabel(issue, t) {
-  return issue === 'unconfirmed' ? t('attnActArrangement')
+  return issue === 'unconfirmed' || issue === 'relationship' ? t('attnActArrangement')
     : issue === 'no-plan' ? t('attnActPlan')
     : issue === 'no-fee' ? t('attnActFee')
     : issue === 'reconfirm-plan' ? t('attnActPlanReview')
@@ -8090,6 +8093,7 @@ const I18N = {
     econFlagProgress: 'in progress',
     econFlagRecording: 'partial recording',
     econFlagPricing: 'partial pricing',
+    econFlagAttribution: 'partial attribution',
     econNoFees: 'No fees',
     econTrendUsage: (f, u) => `${f} · ${u} usage`,
     econTrendAria: (m, f, u, d) => `${m}: fees ${f}, usage ${u}, difference ${d}`,
@@ -9276,6 +9280,7 @@ const I18N = {
     econFlagProgress: '进行中',
     econFlagRecording: '记录不完整',
     econFlagPricing: '定价不完整',
+    econFlagAttribution: '归属不完整',
     econNoFees: '无费用',
     econTrendUsage: (f, u) => `${f} · 用量 ${u}`,
     econTrendAria: (m, f, u, d) => `${m}：费用 ${f}，用量 ${u}，差值 ${d}`,

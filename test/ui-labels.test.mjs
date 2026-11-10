@@ -598,7 +598,7 @@ test('every economics string exists in English and Chinese', () => {
     'econPerMonth', 'econApiUsage', 'econFeesInWindow', 'econConvertedAt', 'econNoFee',
     'econPeriodAbbr', 'econFeeDeclared', 'econFeeCustom', 'econFeeCatalogue', 'econDue',
     'econRenewalUnknown', 'econUsageDetail', 'econNoPlan', 'econInWindow', 'econTrendEmpty',
-    'econFlagProgress', 'econFlagRecording', 'econFlagPricing', 'econNoFees', 'econTrendUsage',
+    'econFlagProgress', 'econFlagRecording', 'econFlagPricing', 'econFlagAttribution', 'econNoFees', 'econTrendUsage',
     'econTrendAria', 'econTrendFeeTitle', 'econTrendUsageTitle', 'econOverviewLabel',
     'econOverviewError', 'econOverviewReading', 'econOverviewNone', 'econOverviewSmall',
     'fxReading', 'fxRetry', 'fxRateLine', 'fxRemove', 'fxEmpty', 'fxCurrency', 'fxUsdPlaceholder',

@@ -289,6 +289,31 @@ class SharedRouteEconomicsTests(unittest.TestCase):
             if_route_rev=current["route_entitlement_rev"], owner_account_id=owner_id,
             path=self.path, catalogue=self.book, at=at)
 
+    def create_events(self, rows: list[dict]) -> Path:
+        event_db = self.directory / "usage.db"
+        with closing(sqlite3.connect(event_db)) as connection, connection:
+            connection.executescript(store._SCHEMA)
+            for index, row in enumerate(rows):
+                ts = row["ts"]
+                values = {"event_id": f"shared-route-{index}", "ts": ts,
+                          "model": "m", "provider": "route-anthropic", "platform": "desktop",
+                          "outcome": "ok", "recorded_at": ts, **row}
+                columns = list(values)
+                connection.execute(
+                    f"INSERT INTO calls ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+                    list(values.values()))
+        return event_db
+
+    def economics_report(self, event_db: Path, *, now: str, trend_months: int) -> dict:
+        rates = Catalogue({"route-anthropic": {"m": Rate(2, 4, .5, 3)}},
+                          "fixture", "test", "", "1")
+        return economics.build_economics_report(
+            now=membership._epoch(now), days=30, trend_months=trend_months,
+            event_db_path=event_db, state_db_path=self.directory / "state.db",
+            membership_path=self.path, fx_file=self.directory / "fx.json",
+            catalogue=rates, plans=self.book,
+            profiles_path=self.directory / "billing-profiles.json")
+
     def test_exactly_linked_route_usage_moves_once_and_unknown_routes_stay_unattributed(self):
         owner = self.save(account("commandcode:paid", "commandcode", ["commandcode"],
                                   plan_id="commandcode.pro", identity="paid"))
@@ -382,6 +407,137 @@ class SharedRouteEconomicsTests(unittest.TestCase):
         self.assertEqual(owner_row["status"], "partial")
         self.assertIn("confirmed during this reporting window", " ".join(owner_row["notes"]))
         self.assertEqual(source_row["usage"]["tokens"], 1_000_000)
+
+    def test_historical_trend_keeps_october_entitlement_after_november_unlink(self):
+        owner = self.save(account("commandcode:paid", "commandcode", ["commandcode"],
+                                  plan_id="commandcode.pro", identity="paid"))
+        source = self.save(account("anthropic:shared", "anthropic", ["route-anthropic"],
+                                   plan_id="anthropic.claude-pro", identity="anthropic"))
+        self.arrange(source["id"], "included", owner["id"], at="2026-09-01T00:00:00Z")
+        event_db = self.create_events([
+            {"ts": membership._epoch("2026-01-01T00:00:00Z"), "input_tokens": 1},
+            {"ts": membership._epoch("2026-10-15T12:00:00Z"), "input_tokens": 1_000_000},
+        ])
+
+        before_unlink = self.economics_report(
+            event_db, now="2026-12-15T12:00:00Z", trend_months=4)
+        self.arrange(source["id"], "subscription", at="2026-11-01T00:00:00Z")
+        after_unlink = self.economics_report(
+            event_db, now="2026-12-15T12:00:00Z", trend_months=4)
+        before = next(row for row in before_unlink["trend"]["months"] if row["month"] == "2026-10")
+        after = next(row for row in after_unlink["trend"]["months"] if row["month"] == "2026-10")
+
+        self.assertEqual((before["usage_usd"], before["fees_by_currency"],
+                          before["fees_usd"], before["difference_usd"]),
+                         (2.0, [{"currency": "USD", "amount": 20.0}], 20.0, -18.0))
+        self.assertEqual((after["usage_usd"], after["fees_by_currency"],
+                          after["fees_usd"], after["difference_usd"]),
+                         (before["usage_usd"], before["fees_by_currency"],
+                          before["fees_usd"], before["difference_usd"]))
+        self.assertFalse(after["partial"])
+        self.assertFalse(after.get("partial_attribution", False))
+        self.assertEqual(after["difference_note"], "")
+
+    def test_idle_included_route_does_not_make_current_or_monthly_comparison_partial(self):
+        owner = self.save(account("commandcode:paid", "commandcode", ["commandcode"],
+                                  plan_id="commandcode.pro", identity="paid"))
+        source = self.save(account("anthropic:idle", "anthropic", ["route-anthropic"],
+                                   plan_id="anthropic.claude-pro", identity="anthropic"))
+        self.arrange(source["id"], "included", owner["id"], at="2026-09-01T00:00:00Z")
+        event_db = self.create_events([
+            {"ts": membership._epoch("2026-01-01T00:00:00Z"), "input_tokens": 1},
+        ])
+
+        result = self.economics_report(
+            event_db, now="2026-10-31T12:00:00Z", trend_months=1)
+        owner_row = next(row for row in result["accounts"] if row["account_id"] == owner["id"])
+        (october,) = result["trend"]["months"]
+
+        self.assertEqual(owner_row["usage"]["calls"], 0)
+        self.assertEqual(owner_row["status"], "ok")
+        self.assertFalse(any("ownership" in note.lower() or "included route usage" in note.lower()
+                             for note in owner_row["notes"]))
+        self.assertEqual(october["fees_by_currency"], [{"currency": "USD", "amount": 20.0}])
+        self.assertEqual(october["usage_usd"], 0.0)
+        self.assertEqual(october["difference_usd"], -20.0)
+        self.assertFalse(october["partial"])
+        self.assertFalse(october.get("partial_attribution", False))
+        self.assertEqual(october["difference_note"], "")
+
+    def test_future_entitlement_does_not_change_pre_link_month_comparison(self):
+        owner = self.save(account("commandcode:paid", "commandcode", ["commandcode"],
+                                  plan_id="commandcode.pro", identity="paid"))
+        source = self.save(account("anthropic:future", "anthropic", ["route-anthropic"],
+                                   plan_id="anthropic.claude-pro", identity="anthropic"))
+        self.arrange(source["id"], "included", owner["id"], at="2026-11-01T00:00:00Z")
+        event_db = self.create_events([
+            {"ts": membership._epoch("2026-01-01T00:00:00Z"), "input_tokens": 1},
+            {"ts": membership._epoch("2026-10-15T12:00:00Z"), "input_tokens": 1_000_000},
+        ])
+
+        result = self.economics_report(
+            event_db, now="2026-12-15T12:00:00Z", trend_months=4)
+        october = next(row for row in result["trend"]["months"] if row["month"] == "2026-10")
+
+        self.assertEqual(october["fees_by_currency"], [{"currency": "USD", "amount": 40.0}])
+        self.assertEqual(october["fees_usd"], 40.0)
+        self.assertEqual(october["usage_usd"], 2.0)
+        self.assertEqual(october["usage_calls"], 1)
+        self.assertEqual(october["difference_usd"], -38.0)
+        self.assertFalse(october["partial"])
+        self.assertFalse(october.get("partial_attribution", False))
+        self.assertEqual(october["difference_note"], "")
+
+    def test_observed_route_with_midmonth_ownership_change_is_partial_and_unassigned(self):
+        owner = self.save(account("commandcode:paid", "commandcode", ["commandcode"],
+                                  plan_id="commandcode.pro", identity="paid"))
+        source = self.save(account("anthropic:transition", "anthropic", ["route-anthropic"],
+                                    plan_id="anthropic.claude-pro", identity="anthropic"))
+        self.arrange(source["id"], "included", owner["id"], at="2026-10-15T00:00:00Z")
+        event_db = self.create_events([
+            {"ts": membership._epoch("2026-01-01T00:00:00Z"), "input_tokens": 1},
+            {"ts": membership._epoch("2026-10-20T12:00:00Z"), "input_tokens": 1_000_000},
+        ])
+
+        result = self.economics_report(
+            event_db, now="2026-12-15T12:00:00Z", trend_months=4)
+        october = next(row for row in result["trend"]["months"] if row["month"] == "2026-10")
+
+        self.assertEqual(october["fees_by_currency"], [{"currency": "USD", "amount": 20.0}])
+        self.assertIsNone(october["fees_usd"])
+        self.assertIsNone(october["usage_usd"])
+        self.assertIsNone(october["difference_usd"])
+        self.assertTrue(october["partial"])
+        self.assertTrue(october["partial_attribution"])
+        self.assertEqual(october["unattributed_usage_calls"], 1)
+        self.assertIn("route-anthropic", october["difference_note"])
+        self.assertIn("ownership changed", october["difference_note"])
+
+    def test_stale_included_owner_keeps_observed_usage_out_of_comparison(self):
+        owner = self.save(account("commandcode:paid", "commandcode", ["commandcode"],
+                                  plan_id="commandcode.pro", identity="paid"))
+        source = self.save(account("anthropic:stale", "anthropic", ["route-anthropic"],
+                                   plan_id="anthropic.claude-pro", identity="anthropic"))
+        self.arrange(source["id"], "included", owner["id"], at="2026-09-01T00:00:00Z")
+        event_db = self.create_events([
+            {"ts": membership._epoch("2026-01-01T00:00:00Z"), "input_tokens": 1},
+            {"ts": membership._epoch("2026-10-15T12:00:00Z"), "input_tokens": 1_000_000},
+        ])
+        membership_store.delete_account(owner["id"], self.path)
+
+        result = self.economics_report(
+            event_db, now="2026-12-15T12:00:00Z", trend_months=4)
+        october = next(row for row in result["trend"]["months"] if row["month"] == "2026-10")
+
+        self.assertEqual(october["fees_by_currency"], [])
+        self.assertIsNone(october["fees_usd"])
+        self.assertIsNone(october["usage_usd"])
+        self.assertIsNone(october["difference_usd"])
+        self.assertTrue(october["partial"])
+        self.assertTrue(october["partial_attribution"])
+        self.assertEqual(october["unattributed_usage_calls"], 1)
+        self.assertIn("ownership could not be verified", october["difference_note"])
+        self.assertIn("route-anthropic", october["difference_note"])
 
 
 if __name__ == "__main__":
