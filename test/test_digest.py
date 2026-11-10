@@ -442,7 +442,9 @@ class DigestReviewFixesTests(DigestCase):
         }
         section = D._spending_section(D.STRINGS["en"], "Last 7 days", billing, True, 10)
         notes = " ".join(section["notes"]).lower()
-        self.assertIn("billing rule", notes)
+        self.assertIn("record does not say whether no rule matched", notes)
+        self.assertNotIn("no matching billing rule", notes)
+        self.assertNotIn("a billing rule matched", notes)
         self.assertNotIn("some usage is unpriced", notes)
         self.assertEqual(
             next(line["value"] for line in section["lines"]
