@@ -17,7 +17,7 @@
 
 <p align="center"><strong>What you pay. What you use. What it's worth.</strong></p>
 
-> **Early access · Available on GitHub.** SpendSense is an open-source Hermes plugin you can try now, directly from this repository. We're refining the experience and verifying compatibility before a formal release and Hermes catalogue submission. See the [installation instructions](#installation), and back up your Hermes profile data before upgrading an existing installation. Found a bug or have an idea? [Open a GitHub issue](https://github.com/WolfMark-Ltd/spendsense/issues/new/choose). Our [release checklist](RELEASING.md) tracks what remains.
+> **Early access · Available on GitHub.** SpendSense is an open-source Hermes plugin you can try now, directly from this repository. We're refining the experience and verifying compatibility before a formal release and Hermes catalogue submission. New here? Start with the [quick-start guide](docs/quickstart.md), and back up your Hermes profile data before upgrading an existing installation. Found a bug or have an idea? [Open a GitHub issue](https://github.com/WolfMark-Ltd/spendsense/issues/new/choose). Our [release checklist](RELEASING.md) tracks what remains.
 
 ## Overview
 
@@ -29,6 +29,8 @@ Spend Sense is a Hermes plugin that shows what your AI usage is actually costing
 - **Private by design** — no Spend Sense account, no telemetry, and no usage upload. Everything stays on your machine.
 
 ## Installation
+
+First time installing? The [quick-start guide](docs/quickstart.md) walks through install, first figures, and recovery in one place. The reference details follow.
 
 ### Requirements
 
@@ -118,16 +120,26 @@ Memberships can mark an account **API Only**, or identify it as a subscription, 
 
 Back up the profile's Spend Sense plugin data before upgrading. Releases older than 0.6.0 may not recognise membership fields; restoring a compatible pre-upgrade backup may be necessary, and edits made after that backup will not be present in it.
 
-Seat quantities are stored separately in `membership-seats.json` alongside
-`memberships.json` and `billing-profiles.json` in the profile's Spend Sense
-plugin-data directory. Back up all three together with the plugin stopped;
-restore them together to the same profile with the plugin stopped. If a file was
-absent when the backup was taken, it should also be absent after restoration.
-The Settings recovery clipboard export includes the raw `membership_store` and
-`seat_history` documents as well as the advanced rules; retain it securely.
-To restore its seat history, save the `seat_history` JSON object as
-`membership-seats.json` beside the restored `memberships.json`. The clipboard
-export does not include the usage ledger or provider credentials.
+Seat quantities are stored separately in `membership-seats.json`, and
+route-to-account relationships in `membership-entitlements.json`, alongside
+`memberships.json`, `billing-profiles.json`, `budgets.json` and `fx-rates.json`
+in the profile's Spend Sense plugin-data directory. Back up all of them together
+with the plugin stopped; restore them together to the same profile with the
+plugin stopped. If a file was absent when the backup was taken, it should also
+be absent after restoration.
+The Settings recovery clipboard export includes the raw `membership_store`,
+`seat_history` and `route_entitlements` documents as well as the advanced rules
+and budget guardrails; retain it securely.
+To restore from it, save the `seat_history` JSON object as
+`membership-seats.json` and the `route_entitlements` JSON object as
+`membership-entitlements.json` beside the restored `memberships.json`. The rules
+and budgets entries need reshaping before they can be saved as store files, and
+billing defaults are not in the export — see the
+[quick-start guide](docs/quickstart.md#backup-upgrade-and-recovery) for the exact
+shapes. The clipboard export does not include either usage ledger or provider
+credentials. The Desktop-recorded ledger lives outside the plugin-data directory
+in Hermes Desktop's app-level storage and is covered by neither the directory
+backup nor the export.
 
 The preceding 0.6.0 membership store can still be read and edited after seats
 are saved: it ignores the separate seat file and does not calculate seat totals.
@@ -158,12 +170,12 @@ A membership card keeps four different kinds of number apart, because adding the
 
 | Figure | What it is | What it is not |
 | --- | --- | --- |
-| Membership fee | The plan fee you declared (or a fee override) | A per-call charge |
+| Membership fee | The effective fee — your override, the plan price, or seats × catalogue unit price | A per-call charge or a verified provider bill |
 | Provider-reported usage | Quota or usage Hermes read from the provider | An invoice |
 | API-equivalent value | What the same tokens would cost at published API rates | Money you actually spent |
 | Metered / incremental cost | Allowance consumed, and extra cash beyond it under your rules | Provider-confirmed billing |
 
-Estimates are estimates. An API-equivalent figure is a comparison price, useful for judging whether a plan is worth keeping — it is not a provider invoice, and Spend Sense never presents it as one.
+Estimates are estimates. An API-equivalent figure is a comparison price, useful for judging whether a plan is worth keeping — it is not a provider invoice, and Spend Sense never presents it as one. New to these terms? The [quick-start guide](docs/quickstart.md#three-money-figures-never-one-total) explains API-equivalent cost, subscription fees and actual provider charges in plain language.
 
 Unpriced usage is reported as unpriced. Unknown is never shown as zero, and known free usage is never mixed into a priced subtotal as if it were priced.
 
@@ -182,7 +194,7 @@ Unpriced usage is reported as unpriced. Unknown is never shown as zero, and know
 - Spend Sense makes no direct HTTP pricing requests. Automatic Hermes model-options refresh is off by default; when enabled, Hermes may refresh public models.dev metadata or contact configured providers using credentials Hermes manages.
 - Model News snapshots your local Hermes pricing cache and bundled plan catalogue to detect newly listed models and rate changes. The first snapshot is a baseline, not news. Nothing is uploaded and no network request is made; everything works offline.
 - Spend Sense Live Updates (Settings, off by default) downloads public Model News and subscription-plan JSON feeds over HTTPS when enabled. Requests contain no user IDs, accounts, credentials, model lists, usage totals or tracking tokens; the source IP is visible to the service, and anonymous aggregate request statistics may be produced. On a remote Hermes host, that host makes the request. Disabling Live Updates stops the requests; local news and locally stored memberships continue to work. See the public [Model News feed contract](news-feed/README.md) and [plans feed contract](plans-feed/README.md) for endpoints and schemas.
-- Settings & About can clear your Memberships and advanced billing rules for the current profile. Captured usage records, Hermes data and provider credentials are left untouched.
+- Settings & About can clear your Memberships, route entitlement relationships, budgets and advanced billing rules for the current profile. Captured usage records, Hermes data, provider credentials and catalogues are left untouched.
 
 ## Requirements and compatibility
 
