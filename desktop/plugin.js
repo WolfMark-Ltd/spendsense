@@ -1834,9 +1834,13 @@ function tokenRows(t, b, hasContext, u) {
   return rows.filter(Boolean)
 }
 
+function desktopTodayPartial(today) {
+  return !!(today.unpricedTokens || today.unpricedCalls || today.missingUsageCalls || today.coverageUnknown)
+}
+
 function desktopTodayText(today, t) {
   if (!today.known) return null
-  const partial = today.unpricedTokens || today.unpricedCalls || today.missingUsageCalls || today.coverageUnknown
+  const partial = desktopTodayPartial(today)
   const qualifiers = [
     t('todayApiEquivalent'),
     t('allProfiles'),
@@ -1846,7 +1850,7 @@ function desktopTodayText(today, t) {
 }
 
 function desktopTodayAmount(today, t) {
-  return today.known ? fmtUsd(today.cost) : t('unknown')
+  return today.known ? `${fmtUsd(today.cost)}${desktopTodayPartial(today) ? '+' : ''}` : t('unknown')
 }
 
 function Chip() {
