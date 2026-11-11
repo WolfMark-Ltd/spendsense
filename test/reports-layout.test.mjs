@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,6 +12,74 @@ const CHROME = [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
 ].find(existsSync)
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+async function chromiumSnapshot(url, profile, width, height) {
+  const browser = spawn(CHROME, [
+    '--headless', '--disable-gpu', '--no-sandbox', '--remote-debugging-port=0',
+    '--remote-allow-origins=*', `--user-data-dir=${profile}`, 'about:blank',
+  ], { stdio: 'ignore' })
+  let socket
+  try {
+    const portFile = join(profile, 'DevToolsActivePort')
+    const deadline = Date.now() + 10000
+    while (!existsSync(portFile) && Date.now() < deadline && browser.exitCode === null) await wait(50)
+    assert.ok(existsSync(portFile), 'Chromium exposes its local DevTools endpoint')
+    const port = Number(readFileSync(portFile, 'utf8').split('\n')[0])
+    const targetResponse = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })
+    assert.equal(targetResponse.ok, true, 'Chromium creates a page for the layout check')
+    const target = await targetResponse.json()
+
+    socket = new WebSocket(target.webSocketDebuggerUrl)
+    const pending = new Map()
+    let commandId = 0
+    let resolveLoad
+    const loaded = new Promise(resolve => { resolveLoad = resolve })
+    socket.addEventListener('message', event => {
+      const message = JSON.parse(String(event.data))
+      if (message.id && pending.has(message.id)) {
+        const { resolve, reject } = pending.get(message.id)
+        pending.delete(message.id)
+        if (message.error) reject(new Error(message.error.message))
+        else resolve(message.result)
+      } else if (message.method === 'Page.loadEventFired') resolveLoad()
+    })
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Chromium DevTools connection timed out')), 5000)
+      socket.addEventListener('open', () => { clearTimeout(timeout); resolve() }, { once: true })
+      socket.addEventListener('error', () => { clearTimeout(timeout); reject(new Error('Chromium DevTools connection failed')) }, { once: true })
+    })
+    const command = (method, params = {}) => new Promise((resolve, reject) => {
+      const id = ++commandId
+      pending.set(id, { resolve, reject })
+      socket.send(JSON.stringify({ id, method, params }))
+    })
+    await command('Page.enable')
+    await command('Runtime.enable')
+    await command('Emulation.setDeviceMetricsOverride', {
+      width, height, deviceScaleFactor: 1, mobile: false,
+    })
+    const load = command('Page.navigate', { url })
+    await Promise.all([load, loaded])
+    await wait(350)
+    const evaluated = await command('Runtime.evaluate', {
+      expression: 'document.getElementById("reports-layout-result").textContent',
+      returnByValue: true,
+    })
+    assert.equal(typeof evaluated?.result?.value, 'string', 'the Reports page records layout measurements')
+    return JSON.parse(evaluated.result.value)
+  } finally {
+    if (socket && socket.readyState === WebSocket.OPEN) socket.close()
+    if (browser.exitCode === null && browser.signalCode === null) {
+      browser.kill('SIGTERM')
+      await new Promise(resolve => {
+        const timeout = setTimeout(resolve, 1000)
+        browser.once('exit', () => { clearTimeout(timeout); resolve() })
+      })
+    }
+  }
+}
 
 test('Reports stays scannable and keyboard usable from 320px through ledger width', {
   skip: CHROME ? false : 'No Chromium binary available for real Reports layout checks',
@@ -48,16 +116,9 @@ body[data-theme="dark"]{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--
       for (const width of [320, 380, 560, 1200]) {
         const theme = locale === 'en' ? 'dark' : 'light'
         const days = width === 320 || width === 560 ? 7 : 30
-        const dom = execFileSync(CHROME, [
-          '--headless', '--disable-gpu', '--no-sandbox',
-          `--user-data-dir=${join(work, `chrome-${locale}-${width}`)}`,
-          '--virtual-time-budget=6000', `--window-size=${width},1800`, '--dump-dom',
+        const result = await chromiumSnapshot(
           `${url}?locale=${locale}&days=${days}&theme=${theme}`,
-        ], { maxBuffer: 16 * 1024 * 1024, timeout: 90000,
-          stdio: ['ignore', 'pipe', 'ignore'] }).toString()
-        const match = dom.match(/<div id="reports-layout-result"[^>]*>([^<]*)<\/div>/)
-        assert.ok(match?.[1], `Chromium records ${locale}/${width}px layout`)
-        const result = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
+          join(work, `chrome-${locale}-${width}`), width, 1800)
         const id = `${locale}/${width}px/${theme}`
         assert.deepEqual(result.errors, [], `${id} has no page errors`)
         assert.equal(result.viewport, width, `${id} uses the requested viewport width`)
