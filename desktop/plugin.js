@@ -626,7 +626,9 @@ function newBucket({ legacy = false, model, profile = '', provider = '' }) {
     provider,
     saved: 0,
     sources: {},
-    unpricedTokens: 0
+    unpricedTokens: 0,
+    unpricedCalls: 0,
+    missingUsageCalls: 0
   }
 }
 
@@ -722,7 +724,7 @@ function changeCacheKnown(cur, init, delta) {
 }
 
 /** Add one priced delta to a bucket (copy-on-write). */
-function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolved, source, usageEvidence }) {
+function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolved, source, usageEvidence = {} }) {
   const b = prevBucket ? { ...prevBucket, sources: { ...prevBucket.sources } } : newBucket(init)
   Object.assign(b, usageValueDelta(prevBucket, delta, resolved, membershipScopeOf($scopeConnection.get(), init.profile || $scopeProfile.get()), usageEvidence))
   b.input += delta.input
@@ -730,6 +732,7 @@ function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolv
   b.cacheRead += delta.cacheRead
   b.cacheWrite += delta.cacheWrite
   b.calls += delta.calls
+  b.missingUsageCalls = num(b.missingUsageCalls) + num(usageEvidence.missingCalls)
   const prompt = num(delta.input) + num(delta.cacheRead) + num(delta.cacheWrite)
   if (changeCacheKnown(cur, init, delta)) {
     b.cacheCoveredPrompt = num(b.cacheCoveredPrompt) + prompt
@@ -750,8 +753,8 @@ function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolv
     if (source === 'foreign' && resolved.foreignSlug) b.foreignSlug = resolved.foreignSlug
   } else {
     b.unpricedTokens += deltaTokens
-    // Optional v2 field: older buckets omit it and are read as zero.
-    if (num(delta.calls) > 0) b.unpricedCalls = num(b.unpricedCalls) + num(delta.calls)
+    const pricedUsageCalls = Math.max(0, num(delta.calls) - num(usageEvidence.missingCalls))
+    b.unpricedCalls = num(b.unpricedCalls) + pricedUsageCalls + num(usageEvidence.resolvedCalls)
   }
   if (resolved.rates) b.saved += grossCacheReadSavings(delta.cacheRead, resolved.rates)
   return b
@@ -913,19 +916,24 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
         calls: hasCallCounter ? Math.max(0, cur.calls - prevCalls) : 0,
         output: rawOutput != null && prevOutput != null ? Math.max(0, rawOutput - prevOutput) : 0
       }
+  const day = dayKey(now)
+  const key = bucketKey(profile, provider, model, false)
   const deltaTokens = tokensOf(delta)
   const completeCounters = rawPrompt.value != null && rawOutput != null
   const priorGuardrail = !restarted ? prev?.guardrail : null
   // Only the current unresolved call can be completed by a later cumulative
   // frame. A new call or runtime cannot erase an earlier missing-usage gap.
   const resolvedCall = !!(priorGuardrail?.pendingUsageCall && completeCounters &&
-    rawCalls === priorGuardrail.pendingUsageCall && tokensOf(cur) > priorGuardrail.pendingUsageTokens)
+    rawCalls === priorGuardrail.pendingUsageCall)
   const missingCalls = delta.calls > 0
-    ? completeCounters && deltaTokens > 0 ? Math.max(0, delta.calls - 1) : delta.calls : 0
+    ? completeCounters ? deltaTokens > 0 ? Math.max(0, delta.calls - 1) : 0 : delta.calls : 0
   const pendingUsageCall = delta.calls > 0
-    ? (!completeCounters || !deltaTokens) && hasCallCounter ? rawCalls : null
+    ? !completeCounters && hasCallCounter ? rawCalls : null
     : resolvedCall ? null : priorGuardrail?.pendingUsageCall ?? null
   const pendingUsageTokens = delta.calls > 0 ? restarted ? 0 : tokensOf(prev || {}) : priorGuardrail?.pendingUsageTokens ?? 0
+  const pendingUsageRef = delta.calls > 0
+    ? pendingUsageCall != null ? { day, bucketKey: key, sessionId: storedId || null } : null
+    : resolvedCall ? null : priorGuardrail?.pendingUsageRef ?? null
   const usageEvidence = { missingCalls, resolvedCalls: resolvedCall ? 1 : 0, coalesced: delta.calls > 1 }
   // Metadata-only completion must settle even when the final output is zero.
   if (!deltaTokens && !delta.calls && !resolvedCall) return led
@@ -942,8 +950,6 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
     source = resolved.origin
   }
 
-  const day = dayKey(now)
-  const key = bucketKey(profile, provider, model, false)
   const days = { ...led.days }
   const forDay = { ...(days[day] || {}) }
   const cacheDeltaKnown = cur.cacheSource !== 'unknown' && (restarted || prev?.cacheSource === cur.cacheSource)
@@ -958,7 +964,7 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
     ...cur,
     guardrail: { ...usageValueDelta(restarted ? null : prev?.guardrail ? { ...prev.guardrail, input: prev.input, output: prev.output, cacheRead: prev.cacheRead, cacheWrite: prev.cacheWrite, calls: prev.calls } : prev, delta, resolved, membershipScopeOf($scopeConnection.get(), profile || $scopeProfile.get()), usageEvidence),
       input: cur.input, output: cur.output, cacheRead: cur.cacheRead, cacheWrite: cur.cacheWrite, calls: cur.calls,
-      pendingUsageCall, pendingUsageTokens },
+      pendingUsageCall, pendingUsageTokens, pendingUsageRef },
     at: now,
     costUsd: gatewayCost,
     counterPrompt: restarted || rawPrompt.value != null ? rawPrompt.value : prev?.counterPrompt ?? null,
@@ -968,9 +974,6 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
     counterOutput: restarted || rawOutput != null ? rawOutput : prev?.counterOutput ?? null,
     counterCalls: restarted ? hasCallCounter ? rawCalls : null : hasCallCounter ? rawCalls : prev?.counterCalls ?? null
   } }, now)
-  const pruned = pruneDays(days, now)
-  const since = led.since && led.since <= day ? led.since : Object.keys(pruned).sort()[0] || day
-
   let sessions = led.sessions || {}
   if (storedId) {
     const prevS = sessions[storedId]
@@ -983,6 +986,28 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
     s.lastAt = now
     sessions = pruneSessions({ ...sessions, [storedId]: s }, now)
   }
+
+  if (resolvedCall && priorGuardrail?.pendingUsageRef) {
+    const pending = priorGuardrail.pendingUsageRef
+    const pendingDays = days[pending.day]
+    const pendingBucket = pendingDays?.[pending.bucketKey]
+    if (pendingBucket && num(pendingBucket.missingUsageCalls) > 0) {
+      days[pending.day] = { ...pendingDays, [pending.bucketKey]: {
+        ...pendingBucket, missingUsageCalls: num(pendingBucket.missingUsageCalls) - 1
+      } }
+    }
+    if (pending.sessionId) {
+      const pendingSession = sessions[pending.sessionId]
+      if (pendingSession && num(pendingSession.missingUsageCalls) > 0) {
+        sessions = { ...sessions, [pending.sessionId]: {
+          ...pendingSession, missingUsageCalls: num(pendingSession.missingUsageCalls) - 1
+        } }
+      }
+    }
+  }
+
+  const pruned = pruneDays(days, now)
+  const since = led.since && led.since <= day ? led.since : Object.keys(pruned).sort()[0] || day
 
   return { ...led, days: pruned, rates, sessions, since, snapshots }
 }
@@ -1011,7 +1036,7 @@ function summarize(led, filter, priceLegacy) {
     for (const [key, b] of Object.entries(buckets)) {
       if (!isObj(b)) continue
       const r = rows[key] || (rows[key] = { ...newBucket(b), cost: b.legacy ? null : 0 })
-      for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'calls', 'pricedTokens', 'unpricedTokens', 'unpricedCalls', 'saved', 'cacheCoveredPrompt', 'cacheCoveredRead', 'cacheExactPrompt', 'cacheEstimatedPrompt', 'netSavingsPrompt']) {
+      for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'calls', 'pricedTokens', 'unpricedTokens', 'unpricedCalls', 'missingUsageCalls', 'saved', 'cacheCoveredPrompt', 'cacheCoveredRead', 'cacheExactPrompt', 'cacheEstimatedPrompt', 'netSavingsPrompt']) {
         r[f] = num(r[f]) + num(b[f])
       }
       if (Number.isFinite(b.netSavings)) r.netSavings += b.netSavings
@@ -1038,7 +1063,8 @@ function summarize(led, filter, priceLegacy) {
     netSavings: 0,
     netSavingsPrompt: 0,
     unpricedTokens: 0,
-    unpricedCalls: 0
+    unpricedCalls: 0,
+    missingUsageCalls: 0
   }
   const list = Object.values(rows).map(r => {
     if (r.legacy) {
@@ -1070,6 +1096,7 @@ function summarize(led, filter, priceLegacy) {
     totals.prompt += num(r.input) + num(r.cacheRead) + num(r.cacheWrite)
     totals.unpricedTokens += num(r.unpricedTokens)
     totals.unpricedCalls += num(r.unpricedCalls)
+    totals.missingUsageCalls += num(r.missingUsageCalls)
     totals.foreignTokens += num(r.sources.foreign) + (r.legacy && r.legacyOrigin === 'foreign' ? tokensOf(r) : 0)
     if (r.cacheEstimated) totals.cacheEstimated = true
     return r
@@ -1466,7 +1493,7 @@ function useLive() {
       // read "this run" beside a note saying "conversation total since …".
       fromHistory: true,
       model: (usage && usage.model) || histModel,
-      partial: (num(hist.unpricedTokens) > 0 || num(hist.unpricedCalls) > 0) && num(hist.pricedTokens) > 0,
+      partial: num(hist.unpricedTokens) > 0 || num(hist.unpricedCalls) > 0 || num(hist.missingUsageCalls) > 0,
       pricingError: error ? String(error.message || error) : null,
       pricingLoading: isLoading,
       // While a run is live, the current route is the live one or unknown;
@@ -1602,7 +1629,7 @@ function Chip() {
   const monthlyIndicator = jsx(BudgetStatusIndicator, { data: budgetData, error: budgetRead.error, t })
   const monthlyTooltip = budgetRead.error ? t('budgetStale') : (budgetData?.statuses || []).filter(row => row.budget.enabled).map(row => budgetTooltip(row, t)).join('\n')
   const open = openLedger
-  const todayText = today.known ? `${t('today')} ${fmtUsd(today.cost)}${today.unpricedTokens ? '+' : ''}` : null
+  const todayText = today.known ? `${t('today')} ${fmtUsd(today.cost)}${today.unpricedTokens || today.unpricedCalls || today.missingUsageCalls ? '+' : ''}` : null
 
   if (!live.bucket) {
     return jsx(Tip, {
@@ -1942,12 +1969,14 @@ function CostKpi({ t, view }) {
       ? jsxs('div', { className: 'wm-partial-chip', children: [
           jsx('span', { children: `▲ ${[
             num(view.bucket.unpricedTokens) ? t('partialShort', fmtTokens(view.bucket.unpricedTokens)) : null,
-            num(view.bucket.unpricedCalls) ? t('partialCallsShort', fmtTokens(view.bucket.unpricedCalls)) : null
+            num(view.bucket.unpricedCalls) ? t('partialCallsShort', fmtTokens(view.bucket.unpricedCalls)) : null,
+            num(view.bucket.missingUsageCalls) ? t('missingUsageCallsShort', fmtTokens(view.bucket.missingUsageCalls)) : null
           ].filter(Boolean).join(' · ')}` }, 'chip'),
           jsx(InfoTip, { id: 'partial', label: t('infoLabel'),
             text: [
               num(view.bucket.unpricedTokens) ? t('unpricedNote', fmtTokens(view.bucket.unpricedTokens)) : null,
-              num(view.bucket.unpricedCalls) ? t('unpricedCallsNote', fmtTokens(view.bucket.unpricedCalls)) : null
+              num(view.bucket.unpricedCalls) ? t('unpricedCallsNote', fmtTokens(view.bucket.unpricedCalls)) : null,
+              num(view.bucket.missingUsageCalls) ? t('missingUsageCallsNote', fmtTokens(view.bucket.missingUsageCalls)) : null
             ].filter(Boolean).join(' ') }, 'info')
         ] }, 'partial')
       : null
@@ -2163,6 +2192,7 @@ function rangeNotes(t, totals, storageError) {
   if (storageError) notes.push(jsx(Note, { warn: true, children: t('storageError', storageError) }, 'st'))
   if (totals.unpricedTokens) notes.push(jsx(Note, { warn: true, children: t('unpricedNote', fmtTokens(totals.unpricedTokens)) }, 'up'))
   if (totals.unpricedCalls) notes.push(jsx(Note, { warn: true, children: t('unpricedCallsNote', fmtTokens(totals.unpricedCalls)) }, 'uc'))
+  if (totals.missingUsageCalls) notes.push(jsx(Note, { warn: true, children: t('missingUsageCallsNote', fmtTokens(totals.missingUsageCalls)) }, 'mu'))
   if (totals.foreignTokens) notes.push(jsx(Note, { warn: true, children: t('foreignNote', fmtTokens(totals.foreignTokens)) }, 'fo'))
   if (totals.legacyTokens) notes.push(jsx(Note, { children: t('legacyNote', fmtTokens(totals.legacyTokens)) }, 'lg'))
   if (totals.cacheCoverage != null) notes.push(jsx(Note, { children: t('cacheCoverageRange', Math.round(totals.cacheCoverage * 100)) }, 'cc'))
@@ -4541,11 +4571,13 @@ function settledDesktopMonth(ledger, now = new Date()) {
   let priced = 0
   let unpriced = 0
   let unpricedCalls = 0
+  let missingUsageCalls = 0
   for (const [day, buckets] of Object.entries(ledger?.days || {})) {
     if (!day.startsWith(month)) continue
     for (const bucket of Object.values(buckets || {})) {
       unpriced += Number(bucket?.unpricedTokens) || 0
       unpricedCalls += Number(bucket?.unpricedCalls) || 0
+      missingUsageCalls += Number(bucket?.missingUsageCalls) || 0
       if (bucket?.legacy || !Number(bucket?.pricedTokens)) continue
       const value = Number(bucket?.cost)
       if (!Number.isFinite(value)) continue
@@ -4553,7 +4585,7 @@ function settledDesktopMonth(ledger, now = new Date()) {
       priced += Number(bucket.pricedTokens)
     }
   }
-  return { known: priced > 0, cost, pricedTokens: priced, unpricedTokens: unpriced, unpricedCalls }
+  return { known: priced > 0, cost, pricedTokens: priced, unpricedTokens: unpriced, unpricedCalls, missingUsageCalls }
 }
 
 function overviewTopModels(rows, limit = 4) {
@@ -4644,11 +4676,11 @@ function OverviewPage() {
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'recorded-usage', children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovRecordedLabel') }),
           jsx('div', { className: 'wm-kpi-figure', children: !local.known ? t('ovUnknown')
-          : local.unpricedTokens || local.unpricedCalls ? [fmtUsd(local.cost), jsx('small', { children: ' ' + t('ovLowerBound') }, 'lb')] : fmtUsd(local.cost) }),
+          : local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls ? [fmtUsd(local.cost), jsx('small', { children: ' ' + t('ovLowerBound') }, 'lb')] : fmtUsd(local.cost) }),
           jsx('p', { className: 'wm-kpi-prov', children: t('ovRecordedProv') }),
           jsxs('div', { className: 'wm-kpi-foot', children: [
             certaintyChip('estimated', t('ovCertRecorded'), 'recorded'),
-            local.known && (local.unpricedTokens || local.unpricedCalls) ? certaintyChip('partial', t('ovCertPartial'), 'rpart') : null
+            (local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls) ? certaintyChip('partial', t('ovCertPartial'), 'rpart') : null
           ].filter(Boolean) })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'actual-charges', 'aria-label': t('ovChargesLabel'), children: [
@@ -9481,9 +9513,11 @@ function LedgerPage() {
       jsxs('td', {
         className: 'py-1.5 text-right tabular-nums',
         children: [
-          jsx('div', { children: r.cost == null ? '—' : `${(r.unpricedTokens || r.unpricedCalls) && r.cost != null ? '≥' : ''}${fmtUsd(r.cost)}` }),
+          jsx('div', { children: r.cost == null ? '—' : `${(r.unpricedTokens || r.unpricedCalls || r.missingUsageCalls) && r.cost != null ? '≥' : ''}${fmtUsd(r.cost)}` }),
           r.unpricedCalls ? jsx('div', { className: 'text-[0.625rem] text-(--ui-warning)',
             children: t('unpricedCallsNote', fmtTokens(r.unpricedCalls)) }) : null,
+          r.missingUsageCalls ? jsx('div', { className: 'text-[0.625rem] text-(--ui-warning)',
+            children: t('missingUsageCallsNote', fmtTokens(r.missingUsageCalls)) }) : null,
           jsx('div', {
             className: cn('text-[0.625rem]', warn ? 'text-(--ui-warning)' : 'text-(--ui-text-quaternary)'),
             children: rowBasis(t, r)
@@ -9526,7 +9560,7 @@ function LedgerPage() {
         children: [
           jsx('div', {
             className: 'text-3xl font-semibold tabular-nums text-(--ui-accent)',
-            children: totals.known ? `${(totals.unpricedTokens || totals.unpricedCalls) ? '≥' : ''}${fmtUsd(totals.cost)}` : '—'
+            children: totals.known ? `${(totals.unpricedTokens || totals.unpricedCalls || totals.missingUsageCalls) ? '≥' : ''}${fmtUsd(totals.cost)}` : '—'
           }),
           jsx('span', { className: 'text-xs text-(--ui-text-quaternary)', children: t('grandHint') })
         ]
@@ -9681,6 +9715,7 @@ const I18N = {
     savingsInfo: 'Theoretical API-equivalent saving versus pricing the same covered prompt tokens at uncached input rates. Cache writes can cost more or less than the input rate, so this is an estimate, not a credit, refund or billed charge. Rates are the catalogue card for the route; a peak/off-peak window may price the same calls differently.',
     partialShort: n => `${n} unpriced`,
     partialCallsShort: n => `${n} calls lacked a price`,
+    missingUsageCallsShort: n => `${n} calls lack usage data`,
     // Subscription economics.
     econTitle: 'Subscription economics',
     econIntro: 'Subscription spending against the API-equivalent value of the usage recorded against it, over the same window. The difference is an estimated value comparison, not cash saved.',
@@ -10444,6 +10479,7 @@ const I18N = {
     total: 'Total',
     unpricedNote: n => `${n} tokens had no known rate and are not in the total (shown as ≥).`,
     unpricedCallsNote: n => `${n} calls had no known rate and are not in the total (shown as ≥).`,
+    missingUsageCallsNote: n => `${n} calls lacked usage data and are not in the API-equivalent total (shown as ≥).`,
     // Ledger tabs.
     tabOverview: 'Overview',
     tabUsage: 'Usage',
@@ -10989,6 +11025,7 @@ const I18N = {
     savingsInfo: '与按未缓存输入价计算同一批已覆盖提示令牌的理论差值（API 等价估算）。缓存写入可能高于或低于输入价，此为估算，不是抵扣、退款或实际账单。费率取该线路的目录卡；峰谷时段可能对同一批调用给出不同价格。',
     partialShort: n => `${n} 未定价`,
     partialCallsShort: n => `${n} 次调用缺少价格`,
+    missingUsageCallsShort: n => `${n} 次调用缺少用量数据`,
     // 订阅经济分析。
     econTitle: '订阅经济分析',
     econIntro: '同一窗口内，订阅支出与记录用量的 API 等值价值对比。差值为估算的价值比较，不是实际节省的现金。',
@@ -11692,6 +11729,7 @@ const I18N = {
     total: '合计',
     unpricedNote: n => `有 ${n} 令牌没有可用单价，未计入总额（显示为 ≥）。`,
     unpricedCallsNote: n => `有 ${n} 次调用没有可用单价，未计入总额（显示为 ≥）。`,
+    missingUsageCallsNote: n => `有 ${n} 次调用缺少用量数据，未计入 API 等值总额（显示为 ≥）。`,
     // Ledger header, record stats, baseline reconciliation and grouping.
     pageTitleDesktop: 'SpendSense — 本机',
     allHermesTitle: 'SpendSense',

@@ -609,6 +609,21 @@ class ComparisonTests(EconomicsCase):
         self.assertEqual(result["accounts"][0]["status"], "partial")
         self.assertEqual(result["headline"]["status"], "partial")
 
+    def test_unavailable_group_keeps_the_incomplete_history_explanation(self):
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        self.create_events([{"ts": NOW - 100, "model": "unknown-model",
+                             "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=0)
+        group = next(group for group in result["groups"] if group["currency"] == "USD")
+        self.assertFalse(result["coverage"]["recording_covers_window"])
+        self.assertIsNone(group["difference_usd"])
+        self.assertEqual(group["status"], "unavailable")
+        codes = [entry["code"] for entry in group["note_codes"]]
+        self.assertIn("econ_group_missing", codes)
+        self.assertIn("econ_group_insufficient_history", codes)
+        self.assertTrue(any("Usage price evidence" in note for note in group["notes"]))
+        self.assertTrue(any("Recording does not cover" in note for note in group["notes"]))
+
     def test_zero_observed_usage_with_full_coverage_is_a_real_zero(self):
         # The anchor is outside the window, so nothing is observed in it.
         self.anchor_coverage()

@@ -357,9 +357,54 @@ test('applyUsage: an unpriced zero-token call stays visible as incomplete eviden
   assert.equal(s.rows[0].calls, 1)
   assert.equal(s.rows[0].unpricedTokens, 0)
   assert.equal(s.rows[0].unpricedCalls, 1)
+  assert.equal(s.rows[0].missingUsageCalls, 0, 'confirmed zero usage is not missing usage')
   assert.equal(s.totals.unpricedCalls, 1)
   assert.equal(s.rows[0].cost, null)
   assert.equal(s.totals.known, false)
+})
+
+test('applyUsage: a known-rate call with missing usage stays partial until its cumulative update resolves', () => {
+  const args = { now: NOW, provider: 'github-copilot', sessionId: 'usage-gap', storedId: 'conversation',
+    payload: copilotPayload({ input: '$9', output: '$9', cache: '$9', tiers: [] }) }
+  let led = T.applyUsage(T.emptyLedger(), { ...args, usage: {
+    model: 'claude-opus-5', input: 100, prompt: 100, output: 0, calls: 1
+  } })
+  const firstCost = T.summarize(led, () => true, null).rows[0].cost
+  assert.ok(firstCost > 0, 'the fixture has known rates for the priced subtotal')
+
+  led = T.applyUsage(led, { ...args, now: NOW + 1, usage: { model: 'claude-opus-5', calls: 2 } })
+  led = T.applyUsage(led, { ...args, now: NOW + 2, usage: { model: 'claude-opus-5', calls: 3 } })
+  let summary = T.summarize(led, () => true, null)
+  assert.equal(summary.rows[0].cost, firstCost, 'keep the known subtotal')
+  assert.equal(summary.rows[0].unpricedCalls, 0, 'rate evidence is not the missing evidence')
+  assert.equal(summary.rows[0].missingUsageCalls, 2)
+  assert.equal(summary.totals.missingUsageCalls, 2)
+
+  // The newest call's delayed cumulative counters arrive without a call-count
+  // increment. Resolve only that pending call; the earlier gap stays open.
+  led = T.applyUsage(led, { ...args, now: NOW + 3, usage: {
+    model: 'claude-opus-5', input: 150, prompt: 150, output: 0, calls: 3
+  } })
+  summary = T.summarize(led, () => true, null)
+  assert.equal(summary.rows[0].missingUsageCalls, 1)
+  assert.equal(summary.totals.missingUsageCalls, 1)
+  assert.ok(summary.rows[0].cost > firstCost, 'the newly reported tokens are priced once')
+  assert.equal(led.sessions.conversation.missingUsageCalls, 1)
+  assert.equal(led.snapshots['usage-gap'].guardrail.usageValueMissingCalls, 1)
+  assert.equal(led.snapshots['usage-gap'].guardrail.pendingUsageCall, null)
+})
+
+test('applyUsage: explicit zero counters with known rates are confirmed usage, not a pending gap', () => {
+  const led = T.applyUsage(T.emptyLedger(), {
+    now: NOW, provider: 'github-copilot', sessionId: 'confirmed-zero',
+    payload: copilotPayload({ input: '$9', output: '$9', cache: '$9', tiers: [] }),
+    usage: { model: 'claude-opus-5', input: 0, prompt: 0, output: 0, calls: 1 }
+  })
+  const summary = T.summarize(led, () => true, null)
+  assert.equal(summary.rows[0].missingUsageCalls, 0)
+  assert.equal(summary.totals.missingUsageCalls, 0)
+  assert.equal(led.snapshots['confirmed-zero'].guardrail.pendingUsageCall, null)
+  assert.equal(led.snapshots['confirmed-zero'].guardrail.usageValueMissingCalls, 0)
 })
 
 test('applyUsage: gateway cost_usd preferred and diffed', () => {

@@ -1222,7 +1222,7 @@ test('Overview renders its settled Desktop cost summary without a React render e
   T.$ledger.set({ ...T.emptyLedger(), days: { [`${month}-01`]: {
     bucket: { cost: 0.42, pricedTokens: 1200, legacy: false }
   } } })
-  assert.deepEqual(T.settledDesktopMonth(T.emptyLedger()), { known: false, cost: 0, pricedTokens: 0, unpricedTokens: 0, unpricedCalls: 0 })
+  assert.deepEqual(T.settledDesktopMonth(T.emptyLedger()), { known: false, cost: 0, pricedTokens: 0, unpricedTokens: 0, unpricedCalls: 0, missingUsageCalls: 0 })
   T.$ledgerTab.set('overview')
   const pendingAccounts = deferred()
   transportCtl.respond(call => call.path.startsWith('/analytics')
@@ -1377,7 +1377,7 @@ test('Overview marks a partly priced Desktop month as a lower bound', async () =
   assert.deepEqual(
     T.settledDesktopMonth({ days: { [`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`]: {
       session: { cost: 0.42, pricedTokens: 1200, unpricedTokens: 300, unpricedCalls: 1 } } } }),
-    { known: true, cost: 0.42, pricedTokens: 1200, unpricedTokens: 300, unpricedCalls: 1 },
+    { known: true, cost: 0.42, pricedTokens: 1200, unpricedTokens: 300, unpricedCalls: 1, missingUsageCalls: 0 },
     'the month keeps its unpriced-token count')
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
@@ -1399,14 +1399,38 @@ test('Overview marks a partly priced Desktop month as a lower bound', async () =
   await React.act(async () => T.$ledger.set(T.emptyLedger()))
 })
 
-test('Overview keeps a known subtotal partial when an unpriced call has zero tokens', () => {
+test('Overview keeps a known subtotal partial when a call has missing usage data', async () => {
   const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
+  const days = { [`${month}-01`]: {
+    session: { cost: 0.42, pricedTokens: 1200, unpricedTokens: 0, unpricedCalls: 0, missingUsageCalls: 1 }
+  } }
+  assert.deepEqual(
+    T.settledDesktopMonth({ days }),
+    { known: true, cost: 0.42, pricedTokens: 1200, unpricedTokens: 0, unpricedCalls: 0, missingUsageCalls: 1 },
+    'the known subtotal remains visible and the missing usage evidence remains explicit')
   assert.deepEqual(
     T.settledDesktopMonth({ days: { [`${month}-01`]: {
       session: { cost: 0.42, pricedTokens: 1200, unpricedTokens: 0, unpricedCalls: 1 }
     } } }),
-    { known: true, cost: 0.42, pricedTokens: 1200, unpricedTokens: 0, unpricedCalls: 1 },
-    'the known subtotal remains visible and the missing call evidence remains explicit')
+    { known: true, cost: 0.42, pricedTokens: 1200, unpricedTokens: 0, unpricedCalls: 1, missingUsageCalls: 0 },
+    'a call with missing price evidence remains separately classified')
+  queryClient.clear(); transportCtl.reset()
+  $testConnectionId.set('gateway-a'); $testProfile.set('default')
+  T.$ledger.set({ ...T.emptyLedger(), days })
+  T.$ledgerTab.set('overview')
+  transportCtl.respond(call => call.path.startsWith('/analytics')
+    ? { ok: true, totals: { list_usd: 0, calls: 0, unpriced_tokens: 0 } }
+    : { ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] })
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient },
+    React.createElement(T.OverviewPage))))
+  await flush(4)
+  const recorded = container.querySelector('[data-kpi="recorded-usage"]').textContent
+  assert.match(recorded, /\$0\.42/, 'the priced subtotal is shown')
+  assert.match(recorded, /lower bound/, 'a subtotal with missing usage is a lower bound')
+  assert.match(recorded, /Partial/, 'the subtotal is explicitly partial')
+  await React.act(async () => T.$ledger.set(T.emptyLedger()))
 })
 
 test('Overview fee heading describes billing periods, not a monthly conversion', async () => {

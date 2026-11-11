@@ -684,8 +684,8 @@ test('every emitted analytics economics gap reason has a readable English and Ch
  for (const reason of reasons) {
   const key = T.OV_GAP_REASON_KEYS[reason]
   assert.ok(key, `mapped reason ${reason}`)
-  assert.notEqual(noteEn(key), reason, `English translates ${reason}`)
-  assert.notEqual(noteZh(key), reason, `Chinese translates ${reason}`)
+  assert.notEqual(noteEn(key), key, `English translates ${key}`)
+  assert.notEqual(noteZh(key), key, `Chinese translates ${key}`)
   assert.notEqual(T.analyticsGapReasonLabel(reason, noteEn), reason)
   assert.notEqual(T.analyticsGapReasonLabel(reason, noteZh), reason)
  }

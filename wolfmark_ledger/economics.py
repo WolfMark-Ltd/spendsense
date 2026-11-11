@@ -933,18 +933,23 @@ def build_economics_report(
                                            "their reporting-window amounts are unavailable.")
             group_code = {"code": "econ_group_window_history_missing",
                           "params": {"count": len(unallocated_window)}}
-        elif not recording_covers_window:
-            status, note = "partial", "Recording does not cover the full comparison window."
-            group_code = {"code": "econ_group_insufficient_history", "params": {}}
         elif difference is None:
             status, note = "unavailable", "Usage price evidence or window allocation is missing; see the account blockers."
             group_code = {"code": "econ_group_missing", "params": {}}
+        elif not recording_covers_window:
+            status, note = "partial", "Recording does not cover the full comparison window."
+            group_code = {"code": "econ_group_insufficient_history", "params": {}}
         elif any(r["status"] == "partial" for r in known):
             status, note = "partial", "At least one account comparison is partial; see the rows."
             group_code = {"code": "econ_group_partial", "params": {}}
         else:
             status, note = "ok", ""
             group_code = {}
+        group_notes = [note] if note else []
+        group_codes = [group_code] if note else []
+        if group_code.get("code") == "econ_group_missing" and not recording_covers_window:
+            group_notes.append("Recording does not cover the full comparison window.")
+            group_codes.append({"code": "econ_group_insufficient_history", "params": {}})
         groups.append({
             "currency": currency, "monthly_fees": fees, "window_fees": window_fees,
             "fee_accounts": len(known), "fee_complete": fee_complete,
@@ -954,8 +959,8 @@ def build_economics_report(
             "window_fee_complete": window_fee_complete,
             "unallocated_window_accounts": unallocated_window,
             "difference_usd": difference, "converted": bool(rate) and currency != "USD",
-            "fx": rate, "status": status, "notes": [note] if note else [],
-            "note_codes": [group_code] if note else [],
+            "fx": rate, "status": status, "notes": group_notes,
+            "note_codes": group_codes,
             "blockers": blockers,
         })
 
