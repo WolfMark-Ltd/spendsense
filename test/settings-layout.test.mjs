@@ -95,6 +95,8 @@ setTimeout(() => {
   const about = document.getElementById('settings-about')
   jumpBtns[jumpBtns.length - 1]?.click()
   out.hashUnchanged = location.hash === hashBefore
+  out.jumpFocusTag = document.activeElement?.tagName || ''
+  out.jumpFocusText = document.activeElement?.textContent || ''
   setTimeout(() => {
     const bar = narrow.querySelector('.wm-product-tabs')
     const targetTop = about.getBoundingClientRect().top
@@ -153,6 +155,8 @@ setTimeout(() => {
         assert.match(data.privacy[index], new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${locale}: privacy note ${index} sits with its control`)
       }
       assert.equal(data.hashUnchanged, true, `${locale}: jump scroll leaves the host hash alone`)
+      assert.equal(data.jumpFocusTag, 'H2', `${locale}: jump lands focus on the destination heading`)
+      assert.equal(data.jumpFocusText, CASES[locale].heads.at(-1), `${locale}: jump lands on the selected section`)
       assert.equal(data.jumpVisible, true, `${locale}: jumped-to heading lands below the sticky bar`)
       assert.equal(data.jumpInView, true, `${locale}: jumped-to heading is in view`)
       assert.deepEqual(data.scrollMargins, { narrow: '150px', wide: '70px' }, `${locale}: scroll offset fits the bar`)

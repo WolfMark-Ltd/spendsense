@@ -5055,7 +5055,14 @@ function jumpToSettingsSection(id) {
   try {
     if (typeof document === 'undefined') return
     const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-    document.getElementById(id)?.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+    const target = document.getElementById(id)
+    target?.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+    // Land keyboard and screen-reader users on the destination heading.
+    const heading = target?.querySelector('h2') || target
+    if (heading && !heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1')
+    try { heading?.focus({ preventScroll: true }) } catch {
+      try { heading?.focus() } catch {}
+    }
   } catch {}
 }
 function SettingsPage() {
