@@ -1184,6 +1184,108 @@ const $group = atom('route')
 const $basis = atom('hybrid')
 /** Namespace-scoped backend door (ctx.rest); null on a build without it. */
 let rest = null
+const $backendCompatibility = atom(null)
+
+const BACKEND_COMPATIBILITY_CODE = 'SPENDSENSE_BACKEND_COMPATIBILITY'
+const COMPATIBILITY_404_GETS = new Set([
+  '/economics/summary',
+  '/allowance/weather',
+  '/reports/digest'
+])
+
+function isBackendCompatibilityError(error) {
+  return error?.code === BACKEND_COMPATIBILITY_CODE
+}
+
+function backendFailureText(failure) {
+  if (typeof failure === 'string') return failure
+  const parts = [failure?.message, failure?.detail, failure?.error,
+    failure?.body, failure?.response?.data, failure?.response?.body]
+  return parts.map(value => {
+    if (typeof value === 'string') return value
+    if (value == null) return ''
+    try { return JSON.stringify(value) } catch { return '' }
+  }).filter(Boolean).join(' ')
+}
+
+function backendFailureStatus(failure) {
+  for (const value of [failure?.status, failure?.statusCode, failure?.status_code,
+    failure?.response?.status, failure?.response?.statusCode]) {
+    const status = Number(value)
+    if (Number.isInteger(status) && status >= 400 && status <= 599) return status
+  }
+  const text = backendFailureText(failure)
+  const match = text.match(/(?:^|\b)(?:HTTP\s*(?:\/\d(?:\.\d)?)?\s*|status(?:\s+code)?\s*[:=]?\s*)?(404|422)\b/i)
+  return match ? Number(match[1]) : 0
+}
+
+function backendCompatibilityKind(path, options, failure) {
+  const method = String(options?.method || 'GET').toUpperCase()
+  const route = String(path || '').split(/[?#]/, 1)[0].replace(/\/+$/, '') || '/'
+  const status = backendFailureStatus(failure)
+  const message = backendFailureText(failure)
+  if (status !== 404 && status !== 422) return null
+  if (/plugin not found|no such plugin|plugin unavailable/i.test(message)) return null
+  if (/no such (?:membership|account|record|item|mark|entry)|(?:membership|account)\s+(?:not found|does not exist|not in (?:this )?store)/i.test(message)) return null
+
+  if (status === 404) {
+    if (method === 'GET' && COMPATIBILITY_404_GETS.has(route)) return 'missing_new_route'
+    if (method === 'PUT' && /^\/membership\/accounts\/[^/]+\/arrangement$/.test(route)) {
+      return 'missing_arrangement_route'
+    }
+    return null
+  }
+
+  if (status === 422 && method === 'PUT' && /^\/membership\/accounts\/[^/]+$/.test(route)
+      && /\b(?:billing_arrangement|api_only)\b/i.test(message)
+      && /extra[_ ](?:forbidden|fields?|inputs?)|(?:unknown|unexpected)\s+(?:fields?|inputs?)|(?:fields?|inputs?)\s+(?:are\s+)?(?:unknown|unexpected|not permitted|not allowed)/i.test(message)) {
+    return 'unknown_new_membership_fields'
+  }
+  return null
+}
+
+function makeBackendCompatibilityError(path, kind) {
+  const error = new Error('SpendSense backend compatibility mismatch')
+  error.code = BACKEND_COMPATIBILITY_CODE
+  error.path = String(path || '')
+  error.kind = kind
+  return error
+}
+
+function backendCompatibilityText(error, t = needsAttentionEn) {
+  return isBackendCompatibilityError(error) ? t('backendCompatibility') : null
+}
+
+async function backendRequest(path, options = {}, transport = rest) {
+  if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
+  const identity = membershipIdentityNow()
+  const handleFailure = failure => {
+    if (isBackendCompatibilityError(failure)) throw failure
+    const kind = backendCompatibilityKind(path, options, failure)
+    if (!kind) throw failure
+    if (membershipIdentityCurrent(identity)) {
+      $backendCompatibility.set({ identity, path: String(path || ''), kind })
+    }
+    throw makeBackendCompatibilityError(path, kind)
+  }
+  try {
+    const result = await transport(path, options)
+    if (result?.ok === false) {
+      const kind = backendCompatibilityKind(path, options, result)
+      if (kind) return handleFailure(result)
+    }
+    return result
+  } catch (error) {
+    return handleFailure(error)
+  }
+}
+
+function wrapBackendTransport(transport) {
+  return typeof transport === 'function'
+    ? (path, options = {}) => backendRequest(path, options, transport)
+    : null
+}
+
 /** Last storage write failure (null when the latest write succeeded). */
 const $storageError = atom(null)
 let storage = null
@@ -2642,6 +2744,9 @@ function ProductHeader({ title, subtitle, actions }) {
   ].filter(Boolean), 'wm-product-heading') })
 }
 function ProductShell({ children, pageStyles = '' }) {
+  const t = usePluginI18n(ID)
+  const identity = useValue($membershipIdentity)
+  const compatibility = useValue($backendCompatibility)
   const supplementalStyles = Array.isArray(pageStyles) ? pageStyles.join('') : pageStyles
   // Mirror the Meter pane: a hover-opened tip has no focused button to catch
   // Escape, so dismiss it here on capture and keep the window-level ledger
@@ -2656,6 +2761,10 @@ function ProductShell({ children, pageStyles = '' }) {
     children: [
       jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + (supplementalStyles || '') }),
       jsx(LedgerTabs, {}),
+      compatibility?.identity === identity
+        ? jsx('div', { className: 'wm-alert wm-backend-compatibility', role: 'alert',
+            children: t('backendCompatibility') })
+        : null,
       children
     ].filter(Boolean) })
 }
@@ -4481,6 +4590,7 @@ function EconomicsPanel({ identity }) {
     }
   }
   if (economics.error) {
+    if (isBackendCompatibilityError(economics.error)) return null
     return jsx('section', { className: 'wm-product-section', children: keyedElementChildren([
       jsx('h2', { children: t('econTitle') }),
       jsx('div', { className: 'wm-alert', role: 'alert',
@@ -5621,9 +5731,9 @@ function membershipTrace(entry) {
 /* ---- state that always belongs to exactly one identity ------------------- */
 
 /** A notice is only ever shown in the identity that produced it. */
-function setMembershipNotice(identity, tone, text, operation = null, accountId = null) {
+function setMembershipNotice(identity, tone, text, operation = null, accountId = null, compatibility = false) {
   if (!membershipIdentityCurrent(identity) || (operation && !membershipOperationCurrent(identity, operation))) return false
-  $membershipNotice.set({ tone, text, origin: identity, accountId })
+  $membershipNotice.set({ tone, text, origin: identity, accountId, compatibility })
   return true
 }
 
@@ -5875,6 +5985,7 @@ function membershipErrorKind(error) {
 
 /** Short, operation-specific text. Never a raw FastAPI/Pydantic payload. */
 function membershipErrorText(error, operation = 'read', t = needsAttentionEn) {
+  if (isBackendCompatibilityError(error)) return t('backendCompatibility')
   const { kind } = membershipErrorKind(error)
   if (kind === 'seat_write_uncertain') return t('memErrSeatWriteUncertain')
   if (kind === 'entitlement_write_uncertain') return t('memErrEntitlementWriteUncertain')
@@ -6134,6 +6245,7 @@ const WEATHER_CSS = `
 /** Compact allowance-weather indicator for one membership card. */
 function AllowanceWeather({ entry, error }) {
   const t = usePluginI18n(ID)
+  if (isBackendCompatibilityError(error) && !entry) return null
   if (!entry && !error) return null
   if (!entry) {
     return jsx('p', { className: 'wm-note', role: 'status', children: t('wxUnavailable') })
@@ -6713,7 +6825,7 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
   // label switches while saving and a scoped failure renders in place.
   const exhaustionForm = exhaustionDraft ? jsxs('form', { className: 'wm-exhaustion-form', onSubmit: submitExhaustion, children: [
     jsx('h3', { children: t('memExhaustionTitle') }),
-    notice?.tone === 'warn' && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
+    notice?.tone === 'warn' && !notice.compatibility && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
     jsx('p', { className: 'wm-note', children: t('memExhaustionUserReported', exhaustionDraft.label) }),
     jsx('label', { className: 'wm-filter', children: [
       jsx('span', { children: t('memExhaustionResetLabel') }),
@@ -6755,7 +6867,7 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
       onAction('save-custom-plan', account, customDraft)
     }, children: [
       jsx('h3', { children: t('memCustomPlanTitle') }),
-      notice?.tone === 'warn' && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
+      notice?.tone === 'warn' && !notice.compatibility && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
       jsx('p', { className: 'wm-note', children: t('memCustomPlanNote') }),
       jsx('div', { className: 'wm-custom-grid', children: [
         field(t('memPlanName'), 'name'),
@@ -6907,7 +7019,7 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
     busy === account.id ? jsx('p', { role: 'status', className: 'wm-note', children: t('memSavingChanges') }) : null,
     notice?.accountId === account.id && notice.tone === 'good'
       ? jsx('p', { role: 'status', className: 'wm-note', children: notice.text }) : null,
-    notice?.accountId === account.id && notice.tone === 'warn'
+    notice?.accountId === account.id && notice.tone === 'warn' && !notice.compatibility
       ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
     subscription && ['xai', 'grok'].includes(account.family)
       ? jsx('p', { className: 'wm-note', children: t('memGrokNote') }) : null,
@@ -6969,7 +7081,7 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
         ? jsxs('form', { className: 'wm-fee-form', noValidate: !account.rev,
             onSubmit: event => { event.preventDefault(); saveFee() }, children: [
             jsx('h3', { children: t('memFeeTitle', membershipAccountShortcutLabel(account, t)) }),
-            notice?.tone === 'warn' && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
+            notice?.tone === 'warn' && !notice.compatibility && notice.accountId === account.id ? jsx('p', { role: 'alert', className: 'wm-warn-note', children: notice.text }) : null,
             jsx('p', { className: 'wm-note', children: t('memFeeRevisionNote') }),
             jsxs('fieldset', { disabled: !!busy, className: 'wm-controls wm-fee-fields', children: [
               jsxs('label', { className: 'wm-filter', children: [
@@ -7164,7 +7276,7 @@ function MembershipsPage() {
   const weatherCurrent = weather.data?.identity === identity && membershipIdentityCurrent(identity)
   const weatherById = new Map(
     ((weatherCurrent ? weather.data.accounts : []) || []).map(entry => [entry.account_id, entry]))
-  const weatherError = !!(weather.error && membershipIdentityCurrent(identity))
+  const weatherError = weather.error && membershipIdentityCurrent(identity) ? weather.error : null
   const attention = needsAttention(list, weatherById, t)
   const attentionIds = new Set(attention.map(item => item.account.id))
   const displayed = attentionOnly ? list.filter(account => attentionIds.has(account.id)) : list
@@ -7268,7 +7380,8 @@ function MembershipsPage() {
       await invalidateWeatherFor(captured)
       return { ok: membershipOperationCurrent(captured, operation), identity: captured }
     } catch (error) {
-      setMembershipNotice(captured, 'warn', membershipErrorText(error, 'write', t), operation, key)
+      setMembershipNotice(captured, 'warn', membershipErrorText(error, 'write', t), operation, key,
+        isBackendCompatibilityError(error))
       return { ok: false, error }
     } finally {
       // Only the identity that holds the flag may clear it.
@@ -7494,7 +7607,7 @@ function MembershipsPage() {
       ] }),
       jsx('p', { className: 'wm-note wm-membership-refresh-note',
         children: t('memRefreshNote') }),
-      notice ? jsx('div', { className: 'wm-alert', 'data-tone': notice.tone === 'warn' ? 'warn' : 'good',
+      notice && !notice.compatibility ? jsx('div', { className: 'wm-alert', 'data-tone': notice.tone === 'warn' ? 'warn' : 'good',
         role: 'status', children: notice.text }) : null,
       storeError
         ? jsx('div', { className: 'wm-alert', role: 'alert', 'data-tone': 'warn',
@@ -7673,6 +7786,7 @@ function ReportsPage() {
   // period or locale withholds it until the next explicit Generate.
   const matches = current && current.days === days && current.lang === lang ? current : null
   const failed = !!(report.error && membershipIdentityCurrent(identity))
+  const compatibilityError = isBackendCompatibilityError(report.error)
   return jsx(ProductShell, { pageStyles: REPORTS_CSS, children:
     jsxs('div', { className: 'wm-shell wm-reports', children: [
       jsxs('div', { className: 'wm-reports-bar', children: [
@@ -7696,7 +7810,9 @@ function ReportsPage() {
             children: t('rpStale', fmtDay(matches.generated_at)) }, 'stale'),
           jsx(DigestPreview, { report: matches }, 'preview'),
         ] })
-        : failed
+        : compatibilityError
+          ? null
+          : failed
           ? jsxs('div', { className: 'wm-digest-error', children: [
             jsx('p', { role: 'alert', children: t('rpError') }),
             jsx(ProductButton, { type: 'button', className: 'wm-button',
@@ -10059,6 +10175,7 @@ const I18N = {
     memErrBridge: 'This Desktop build has no plugin backend bridge, so memberships cannot be read.',
     memErrRefresh: 'Readings could not be refreshed. The previous reading is still shown.',
     memErrGeneric: 'That did not complete. Please retry; if it persists, check the backend log.',
+    backendCompatibility: 'The backend may be older than this SpendSense Desktop UI. Update the Hermes plugin backend and Desktop together, then try again.',
     // Fee-override reasons (mirrors REASON_LABELS).
     memReasonDiscount: 'Discount',
     memReasonLegacyPricing: 'Legacy price',
@@ -11369,6 +11486,7 @@ const I18N = {
     memErrBridge: '该 Desktop 版本没有插件后端桥，会员无法读取。',
     memErrRefresh: '读数无法刷新，仍显示之前的读数。',
     memErrGeneric: '没有完成。请重试；如果仍然不行，请查看后端日志。',
+    backendCompatibility: '后端可能比此 SpendSense Desktop 界面版本旧。请将 Hermes 插件后端与 Desktop 一起更新，然后再试。',
     // 费用覆盖原因（与 REASON_LABELS 对应）。
     memReasonDiscount: '折扣',
     memReasonLegacyPricing: '历史价格',
@@ -12260,7 +12378,8 @@ export default {
     ctx.setInterval(() => $membershipActivation.set(gatewayActivationEpoch()), 250)
     ctx.setInterval(() => $membershipClock.set(Date.now()), 30_000)
     osApi = ctx.os || null
-    rest = typeof ctx.rest === 'function' ? ctx.rest : null
+    $backendCompatibility.set(null)
+    rest = wrapBackendTransport(typeof ctx.rest === 'function' ? ctx.rest : null)
     const { ledger, migrated } = readStoredLedger(ctx.storage)
     $ledger.set(ledger)
     if (migrated) saveLedger(ledger)
@@ -12405,7 +12524,9 @@ export const __test = {
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
-  setRest: value => { rest = value },
+  setRest: value => { $backendCompatibility.set(null); rest = wrapBackendTransport(value) },
+  backendRequest, isBackendCompatibilityError, backendCompatibilityText,
+  $backendCompatibility,
   PANE_DATA,
   applyUsage,
   bundledLookup,
