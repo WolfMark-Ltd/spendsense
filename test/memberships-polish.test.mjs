@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // Browser interaction test for the PR-D Memberships polish: real Chrome
 // geometry and focus with synthetic attention accounts. Asserts the

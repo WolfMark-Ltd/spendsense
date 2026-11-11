@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // Subscription economics rendering regressions — real React, real
 // TanStack Query, synthetic fixtures. Renders EconomicsSection directly with

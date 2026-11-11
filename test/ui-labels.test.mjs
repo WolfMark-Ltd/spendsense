@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // Presentation regressions for the Token & Cost pane (0.2.4-ui-1):
 // a missing `src_backend` translation rendered the raw key beside the price, the

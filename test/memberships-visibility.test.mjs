@@ -1,4 +1,4 @@
-// Run: node --test test/
+// Run: node --test --test-force-exit test/*.test.mjs
 //
 // Browser regression for the PR-D review: attention targets below the fold
 // of a short pane, and billing tooltip anchoring. Runs real Chrome with
