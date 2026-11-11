@@ -170,7 +170,7 @@ A membership card keeps four different kinds of number apart, because adding the
 
 | Figure | What it is | What it is not |
 | --- | --- | --- |
-| Membership fee | The effective fee per account — your override, or the catalogue's published price | A per-call charge or a verified provider bill |
+| Membership fee | The effective fee — your override, the plan price, or seats × catalogue unit price | A per-call charge or a verified provider bill |
 | Provider-reported usage | Quota or usage Hermes read from the provider | An invoice |
 | API-equivalent value | What the same tokens would cost at published API rates | Money you actually spent |
 | Metered / incremental cost | Allowance consumed, and extra cash beyond it under your rules | Provider-confirmed billing |

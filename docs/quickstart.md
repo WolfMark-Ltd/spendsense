@@ -79,7 +79,7 @@ Open **Overview**. It shows four headline figures that answer different question
 | Recorded usage · API-equivalent, this month | Desktop-recorded tokens priced at capture. |
 | API-equivalent estimate · backend, 30 days | Timestamped backend calls priced at current catalogue rates. |
 | Actual provider charges · 30 days | What the provider billed. Currently **Not recorded** (see below). |
-| Saved account fees · by currency and billing period | Effective fees per account (your overrides or catalogue prices). |
+| Saved account fees · by currency and billing period | Effective fees per account (overrides, catalogue or custom-plan prices). |
 
 Two honest expectations for a first run:
 
@@ -93,7 +93,7 @@ Then visit **Memberships** and confirm which plan each discovered account is on.
 New users trip on one idea, so here it is plainly:
 
 - **API-equivalent cost** is a comparison price: what the same tokens would cost at published pay-as-you-go rates. It judges whether a plan is worth keeping. It is not money you spent.
-- **Subscription fees** are the effective fee per account: your override where you set one, otherwise the catalogue's published price for the confirmed plan. Neither is a verified provider charge — catalogue prices can differ from the provider bill. Fees keep their own billing period and currency and are never converted.
+- **Subscription fees** are the effective fee per account: your override where you set one, otherwise the confirmed plan's price — catalogue, your own custom-plan price, or catalogue unit price × saved seats for per-seat plans. None of these is a verified provider charge — catalogue prices can differ from the provider bill. Fees keep their own billing period and currency and are never converted.
 - **Actual provider charges** are what the provider really billed. SpendSense does not have this evidence today, so it says **Not recorded** instead of presenting the API-equivalent figure as a bill.
 
 These are never added together. A membership card also keeps provider-reported usage (quota Hermes read from the provider) apart from metered cost (allowance consumed under your rules). The [README](../README.md#four-figures-never-summed) has the full table.
