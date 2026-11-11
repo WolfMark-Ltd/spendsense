@@ -842,8 +842,9 @@ test('membership helpers default to the legacy English wording', () => {
 })
 
 test('every digest string exists in English and Chinese', () => {
-  const keys = ['reportsTitle', 'rpDays7', 'rpDays30', 'rpGenerate', 'rpGenerating',
-    'rpCopy', 'rpCopied', 'rpSave', 'rpSaveFallback', 'rpFailed', 'rpError', 'rpRetry',
+  const keys = ['reportsTitle', 'rpSummary', 'rpPeriod', 'rpActions', 'rpDays7', 'rpDays30',
+    'rpGenerate', 'rpGenerating', 'rpCopy', 'rpCopied', 'rpSave', 'rpDownloadRequested',
+    'rpSaveFallback', 'rpFailed', 'rpDownloadFailed', 'rpError', 'rpRetry',
     'rpEmpty', 'rpStale']
   for (const key of keys) {
     assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)

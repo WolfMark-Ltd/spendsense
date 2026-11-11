@@ -196,6 +196,7 @@ class DigestShapeTests(DigestCase):
         # Markdown renderer escapes structure characters.
         self.assertIn("weird|model", names)
         self.assertIn("weird\\|model", result["markdown"])
+        self.assertEqual(models["heading"], "Top models by priced API-equivalent subtotal")
 
     def test_cost_figures_are_kept_separate(self):
         self.standard_fixture()
@@ -212,7 +213,7 @@ class DigestShapeTests(DigestCase):
         usage_window = self.section(result, "usage")["window"]
         allowance_window = self.section(result, "allowances")["window"]
         self.assertIn("Last 7 days", usage_window)
-        self.assertIn("Current cycle", allowance_window)
+        self.assertIn("Current allowance cycle", allowance_window)
         self.assertNotEqual(usage_window, allowance_window)
 
     def test_sections_and_markdown_agree(self):
@@ -308,6 +309,50 @@ class DigestContentTests(DigestCase):
         self.assertTrue(allowances["rows"])
         text = " ".join(" ".join(row) for row in allowances["rows"])
         self.assertIn("test:default", text)
+        self.assertEqual(allowances["columns"][1], "Calculated cycle end")
+        notes = " ".join(allowances["notes"])
+        self.assertIn("not provider-confirmed reset times", notes)
+        self.assertIn("do not include provider usage readings or query providers", notes)
+        self.assertIn("Check Memberships for provider readings", notes)
+        self.assertIn("locally recorded usage under configured cost rules", notes)
+
+    def test_allowance_unknown_reasons_are_grouped_by_cause(self):
+        accounts = [
+            {"account_id": "a", "label": "A", "cycle": {}, "rollup": {"state": "unknown"},
+             "windows": [{"verdict": "unknown", "verdict_basis": "none"}]},
+            {"account_id": "b", "label": "B", "cycle": {}, "rollup": {"state": "unknown"},
+             "windows": [{"verdict": "unknown", "verdict_basis": "none"}]},
+            {"account_id": "c", "label": "C", "cycle": {}, "rollup": {"state": "unknown"},
+             "windows": [{"verdict": "unknown", "verdict_basis": "provider_only"}]},
+            {"account_id": "d", "label": "D", "cycle": {}, "rollup": {"state": "unknown"},
+             "windows": [{"verdict": "unknown", "verdict_basis": "conflicted"}]},
+            {"account_id": "e", "label": "E", "cycle": {}, "rollup": {"state": "unknown"},
+             "windows": [], "rules": []},
+            {"account_id": "f", "label": "F", "cycle": {}, "rollup": {"state": "unknown"},
+             "windows": [{"verdict": "unknown", "verdict_basis": "none",
+                          "cycle_basis": "none"}]},
+            {"account_id": "g", "label": "G", "cycle": {}, "rollup": {"state": "unknown"},
+             "windows": [], "rules": [{"verdict": "unknown", "verdict_basis": "none",
+                                         "pool": "shared"}]},
+        ]
+        section = D._allowances_section(D.STRINGS["en"], "Current allowance cycle, as of 2026-10-31",
+                                        accounts)
+        notes = " ".join(section["notes"])
+        self.assertIn("2 account(s)", notes)
+        self.assertIn("no usable cycle position", notes)
+        self.assertIn("readings conflict", notes)
+        self.assertIn("No configured allowance window", notes)
+        self.assertIn("no usable cycle position is available", notes)
+        self.assertIn("allowance limit is unavailable or unusable", notes)
+
+        translated = D._allowances_section(
+            D.STRINGS["zh"], "当前额度周期（截至 2026-10-31）", accounts)
+        translated_notes = " ".join(translated["notes"])
+        self.assertIn("没有服务商读数或手动标记", translated_notes)
+        self.assertIn("服务商读数与手动标记冲突", translated_notes)
+        self.assertIn("没有可用的周期位置", translated_notes)
+        self.assertIn("额度上限不可用或无效", translated_notes)
+        self.assertIn("报告摘要不包含服务商用量读数，也不会查询服务商", translated_notes)
 
 
 class DigestLocalisationTests(DigestCase):
@@ -319,8 +364,31 @@ class DigestLocalisationTests(DigestCase):
         self.assertRegex(result["title"], r"[\u4e00-\u9fff]")
         for section in result["sections"]:
             self.assertRegex(section["heading"], r"[\u4e00-\u9fff]", section["id"])
+        self.assertEqual(self.section(result, "models")["heading"], "按已定价 API 等值小计排名的模型")
         self.assertIn("$5.00", result["markdown"])
         self.assertIn("test:default", result["markdown"])
+
+    def test_seven_and_thirty_day_reports_keep_en_zh_ux_copy(self):
+        self.standard_fixture()
+        for days in (7, 30):
+            for lang in ("en", "zh"):
+                with self.subTest(days=days, lang=lang):
+                    result = self.report(days=days, lang=lang)
+                    models = self.section(result, "models")
+                    allowances = self.section(result, "allowances")
+                    methodology = " ".join(self.section(result, "methodology")["notes"])
+                    self.assertIn(str(days), result["period"]["label"])
+                    self.assertIn("API-equivalent subtotal" if lang == "en" else "API 等值小计",
+                                  models["heading"])
+                    allowance_notes = " ".join(allowances["notes"])
+                    if lang == "en":
+                        self.assertIn("not provider-confirmed reset times", allowance_notes)
+                        self.assertIn("do not include provider usage readings", allowance_notes)
+                        self.assertIn("current-cycle values calculated under configured cost rules", methodology)
+                    else:
+                        self.assertIn("并非服务商确认的重置时间", allowance_notes)
+                        self.assertIn("不包含服务商用量读数", allowance_notes)
+                        self.assertIn("当前周期内按配置费用规则计算", methodology)
 
     def test_unknown_lang_falls_back_to_english(self):
         self.standard_fixture()
@@ -433,7 +501,7 @@ class DigestReviewFixesTests(DigestCase):
     def test_unclassified_calls_do_not_claim_that_pricing_is_missing(self):
         billing = {
             "metered_usd": 2.0, "excluded_out_of_cycle": 0,
-            "unclassified_tokens": 0, "unclassified_calls": 1,
+            "unclassified_tokens": 0, "unclassified_calls": 10,
             "evidence": {
                 "provider_reported": {"usd": None, "basis": "none", "calls": 0},
                 "incremental_cash": {"usd": None, "basis": "unknown"},
@@ -446,6 +514,7 @@ class DigestReviewFixesTests(DigestCase):
         self.assertNotIn("no matching billing rule", notes)
         self.assertNotIn("a billing rule matched", notes)
         self.assertNotIn("some usage is unpriced", notes)
+        self.assertIn("10 call(s) are unclassified", notes)
         self.assertEqual(
             next(line["value"] for line in section["lines"]
                  if line["label"] == "Metered (allowance) spending"), "≥$2.00")
@@ -718,6 +787,29 @@ class DigestFeesCoverageTests(DigestCase):
         notes = " ".join(fees["notes"]).lower()
         self.assertIn("historical fee evidence", notes)
         self.assertNotIn("estimated effective date", notes)
+
+    def test_fees_keep_each_currency_when_one_window_allocation_is_missing(self):
+        headline = {
+            "fees_monthly_by_currency": [
+                {"currency": "GBP", "amount": 0.95},
+                {"currency": "USD", "amount": 30.0},
+            ],
+            "fees_window_by_currency": [{"currency": "GBP", "amount": 0.22}],
+            "usage_usd": None, "difference_usd": None, "status": "unavailable",
+        }
+        groups = [
+            {"currency": "GBP", "fee_complete": True, "window_fee_complete": True},
+            {"currency": "USD", "fee_complete": True, "window_fee_complete": False,
+             "unallocated_window_accounts": ["usd-account"]},
+        ]
+        section = D._fees_section(D.STRINGS["en"], "Last 7 days", headline, True, 1,
+                                  False, groups)
+        by_label = {line["label"]: line["value"] for line in section["lines"]}
+        self.assertEqual(by_label["Known monthly fees (GBP)"], "£0.95/mo")
+        self.assertEqual(by_label["Fees in window (GBP)"], "£0.22")
+        self.assertEqual(by_label["Known monthly fees (USD)"], "$30.00/mo")
+        self.assertEqual(by_label["Fees in window (USD)"], "—")
+        self.assertTrue(any("historical fee evidence" in note for note in section["notes"]))
 
     def test_fees_exact_when_fully_priced_and_covered(self):
         self.standard_fixture()

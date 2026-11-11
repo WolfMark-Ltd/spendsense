@@ -7917,17 +7917,23 @@ function MembershipsPage() {
   })
 }
 
-async function digestCopy(report, t) {
+function digestActionFeedback(notice, onFeedback) {
+  if (onFeedback?.(notice) !== false) host.notify(notice)
+}
+
+async function digestCopy(report, t, onFeedback) {
   if (!report || !report.markdown) return false
   const ok = await writeClipboard(report.markdown)
-  host.notify({ kind: ok ? 'success' : 'error', message: ok ? t('rpCopied') : t('rpFailed') })
+  const notice = { kind: ok ? 'success' : 'error', message: ok ? t('rpCopied') : t('rpFailed') }
+  digestActionFeedback(notice, onFeedback)
   return ok
 }
 
-async function digestDownload(report, t) {
-  if (!report || !report.markdown) return
+async function digestDownload(report, t, onFeedback) {
+  if (!report || !report.markdown) return false
+  let url = null
   try {
-    const url = URL.createObjectURL(new Blob([report.markdown], { type: 'text/markdown;charset=utf-8' }))
+    url = URL.createObjectURL(new Blob([report.markdown], { type: 'text/markdown;charset=utf-8' }))
     const a = document.createElement('a')
     a.href = url
     a.download = report.filename || 'spend-sense-digest.md'
@@ -7935,9 +7941,18 @@ async function digestDownload(report, t) {
     a.click()
     a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    const notice = { kind: 'success', message: t('rpDownloadRequested', a.download) }
+    digestActionFeedback(notice, onFeedback)
+    return true
   } catch {
     const ok = await writeClipboard(report.markdown)
-    host.notify({ kind: ok ? 'info' : 'error', message: ok ? t('rpSaveFallback') : t('rpFailed') })
+    if (url) {
+      try { URL.revokeObjectURL(url) } catch {}
+    }
+    const notice = { kind: ok ? 'info' : 'error',
+      message: ok ? t('rpSaveFallback') : t('rpDownloadFailed') }
+    digestActionFeedback(notice, onFeedback)
+    return ok
   }
 }
 
@@ -7945,43 +7960,114 @@ const REPORTS_CSS = `
 .wm-reports-bar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px;flex-wrap:wrap;
   padding:8px 0;background:var(--ui-fill-primary);border-bottom:1px solid var(--ui-stroke-secondary)}
 .wm-reports-bar h2{font-size:13px;font-weight:600;margin:0 auto 0 0}
-.wm-digest{display:grid;gap:12px;padding:12px 0}
-.wm-digest-head{font-size:12px;color:var(--ui-text-secondary)}
-.wm-digest-section h3{font-size:12.5px;font-weight:600;margin:0 0 2px}
-.wm-digest-lines{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:3px;font-size:12px}
-.wm-digest-lines li{display:flex;justify-content:space-between;gap:12px}
-.wm-digest-lines li span:first-child{color:var(--ui-text-secondary)}
-.wm-digest-lines li span:last-child{text-align:right;font-variant-numeric:tabular-nums}
-.wm-digest table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
-.wm-digest th{text-align:left;font-weight:600;color:var(--ui-text-secondary);padding:3px 8px 3px 0;border-bottom:1px solid var(--ui-stroke-secondary)}
-.wm-digest td{padding:3px 8px 3px 0;border-bottom:1px solid var(--ui-stroke-secondary);font-variant-numeric:tabular-nums}
-.wm-digest-notes{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:3px;font-size:11.5px;color:var(--ui-text-secondary)}
-.wm-digest-method{font-size:11.5px;color:var(--ui-text-secondary)}
+.wm-reports-period{display:flex;min-width:0}
+.wm-reports-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.wm-report-feedback{margin:8px 0 0;padding:8px 10px;border-inline-start:3px solid var(--ui-accent);
+  border-radius:5px;background:var(--ui-fill-secondary);font-size:12px;overflow-wrap:anywhere}
+.wm-report-feedback[role="alert"]{border-inline-start-color:var(--ui-error)}
+.wm-digest{display:grid;gap:10px;padding:12px 0}
+.wm-digest-overview{display:grid;gap:10px;padding:14px;border:1px solid var(--ui-stroke-secondary);
+  border-radius:9px;background:var(--ui-fill-secondary);min-width:0}
+.wm-digest-overview h3{font-size:13px;font-weight:650;margin:0}
+.wm-digest-meta{display:grid;gap:3px;margin:0}
+.wm-digest-period{font-size:14px;font-weight:600;margin:0;overflow-wrap:anywhere}
+.wm-digest-generated{font-size:11.5px;color:var(--ui-text-secondary);margin:0}
+.wm-digest-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.wm-digest-stat{display:grid;align-content:start;gap:4px;padding:10px 11px;min-width:0;
+  border:1px solid var(--ui-stroke-secondary);border-radius:7px;background:var(--ui-fill-primary)}
+.wm-digest-stat span{font-size:11px;color:var(--ui-text-secondary);overflow-wrap:anywhere}
+.wm-digest-stat strong{font-size:16px;line-height:1.25;font-weight:650;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.wm-digest-section{--wm-digest-accent:var(--ui-accent);display:grid;gap:8px;min-width:0;
+  padding:12px;border:1px solid var(--ui-stroke-secondary);border-inline-start:3px solid var(--wm-digest-accent);
+  border-radius:8px;background:var(--ui-fill-primary)}
+.wm-digest-section[data-section="models"],.wm-digest-section[data-section="allowances"]{--wm-digest-accent:var(--ui-success)}
+.wm-digest-section[data-section="value"],.wm-digest-section[data-section="spending"]{--wm-digest-accent:var(--ui-warning)}
+.wm-digest-section[data-section="coverage"]{--wm-digest-accent:var(--ui-error)}
+.wm-digest-section[data-section="fees"],.wm-digest-section[data-section="methodology"]{--wm-digest-accent:var(--ui-text-tertiary)}
+.wm-digest-section-header{display:flex;align-items:center;gap:8px;min-width:0}
+.wm-digest-section h3{font-size:13px;font-weight:650;line-height:1.3;margin:0;overflow-wrap:anywhere}
+.wm-digest-icon{display:inline-grid;place-items:center;flex:none;width:24px;height:24px;
+  border-radius:6px;background:var(--ui-fill-secondary);color:var(--wm-digest-accent);font-size:14px;font-weight:700}
+.wm-digest-context{display:inline-flex;justify-self:start;margin:0;padding:3px 7px;border-radius:999px;
+  background:var(--ui-fill-secondary);color:var(--ui-text-secondary);font-size:11px;overflow-wrap:anywhere}
+.wm-digest-lines{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:12.5px}
+.wm-digest-lines li{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0}
+.wm-digest-lines li span:first-child{color:var(--ui-text-secondary);min-width:0;overflow-wrap:anywhere}
+.wm-digest-lines li span:last-child{text-align:right;font-variant-numeric:tabular-nums;min-width:0;max-width:60%;overflow-wrap:anywhere}
+.wm-digest-table-wrap{max-width:100%;overflow:auto;border-radius:5px;overscroll-behavior-inline:contain}
+.wm-digest-table-wrap:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}
+.wm-digest table{width:100%;min-width:420px;border-collapse:collapse;font-size:12px}
+.wm-digest th{text-align:left;font-weight:600;color:var(--ui-text-secondary);padding:7px 9px 7px 0;
+  border-bottom:1px solid var(--ui-stroke-secondary);white-space:nowrap}
+.wm-digest td{padding:7px 9px 7px 0;border-bottom:1px solid var(--ui-stroke-secondary);
+  font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.wm-digest-notes{list-style:none;margin:0;padding:0;display:grid;gap:5px;font-size:11.5px;color:var(--ui-text-secondary)}
+.wm-digest-notes li{padding:6px 8px;border-inline-start:2px solid var(--ui-stroke-secondary);
+  background:var(--ui-fill-secondary);border-radius:0 5px 5px 0;overflow-wrap:anywhere}
+.wm-digest-method{font-size:12px;color:var(--ui-text-secondary)}
+.wm-digest-method summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none}
+.wm-digest-method summary::-webkit-details-marker{display:none}
+.wm-digest-method .wm-digest-notes{margin-top:10px}
 .wm-digest-error{display:grid;gap:8px;justify-items:start;padding:12px 0}
+@media(max-width:560px){
+  .wm-reports-bar{display:grid;grid-template-columns:minmax(0,1fr);align-items:start;gap:7px}
+  .wm-reports-bar h2{margin:0}
+  .wm-reports-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;gap:6px}
+  .wm-reports-actions .wm-button{min-width:0;white-space:normal;line-height:1.25;padding-inline:6px}
+  .wm-reports-actions .wm-button:first-child{grid-column:1/-1}
+  .wm-digest-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .wm-digest-overview,.wm-digest-section{padding:10px}
+}
 `
 
 /** Generic section renderer: headings, tables, lines and notes, React-escaped. */
 function DigestPreview({ report }) {
+  const t = usePluginI18n(ID)
   const sections = Array.isArray(report?.sections) ? report.sections : []
+  const usage = sections.find(section => section.id === 'usage')
+  const value = sections.find(section => section.id === 'value')
+  const summary = [usage?.lines?.[0], value?.lines?.[0]].filter(Boolean)
+  const icons = { usage: '↗', models: '◈', providers: '◎', value: '≈', spending: '$',
+    fees: '¤', allowances: '◷', changes: '↕', coverage: '✓', methodology: 'i' }
   return jsxs('div', { className: 'wm-digest', children: [
-    jsx('p', { className: 'wm-digest-head',
-      children: `${report?.period?.label || ''} · ${fmtDay(report?.generated_at)}` }),
+    jsxs('section', { className: 'wm-digest-overview', 'aria-label': t('rpSummary'), children: [
+      jsx('h3', { children: t('rpSummary') }),
+      jsxs('div', { className: 'wm-digest-meta', children: [
+        jsx('p', { className: 'wm-digest-period', children: report?.period?.label || '' }),
+        jsx('p', { className: 'wm-digest-generated', children: fmtDay(report?.generated_at) }),
+      ] }),
+      summary.length ? jsxs('div', { className: 'wm-digest-summary', children: summary.map((line, index) =>
+        jsxs('div', { className: 'wm-digest-stat', children: [
+          jsx('span', { children: line.label }),
+          jsx('strong', { children: line.value }),
+        ] }, `summary${index}`)) }) : null,
+    ] }),
     ...sections.map(section => section.id === 'methodology'
-      ? jsxs('details', { className: 'wm-digest-method', children: [
-        jsx('summary', { children: section.heading }),
+      ? jsxs('details', { className: 'wm-digest-section wm-digest-method',
+        'data-section': section.id, children: [
+        jsxs('summary', { children: [
+          jsx('span', { className: 'wm-digest-icon', 'aria-hidden': 'true', children: icons[section.id] || '·' }),
+          jsx('span', { children: section.heading }),
+        ] }),
         jsxs('ul', { className: 'wm-digest-notes',
           children: (section.notes || []).map((note, index) => jsx('li', { children: note }, `n${index}`)) }),
       ] }, section.id)
-      : jsxs('section', { className: 'wm-digest-section', 'aria-label': section.heading, children: [
-        jsx('h3', { children: section.heading }),
-        section.window ? jsx('p', { className: 'wm-note', children: section.window }) : null,
-        section.kind === 'table' ? jsxs('table', { children: [
+      : jsxs('section', { className: 'wm-digest-section', 'data-section': section.id,
+        'aria-labelledby': `wm-digest-heading-${section.id}`, children: [
+        jsxs('div', { className: 'wm-digest-section-header', children: [
+          jsx('span', { className: 'wm-digest-icon', 'aria-hidden': 'true', children: icons[section.id] || '·' }),
+          jsx('h3', { id: `wm-digest-heading-${section.id}`, children: section.heading }),
+        ] }),
+        section.window && section.window !== report?.period?.label
+          ? jsx('p', { className: 'wm-digest-context', children: section.window }) : null,
+        section.kind === 'table' ? jsx('div', { className: 'wm-digest-table-wrap', role: 'region',
+          'aria-label': section.heading, tabIndex: 0, children: jsxs('table', { children: [
           jsx('thead', { children: jsx('tr', { children: (section.columns || [])
-            .map((column, index) => jsx('th', { children: column }, `h${index}`)) }) }),
+            .map((column, index) => jsx('th', { scope: 'col', children: column }, `h${index}`)) }) }),
           jsx('tbody', { children: (section.rows || [])
             .map((row, index) => jsx('tr', { children: row
               .map((cell, cellIndex) => jsx('td', { children: cell }, `c${cellIndex}`)) }, `r${index}`)) }),
-        ] }) : null,
+        ] }) }) : null,
         (section.lines || []).length ? jsxs('ul', { className: 'wm-digest-lines',
           children: section.lines.map((line, index) => jsxs('li', { children: [
             jsx('span', { children: line.label }),
@@ -7995,8 +8081,40 @@ function DigestPreview({ report }) {
 
 function ReportsPage() {
   const t = usePluginI18n(ID)
+  const [actionFeedback, setActionFeedback] = useState(null)
   const identity = useValue($membershipIdentity)
   const days = useValue($digestDays)
+  const actionGeneration = useRef(0)
+  const actionScope = useRef({ identity, days, generation: 0 })
+  actionScope.current = { ...actionScope.current, identity, days }
+  const visibleActionFeedback = actionFeedback?.identity === identity && actionFeedback?.days === days
+    ? actionFeedback : null
+  useEffect(() => {
+    actionScope.current = { identity, days, generation: ++actionGeneration.current }
+    setActionFeedback(null)
+  }, [identity, days])
+  const clearActionFeedback = () => {
+    actionScope.current = { identity, days, generation: ++actionGeneration.current }
+    setActionFeedback(null)
+  }
+  const runReportAction = action => {
+    const scope = { identity, days, generation: ++actionGeneration.current }
+    actionScope.current = scope
+    setActionFeedback(null)
+    return action(notice => {
+      const current = actionScope.current
+      if (current.generation === scope.generation
+          && current.identity === scope.identity && current.days === scope.days) {
+        setActionFeedback({ ...notice, identity: scope.identity, days: scope.days })
+        return true
+      }
+      return false
+    })
+  }
+  const refreshReport = () => {
+    clearActionFeedback()
+    return report.refetch()
+  }
   const lang = uiLocale(t)
   const report = useQuery(digestQuery(identity, days, lang))
   const current = report.data?.identity === identity && membershipIdentityCurrent(identity)
@@ -8011,19 +8129,28 @@ function ReportsPage() {
     jsxs('div', { className: 'wm-shell wm-reports', children: [
       jsxs('div', { className: 'wm-reports-bar', children: [
         jsx('h2', { children: t('reportsTitle') }),
-        jsx(SegmentedControl, {
-          onChange: v => $digestDays.set(Number(v) === 7 ? 7 : 30),
-          options: [{ id: '7', label: t('rpDays7') }, { id: '30', label: t('rpDays30') }],
-          value: String(days),
-        }),
-        jsx(AsyncButton, { type: 'button', className: 'wm-button wm-accent',
-          status: report.isFetching ? 'pending' : 'idle', pendingLabel: t('rpGenerating'),
-          onClick: () => report.refetch(), children: t('rpGenerate') }),
-        jsx(ProductButton, { type: 'button', className: 'wm-button',
-          disabled: !matches, onClick: () => digestCopy(matches, t), children: t('rpCopy') }),
-        jsx(ProductButton, { type: 'button', className: 'wm-button',
-          disabled: !matches, onClick: () => digestDownload(matches, t), children: t('rpSave') }),
+        jsx('div', { className: 'wm-reports-period', role: 'group', 'aria-label': t('rpPeriod'),
+          children: jsx(SegmentedControl, {
+            onChange: v => { clearActionFeedback(); $digestDays.set(Number(v) === 7 ? 7 : 30) },
+            options: [{ id: '7', label: t('rpDays7') }, { id: '30', label: t('rpDays30') }],
+            value: String(days),
+          }) }),
+        jsxs('div', { className: 'wm-reports-actions', role: 'group', 'aria-label': t('rpActions'), children: [
+          jsx(AsyncButton, { type: 'button', className: 'wm-button wm-accent',
+            status: report.isFetching ? 'pending' : 'idle', pendingLabel: t('rpGenerating'),
+            onClick: refreshReport, children: t('rpGenerate') }),
+          jsx(ProductButton, { type: 'button', className: 'wm-button',
+            disabled: !matches, onClick: () => runReportAction(onFeedback =>
+              digestCopy(matches, t, onFeedback)), children: t('rpCopy') }),
+          jsx(ProductButton, { type: 'button', className: 'wm-button',
+            disabled: !matches, onClick: () => runReportAction(onFeedback =>
+              digestDownload(matches, t, onFeedback)), children: t('rpSave') }),
+        ] }),
       ] }),
+      visibleActionFeedback ? jsx('p', { className: 'wm-report-feedback',
+        role: visibleActionFeedback.kind === 'error' ? 'alert' : 'status',
+        'aria-live': visibleActionFeedback.kind === 'error' ? 'assertive' : 'polite',
+        'aria-atomic': 'true', children: visibleActionFeedback.message }) : null,
       failed && matches
         ? jsxs('div', { children: [
           jsx('div', { className: 'wm-alert', role: 'alert',
@@ -8036,7 +8163,7 @@ function ReportsPage() {
           ? jsxs('div', { className: 'wm-digest-error', children: [
             jsx('p', { role: 'alert', children: t('rpError') }),
             jsx(ProductButton, { type: 'button', className: 'wm-button',
-              onClick: () => report.refetch(), children: t('rpRetry') }),
+              onClick: refreshReport, children: t('rpRetry') }),
           ] })
           : matches ? jsx(DigestPreview, { report: matches })
             : report.isFetching
@@ -10505,15 +10632,20 @@ const I18N = {
     wxStale: 'Refresh failed — showing the last read.',
     // Local digest reports.
     reportsTitle: 'Reports',
+    rpSummary: 'At a glance',
+    rpPeriod: 'Report period',
+    rpActions: 'Report actions',
     rpDays7: 'Last 7 days',
     rpDays30: 'Last 30 days',
     rpGenerate: 'Generate report',
     rpGenerating: 'Generating…',
-    rpCopy: 'Copy',
-    rpCopied: 'Report copied to the clipboard.',
-    rpSave: 'Save',
-    rpSaveFallback: 'Download unavailable — report copied to the clipboard instead.',
-    rpFailed: 'Report action failed.',
+    rpCopy: 'Copy Markdown',
+    rpCopied: 'Markdown report copied to the clipboard.',
+    rpSave: 'Download Markdown',
+    rpDownloadRequested: filename => `Markdown download requested: ${filename}`,
+    rpSaveFallback: 'Download could not start. The Markdown report was copied to the clipboard instead.',
+    rpFailed: 'Could not copy the Markdown report. Check clipboard access or download the report.',
+    rpDownloadFailed: 'Could not download or copy the Markdown report.',
     rpError: 'Report unavailable for this connection.',
     rpRetry: 'Retry',
     rpEmpty: 'Choose a period, then Generate report.',
@@ -11831,15 +11963,20 @@ const I18N = {
     wxStale: '刷新失败——显示上次读取的数据。',
     // 本地摘要报告。
     reportsTitle: '报告',
+    rpSummary: '报告概览',
+    rpPeriod: '报告周期',
+    rpActions: '报告操作',
     rpDays7: '过去 7 天',
     rpDays30: '过去 30 天',
     rpGenerate: '生成报告',
     rpGenerating: '正在生成…',
-    rpCopy: '复制',
-    rpCopied: '报告已复制到剪贴板。',
-    rpSave: '保存',
-    rpSaveFallback: '无法下载——报告已复制到剪贴板。',
-    rpFailed: '报告操作失败。',
+    rpCopy: '复制 Markdown',
+    rpCopied: 'Markdown 报告已复制到剪贴板。',
+    rpSave: '下载 Markdown',
+    rpDownloadRequested: filename => `已请求下载 Markdown：${filename}`,
+    rpSaveFallback: '无法开始下载，Markdown 报告已改为复制到剪贴板。',
+    rpFailed: '无法复制 Markdown 报告。请检查剪贴板权限，或下载报告。',
+    rpDownloadFailed: '无法下载或复制 Markdown 报告。',
     rpError: '此连接无法生成报告。',
     rpRetry: '重试',
     rpEmpty: '选择周期，然后生成报告。',
