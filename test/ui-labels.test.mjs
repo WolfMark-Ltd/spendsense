@@ -412,7 +412,7 @@ test('every settings string exists in English and Chinese', () => {
   const keys = ['tabListLabel', 'settingsNotifyPrefsReset', 'settingsNotifyPrefsFailed',
     'settingsNotifyDataCleared', 'settingsNotifyDataFailed', 'settingsNotifyModelsOk',
     'settingsNotifyModelsFailed', 'settingsNotifyCatalogueOk', 'settingsNotifyCatalogueFailed',
-    'settingsNotifyLiveOff', 'settingsTitle', 'settingsSubtitle', 'settingsPrivacyHeading',
+    'settingsNotifyLiveOff', 'settingsTitle', 'settingsSubtitle', 'settingsNavLabel', 'settingsPrivacyHeading',
     'settingsPrivacyP1', 'settingsPrivacyP2', 'settingsPrivacyP3', 'settingsPrivacyP4',
     'settingsPricingHeading', 'settingsPricingUnavailable', 'settingsPricingSourceLabel',
     'settingsPricingNoSource', 'settingsPricingDate', 'settingsPricingNoDate', 'settingsPricingAge',
@@ -430,7 +430,9 @@ test('every settings string exists in English and Chinese', () => {
     'settingsRecoveryPrefsExplain', 'settingsRecoveryPrefsConfirmText', 'settingsRecoveryPrefsConfirm',
     'settingsResetPrefs', 'settingsRecoveryDataExplain', 'settingsRecoveryBackupText',
     'settingsRecoveryDataConfirm', 'settingsCopyBackup', 'settingsAboutHeading', 'settingsAboutVersion',
-    'settingsAboutCredit', 'settingsAboutSupport', 'settingsAboutContact', 'settingsAboutCatalogueNote',
+    'settingsAboutCredit', 'settingsAboutSupport', 'settingsAboutContact', 'settingsLinkWolfmark',
+    'settingsLinkRepo', 'settingsLinkBug', 'settingsLinkFeature', 'settingsLinkDocs',
+    'settingsAboutLicenceHeading', 'settingsAboutLicenceText', 'settingsAboutCatalogueNote',
     'settingsPanePlacement']
   for (const key of keys) {
     assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
@@ -455,6 +457,19 @@ test('every settings string exists in English and Chinese', () => {
   assert.match(zh.settingsCatalogueVersion('实时', '2026-11-04.3', ' · 生成于X'), /实时会员目录/)
   assert.match(zh.settingsCatalogueTotals(58, 50, 5, 3), /58 个方案/)
   assert.equal(zh.settingsAboutVersion('0.6.0'), 'SpendSense 0.6.0')
+  // WP12: the subtitle scans operational-first, and the licence disclosure
+  // names the exact distribution terms from NOTICE (GPL-3.0, no "or later").
+  assert.match(en.settingsSubtitle, /Budgets, pricing, updates/)
+  assert.match(zh.settingsSubtitle, /预算、价格、更新/)
+  assert.match(en.settingsAboutLicenceText, /GPL-3\.0/)
+  assert.match(en.settingsAboutLicenceText, /LICENSE/)
+  assert.match(en.settingsAboutLicenceText, /Apache License 2\.0/)
+  assert.match(zh.settingsAboutLicenceText, /GPL-3\.0/)
+  assert.match(zh.settingsAboutLicenceText, /licenses\/Apache-2\.0\.txt/)
+  // Support labels name destinations, never a response promise.
+  for (const key of ['settingsLinkWolfmark', 'settingsLinkRepo', 'settingsLinkBug', 'settingsLinkFeature', 'settingsLinkDocs', 'settingsAboutContact']) {
+    assert.doesNotMatch(en[key], /24\/7|guarantee|within .*hour/i)
+  }
 })
 
 test('every usage panel string exists in English and Chinese', () => {
