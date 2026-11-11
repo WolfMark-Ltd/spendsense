@@ -465,7 +465,7 @@ test('every settings string exists in English and Chinese', () => {
   assert.match(en.settingsAboutLicenceText, /LICENSE/)
   assert.match(en.settingsAboutLicenceText, /Apache License 2\.0/)
   assert.match(zh.settingsAboutLicenceText, /GPL-3\.0/)
-  assert.match(zh.settingsAboutLicenceText, /licences\/Apache-2\.0\.txt/)
+  assert.match(zh.settingsAboutLicenceText, /licenses\/Apache-2\.0\.txt/)
   // Support labels name destinations, never a response promise.
   for (const key of ['settingsLinkWolfmark', 'settingsLinkRepo', 'settingsLinkBug', 'settingsLinkFeature', 'settingsLinkDocs', 'settingsAboutContact']) {
     assert.doesNotMatch(en[key], /24\/7|guarantee|within .*hour/i)

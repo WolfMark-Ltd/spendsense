@@ -1,6 +1,7 @@
 // WP12: real Chromium layout of the reorganised Settings page with isolated,
 // invented values and no transport. Operational sections first, privacy notes
 // next to their controls, support links and licence disclosure in About.
+// Jump controls are buttons that scroll without touching the host hash.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
@@ -17,8 +18,6 @@ const ABOUT_LINKS = ['https://wolfmark.co.uk/', 'https://github.com/WolfMark-Ltd
   'https://github.com/WolfMark-Ltd/spendsense/issues/new?template=feature-request.yml',
   'https://github.com/WolfMark-Ltd/spendsense/blob/main/docs/quickstart.md',
   'https://wolfmark.co.uk/contact']
-const ANCHORS = ['#settings-budgets', '#settings-pricing', '#settings-live', '#settings-models',
-  '#settings-billing', '#settings-data', '#settings-diagnostics', '#settings-about']
 const CASES = {
   en: {
     heads: ['Budget guardrails', 'Pricing provenance and freshness', 'SpendSense Live Updates',
@@ -73,13 +72,12 @@ setTimeout(() => {
   for(const id of ['narrow-dark','wide-dark','narrow-light','wide-light']) {
     const el=document.getElementById(id), rect=el.getBoundingClientRect()
     const nav=el.querySelector('nav[aria-label]')
-    const anchors=[...(nav?.querySelectorAll('a') || [])].map(a=>a.getAttribute('href'))
+    const jumps=[...(nav?.querySelectorAll('button') || [])].map(b=>b.textContent)
     const outside=[...el.querySelectorAll('input,select,button,a,details')].filter(x=>{const r=x.getBoundingClientRect();return r.left < rect.left-1 || r.right > rect.right+1})
     const tabs=[...el.querySelectorAll('[role=\"tab\"]')].map(t=>t.getAttribute('aria-selected')+':'+t.tabIndex)
     out.layouts.push({id,
       heads:[...el.querySelectorAll('.wm-settings-grid h2')].map(h=>h.textContent),
-      navLabel:nav?.getAttribute('aria-label'), anchors,
-      anchorsResolve:anchors.every(h=>h.startsWith('#') && el.querySelector(h)),
+      navLabel:nav?.getAttribute('aria-label'), jumps,
       aboutLinks:[...el.querySelector('#settings-about').querySelectorAll('a')].map(a=>a.getAttribute('href')),
       aboutTargets:[...el.querySelector('#settings-about').querySelectorAll('a')].map(a=>a.getAttribute('target')+'|'+a.getAttribute('rel')),
       licence:el.querySelector('#settings-about details summary')?.textContent || '',
@@ -89,17 +87,35 @@ setTimeout(() => {
   }
   const sec = id => document.querySelector('#wide-light #'+id)?.textContent || ''
   out.privacy = [sec('settings-pricing'), sec('settings-models'), sec('settings-models'), sec('settings-data')]
-  const summary = document.querySelector('#wide-light #settings-about details summary')
-  summary?.focus()
-  out.focusedSummary = document.activeElement === summary
-  const details = summary?.closest('details')
-  const wasOpen = details?.open === true
-  summary?.click()
-  out.toggleWorks = details?.open === true && !wasOpen
-  const jump = document.querySelector('#wide-light nav[aria-label] a')
-  jump?.focus()
-  out.focusedJump = document.activeElement === jump
-  document.getElementById('result').textContent=JSON.stringify(out)
+  // Jump behaviour: instant scroll (reduced motion), host hash untouched.
+  window.matchMedia = () => ({ matches: true })
+  const narrow = document.getElementById('narrow-dark')
+  const hashBefore = location.hash
+  const jumpBtns = [...narrow.querySelectorAll('nav[aria-label] button')]
+  const about = document.getElementById('settings-about')
+  jumpBtns[jumpBtns.length - 1]?.click()
+  out.hashUnchanged = location.hash === hashBefore
+  setTimeout(() => {
+    const bar = narrow.querySelector('.wm-product-tabs')
+    const targetTop = about.getBoundingClientRect().top
+    out.jumpVisible = targetTop >= bar.getBoundingClientRect().bottom - 1
+    out.jumpInView = targetTop >= 0 && targetTop < window.innerHeight
+    out.scrollMargins = {
+      narrow: getComputedStyle(narrow.querySelector('#settings-about')).scrollMarginTop,
+      wide: getComputedStyle(document.getElementById('wide-dark').querySelector('#settings-about')).scrollMarginTop,
+    }
+    const summary = document.querySelector('#wide-light #settings-about details summary')
+    summary?.focus()
+    out.focusedSummary = document.activeElement === summary
+    const details = summary?.closest('details')
+    const wasOpen = details?.open === true
+    summary?.click()
+    out.toggleWorks = details?.open === true && !wasOpen
+    const jump = document.querySelector('#wide-light nav[aria-label] button')
+    jump?.focus()
+    out.focusedJump = document.activeElement === jump
+    document.getElementById('result').textContent=JSON.stringify(out)
+  }, 100)
 },500)
 `)
       const esbuild = (await import(pathToFileURL(join(modules, 'esbuild/lib/main.js')))).default
@@ -108,7 +124,7 @@ setTimeout(() => {
         nodePaths: [modules], logLevel: 'warning', jsx: 'automatic' })
       const html = join(dir, `page-${locale}.html`)
       writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><style>
-*{box-sizing:border-box}body{margin:0;font:13px/1.5 system-ui} .case{margin:10px;display:inline-block;vertical-align:top;background:var(--ui-fill-primary);color:var(--ui-text-primary)}
+*{box-sizing:border-box}body{margin:0;font:13px/1.5 system-ui} .case{margin:10px;display:inline-block;vertical-align:top;background:var(--ui-fill-primary);color:var(--ui-text-primary);container-type:inline-size}
 .dark{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--ui-fill-tertiary:#232633;--ui-stroke-secondary:#2b2f40;--ui-text-primary:#eef0f6;--ui-text-secondary:#b9bdd1;--ui-text-tertiary:#a9aec6;--ui-text-quaternary:#9398b0;--ui-accent:#4f7cff;--ui-warning:#f5b544;--ui-error:#f26d6d}
 .light{--ui-fill-primary:#fff;--ui-fill-secondary:#f2f4f7;--ui-fill-tertiary:#e3e5eb;--ui-stroke-secondary:#c5cbd5;--ui-text-primary:#151823;--ui-text-secondary:#414655;--ui-text-tertiary:#555b69;--ui-text-quaternary:#626877;--ui-accent:#3157c0;--ui-warning:#9a5e00;--ui-error:#b42318}
 .narrow{width:380px}.wide{width:1080px}#result{display:none}
@@ -122,8 +138,7 @@ setTimeout(() => {
       for (const layout of data.layouts) {
         assert.deepEqual(layout.heads, CASES[locale].heads, `${locale} ${layout.id}: operational sections first`)
         assert.equal(layout.navLabel, CASES[locale].navLabel, `${locale} ${layout.id}`)
-        assert.deepEqual(layout.anchors, ANCHORS, `${locale} ${layout.id}`)
-        assert.equal(layout.anchorsResolve, true, `${locale} ${layout.id}: every jump link resolves`)
+        assert.deepEqual(layout.jumps, CASES[locale].heads, `${locale} ${layout.id}: jump labels match sections`)
         assert.deepEqual(layout.aboutLinks, ABOUT_LINKS, `${locale} ${layout.id}`)
         assert.ok(layout.aboutTargets.every(t => t === '_blank|noreferrer'), `${locale} ${layout.id}`)
         assert.equal(layout.licence, CASES[locale].licence, `${locale} ${layout.id}`)
@@ -137,9 +152,13 @@ setTimeout(() => {
       for (const [index, snippet] of CASES[locale].privacy.entries()) {
         assert.match(data.privacy[index], new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${locale}: privacy note ${index} sits with its control`)
       }
+      assert.equal(data.hashUnchanged, true, `${locale}: jump scroll leaves the host hash alone`)
+      assert.equal(data.jumpVisible, true, `${locale}: jumped-to heading lands below the sticky bar`)
+      assert.equal(data.jumpInView, true, `${locale}: jumped-to heading is in view`)
+      assert.deepEqual(data.scrollMargins, { narrow: '150px', wide: '70px' }, `${locale}: scroll offset fits the bar`)
       assert.equal(data.focusedSummary, true, `${locale}: disclosure summary is keyboard-focusable`)
       assert.equal(data.toggleWorks, true, `${locale}: disclosure toggles`)
-      assert.equal(data.focusedJump, true, `${locale}: jump links are keyboard-focusable`)
+      assert.equal(data.focusedJump, true, `${locale}: jump controls are keyboard-focusable`)
     }
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })

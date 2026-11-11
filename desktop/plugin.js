@@ -3349,13 +3349,20 @@ function evidenceForMode(rows, mode) {
     : ['provider_reported', 'api_equivalent', 'credits_consumed', 'incremental_cash', 'subscription_fee']
   return rows.filter(row => keys.includes(row.key))
 }
-const $ledgerTab = atom(typeof location !== 'undefined' && /memberships?/.test(location.hash) ? 'memberships'
-  : typeof location !== 'undefined' && /billing/.test(location.hash) ? 'costs'
-    : typeof location !== 'undefined' && /usage/.test(location.hash) ? 'usage'
-      : typeof location !== 'undefined' && /costs/.test(location.hash) ? 'costs'
-        : typeof location !== 'undefined' && /reports/.test(location.hash) ? 'reports'
-        : typeof location !== 'undefined' && /news/.test(location.hash) ? 'news'
-        : typeof location !== 'undefined' && /settings/.test(location.hash) ? 'settings' : 'overview')
+/** Initial tab from the host hash. Settings is matched before billing so a
+ * settings-section hash (e.g. `#settings-billing`) selects Settings. */
+function ledgerTabForHash(hash) {
+  const value = String(hash || '')
+  if (/memberships?/.test(value)) return 'memberships'
+  if (/settings/.test(value)) return 'settings'
+  if (/billing/.test(value)) return 'costs'
+  if (/usage/.test(value)) return 'usage'
+  if (/costs/.test(value)) return 'costs'
+  if (/reports/.test(value)) return 'reports'
+  if (/news/.test(value)) return 'news'
+  return 'overview'
+}
+const $ledgerTab = atom(typeof location !== 'undefined' ? ledgerTabForHash(location.hash) : 'overview')
 const $billingNotice = atom(null)
 const $billingProfiles = atom({ profiles: [], loading: true, error: '' })
 
@@ -4240,7 +4247,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}',
   '.wm-product .wm-settings-grid .wm-product-section{min-width:0}',
   '.wm-product .wm-settings-grid [id]{scroll-margin-top:70px}',
-  '.wm-product a.wm-account-chip{text-decoration:none}',
+  '@container(max-width:760px){.wm-product .wm-settings-grid [id]{scroll-margin-top:150px}}',
   '.wm-product .wm-setting-action{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}',
   '.wm-product .wm-setting-toggle{display:flex;align-items:flex-start;gap:9px;margin:10px 0;padding:10px;border:1px solid var(--ui-stroke-secondary);border-radius:7px;background:var(--ui-fill-secondary);color:var(--ui-text-primary);font-size:12px;line-height:1.45}',
   '.wm-product .wm-setting-toggle input{margin:2px 0 0;accent-color:var(--ui-accent)}',
@@ -5043,6 +5050,14 @@ function OverviewPage() {
   })
 }
 
+/** In-page jump that never touches the host hash (hash changes corrupt returnTo). */
+function jumpToSettingsSection(id) {
+  try {
+    if (typeof document === 'undefined') return
+    const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    document.getElementById(id)?.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+  } catch {}
+}
 function SettingsPage() {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
@@ -5226,7 +5241,8 @@ function SettingsPage() {
         ['settings-data', 'settingsRecoveryHeading'],
         ['settings-diagnostics', 'settingsDiagnosticsHeading'],
         ['settings-about', 'settingsAboutHeading'],
-      ].map(([id, key]) => jsx('a', { className: 'wm-account-chip', href: '#' + id, children: t(key) }, id)) }),
+      ].map(([id, key]) => jsx('button', { type: 'button', className: 'wm-account-chip',
+        onClick: () => jumpToSettingsSection(id), children: t(key) }, id)) }),
       jsxs('div', { className: 'wm-settings-grid', children: keyedElementChildren([
         jsx('div', { id: 'settings-budgets', children: jsx(BudgetPanel, { manage: true }) }),
         jsxs('section', { id: 'settings-pricing', className: 'wm-product-section', children: [
@@ -10954,7 +10970,7 @@ const I18N = {
     settingsLinkFeature: 'Request a feature',
     settingsLinkDocs: 'Quick-start guide',
     settingsAboutLicenceHeading: 'Licence & credits',
-    settingsAboutLicenceText: 'SpendSense is distributed under GPL-3.0 — see LICENSE in the repository. Third-party credits are in NOTICE, and the Apache License 2.0 text covering the AFei component is in licences/Apache-2.0.txt.',
+    settingsAboutLicenceText: 'SpendSense is distributed under GPL-3.0 — see LICENSE in the repository. Third-party credits are in NOTICE, and the Apache License 2.0 text covering the AFei component is in licenses/Apache-2.0.txt.',
     settingsAboutCatalogueNote: 'The bundled pricing and membership catalogue is maintained through normal reviewed plugin releases. No user-defined plan is overwritten by a catalogue update.',
     settingsPanePlacement: 'The SpendSense pane can be dragged to the left or right using Hermes’ supported layout controls. Hermes remembers your placement across reloads.',
     // Usage analytics helpers.
@@ -12274,7 +12290,7 @@ const I18N = {
     settingsLinkFeature: '功能建议',
     settingsLinkDocs: '快速入门指南',
     settingsAboutLicenceHeading: '许可与致谢',
-    settingsAboutLicenceText: 'SpendSense 遵循 GPL-3.0 发布——见仓库中的 LICENSE。第三方致谢见 NOTICE，涵盖 AFei 组件的 Apache License 2.0 全文见 licences/Apache-2.0.txt。',
+    settingsAboutLicenceText: 'SpendSense 遵循 GPL-3.0 发布——见仓库中的 LICENSE。第三方致谢见 NOTICE，涵盖 AFei 组件的 Apache License 2.0 全文见 licenses/Apache-2.0.txt。',
     settingsAboutCatalogueNote: '内置价格与会员目录通过常规评审插件版本维护。目录更新不会覆盖任何用户自定义方案。',
     settingsPanePlacement: '可使用 Hermes 支持的布局控件将 SpendSense 面板拖到左侧或右侧。Hermes 会在重新加载后记住您的位置。',
     // 用量分析助手。
@@ -12687,7 +12703,7 @@ export const __test = {
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
-  CostsPage, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark, PRODUCT_CSS,
+  CostsPage, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
   $settingsConfirmation, $modelRefreshState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,

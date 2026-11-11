@@ -517,6 +517,19 @@ test('close never loops back onto the ledger; falls back to new chat', () => {
   assert.notEqual(__nav.at(-1), '/spend-sense')
 })
 
+test('settings-section hashes select Settings, never Costs', () => {
+  assert.equal(T.ledgerTabForHash('#settings-billing'), 'settings')
+  assert.equal(T.ledgerTabForHash('#settings'), 'settings')
+  assert.equal(T.ledgerTabForHash('#membership'), 'memberships')
+  assert.equal(T.ledgerTabForHash('#billing'), 'costs')
+  assert.equal(T.ledgerTabForHash('#costs'), 'costs')
+  assert.equal(T.ledgerTabForHash('#usage'), 'usage')
+  assert.equal(T.ledgerTabForHash('#reports'), 'reports')
+  assert.equal(T.ledgerTabForHash('#news'), 'news')
+  assert.equal(T.ledgerTabForHash(''), 'overview')
+  assert.equal(T.ledgerTabForHash(null), 'overview')
+})
+
 test('per-conversation totals survive a restart (new runtime id, counters reset)', () => {
   let led = T.emptyLedger()
   const u = (input, output, cacheRead, calls) => ({ model: 'gpt-4o', input, output, cache_read: cacheRead, calls, total: input + output + cacheRead })
