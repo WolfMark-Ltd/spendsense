@@ -800,3 +800,124 @@ test('the composition bar labels every part with its share', async () => {
   const fills = [...bar.querySelectorAll('.wm-mix-fill')].map(el => el.style.width)
   assert.deepEqual(fills, ['20%', '60%', '20%'])
 })
+
+// --- WP13: compact sidebar ------------------------------------------------------
+const WP13_LONG_MODEL = 'claude-opus-4-6-thinking-20250601-xlarge-extended-reasoning'
+
+const renderHeader = async (view, presence = 'live') => {
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => {
+    root.render(React.createElement(T.MeterHeader, { presence, t: key => key, view }))
+  })
+  return container
+}
+
+test('a long model name renders in full with a matching tooltip', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage({ model: WP13_LONG_MODEL }))
+  const container = await renderMeter()
+  await flush()
+  const model = container.querySelector('.wm-model')
+  assert.equal(model.textContent, WP13_LONG_MODEL, 'the name is never truncated by React')
+  assert.equal(model.getAttribute('title'), WP13_LONG_MODEL, 'the tooltip carries the full name')
+  const badge = container.querySelector('.wm-provider-badge')
+  assert.equal(badge.textContent, 'providerUnknown', 'no provider id is synthesised')
+  assert.equal(badge.getAttribute('title'), 'providerUnknownTip')
+  assert.doesNotMatch(badge.textContent, /undefined|null/, 'no raw placeholder leaks')
+})
+
+test('a recorded route renders the provider badge with the membership label', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('runtime-9')
+  host.state.focusedStoredSessionId.set('stored-9')
+  host.state.model.set('gpt-4o')
+  const ledger = T.emptyLedger()
+  ledger.sessions['stored-9'] = histBucket({ provider: 'anthropic' })
+  T.$ledger.set(ledger)
+  const container = await renderMeter()
+  await flush()
+  const badge = container.querySelector('.wm-provider-badge')
+  assert.equal(badge.textContent, 'memProviderAnthropic', 'mapped providers localise')
+  assert.equal(badge.getAttribute('title'), 'providerTip')
+})
+
+test('an unmapped provider prints its id as-is with the raw-id tooltip', async () => {
+  const container = await renderHeader({ model: 'gpt-4o', provider: 'openai', fromHistory: true })
+  const badge = container.querySelector('.wm-provider-badge')
+  assert.equal(badge.textContent, 'openai')
+  assert.equal(badge.getAttribute('title'), 'providerTip')
+  const unknown = await renderHeader({ model: 'gpt-4o', provider: null, fromHistory: false })
+  const unknownBadge = unknown.querySelector('.wm-provider-badge')
+  assert.equal(unknownBadge.textContent, 'providerUnknown')
+  assert.equal(unknownBadge.getAttribute('title'), 'providerUnknownTip')
+})
+
+test('the WP13 labels exist in English and Chinese', () => {
+  const { en, zh } = T.I18N
+  assert.equal(en.openLedger, 'Open SpendSense')
+  assert.equal(zh.openLedger, '打开 SpendSense')
+  assert.equal(en.memProviderAnthropic, 'Anthropic')
+  assert.equal(zh.memProviderAnthropic, 'Anthropic 服务')
+  assert.match(en.providerTip('acme'), /acme/)
+  assert.match(zh.providerTip('acme'), /acme/)
+  assert.ok(en.providerUnknown.length > 0 && zh.providerUnknown.length > 0)
+  assert.ok(en.providerUnknownTip.length > 0 && zh.providerUnknownTip.length > 0)
+})
+
+test('the open-ledger button routes to the ledger from the live meter', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage())
+  const container = await renderMeter()
+  await flush()
+  const button = container.querySelector('.wm-meter-sections .wm-open-ledger')
+  assert.ok(button, 'the live meter offers the ledger action')
+  assert.equal(button.tagName, 'BUTTON', 'a native button stays keyboard-operable')
+  assert.equal(button.getAttribute('type'), 'button')
+  assert.equal(button.getAttribute('tabindex'), null, 'the button stays in the tab order')
+  assert.equal(button.textContent, 'openLedger')
+  const seen = []
+  const orig = host.navigate
+  host.navigate = route => seen.push(route)
+  try {
+    await React.act(async () => {
+      button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    })
+    await flush(2)
+  } finally {
+    host.navigate = orig
+  }
+  assert.deepEqual(seen, ['/spend-sense'])
+})
+
+test('the empty state offers the ledger action', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('brand-new')
+  const container = await renderMeter()
+  await flush()
+  const button = container.querySelector('.wm-meter-empty .wm-open-ledger')
+  assert.ok(button, 'the empty state offers the ledger action')
+  assert.equal(button.tagName, 'BUTTON', 'a native button stays keyboard-operable')
+  const seen = []
+  const orig = host.navigate
+  host.navigate = route => seen.push(route)
+  try {
+    await React.act(async () => {
+      button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    })
+    await flush(2)
+  } finally {
+    host.navigate = orig
+  }
+  assert.deepEqual(seen, ['/spend-sense'])
+})
+
+test('the meter stylesheet pins the compact container rules', () => {
+  assert.match(T.METER_CSS, /container-type:\s*inline-size/, 'the pane is a container')
+  assert.match(T.METER_CSS, /@container[^{]*max-width:\s*320px/, 'the 320px compact query exists')
+  assert.match(T.METER_CSS, /\.wm-open-ledger/, 'the ledger button is styled')
+})

@@ -47,6 +47,7 @@ const THEMES = {
 // pane + wide product. Eight runs (× dark/light × en/zh) keep the browser
 // matrix affordable while many suite files drive Chrome in parallel.
 const WIDTHS = [[268, 300], [380, 900]]
+const WP13_LONG_MODEL = 'claude-opus-4-6-thinking-20250601-xlarge-extended-reasoning'
 const LOCALES = ['en', 'zh']
 
 if (!chrome) {
@@ -86,6 +87,7 @@ body{margin:0;background:${THEMES[theme].background};font:400 13px/1.5 system-ui
 #app{display:grid;gap:12px;padding:10px;justify-items:start}
 #pane-wrap{width:${paneWidth}px}
 #product-case{width:${productWidth}px;height:440px}
+#wp13-wrap{width:268px;max-width:100%;box-sizing:border-box}
 #tooltip-layout-result{display:none}
 </style></head><body><div id="app"></div><div id="tooltip-layout-result"></div>
 <script>globalThis.__tooltipLocale=${JSON.stringify(locale)}</script>
@@ -166,6 +168,23 @@ body{margin:0;background:${THEMES[theme].background};font:400 13px/1.5 system-ui
             }
             assert.equal(result.hostCalls, 0, `[${id}] no host/gateway calls were made`)
             assert.equal(result.navigations, 0, `[${id}] no navigation happened`)
+            assert.equal(result.wp13 && result.wp13.fixtureFound, true, `[${id}] the WP13 fixture renders`)
+            assert.ok(Math.abs(result.wp13.fixtureWidth - 268) <= 2,
+              `[${id}] WP13 fixture is ~268px (got ${result.wp13.fixtureWidth})`)
+            assert.ok(result.wp13.overflowX <= 1,
+              `[${id}] WP13 header fits at 268px without horizontal overflow (got ${result.wp13.overflowX})`)
+            assert.equal(result.wp13.model && result.wp13.model.text, WP13_LONG_MODEL,
+              `[${id}] WP13 long model renders in full`)
+            assert.equal(result.wp13.model && result.wp13.model.title, WP13_LONG_MODEL,
+              `[${id}] WP13 long model keeps a tooltip`)
+            assert.equal(result.wp13.figure, '—', `[${id}] WP13 unknown cost renders an em dash`)
+            if (locale === 'en') {
+              assert.equal(result.wp13.badge && result.wp13.badge.text, 'provider ?', `[${id}] WP13 unknown provider badge`)
+              assert.match(result.wp13.badge.title || '', /estimate/, `[${id}] WP13 unknown provider tooltip`)
+            } else {
+              assert.equal(result.wp13.badge && result.wp13.badge.text, '供应商未知', `[${id}] WP13 unknown provider badge (zh)`)
+              assert.ok((result.wp13.badge.title || '').length > 0, `[${id}] WP13 unknown provider tooltip (zh)`)
+            }
           }
         }
       }
@@ -181,7 +200,7 @@ body{margin:0;background:${THEMES[theme].background};font:400 13px/1.5 system-ui
         const bundleSource = await import('node:fs').then(fs => fs.readFileSync(bundle, 'utf8'))
         for (const theme of Object.keys(THEMES)) {
           for (const locale of LOCALES) {
-            for (const [shot, paneW, productW] of [['rates-source', 380, 380], ['wp02-edge-bottom', 380, 900]]) {
+            for (const [shot, paneW, productW] of [['rates-source', 380, 380], ['wp02-edge-bottom', 380, 900], ['wp13-compact', 268, 380]]) {
               const html = join(work, `shot-${theme}-${locale}-${shot}.html`)
               writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><style>
 :root{${THEMES[theme].tokens}}
@@ -189,6 +208,7 @@ body{margin:0;background:${THEMES[theme].background};font:400 13px/1.5 system-ui
 #app{display:grid;gap:12px;padding:10px;justify-items:start}
 #pane-wrap{width:${paneW}px}
 #product-case{width:${productW}px;height:440px}
+#wp13-wrap{width:268px;max-width:100%;box-sizing:border-box}
 #tooltip-layout-result{display:none}
 </style></head><body><div id="app"></div><div id="tooltip-layout-result"></div>
 <script>globalThis.__tooltipLocale=${JSON.stringify(locale)}</script>

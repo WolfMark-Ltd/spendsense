@@ -28,7 +28,14 @@ try {
           React.createElement('div', { style: { height: '560px' } }),
           React.createElement('div', { id: 'edge-bottom-row', style: { display: 'flex', justifyContent: 'flex-end' } },
             React.createElement(T.InfoTip, { id: 'wp02-edge-bottom', label: t('infoLabel'), text: t('budgetHelp') })))
-      }))))
+      })),
+    // WP13: compact-header fixture — long model, unknown provider, unknown cost.
+    React.createElement('div', { id: 'wp13-wrap', className: 'wm-pane' },
+      React.createElement(T.MeterHeader, { presence: 'recorded', t,
+        view: { model: 'claude-opus-4-6-thinking-20250601-xlarge-extended-reasoning', provider: null, fromHistory: true } }),
+      React.createElement(T.CostKpi, { t,
+        view: { cost: null, costSource: 'none', bucket: {}, foreignSlug: null,
+          providerUnknown: true, sinceAt: null, partial: false } }))))
   setTimeout(() => {
     try {
       const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -149,6 +156,27 @@ try {
           out.tooltips['wp02-edge-bottom'].productScroll = {
             scrollWidth: product.scrollWidth, clientWidth: product.clientWidth,
             scrollHeight: product.scrollHeight, clientHeight: product.clientHeight,
+          }
+        }
+        // WP13: compact-header worst case — long model, unknown provider/cost at 268px.
+        {
+          const fixture = document.querySelector('#wp13-wrap')
+          out.wp13 = { fixtureFound: !!fixture }
+          if (fixture) {
+            const badge = fixture.querySelector('.wm-provider-badge')
+            const model = fixture.querySelector('.wm-model')
+            const figure = fixture.querySelector('.wm-kpi-figure')
+            out.wp13.fixtureWidth = Math.round(rectOf(fixture).width)
+            out.wp13.overflowX = fixture.scrollWidth - fixture.clientWidth
+            out.wp13.badge = badge ? {
+              text: badge.textContent.trim(),
+              title: badge.getAttribute('title') || '',
+            } : null
+            out.wp13.model = model ? {
+              text: model.textContent.trim(),
+              title: model.getAttribute('title') || '',
+            } : null
+            out.wp13.figure = figure ? figure.textContent.trim() : null
           }
         }
         // Locale markers: real dictionary copy behind the shared tips.
