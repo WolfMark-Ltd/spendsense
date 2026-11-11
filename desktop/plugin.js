@@ -1229,6 +1229,50 @@ function backendMethod(options) {
   return String(options?.method || 'GET').toUpperCase()
 }
 
+function backendRejectedNewMembershipField(failure) {
+  const payloads = [
+    failure?.detail, failure?.error?.detail, failure?.body?.detail,
+    failure?.response?.data?.detail, failure?.response?.body?.detail,
+    Array.isArray(failure?.body) ? failure.body : undefined,
+    Array.isArray(failure?.response?.data) ? failure.response.data : undefined,
+    Array.isArray(failure?.response?.body) ? failure.response.body : undefined,
+  ]
+  const message = typeof failure === 'string' ? failure : failure?.message
+  const ipcPrefix = /^(?:IPC(?:\s+Error)?\s*:\s*(?:Error:\s*)?|Error invoking remote method\s+['"][^'"\r\n]+['"]:\s*(?:Error:\s*)?)/i
+  const httpMessage = String(message || '').replace(ipcPrefix, '')
+  const jsonError = httpMessage.match(/^(?:Error:\s*)?(?:HTTP(?:\/\d(?:\.\d)?)?\s+)?422:\s*(\{[\s\S]*\}|\[[\s\S]*\])\s*$/i)
+  if (jsonError) {
+    try {
+      const body = JSON.parse(jsonError[1])
+      payloads.push(Array.isArray(body) ? body : body?.detail
+        ?? (body && typeof body === 'object' && ('loc' in body || 'type' in body || 'msg' in body) ? body : undefined))
+    } catch {}
+  }
+
+  const hasStructuredDetails = payloads.some(value => Array.isArray(value)
+    || (value && typeof value === 'object'))
+  const entries = payloads.flatMap(value => Array.isArray(value)
+    ? value
+    : value && typeof value === 'object' ? [value] : [])
+  if (hasStructuredDetails) {
+    return entries.some(entry => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false
+      const fields = [
+        Array.isArray(entry.loc) ? String(entry.loc.at(-1) || '') : '',
+        typeof entry.field === 'string' ? entry.field : '',
+      ]
+      const identifiesNewField = fields.some(value => /\b(?:billing_arrangement|api_only)\b/i.test(value))
+      const rejection = [entry.type, entry.msg].filter(value => typeof value === 'string').join(' ')
+      const rejectsUnknownField = /extra[_\s.-]?forbidden|extra\s+(?:fields?|inputs?)\s+(?:are\s+)?(?:not permitted|not allowed|forbidden)|(?:unknown|unexpected)\s+(?:fields?|inputs?)\b|(?:fields?|inputs?)\s+(?:are\s+)?(?:unknown|unexpected|forbidden|not permitted|not allowed)/i.test(rejection)
+      return identifiesNewField && rejectsUnknownField
+    })
+  }
+
+  const text = [httpMessage, ...payloads.filter(value => typeof value === 'string')].join(' ')
+  return /\b(?:billing_arrangement|api_only)\b/i.test(text)
+    && /extra[_ ]forbidden|extra\s+(?:fields?|inputs?)\s+(?:are\s+)?(?:not permitted|not allowed|forbidden)|(?:unknown|unexpected)\s+(?:fields?|inputs?)|(?:fields?|inputs?)\s+(?:are\s+)?(?:unknown|unexpected|forbidden|not permitted|not allowed)/i.test(text)
+}
+
 function backendCompatibilityKind(path, options, failure) {
   const method = backendMethod(options)
   const route = backendRoute(path)
@@ -1247,8 +1291,7 @@ function backendCompatibilityKind(path, options, failure) {
   }
 
   if (status === 422 && method === 'PUT' && /^\/membership\/accounts\/[^/]+$/.test(route)
-      && /\b(?:billing_arrangement|api_only)\b/i.test(message)
-      && /extra[_ ](?:forbidden|fields?|inputs?)|(?:unknown|unexpected)\s+(?:fields?|inputs?)|(?:fields?|inputs?)\s+(?:are\s+)?(?:unknown|unexpected|not permitted|not allowed)/i.test(message)) {
+      && backendRejectedNewMembershipField(failure)) {
     return 'unknown_new_membership_fields'
   }
   return null
@@ -1281,6 +1324,13 @@ function clearBackendCompatibilityFailure(identity, route, method) {
   const next = current.filter(item => item.identity !== identity
     || item.route !== route || item.method !== method)
   if (next.length !== current.length) $backendCompatibility.set(next)
+}
+
+function hasBackendCompatibilityFailure(identity, route, method) {
+  const normalizedRoute = backendRoute(route)
+  const normalizedMethod = String(method || 'GET').toUpperCase()
+  return $backendCompatibility.get().some(item => item.identity === identity
+    && item.route === normalizedRoute && item.method === normalizedMethod)
 }
 
 async function backendRequest(path, options = {}, transport = rest) {
@@ -7817,7 +7867,8 @@ function ReportsPage() {
   // period or locale withholds it until the next explicit Generate.
   const matches = current && current.days === days && current.lang === lang ? current : null
   const failed = !!(report.error && membershipIdentityCurrent(identity))
-  const compatibilityError = isBackendCompatibilityError(report.error)
+  const compatibilityWarning = isBackendCompatibilityError(report.error)
+    && hasBackendCompatibilityFailure(identity, report.error.path, 'GET')
   return jsx(ProductShell, { pageStyles: REPORTS_CSS, children:
     jsxs('div', { className: 'wm-shell wm-reports', children: [
       jsxs('div', { className: 'wm-reports-bar', children: [
@@ -7841,7 +7892,7 @@ function ReportsPage() {
             children: t('rpStale', fmtDay(matches.generated_at)) }, 'stale'),
           jsx(DigestPreview, { report: matches }, 'preview'),
         ] })
-        : compatibilityError
+        : compatibilityWarning
           ? null
           : failed
           ? jsxs('div', { className: 'wm-digest-error', children: [

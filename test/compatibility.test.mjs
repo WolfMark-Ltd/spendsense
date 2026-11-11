@@ -115,6 +115,17 @@ test('only an unknown newer field on the account write is treated as 422 skew', 
   const mismatch = await requestError('/membership/accounts/a', 'PUT', 422, extraField)
   assert.equal(T.isBackendCompatibilityError(mismatch), true)
 
+  for (const details of [
+    [{ type: 'extra_forbidden', loc: ['body', 'unrelated'], msg: 'Extra inputs are not permitted', input: 'billing_arrangement' }],
+    [
+      { type: 'value_error', loc: ['body', 'billing_arrangement'], msg: 'billing arrangement is invalid' },
+      { type: 'extra_forbidden', loc: ['body', 'unrelated'], msg: 'Extra inputs are not permitted' }
+    ],
+  ]) {
+    const ordinaryValidation = await requestError('/membership/accounts/a', 'PUT', 422, { detail: details })
+    assert.equal(T.isBackendCompatibilityError(ordinaryValidation), false)
+  }
+
   const invalidValue = await requestError('/membership/accounts/a', 'PUT', 422, {
     detail: 'billing arrangement is invalid'
   })
@@ -222,8 +233,14 @@ test('route recovery clears only its identity-route-method failure', async () =>
     T.$scopeConnection.set('another-connection')
     await T.backendRequest('/economics/summary?days=7', { method: 'GET' }, async () => ({ ok: true }))
     assert.deepEqual(T.$backendCompatibility.get(), failures)
+    const otherConnectionWarnings = T.ProductShell({ children: null }).props.children
+      .filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility')
+    assert.equal(otherConnectionWarnings.length, 0)
 
     T.$scopeConnection.set(previousConnection)
+    const originalConnectionWarnings = T.ProductShell({ children: null }).props.children
+      .filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility')
+    assert.equal(originalConnectionWarnings.length, 1)
     await T.backendRequest(failedMembershipPath, { method: 'GET' }, async () => ({ ok: true }))
     assert.deepEqual(T.$backendCompatibility.get(), failures)
 
@@ -242,7 +259,9 @@ test('route recovery clears only its identity-route-method failure', async () =>
     const generate = reportNodes.find(node => node.props?.children === en('rpGenerate'))
     assert.ok(generate)
     assert.equal(typeof generate.props.onClick, 'function')
-    assert.equal(generate.props.disabled, undefined)
+    const generateButton = allNodes(T.AsyncButton(generate.props)).find(node => node.type === T.ProductButton)
+    assert.ok(generateButton)
+    assert.notEqual(generateButton.props.disabled, true)
     assert.doesNotMatch(allText(reportContent), /Report unavailable|Retry|此连接无法生成报告|重试/)
 
     await T.backendRequest('/reports/digest?days=7&lang=en', { method: 'GET' }, async () => ({ ok: true }))
@@ -254,6 +273,48 @@ test('route recovery clears only its identity-route-method failure', async () =>
     assert.equal(warningsAfterAllRecoveries.length, 0)
   } finally {
     T.$scopeConnection.set(previousConnection)
+    T.$backendCompatibility.set(previousCompatibility)
+    restoreGlobals(globals)
+  }
+})
+
+test('a recovered digest route restores report error and retry guidance', async () => {
+  const previousCompatibility = T.$backendCompatibility.get()
+  const globals = snapshotGlobals(['compatibilityQueryResponse'])
+  T.$backendCompatibility.set([])
+  try {
+    let digestError
+    await assert.rejects(
+      T.backendRequest('/reports/digest?days=7&lang=en', { method: 'GET' }, failedTransport(404, { detail: 'Not Found' })),
+      error => { digestError = error; return T.isBackendCompatibilityError(error) }
+    )
+    globalThis.compatibilityQueryResponse = {
+      data: null, error: digestError, isLoading: false, isFetching: false, refetch() {}
+    }
+    const incompatibleReport = T.ReportsPage()
+    const incompatibleShell = T.ProductShell({ children: incompatibleReport.props.children })
+    const incompatibleWarnings = incompatibleShell.props.children
+      .filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility')
+    assert.equal(incompatibleWarnings.length, 1)
+    assert.doesNotMatch(allText(incompatibleReport.props.children), /Report unavailable|Retry|此连接无法生成报告|重试/)
+
+    await T.backendRequest('/reports/digest?days=30&lang=en', { method: 'GET' }, async () => ({ ok: true }))
+    assert.deepEqual(T.$backendCompatibility.get(), [])
+
+    const recoveredReport = T.ReportsPage()
+    const recoveredShell = T.ProductShell({ children: recoveredReport.props.children })
+    const recoveredWarnings = recoveredShell.props.children
+      .filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility')
+    assert.equal(recoveredWarnings.length, 0)
+    assert.ok(allText(recoveredReport.props.children).includes(en('rpError')))
+    assert.ok(allText(recoveredReport.props.children).includes(en('rpRetry')))
+    const generate = allNodes(recoveredReport.props.children)
+      .find(node => node.props?.children === en('rpGenerate'))
+    assert.ok(generate)
+    const generateButton = allNodes(T.AsyncButton(generate.props)).find(node => node.type === T.ProductButton)
+    assert.ok(generateButton)
+    assert.notEqual(generateButton.props.disabled, true)
+  } finally {
     T.$backendCompatibility.set(previousCompatibility)
     restoreGlobals(globals)
   }
@@ -318,7 +379,9 @@ test('the installed transport wrapper records one translated warning and removes
     assert.doesNotMatch(labels, /Report unavailable|Retry|此连接无法生成报告|重试/)
     const generate = allNodes(reportContent).find(node => node.props?.children === zh('rpGenerate'))
     assert.ok(generate)
-    assert.equal(generate.props.disabled, undefined)
+    const generateButton = allNodes(T.AsyncButton(generate.props)).find(node => node.type === T.ProductButton)
+    assert.ok(generateButton)
+    assert.notEqual(generateButton.props.disabled, true)
     assert.equal(globalThis.compatibilityRetried, undefined)
   } finally {
     T.restoreRest(previousRest)
