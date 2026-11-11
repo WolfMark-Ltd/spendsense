@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { createDevToolsClient, pollForMeasurement } from './reports-layout.devtools.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const MODULES = join(ROOT, 'test/harness/node_modules')
@@ -32,43 +33,28 @@ async function chromiumSnapshot(url, profile, width, height) {
     const target = await targetResponse.json()
 
     socket = new WebSocket(target.webSocketDebuggerUrl)
-    const pending = new Map()
-    let commandId = 0
-    let resolveLoad
-    const loaded = new Promise(resolve => { resolveLoad = resolve })
-    socket.addEventListener('message', event => {
-      const message = JSON.parse(String(event.data))
-      if (message.id && pending.has(message.id)) {
-        const { resolve, reject } = pending.get(message.id)
-        pending.delete(message.id)
-        if (message.error) reject(new Error(message.error.message))
-        else resolve(message.result)
-      } else if (message.method === 'Page.loadEventFired') resolveLoad()
-    })
+    const devtools = createDevToolsClient(socket)
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('Chromium DevTools connection timed out')), 5000)
       socket.addEventListener('open', () => { clearTimeout(timeout); resolve() }, { once: true })
       socket.addEventListener('error', () => { clearTimeout(timeout); reject(new Error('Chromium DevTools connection failed')) }, { once: true })
+      socket.addEventListener('close', () => {
+        clearTimeout(timeout)
+        reject(new Error('Chromium DevTools connection closed before opening'))
+      }, { once: true })
     })
-    const command = (method, params = {}) => new Promise((resolve, reject) => {
-      const id = ++commandId
-      pending.set(id, { resolve, reject })
-      socket.send(JSON.stringify({ id, method, params }))
-    })
-    await command('Page.enable')
-    await command('Runtime.enable')
-    await command('Emulation.setDeviceMetricsOverride', {
+    await devtools.command('Page.enable')
+    await devtools.command('Runtime.enable')
+    await devtools.command('Emulation.setDeviceMetricsOverride', {
       width, height, deviceScaleFactor: 1, mobile: false,
     })
-    const load = command('Page.navigate', { url })
-    await Promise.all([load, loaded])
-    await wait(350)
-    const evaluated = await command('Runtime.evaluate', {
+    const loaded = devtools.waitForPageLoad()
+    const navigation = devtools.command('Page.navigate', { url })
+    await Promise.all([navigation, loaded])
+    return await pollForMeasurement(timeoutMs => devtools.command('Runtime.evaluate', {
       expression: 'document.getElementById("reports-layout-result").textContent',
       returnByValue: true,
-    })
-    assert.equal(typeof evaluated?.result?.value, 'string', 'the Reports page records layout measurements')
-    return JSON.parse(evaluated.result.value)
+    }, timeoutMs))
   } finally {
     if (socket && socket.readyState === WebSocket.OPEN) socket.close()
     if (browser.exitCode === null && browser.signalCode === null) {
