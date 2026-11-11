@@ -2600,10 +2600,18 @@ function analyticsDistribution(rows, metric = 'cost', grouping = 'model', limit 
     unpricedTokens: rows.reduce((s,r)=>s+num(r.unpriced_tokens),0)}
 }
 
+/**
+ * Cache-read stream colour. Deliberately not the raw attention token: the
+ * host warning can be near-invisible on dark fills, and the read stream
+ * dominates Usage charts, so it gets its own amber pulled toward primary
+ * text — lighter on dark themes, darker on light themes — staying distinct
+ * from the attention badges that keep the pure token.
+ */
+const CACHE_READ_COLOR = 'color-mix(in srgb, var(--ui-warning) 68%, var(--ui-text-primary))'
 const TOKEN_STREAMS = [
   ['input_tokens','Input','var(--ui-accent)'],
   ['output_tokens','Output','var(--ui-success)'],
-  ['cache_read_tokens','Cache read','var(--ui-warning)'],
+  ['cache_read_tokens','Cache read',CACHE_READ_COLOR],
   ['cache_write_tokens','Cache write','color-mix(in srgb, var(--ui-accent) 45%, var(--ui-text-primary))']
 ]
 /** Token-stream ids to their I18N labels. TOKEN_STREAMS keeps the canonical English. */
@@ -2761,8 +2769,12 @@ const ANALYTICS_CSS = SHARED_CSS + `
 .wm-analytics .wm-filter{display:flex;flex-direction:column;gap:5px;min-width:115px;flex:1;max-width:250px}.wm-analytics .wm-filter span{font-size:10px;color:var(--ui-text-tertiary)}
 .wm-analytics select{width:100%;max-width:100%;min-height:33px;border:1px solid var(--ui-stroke-secondary);background:var(--ui-fill-primary);padding:6px 25px 6px 9px;border-radius:6px;font-size:11px}
 .wm-analytics option{background:var(--ui-fill-primary);color:var(--ui-text-primary)}
-.wm-analytics .wm-scopechips{display:flex;gap:6px;flex-wrap:wrap;margin-top:-9px}.wm-analytics .wm-scopechips button{border:1px solid color-mix(in srgb,var(--ui-accent) 35%,var(--ui-stroke-secondary));background:color-mix(in srgb,var(--ui-accent) 7%,transparent);color:var(--ui-accent);border-radius:4px;padding:3px 7px;font-size:10px;max-width:100%;overflow-wrap:anywhere}
-.wm-analytics .wm-stats{display:grid;grid-template-columns:1.3fr 1fr 1fr 1fr 1fr;gap:0;border:1px solid var(--ui-stroke-secondary);border-radius:9px;overflow:hidden}
+.wm-analytics .wm-advancedfilters{flex:1 1 100%;min-width:0}.wm-analytics .wm-advancedfilters summary{font-size:11px;color:var(--ui-text-secondary);padding:2px 0;cursor:pointer}.wm-analytics .wm-advancedfilters summary::marker{color:var(--ui-accent)}.wm-analytics .wm-advancedrow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;padding-top:12px}
+.wm-analytics .wm-scopechips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.wm-analytics .wm-scopechips button{border:1px solid color-mix(in srgb,var(--ui-accent) 35%,var(--ui-stroke-secondary));background:color-mix(in srgb,var(--ui-accent) 7%,transparent);color:var(--ui-accent);border-radius:4px;padding:3px 7px;font-size:10px;min-height:24px;max-width:100%;overflow-wrap:anywhere}
+.wm-analytics .wm-stats{display:flex;gap:0;border:1px solid var(--ui-stroke-secondary);border-radius:9px;overflow:hidden}
+.wm-analytics .wm-statgroup{display:grid;grid-template-columns:1fr 1fr 1fr;flex:3;min-width:0;align-content:start}
+.wm-analytics .wm-statgroup[data-kpi-group=activity]{grid-template-columns:1fr 1fr;flex:2;border-left:1px solid var(--ui-stroke-secondary)}
+.wm-analytics .wm-statgrouplabel{grid-column:1/-1;font-size:10px;text-transform:uppercase;letter-spacing:1.4px;color:var(--ui-text-tertiary);padding:12px 21px 0}
 .wm-analytics .wm-insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}.wm-analytics .wm-insight{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:12px 14px;display:grid;gap:5px}.wm-analytics .wm-insight b{font-size:11px}.wm-analytics .wm-insight span{font-size:11.5px;color:var(--ui-text-secondary);line-height:1.5}
 .wm-analytics .wm-stat{padding:19px 21px;min-width:0;border-right:1px solid var(--ui-stroke-secondary)}.wm-analytics .wm-stat:last-child{border:0}.wm-analytics .wm-statlabel{font-size:11px;color:var(--ui-text-tertiary);margin-bottom:10px}.wm-analytics .wm-statvalue{font-size:29px;line-height:1.2;font-weight:550;letter-spacing:-1.2px;overflow-wrap:anywhere;margin-bottom:10px}.wm-analytics .wm-statvalue small{font-size:11px;letter-spacing:0;margin-left:6px;font-weight:400}
 .wm-analytics .wm-badge{display:inline-block;font-size:10px;line-height:1.4;letter-spacing:.15px;border:1px solid var(--ui-stroke-secondary);border-radius:4px;padding:2px 5px;vertical-align:middle;color:var(--ui-text-secondary)}
@@ -2773,19 +2785,20 @@ const ANALYTICS_CSS = SHARED_CSS + `
 .wm-analytics svg{display:block;max-width:100%;overflow:visible}.wm-analytics .wm-donut{width:100%;max-width:220px;margin:auto}.wm-analytics .wm-ring{transform:rotate(-90deg);transform-origin:center}
 .wm-analytics .wm-svgtext{fill:var(--ui-text-primary);font-family:var(--font-mono,ui-monospace,monospace);font-size:19px;font-weight:500}.wm-analytics .wm-svghint{fill:var(--ui-text-tertiary);font-size:9px}
 .wm-analytics .wm-legend{display:grid;gap:4px;min-width:0}.wm-analytics .wm-legendrow{display:grid;grid-template-columns:7px minmax(0,1.2fr) minmax(60px,1fr) auto;gap:8px;text-align:left;align-items:center;padding:7px 4px;border:0;background:transparent;border-radius:4px;font-size:11px;width:100%;min-width:0}.wm-analytics .wm-bartrack{height:8px;background:var(--ui-stroke-secondary);border-radius:99px;overflow:hidden}.wm-analytics .wm-barfill{display:block;height:100%;border-radius:99px}
-.wm-analytics .wm-dot{width:6px;height:6px;border-radius:2px;display:inline-block;flex-shrink:0}.wm-analytics .wm-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;min-width:0}.wm-analytics .wm-legendrow small{font-size:9px;color:var(--ui-text-quaternary);display:block}.wm-analytics .wm-legendrow .wm-value{text-align:right;font-size:11px;white-space:nowrap}
+.wm-analytics .wm-dot{width:6px;height:6px;border-radius:2px;display:inline-block;flex-shrink:0}.wm-analytics .wm-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;min-width:0}.wm-analytics .wm-legendrow small{font-size:9px;color:var(--ui-text-quaternary);display:block}.wm-analytics .wm-legendrow .wm-value{text-align:right;font-size:11px;white-space:nowrap}.wm-analytics .wm-legendrow .wm-exact{display:none}.wm-analytics .wm-legendrow:focus-visible .wm-exact{display:inline}.wm-analytics .wm-legendrow:focus-visible .wm-approx{display:none}
 .wm-analytics .wm-footnote{border-top:1px solid var(--ui-stroke-secondary);padding-top:12px;margin-top:15px;font-size:11px;color:var(--ui-text-tertiary);line-height:1.6}.wm-analytics .wm-remainder{padding:12px;background:var(--ui-fill-secondary);border-radius:6px;margin-top:12px;max-height:240px;overflow:auto}
-.wm-analytics .wm-trend{width:100%;height:auto;min-height:180px;margin-top:10px}.wm-analytics .wm-gridline{stroke:var(--ui-stroke-secondary);stroke-width:1;stroke-dasharray:3 5}.wm-analytics .wm-axis{fill:var(--ui-text-tertiary);font-family:var(--font-mono,ui-monospace,monospace);font-size:10px}
+.wm-analytics .wm-trend{width:100%;height:auto;min-height:180px;margin-top:10px}.wm-analytics .wm-gridline{stroke:var(--ui-stroke-secondary);stroke-width:1;stroke-dasharray:3 5}.wm-analytics .wm-axis{fill:var(--ui-text-tertiary);font-family:var(--font-mono,ui-monospace,monospace);font-size:11px}
 .wm-analytics .wm-chartkey{display:flex;gap:13px;flex-wrap:wrap;font-size:11px;color:var(--ui-text-tertiary);margin-top:10px}.wm-analytics .wm-chartkey span{display:inline-flex;align-items:center;gap:5px}.wm-analytics .wm-chartdetail{display:flex;justify-content:space-between;gap:9px;flex-wrap:wrap;min-height:32px;padding-top:10px;font-size:11px;color:var(--ui-text-tertiary)}
 .wm-analytics .wm-rank{width:100%;min-height:200px}.wm-analytics .wm-composition{min-height:225px;display:grid;align-content:center;gap:20px}.wm-analytics .wm-compositiontotal{font-size:27px;font-weight:500;letter-spacing:-1px}.wm-analytics .wm-compositionkey{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}
 .wm-analytics .wm-tablewrap{overflow:auto;margin:0 -20px}.wm-analytics table{width:100%;border-collapse:collapse;white-space:nowrap;text-align:right;font-size:11px}.wm-analytics caption{text-align:left;position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-.wm-analytics th{font-size:10px;color:var(--ui-text-tertiary);font-weight:450;border-bottom:1px solid var(--ui-stroke-secondary);position:sticky;top:0;background:var(--ui-fill-primary);z-index:1}.wm-analytics th button{font:inherit;color:inherit;border:0;background:transparent;padding:10px 10px;text-align:right;width:100%;white-space:nowrap}.wm-analytics td{padding:11px 10px;border-bottom:1px solid var(--ui-stroke-secondary);font-variant-numeric:tabular-nums}.wm-analytics td:first-child,.wm-analytics th:first-child{padding-left:20px;text-align:left}.wm-analytics td:last-child,.wm-analytics th:last-child{padding-right:20px}.wm-analytics tr:last-child td{border-bottom:0}.wm-analytics tbody tr:hover{background:var(--ui-fill-secondary)}
+.wm-analytics th{font-size:10px;color:var(--ui-text-tertiary);font-weight:450;border-bottom:1px solid var(--ui-stroke-secondary);position:sticky;top:0;background:var(--ui-fill-primary);z-index:1}.wm-analytics .wm-tablewrap th:first-child{left:0;z-index:2}.wm-analytics .wm-tablewrap td:first-child{position:sticky;left:0;background:var(--ui-fill-primary);z-index:1;box-shadow:1px 0 0 var(--ui-stroke-secondary)}.wm-analytics th button{font:inherit;color:inherit;border:0;background:transparent;padding:10px 10px;text-align:right;width:100%;white-space:nowrap}.wm-analytics td{padding:11px 10px;border-bottom:1px solid var(--ui-stroke-secondary);font-variant-numeric:tabular-nums}.wm-analytics td:first-child,.wm-analytics th:first-child{padding-left:20px;text-align:left}.wm-analytics td:last-child,.wm-analytics th:last-child{padding-right:20px}.wm-analytics tr:last-child td{border-bottom:0}.wm-analytics tbody tr:hover{background:var(--ui-fill-secondary)}
 .wm-analytics .wm-modelbutton{border:0;background:transparent;color:var(--ui-text-primary);text-align:left;padding:0;font-weight:500;max-width:260px;display:block;overflow:hidden;text-overflow:ellipsis}.wm-analytics .wm-meter{width:64px;height:3px;background:var(--ui-fill-tertiary);border-radius:2px;overflow:hidden;margin:5px 0 0 auto}.wm-analytics .wm-meter span{display:block;height:100%;background:var(--ui-accent)}
 .wm-analytics .wm-economics{display:grid;grid-template-columns:1fr 1fr;gap:28px}.wm-analytics .wm-comparison{display:grid;gap:15px;margin-top:20px}.wm-analytics .wm-comparerow{display:grid;gap:7px}.wm-analytics .wm-comparelabel{display:flex;justify-content:space-between;font-size:11px}.wm-analytics .wm-comparetrack{height:9px;background:var(--ui-fill-tertiary);border-radius:3px;overflow:hidden}.wm-analytics .wm-comparetrack span{display:block;height:100%;border-radius:3px}
 .wm-analytics .wm-explanation{border-left:1px solid var(--ui-stroke-secondary);padding-left:26px;color:var(--ui-text-tertiary);font-size:11px}.wm-analytics .wm-explanation p+p{margin-top:9px}.wm-analytics details summary{cursor:pointer;font-size:11px;color:var(--ui-text-tertiary)}.wm-analytics .wm-bars{display:grid;gap:10px;margin-top:14px}.wm-analytics .wm-bar{display:grid;grid-template-columns:150px minmax(0,1fr) 90px;gap:10px;align-items:center;font-size:11px}.wm-analytics .wm-bartrack{height:10px;border-radius:5px;background:var(--ui-fill-secondary);overflow:hidden}.wm-analytics .wm-barfill{height:100%;border-radius:5px;background:var(--ui-accent)}.wm-analytics .wm-barfill.wm-cash{background:var(--ui-warning)}.wm-analytics .wm-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}.wm-analytics .wm-card{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:12px;display:grid;gap:6px;min-width:0}.wm-analytics .wm-card b{font-weight:600}.wm-analytics .wm-baseline{border-top:1px solid var(--ui-stroke-secondary);padding-top:15px}.wm-analytics .wm-empty{padding:36px 20px;border:1px dashed var(--ui-stroke-secondary);border-radius:8px;text-align:center;display:grid;justify-items:center;gap:10px;color:var(--ui-text-tertiary)}.wm-analytics .wm-alert{border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));padding:14px;border-radius:6px;color:var(--ui-warning)}
-@container(max-width:1050px){.wm-analytics .wm-shell{padding:22px}.wm-analytics .wm-charts{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.wm-analytics .wm-donutbody{grid-template-columns:1fr;gap:10px}.wm-analytics .wm-donut{max-width:165px}.wm-analytics .wm-stats{grid-template-columns:1fr 1fr}.wm-analytics .wm-stat:nth-child(2){border-right:0}.wm-analytics .wm-stat:nth-child(-n+2){border-bottom:1px solid var(--ui-stroke-secondary)}}
+@container(max-width:1050px){.wm-analytics .wm-shell{padding:22px}.wm-analytics .wm-charts{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.wm-analytics .wm-donutbody{grid-template-columns:1fr;gap:10px}.wm-analytics .wm-donut{max-width:165px}.wm-analytics .wm-stats{flex-direction:column}.wm-analytics .wm-statgroup[data-kpi-group=activity]{border-left:0;border-top:1px solid var(--ui-stroke-secondary)}}
 @container(max-width:720px){.wm-analytics .wm-shell{padding:18px 14px;gap:17px}.wm-analytics .wm-charts{grid-template-columns:minmax(0,1fr)}.wm-analytics h1{font-size:24px}.wm-analytics .wm-economics{grid-template-columns:minmax(0,1fr);gap:18px}.wm-analytics .wm-explanation{border-left:0;border-top:1px solid var(--ui-stroke-secondary);padding:16px 0 0}.wm-analytics .wm-panel{padding:16px}.wm-analytics .wm-tablewrap{margin:0 -16px}.wm-analytics .wm-donutbody{grid-template-columns:minmax(120px,.85fr) minmax(0,1.15fr)}.wm-analytics .wm-stat{padding:16px}.wm-analytics .wm-statvalue{font-size:25px}.wm-analytics .wm-filter{max-width:none;min-width:125px}}
-@container(max-width:380px){.wm-analytics .wm-donutbody{grid-template-columns:1fr}.wm-analytics .wm-stats{grid-template-columns:1fr}.wm-analytics .wm-stat{border-right:0;border-bottom:1px solid var(--ui-stroke-secondary)}.wm-analytics .wm-compositionkey{grid-template-columns:1fr}}
+@container(max-width:560px){.wm-analytics .wm-statgroup,.wm-analytics .wm-statgroup[data-kpi-group=activity]{grid-template-columns:minmax(0,1fr)}.wm-analytics .wm-stat{border-right:0;border-bottom:1px solid var(--ui-stroke-secondary)}.wm-analytics .wm-modelbutton{max-width:45cqi}}
+@container(max-width:380px){.wm-analytics .wm-donutbody{grid-template-columns:1fr}.wm-analytics .wm-compositionkey{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.wm-analytics *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `
 const CHART_COLORS = ['var(--ui-accent)','var(--ui-success)','var(--ui-warning)',
@@ -2886,19 +2899,19 @@ function AnalyticsPanel({number,title,subtitle,controls,children,footer}) {
 function AnalyticsStat({label,value,hint,extra,tone}) {
   return jsxs('div',{className:'wm-stat',children:[jsx('div',{className:'wm-statlabel',children:label}),jsx('div',{className:cn('wm-statvalue wm-mono',tone),children:value}),jsx('div',{className:'wm-subtle',children:hint}),extra?jsx('div',{className:'wm-subtle',style:{marginTop:5},children:extra}):null]})
 }
-function AnalyticsDonut({items,total,label,format,onSelect,chart='distribution',t}) {
+function AnalyticsDonut({items,total,label,format,exact=format,onSelect,chart='distribution',t}) {
   const radius=72,circumference=2*Math.PI*radius
   let offset=0
-  return jsxs('svg',{className:'wm-donut',viewBox:'0 0 200 200','data-chart':chart,role:'img','aria-label':`${label}: ${format(total)}`,children:[
-    jsx('title',{children:`${label}. ${items.map(r=>`${r.label}: ${format(r.value)} (${percent(r.share)})`).join('; ')}`}),
+  return jsxs('svg',{className:'wm-donut',viewBox:'0 0 200 200','data-chart':chart,role:'img','aria-label':`${label}: ${exact(total)}`,children:[
+    jsx('title',{children:`${label}. ${items.map(r=>`${r.label}: ${exact(r.value)} (${percent(r.share)})`).join('; ')}`}),
     jsx('circle',{cx:100,cy:100,r:radius,fill:'none',stroke:'var(--ui-fill-tertiary)',strokeWidth:22}),
     ...items.map((item,i)=>{
       const start=offset;offset+=item.share*circumference
       const select=()=>onSelect(item)
       return jsx('circle',{className:'wm-ring',cx:100,cy:100,r:radius,fill:'none',stroke:item.color || CHART_COLORS[i%CHART_COLORS.length],strokeWidth:22,
         strokeDasharray:`${item.share*circumference} ${circumference}`,strokeDashoffset:-start,
-        role:'button',tabIndex:0,'aria-label':t('usageDonutAction', item.other, item.label, format(item.value), percent(item.share)),
-        onClick:select,onKeyDown:event=>keyActivate(event,select),style:{cursor:'pointer'},children:jsx('title',{children:`${item.label} · ${format(item.value)} · ${percent(item.share)}`})},item.id)
+        role:'button',tabIndex:0,'aria-label':t('usageDonutAction', item.other, item.label, exact(item.value), percent(item.share)),
+        onClick:select,onKeyDown:event=>keyActivate(event,select),style:{cursor:'pointer'},children:jsx('title',{children:`${item.label} · ${exact(item.value)} · ${percent(item.share)}`})},item.id)
     }),jsx('text',{x:100,y:97,textAnchor:'middle',className:'wm-svgtext',children:format(total)}),jsx('text',{x:100,y:116,textAnchor:'middle',className:'wm-svghint',children:label})]})
 }
 function AnalyticsDistribution({data,state,dispatch}) {
@@ -2907,13 +2920,16 @@ function AnalyticsDistribution({data,state,dispatch}) {
   const dist=analyticsDistribution((grouped?data.by_route:data.by_model) || [],state.distributionMetric,state.grouping,6,t)
   const format=state.distributionMetric==='cost'?analyticMoney:fmtTokens
   const select=row=>row.other ? dispatch({type:'toggle',key:'otherOpen'}) : dispatch({type:'select',group:state.grouping,row})
+  // The visible legend value stays compact; hover (title) and focus (label)
+  // both carry the exact figure the bar conserves.
+  const legendExact=row=>state.distributionMetric==='cost'?analyticMoney(row.value):exactTokens(row.value)
   const legend=(row,i)=>jsxs('button',{type:'button',className:'wm-legendrow',
-    'aria-label':row.other?t('usageLegendInspectOther', grouped?t('usageLegendProviders'):t('usageLegendModels')):t('usageLegendFilter', grouped?row.provider:row.model, row.provider),
-    'aria-expanded':row.other?state.otherOpen:undefined,onClick:()=>select(row),title:row.other?t('usageLegendInspectTitle'):t('usageLegendApplyTitle', state.grouping),children:[
+    'aria-label':row.other?`${t('usageLegendInspectOther', grouped?t('usageLegendProviders'):t('usageLegendModels'))} · ${legendExact(row)}`:t('usageLegendFilter', grouped?row.provider:row.model, row.provider, legendExact(row)),
+    'aria-expanded':row.other?state.otherOpen:undefined,onClick:()=>select(row),title:row.other?`${t('usageLegendInspectTitle')} · ${legendExact(row)}`:`${t('usageLegendApplyTitle', state.grouping)} · ${legendExact(row)}`,children:[
       jsx('span',{className:'wm-dot',style:{background:CHART_COLORS[i%CHART_COLORS.length]}}),
       jsxs('span',{className:'wm-label',children:[row.label,!grouped&&!row.other?jsx('small',{children:row.provider || t('usageUnknownProviderCap')}):null]}),
       jsx('span',{className:'wm-bartrack','aria-hidden':'true',children:jsx('span',{className:'wm-barfill',style:{width:`${Math.max(0,Math.min(100,row.share*100))}%`,background:CHART_COLORS[i%CHART_COLORS.length]}})}),
-      jsxs('span',{className:'wm-value wm-mono',children:[format(row.value),jsx('small',{children:percent(row.share)})]})]},row.id)
+      jsxs('span',{className:'wm-value wm-mono',children:[jsx('span',{className:'wm-approx',children:format(row.value)}),jsx('span',{className:'wm-exact',children:legendExact(row)}),jsx('small',{children:percent(row.share)})]})]},row.id)
   return jsx(AnalyticsPanel,{number:'01',title:t('usageDistTitle'),subtitle:t('usageDistSubtitle'),controls:jsxs('div',{className:'wm-controls',children:[
     jsx(AnalyticsSegments,{label:t('usageSegDistribution'),value:state.distributionMetric,options:[['cost',t('usageSegCost')],['tokens',t('usageSegTokens')]],onChange:value=>dispatch({type:'set',key:'distributionMetric',value})}),
     jsx(AnalyticsSegments,{label:t('usageSegDistBy'),value:state.grouping,options:[['model',t('usageSegModel')],['provider',t('usageSegProvider')]],onChange:value=>dispatch({type:'set',key:'grouping',value})})]}),
@@ -2926,6 +2942,9 @@ function AnalyticsTrendChart({data,state,dispatch}) {
   const metric=state.trendMetric
   const trend=analyticsTrend(data.trend?.buckets || [],metric)
   const format=metric==='cost'?analyticMoney:fmtTokens
+  // Hover/focus detail always shows the exact point total; only the compact
+  // axis labels keep the rounded form.
+  const exact=metric==='cost'?analyticMoney:exactTokens
   const width=600,height=240,left=48,right=580,top=17,bottom=195
   const x=point=>left+point.x*(right-left),y=value=>bottom-(value/(trend.max || 1))*(bottom-top)
   const select=index=>dispatch({type:'set',key:'trendIndex',value:index})
@@ -2937,12 +2956,12 @@ function AnalyticsTrendChart({data,state,dispatch}) {
     const d=`M ${trend.points.map(p=>`${x(p)},${y(upper(p))}`).join(' L ')} L ${trend.points.slice().reverse().map(p=>`${x(p)},${y(lower(p))}`).join(' L ')} Z`
     layers.push(jsx('path',{d,fill:TOKEN_STREAMS[i][2],fillOpacity:.68,stroke:TOKEN_STREAMS[i][2],strokeWidth:.8},`layer${i}`))
   }
-  const markers=trend.points.map((p,index)=>jsxs('g',{'data-trend-point':index,role:'button',tabIndex:0,'aria-label':t('usageTrendPoint', p.ts, format(p.total), num(p.row.unpriced_tokens)),
+  const markers=trend.points.map((p,index)=>jsxs('g',{'data-trend-point':index,role:'button',tabIndex:0,'aria-label':t('usageTrendPoint', p.ts, exact(p.total), num(p.row.unpriced_tokens)),
     onClick:()=>select(index),onFocus:()=>select(index),onMouseEnter:()=>select(index),onKeyDown:event=>{
       if(event.key==='ArrowRight'||event.key==='ArrowLeft'){event.preventDefault();dispatch({type:'trend-step',index,total:trend.points.length,direction:event.key==='ArrowRight'?1:-1})}
       else keyActivate(event,()=>select(index))
     },style:{cursor:'crosshair'},children:[
-      jsx('title',{children:t('usageTrendTitle', p.ts, format(p.total), exactTokens(p.row.calls))}),
+      jsx('title',{children:t('usageTrendTitle', p.ts, exact(p.total), exactTokens(p.row.calls))}),
       trend.stacked&&trend.points.length===1?TOKEN_STREAMS.map(([, ,color],i)=>jsx('rect',{x:x(p)-15,width:30,y:y(p.values.slice(0,i+1).reduce((a,b)=>a+b,0)),height:(p.values[i]/(trend.max||1))*(bottom-top),fill:color},i)):null,
       jsx('line',{x1:x(p),x2:x(p),y1:top,y2:bottom,stroke:'var(--ui-accent)',strokeOpacity:active===p?.45:0}),
       jsx('rect',{x:x(p)-Math.min(18,(right-left)/Math.max(1,trend.points.length)/2),y:top,width:Math.min(36,(right-left)/Math.max(1,trend.points.length)),height:bottom-top,fill:'transparent'}),
@@ -2964,7 +2983,7 @@ function AnalyticsTrendChart({data,state,dispatch}) {
     jsx('div',{className:'wm-chartkey',children:trend.stacked?TOKEN_STREAMS.map(([key,,color])=>jsxs('span',{children:[jsx('i',{className:'wm-dot',style:{background:color}}),t(STREAM_LABEL_KEYS[key])]},key)):jsx('span',{children:t('usageTrendUnstacked')})}),
     jsx('div',{className:'wm-chartdetail','aria-live':'polite',children:active?[
       jsx('span',{className:'wm-mono',children:(active.row.ts_local || active.ts).replace('T',' ').replace('Z',' UTC')},'ts'),
-      jsx('strong',{className:'wm-mono',children:t('usageTrendTotal', format(active.total), num(active.row.unpriced_tokens))},'total'),
+      jsx('strong',{className:'wm-mono',children:t('usageTrendTotal', exact(active.total), num(active.row.unpriced_tokens))},'total'),
       ...TOKEN_STREAMS.map(([key])=>jsx('span',{children:t('usageTrendStream', t(STREAM_LABEL_KEYS[key]), exactTokens(active.row[key]))},key))
     ]:t('usageTrendEmpty')})]}),
     footer:metric==='cost'?t('usageTrendFooterCost'):t('usageTrendFooterTokens')})
@@ -3001,9 +3020,9 @@ function AnalyticsRanking({data,state,dispatch}) {
       ...ranked.map((row,i)=>{
         const value=numeric(row),barWidth=Math.abs(value || 0)/(state.ranking==='cache_hit_rate'?1:maximum)*range
         const action=()=>dispatch({type:'select',group:'model',row})
-        return jsxs('g',{transform:`translate(0,${i*42+5})`,role:'button',tabIndex:0,'aria-label':t('usageRankRowAria', row.model, row.provider, percent(row.cache_hit_rate), fmtTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd)),onClick:action,onKeyDown:event=>keyActivate(event,action),style:{cursor:'pointer'},children:[
+        return jsxs('g',{transform:`translate(0,${i*42+5})`,role:'button',tabIndex:0,'aria-label':t('usageRankRowAria', row.model, row.provider, percent(row.cache_hit_rate), exactTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd)),onClick:action,onKeyDown:event=>keyActivate(event,action),style:{cursor:'pointer'},children:[
           jsx('title',{children:t('usageRankRowTitle', row.model, row.provider, row.cache_known_calls || 0, row.cache_unknown_calls || 0, exactTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
-          jsx('text',{x:0,y:12,fill:'var(--ui-text-primary)',fontSize:11,children:row.model?.length>31?`${row.model.slice(0,29)}…`:row.model}),jsx('text',{x:0,y:26,className:'wm-axis',children:t('usageRankRowSub', row.provider || t('unknown'), fmtTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
+          jsx('text',{x:0,y:12,fill:'var(--ui-text-primary)',fontSize:12,children:row.model?.length>31?`${row.model.slice(0,29)}…`:row.model}),jsx('text',{x:0,y:26,className:'wm-axis',children:t('usageRankRowSub', row.provider || t('unknown'), fmtTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
           jsx('rect',{x:signed?233:start,y:5,width:signed?200:range,height:8,rx:3,fill:'var(--ui-fill-tertiary)'}),
           value!=null?jsx('rect',{x:value<0?start-barWidth:start,y:5,width:barWidth,height:8,rx:3,fill:value<0?'var(--ui-warning)':'var(--ui-success)'}):null,
           signed?jsx('line',{x1:start,x2:start,y1:1,y2:18,stroke:'var(--ui-text-quaternary)'}):null,
@@ -3019,13 +3038,13 @@ function AnalyticsComposition({data,state,dispatch}) {
   let x=0
   return jsx(AnalyticsPanel,{number:'05',title:t('usageCompTitle'),subtitle:t('usageCompSubtitle'),controls:jsx(AnalyticsSegments,{label:t('usageSegComposition'),value:state.compositionMode,options:[['stacked',t('usageSegStacked')],['doughnut',t('usageSegDoughnut')]],onChange:value=>dispatch({type:'set',key:'compositionMode',value})}),
     children:jsxs('div',{className:'wm-composition',children:[state.compositionMode==='doughnut'?
-      jsx(AnalyticsDonut,{items:parts,total,label:t('usageDonutAllStreams'),format:fmtTokens,onSelect:select,chart:'composition',t}):
+      jsx(AnalyticsDonut,{items:parts,total,label:t('usageDonutAllStreams'),format:fmtTokens,exact:exactTokens,onSelect:select,chart:'composition',t}):
       jsxs('div',{children:[jsx('div',{className:'wm-compositiontotal wm-mono',children:fmtTokens(total)}),jsx('p',{className:'wm-subtle',children:t('usageCompTokensTotal')}),
         jsxs('svg',{viewBox:'0 0 600 44',style:{width:'100%',marginTop:18},'data-chart':'composition',role:'img','aria-label':t('usageCompAria', exactTokens(total)),children:[jsx('title',{children:parts.map(r=>t('usageCompSvgPart', r.label, exactTokens(r.value), percent(r.share))).join('; ')}),jsx('rect',{x:0,y:4,width:600,height:28,rx:4,fill:'var(--ui-fill-tertiary)'}),...parts.map(row=>{
           const start=x;x+=row.share*600
-          return jsx('rect',{x:start,y:4,width:row.share*600,height:28,fill:row.color,role:'button',tabIndex:0,'aria-label':t('usageCompSelect', row.label),onClick:()=>select(row),onKeyDown:event=>keyActivate(event,()=>select(row)),children:jsx('title',{children:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share))})},row.id)
+          return jsx('rect',{x:start,y:4,width:row.share*600,height:28,fill:row.color,role:'button',tabIndex:0,'aria-label':t('usageCompSelect', row.label),onClick:()=>select(row),onFocus:()=>select(row),onKeyDown:event=>keyActivate(event,()=>select(row)),children:jsx('title',{children:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share))})},row.id)
         })]})]}),
-      jsx('div',{className:'wm-compositionkey',children:parts.map(row=>jsxs('button',{type:'button',className:'wm-legendrow','aria-label':t('usageCompSelect', row.label),'aria-pressed':state.compositionFocus===row.id,onClick:()=>select(row),children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsxs('span',{className:'wm-value wm-mono',children:[fmtTokens(row.value),jsx('small',{children:percent(row.share)})]})]},row.id))})]}),
+      jsx('div',{className:'wm-compositionkey',children:parts.map(row=>jsxs('button',{type:'button',className:'wm-legendrow','aria-label':t('usageCompSelect', row.label),'aria-pressed':state.compositionFocus===row.id,onClick:()=>select(row),onFocus:()=>select(row),title:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share)),children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsxs('span',{className:'wm-value wm-mono',children:[fmtTokens(row.value),jsx('small',{children:percent(row.share)})]})]},row.id))})]}),
     footer:jsx('div',{'aria-live':'polite',children:focus?t('usageCompFocus', focus.label, exactTokens(focus.value), percent(focus.share), focus.id==='cache_read_tokens'?t('usageCompNoteCacheRead'):focus.id==='cache_write_tokens'?t('usageCompNoteCacheWrite'):focus.id==='input_tokens'?t('usageCompNoteInput'):t('usageCompNoteOutput')):t('usageCompEmpty')})})
 }
 const ANALYTICS_COLUMNS = [['model','Model'],['provider','Provider'],['calls','Calls'],['tokens','Tokens'],['input_tokens','Input'],['output_tokens','Output'],['reasoning_tokens','Reasoning'],['cache_read_tokens','Read'],['cache_write_tokens','Write'],['cache_hit_rate','Cache %'],['savings','Net savings'],['list_usd','API cost'],['per_call','$/call'],['per_million','$/1M tokens'],['pricing','Pricing'],['billing','Billing']]
@@ -3083,7 +3102,7 @@ function AnalyticsExplorer({data,state,dispatch}) {
   const rows=analyticsSort(enriched,state.sortKey,state.sortDirection)
   const columns=state.columnMode==='all'?ANALYTICS_COLUMNS:ANALYTICS_COLUMNS.filter(([key])=>ANALYTICS_CORE_COLUMNS.includes(key))
   const visible=state.showAllModels?rows:rows.slice(0,25)
-  return jsx(AnalyticsPanel,{title:t('usageExplorerTitle'),subtitle:t('usageExplorerSubtitle', rows.length),controls:jsxs('div',{className:'wm-controls',children:[
+  return jsx(AnalyticsPanel,{number:'06',title:t('usageExplorerTitle'),subtitle:t('usageExplorerSubtitle', rows.length),controls:jsxs('div',{className:'wm-controls',children:[
     jsx(AnalyticsSegments,{label:t('usageSegColumns'),value:state.columnMode,options:[['core',t('usageSegCore')],['all',t('usageSegAll')]],onChange:value=>dispatch({type:'set',key:'columnMode',value})}),
     rows.length>25?jsx(AnalyticsButton,{label:state.showAllModels?t('usageExplorerTop25Tip'):t('usageExplorerShowAllTip'),onClick:()=>dispatch({type:'toggle',key:'showAllModels'}),children:state.showAllModels?t('usageExplorerTop25'):t('usageExplorerShowAll')}):null,
     jsx(AnalyticsButton,{label:t('usageExplorerExportTip'),onClick:()=>downloadAnalyticsCsv(rows),children:t('usageExplorerExport')}),
@@ -3113,7 +3132,7 @@ function AnalyticsEconomics({data}) {
   const t = usePluginI18n(ID)
   const e=data.economics || data.totals?.economics || {}
   const max=Math.max(num(e.uncached_usd),num(e.cached_usd)) || 1
-  return jsx(AnalyticsPanel,{title:t('usageEconTitle'),subtitle:t('usageEconSubtitle'),controls:jsx('span',{className:cn('wm-badge',e.savings_usd<0?'wm-warn':'wm-good'),children:e.savings_usd==null?t('usageEconNoPricing'):e.savings_usd<0?t('usageEconWritePremium'):t('usageEconBenefit')}),children:jsxs('div',{className:'wm-economics',children:[
+  return jsx(AnalyticsPanel,{number:'07',title:t('usageEconTitle'),subtitle:t('usageEconSubtitle'),controls:jsx('span',{className:cn('wm-badge',e.savings_usd<0?'wm-warn':'wm-good'),children:e.savings_usd==null?t('usageEconNoPricing'):e.savings_usd<0?t('usageEconWritePremium'):t('usageEconBenefit')}),children:jsxs('div',{className:'wm-economics',children:[
     jsxs('div',{children:[jsx('div',{className:cn('wm-compositiontotal wm-mono',e.savings_usd<0?'wm-warn':'wm-good'),children:analyticMoney(e.savings_usd)}),jsx('div',{className:'wm-subtle',children:t('usageEconNetSavings')}),
       jsx('div',{className:'wm-comparison',children:[[t('usageEconWithoutCache'),e.uncached_usd,'var(--ui-text-quaternary)'],[t('usageEconWithCache'),e.cached_usd,'var(--ui-success)']].map(([label,value,color])=>jsxs('div',{className:'wm-comparerow',children:[jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:analyticMoney(value)})]}),jsx('div',{className:'wm-comparetrack',role:'img','aria-label':t('usageEconBarAria', label, analyticMoney(value)),children:finiteValue(value)!=null?jsx('span',{style:{width:`${num(value)/max*100}%`,background:color}}):null})]},label))})]}),
     jsxs('div',{className:'wm-explanation',children:[jsx('p',{children:t('usageEconExplainRates')}),
@@ -3155,16 +3174,25 @@ function AnalyticsFilters({data,state,dispatch}) {
   const t = usePluginI18n(ID)
   const filter=(key,value)=>dispatch({type:'filter',key,value})
   const opts=data?.options || {}
+  // The default row stays scannable (period, model, provider); the four
+  // narrower slices live behind an always-available disclosure. Active
+  // advanced filters still surface as removable chips underneath.
+  const named=([key,label,raw,ariaName])=>{
+    const options=key==='model'?[...new Set(raw.map(r=>typeof r==='string'?r:r.model))]:[...raw]
+    if(state.filters[key]&&!options.includes(state.filters[key]))options.unshift(state.filters[key])
+    return jsxs('label',{className:'wm-filter',children:[jsx('span',{children:label}),jsx('select',{'aria-label':t('usageFilterTip', ariaName),value:state.filters[key],onChange:event=>filter(key,event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAll', key)},'all'),...options.map(value=>jsx('option',{value,children:value || t('usageUnknown')},value))]})]},key)
+  }
+  const primary=[['model',t('usageFilterModel'),opts.models || [],t('usageFilterModelName')],['provider',t('usageFilterProvider'),opts.providers || [],t('usageFilterProviderName')]]
+  const advanced=[['surface',t('usageFilterSurface'),opts.surfaces || [],t('usageFilterSurfaceName')],['task',t('usageFilterTask'),opts.tasks || [],t('usageFilterTaskName')]]
+  const advancedActive=['surface','task','parent','scope'].filter(key=>state.filters[key]).length
   return jsxs('div',{children:[jsxs('div',{className:'wm-filters',children:[
     jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterPeriod')}),jsx('select',{'aria-label':t('usageFilterPeriodTip'),value:state.days,onChange:event=>dispatch({type:'set',key:'days',value:Number(event.target.value)}),children:[[1,t('usagePeriodToday')],[7,t('usagePeriodWeek')],[30,t('usagePeriodMonth')],[90,t('usagePeriodQuarter')],[365,t('usagePeriodYear')]].map(([days,label])=>jsx('option',{value:days,children:label},days))})]}),
-    ...[['model',t('usageFilterModel'),opts.models || [],t('usageFilterModelName')],['provider',t('usageFilterProvider'),opts.providers || [],t('usageFilterProviderName')],['surface',t('usageFilterSurface'),opts.surfaces || [],t('usageFilterSurfaceName')],['task',t('usageFilterTask'),opts.tasks || [],t('usageFilterTaskName')]].map(([key,label,raw,ariaName])=>{
-      const options=key==='model'?[...new Set(raw.map(r=>typeof r==='string'?r:r.model))]:[...raw]
-      if(state.filters[key]&&!options.includes(state.filters[key]))options.unshift(state.filters[key])
-      return jsxs('label',{className:'wm-filter',children:[jsx('span',{children:label}),jsx('select',{'aria-label':t('usageFilterTip', ariaName),value:state.filters[key],onChange:event=>filter(key,event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAll', key)},'all'),...options.map(value=>jsx('option',{value,children:value || t('usageUnknown')},value))]})]},key)
-    }),
-    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterParentOp')}),jsx('select',{'aria-label':t('usageFilterOpTip'),value:state.filters.parent,onChange:event=>filter('parent',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAllOps')},'all'),...(opts.operations || []).map(o=>jsx('option',{value:o.parent,children:t('usageDelegOpWorkers', o.parent, o.subagent_calls)},o.parent))]})]}),
-    jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterWho')}),jsx('select',{'aria-label':t('usageFilterDelegTip'),value:state.filters.scope,onChange:event=>filter('scope',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterEveryone')},'all'),jsx('option',{value:'direct',children:t('usageFilterDirectOnly')},'direct'),jsx('option',{value:'subagent',children:t('usageFilterSubagentsOnly')},'subagent'),jsx('option',{value:'auxiliary',children:t('usageFilterAuxOnly')},'auxiliary'),jsx('option',{value:'unattributed',children:t('usageFilterUnattributedOnly')},'unattributed')]})]}),
-    jsx(AnalyticsButton,{label:t('usageFilterClear'),onClick:()=>dispatch({type:'clear'})})]}),
+    ...primary.map(named),
+    jsx(AnalyticsButton,{label:t('usageFilterClear'),onClick:()=>dispatch({type:'clear'})}),
+    jsxs('details',{className:'wm-advancedfilters','data-filters-advanced':'',children:[jsx('summary',{children:t('usageFilterAdvanced', advancedActive)}),
+      jsxs('div',{className:'wm-advancedrow',children:[...advanced.map(named),
+        jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterParentOp')}),jsx('select',{'aria-label':t('usageFilterOpTip'),value:state.filters.parent,onChange:event=>filter('parent',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAllOps')},'all'),...(opts.operations || []).map(o=>jsx('option',{value:o.parent,children:t('usageDelegOpWorkers', o.parent, o.subagent_calls)},o.parent))]})]}),
+        jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterWho')}),jsx('select',{'aria-label':t('usageFilterDelegTip'),value:state.filters.scope,onChange:event=>filter('scope',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterEveryone')},'all'),jsx('option',{value:'direct',children:t('usageFilterDirectOnly')},'direct'),jsx('option',{value:'subagent',children:t('usageFilterSubagentsOnly')},'subagent'),jsx('option',{value:'auxiliary',children:t('usageFilterAuxOnly')},'auxiliary'),jsx('option',{value:'unattributed',children:t('usageFilterUnattributedOnly')},'unattributed')]})]})]})]})]}),
     Object.values(state.filters).some(Boolean)?jsxs('div',{style:{marginTop:10},children:[jsx('p',{className:'wm-subtle',children:t('usageFilterActiveNote')}),jsx('div',{className:'wm-scopechips',children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':t('usageFilterRemove', usageFilterChipName(key, t)),onClick:()=>filter(key,''),children:t('usageFilterChip', usageFilterChipName(key, t), usageFilterChipValue(key, value, t))},key))})]}):null]})
 }
 function AnalyticsBaseline({days,scope}) {
@@ -3186,16 +3214,18 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const refresh=()=>query.refetch?.()
   const billingMix=totals?.billing_mix ? Object.entries(totals.billing_mix).map(([kind,value])=>`${kind}: ${typeof value==='number'?fmtTokens(value):String(value)}`).join(' · ') : ''
   const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('div',{className:'wm-eyebrow',children:'WolfMark / SpendSense'}),jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
-    jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')}),jsx(AnalyticsButton,{label:t('usageCloseTip'),onClick:closeLedger,children:t('usageClose')})]})]})
+    jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')})]})]})
   const content = jsxs('div',{className:'wm-shell',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
       query.error?jsxs('div',{className:'wm-alert',role:'alert',children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
     totals?jsxs('div',{className:'wm-stats',children:[
-      jsx(AnalyticsStat,{label:t('usageStatApiEquiv'),value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',(num(totals.unpriced_tokens)||num(totals.unpriced_calls))&&'wm-warn'),children:analyticsPricing(totals, t)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd, t)) || t('usageStatApiExtra')}),
-      jsx(AnalyticsStat,{label:t('weightedCacheHit'),value:percent(totals.cache_hit_rate),tone:'wm-good',hint: totals.cache_prompt_coverage == null ? t('cacheCoverageUnavailable') : t('cacheCoveragePrompt', percent(totals.cache_prompt_coverage)),extra:t('cacheCoverageBasis')}),
-      jsx(AnalyticsStat,{label:t('usageStatSavings'),value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:t('usageStatSavingsHint'),extra:t('usageStatSavingsExtra', percent(economics.coverage))}),
-      jsx(AnalyticsStat,{label:t('usageStatTokens'),value:fmtTokens(totals.tokens),hint:t('usageStatTokensHint', exactTokens(totals.calls)),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens, t)) || t('usageStatTokensExtra', fmtTokens(totals.input_tokens), fmtTokens(totals.output_tokens))}),
-      jsx(AnalyticsStat,{label:t('usageStatCoverage'),value:num(totals.tokens)?percent(data.pricing_coverage?.coverage):t('usageUnknown'),hint:t('usageStatCoverageHint', exactTokens(totals.unpriced_tokens), exactTokens(totals.unpriced_calls)),extra:analyticsPricing(totals, t)})]}):null,
+      jsxs('div',{className:'wm-statgroup',role:'group','aria-label':t('usageKpiMoney'),'data-kpi-group':'money',children:[jsx('div',{className:'wm-statgrouplabel','aria-hidden':'true',children:t('usageKpiMoney')}),
+        jsx(AnalyticsStat,{label:t('usageStatApiEquiv'),value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',(num(totals.unpriced_tokens)||num(totals.unpriced_calls))&&'wm-warn'),children:analyticsPricing(totals, t)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd, t)) || t('usageStatApiExtra')}),
+        jsx(AnalyticsStat,{label:t('usageStatSavings'),value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:t('usageStatSavingsHint'),extra:t('usageStatSavingsExtra', percent(economics.coverage))}),
+        jsx(AnalyticsStat,{label:t('usageStatCoverage'),value:num(totals.tokens)?percent(data.pricing_coverage?.coverage):t('usageUnknown'),hint:t('usageStatCoverageHint', exactTokens(totals.unpriced_tokens), exactTokens(totals.unpriced_calls)),extra:analyticsPricing(totals, t)})]}),
+      jsxs('div',{className:'wm-statgroup',role:'group','aria-label':t('usageKpiActivity'),'data-kpi-group':'activity',children:[jsx('div',{className:'wm-statgrouplabel','aria-hidden':'true',children:t('usageKpiActivity')}),
+        jsx(AnalyticsStat,{label:t('weightedCacheHit'),value:percent(totals.cache_hit_rate),tone:'wm-good',hint: totals.cache_prompt_coverage == null ? t('cacheCoverageUnavailable') : t('cacheCoveragePrompt', percent(totals.cache_prompt_coverage)),extra:t('cacheCoverageBasis')}),
+        jsx(AnalyticsStat,{label:t('usageStatTokens'),value:fmtTokens(totals.tokens),hint:t('usageStatTokensHint', exactTokens(totals.calls)),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens, t)) || t('usageStatTokensExtra', fmtTokens(totals.input_tokens), fmtTokens(totals.output_tokens))})]})]}):null,
     totals&&analyticsInsights(data, t).length?jsx('div',{className:'wm-insights','aria-label':t('usageInsightsAria'),children:analyticsInsights(data, t).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{children:item.text})]},item.label))}):null,
     totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:billingMix || t('usageBillingTitle'),children:[jsx('strong',{children:t('usageBillingLabel')}),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),' ',jsx('span',{className:cn('wm-badge',!totals.billed_complete&&'wm-warn'),children:totals.billed_complete?t('usageBillingComplete'):totals.billed_usd==null?t('usageUnknown'):t('usageBillingPartial')}),t('usageBillingNote')]}),jsx('span',{className:'wm-mono',children:data.window?t('usageWindowDash', String(data.window.since_local || data.window.since || '').slice(0,10), String(data.window.until_local || data.window.until || '').slice(0,10), data.window.since_local ? data.window.timezone || 'local' : 'UTC'):t('usageWindowPending')})]}):null,
     totals&&data.previous&&!data.previous.comparable?jsx('div',{className:'wm-alert',children:t(data.previous.reason==='no_previous_calls'?'usagePreviousNoCalls':data.previous.reason==='insufficient_history'?'usagePreviousInsufficient':'usagePreviousUnavailable')}):null,
@@ -10721,8 +10751,6 @@ const I18N = {
     usageRefresh: '↻ Refresh',
     usageThisDesktopTip: 'Use this desktop’s ledger',
     usageThisDesktop: 'This desktop',
-    usageCloseTip: 'Close analytics',
-    usageClose: '× Close',
     // Costs page.
     costsPricing: (source, age, stale) => `Pricing: ${source} · ${age}${stale} · sources and privacy`,
     costsPricingNoSource: 'source unavailable',
@@ -10934,7 +10962,7 @@ const I18N = {
     usageLegendInspectOther: grouped => `Inspect Other ${grouped}`,
     usageLegendProviders: 'providers',
     usageLegendModels: 'models',
-    usageLegendFilter: (target, provider) => `Filter ${target} via ${provider}`,
+    usageLegendFilter: (target, provider, detail) => `Filter ${target} via ${provider}${detail ? ` · ${detail}` : ''}`,
     usageLegendInspectTitle: 'Inspect the exact remainder without changing filters',
     usageLegendApplyTitle: grouping => `Apply exact ${grouping} filter`,
     usageDistTitle: 'Usage distribution',
@@ -11095,6 +11123,7 @@ const I18N = {
     usageFilterAuxOnly: 'Auxiliary only',
     usageFilterUnattributedOnly: 'Unattributed only',
     usageFilterClear: 'Clear filters',
+    usageFilterAdvanced: count => count ? `Advanced filters · ${count} active` : 'Advanced filters',
     usageFilterActiveNote: 'Filtered view — only calls matching all of these are included. Remove one to widen the scope.',
     usageFilterRemove: key => `Remove ${key} filter`,
     usageFilterChip: (key, value) => `${key}: ${value} ×`,
@@ -11120,6 +11149,8 @@ const I18N = {
     usageRetryTip: 'Retry analytics',
     usageLoading: 'Reading timestamped calls…',
     usageStatApiEquiv: 'API-equivalent',
+    usageKpiMoney: 'Cost & coverage',
+    usageKpiActivity: 'Volume & cache',
     usageStatApiExtra: 'Priced per-call estimate · not an invoice',
     usageStatSavings: 'Theoretical net savings',
     usageStatSavingsHint: 'Read discounts − write premiums',
@@ -12032,8 +12063,6 @@ const I18N = {
     usageRefresh: '↻ 刷新',
     usageThisDesktopTip: '使用此桌面的账本',
     usageThisDesktop: '此桌面',
-    usageCloseTip: '关闭分析',
-    usageClose: '× 关闭',
     // 费用页面。
     costsPricing: (source, age, stale) => `价格：${source} · ${age}${stale} · 来源与隐私`,
     costsPricingNoSource: '来源不可用',
@@ -12245,7 +12274,7 @@ const I18N = {
     usageLegendInspectOther: grouped => `查看其余${grouped}`,
     usageLegendProviders: '供应商',
     usageLegendModels: '模型',
-    usageLegendFilter: (target, provider) => `按 ${target}（经 ${provider}）筛选`,
+    usageLegendFilter: (target, provider, detail) => `按 ${target}（经 ${provider}）筛选${detail ? ` · ${detail}` : ''}`,
     usageLegendInspectTitle: '查看确切余项，不更改筛选',
     usageLegendApplyTitle: grouping => `应用确切 ${grouping} 筛选`,
     usageDistTitle: '用量分布',
@@ -12406,6 +12435,7 @@ const I18N = {
     usageFilterAuxOnly: '仅辅助',
     usageFilterUnattributedOnly: '仅未归属',
     usageFilterClear: '清除筛选',
+    usageFilterAdvanced: count => count ? `高级筛选 · ${count} 项已选` : '高级筛选',
     usageFilterActiveNote: '已筛选视图——仅包含符合全部条件的调用。移除一项以扩大范围。',
     usageFilterRemove: key => `移除 ${key} 筛选`,
     usageFilterChip: (key, value) => `${key}：${value} ×`,
@@ -12431,6 +12461,8 @@ const I18N = {
     usageRetryTip: '重试分析',
     usageLoading: '正在读取带时间戳调用…',
     usageStatApiEquiv: 'API 等值',
+    usageKpiMoney: '成本与覆盖',
+    usageKpiActivity: '用量与缓存',
     usageStatApiExtra: '已定价按次估算 · 非账单',
     usageStatSavings: '理论净节省',
     usageStatSavingsHint: '读取折扣 − 写入溢价',
@@ -12567,7 +12599,7 @@ export default {
 /** Pure internals, exported for the node test-suite (the host only reads `default`). */
 export const __test = {
   Chip, BudgetPanel, BudgetStatusIndicator, budgetLevel, budgetColour, sessionBudgetStatus, usageValueDelta, budgetQuery, budgetWrite, budgetPayload, newBudgetDraft, budgetTooltip, $budgetDraft, $budgetBusy, $budgetNotice, BUDGET_CSS,
-  analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText,
+  analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS,
   AnalyticsPage, AnalyticsDashboard, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
   AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS,
   usageFilterChipName, USAGE_FILTER_CHIP_KEYS, usageFilterChipValue, USAGE_FILTER_SCOPE_KEYS,
