@@ -926,9 +926,11 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
   const resolvedCall = !!(priorGuardrail?.pendingUsageCall && completeCounters &&
     rawCalls === priorGuardrail.pendingUsageCall)
   const missingCalls = delta.calls > 0
-    ? completeCounters ? deltaTokens > 0 ? Math.max(0, delta.calls - 1) : 0 : delta.calls : 0
+    ? completeCounters && (deltaTokens > 0 || restarted)
+      ? deltaTokens > 0 ? Math.max(0, delta.calls - 1) : 0
+      : delta.calls : 0
   const pendingUsageCall = delta.calls > 0
-    ? !completeCounters && hasCallCounter ? rawCalls : null
+    ? missingCalls > 0 && (!completeCounters || !deltaTokens) && hasCallCounter ? rawCalls : null
     : resolvedCall ? null : priorGuardrail?.pendingUsageCall ?? null
   const pendingUsageTokens = delta.calls > 0 ? restarted ? 0 : tokensOf(prev || {}) : priorGuardrail?.pendingUsageTokens ?? 0
   const pendingUsageRef = delta.calls > 0
