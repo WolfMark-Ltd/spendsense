@@ -304,6 +304,42 @@ test('the idle status-chip tooltip names SpendSense in both locales', () => {
   }
 })
 
+test('G03 usage labels retain coverage, API-equivalent and all-profile qualifiers in both locales', () => {
+  for (const [language, dict] of [['en', en], ['zh', zh]]) {
+    for (const key of ['allProfiles', 'coverageUnknownShort', 'ovCoverageUnknown']) {
+      assert.ok(dict[key] && dict[key] !== key, `${language} has ${key}`)
+    }
+  }
+  assert.match(en.ovRecordedLabel, /API-equivalent.*all profiles/i)
+  assert.match(en.ovRecordedProv, /all profiles.*not .*actual provider charges/i)
+  assert.match(en.ovMethodBody, /all profiles in this ledger/i)
+  assert.match(en.ovMethodBody, /active profile/i)
+  assert.match(en.ovMethodBody, /no historical values are backfilled/i)
+  assert.match(en.todayStatusNote, /not actual provider charges/i)
+  assert.match(en.todayStatusNote, /all profiles in this Desktop ledger/i)
+  assert.match(zh.ovRecordedLabel, /API 等值.*所有配置文件/)
+  assert.match(zh.ovRecordedProv, /所有配置文件.*不是.*实际服务商/)
+  assert.match(zh.ovMethodBody, /本桌面账本中的月度和今日总额.*所有配置文件/)
+  assert.match(zh.ovMethodBody, /不会回填历史记录/)
+  assert.match(zh.todayStatusNote, /并非实际服务商费用/)
+  assert.match(zh.todayStatusNote, /所有配置文件/)
+
+  const today = {
+    known: true, cost: 3.75, unpricedTokens: 0, unpricedCalls: 0,
+    missingUsageCalls: 0, coverageUnknown: true
+  }
+  const translate = language => (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const englishChip = T.desktopTodayText(today, translate('en'))
+  const chineseChip = T.desktopTodayText(today, translate('zh'))
+  assert.match(englishChip, /API-equivalent.*all profiles/i)
+  assert.match(englishChip, /coverage unknown/i)
+  assert.match(chineseChip, /API 等值.*所有配置文件/)
+  assert.match(chineseChip, /覆盖情况未知/)
+})
+
 test('every ledger tab string exists in English and Chinese', () => {
   const keys = ['tabOverview', 'tabUsage', 'tabCosts', 'tabMemberships', 'tabReports', 'tabNews', 'tabSettings']
   for (const key of keys) {

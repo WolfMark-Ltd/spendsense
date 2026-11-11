@@ -628,11 +628,19 @@ function newBucket({ legacy = false, model, profile = '', provider = '' }) {
     sources: {},
     unpricedTokens: 0,
     unpricedCalls: 0,
-    missingUsageCalls: 0
+    missingUsageCalls: 0,
+    coverageUnknown: false
   }
 }
 
 const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v)
+
+function coverageUnknown(b) {
+  if (!isObj(b)) return false
+  const recordedCount = value => Number.isInteger(value) && value >= 0
+  return b.coverageUnknown === true ||
+    !recordedCount(b.unpricedCalls) || !recordedCount(b.missingUsageCalls)
+}
 
 /** v1 stored tokens only, keyed by model, and re-priced them on every read. */
 function migrateV1(raw, now) {
@@ -726,6 +734,7 @@ function changeCacheKnown(cur, init, delta) {
 /** Add one priced delta to a bucket (copy-on-write). */
 function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolved, source, usageEvidence = {} }) {
   const b = prevBucket ? { ...prevBucket, sources: { ...prevBucket.sources } } : newBucket(init)
+  if (prevBucket && coverageUnknown(prevBucket)) b.coverageUnknown = true
   Object.assign(b, usageValueDelta(prevBucket, delta, resolved, membershipScopeOf($scopeConnection.get(), init.profile || $scopeProfile.get()), usageEvidence))
   b.input += delta.input
   b.output += delta.output
@@ -1038,6 +1047,7 @@ function summarize(led, filter, priceLegacy) {
     for (const [key, b] of Object.entries(buckets)) {
       if (!isObj(b)) continue
       const r = rows[key] || (rows[key] = { ...newBucket(b), cost: b.legacy ? null : 0 })
+      if (coverageUnknown(b)) r.coverageUnknown = true
       for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'calls', 'pricedTokens', 'unpricedTokens', 'unpricedCalls', 'missingUsageCalls', 'saved', 'cacheCoveredPrompt', 'cacheCoveredRead', 'cacheExactPrompt', 'cacheEstimatedPrompt', 'netSavingsPrompt']) {
         r[f] = num(r[f]) + num(b[f])
       }
@@ -1066,7 +1076,8 @@ function summarize(led, filter, priceLegacy) {
     netSavingsPrompt: 0,
     unpricedTokens: 0,
     unpricedCalls: 0,
-    missingUsageCalls: 0
+    missingUsageCalls: 0,
+    coverageUnknown: false
   }
   const list = Object.values(rows).map(r => {
     if (r.legacy) {
@@ -1099,6 +1110,7 @@ function summarize(led, filter, priceLegacy) {
     totals.unpricedTokens += num(r.unpricedTokens)
     totals.unpricedCalls += num(r.unpricedCalls)
     totals.missingUsageCalls += num(r.missingUsageCalls)
+    if (r.coverageUnknown) totals.coverageUnknown = true
     totals.foreignTokens += num(r.sources.foreign) + (r.legacy && r.legacyOrigin === 'foreign' ? tokensOf(r) : 0)
     if (r.cacheEstimated) totals.cacheEstimated = true
     return r
@@ -1141,7 +1153,8 @@ function csvCell(v) {
 
 const CSV_COLUMNS = [
   'date', 'profile', 'provider', 'model', 'input', 'output', 'cache_read', 'cache_write', 'calls',
-  'cost_usd', 'cost_basis', 'priced_tokens', 'unpriced_tokens', 'cache_saved_usd', 'cache_estimated', 'net_cache_savings_usd'
+  'cost_usd', 'cost_basis', 'priced_tokens', 'unpriced_tokens', 'cache_saved_usd', 'cache_estimated', 'net_cache_savings_usd',
+  'unpriced_calls', 'missing_usage_calls', 'coverage_unknown'
 ]
 
 function costBasis(b) {
@@ -1162,7 +1175,8 @@ function ledgerCsv(led) {
           costBasis(b), num(b.pricedTokens), num(b.unpricedTokens),
           b.legacy ? '' : Number(num(b.saved).toFixed(6)), b.cacheEstimated ? 'yes' : 'no',
           num(b.netSavingsPrompt) && num(b.netSavingsPrompt) === num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
-            ? Number(b.netSavings.toFixed(6)) : ''
+            ? Number(b.netSavings.toFixed(6)) : '',
+          num(b.unpricedCalls), num(b.missingUsageCalls), coverageUnknown(b) ? 'yes' : 'no'
         ]
           .map(csvCell)
           .join(',')
@@ -1694,7 +1708,8 @@ function useLive() {
       // read "this run" beside a note saying "conversation total since …".
       fromHistory: true,
       model: (usage && usage.model) || histModel,
-      partial: num(hist.unpricedTokens) > 0 || num(hist.unpricedCalls) > 0 || num(hist.missingUsageCalls) > 0,
+      partial: num(hist.unpricedTokens) > 0 || num(hist.unpricedCalls) > 0 ||
+        num(hist.missingUsageCalls) > 0 || coverageUnknown(hist),
       pricingError: error ? String(error.message || error) : null,
       pricingLoading: isLoading,
       // While a run is live, the current route is the live one or unknown;
@@ -1818,6 +1833,17 @@ function tokenRows(t, b, hasContext, u) {
   return rows.filter(Boolean)
 }
 
+function desktopTodayText(today, t) {
+  if (!today.known) return null
+  const partial = today.unpricedTokens || today.unpricedCalls || today.missingUsageCalls || today.coverageUnknown
+  const qualifiers = [
+    t('todayApiEquivalent'),
+    t('allProfiles'),
+    today.coverageUnknown ? t('coverageUnknownShort') : null
+  ].filter(Boolean).join(' · ')
+  return `${t('today')} ${fmtUsd(today.cost)}${partial ? '+' : ''} · ${qualifiers}`
+}
+
 function Chip() {
   const t = usePluginI18n(ID)
   const live = useLive()
@@ -1830,11 +1856,12 @@ function Chip() {
   const monthlyIndicator = jsx(BudgetStatusIndicator, { data: budgetData, error: budgetRead.error, t })
   const monthlyTooltip = budgetRead.error ? t('budgetStale') : (budgetData?.statuses || []).filter(row => row.budget.enabled).map(row => budgetTooltip(row, t)).join('\n')
   const open = openLedger
-  const todayText = today.known ? `${t('today')} ${fmtUsd(today.cost)}${today.unpricedTokens || today.unpricedCalls || today.missingUsageCalls ? '+' : ''}` : null
+  const todayText = desktopTodayText(today, t)
+  const todayTooltip = today.known ? t('todayStatusNote') : null
 
   if (!live.bucket) {
     return jsx(Tip, {
-      label: [t('chipTipIdle'), monthlyTooltip].filter(Boolean).join('\n'),
+      label: [t('chipTipIdle'), todayTooltip, monthlyTooltip].filter(Boolean).join('\n'),
       children: jsx('button', {
         className: cn(
           'inline-flex h-full items-center px-1.5 text-[0.6875rem] transition-colors',
@@ -1856,7 +1883,7 @@ function Chip() {
       fmtUsd(today.cost),
       live.cacheHitPct != null ? `${live.bucket?.cacheEstimated ? '≈' : ''}${Math.round(live.cacheHitPct)}%` : '—',
       live.saved != null ? `${live.bucket && live.bucket.cacheEstimated ? '≈' : ''}${fmtUsd(live.saved)}` : '—'
-    ) + (monthlyTooltip ? '\n' + monthlyTooltip : ''),
+    ) + [todayTooltip, monthlyTooltip].filter(Boolean).map(value => '\n' + value).join(''),
     children: jsxs('button', {
       className: cn(
         'inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] transition-colors',
@@ -4811,9 +4838,11 @@ function settledDesktopMonth(ledger, now = new Date()) {
   let unpriced = 0
   let unpricedCalls = 0
   let missingUsageCalls = 0
+  let unknownCoverage = false
   for (const [day, buckets] of Object.entries(ledger?.days || {})) {
     if (!day.startsWith(month)) continue
     for (const bucket of Object.values(buckets || {})) {
+      unknownCoverage ||= coverageUnknown(bucket)
       unpriced += Number(bucket?.unpricedTokens) || 0
       unpricedCalls += Number(bucket?.unpricedCalls) || 0
       missingUsageCalls += Number(bucket?.missingUsageCalls) || 0
@@ -4824,7 +4853,10 @@ function settledDesktopMonth(ledger, now = new Date()) {
       priced += Number(bucket.pricedTokens)
     }
   }
-  return { known: priced > 0, cost, pricedTokens: priced, unpricedTokens: unpriced, unpricedCalls, missingUsageCalls }
+  return {
+    known: priced > 0, cost, pricedTokens: priced, unpricedTokens: unpriced,
+    unpricedCalls, missingUsageCalls, coverageUnknown: unknownCoverage
+  }
 }
 
 function overviewTopModels(rows, limit = 4) {
@@ -4915,11 +4947,14 @@ function OverviewPage() {
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'recorded-usage', children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovRecordedLabel') }),
           jsx('div', { className: 'wm-kpi-figure', children: !local.known ? t('ovUnknown')
-          : local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls ? [fmtUsd(local.cost), jsx('small', { children: ' ' + t('ovLowerBound') }, 'lb')] : fmtUsd(local.cost) }),
+          : local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls || local.coverageUnknown
+            ? [jsx('small', { children: '≥' }, 'gte'), fmtUsd(local.cost), jsx('small', { children: ' ' + t('ovLowerBound') }, 'lb')]
+            : fmtUsd(local.cost) }),
           jsx('p', { className: 'wm-kpi-prov', children: t('ovRecordedProv') }),
+          local.coverageUnknown ? jsx('p', { className: 'wm-kpi-prov', children: t('ovCoverageUnknown') }) : null,
           jsxs('div', { className: 'wm-kpi-foot', children: [
             certaintyChip('estimated', t('ovCertRecorded'), 'recorded'),
-            (local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls) ? certaintyChip('partial', t('ovCertPartial'), 'rpart') : null
+            (local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls || local.coverageUnknown) ? certaintyChip('partial', t('ovCertPartial'), 'rpart') : null
           ].filter(Boolean) })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'actual-charges', 'aria-label': t('ovChargesLabel'), children: [
@@ -9924,6 +9959,10 @@ const I18N = {
     chipTip: (model, source, today, hit, saved) =>
       `${model} — cost ${source}. Today ${today}. Cache hit ${hit}; theoretical net cache savings ${saved}. Click for details.`,
   chipTipIdle: 'SpendSense — click for details',
+  todayApiEquivalent: 'API-equivalent',
+  allProfiles: 'all profiles',
+  todayStatusNote: 'Today is API-equivalent, not actual provider charges; it includes all profiles in this Desktop ledger.',
+  coverageUnknownShort: 'coverage unknown',
     context: 'Context',
     copied: 'Ledger JSON copied to the clipboard.',
     copyJson: 'Copy JSON',
@@ -10065,8 +10104,9 @@ const I18N = {
     ovTitle: 'Overview',
     ovSubtitle: 'See captured usage value, backend estimates, saved account fees and what needs attention.',
     ovFigures: 'Key figures',
-    ovRecordedLabel: 'Recorded usage · API-equivalent, this month',
-    ovRecordedProv: 'Desktop ledger · priced at capture; not payment or actual spend.',
+    ovRecordedLabel: 'Recorded usage · API-equivalent, all profiles, this month',
+    ovRecordedProv: 'Desktop ledger · all profiles · API-equivalent at capture rates; not payment, invoice or actual provider charges.',
+    ovCoverageUnknown: 'Call-level coverage was not recorded on older ledger entries, so completeness cannot be confirmed.',
     ovCertRecorded: 'Priced at capture',
     ovUnknown: 'Unknown',
     ovEstimatedLabel: 'API-equivalent estimate · backend, 30 days',
@@ -10379,7 +10419,7 @@ const I18N = {
     ovReviewMemberships: 'Review memberships',
     ovManageMemberships: 'Manage memberships',
     ovMethodTitle: 'How these figures are calculated',
-    ovMethodBody: 'Desktop recorded usage is an API-equivalent value priced at capture; it is not a payment, invoice or actual provider spend. Backend estimates use current catalogue rates for timestamped calls in the last 30 days; partial amounts are lower bounds and unpriced usage is reported separately. Actual provider charges are not recorded in this view because the 30-day analytics endpoint does not include per-call actual-charge evidence; billing classifications do not supply that evidence. Saved account fees retain their currency and billing period, and unknown fees are excluded with their count. No currency conversion or shared-entitlement relationship is inferred. Model rankings count recorded calls only. A subscription-value comparison is not summarised here while account relationships and financial coverage remain unverified.',
+    ovMethodBody: 'Desktop month and today totals aggregate all profiles in this ledger, not just the active profile. These Desktop values are API-equivalent at capture rates, not payments, invoices or actual provider charges. The separate backend API-equivalent estimate is limited to the active profile and uses current catalogue rates for timestamped calls in the last 30 days. Older records written before call-level coverage counters existed cannot prove every call included usage data; no historical values are backfilled. Partial amounts remain lower bounds and unpriced usage is reported separately. Actual provider charges are not recorded in this view because the 30-day analytics endpoint does not include per-call actual-charge evidence; billing classifications do not supply that evidence. Saved account fees retain their currency and billing period, and unknown fees are excluded with their count. No currency conversion or shared-entitlement relationship is inferred. Model rankings count recorded calls only. A subscription-value comparison is not summarised here while account relationships and financial coverage remain unverified.',
     // Allowance weather.
     wxTitle: 'Allowance weather',
     wxAhead: 'Ahead of pace',
@@ -11236,6 +11276,10 @@ const I18N = {
     chipTip: (model, source, today, hit, saved) =>
       `${model} — 费用${source}。今日 ${today}。缓存命中 ${hit}，理论缓存净节省 ${saved}。点击查看明细。`,
   chipTipIdle: 'SpendSense — 点击查看详情',
+  todayApiEquivalent: 'API 等值',
+  allProfiles: '所有配置文件',
+  todayStatusNote: '今日金额是 API 等值，并非实际服务商费用；包含此桌面账本中的所有配置文件。',
+  coverageUnknownShort: '覆盖情况未知',
     context: '上下文',
     copied: '账本 JSON 已复制到剪贴板。',
     copyJson: '复制 JSON',
@@ -11377,8 +11421,9 @@ const I18N = {
     ovTitle: '总览',
     ovSubtitle: '查看已记录用量价值、后端估算、已保存账户费用和待处理事项。',
     ovFigures: '关键数据',
-    ovRecordedLabel: '已记录用量 · API 等值，本月',
-    ovRecordedProv: '桌面账本 · 按捕获时价格计价；非付款，也非实际支出。',
+    ovRecordedLabel: '已记录用量 · API 等值，所有配置文件，本月',
+    ovRecordedProv: '桌面账本 · 所有配置文件 · 按捕获时价格计算的 API 等值；不是付款、发票或实际服务商费用。',
+    ovCoverageUnknown: '旧账本条目未记录逐次调用的覆盖计数器，因此无法确认其完整性。',
     ovCertRecorded: '按捕获时价格计价',
     ovUnknown: '未知',
     ovEstimatedLabel: 'API 等值估算 · 后端，30 天',
@@ -11691,7 +11736,7 @@ const I18N = {
     ovReviewMemberships: '检查会员',
     ovManageMemberships: '管理会员',
     ovMethodTitle: '这些数据的计算方式',
-    ovMethodBody: '桌面已记录用量是按捕获时价格计算的 API 等值；它不是付款、发票或实际服务商支出。后端估算按过去 30 天带时间戳的调用及当前目录价格计算；部分金额是下限，未定价用量会单独说明。此视图不记录实际服务商费用，因为 30 天分析接口不包含逐次调用的实际费用证据；账单分类不能代替此类证据。已保存账户费用保留原币种和账单周期，未知费用会连同数量说明。不进行币种换算，也不推断共享权益关系。模型排名仅按已记录调用数计算。账户关系和财务覆盖情况尚未核实，因此此处不汇总订阅价值比较。',
+    ovMethodBody: '本桌面账本中的月度和今日总额汇总所有配置文件，而不只限于当前配置文件。桌面金额按记录时价格计算为 API 等值，并非付款、发票或实际服务商费用。单独的后端 API 等值估算仅限当前配置文件，并使用过去 30 天带时间戳调用的当前目录价格。逐次调用覆盖计数器出现前写入的旧记录，无法证明每次调用都包含用量数据；不会回填历史记录。部分金额仍是下限，未定价用量会单独说明。此视图不记录实际服务商费用，因为 30 天分析接口不包含逐次调用的实际费用证据；账单分类不能代替此类证据。已保存账户费用保留原币种和账单周期，未知费用会连同数量说明。不进行币种换算，也不推断共享权益关系。模型排名仅按已记录调用数计算。账户关系和财务覆盖情况尚未核实，因此此处不汇总订阅价值比较。',
     // 额度动态。
     wxTitle: '额度动态',
     wxAhead: '消耗偏快',
@@ -12654,7 +12699,7 @@ export const __test = {
   CostsPage, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark, PRODUCT_CSS,
   $settingsConfirmation, $modelRefreshState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
-  settledDesktopMonth, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
+  settledDesktopMonth, desktopTodayText, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
   setRest: value => { $backendCompatibility.set([]); rest = wrapBackendTransport(value) },
   getRest: () => rest,
@@ -12663,6 +12708,7 @@ export const __test = {
   $backendCompatibility,
   PANE_DATA,
   applyUsage,
+  coverageUnknown,
   bundledLookup,
   csvCell,
   daysAgoKey,

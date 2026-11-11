@@ -40,6 +40,20 @@ const { __test: T } = mod
 const plugin = mod.default
 
 const NOW = new Date(2026, 9, 21, 12).getTime()
+const coverageLedger = bucket => {
+  const day = T.dayKey(NOW)
+  const key = JSON.stringify(['work', 'provider-x', 'model-x', 0])
+  const saved = {
+    cacheRead: 0, cacheWrite: 0, calls: 2, cost: 0.0105, input: 1000, legacy: false,
+    model: 'model-x', output: 500, pricedTokens: 1500, profile: 'work', provider: 'provider-x',
+    saved: 0, sources: { live: 1500 }, unpricedTokens: 0, ...bucket
+  }
+  return {
+    ...T.emptyLedger(),
+    days: { [day]: { [key]: saved } },
+    sessions: { conversation: { ...saved, firstAt: NOW, lastAt: NOW } }
+  }
+}
 const copilotPayload = rates => ({
   model: 'claude-opus-5',
   provider: 'github-copilot',
@@ -388,10 +402,38 @@ test('applyUsage: a known-rate call with missing usage stays partial until its c
   summary = T.summarize(led, () => true, null)
   assert.equal(summary.rows[0].missingUsageCalls, 1)
   assert.equal(summary.totals.missingUsageCalls, 1)
+  assert.equal(summary.rows[0].coverageUnknown, false)
   assert.ok(summary.rows[0].cost > firstCost, 'the newly reported tokens are priced once')
   assert.equal(led.sessions.conversation.missingUsageCalls, 1)
   assert.equal(led.snapshots['usage-gap'].guardrail.usageValueMissingCalls, 1)
   assert.equal(led.snapshots['usage-gap'].guardrail.pendingUsageCall, null)
+})
+
+test('summarize marks absent or partially present call-coverage counters as unknown', () => {
+  for (const bucket of [{}, { missingUsageCalls: 0 }]) {
+    const summary = T.summarize(coverageLedger(bucket), () => true, null)
+    assert.equal(summary.rows[0].coverageUnknown, true)
+    assert.equal(summary.totals.coverageUnknown, true)
+  }
+})
+
+test('summarize treats recorded zero call-coverage counters as complete', () => {
+  const summary = T.summarize(coverageLedger({ unpricedCalls: 0, missingUsageCalls: 0 }), () => true, null)
+  assert.equal(summary.rows[0].coverageUnknown, false)
+  assert.equal(summary.totals.coverageUnknown, false)
+})
+
+test('coverage uncertainty survives a new write into a partially covered old bucket', () => {
+  const legacy = coverageLedger({ missingUsageCalls: 0 })
+  const updated = T.applyUsage(legacy, {
+    now: NOW, profile: 'work', provider: 'provider-x', sessionId: 'after-upgrade', storedId: 'conversation',
+    usage: { model: 'model-x', input: 10, calls: 1 }
+  })
+  const bucket = Object.values(updated.days[T.dayKey(NOW)])[0]
+  assert.equal(bucket.coverageUnknown, true)
+  assert.equal(typeof bucket.unpricedCalls, 'number', 'the new write adds its own evidence counter')
+  assert.equal(T.summarize(updated, () => true, null).totals.coverageUnknown, true)
+  assert.equal(updated.sessions.conversation.coverageUnknown, true, 'conversation history retains the uncertainty too')
 })
 
 test('applyUsage: explicit zero counters with known rates are confirmed usage, not a pending gap', () => {
@@ -486,6 +528,30 @@ test('CSV keeps gross cache-read savings and adds a separate signed net column',
     usage: { model: 'm', input: 100, prompt: 100, calls: 1 } })
   const unknownRow = T.ledgerCsv(unknown).trim().split('\r\n')[1].split(',')
   assert.equal(unknownRow[15], '', 'unknown coverage has no net value')
+})
+
+test('CSV appends call-coverage evidence without moving the original 16 columns', () => {
+  const fields = (model, coverage) => ({
+    input: 100, output: 0, cacheRead: 0, cacheWrite: 0, calls: 1, cost: 0.01,
+    legacy: false, model, profile: 'work', provider: 'p', pricedTokens: 100, unpricedTokens: 0,
+    saved: 0, sources: { live: 100 }, ...coverage
+  })
+  const led = { days: { '2026-10-21': {
+    complete: fields('complete', { unpricedCalls: 0, missingUsageCalls: 0 }),
+    gap: fields('gap', { unpricedCalls: 0, missingUsageCalls: 1 }),
+    legacy: fields('legacy', {})
+  } } }
+  const [header, ...rows] = T.ledgerCsv(led).trim().split('\r\n').map(line => line.split(','))
+  assert.deepEqual(header.slice(0, 16), [
+    'date', 'profile', 'provider', 'model', 'input', 'output', 'cache_read', 'cache_write', 'calls',
+    'cost_usd', 'cost_basis', 'priced_tokens', 'unpriced_tokens', 'cache_saved_usd', 'cache_estimated', 'net_cache_savings_usd'
+  ])
+  assert.deepEqual(header.slice(16), ['unpriced_calls', 'missing_usage_calls', 'coverage_unknown'])
+  assert.equal(header.length, 19)
+  const byModel = Object.fromEntries(rows.map(row => [row[3], row]))
+  assert.deepEqual(byModel.complete.slice(16), ['0', '0', 'no'])
+  assert.deepEqual(byModel.gap.slice(16), ['0', '1', 'no'])
+  assert.deepEqual(byModel.legacy.slice(16), ['0', '0', 'yes'])
 })
 
 test('daysAgoKey is DST-safe local calendar math', () => {
