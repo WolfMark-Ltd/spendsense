@@ -1219,9 +1219,17 @@ function backendFailureStatus(failure) {
   return match ? Number(match[1]) : 0
 }
 
+function backendRoute(path) {
+  return String(path || '').split(/[?#]/, 1)[0].replace(/\/+$/, '') || '/'
+}
+
+function backendMethod(options) {
+  return String(options?.method || 'GET').toUpperCase()
+}
+
 function backendCompatibilityKind(path, options, failure) {
-  const method = String(options?.method || 'GET').toUpperCase()
-  const route = String(path || '').split(/[?#]/, 1)[0].replace(/\/+$/, '') || '/'
+  const method = backendMethod(options)
+  const route = backendRoute(path)
   const status = backendFailureStatus(failure)
   const message = backendFailureText(failure)
   if (status !== 404 && status !== 422) return null
@@ -1259,12 +1267,14 @@ function backendCompatibilityText(error, t = needsAttentionEn) {
 async function backendRequest(path, options = {}, transport = rest) {
   if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
   const identity = membershipIdentityNow()
+  const route = backendRoute(path)
+  const method = backendMethod(options)
   const handleFailure = failure => {
     if (isBackendCompatibilityError(failure)) throw failure
     const kind = backendCompatibilityKind(path, options, failure)
     if (!kind) throw failure
     if (membershipIdentityCurrent(identity)) {
-      $backendCompatibility.set({ identity, path: String(path || ''), kind })
+      $backendCompatibility.set({ identity, route, method, kind })
     }
     throw makeBackendCompatibilityError(path, kind)
   }
@@ -1273,6 +1283,12 @@ async function backendRequest(path, options = {}, transport = rest) {
     if (result?.ok === false) {
       const kind = backendCompatibilityKind(path, options, result)
       if (kind) return handleFailure(result)
+    } else {
+      const flagged = $backendCompatibility.get()
+      if (flagged?.identity === identity && flagged.route === route && flagged.method === method
+          && membershipIdentityCurrent(identity)) {
+        $backendCompatibility.set(null)
+      }
     }
     return result
   } catch (error) {
@@ -7175,7 +7191,7 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
             children: t('memMarkAccountExhausted') }),
           exhaustionDraft?.scope_kind === 'account' ? exhaustionForm : null
         ] }),
-    jsx(AllowanceWeather, { entry: weather || null, error: !!weatherError }),
+    jsx(AllowanceWeather, { entry: weather || null, error: weatherError }),
     rows.length && !accountHolderMarked(account)
       ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'exhaust-account-footer',
           disabled: !!busy,
@@ -12525,6 +12541,8 @@ export const __test = {
   settledDesktopMonth, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
   setRest: value => { $backendCompatibility.set(null); rest = wrapBackendTransport(value) },
+  getRest: () => rest,
+  restoreRest: value => { rest = value },
   backendRequest, isBackendCompatibilityError, backendCompatibilityText,
   $backendCompatibility,
   PANE_DATA,

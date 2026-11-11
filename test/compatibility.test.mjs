@@ -62,11 +62,27 @@ function failedTransport(status, body) {
 }
 async function requestError(path, method, status, body) {
   let rejected
-  await assert.rejects(
-    T.backendRequest(path, { method }, failedTransport(status, body)),
-    error => { rejected = error; return error instanceof Error }
-  )
-  return rejected
+  const previousCompatibility = T.$backendCompatibility.get()
+  try {
+    await assert.rejects(
+      T.backendRequest(path, { method }, failedTransport(status, body)),
+      error => { rejected = error; return error instanceof Error }
+    )
+    return rejected
+  } finally {
+    T.$backendCompatibility.set(previousCompatibility)
+  }
+}
+
+function snapshotGlobals(names) {
+  return new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]))
+}
+
+function restoreGlobals(snapshot) {
+  for (const [name, descriptor] of snapshot) {
+    if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+    else delete globalThis[name]
+  }
 }
 
 test('known newer endpoints and the WP04 arrangement route recognise route-level 404s', async () => {
@@ -124,51 +140,121 @@ test('network errors, unrelated 404s, missing records and missing plugin namespa
   }
 })
 
-test('the installed transport wrapper records one translated warning and removes digest retry guidance', async () => {
-  T.setRest(async () => ({ ok: false, status: 404, detail: 'Not Found' }))
-  const identity = T.membershipIdentityNow()
-  let rejection
-  await assert.rejects(T.economicsQuery(identity).queryFn(), error => {
-    rejection = error
-    return T.isBackendCompatibilityError(error)
-  })
-  assert.equal(T.$backendCompatibility.get()?.identity, identity)
-
-  globalThis.compatibilityLanguage = 'zh'
-  const shell = T.ProductShell({ children: null })
-  const warnings = shell.props.children.filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility')
-  assert.equal(warnings.length, 1)
-  assert.match(warnings[0].props.children, /后端可能比此/)
-  assert.match(T.membershipErrorText(rejection, 'write', zh), /一起更新/)
-
+test('MembershipCard forwards classified and ordinary weather errors to AllowanceWeather', async () => {
+  const compatibilityError = await requestError('/allowance/weather', 'GET', 404, { detail: 'Not Found' })
   const account = {
-    id: 'a', family: 'openai-codex', rev: 'rev-1', effective_arrangement: 'subscription',
-    quota: {}, fee: {}
+    id: 'weather-account', family: 'openai-codex', rev: 'rev-1',
+    effective_arrangement: 'subscription', quota: {}, fee: {}
   }
-  const card = notice => T.MembershipCard({
-    account, accounts: [account], plans: [], busy: '', onAction() {}, draft: null,
-    saveFee() {}, catalogue: {}, notice, weather: null, weatherError: null, hasAttention: false
-  })
-  const compatibilityNotice = T.backendCompatibilityText(rejection, zh)
-  assert.doesNotMatch(allText(card({
-    tone: 'warn', text: compatibilityNotice, accountId: account.id, compatibility: true
-  })), /后端可能比此/)
-  assert.ok(allText(card({
-    tone: 'warn', text: zh('memErrValidation'), accountId: account.id
-  })).includes(zh('memErrValidation')))
+  const renderWeather = weatherError => {
+    const card = T.MembershipCard({
+      account, accounts: [account], plans: [], busy: '', onAction() {}, draft: null,
+      saveFee() {}, catalogue: {}, notice: null, weather: null, weatherError, hasAttention: false
+    })
+    const component = allNodes(card).find(node => node.type === T.AllowanceWeather)
+    assert.ok(component)
+    return { component, output: T.AllowanceWeather(component.props) }
+  }
 
-  globalThis.compatibilityQueryResponse = {
-    data: null, error: rejection, isLoading: false, isFetching: false,
-    refetch: () => { globalThis.compatibilityRetried = true }
+  const compatibilityWeather = renderWeather(compatibilityError)
+  assert.equal(compatibilityWeather.component.props.error, compatibilityError)
+  assert.equal(compatibilityWeather.output, null)
+
+  const ordinaryError = new Error('fetch failed')
+  const ordinaryWeather = renderWeather(ordinaryError)
+  assert.equal(ordinaryWeather.component.props.error, ordinaryError)
+  assert.equal(allText(ordinaryWeather.output), en('wxUnavailable'))
+})
+
+test('a later success clears only the flagged route for the same identity', async () => {
+  const previousCompatibility = T.$backendCompatibility.get()
+  const previousConnection = T.$scopeConnection.get()
+  const failedPath = '/economics/summary?days=30'
+  T.$backendCompatibility.set(null)
+  try {
+    let compatibilityError
+    await assert.rejects(
+      T.backendRequest(failedPath, { method: 'GET' }, failedTransport(404, { detail: 'Not Found' })),
+      error => { compatibilityError = error; return T.isBackendCompatibilityError(error) }
+    )
+    const flagged = T.$backendCompatibility.get()
+    assert.ok(flagged)
+    assert.equal(flagged.identity, T.membershipIdentityNow())
+    assert.equal(flagged.route, '/economics/summary')
+    assert.equal(flagged.method, 'GET')
+    assert.ok(compatibilityError)
+
+    await T.backendRequest('/reports/digest', { method: 'GET' }, async () => ({ ok: true }))
+    assert.deepEqual(T.$backendCompatibility.get(), flagged)
+
+    T.$scopeConnection.set('another-connection')
+    await T.backendRequest('/economics/summary?days=7', { method: 'GET' }, async () => ({ ok: true }))
+    assert.deepEqual(T.$backendCompatibility.get(), flagged)
+
+    T.$scopeConnection.set(previousConnection)
+    await T.backendRequest('/economics/summary?days=7', { method: 'GET' }, async () => ({ ok: true }))
+    assert.equal(T.$backendCompatibility.get(), null)
+  } finally {
+    T.$scopeConnection.set(previousConnection)
+    T.$backendCompatibility.set(previousCompatibility)
   }
-  const reportPage = T.ReportsPage()
-  const reportContent = reportPage.props.children
-  const labels = allText(reportContent)
-  assert.doesNotMatch(labels, /Report unavailable|Retry|此连接无法生成报告|重试/)
-  const generate = allNodes(reportContent).find(node => node.props?.children === zh('rpGenerate'))
-  assert.ok(generate)
-  assert.equal(generate.props.disabled, undefined)
-  assert.equal(globalThis.compatibilityRetried, undefined)
-  T.setRest(null)
-  globalThis.compatibilityQueryResponse = null
+})
+
+test('the installed transport wrapper records one translated warning and removes digest retry guidance', async () => {
+  const globals = snapshotGlobals([
+    'compatibilityLanguage', 'compatibilityQueryResponse', 'compatibilityRetried'
+  ])
+  const previousRest = T.getRest()
+  const previousCompatibility = T.$backendCompatibility.get()
+  try {
+    globalThis.compatibilityRetried = undefined
+    T.setRest(async () => ({ ok: false, status: 404, detail: 'Not Found' }))
+    const identity = T.membershipIdentityNow()
+    let rejection
+    await assert.rejects(T.economicsQuery(identity).queryFn(), error => {
+      rejection = error
+      return T.isBackendCompatibilityError(error)
+    })
+    assert.equal(T.$backendCompatibility.get()?.identity, identity)
+
+    globalThis.compatibilityLanguage = 'zh'
+    const shell = T.ProductShell({ children: null })
+    const warnings = shell.props.children.filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility')
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0].props.children, /后端可能比此/)
+    assert.match(T.membershipErrorText(rejection, 'write', zh), /一起更新/)
+
+    const account = {
+      id: 'a', family: 'openai-codex', rev: 'rev-1', effective_arrangement: 'subscription',
+      quota: {}, fee: {}
+    }
+    const card = notice => T.MembershipCard({
+      account, accounts: [account], plans: [], busy: '', onAction() {}, draft: null,
+      saveFee() {}, catalogue: {}, notice, weather: null, weatherError: null, hasAttention: false
+    })
+    const compatibilityNotice = T.backendCompatibilityText(rejection, zh)
+    assert.doesNotMatch(allText(card({
+      tone: 'warn', text: compatibilityNotice, accountId: account.id, compatibility: true
+    })), /后端可能比此/)
+    assert.ok(allText(card({
+      tone: 'warn', text: zh('memErrValidation'), accountId: account.id
+    })).includes(zh('memErrValidation')))
+
+    globalThis.compatibilityQueryResponse = {
+      data: null, error: rejection, isLoading: false, isFetching: false,
+      refetch: () => { globalThis.compatibilityRetried = true }
+    }
+    const reportPage = T.ReportsPage()
+    const reportContent = reportPage.props.children
+    const labels = allText(reportContent)
+    assert.doesNotMatch(labels, /Report unavailable|Retry|此连接无法生成报告|重试/)
+    const generate = allNodes(reportContent).find(node => node.props?.children === zh('rpGenerate'))
+    assert.ok(generate)
+    assert.equal(generate.props.disabled, undefined)
+    assert.equal(globalThis.compatibilityRetried, undefined)
+  } finally {
+    T.restoreRest(previousRest)
+    T.$backendCompatibility.set(previousCompatibility)
+    restoreGlobals(globals)
+  }
 })
