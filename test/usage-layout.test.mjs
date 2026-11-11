@@ -43,7 +43,7 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
     const run = locale => {
       const dom = execFileSync(CHROME, [
         '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-profile-${locale}`)}`,
-        '--virtual-time-budget=8000', '--dump-dom', `${url}?locale=${locale}`,
+        '--virtual-time-budget=8000', '--dump-dom', `${url}?locale=${locale}&open=filters`,
       ], { maxBuffer: 64 * 1024 * 1024, timeout: 120000 }).toString()
       const match = dom.match(/<div id="usage-layout-result"[^>]*>([^<]*)<\/div>/)
       assert.ok(match?.[1], `Chromium records Usage layout results (${locale})`)
@@ -63,6 +63,13 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.ok(layout.statGroups.length >= 2, `${id} groups KPIs with labelled separators`)
         assert.equal(layout.selects, 7, `${id} keeps all seven filters`)
         assert.equal(layout.advancedFilters, true, `${id} discloses advanced filters`)
+        assert.equal(layout.advancedOpen, true, `${id} measures the advanced row expanded`)
+        assert.equal(layout.advancedSelects, 4, `${id} keeps four advanced filters`)
+        assert.match(layout.advancedSummary, /2/, `${id} counts two active advanced slices`)
+        assert.deepEqual(layout.advancedRowOverlap, [], `${id} has no overlapping advanced filters`)
+        assert.equal(layout.advancedRowOverflow, 0, `${id} keeps the advanced row inside its pane`)
+        assert.ok(layout.stickyColumnWidth > 0 && layout.stickyColumnWidth < layout.tableViewportWidth,
+          `${id} keeps the pinned model column inside the table viewport (${layout.stickyColumnWidth}/${layout.tableViewportWidth})`)
         assert.equal(layout.chips, 3, `${id} renders three active-filter chips`)
         assert.deepEqual(layout.filterOverlap, [], `${id} has no overlapping filters`)
         assert.deepEqual(layout.chipOverlap, [], `${id} has no overlapping chips`)
@@ -89,6 +96,12 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.equal(layout.methodologyOpen, false, `${id} keeps Methodology collapsed`)
         assert.equal(layout.baselineOpen, false, `${id} keeps Baseline collapsed`)
       }
+      const interaction = result.interaction || {}
+      assert.equal(interaction.chipsBefore, 3, `chip removal starts from three chips (${locale})`)
+      assert.equal(interaction.chipsAfterSurface, 2, `removing the surface chip leaves two (${locale})`)
+      assert.match(interaction.summaryAfterSurface || '', /1/, `the disclosure count drops to one (${locale})`)
+      assert.equal(interaction.chipsAfterModel, 1, `removing the model chip leaves one (${locale})`)
+      assert.equal(interaction.disclosureToggle, true, `the disclosure toggles closed and open (${locale})`)
       const wide = result.layouts.find(l => l.id === 'wide-dark')
       if (locale === 'en') {
         assert.match(wide.text, /Theoretical net savings/, 'WP06 cache-savings evidence survives')

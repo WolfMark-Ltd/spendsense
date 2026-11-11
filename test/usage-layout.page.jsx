@@ -146,10 +146,12 @@ function overlapPairs(elements) {
 
 async function measure() {
   await tick(1200)
-  // Evidence-only single-case states for review screenshots (inert by default).
-  if (selected && params.get('open') === 'filters') {
-    const advanced = document.querySelector('[data-filters-advanced]')
-    if (advanced) advanced.open = true
+  // The committed test opens every Advanced disclosure (?open=filters) so
+  // the hidden filters get real layout and the overlap/overflow checks below
+  // cover the advanced row too.
+  if (params.get('open') === 'filters') {
+    for (const advanced of document.querySelectorAll('[data-filters-advanced]')) advanced.open = true
+    await tick(300)
   }
   if (selected && params.get('scroll') === 'explorer') {
     const wrap = document.querySelector('.wm-tablewrap')
@@ -177,6 +179,11 @@ async function measure() {
     const statOverflow = stats.filter(el => el.scrollWidth - el.clientWidth > 1).length
     const trendPoints = [...pane.querySelectorAll('[data-trend-point]')]
     const legendRows = [...pane.querySelectorAll('.wm-legend .wm-legendrow')]
+    const advanced = pane.querySelector('[data-filters-advanced]')
+    const advancedRow = pane.querySelector('.wm-advancedrow')
+    const advancedRowFilters = advanced ? [...advanced.querySelectorAll('.wm-filter')] : []
+    const tableWrap = pane.querySelector('.wm-tablewrap')
+    const firstCell = pane.querySelector('tbody td:first-child')
     output.layouts.push({
       id, width: pane.clientWidth,
       numbers: [...pane.querySelectorAll('.wm-panel .wm-number')].map(el => el.textContent),
@@ -184,7 +191,14 @@ async function measure() {
       stats: stats.length,
       statGroups: [...pane.querySelectorAll('[data-kpi-group]')].map(el => el.dataset.kpiGroup),
       selects: pane.querySelectorAll('select').length,
-      advancedFilters: !!pane.querySelector('[data-filters-advanced]'),
+      advancedFilters: !!advanced,
+      advancedOpen: !!advanced?.open,
+      advancedSummary: advanced?.querySelector('summary')?.textContent || '',
+      advancedSelects: advanced ? advanced.querySelectorAll('select').length : 0,
+      advancedRowOverlap: overlapPairs(advancedRowFilters),
+      advancedRowOverflow: advancedRow && advancedRow.scrollWidth - advancedRow.clientWidth > 1 ? 1 : 0,
+      stickyColumnWidth: firstCell ? firstCell.offsetWidth : 0,
+      tableViewportWidth: tableWrap ? tableWrap.clientWidth : 0,
       filterOverlap: overlapPairs(filters),
       chipOverlap: overlapPairs(chips),
       chips: chips.length,
@@ -201,12 +215,55 @@ async function measure() {
         const cell = pane.querySelector('tbody td:first-child')
         return cell ? getComputedStyle(cell).position : 'none'
       })(),
-      methodologyOpen: !!pane.querySelector('.wm-shell > div details')?.open,
+      methodologyOpen: (() => {
+        // Methodology is the only disclosure that is neither the advanced
+        // filters nor the baseline; match it by exclusion so the open
+        // advanced row cannot masquerade as an open Methodology.
+        const rest = [...pane.querySelectorAll('.wm-shell details')]
+          .filter(el => !el.hasAttribute('data-filters-advanced') && !el.classList.contains('wm-baseline'))
+        return rest.length === 1 && !!rest[0].open
+      })(),
       baselineOpen: !!pane.querySelector('details.wm-baseline')?.open,
       text: shell.textContent,
     })
   }
+  // Interaction probe on the first case only: all cases share one analytics
+  // atom, so clicks here re-render every pane. Layout above is recorded first.
+  // Skipped in single-case screenshot mode so shots show the pristine state.
+  output.interaction = selected ? null : await interactionProbe()
   document.getElementById('usage-layout-result').textContent = JSON.stringify(output)
+}
+
+async function interactionProbe() {
+  const probe = document.getElementById(cases[0])
+  const probeChips = () => [...probe.querySelectorAll('.wm-scopechips button')]
+  const probeSummary = () => probe.querySelector('[data-filters-advanced] summary')?.textContent || ''
+  const interaction = { chipsBefore: probeChips().length, summaryBefore: probeSummary() }
+  const surfaceChip = probeChips()[1]
+  if (surfaceChip) {
+    surfaceChip.click()
+    await tick(300)
+    interaction.chipsAfterSurface = probeChips().length
+    interaction.summaryAfterSurface = probeSummary()
+  }
+  const modelChip = probeChips()[0]
+  if (modelChip) {
+    modelChip.click()
+    await tick(300)
+    interaction.chipsAfterModel = probeChips().length
+  }
+  const toggle = probe.querySelector('[data-filters-advanced]')
+  if (toggle) {
+    const summary = toggle.querySelector('summary')
+    const wasOpen = toggle.open
+    summary.click()
+    await tick(200)
+    const closed = !toggle.open
+    summary.click()
+    await tick(200)
+    interaction.disclosureToggle = wasOpen && closed && toggle.open
+  }
+  return interaction
 }
 
 window.addEventListener('error', event => {
