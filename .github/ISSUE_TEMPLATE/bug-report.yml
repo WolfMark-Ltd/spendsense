@@ -7,7 +7,7 @@ body:
     attributes:
       label: Before reporting
       options:
-        - label: I checked the [troubleshooting table](https://github.com/WolfMark-Ltd/spendsense/blob/main/docs/quickstart.md#if-something-goes-wrong) and my symptom is not covered there.
+        - label: I checked the troubleshooting guide and the problem remains unresolved.
           required: true
         - label: I have a backup of my Hermes profile data.
           required: false
