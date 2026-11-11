@@ -179,37 +179,83 @@ test('MembershipCard forwards classified and ordinary weather errors to Allowanc
   assert.equal(allText(ordinaryWeather.output), en('wxUnavailable'))
 })
 
-test('a later success clears only the flagged route for the same identity', async () => {
+test('route recovery clears only its identity-route-method failure', async () => {
   const previousCompatibility = T.$backendCompatibility.get()
   const previousConnection = T.$scopeConnection.get()
-  const failedPath = '/economics/summary?days=30'
-  T.$backendCompatibility.set(null)
+  const globals = snapshotGlobals(['compatibilityQueryResponse'])
+  const failedEconomicsPath = '/economics/summary?days=30'
+  const failedDigestPath = '/reports/digest?days=30&lang=en'
+  const failedMembershipPath = '/membership/accounts/a'
+  T.$backendCompatibility.set([])
   try {
-    let compatibilityError
+    let economicsError
     await assert.rejects(
-      T.backendRequest(failedPath, { method: 'GET' }, failedTransport(404, { detail: 'Not Found' })),
-      error => { compatibilityError = error; return T.isBackendCompatibilityError(error) }
+      T.backendRequest(failedEconomicsPath, { method: 'GET' }, failedTransport(404, { detail: 'Not Found' })),
+      error => { economicsError = error; return T.isBackendCompatibilityError(error) }
     )
-    const flagged = T.$backendCompatibility.get()
-    assert.ok(flagged)
-    assert.equal(flagged.identity, T.membershipIdentityNow())
-    assert.equal(flagged.route, '/economics/summary')
-    assert.equal(flagged.method, 'GET')
-    assert.ok(compatibilityError)
+    let digestError
+    await assert.rejects(
+      T.backendRequest(failedDigestPath, { method: 'GET' }, failedTransport(404, { detail: 'Not Found' })),
+      error => { digestError = error; return T.isBackendCompatibilityError(error) }
+    )
+    let membershipError
+    await assert.rejects(
+      T.backendRequest(failedMembershipPath, { method: 'PUT' }, failedTransport(422, {
+        detail: 'billing_arrangement and api_only: extra fields not permitted'
+      })),
+      error => { membershipError = error; return T.isBackendCompatibilityError(error) }
+    )
+    const identity = T.membershipIdentityNow()
+    const failures = T.$backendCompatibility.get()
+    assert.deepEqual(failures.map(({ identity, route, method }) => ({ identity, route, method })), [
+      { identity, route: '/economics/summary', method: 'GET' },
+      { identity, route: '/reports/digest', method: 'GET' },
+      { identity, route: failedMembershipPath, method: 'PUT' },
+    ])
+    assert.ok(T.isBackendCompatibilityError(economicsError))
+    assert.ok(T.isBackendCompatibilityError(digestError))
+    assert.ok(T.isBackendCompatibilityError(membershipError))
 
-    await T.backendRequest('/reports/digest', { method: 'GET' }, async () => ({ ok: true }))
-    assert.deepEqual(T.$backendCompatibility.get(), flagged)
+    await T.backendRequest('/allowance/weather', { method: 'GET' }, async () => ({ ok: true }))
+    assert.deepEqual(T.$backendCompatibility.get(), failures)
 
     T.$scopeConnection.set('another-connection')
     await T.backendRequest('/economics/summary?days=7', { method: 'GET' }, async () => ({ ok: true }))
-    assert.deepEqual(T.$backendCompatibility.get(), flagged)
+    assert.deepEqual(T.$backendCompatibility.get(), failures)
 
     T.$scopeConnection.set(previousConnection)
+    await T.backendRequest(failedMembershipPath, { method: 'GET' }, async () => ({ ok: true }))
+    assert.deepEqual(T.$backendCompatibility.get(), failures)
+
     await T.backendRequest('/economics/summary?days=7', { method: 'GET' }, async () => ({ ok: true }))
-    assert.equal(T.$backendCompatibility.get(), null)
+    assert.deepEqual(T.$backendCompatibility.get(), [failures[1], failures[2]])
+
+    const warningsAfterOneRecovery = T.ProductShell({ children: null }).props.children
+      .filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility')
+    assert.equal(warningsAfterOneRecovery.length, 1)
+
+    globalThis.compatibilityQueryResponse = {
+      data: null, error: digestError, isLoading: false, isFetching: false, refetch() {}
+    }
+    const reportContent = T.ReportsPage().props.children
+    const reportNodes = allNodes(reportContent)
+    const generate = reportNodes.find(node => node.props?.children === en('rpGenerate'))
+    assert.ok(generate)
+    assert.equal(typeof generate.props.onClick, 'function')
+    assert.equal(generate.props.disabled, undefined)
+    assert.doesNotMatch(allText(reportContent), /Report unavailable|Retry|此连接无法生成报告|重试/)
+
+    await T.backendRequest('/reports/digest?days=7&lang=en', { method: 'GET' }, async () => ({ ok: true }))
+    assert.deepEqual(T.$backendCompatibility.get(), [failures[2]])
+    await T.backendRequest(failedMembershipPath, { method: 'PUT' }, async () => ({ ok: true }))
+    assert.deepEqual(T.$backendCompatibility.get(), [])
+    const warningsAfterAllRecoveries = T.ProductShell({ children: null }).props.children
+      .filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility')
+    assert.equal(warningsAfterAllRecoveries.length, 0)
   } finally {
     T.$scopeConnection.set(previousConnection)
     T.$backendCompatibility.set(previousCompatibility)
+    restoreGlobals(globals)
   }
 })
 
@@ -228,7 +274,8 @@ test('the installed transport wrapper records one translated warning and removes
       economicsError = error
       return T.isBackendCompatibilityError(error)
     })
-    assert.equal(T.$backendCompatibility.get()?.identity, identity)
+    assert.ok(T.$backendCompatibility.get().some(failure => failure.identity === identity
+      && failure.route === '/economics/summary' && failure.method === 'GET'))
 
     globalThis.compatibilityLanguage = 'zh'
     const shell = T.ProductShell({ children: null })

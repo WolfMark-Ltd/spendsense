@@ -1184,7 +1184,7 @@ const $group = atom('route')
 const $basis = atom('hybrid')
 /** Namespace-scoped backend door (ctx.rest); null on a build without it. */
 let rest = null
-const $backendCompatibility = atom(null)
+const $backendCompatibility = atom([])
 
 const BACKEND_COMPATIBILITY_CODE = 'SPENDSENSE_BACKEND_COMPATIBILITY'
 const COMPATIBILITY_404_GETS = new Set([
@@ -1266,6 +1266,23 @@ function backendCompatibilityText(error, t = needsAttentionEn) {
   return isBackendCompatibilityError(error) ? t('backendCompatibility') : null
 }
 
+function rememberBackendCompatibilityFailure(failure) {
+  const current = $backendCompatibility.get()
+  const index = current.findIndex(item => item.identity === failure.identity
+    && item.route === failure.route && item.method === failure.method)
+  const next = current.slice()
+  if (index === -1) next.push(failure)
+  else next[index] = failure
+  $backendCompatibility.set(next)
+}
+
+function clearBackendCompatibilityFailure(identity, route, method) {
+  const current = $backendCompatibility.get()
+  const next = current.filter(item => item.identity !== identity
+    || item.route !== route || item.method !== method)
+  if (next.length !== current.length) $backendCompatibility.set(next)
+}
+
 async function backendRequest(path, options = {}, transport = rest) {
   if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
   const identity = membershipIdentityNow()
@@ -1276,7 +1293,7 @@ async function backendRequest(path, options = {}, transport = rest) {
     const kind = backendCompatibilityKind(path, options, failure)
     if (!kind) throw failure
     if (membershipIdentityCurrent(identity)) {
-      $backendCompatibility.set({ identity, route, method, kind })
+      rememberBackendCompatibilityFailure({ identity, route, method, kind })
     }
     throw makeBackendCompatibilityError(path, kind)
   }
@@ -1286,11 +1303,7 @@ async function backendRequest(path, options = {}, transport = rest) {
       const kind = backendCompatibilityKind(path, options, result)
       if (kind) return handleFailure(result)
     } else {
-      const flagged = $backendCompatibility.get()
-      if (flagged?.identity === identity && flagged.route === route && flagged.method === method
-          && membershipIdentityCurrent(identity)) {
-        $backendCompatibility.set(null)
-      }
+      if (membershipIdentityCurrent(identity)) clearBackendCompatibilityFailure(identity, route, method)
     }
     return result
   } catch (error) {
@@ -2779,7 +2792,7 @@ function ProductShell({ children, pageStyles = '' }) {
     children: [
       jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + (supplementalStyles || '') }),
       jsx(LedgerTabs, {}),
-      compatibility?.identity === identity
+      compatibility.some(failure => failure.identity === identity)
         ? jsx('div', { className: 'wm-alert wm-backend-compatibility', role: 'alert',
             children: t('backendCompatibility') })
         : null,
@@ -12396,7 +12409,7 @@ export default {
     ctx.setInterval(() => $membershipActivation.set(gatewayActivationEpoch()), 250)
     ctx.setInterval(() => $membershipClock.set(Date.now()), 30_000)
     osApi = ctx.os || null
-    $backendCompatibility.set(null)
+    $backendCompatibility.set([])
     rest = wrapBackendTransport(typeof ctx.rest === 'function' ? ctx.rest : null)
     const { ledger, migrated } = readStoredLedger(ctx.storage)
     $ledger.set(ledger)
@@ -12542,7 +12555,7 @@ export const __test = {
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
-  setRest: value => { $backendCompatibility.set(null); rest = wrapBackendTransport(value) },
+  setRest: value => { $backendCompatibility.set([]); rest = wrapBackendTransport(value) },
   getRest: () => rest,
   restoreRest: value => { rest = value },
   backendRequest, isBackendCompatibilityError, backendCompatibilityText,
