@@ -312,8 +312,9 @@ class DigestContentTests(DigestCase):
         self.assertEqual(allowances["columns"][1], "Calculated cycle end")
         notes = " ".join(allowances["notes"])
         self.assertIn("not provider-confirmed reset times", notes)
-        self.assertIn("does not display provider reading values or query providers", notes)
-        self.assertIn("Check Memberships for saved readings", notes)
+        self.assertIn("do not include provider usage readings or query providers", notes)
+        self.assertIn("Check Memberships for provider readings", notes)
+        self.assertIn("locally recorded usage under configured cost rules", notes)
 
     def test_allowance_unknown_reasons_are_grouped_by_cause(self):
         accounts = [
@@ -351,7 +352,7 @@ class DigestContentTests(DigestCase):
         self.assertIn("服务商读数与手动标记冲突", translated_notes)
         self.assertIn("没有可用的周期位置", translated_notes)
         self.assertIn("额度上限不可用或无效", translated_notes)
-        self.assertIn("不显示服务商读数值，也不会查询服务商", translated_notes)
+        self.assertIn("报告摘要不包含服务商用量读数，也不会查询服务商", translated_notes)
 
 
 class DigestLocalisationTests(DigestCase):
@@ -375,16 +376,19 @@ class DigestLocalisationTests(DigestCase):
                     result = self.report(days=days, lang=lang)
                     models = self.section(result, "models")
                     allowances = self.section(result, "allowances")
+                    methodology = " ".join(self.section(result, "methodology")["notes"])
                     self.assertIn(str(days), result["period"]["label"])
                     self.assertIn("API-equivalent subtotal" if lang == "en" else "API 等值小计",
                                   models["heading"])
                     allowance_notes = " ".join(allowances["notes"])
                     if lang == "en":
                         self.assertIn("not provider-confirmed reset times", allowance_notes)
-                        self.assertIn("does not display provider reading values", allowance_notes)
+                        self.assertIn("do not include provider usage readings", allowance_notes)
+                        self.assertIn("current-cycle values calculated under configured cost rules", methodology)
                     else:
                         self.assertIn("并非服务商确认的重置时间", allowance_notes)
-                        self.assertIn("不显示服务商读数值", allowance_notes)
+                        self.assertIn("不包含服务商用量读数", allowance_notes)
+                        self.assertIn("当前周期内按配置费用规则计算", methodology)
 
     def test_unknown_lang_falls_back_to_english(self):
         self.standard_fixture()
