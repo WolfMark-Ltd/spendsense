@@ -18,7 +18,7 @@ const Badge = noop, Button = noop, Codicon = noop, SegmentedControl = noop, Tip 
 const cn = (...values) => values.filter(Boolean).join(' ')
 const host = { state: { connectionId: atom(null), profile: atom('default'), gateway: atom('connected'), focusedSessionId: atom(null), focusedStoredSessionId: atom(null), focusedSessionProfile: atom('default'), focusedUsage: atom(null) }, notify() {}, navigate() {}, request: async () => null }
 const gatewayActivationEpoch = () => 1
-const useEffect = noop, useRef = initial => ({ current: initial })
+const useEffect = noop, useRef = initial => ({ current: initial }), useState = initial => [initial, noop]
 const queryClient = { fetchQuery: async query => query.queryFn(), invalidateQueries: async () => {} }
 const usePluginI18n = () => (key, ...args) => {
   const entry = I18N[globalThis.compatibilityLanguage || 'en'][key]

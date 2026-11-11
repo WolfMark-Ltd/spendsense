@@ -27,7 +27,8 @@ test('Reports stays scannable and keyboard usable from 320px through ledger widt
       nodePaths: [MODULES], logLevel: 'warning',
     })
     const html = join(work, 'page.html')
-    writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><style>
+    writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><style>
 *{box-sizing:border-box}html,body{margin:0;width:100%;min-height:100%}
 body{font:400 13px/1.5 system-ui,sans-serif;background:var(--ui-fill-primary);color:var(--ui-text-primary)}
 body{--ui-fill-primary:#fff;--ui-fill-secondary:#f2f4f7;--ui-fill-tertiary:#e3e5eb;
@@ -59,6 +60,7 @@ body[data-theme="dark"]{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--
         const result = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
         const id = `${locale}/${width}px/${theme}`
         assert.deepEqual(result.errors, [], `${id} has no page errors`)
+        assert.equal(result.viewport, width, `${id} uses the requested viewport width`)
         assert.ok(result.shellWidth > 0, `${id} renders the Reports pane`)
         assert.ok(result.pageScroll <= result.viewport + 1,
           `${id} has no page-level horizontal overflow (${result.pageScroll}/${result.viewport})`)
