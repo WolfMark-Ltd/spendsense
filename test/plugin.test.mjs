@@ -498,6 +498,19 @@ test('v1 migration keeps tokens, marks them legacy, never fakes a settled cost',
   assert.equal(next, ledger)
 })
 
+test('pre-existing v2 buckets migrated from v1 retain unknown coverage without rewriting', () => {
+  const ledger = { ...T.emptyLedger(), days: { '2026-10-01': {
+    migrated: { legacy: true, model: 'claude-opus-5', input: 100, output: 50,
+      calls: 1, unpricedCalls: 0, missingUsageCalls: 0, coverageUnknown: false }
+  } } }
+  const summary = T.summarize(ledger, () => true, null)
+  assert.equal(summary.rows[0].coverageUnknown, true)
+  assert.equal(summary.totals.coverageUnknown, true)
+  assert.equal(ledger.days['2026-10-01'].migrated.coverageUnknown, false,
+    'reading existing v2 data does not rewrite it')
+  assert.equal(T.ledgerCsv(ledger).trim().split('\r\n')[1].split(',')[18], 'yes')
+})
+
 test('CSV export: header, settled cost, formula injection neutralised', () => {
   let led = T.applyUsage(T.emptyLedger(), {
     now: NOW,

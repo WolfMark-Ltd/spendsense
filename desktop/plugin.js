@@ -638,7 +638,7 @@ const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v)
 function coverageUnknown(b) {
   if (!isObj(b)) return false
   const recordedCount = value => Number.isInteger(value) && value >= 0
-  return b.coverageUnknown === true ||
+  return b.legacy === true || b.coverageUnknown === true ||
     !recordedCount(b.unpricedCalls) || !recordedCount(b.missingUsageCalls)
 }
 
@@ -1845,6 +1845,10 @@ function desktopTodayText(today, t) {
   return `${t('today')} ${fmtUsd(today.cost)}${partial ? '+' : ''} · ${qualifiers}`
 }
 
+function desktopTodayAmount(today, t) {
+  return today.known ? fmtUsd(today.cost) : t('unknown')
+}
+
 function Chip() {
   const t = usePluginI18n(ID)
   const live = useLive()
@@ -1858,7 +1862,7 @@ function Chip() {
   const monthlyTooltip = budgetRead.error ? t('budgetStale') : (budgetData?.statuses || []).filter(row => row.budget.enabled).map(row => budgetTooltip(row, t)).join('\n')
   const open = openLedger
   const todayText = desktopTodayText(today, t)
-  const todayTooltip = today.known ? t('todayStatusNote') : null
+  const todayTooltip = t('todayStatusNote')
 
   if (!live.bucket) {
     return jsx(Tip, {
@@ -1881,7 +1885,7 @@ function Chip() {
       'chipTip',
       live.model || '—',
       guard?.spend != null ? t('budgetEstimated') : sourceLabel(t, live.costSource, live.foreignSlug, live.providerUnknown),
-      fmtUsd(today.cost),
+      desktopTodayAmount(today, t),
       live.cacheHitPct != null ? `${live.bucket?.cacheEstimated ? '≈' : ''}${Math.round(live.cacheHitPct)}%` : '—',
       live.saved != null ? `${live.bucket && live.bucket.cacheEstimated ? '≈' : ''}${fmtUsd(live.saved)}` : '—'
     ) + [todayTooltip, monthlyTooltip].filter(Boolean).map(value => '\n' + value).join(''),
@@ -9965,7 +9969,7 @@ const I18N = {
   chipTipIdle: 'SpendSense — click for details',
   todayApiEquivalent: 'API-equivalent',
   allProfiles: 'all profiles',
-  todayStatusNote: 'Today is API-equivalent, not actual provider charges; it includes all profiles in this Desktop ledger.',
+  todayStatusNote: 'Today’s amount, when available, is API-equivalent, not actual provider charges; the aggregate covers all profiles in this Desktop ledger.',
   coverageUnknownShort: 'coverage unknown',
   coverageUnknownNote: 'One or more conversation records lack complete call-level coverage counters, so usage completeness cannot be confirmed.',
     context: 'Context',
@@ -10424,7 +10428,7 @@ const I18N = {
     ovReviewMemberships: 'Review memberships',
     ovManageMemberships: 'Manage memberships',
     ovMethodTitle: 'How these figures are calculated',
-    ovMethodBody: 'Desktop month and today totals aggregate all profiles in this ledger, not just the active profile. These Desktop values are API-equivalent at capture rates, not payments, invoices or actual provider charges. The separate backend API-equivalent estimate is limited to the active profile and uses current catalogue rates for timestamped calls in the last 30 days. Older records written before call-level coverage counters existed cannot prove every call included usage data; no historical values are backfilled. Partial amounts remain lower bounds and unpriced usage is reported separately. Actual provider charges are not recorded in this view because the 30-day analytics endpoint does not include per-call actual-charge evidence; billing classifications do not supply that evidence. Saved account fees retain their currency and billing period, and unknown fees are excluded with their count. No currency conversion or shared-entitlement relationship is inferred. Model rankings count recorded calls only. A subscription-value comparison is not summarised here while account relationships and financial coverage remain unverified.',
+    ovMethodBody: 'Desktop month and today totals aggregate all profiles in this ledger, not just the active profile. Current v2 Desktop values are API-equivalent at capture rates, not payments, invoices or actual provider charges. Migrated v1 buckets may instead use remembered model rates because v1 did not retain capture-time prices. The separate backend API-equivalent estimate is limited to the active profile and uses current catalogue rates for timestamped calls in the last 30 days. Older records written before call-level coverage counters existed cannot prove every call included usage data; no historical values are backfilled. Partial amounts remain lower bounds and unpriced usage is reported separately. Actual provider charges are not recorded in this view because the 30-day analytics endpoint does not include per-call actual-charge evidence; billing classifications do not supply that evidence. Saved account fees retain their currency and billing period, and unknown fees are excluded with their count. No currency conversion or shared-entitlement relationship is inferred. Model rankings count recorded calls only. A subscription-value comparison is not summarised here while account relationships and financial coverage remain unverified.',
     // Allowance weather.
     wxTitle: 'Allowance weather',
     wxAhead: 'Ahead of pace',
@@ -11283,7 +11287,7 @@ const I18N = {
   chipTipIdle: 'SpendSense — 点击查看详情',
   todayApiEquivalent: 'API 等值',
   allProfiles: '所有配置文件',
-  todayStatusNote: '今日金额是 API 等值，并非实际服务商费用；包含此桌面账本中的所有配置文件。',
+  todayStatusNote: '今日金额（如有）是 API 等值，并非实际服务商费用；合计包含此桌面账本中的所有配置文件。',
   coverageUnknownShort: '覆盖情况未知',
   coverageUnknownNote: '此对话中至少一条记录缺少完整的逐次调用覆盖计数器，因此无法确认用量是否完整。',
     context: '上下文',
@@ -11742,7 +11746,7 @@ const I18N = {
     ovReviewMemberships: '检查会员',
     ovManageMemberships: '管理会员',
     ovMethodTitle: '这些数据的计算方式',
-    ovMethodBody: '本桌面账本中的月度和今日总额汇总所有配置文件，而不只限于当前配置文件。桌面金额按记录时价格计算为 API 等值，并非付款、发票或实际服务商费用。单独的后端 API 等值估算仅限当前配置文件，并使用过去 30 天带时间戳调用的当前目录价格。逐次调用覆盖计数器出现前写入的旧记录，无法证明每次调用都包含用量数据；不会回填历史记录。部分金额仍是下限，未定价用量会单独说明。此视图不记录实际服务商费用，因为 30 天分析接口不包含逐次调用的实际费用证据；账单分类不能代替此类证据。已保存账户费用保留原币种和账单周期，未知费用会连同数量说明。不进行币种换算，也不推断共享权益关系。模型排名仅按已记录调用数计算。账户关系和财务覆盖情况尚未核实，因此此处不汇总订阅价值比较。',
+    ovMethodBody: '本桌面账本中的月度和今日总额汇总所有配置文件，而不只限于当前配置文件。当前 v2 桌面数据按记录时价格计算为 API 等值，并非付款、发票或实际服务商费用。迁移的 v1 记录可能改用先前保存的模型费率计算，因为 v1 未保存记录时的价格。单独的后端 API 等值估算仅限当前配置文件，并使用过去 30 天带时间戳调用的当前目录价格。逐次调用覆盖计数器出现前写入的旧记录，无法证明每次调用都包含用量数据；不会回填历史记录。部分金额仍是下限，未定价用量会单独说明。此视图不记录实际服务商费用，因为 30 天分析接口不包含逐次调用的实际费用证据；账单分类不能代替此类证据。已保存账户费用保留原币种和账单周期，未知费用会连同数量说明。不进行币种换算，也不推断共享权益关系。模型排名仅按已记录调用数计算。账户关系和财务覆盖情况尚未核实，因此此处不汇总订阅价值比较。',
     // 额度动态。
     wxTitle: '额度动态',
     wxAhead: '消耗偏快',
@@ -12705,7 +12709,7 @@ export const __test = {
   CostsPage, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, $billingPresentation, BrandMark, PRODUCT_CSS,
   $settingsConfirmation, $modelRefreshState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
-  settledDesktopMonth, desktopTodayText, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
+  settledDesktopMonth, desktopTodayText, desktopTodayAmount, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
   setRest: value => { $backendCompatibility.set([]); rest = wrapBackendTransport(value) },
   getRest: () => rest,

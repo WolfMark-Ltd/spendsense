@@ -317,12 +317,14 @@ test('G03 usage labels retain coverage, API-equivalent and all-profile qualifier
   assert.match(en.ovMethodBody, /all profiles in this ledger/i)
   assert.match(en.ovMethodBody, /active profile/i)
   assert.match(en.ovMethodBody, /no historical values are backfilled/i)
-  assert.match(en.todayStatusNote, /not actual provider charges/i)
+  assert.match(en.ovMethodBody, /migrated v1 buckets.*remembered model rates.*did not retain capture-time prices/i)
+  assert.match(en.todayStatusNote, /when available.*not actual provider charges/i)
   assert.match(en.todayStatusNote, /all profiles in this Desktop ledger/i)
   assert.match(zh.ovRecordedLabel, /API 等值.*所有配置文件/)
   assert.match(zh.ovRecordedProv, /所有配置文件.*不是.*实际服务商/)
   assert.match(zh.ovMethodBody, /本桌面账本中的月度和今日总额.*所有配置文件/)
   assert.match(zh.ovMethodBody, /不会回填历史记录/)
+  assert.match(zh.ovMethodBody, /迁移的 v1 记录.*先前保存的模型费率.*未保存记录时的价格/)
   assert.match(zh.todayStatusNote, /并非实际服务商费用/)
   assert.match(zh.todayStatusNote, /所有配置文件/)
 
@@ -340,6 +342,8 @@ test('G03 usage labels retain coverage, API-equivalent and all-profile qualifier
   assert.match(englishChip, /coverage unknown/i)
   assert.match(chineseChip, /API 等值.*所有配置文件/)
   assert.match(chineseChip, /覆盖情况未知/)
+  assert.equal(T.desktopTodayAmount({ known: false, cost: 0 }, translate('en')), 'unknown')
+  assert.equal(T.desktopTodayAmount({ known: false, cost: 0 }, translate('zh')), '未知')
 })
 
 test('every ledger tab string exists in English and Chinese', () => {
