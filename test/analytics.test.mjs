@@ -334,7 +334,7 @@ test('legend exact-selection, Other inspection, sorting and keyboard chart detai
  T.$analytics.set({})
  const scope=T.analyticsScope('default','connected')
  let tree=page()
- button(tree,'Inspect Other models').props.onClick()
+ button(tree,'Inspect Other models · $7.00').props.onClick()
  assert.equal(T.$analytics.get()[scope].otherOpen,true)
  assert.deepEqual(T.$analytics.get()[scope].filters,T.analyticsInitialState().filters)
  tree=page()
@@ -420,6 +420,27 @@ test('chart hover and focus surfaces carry exact values, not rounded ones', () =
  assert.ok(segment.props['aria-label'].includes('2,000'),'doughnut focus label carries the exact count')
 })
 
+test('legend focus swaps the visible value to exact', () => {
+ T.$analytics.set({})
+ const scope=T.analyticsScope('default','connected','local')
+ T.$analytics.set({[scope]:{...T.analyticsInitialState(),distributionMetric:'tokens'}})
+ const tree=page()
+ const row=nodes(tree,n=>n.type==='button' && String(n.props['aria-label']||'').startsWith('Filter m0 via p0'))[0]
+ assert.equal(text(nodes(row,n=>n.type==='span' && n.props.className==='wm-approx')[0]),'10.0k')
+ assert.equal(text(nodes(row,n=>n.type==='span' && n.props.className==='wm-exact')[0]),'10,000')
+ const css=T.ANALYTICS_CSS
+ assert.ok(css.includes('.wm-legendrow .wm-exact{display:none}'),'exact stays hidden until focus')
+ assert.ok(css.includes('.wm-legendrow:focus-visible .wm-exact{display:inline}'),'focus reveals the exact value')
+ assert.ok(css.includes('.wm-legendrow:focus-visible .wm-approx{display:none}'),'focus hides the rounded value')
+})
+
+test('the pinned explorer column cannot leak onto other tabs tables', () => {
+ const css=T.ANALYTICS_CSS
+ assert.ok(css.includes('.wm-tablewrap td:first-child{position:sticky'),'explorer pins its model column')
+ assert.ok(!css.includes('.wm-analytics td:first-child{position:sticky'),'no page-wide first-column pinning')
+ assert.ok(!css.includes('.wm-analytics th:first-child{left:0'),'no page-wide corner cell rule')
+})
+
 test('error, retry, loading and no-results remain actionable without invented zero totals', () => {
  assert.equal(typeof T.AnalyticsPage,'function','analytics page is exported')
  T.$analytics.set({})
@@ -497,7 +518,7 @@ test('keyboard repeats use current selected timestamp and Other toggles do not c
  point.props.onKeyDown({key:'ArrowRight',preventDefault(){}})
  point.props.onKeyDown({key:'ArrowRight',preventDefault(){}})
  assert.equal(T.$analytics.get()[scope].trendIndex,2)
- const other=button(tree,'Inspect Other models')
+ const other=button(tree,'Inspect Other models · $7.00')
  other.props.onClick();other.props.onClick()
  assert.equal(T.$analytics.get()[scope].otherOpen,false)
 })

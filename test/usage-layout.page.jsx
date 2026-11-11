@@ -231,6 +231,10 @@ async function measure() {
   // atom, so clicks here re-render every pane. Layout above is recorded first.
   // Skipped in single-case screenshot mode so shots show the pristine state.
   output.interaction = selected ? null : await interactionProbe()
+  // Re-read the shared error array: output initialised before the probe, and
+  // the listener creates the array lazily, so the initial snapshot can miss
+  // probe-phase errors.
+  output.errors = window.__usageErrors || []
   document.getElementById('usage-layout-result').textContent = JSON.stringify(output)
 }
 
