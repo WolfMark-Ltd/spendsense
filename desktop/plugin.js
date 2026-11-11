@@ -1229,6 +1229,23 @@ function backendMethod(options) {
   return String(options?.method || 'GET').toUpperCase()
 }
 
+function backendPlainTextRejectsNewMembershipField(message) {
+  const field = '(?:billing_arrangement|api_only)'
+  const fieldList = `${field}(?:\\s*(?:,|and)\\s*${field})*`
+  const patterns = [
+    new RegExp(`\\b(?:unknown|unexpected)\\s+fields?\\s*(?::|=)?\\s*${fieldList}\\b`, 'i'),
+    new RegExp(`\\b${field}\\s+(?:is\\s+)?(?:an?\\s+)?(?:unknown|unexpected|forbidden|extra)\\s+field\\b`, 'i'),
+    new RegExp(`\\bfield\\s+${field}\\s+(?:is\\s+)?(?:unknown|unexpected|forbidden|extra|not permitted|not allowed)\\b`, 'i'),
+    new RegExp(`\\b${fieldList}\\s*:\\s*extra(?:[_ ]forbidden|\\s+fields?\\s+(?:are\\s+)?(?:not permitted|not allowed|forbidden))\\b`, 'i'),
+    new RegExp(`\\b${fieldList}\\s*:\\s*(?:unknown|unexpected)\\s+fields?\\b`, 'i'),
+    new RegExp(`\\bextra\\s+field\\s+${field}\\s+(?:is\\s+)?(?:not permitted|not allowed|forbidden)\\b`, 'i'),
+    new RegExp(`\\bextra\\s+fields?\\s+(?:are\\s+)?(?:not permitted|not allowed|forbidden)\\s*[:=]\\s*${fieldList}\\b`, 'i'),
+    new RegExp(`\\bextra[_ ]forbidden\\s*[:=]\\s*${fieldList}\\b`, 'i'),
+  ]
+  return String(message || '').split(/[;.\r\n]+/)
+    .some(clause => patterns.some(pattern => pattern.test(clause)))
+}
+
 function backendRejectedNewMembershipField(failure) {
   const payloads = [
     failure?.detail, failure?.error?.detail, failure?.body?.detail,
@@ -1268,9 +1285,8 @@ function backendRejectedNewMembershipField(failure) {
     })
   }
 
-  const text = [httpMessage, ...payloads.filter(value => typeof value === 'string')].join(' ')
-  return /\b(?:billing_arrangement|api_only)\b/i.test(text)
-    && /extra[_ ]forbidden|extra\s+(?:fields?|inputs?)\s+(?:are\s+)?(?:not permitted|not allowed|forbidden)|(?:unknown|unexpected)\s+(?:fields?|inputs?)|(?:fields?|inputs?)\s+(?:are\s+)?(?:unknown|unexpected|forbidden|not permitted|not allowed)/i.test(text)
+  return [httpMessage, ...payloads.filter(value => typeof value === 'string')]
+    .some(backendPlainTextRejectsNewMembershipField)
 }
 
 function backendCompatibilityKind(path, options, failure) {
@@ -6326,7 +6342,9 @@ const WEATHER_CSS = `
 /** Compact allowance-weather indicator for one membership card. */
 function AllowanceWeather({ entry, error }) {
   const t = usePluginI18n(ID)
-  if (isBackendCompatibilityError(error) && !entry) return null
+  const compatibilityWarning = isBackendCompatibilityError(error)
+    && hasBackendCompatibilityFailure(membershipIdentityNow(), error.path, 'GET')
+  if (compatibilityWarning && !entry) return null
   if (!entry && !error) return null
   if (!entry) {
     return jsx('p', { className: 'wm-note', role: 'status', children: t('wxUnavailable') })

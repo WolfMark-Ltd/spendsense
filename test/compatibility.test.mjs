@@ -132,6 +132,21 @@ test('only an unknown newer field on the account write is treated as 422 skew', 
   assert.equal(T.isBackendCompatibilityError(invalidValue), false)
   assert.equal(T.membershipErrorText(invalidValue, 'write', en), en('memErrValidation'))
   assert.equal(T.membershipErrorText(invalidValue, 'write', zh), zh('memErrValidation'))
+
+  const plainTextMismatch = await requestError('/membership/accounts/a', 'PUT', 422, {
+    detail: 'billing_arrangement and api_only: extra fields not permitted'
+  })
+  assert.equal(T.isBackendCompatibilityError(plainTextMismatch), true)
+
+  for (const detail of [
+    'billing_arrangement has an invalid value; extra field legacy_alias is forbidden',
+    'api_only is supported. An unrelated extra field legacy_mode is not permitted'
+  ]) {
+    const ambiguous = await requestError('/membership/accounts/a', 'PUT', 422, { detail })
+    assert.equal(T.isBackendCompatibilityError(ambiguous), false, detail)
+    assert.equal(T.membershipErrorText(ambiguous, 'write', en), en('memErrValidation'))
+  }
+
   assert.match(T.backendCompatibilityText(mismatch, en), /update.*backend.*Desktop together/i)
   assert.match(T.backendCompatibilityText(mismatch, zh), /一起更新/)
 })
@@ -165,7 +180,8 @@ test('network errors, unrelated 404s, missing records and missing plugin namespa
 })
 
 test('MembershipCard forwards classified and ordinary weather errors to AllowanceWeather', async () => {
-  const compatibilityError = await requestError('/allowance/weather', 'GET', 404, { detail: 'Not Found' })
+  const previousCompatibility = T.$backendCompatibility.get()
+  const previousConnection = T.$scopeConnection.get()
   const account = {
     id: 'weather-account', family: 'openai-codex', rev: 'rev-1',
     effective_arrangement: 'subscription', quota: {}, fee: {}
@@ -180,14 +196,39 @@ test('MembershipCard forwards classified and ordinary weather errors to Allowanc
     return { component, output: T.AllowanceWeather(component.props) }
   }
 
-  const compatibilityWeather = renderWeather(compatibilityError)
-  assert.equal(compatibilityWeather.component.props.error, compatibilityError)
-  assert.equal(compatibilityWeather.output, null)
+  try {
+    T.$backendCompatibility.set([])
+    let compatibilityError
+    await assert.rejects(
+      T.backendRequest('/allowance/weather', { method: 'GET' }, failedTransport(404, { detail: 'Not Found' })),
+      error => { compatibilityError = error; return T.isBackendCompatibilityError(error) }
+    )
+    assert.equal(T.$backendCompatibility.get().some(failure => failure.identity === T.membershipIdentityNow()
+      && failure.route === '/allowance/weather' && failure.method === 'GET'), true)
 
-  const ordinaryError = new Error('fetch failed')
-  const ordinaryWeather = renderWeather(ordinaryError)
-  assert.equal(ordinaryWeather.component.props.error, ordinaryError)
-  assert.equal(allText(ordinaryWeather.output), en('wxUnavailable'))
+    const compatibilityWeather = renderWeather(compatibilityError)
+    assert.equal(compatibilityWeather.component.props.error, compatibilityError)
+    assert.equal(compatibilityWeather.output, null)
+
+    T.$scopeConnection.set('another-connection')
+    const otherConnectionWeather = renderWeather(compatibilityError)
+    assert.equal(allText(otherConnectionWeather.output), en('wxUnavailable'))
+    T.$scopeConnection.set(previousConnection)
+    assert.equal(renderWeather(compatibilityError).output, null)
+
+    await T.backendRequest('/allowance/weather', { method: 'GET' }, async () => ({ ok: true }))
+    assert.deepEqual(T.$backendCompatibility.get(), [])
+    const recoveredWeather = renderWeather(compatibilityError)
+    assert.equal(allText(recoveredWeather.output), en('wxUnavailable'))
+
+    const ordinaryError = new Error('fetch failed')
+    const ordinaryWeather = renderWeather(ordinaryError)
+    assert.equal(ordinaryWeather.component.props.error, ordinaryError)
+    assert.equal(allText(ordinaryWeather.output), en('wxUnavailable'))
+  } finally {
+    T.$scopeConnection.set(previousConnection)
+    T.$backendCompatibility.set(previousCompatibility)
+  }
 })
 
 test('route recovery clears only its identity-route-method failure', async () => {
