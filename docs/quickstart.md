@@ -40,9 +40,11 @@ Do not proceed if the URL differs.
 SpendSense has two components, and the install is only complete when both are in place:
 
 - **Desktop UI half** — a **SpendSense** entry appears in the sidebar, with a status-bar chip and a side pane. Opening the entry loads the full page.
-- **Agent backend half** — the page can read backend usage. Open SpendSense and check the Overview: if it shows backend figures (or an honest empty state such as "No backend calls recorded in the last 30 days"), the backend half is active on this profile.
+- **Agent backend half** — the page can read backend usage. Open SpendSense and check the Overview: figures, or the "No backend calls recorded in the last 30 days" empty state, prove the backend API answers on this profile. That empty state alone does not prove recording works.
 
 If you see **"The SpendSense backend is not reachable"** or **"Backend usage could not be read for this connection"**, the UI half is working but the backend half is not active on the connected profile. See [If something goes wrong](#if-something-goes-wrong).
+
+To prove recording works, use Hermes for a genuine task on this profile, then return to Overview → Most-used models. That ranking counts recorded backend calls only: model rows with call counts mean the collector is writing. Still empty after real usage means recording is not happening — check you are on the installed profile, then report it.
 
 Note: the dashboard web view intentionally shows only "Open SpendSense in Hermes Desktop to view your usage." The full interface is the Desktop plugin.
 
@@ -64,13 +66,9 @@ The sixty-second tour: **Overview** for the headline figures, **Usage** for the 
 
 ## Connect to the right profile
 
-Backend analytics come from the profile the agent component is active on. If your figures look empty or stale:
+Backend analytics come from the profile the agent component is active on. Each profile keeps its own ledger, memberships and billing rules, and there is no cross-profile view. If your backend figures look empty or stale, make sure Desktop is connected to the same profile you installed for; switching gateway or profile gives backend analytics a fresh scope.
 
-- Make sure Desktop is connected to the same profile you installed for.
-- Switching gateway or profile discards the previous scope, so readings always belong to the current connection — never a mix.
-- Each profile keeps its own ledger, memberships and billing rules. There is no cross-profile view.
-
-The Desktop ledger is kept per profile even though it lives in one app-level store, so your laptop and server never merge figures.
+One exception: the Overview Desktop monthly figure is not profile-scoped. The Desktop ledger is one app-level store whose buckets are keyed per profile, but the monthly figure totals every profile in it — after using two profiles it shows combined history, not just the current connection. Separate machines still stay separate.
 
 ## Read your first figures
 
@@ -81,7 +79,7 @@ Open **Overview**. It shows four headline figures that answer different question
 | Recorded usage · API-equivalent, this month | Desktop-recorded tokens priced at capture. |
 | API-equivalent estimate · backend, 30 days | Timestamped backend calls priced at current catalogue rates. |
 | Actual provider charges · 30 days | What the provider billed. Currently **Not recorded** (see below). |
-| Saved account fees · by currency and billing period | Fees you declared on your memberships. |
+| Saved account fees · by currency and billing period | Effective fees per account (your overrides or catalogue prices). |
 
 Two honest expectations for a first run:
 
@@ -95,7 +93,7 @@ Then visit **Memberships** and confirm which plan each discovered account is on.
 New users trip on one idea, so here it is plainly:
 
 - **API-equivalent cost** is a comparison price: what the same tokens would cost at published pay-as-you-go rates. It judges whether a plan is worth keeping. It is not money you spent.
-- **Subscription fees** are the plan fees you declared. They are real money leaving your account, on their own billing period and currency.
+- **Subscription fees** are the effective fee per account: your override where you set one, otherwise the catalogue's published price for the confirmed plan. Neither is a verified provider charge — catalogue prices can differ from the provider bill. Fees keep their own billing period and currency and are never converted.
 - **Actual provider charges** are what the provider really billed. SpendSense does not have this evidence today, so it says **Not recorded** instead of presenting the API-equivalent figure as a bill.
 
 These are never added together. A membership card also keeps provider-reported usage (quota Hermes read from the provider) apart from metered cost (allowance consumed under your rules). The [README](../README.md#four-figures-never-summed) has the full table.
@@ -119,16 +117,19 @@ A dash means unknown or unavailable, never zero. Zeros appear only where recordi
 | Unverified-source warning | Expected until catalogue admission. | Verify the repository URL matches exactly, then proceed. |
 | No sidebar entry after install | The UI half did not land. | Install from inside the Desktop app, especially if it runs on another machine than the backend. |
 | "The SpendSense backend is not reachable" | The backend half is not active on this connection. | Connect to the profile you installed for and confirm the agent component is enabled there. |
-| "Backend usage could not be read" / "unavailable" | Same as above, or an empty store. | Check the profile first; a fresh install honestly reports no calls. |
+| "Backend usage could not be read" | The backend half is not active on this connection, or the read failed. | Check the profile first; if the profile is right, report it with the exact message. |
 | Discovery finds nothing | No credential slots in this profile's Hermes auth storage. | Add the provider account in Hermes, then run discovery again. |
-| Membership edits conflict or report uncertain writes | Stale revision after a concurrent change. | Reload membership data before retrying; nothing was overwritten. |
+| Membership edit rejected as a conflict | Stale revision after a concurrent change. | Reload membership data, then retry. Nothing was written. |
+| "…may have been saved, but the write could not be confirmed" | The change might already be persisted. | Reload, inspect the saved value, and only retry if your change is missing. |
 | Store unreadable errors | A damaged local JSON store. | Stop the plugin and restore from backup; never let a tool overwrite the damaged file. |
 
 For anything else, open a [GitHub issue](https://github.com/WolfMark-Ltd/spendsense/issues/new/choose) with the Hermes version, the profile setup, and the exact message shown.
 
 ## Backup, upgrade and recovery
 
-All SpendSense data lives under the profile's plugin-data directory (`<hermes home>/plugin-data/spend-sense/`). Back it up **with the plugin stopped**, and restore files together to the same profile — if a file was absent when the backup was taken, it should also be absent after restoration.
+Backend profile data lives under the profile's plugin-data directory (`<hermes home>/plugin-data/spend-sense/`). Back it up **with the plugin stopped**, and restore files together to the same profile — if a file was absent when the backup was taken, it should also be absent after restoration.
+
+The Desktop-recorded ledger is not in that directory. It lives in Hermes Desktop's app-level storage, and neither the directory backup nor the Settings export below preserves it. There is no verified Desktop backup or restore procedure, so rebuilding or moving your Desktop installation may lose that capture-time history. (CSV exports are reports — nothing imports them back.)
 
 | File | Contents | Back up? |
 | --- | --- | --- |
@@ -143,7 +144,7 @@ All SpendSense data lives under the profile's plugin-data directory (`<hermes ho
 
 Two more safety nets:
 
-- **Settings recovery export.** Settings can copy a JSON bundle to the clipboard: `membership_store` restores as `memberships.json`, `seat_history` as `membership-seats.json`, `route_entitlements` as `membership-entitlements.json`, `advanced_rules` as `billing-profiles.json`, and `budget_guardrails` as `budgets.json`. It contains no credentials and no usage ledger. Retain it securely.
+- **Settings recovery export.** Settings can copy a JSON bundle to the clipboard. Three entries restore directly: `membership_store` as `memberships.json`, `seat_history` as `membership-seats.json`, `route_entitlements` as `membership-entitlements.json`. The other two need reshaping — never save them as-is: wrap `advanced_rules` as `{"version": 1, "profiles": <array>}`, and keep only `version`, `budgets` and `dismissals` from `budget_guardrails` (drop the `ok`/`rev` response fields). The export cannot restore billing defaults, FX rates, either usage ledger, or credentials. Retain it securely.
 - **Settings reset.** Reset clears memberships, route entitlements, budgets and advanced rules for the current profile. Captured usage records, Hermes data, provider credentials and catalogues are left untouched.
 
 When upgrading: back up first, keep the existing `spend-sense` plugin ID and `/spend-sense` route (changing them orphans stored data), and never install over an existing plugin without a verified backup. Releases older than 0.6.0 may not recognise newer membership fields, so keep the pre-upgrade backup until the new version is confirmed working.

@@ -132,8 +132,14 @@ The Settings recovery clipboard export includes the raw `membership_store`,
 and budget guardrails; retain it securely.
 To restore from it, save the `seat_history` JSON object as
 `membership-seats.json` and the `route_entitlements` JSON object as
-`membership-entitlements.json` beside the restored `memberships.json`. The clipboard
-export does not include the usage ledger or provider credentials.
+`membership-entitlements.json` beside the restored `memberships.json`. The rules
+and budgets entries need reshaping before they can be saved as store files, and
+billing defaults are not in the export — see the
+[quick-start guide](docs/quickstart.md#backup-upgrade-and-recovery) for the exact
+shapes. The clipboard export does not include either usage ledger or provider
+credentials. The Desktop-recorded ledger lives outside the plugin-data directory
+in Hermes Desktop's app-level storage and is covered by neither the directory
+backup nor the export.
 
 The preceding 0.6.0 membership store can still be read and edited after seats
 are saved: it ignores the separate seat file and does not calculate seat totals.
@@ -164,7 +170,7 @@ A membership card keeps four different kinds of number apart, because adding the
 
 | Figure | What it is | What it is not |
 | --- | --- | --- |
-| Membership fee | The plan fee you declared (or a fee override) | A per-call charge |
+| Membership fee | The effective fee per account — your override, or the catalogue's published price | A per-call charge or a verified provider bill |
 | Provider-reported usage | Quota or usage Hermes read from the provider | An invoice |
 | API-equivalent value | What the same tokens would cost at published API rates | Money you actually spent |
 | Metered / incremental cost | Allowance consumed, and extra cash beyond it under your rules | Provider-confirmed billing |
