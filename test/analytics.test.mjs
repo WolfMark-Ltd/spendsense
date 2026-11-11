@@ -179,7 +179,7 @@ test('usage header follows the selected language', () => {
     assert.match(view, /极客模式/)
     assert.match(view, /↻ 刷新/)
     assert.match(view, /此桌面/)
-    assert.match(view, /× 关闭/)
+    assert.doesNotMatch(view, /× 关闭/, 'the redundant header Close is gone; Esc and tabs navigate')
   } finally {
     globalThis.analyticsLanguage = 'en'
   }
@@ -187,6 +187,7 @@ test('usage header follows the selected language', () => {
   assert.match(english, /Usage analytics/)
   assert.match(english, /Recorded calls · default · all Hermes surfaces/)
   assert.match(english, /NERD MODE/)
+  assert.doesNotMatch(english, /× Close/, 'the redundant header Close is gone; Esc and tabs navigate')
   assert.equal(T.I18N.en.usageCurrentProfile, 'current profile')
   assert.equal(T.I18N.zh.usageCurrentProfile, '当前配置文件')
 })
@@ -338,7 +339,7 @@ test('legend exact-selection, Other inspection, sorting and keyboard chart detai
  assert.deepEqual(T.$analytics.get()[scope].filters,T.analyticsInitialState().filters)
  tree=page()
  assert.ok(text(tree).includes('Remainder · 2 models'))
- button(tree,'Filter m6 via p0').props.onClick()
+ button(tree,'Filter m6 via p0 · $4.00').props.onClick()
  assert.deepEqual(T.$analytics.get()[scope].filters,{model:'m6',provider:'p0',surface:'',task:'',parent:'',scope:''})
  button(page(),'Sort by Calls').props.onClick()
  assert.equal(T.$analytics.get()[scope].sortKey,'calls')
@@ -353,6 +354,70 @@ test('legend exact-selection, Other inspection, sorting and keyboard chart detai
  assert.ok(text(page()).includes('2026-10-01'))
  button(page(),'Select Cache read composition').props.onClick()
  assert.equal(T.$analytics.get()[scope].compositionFocus,'cache_read_tokens')
+})
+
+test('usage sections number 01–07 and group KPIs into money and activity', () => {
+ T.$analytics.set({})
+ const tree=page()
+ assert.deepEqual(nodes(tree,n=>n.type==='span' && n.props.className==='wm-number').map(text),
+   ['01','02','03','04','05','06','07'])
+ const groups=nodes(tree,n=>n.props?.['data-kpi-group'])
+ assert.deepEqual(groups.map(n=>n.props['data-kpi-group']),['money','activity'])
+ assert.deepEqual(groups.map(n=>n.props['aria-label']),['Cost & coverage','Volume & cache'])
+ assert.ok(groups.every(n=>n.props.role==='group'))
+ const money=text(groups[0]), activity=text(groups[1])
+ for (const label of ['API-equivalent','Theoretical net savings','Pricing coverage']) assert.ok(money.includes(label),label)
+ for (const label of ['Weighted cache hit','Tokens / calls']) assert.ok(activity.includes(label),label)
+})
+
+test('token streams keep four distinct colours with a dedicated theme-aware cache-read', () => {
+ const streams=T.TOKEN_STREAMS
+ assert.equal(streams.length,4)
+ const colours=streams.map(([, ,colour])=>colour)
+ assert.equal(new Set(colours).size,4,'input, output, read and write stay distinct')
+ const read=streams.find(([key])=>key==='cache_read_tokens')[2]
+ assert.notEqual(read,'var(--ui-warning)','cache-read no longer borrows the raw attention token')
+ assert.ok(read.includes('var(--ui-warning)') && read.includes('var(--ui-text-primary)'),
+   'cache-read stays amber but adapts toward text in both themes')
+})
+
+test('advanced filters stay available behind a disclosure that counts active slices', () => {
+ T.$analytics.set({})
+ let tree=page()
+ assert.equal(nodes(tree,n=>n.type==='select').length,7,'all seven filters still render')
+ const details=nodes(tree,n=>n.type==='details' && n.props['data-filters-advanced']!==undefined)[0]
+ assert.ok(details,'advanced filters disclose')
+ assert.equal(text(nodes(details,n=>n.type==='summary')[0]),'Advanced filters')
+ assert.equal(nodes(details,n=>n.type==='select').length,4,'surface, task, parent and scope hide by default')
+ const scope=T.analyticsScope('default','connected','local')
+ T.$analytics.set({[scope]:{...T.analyticsInitialState(),filters:{...T.analyticsInitialState().filters,surface:'telegram',scope:'subagent'}}})
+ tree=page()
+ const open=nodes(tree,n=>n.type==='details' && n.props['data-filters-advanced']!==undefined)[0]
+ assert.equal(text(nodes(open,n=>n.type==='summary')[0]),'Advanced filters · 2 active')
+ assert.ok(text(tree).includes('surface: telegram ×'),'active advanced filters still surface as chips')
+})
+
+test('chart hover and focus surfaces carry exact values, not rounded ones', () => {
+ T.$analytics.set({})
+ const scope=T.analyticsScope('default','connected','local')
+ T.$analytics.set({[scope]:{...T.analyticsInitialState(),trendIndex:0}})
+ const tree=page()
+ const detail=nodes(tree,n=>n.type==='div' && n.props.className==='wm-chartdetail')[0]
+ assert.ok(text(detail).includes('10,000'),'trend detail shows the exact point total')
+ assert.ok(text(detail).includes('6,000'),'trend detail shows exact stream counts')
+ const legend=nodes(tree,n=>n.type==='button' && String(n.props['aria-label'] || '').startsWith('Filter m0 via p0'))[0]
+ assert.equal(legend.props['aria-label'],'Filter m0 via p0 · $10.00')
+ assert.ok(legend.props.title.includes('$10.00'),'legend hover title carries the exact figure')
+ const rankRow=nodes(tree,n=>typeof n.props?.['aria-label']==='string' && n.props['aria-label'].startsWith('Filter m0 via p0;'))[0]
+ assert.ok(rankRow.props['aria-label'].includes('6,000'),'ranking label carries exact read tokens')
+ const keyButton=nodes(tree,n=>n.type==='button' && n.props['aria-label']==='Select Input composition')[0]
+ assert.ok(keyButton.props.title.includes('2,000'),'composition key hover carries the exact count')
+ assert.equal(typeof keyButton.props.onFocus,'function','composition key reveals exact values on focus')
+ T.$analytics.set({[scope]:{...T.analyticsInitialState(),trendIndex:0,compositionMode:'doughnut'}})
+ const donut=nodes(page(),n=>n.type==='svg' && n.props['data-chart']==='composition')[0]
+ const segment=nodes(donut,n=>n.type==='circle' && n.props.role==='button')[0]
+ assert.ok(text(nodes(segment,n=>n.type==='title')[0]).includes('2,000'),'doughnut hover carries the exact count')
+ assert.ok(segment.props['aria-label'].includes('2,000'),'doughnut focus label carries the exact count')
 })
 
 test('error, retry, loading and no-results remain actionable without invented zero totals', () => {

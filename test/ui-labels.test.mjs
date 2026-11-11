@@ -498,7 +498,7 @@ test('every usage panel string exists in English and Chinese', () => {
     'usageFilterTaskName', 'usageFilterTip', 'usageFilterAll', 'usageFilterParentOp', 'usageFilterOpTip',
     'usageFilterAllOps', 'usageFilterWho', 'usageFilterDelegTip', 'usageFilterEveryone',
     'usageFilterDirectOnly', 'usageFilterSubagentsOnly', 'usageFilterAuxOnly', 'usageFilterUnattributedOnly',
-    'usageFilterClear', 'usageFilterActiveNote', 'usageFilterRemove', 'usageFilterChip',
+    'usageFilterClear', 'usageFilterAdvanced', 'usageFilterActiveNote', 'usageFilterRemove', 'usageFilterChip',
     'usageFilterChipModel', 'usageFilterChipProvider', 'usageFilterChipSurface',
     'usageFilterChipTask', 'usageFilterChipParent', 'usageFilterChipScope',
     'usageFilterScopeDirect', 'usageFilterScopeSubagent', 'usageFilterScopeAuxiliary',
@@ -506,7 +506,7 @@ test('every usage panel string exists in English and Chinese', () => {
     'usageGranDay', 'usageGranHour',
     'usageBaselineUnavailable', 'usageBaselineLoading', 'usageBaselineEstimateNote', 'usageBaselineTotals',
     'usageBaselineEmpty', 'usageLoadTitle', 'usageLoadStale', 'usageLoadFallback', 'usageRetryTip',
-    'usageLoading', 'usageStatApiEquiv', 'usageStatApiExtra', 'usageStatSavings', 'usageStatSavingsHint',
+    'usageLoading', 'usageStatApiEquiv', 'usageKpiMoney', 'usageKpiActivity', 'usageStatApiExtra', 'usageStatSavings', 'usageStatSavingsHint',
     'usageStatSavingsExtra', 'usageStatTokens', 'usageStatTokensHint', 'usageStatTokensExtra',
     'usageStatCoverage', 'usageStatCoverageHint', 'usageInsightsAria', 'usageBillingTitle',
     'usageBillingLabel', 'usageBillingComplete', 'usageBillingPartial', 'usageBillingNote', 'usageWindowDash',
@@ -523,6 +523,13 @@ test('every usage panel string exists in English and Chinese', () => {
   assert.equal(en.usageRankFooter(8, 'weighted rate'),
     'Top 8 by weighted rate. Zero-cache older rows are ambiguous, not confirmed misses. Unknown is not zero. All models remain in the explorer.')
   assert.match(zh.usageCompFocus('输入', '1K', '50%', '注'), /占全部令牌的/)
+  assert.equal(en.usageFilterAdvanced(0), 'Advanced filters')
+  assert.equal(en.usageFilterAdvanced(2), 'Advanced filters · 2 active')
+  assert.equal(zh.usageFilterAdvanced(0), '高级筛选')
+  assert.equal(zh.usageFilterAdvanced(2), '高级筛选 · 2 项已选')
+  assert.equal(en.usageLegendFilter('m', 'p'), 'Filter m via p')
+  assert.equal(en.usageLegendFilter('m', 'p', '$1.00'), 'Filter m via p · $1.00')
+  assert.equal(zh.usageLegendFilter('m', 'p', '1,000'), '按 m（经 p）筛选 · 1,000')
 })
 
 test('granularity and filter-chip labels translate while English stays identical', () => {
