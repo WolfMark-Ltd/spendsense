@@ -1,0 +1,51 @@
+name: Bug report
+description: Something in SpendSense is not working as documented.
+labels: [bug]
+body:
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before reporting
+      options:
+        - label: I checked the troubleshooting guide and the problem remains unresolved.
+          required: true
+        - label: I have a backup of my Hermes profile data.
+          required: false
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+      placeholder: Overview shows "Backend usage could not be read for this connection" after switching profiles.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest path from a fresh Hermes start to the problem.
+      placeholder: |
+        1. Connect Desktop to profile "work".
+        2. Open the SpendSense sidebar entry.
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: message
+    attributes:
+      label: Exact message shown
+      description: Copy the full on-screen message or error text, if any.
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Versions and setup. Find the SpendSense version in Settings → Diagnostics.
+      placeholder: |
+        Hermes version:
+        SpendSense version:
+        OS:
+        Profile setup (local/remote backend, which profile):
+    validations:
+      required: true
