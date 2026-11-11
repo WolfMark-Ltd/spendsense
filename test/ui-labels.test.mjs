@@ -306,10 +306,12 @@ test('the idle status-chip tooltip names SpendSense in both locales', () => {
 
 test('G03 usage labels retain coverage, API-equivalent and all-profile qualifiers in both locales', () => {
   for (const [language, dict] of [['en', en], ['zh', zh]]) {
-    for (const key of ['allProfiles', 'coverageUnknownShort', 'ovCoverageUnknown']) {
+    for (const key of ['allProfiles', 'coverageUnknownShort', 'coverageUnknownNote', 'ovCoverageUnknown']) {
       assert.ok(dict[key] && dict[key] !== key, `${language} has ${key}`)
     }
   }
+  assert.match(en.coverageUnknownNote, /lack complete call-level coverage counters/i)
+  assert.match(zh.coverageUnknownNote, /缺少完整的逐次调用覆盖计数器/)
   assert.match(en.ovRecordedLabel, /API-equivalent.*all profiles/i)
   assert.match(en.ovRecordedProv, /all profiles.*not .*actual provider charges/i)
   assert.match(en.ovMethodBody, /all profiles in this ledger/i)

@@ -658,6 +658,7 @@ function migrateV1(raw, now) {
       nb.cacheWrite = num(b.cacheWrite)
       nb.calls = num(b.calls)
       nb.cost = null
+      nb.coverageUnknown = true
       day[bucketKey('', '', model, true)] = nb
     }
     if (Object.keys(day).length) led.days[date] = day
@@ -2166,6 +2167,7 @@ function MeterHeader({ presence, t, view }) {
 /** Section B: the conversation's API-equivalent cost and supporting metrics. */
 function CostKpi({ t, view }) {
   const warn = view.costSource === 'foreign' || view.costSource === 'none'
+  const unknownCoverage = coverageUnknown(view.bucket)
   return jsxs('section', { className: 'wm-card', 'aria-label': t('cost'), children: [
     jsx('div', {
       className: cn('wm-kpi-figure', warn && 'wm-warn'),
@@ -2198,13 +2200,15 @@ function CostKpi({ t, view }) {
           jsx('span', { children: `▲ ${[
             num(view.bucket.unpricedTokens) ? t('partialShort', fmtTokens(view.bucket.unpricedTokens)) : null,
             num(view.bucket.unpricedCalls) ? t('partialCallsShort', fmtTokens(view.bucket.unpricedCalls)) : null,
-            num(view.bucket.missingUsageCalls) ? t('missingUsageCallsShort', fmtTokens(view.bucket.missingUsageCalls)) : null
+            num(view.bucket.missingUsageCalls) ? t('missingUsageCallsShort', fmtTokens(view.bucket.missingUsageCalls)) : null,
+            unknownCoverage ? t('coverageUnknownShort') : null
           ].filter(Boolean).join(' · ')}` }, 'chip'),
           jsx(InfoTip, { id: 'partial', label: t('infoLabel'),
             text: [
               num(view.bucket.unpricedTokens) ? t('unpricedNote', fmtTokens(view.bucket.unpricedTokens)) : null,
               num(view.bucket.unpricedCalls) ? t('unpricedCallsNote', fmtTokens(view.bucket.unpricedCalls)) : null,
-              num(view.bucket.missingUsageCalls) ? t('missingUsageCallsNote', fmtTokens(view.bucket.missingUsageCalls)) : null
+              num(view.bucket.missingUsageCalls) ? t('missingUsageCallsNote', fmtTokens(view.bucket.missingUsageCalls)) : null,
+              unknownCoverage ? t('coverageUnknownNote') : null
             ].filter(Boolean).join(' ') }, 'info')
         ] }, 'partial')
       : null
@@ -9963,6 +9967,7 @@ const I18N = {
   allProfiles: 'all profiles',
   todayStatusNote: 'Today is API-equivalent, not actual provider charges; it includes all profiles in this Desktop ledger.',
   coverageUnknownShort: 'coverage unknown',
+  coverageUnknownNote: 'One or more conversation records lack complete call-level coverage counters, so usage completeness cannot be confirmed.',
     context: 'Context',
     copied: 'Ledger JSON copied to the clipboard.',
     copyJson: 'Copy JSON',
@@ -11280,6 +11285,7 @@ const I18N = {
   allProfiles: '所有配置文件',
   todayStatusNote: '今日金额是 API 等值，并非实际服务商费用；包含此桌面账本中的所有配置文件。',
   coverageUnknownShort: '覆盖情况未知',
+  coverageUnknownNote: '此对话中至少一条记录缺少完整的逐次调用覆盖计数器，因此无法确认用量是否完整。',
     context: '上下文',
     copied: '账本 JSON 已复制到剪贴板。',
     copyJson: '复制 JSON',

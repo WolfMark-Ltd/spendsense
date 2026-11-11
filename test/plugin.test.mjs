@@ -490,6 +490,9 @@ test('v1 migration keeps tokens, marks them legacy, never fakes a settled cost',
   assert.equal(s.rows[0].legacy, true)
   assert.equal(s.rows[0].cost, 5)
   assert.equal(s.totals.legacyTokens, 1_000_000)
+  assert.equal(s.rows[0].coverageUnknown, true)
+  assert.equal(s.totals.coverageUnknown, true)
+  assert.equal(T.ledgerCsv(ledger).trim().split('\r\n')[1].split(',')[18], 'yes')
   // Continuing the same session after upgrade must not double count.
   const next = T.applyUsage(ledger, { now: NOW, provider: 'github-copilot', sessionId: 's', usage: { model: 'claude-opus-5', input: 1_000_000, calls: 1 } })
   assert.equal(next, ledger)

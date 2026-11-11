@@ -1339,6 +1339,25 @@ test('Overview keeps the subtotal visible and explains unknown legacy coverage',
   await React.act(async () => T.$ledger.set(T.emptyLedger()))
 })
 
+test('conversation cost warning explains unknown call-level coverage', async () => {
+  const container = document.createElement('div'); document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container); roots.push(root)
+  const view = {
+    bucket: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, calls: 2,
+      cost: 0.42, pricedTokens: 1500, unpricedTokens: 0, unpricedCalls: 0,
+      missingUsageCalls: 0, coverageUnknown: true },
+    cost: 0.42, costSource: 'live', foreignSlug: null, providerUnknown: false,
+    partial: true
+  }
+  await React.act(async () => root.render(React.createElement(T.CostKpi, { t: i18nBackend.t, view })))
+  const partial = container.querySelector('.wm-partial-chip')
+  assert.match(partial.textContent, /coverage unknown/i)
+  const info = partial.querySelector('button.wm-info-btn')
+  assert.ok(info, 'the partial warning has an explanation control')
+  await React.act(async () => info.dispatchEvent(new window.MouseEvent('click', { bubbles: true })))
+  assert.match(container.querySelector('#wm-info-partial').textContent, /lack complete call-level coverage counters/i)
+})
+
 test('Overview keeps subscription value out of the summary pending verified account and financial coverage', async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
