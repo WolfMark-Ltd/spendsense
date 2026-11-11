@@ -686,6 +686,8 @@ test('every emitted analytics economics gap reason has a readable English and Ch
   assert.ok(key, `mapped reason ${reason}`)
   assert.notEqual(noteEn(key), key, `English translates ${key}`)
   assert.notEqual(noteZh(key), key, `Chinese translates ${key}`)
+  assert.notEqual(T.analyticsGapReasonLabel(reason, noteEn), key)
+  assert.notEqual(T.analyticsGapReasonLabel(reason, noteZh), key)
   assert.notEqual(T.analyticsGapReasonLabel(reason, noteEn), reason)
   assert.notEqual(T.analyticsGapReasonLabel(reason, noteZh), reason)
  }

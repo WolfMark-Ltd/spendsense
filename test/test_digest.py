@@ -464,7 +464,7 @@ class DigestReviewFixesTests(DigestCase):
         }
         for lang, matched_text, evidence_text in (
             ("en", "a billing rule matched", "price or provider charge evidence"),
-            ("zh", "匹配了计费规则", "价格或供应商费用记录证据"),
+            ("zh", "匹配了计费规则", "价格或服务商费用记录证据"),
         ):
             matched = billing.classify([row], {
                 "profiles": [{"id": "api", "provider": "test", "kind": "api"}],
@@ -481,6 +481,15 @@ class DigestReviewFixesTests(DigestCase):
             D.STRINGS["en"], "Last 7 days", unmatched, True, 1)["notes"]).lower()
         self.assertIn("no matching billing rule", notes)
         self.assertNotIn("a billing rule matched", notes)
+
+    def test_zh_unpriced_calls_uses_token_terminology(self):
+        section = D._usage_section(
+            D.STRINGS["zh"], "最近 7 天",
+            {"unpriced_calls": 1, "unpriced_tokens": 0, "list_usd": None},
+            True, 1)
+        notes = " ".join(section["notes"])
+        self.assertIn("未定价 token", notes)
+        self.assertNotIn("未定价令牌", notes)
 
     def test_provider_reported_charge_keeps_its_own_basis_and_currency_line(self):
         billing = {

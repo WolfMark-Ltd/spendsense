@@ -734,6 +734,36 @@ class CurrencyTests(EconomicsCase):
         account_row = next(row for row in result["accounts"] if row["account_id"] == "b")
         self.assertIsNone(account_row["window_expenditure"]["amount"])
 
+    def test_window_fee_gap_also_explains_incomplete_recording_history(self):
+        plans = plans_doc(
+            {"id": "test.plus", "provider_family": "test", "name": "Test Plus",
+             "price": {"amount": 20.0, "currency": "USD", "period": "month"}},
+            {"id": "other.unknown-history", "provider_family": "other", "name": "Other Plus",
+             "price": {"amount": None, "currency": "USD", "period": "month"}},
+        )
+        missing_history = override(30, "USD", "month",
+                                   effective_from=datetime.fromtimestamp(NOW - 10 * 86400,
+                                                                         timezone.utc).isoformat())
+        self.write_store([
+            account("a", "test", plan_id="test.plus"),
+            account("b", "other", plan_id="other.unknown-history",
+                    fee_overrides=[missing_history]),
+        ])
+        self.create_events([
+            {"ts": NOW - 100, "provider": "test", "input_tokens": 1_000_000},
+            {"ts": NOW - 90, "provider": "other", "input_tokens": 1_000_000},
+        ])
+
+        result = self.report(days=30, trend_months=0, plans=plans)
+        group = next(group for group in result["groups"] if group["currency"] == "USD")
+        codes = [entry["code"] for entry in group["note_codes"]]
+        self.assertFalse(result["coverage"]["recording_covers_window"])
+        self.assertEqual(group["status"], "unavailable")
+        self.assertIn("econ_group_window_history_missing", codes)
+        self.assertIn("econ_group_insufficient_history", codes)
+        self.assertTrue(any("historical fee evidence is missing" in note for note in group["notes"]))
+        self.assertTrue(any("Recording does not cover" in note for note in group["notes"]))
+
     def test_explicit_fx_rate_enables_a_cited_conversion(self):
         self.two_currency_store()
         E.save_fx([{"currency": "GBP", "usd_per_unit": 1.25,

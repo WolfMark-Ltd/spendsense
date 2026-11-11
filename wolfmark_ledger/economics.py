@@ -947,7 +947,8 @@ def build_economics_report(
             group_code = {}
         group_notes = [note] if note else []
         group_codes = [group_code] if note else []
-        if group_code.get("code") == "econ_group_missing" and not recording_covers_window:
+        if group_code.get("code") in ("econ_group_missing", "econ_group_window_history_missing") \
+                and not recording_covers_window:
             group_notes.append("Recording does not cover the full comparison window.")
             group_codes.append({"code": "econ_group_insufficient_history", "params": {}})
         groups.append({
