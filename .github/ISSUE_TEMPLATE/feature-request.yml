@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an improvement or a new SpendSense capability.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve
+      description: The job you are trying to do and where SpendSense falls short today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: The behaviour you want, and where in the UI it would live if you know.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that helps decide or scope this (examples, provider, plan type).
+    validations:
+      required: false

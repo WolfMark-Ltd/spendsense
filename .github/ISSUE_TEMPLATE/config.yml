@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting guide
+    url: https://github.com/WolfMark-Ltd/spendsense/blob/main/docs/quickstart.md#if-something-goes-wrong
+    about: Common install, backend-connection and membership errors with fixes.
+  - name: WolfMark product support
+    url: https://wolfmark.co.uk/contact
+    about: Private product-support enquiries for WolfMark.

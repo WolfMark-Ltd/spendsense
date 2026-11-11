@@ -1,6 +1,6 @@
 # Release and update checklist
 
-This candidate is not yet a release. A release, catalogue submission and any
+This candidate is not yet a formal release. A release, catalogue submission and any
 production installation require separate authorisation.
 
 1. Review the exact commit, its dependencies, licences, privacy disclosures and
