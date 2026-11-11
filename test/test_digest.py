@@ -196,7 +196,7 @@ class DigestShapeTests(DigestCase):
         # Markdown renderer escapes structure characters.
         self.assertIn("weird|model", names)
         self.assertIn("weird\\|model", result["markdown"])
-        self.assertEqual(models["heading"], "Top models by API-equivalent value")
+        self.assertEqual(models["heading"], "Top models by priced API-equivalent subtotal")
 
     def test_cost_figures_are_kept_separate(self):
         self.standard_fixture()
@@ -312,7 +312,8 @@ class DigestContentTests(DigestCase):
         self.assertEqual(allowances["columns"][1], "Calculated cycle end")
         notes = " ".join(allowances["notes"])
         self.assertIn("not provider-confirmed reset times", notes)
-        self.assertIn("latest saved reading", notes)
+        self.assertIn("does not display provider reading values or query providers", notes)
+        self.assertIn("Check Memberships for saved readings", notes)
 
     def test_allowance_unknown_reasons_are_grouped_by_cause(self):
         accounts = [
@@ -329,6 +330,9 @@ class DigestContentTests(DigestCase):
             {"account_id": "f", "label": "F", "cycle": {}, "rollup": {"state": "unknown"},
              "windows": [{"verdict": "unknown", "verdict_basis": "none",
                           "cycle_basis": "none"}]},
+            {"account_id": "g", "label": "G", "cycle": {}, "rollup": {"state": "unknown"},
+             "windows": [], "rules": [{"verdict": "unknown", "verdict_basis": "none",
+                                         "pool": "shared"}]},
         ]
         section = D._allowances_section(D.STRINGS["en"], "Current allowance cycle, as of 2026-10-31",
                                         accounts)
@@ -338,6 +342,7 @@ class DigestContentTests(DigestCase):
         self.assertIn("readings conflict", notes)
         self.assertIn("No configured allowance window", notes)
         self.assertIn("no usable cycle position is available", notes)
+        self.assertIn("allowance limit is unavailable or unusable", notes)
 
         translated = D._allowances_section(
             D.STRINGS["zh"], "当前额度周期（截至 2026-10-31）", accounts)
@@ -345,6 +350,8 @@ class DigestContentTests(DigestCase):
         self.assertIn("没有服务商读数或手动标记", translated_notes)
         self.assertIn("服务商读数与手动标记冲突", translated_notes)
         self.assertIn("没有可用的周期位置", translated_notes)
+        self.assertIn("额度上限不可用或无效", translated_notes)
+        self.assertIn("不显示服务商读数值，也不会查询服务商", translated_notes)
 
 
 class DigestLocalisationTests(DigestCase):
@@ -356,7 +363,7 @@ class DigestLocalisationTests(DigestCase):
         self.assertRegex(result["title"], r"[\u4e00-\u9fff]")
         for section in result["sections"]:
             self.assertRegex(section["heading"], r"[\u4e00-\u9fff]", section["id"])
-        self.assertEqual(self.section(result, "models")["heading"], "按 API 等值金额排名的模型")
+        self.assertEqual(self.section(result, "models")["heading"], "按已定价 API 等值小计排名的模型")
         self.assertIn("$5.00", result["markdown"])
         self.assertIn("test:default", result["markdown"])
 
@@ -369,15 +376,15 @@ class DigestLocalisationTests(DigestCase):
                     models = self.section(result, "models")
                     allowances = self.section(result, "allowances")
                     self.assertIn(str(days), result["period"]["label"])
-                    self.assertIn("API-equivalent value" if lang == "en" else "API 等值金额",
+                    self.assertIn("API-equivalent subtotal" if lang == "en" else "API 等值小计",
                                   models["heading"])
                     allowance_notes = " ".join(allowances["notes"])
                     if lang == "en":
                         self.assertIn("not provider-confirmed reset times", allowance_notes)
-                        self.assertIn("latest saved reading", allowance_notes)
+                        self.assertIn("does not display provider reading values", allowance_notes)
                     else:
                         self.assertIn("并非服务商确认的重置时间", allowance_notes)
-                        self.assertIn("最新保存的读数", allowance_notes)
+                        self.assertIn("不显示服务商读数值", allowance_notes)
 
     def test_unknown_lang_falls_back_to_english(self):
         self.standard_fixture()

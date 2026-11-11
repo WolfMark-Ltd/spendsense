@@ -48,7 +48,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "cycle_as_of": "Current allowance cycle, as of {date}",
         "unknown": "—",
         "heading_usage": "Usage",
-        "heading_models": "Top models by API-equivalent value",
+        "heading_models": "Top models by priced API-equivalent subtotal",
         "heading_providers": "Providers",
         "heading_value": "Usage value (API-equivalent)",
         "heading_spending": "Metered and cash spending",
@@ -119,12 +119,13 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_ambiguous": "Usage on routes claimed by more than one account is counted once and attributed to nobody.",
         "note_allowance_current": "Allowance status is current, not windowed: it reflects the present cycle position.",
         "note_allowance_cycle_dates": "Cycle dates are calculated from a saved membership or plan billing-cycle anchor; if none is set, the report estimates a calendar month from the 1st. These are not provider-confirmed reset times.",
-        "note_allowance_saved_readings": "Reports use saved allowance readings and do not query providers. Local usage is not a substitute for provider consumption; check Memberships for the latest saved reading and any provider reset time.",
+        "note_allowance_saved_readings": "This report uses saved allowance readings to describe status; it does not display provider reading values or query providers. Local usage is not provider consumption. Check Memberships for saved readings and any provider reset time.",
         "note_allowance_no_reading": "No provider reading or manual mark is available for {count} account(s), so the allowance status is unknown.",
         "note_allowance_no_cycle": "A provider usage share is saved for {count} account(s), but no usable cycle position is available, so no pacing verdict is made.",
         "note_allowance_no_cycle_position": "No usable cycle position is available for {count} account(s), so no pacing verdict is made.",
         "note_allowance_conflict": "Provider and manual allowance readings conflict for {count} account(s); neither is used for a verdict.",
         "note_allowance_prepaid_unknown": "The prepaid balance is unknown for {count} account(s) because wallet top-ups are not tracked.",
+        "note_allowance_unusable_limit": "The allowance limit is unavailable or unusable for {count} account(s), so no allowance verdict can be made; review allowance settings in Costs.",
         "note_allowance_no_configured": "No configured allowance window or saved reading is available for {count} account(s).",
         "note_allowance_other_unknown": "The available evidence cannot support an allowance verdict for {count} account(s); review the saved reading and cycle details in Memberships.",
         "note_no_memberships": "No memberships on file.",
@@ -151,7 +152,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "cycle_as_of": "当前额度周期（截至 {date}）",
         "unknown": "—",
         "heading_usage": "用量",
-        "heading_models": "按 API 等值金额排名的模型",
+        "heading_models": "按已定价 API 等值小计排名的模型",
         "heading_providers": "服务商",
         "heading_value": "用量价值（API 等值）",
         "heading_spending": "计量与现金支出",
@@ -222,12 +223,13 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_ambiguous": "多人认领路由上的用量只计数一次，不归因给任何人。",
         "note_allowance_current": "额度状态反映当前周期进度，并非上述报告周期内的用量。",
         "note_allowance_cycle_dates": "周期日期按已保存的账号或套餐账期日历计算；未设置账期日时，报告按每月 1 日估算。这些日期并非服务商确认的重置时间。",
-        "note_allowance_saved_readings": "报告使用已保存的额度读数，不会查询服务商。本地用量不能替代服务商报告的用量；请在“会员”中查看最新保存的读数和服务商重置时间（如有）。",
+        "note_allowance_saved_readings": "本报告依据已保存的额度读数描述状态；不显示服务商读数值，也不会查询服务商。本地用量不等同于服务商用量；请在“会员”中查看已保存读数和服务商重置时间。",
         "note_allowance_no_reading": "有 {count} 个账号没有服务商读数或手动标记，因此额度状态未知。",
         "note_allowance_no_cycle": "有 {count} 个账号保存了服务商用量比例，但没有可用的周期位置，因此无法判断消耗进度。",
         "note_allowance_no_cycle_position": "有 {count} 个账号没有可用的周期位置，因此无法判断消耗进度。",
         "note_allowance_conflict": "有 {count} 个账号的服务商读数与手动标记冲突，因此不会依据其中任何一项给出判断。",
         "note_allowance_prepaid_unknown": "有 {count} 个账号的预付余额未知，因为系统没有记录充值情况。",
+        "note_allowance_unusable_limit": "有 {count} 个账号的额度上限不可用或无效，因此无法判断额度状态；请在“费用”中检查额度设置。",
         "note_allowance_no_configured": "有 {count} 个账号没有已配置的额度窗口或已保存的读数。",
         "note_allowance_other_unknown": "现有证据不足以判断 {count} 个账号的额度状态；请在“会员”中查看已保存的读数和周期详情。",
         "note_no_memberships": "没有已确认的会员。",
@@ -662,7 +664,7 @@ def _allowances_section(S: Mapping[str, str], window_label: str,
         elif not windows and not rules:
             reason = "note_allowance_no_configured"
         elif "none" in rule_bases:
-            reason = "note_allowance_prepaid_unknown"
+            reason = "note_allowance_unusable_limit"
         else:
             reason = "note_allowance_other_unknown"
         unknown_reasons[reason] = unknown_reasons.get(reason, 0) + 1
@@ -675,6 +677,7 @@ def _allowances_section(S: Mapping[str, str], window_label: str,
         for key in ("note_allowance_no_reading", "note_allowance_no_cycle",
                     "note_allowance_no_cycle_position",
                     "note_allowance_conflict", "note_allowance_prepaid_unknown",
+                    "note_allowance_unusable_limit",
                     "note_allowance_no_configured", "note_allowance_other_unknown"):
             if unknown_reasons.get(key):
                 notes.append(S[key].format(count=unknown_reasons[key]))

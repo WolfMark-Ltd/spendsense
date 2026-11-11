@@ -25,7 +25,7 @@ const report = {
   sections: [
     { id: 'usage', heading: locale === 'zh' ? '用量' : 'Usage', window: period, kind: 'lines',
       lines: [{ label: locale === 'zh' ? '调用' : 'Calls', value: '1234' }], notes: [] },
-    { id: 'models', heading: locale === 'zh' ? '按 API 等值金额排名的模型' : 'Top models by API-equivalent value',
+    { id: 'models', heading: locale === 'zh' ? '按已定价 API 等值小计排名的模型' : 'Top models by priced API-equivalent subtotal',
       window: period, kind: 'table',
       columns: locale === 'zh' ? ['模型', '调用', 'Token', 'API 等值'] : ['Model', 'Calls', 'Tokens', 'API-equiv'],
       rows: [['synthetic-long-model-name-to-check-narrow-report-table-wrapping', '1234', '3.14M', '$143.61']],

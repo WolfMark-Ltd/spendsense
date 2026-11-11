@@ -85,7 +85,7 @@ const digestFixture = (days = 30, lang = 'en') => {
     { id: 'usage', heading: zh ? '用量' : 'Usage', window: periodLabel, kind: 'lines',
       lines: [{ label: zh ? '调用' : 'Calls', value: '3' }],
       notes: [] },
-    { id: 'models', heading: zh ? '按 API 等值金额排名的模型' : 'Top models by API-equivalent value',
+    { id: 'models', heading: zh ? '按已定价 API 等值小计排名的模型' : 'Top models by priced API-equivalent subtotal',
       window: periodLabel, kind: 'table',
       columns: [zh ? '模型' : 'Model', zh ? '调用' : 'Calls', zh ? 'Token' : 'Tokens', zh ? 'API 等值' : 'API-equiv'],
       rows: [['m', '2', '2.00M', '$4.00'], ['<img src=x onerror=alert(1)>', '1', '1.00M', '$2.00']],
@@ -201,7 +201,7 @@ test('the preview renders sections, tables and methodology disclosure', async ()
   })
   const text = container.textContent
   assert.match(text, /Usage/)
-  assert.match(text, /Top models by API-equivalent value/)
+  assert.match(text, /Top models by priced API-equivalent subtotal/)
   assert.match(text, /At a glance/)
   assert.match(text, /Current allowance cycle, as of 2026-10-31/)
   assert.match(text, /\$5\.00/)
@@ -300,8 +300,8 @@ test('the reports page keeps the shared tab navigation', async () => {
 
 test('7 and 30 day previews keep English and Chinese period and summary copy', async () => {
   for (const [locale, translator, expectedHeading] of [
-    ['en', enT, 'Top models by API-equivalent value'],
-    ['zh', zhT, '按 API 等值金额排名的模型'],
+    ['en', enT, 'Top models by priced API-equivalent subtotal'],
+    ['zh', zhT, '按已定价 API 等值小计排名的模型'],
   ]) {
     i18nBackend.t = translator
     for (const days of [7, 30]) {
@@ -382,6 +382,44 @@ test('copy without a clipboard notifies failure', async () => {
       'Could not copy the Markdown report. Check clipboard access or download the report.')
   } finally {
     host.notify = originalNotify
+  }
+})
+
+test('late report action feedback is ignored after its period or connection changes', async () => {
+  const originalClipboard = Object.getOwnPropertyDescriptor(window.navigator, 'clipboard')
+  const originalNotify = host.notify
+  const notices = []
+  host.notify = notice => notices.push(notice)
+  let resolveWrite
+  Object.defineProperty(window.navigator, 'clipboard', {
+    value: { writeText: () => new Promise(resolve => { resolveWrite = resolve }) }, configurable: true,
+  })
+  const resolvePendingWrite = async () => {
+    assert.equal(typeof resolveWrite, 'function')
+    await React.act(async () => { resolveWrite() })
+    await flush(4)
+  }
+  try {
+    const periodPage = await bootReports()
+    await clickByText(periodPage.container, 'Copy Markdown')
+    await React.act(async () => { T.$digestDays.set(7) })
+    await flush(2)
+    await resolvePendingWrite()
+    assert.equal(periodPage.container.querySelector('.wm-report-feedback'), null)
+    assert.deepEqual(notices, [], 'a completion for the old period is not announced')
+    await disposePage(periodPage.root)
+
+    const connectionPage = await bootReports()
+    await clickByText(connectionPage.container, 'Copy Markdown')
+    await React.act(async () => { $testConnectionId.set('gateway-b') })
+    await flush(2)
+    await resolvePendingWrite()
+    assert.equal(connectionPage.container.querySelector('.wm-report-feedback'), null)
+    assert.deepEqual(notices, [], 'a completion for the old connection is not announced')
+  } finally {
+    host.notify = originalNotify
+    if (originalClipboard) Object.defineProperty(window.navigator, 'clipboard', originalClipboard)
+    else delete window.navigator.clipboard
   }
 })
 
@@ -490,7 +528,7 @@ test('a Chinese catalogue requests a Chinese digest', async () => {
   await flush(4)
   assert.match(text(), /报告/)
   assert.match(text(), /报告概览/)
-  assert.match(text(), /按 API 等值金额排名的模型/)
+  assert.match(text(), /按已定价 API 等值小计排名的模型/)
   assert.match(text(), /当前额度周期（截至 2026-10-31）/)
   assert.match(digestCalls()[0].path, /lang=zh/)
 })

@@ -7917,12 +7917,15 @@ function MembershipsPage() {
   })
 }
 
+function digestActionFeedback(notice, onFeedback) {
+  if (onFeedback?.(notice) !== false) host.notify(notice)
+}
+
 async function digestCopy(report, t, onFeedback) {
   if (!report || !report.markdown) return false
   const ok = await writeClipboard(report.markdown)
   const notice = { kind: ok ? 'success' : 'error', message: ok ? t('rpCopied') : t('rpFailed') }
-  host.notify(notice)
-  onFeedback?.(notice)
+  digestActionFeedback(notice, onFeedback)
   return ok
 }
 
@@ -7939,8 +7942,7 @@ async function digestDownload(report, t, onFeedback) {
     a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 10_000)
     const notice = { kind: 'success', message: t('rpDownloadRequested', a.download) }
-    host.notify(notice)
-    onFeedback?.(notice)
+    digestActionFeedback(notice, onFeedback)
     return true
   } catch {
     const ok = await writeClipboard(report.markdown)
@@ -7949,8 +7951,7 @@ async function digestDownload(report, t, onFeedback) {
     }
     const notice = { kind: ok ? 'info' : 'error',
       message: ok ? t('rpSaveFallback') : t('rpDownloadFailed') }
-    host.notify(notice)
-    onFeedback?.(notice)
+    digestActionFeedback(notice, onFeedback)
     return ok
   }
 }
@@ -8083,6 +8084,37 @@ function ReportsPage() {
   const [actionFeedback, setActionFeedback] = useState(null)
   const identity = useValue($membershipIdentity)
   const days = useValue($digestDays)
+  const actionGeneration = useRef(0)
+  const actionScope = useRef({ identity, days, generation: 0 })
+  actionScope.current = { ...actionScope.current, identity, days }
+  const visibleActionFeedback = actionFeedback?.identity === identity && actionFeedback?.days === days
+    ? actionFeedback : null
+  useEffect(() => {
+    actionScope.current = { identity, days, generation: ++actionGeneration.current }
+    setActionFeedback(null)
+  }, [identity, days])
+  const clearActionFeedback = () => {
+    actionScope.current = { identity, days, generation: ++actionGeneration.current }
+    setActionFeedback(null)
+  }
+  const runReportAction = action => {
+    const scope = { identity, days, generation: ++actionGeneration.current }
+    actionScope.current = scope
+    setActionFeedback(null)
+    return action(notice => {
+      const current = actionScope.current
+      if (current.generation === scope.generation
+          && current.identity === scope.identity && current.days === scope.days) {
+        setActionFeedback({ ...notice, identity: scope.identity, days: scope.days })
+        return true
+      }
+      return false
+    })
+  }
+  const refreshReport = () => {
+    clearActionFeedback()
+    return report.refetch()
+  }
   const lang = uiLocale(t)
   const report = useQuery(digestQuery(identity, days, lang))
   const current = report.data?.identity === identity && membershipIdentityCurrent(identity)
@@ -8099,24 +8131,26 @@ function ReportsPage() {
         jsx('h2', { children: t('reportsTitle') }),
         jsx('div', { className: 'wm-reports-period', role: 'group', 'aria-label': t('rpPeriod'),
           children: jsx(SegmentedControl, {
-            onChange: v => { setActionFeedback(null); $digestDays.set(Number(v) === 7 ? 7 : 30) },
+            onChange: v => { clearActionFeedback(); $digestDays.set(Number(v) === 7 ? 7 : 30) },
             options: [{ id: '7', label: t('rpDays7') }, { id: '30', label: t('rpDays30') }],
             value: String(days),
           }) }),
         jsxs('div', { className: 'wm-reports-actions', role: 'group', 'aria-label': t('rpActions'), children: [
           jsx(AsyncButton, { type: 'button', className: 'wm-button wm-accent',
             status: report.isFetching ? 'pending' : 'idle', pendingLabel: t('rpGenerating'),
-            onClick: () => { setActionFeedback(null); return report.refetch() }, children: t('rpGenerate') }),
+            onClick: refreshReport, children: t('rpGenerate') }),
           jsx(ProductButton, { type: 'button', className: 'wm-button',
-            disabled: !matches, onClick: () => digestCopy(matches, t, setActionFeedback), children: t('rpCopy') }),
+            disabled: !matches, onClick: () => runReportAction(onFeedback =>
+              digestCopy(matches, t, onFeedback)), children: t('rpCopy') }),
           jsx(ProductButton, { type: 'button', className: 'wm-button',
-            disabled: !matches, onClick: () => digestDownload(matches, t, setActionFeedback), children: t('rpSave') }),
+            disabled: !matches, onClick: () => runReportAction(onFeedback =>
+              digestDownload(matches, t, onFeedback)), children: t('rpSave') }),
         ] }),
       ] }),
-      actionFeedback ? jsx('p', { className: 'wm-report-feedback',
-        role: actionFeedback.kind === 'error' ? 'alert' : 'status',
-        'aria-live': actionFeedback.kind === 'error' ? 'assertive' : 'polite',
-        'aria-atomic': 'true', children: actionFeedback.message }) : null,
+      visibleActionFeedback ? jsx('p', { className: 'wm-report-feedback',
+        role: visibleActionFeedback.kind === 'error' ? 'alert' : 'status',
+        'aria-live': visibleActionFeedback.kind === 'error' ? 'assertive' : 'polite',
+        'aria-atomic': 'true', children: visibleActionFeedback.message }) : null,
       failed && matches
         ? jsxs('div', { children: [
           jsx('div', { className: 'wm-alert', role: 'alert',
@@ -8129,7 +8163,7 @@ function ReportsPage() {
           ? jsxs('div', { className: 'wm-digest-error', children: [
             jsx('p', { role: 'alert', children: t('rpError') }),
             jsx(ProductButton, { type: 'button', className: 'wm-button',
-              onClick: () => report.refetch(), children: t('rpRetry') }),
+              onClick: refreshReport, children: t('rpRetry') }),
           ] })
           : matches ? jsx(DigestPreview, { report: matches })
             : report.isFetching
