@@ -45,15 +45,15 @@ STRINGS: dict[str, dict[str, str]] = {
         "title": "SpendSense digest",
         "generated": "Generated {ts} UTC",
         "period_days": "Last {days} days ({start} → {end} UTC)",
-        "cycle_as_of": "Current cycle, as of {date}",
+        "cycle_as_of": "Current allowance cycle, as of {date}",
         "unknown": "—",
         "heading_usage": "Usage",
-        "heading_models": "Top models",
+        "heading_models": "Top models by API-equivalent value",
         "heading_providers": "Providers",
         "heading_value": "Usage value (API-equivalent)",
         "heading_spending": "Metered and cash spending",
         "heading_fees": "Subscription fees",
-        "heading_allowances": "Allowances",
+        "heading_allowances": "Current allowance status",
         "heading_changes": "Changes since the previous {days} days",
         "heading_coverage": "Coverage and caveats",
         "heading_methodology": "Methodology",
@@ -88,8 +88,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "col_tokens": "Tokens",
         "col_cost": "API-equiv",
         "col_account": "Account",
-        "col_cycle_ends": "Cycle ends",
-        "col_days_left": "Days left",
+        "col_cycle_ends": "Calculated cycle end",
+        "col_days_left": "Calculated days left",
         "col_status": "Status",
         "verdict_ahead": "Ahead of pace",
         "verdict_on_track": "On track",
@@ -117,7 +117,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_unavailable_comparison": "Comparison unavailable: fees, coverage or rates are missing.",
         "note_unattributed": "Usage on routes no account claims stays unattributed.",
         "note_ambiguous": "Usage on routes claimed by more than one account is counted once and attributed to nobody.",
-        "note_allowance_current": "Allowance status is current, not windowed: it reflects present cycle position.",
+        "note_allowance_current": "Allowance status is current, not windowed: it reflects the present cycle position.",
+        "note_allowance_cycle_dates": "Cycle dates are calculated from a saved membership or plan billing-cycle anchor; if none is set, the report estimates a calendar month from the 1st. These are not provider-confirmed reset times.",
+        "note_allowance_saved_readings": "Reports use saved allowance readings and do not query providers. Local usage is not a substitute for provider consumption; check Memberships for the latest saved reading and any provider reset time.",
+        "note_allowance_no_reading": "No provider reading or manual mark is available for {count} account(s), so the allowance status is unknown.",
+        "note_allowance_no_cycle": "A provider usage share is saved for {count} account(s), but no usable cycle position is available, so no pacing verdict is made.",
+        "note_allowance_no_cycle_position": "No usable cycle position is available for {count} account(s), so no pacing verdict is made.",
+        "note_allowance_conflict": "Provider and manual allowance readings conflict for {count} account(s); neither is used for a verdict.",
+        "note_allowance_prepaid_unknown": "The prepaid balance is unknown for {count} account(s) because wallet top-ups are not tracked.",
+        "note_allowance_no_configured": "No configured allowance window or saved reading is available for {count} account(s).",
+        "note_allowance_other_unknown": "The available evidence cannot support an allowance verdict for {count} account(s); review the saved reading and cycle details in Memberships.",
         "note_no_memberships": "No memberships on file.",
         "note_no_models": "No models recorded in this window.",
         "note_no_providers": "No providers recorded in this window.",
@@ -131,7 +140,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_previous_unavailable": "The previous-window comparison is unavailable.",
         "note_recon_gap": "Recording missed about {tokens} since it began; figures may understate usage.",
         "method_local": "This report is generated locally from your recorded calls and membership store. Nothing leaves your profile unless you export it.",
-        "method_windows": "Usage sections cover the trailing window above; allowance status reflects current billing cycles as of generation.",
+        "method_windows": "Usage sections cover the trailing window above; allowance status reflects saved readings for the current cycle. Cycle dates are calculated from membership or plan settings (defaulting to day 1 when unset), not provider-confirmed reset times.",
         "method_value": "API-equivalent value prices recorded tokens at current catalogue rates. It is not what you paid and not what you would pay elsewhere.",
         "method_missing": "A dash means unknown or unavailable, never zero. Zeros appear only where recording genuinely observed nothing.",
     },
@@ -139,15 +148,15 @@ STRINGS: dict[str, dict[str, str]] = {
         "title": "SpendSense 摘要",
         "generated": "生成于 {ts} UTC",
         "period_days": "过去 {days} 天（{start} → {end} UTC）",
-        "cycle_as_of": "当前周期（截至 {date}）",
+        "cycle_as_of": "当前额度周期（截至 {date}）",
         "unknown": "—",
         "heading_usage": "用量",
-        "heading_models": "常用模型",
+        "heading_models": "按 API 等值金额排名的模型",
         "heading_providers": "服务商",
         "heading_value": "用量价值（API 等值）",
         "heading_spending": "计量与现金支出",
         "heading_fees": "订阅费用",
-        "heading_allowances": "额度",
+        "heading_allowances": "当前额度状态",
         "heading_changes": "与前 {days} 天相比",
         "heading_coverage": "覆盖范围与说明",
         "heading_methodology": "方法说明",
@@ -182,8 +191,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "col_tokens": "Token",
         "col_cost": "API 等值",
         "col_account": "账号",
-        "col_cycle_ends": "周期结束",
-        "col_days_left": "剩余天数",
+        "col_cycle_ends": "计算的周期结束日期",
+        "col_days_left": "计算的剩余天数",
         "col_status": "状态",
         "verdict_ahead": "消耗偏快",
         "verdict_on_track": "正常",
@@ -211,7 +220,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_unavailable_comparison": "无法对比：缺少费用、覆盖率或汇率数据。",
         "note_unattributed": "无人认领路由上的用量保持未归因。",
         "note_ambiguous": "多人认领路由上的用量只计数一次，不归因给任何人。",
-        "note_allowance_current": "额度状态为当前状态，非周期数据：反映当前周期进度。",
+        "note_allowance_current": "额度状态反映当前周期进度，并非上述报告周期内的用量。",
+        "note_allowance_cycle_dates": "周期日期按已保存的账号或套餐账期日历计算；未设置账期日时，报告按每月 1 日估算。这些日期并非服务商确认的重置时间。",
+        "note_allowance_saved_readings": "报告使用已保存的额度读数，不会查询服务商。本地用量不能替代服务商报告的用量；请在“会员”中查看最新保存的读数和服务商重置时间（如有）。",
+        "note_allowance_no_reading": "有 {count} 个账号没有服务商读数或手动标记，因此额度状态未知。",
+        "note_allowance_no_cycle": "有 {count} 个账号保存了服务商用量比例，但没有可用的周期位置，因此无法判断消耗进度。",
+        "note_allowance_no_cycle_position": "有 {count} 个账号没有可用的周期位置，因此无法判断消耗进度。",
+        "note_allowance_conflict": "有 {count} 个账号的服务商读数与手动标记冲突，因此不会依据其中任何一项给出判断。",
+        "note_allowance_prepaid_unknown": "有 {count} 个账号的预付余额未知，因为系统没有记录充值情况。",
+        "note_allowance_no_configured": "有 {count} 个账号没有已配置的额度窗口或已保存的读数。",
+        "note_allowance_other_unknown": "现有证据不足以判断 {count} 个账号的额度状态；请在“会员”中查看已保存的读数和周期详情。",
         "note_no_memberships": "没有已确认的会员。",
         "note_no_models": "本周期内没有记录到模型。",
         "note_no_providers": "本周期内没有记录到服务商。",
@@ -225,7 +243,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_previous_unavailable": "前一周期对比不可用。",
         "note_recon_gap": "自记录开始以来约漏记 {tokens}，数据可能低估实际用量。",
         "method_local": "本报告根据您记录的调用和会员数据在本地生成。除非您主动导出，否则不会离开您的设备。",
-        "method_windows": "用量部分覆盖上述报告周期；额度状态反映生成时的当前计费周期。",
+        "method_windows": "用量部分覆盖上述报告周期；额度状态反映当前周期的已保存读数。周期日期根据会员或套餐设置计算（未设置时默认每月 1 日），并非服务商确认的重置时间。",
         "method_value": "API 等值按当前目录价格为记录的 token 计价。它不是您的实际支出，也不是别处的应付价格。",
         "method_missing": "破折号表示未知或不可用，绝不是零。只有记录确实为空时才会显示零。",
     },
@@ -614,6 +632,7 @@ def _allowances_section(S: Mapping[str, str], window_label: str,
     verdict_key = {"ahead": "verdict_ahead", "on_track": "verdict_on_track",
                    "behind": "verdict_behind", "exhausted": "verdict_exhausted"}
     rows: list[list[str]] = []
+    unknown_reasons: dict[str, int] = {}
     for entry in accounts:
         cycle = entry.get("cycle") or {}
         days = cycle.get("days_remaining_display")
@@ -622,9 +641,43 @@ def _allowances_section(S: Mapping[str, str], window_label: str,
                      _utc_date(cycle.get("end")) or S["unknown"],
                      str(days) if isinstance(days, int) else S["unknown"],
                      S.get(verdict_key.get(state, ""), S["verdict_unknown"])])
+        if state != "unknown":
+            continue
+        windows = [row for row in (entry.get("windows") or []) if isinstance(row, dict)]
+        unknown_windows = [row for row in windows if row.get("verdict") == "unknown"]
+        rules = [row for row in (entry.get("rules") or []) if isinstance(row, dict)]
+        window_bases = {row.get("verdict_basis") for row in unknown_windows}
+        rule_rows = [row for row in rules if row.get("verdict") == "unknown"]
+        rule_bases = {row.get("verdict_basis") for row in rule_rows}
+        if "conflicted" in window_bases:
+            reason = "note_allowance_conflict"
+        elif "provider_only" in window_bases:
+            reason = "note_allowance_no_cycle"
+        elif any(row.get("cycle_basis") == "none" for row in unknown_windows):
+            reason = "note_allowance_no_cycle_position"
+        elif "none" in window_bases:
+            reason = "note_allowance_no_reading"
+        elif any(row.get("pool") == "prepaid_spend" for row in rule_rows):
+            reason = "note_allowance_prepaid_unknown"
+        elif not windows and not rules:
+            reason = "note_allowance_no_configured"
+        elif "none" in rule_bases:
+            reason = "note_allowance_prepaid_unknown"
+        else:
+            reason = "note_allowance_other_unknown"
+        unknown_reasons[reason] = unknown_reasons.get(reason, 0) + 1
     notes = [S["note_allowance_current"]]
     if not rows:
         notes.append(S["note_no_memberships"])
+    else:
+        notes.extend((S["note_allowance_cycle_dates"],
+                      S["note_allowance_saved_readings"]))
+        for key in ("note_allowance_no_reading", "note_allowance_no_cycle",
+                    "note_allowance_no_cycle_position",
+                    "note_allowance_conflict", "note_allowance_prepaid_unknown",
+                    "note_allowance_no_configured", "note_allowance_other_unknown"):
+            if unknown_reasons.get(key):
+                notes.append(S[key].format(count=unknown_reasons[key]))
     return {"id": "allowances", "heading": S["heading_allowances"], "window": window_label,
             "kind": "table",
             "columns": [S["col_account"], S["col_cycle_ends"], S["col_days_left"],
