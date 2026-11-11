@@ -1215,7 +1215,9 @@ function backendFailureStatus(failure) {
     if (Number.isInteger(status) && status >= 400 && status <= 599) return status
   }
   const text = backendFailureText(failure)
-  const match = text.match(/(?:^|\b)(?:HTTP\s*(?:\/\d(?:\.\d)?)?\s*|status(?:\s+code)?\s*[:=]?\s*)?(404|422)\b/i)
+  const ipcPrefix = /^(?:IPC(?:\s+Error)?\s*:\s*(?:Error:\s*)?|Error invoking remote method\s+['"][^'"\r\n]+['"]:\s*(?:Error:\s*)?)/i
+  const message = text.replace(ipcPrefix, '')
+  const match = message.match(/^(?:HTTP(?:\/\d(?:\.\d)?)?\s+)?(404|422):/i)
   return match ? Number(match[1]) : 0
 }
 

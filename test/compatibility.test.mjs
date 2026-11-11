@@ -55,17 +55,17 @@ function allText(node) {
   if (Array.isArray(node)) return node.map(allText).join(' ')
   return allText(node.props?.children)
 }
-function failedTransport(status, body) {
+function failedTransport(status, body, prefix = '') {
   return async () => {
-    throw new Error(`${status} ${JSON.stringify(body)}`)
+    throw new Error(`${prefix}${status}: ${JSON.stringify(body)}`)
   }
 }
-async function requestError(path, method, status, body) {
+async function requestError(path, method, status, body, prefix = '') {
   let rejected
   const previousCompatibility = T.$backendCompatibility.get()
   try {
     await assert.rejects(
-      T.backendRequest(path, { method }, failedTransport(status, body)),
+      T.backendRequest(path, { method }, failedTransport(status, body, prefix)),
       error => { rejected = error; return error instanceof Error }
     )
     return rejected
@@ -99,6 +99,10 @@ test('known newer endpoints and the WP04 arrangement route recognise route-level
   assert.match(T.backendCompatibilityText(arrangement, zh), /Desktop/)
   assert.match(T.backendCompatibilityText(arrangement, zh), /一起更新/)
   assert.doesNotMatch(T.backendCompatibilityText(arrangement, en), /8bc1f3d|commit/i)
+
+  const ipc404 = await requestError('/economics/summary', 'GET', 404, { detail: 'Not Found' },
+    "Error invoking remote method 'hermes:api': Error: ")
+  assert.equal(T.isBackendCompatibilityError(ipc404), true)
 })
 
 test('only an unknown newer field on the account write is treated as 422 skew', async () => {
@@ -128,6 +132,15 @@ test('network errors, unrelated 404s, missing records and missing plugin namespa
     error => { network = error; return error instanceof Error }
   )
   assert.equal(T.isBackendCompatibilityError(network), false)
+
+  let portFailure
+  await assert.rejects(
+    T.backendRequest('/economics/summary', { method: 'GET' }, async () => {
+      throw new Error("Error invoking remote method 'hermes:api': Error: connect ECONNREFUSED 127.0.0.1:404")
+    }),
+    error => { portFailure = error; return error instanceof Error }
+  )
+  assert.equal(T.isBackendCompatibilityError(portFailure), false)
 
   for (const [path, method, status, detail] of [
     ['/billing/profiles', 'GET', 404, 'Not Found'],
@@ -210,9 +223,9 @@ test('the installed transport wrapper records one translated warning and removes
     globalThis.compatibilityRetried = undefined
     T.setRest(async () => ({ ok: false, status: 404, detail: 'Not Found' }))
     const identity = T.membershipIdentityNow()
-    let rejection
+    let economicsError
     await assert.rejects(T.economicsQuery(identity).queryFn(), error => {
-      rejection = error
+      economicsError = error
       return T.isBackendCompatibilityError(error)
     })
     assert.equal(T.$backendCompatibility.get()?.identity, identity)
@@ -222,7 +235,7 @@ test('the installed transport wrapper records one translated warning and removes
     const warnings = shell.props.children.filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility')
     assert.equal(warnings.length, 1)
     assert.match(warnings[0].props.children, /后端可能比此/)
-    assert.match(T.membershipErrorText(rejection, 'write', zh), /一起更新/)
+    assert.match(T.membershipErrorText(economicsError, 'write', zh), /一起更新/)
 
     const account = {
       id: 'a', family: 'openai-codex', rev: 'rev-1', effective_arrangement: 'subscription',
@@ -232,7 +245,7 @@ test('the installed transport wrapper records one translated warning and removes
       account, accounts: [account], plans: [], busy: '', onAction() {}, draft: null,
       saveFee() {}, catalogue: {}, notice, weather: null, weatherError: null, hasAttention: false
     })
-    const compatibilityNotice = T.backendCompatibilityText(rejection, zh)
+    const compatibilityNotice = T.backendCompatibilityText(economicsError, zh)
     assert.doesNotMatch(allText(card({
       tone: 'warn', text: compatibilityNotice, accountId: account.id, compatibility: true
     })), /后端可能比此/)
@@ -240,8 +253,16 @@ test('the installed transport wrapper records one translated warning and removes
       tone: 'warn', text: zh('memErrValidation'), accountId: account.id
     })).includes(zh('memErrValidation')))
 
+    let digestError
+    await assert.rejects(T.digestQuery(identity, 30, 'zh').queryFn(), error => {
+      digestError = error
+      return T.isBackendCompatibilityError(error)
+    })
+    assert.equal(T.isBackendCompatibilityError(digestError), true)
+    assert.match(digestError.path, /^\/reports\/digest\?/)
+
     globalThis.compatibilityQueryResponse = {
-      data: null, error: rejection, isLoading: false, isFetching: false,
+      data: null, error: digestError, isLoading: false, isFetching: false,
       refetch: () => { globalThis.compatibilityRetried = true }
     }
     const reportPage = T.ReportsPage()
