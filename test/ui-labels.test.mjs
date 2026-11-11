@@ -799,6 +799,7 @@ test('every PR28 generated-content key exists in English and Chinese', () => {
     'ovNoteFallback', 'ovNoteEconomics', 'ovNoteBilling', 'ovNotePrevious', 'ovNoteGap',
     'ovGapCallFailed', 'ovGapUsageMissing', 'ovGapCacheProvenance', 'ovGapRateUnavailable',
     'ovGapMissingBaseRate', 'ovGapMissingCacheRead', 'ovGapMissingCacheWrite',
+    'usagePricingPartialCalls',
     'econHeadNoFees', 'econHeadUnpriced', 'econHeadIncomparable', 'econHeadPartial',
     'econHeadOk', 'econHeadFxError',
     'econGroupUnknownCurrency', 'econGroupUnpriced', 'econGroupNoFx',

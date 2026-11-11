@@ -626,7 +626,9 @@ function newBucket({ legacy = false, model, profile = '', provider = '' }) {
     provider,
     saved: 0,
     sources: {},
-    unpricedTokens: 0
+    unpricedTokens: 0,
+    unpricedCalls: 0,
+    missingUsageCalls: 0
   }
 }
 
@@ -722,7 +724,7 @@ function changeCacheKnown(cur, init, delta) {
 }
 
 /** Add one priced delta to a bucket (copy-on-write). */
-function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolved, source, usageEvidence }) {
+function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolved, source, usageEvidence = {} }) {
   const b = prevBucket ? { ...prevBucket, sources: { ...prevBucket.sources } } : newBucket(init)
   Object.assign(b, usageValueDelta(prevBucket, delta, resolved, membershipScopeOf($scopeConnection.get(), init.profile || $scopeProfile.get()), usageEvidence))
   b.input += delta.input
@@ -730,6 +732,7 @@ function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolv
   b.cacheRead += delta.cacheRead
   b.cacheWrite += delta.cacheWrite
   b.calls += delta.calls
+  b.missingUsageCalls = num(b.missingUsageCalls) + num(usageEvidence.missingCalls)
   const prompt = num(delta.input) + num(delta.cacheRead) + num(delta.cacheWrite)
   if (changeCacheKnown(cur, init, delta)) {
     b.cacheCoveredPrompt = num(b.cacheCoveredPrompt) + prompt
@@ -750,6 +753,8 @@ function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolv
     if (source === 'foreign' && resolved.foreignSlug) b.foreignSlug = resolved.foreignSlug
   } else {
     b.unpricedTokens += deltaTokens
+    const pricedUsageCalls = Math.max(0, num(delta.calls) - num(usageEvidence.missingCalls))
+    b.unpricedCalls = num(b.unpricedCalls) + pricedUsageCalls + num(usageEvidence.resolvedCalls)
   }
   if (resolved.rates) b.saved += grossCacheReadSavings(delta.cacheRead, resolved.rates)
   return b
@@ -911,19 +916,26 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
         calls: hasCallCounter ? Math.max(0, cur.calls - prevCalls) : 0,
         output: rawOutput != null && prevOutput != null ? Math.max(0, rawOutput - prevOutput) : 0
       }
+  const day = dayKey(now)
+  const key = bucketKey(profile, provider, model, false)
   const deltaTokens = tokensOf(delta)
   const completeCounters = rawPrompt.value != null && rawOutput != null
   const priorGuardrail = !restarted ? prev?.guardrail : null
   // Only the current unresolved call can be completed by a later cumulative
   // frame. A new call or runtime cannot erase an earlier missing-usage gap.
   const resolvedCall = !!(priorGuardrail?.pendingUsageCall && completeCounters &&
-    rawCalls === priorGuardrail.pendingUsageCall && tokensOf(cur) > priorGuardrail.pendingUsageTokens)
+    rawCalls === priorGuardrail.pendingUsageCall)
   const missingCalls = delta.calls > 0
-    ? completeCounters && deltaTokens > 0 ? Math.max(0, delta.calls - 1) : delta.calls : 0
+    ? completeCounters && (deltaTokens > 0 || restarted)
+      ? deltaTokens > 0 ? Math.max(0, delta.calls - 1) : 0
+      : delta.calls : 0
   const pendingUsageCall = delta.calls > 0
-    ? (!completeCounters || !deltaTokens) && hasCallCounter ? rawCalls : null
+    ? missingCalls > 0 && (!completeCounters || !deltaTokens) && hasCallCounter ? rawCalls : null
     : resolvedCall ? null : priorGuardrail?.pendingUsageCall ?? null
   const pendingUsageTokens = delta.calls > 0 ? restarted ? 0 : tokensOf(prev || {}) : priorGuardrail?.pendingUsageTokens ?? 0
+  const pendingUsageRef = delta.calls > 0
+    ? pendingUsageCall != null ? { day, bucketKey: key, sessionId: storedId || null } : null
+    : resolvedCall ? null : priorGuardrail?.pendingUsageRef ?? null
   const usageEvidence = { missingCalls, resolvedCalls: resolvedCall ? 1 : 0, coalesced: delta.calls > 1 }
   // Metadata-only completion must settle even when the final output is zero.
   if (!deltaTokens && !delta.calls && !resolvedCall) return led
@@ -940,8 +952,6 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
     source = resolved.origin
   }
 
-  const day = dayKey(now)
-  const key = bucketKey(profile, provider, model, false)
   const days = { ...led.days }
   const forDay = { ...(days[day] || {}) }
   const cacheDeltaKnown = cur.cacheSource !== 'unknown' && (restarted || prev?.cacheSource === cur.cacheSource)
@@ -956,7 +966,7 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
     ...cur,
     guardrail: { ...usageValueDelta(restarted ? null : prev?.guardrail ? { ...prev.guardrail, input: prev.input, output: prev.output, cacheRead: prev.cacheRead, cacheWrite: prev.cacheWrite, calls: prev.calls } : prev, delta, resolved, membershipScopeOf($scopeConnection.get(), profile || $scopeProfile.get()), usageEvidence),
       input: cur.input, output: cur.output, cacheRead: cur.cacheRead, cacheWrite: cur.cacheWrite, calls: cur.calls,
-      pendingUsageCall, pendingUsageTokens },
+      pendingUsageCall, pendingUsageTokens, pendingUsageRef },
     at: now,
     costUsd: gatewayCost,
     counterPrompt: restarted || rawPrompt.value != null ? rawPrompt.value : prev?.counterPrompt ?? null,
@@ -966,9 +976,6 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
     counterOutput: restarted || rawOutput != null ? rawOutput : prev?.counterOutput ?? null,
     counterCalls: restarted ? hasCallCounter ? rawCalls : null : hasCallCounter ? rawCalls : prev?.counterCalls ?? null
   } }, now)
-  const pruned = pruneDays(days, now)
-  const since = led.since && led.since <= day ? led.since : Object.keys(pruned).sort()[0] || day
-
   let sessions = led.sessions || {}
   if (storedId) {
     const prevS = sessions[storedId]
@@ -981,6 +988,28 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
     s.lastAt = now
     sessions = pruneSessions({ ...sessions, [storedId]: s }, now)
   }
+
+  if (resolvedCall && priorGuardrail?.pendingUsageRef) {
+    const pending = priorGuardrail.pendingUsageRef
+    const pendingDays = days[pending.day]
+    const pendingBucket = pendingDays?.[pending.bucketKey]
+    if (pendingBucket && num(pendingBucket.missingUsageCalls) > 0) {
+      days[pending.day] = { ...pendingDays, [pending.bucketKey]: {
+        ...pendingBucket, missingUsageCalls: num(pendingBucket.missingUsageCalls) - 1
+      } }
+    }
+    if (pending.sessionId) {
+      const pendingSession = sessions[pending.sessionId]
+      if (pendingSession && num(pendingSession.missingUsageCalls) > 0) {
+        sessions = { ...sessions, [pending.sessionId]: {
+          ...pendingSession, missingUsageCalls: num(pendingSession.missingUsageCalls) - 1
+        } }
+      }
+    }
+  }
+
+  const pruned = pruneDays(days, now)
+  const since = led.since && led.since <= day ? led.since : Object.keys(pruned).sort()[0] || day
 
   return { ...led, days: pruned, rates, sessions, since, snapshots }
 }
@@ -1009,8 +1038,8 @@ function summarize(led, filter, priceLegacy) {
     for (const [key, b] of Object.entries(buckets)) {
       if (!isObj(b)) continue
       const r = rows[key] || (rows[key] = { ...newBucket(b), cost: b.legacy ? null : 0 })
-      for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'calls', 'pricedTokens', 'unpricedTokens', 'saved', 'cacheCoveredPrompt', 'cacheCoveredRead', 'cacheExactPrompt', 'cacheEstimatedPrompt', 'netSavingsPrompt']) {
-        r[f] += num(b[f])
+      for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'calls', 'pricedTokens', 'unpricedTokens', 'unpricedCalls', 'missingUsageCalls', 'saved', 'cacheCoveredPrompt', 'cacheCoveredRead', 'cacheExactPrompt', 'cacheEstimatedPrompt', 'netSavingsPrompt']) {
+        r[f] = num(r[f]) + num(b[f])
       }
       if (Number.isFinite(b.netSavings)) r.netSavings += b.netSavings
       if (!b.legacy) r.cost += num(b.cost)
@@ -1035,7 +1064,9 @@ function summarize(led, filter, priceLegacy) {
     cacheEstimatedPrompt: 0,
     netSavings: 0,
     netSavingsPrompt: 0,
-    unpricedTokens: 0
+    unpricedTokens: 0,
+    unpricedCalls: 0,
+    missingUsageCalls: 0
   }
   const list = Object.values(rows).map(r => {
     if (r.legacy) {
@@ -1066,6 +1097,8 @@ function summarize(led, filter, priceLegacy) {
     totals.read += num(r.cacheRead)
     totals.prompt += num(r.input) + num(r.cacheRead) + num(r.cacheWrite)
     totals.unpricedTokens += num(r.unpricedTokens)
+    totals.unpricedCalls += num(r.unpricedCalls)
+    totals.missingUsageCalls += num(r.missingUsageCalls)
     totals.foreignTokens += num(r.sources.foreign) + (r.legacy && r.legacyOrigin === 'foreign' ? tokensOf(r) : 0)
     if (r.cacheEstimated) totals.cacheEstimated = true
     return r
@@ -1462,7 +1495,7 @@ function useLive() {
       // read "this run" beside a note saying "conversation total since …".
       fromHistory: true,
       model: (usage && usage.model) || histModel,
-      partial: num(hist.unpricedTokens) > 0 && num(hist.pricedTokens) > 0,
+      partial: num(hist.unpricedTokens) > 0 || num(hist.unpricedCalls) > 0 || num(hist.missingUsageCalls) > 0,
       pricingError: error ? String(error.message || error) : null,
       pricingLoading: isLoading,
       // While a run is live, the current route is the live one or unknown;
@@ -1598,7 +1631,7 @@ function Chip() {
   const monthlyIndicator = jsx(BudgetStatusIndicator, { data: budgetData, error: budgetRead.error, t })
   const monthlyTooltip = budgetRead.error ? t('budgetStale') : (budgetData?.statuses || []).filter(row => row.budget.enabled).map(row => budgetTooltip(row, t)).join('\n')
   const open = openLedger
-  const todayText = today.known ? `${t('today')} ${fmtUsd(today.cost)}${today.unpricedTokens ? '+' : ''}` : null
+  const todayText = today.known ? `${t('today')} ${fmtUsd(today.cost)}${today.unpricedTokens || today.unpricedCalls || today.missingUsageCalls ? '+' : ''}` : null
 
   if (!live.bucket) {
     return jsx(Tip, {
@@ -1936,9 +1969,17 @@ function CostKpi({ t, view }) {
       : jsx('div', { className: 'wm-kpi-since wm-kpi-since-empty', children: '—' }, 'since'),
     view.partial
       ? jsxs('div', { className: 'wm-partial-chip', children: [
-          jsx('span', { children: `▲ ${t('partialShort', fmtTokens(view.bucket.unpricedTokens))}` }, 'chip'),
+          jsx('span', { children: `▲ ${[
+            num(view.bucket.unpricedTokens) ? t('partialShort', fmtTokens(view.bucket.unpricedTokens)) : null,
+            num(view.bucket.unpricedCalls) ? t('partialCallsShort', fmtTokens(view.bucket.unpricedCalls)) : null,
+            num(view.bucket.missingUsageCalls) ? t('missingUsageCallsShort', fmtTokens(view.bucket.missingUsageCalls)) : null
+          ].filter(Boolean).join(' · ')}` }, 'chip'),
           jsx(InfoTip, { id: 'partial', label: t('infoLabel'),
-            text: t('unpricedNote', fmtTokens(view.bucket.unpricedTokens)) }, 'info')
+            text: [
+              num(view.bucket.unpricedTokens) ? t('unpricedNote', fmtTokens(view.bucket.unpricedTokens)) : null,
+              num(view.bucket.unpricedCalls) ? t('unpricedCallsNote', fmtTokens(view.bucket.unpricedCalls)) : null,
+              num(view.bucket.missingUsageCalls) ? t('missingUsageCallsNote', fmtTokens(view.bucket.missingUsageCalls)) : null
+            ].filter(Boolean).join(' ') }, 'info')
         ] }, 'partial')
       : null
   ].filter(Boolean) })
@@ -2152,6 +2193,8 @@ function rangeNotes(t, totals, storageError) {
   const notes = []
   if (storageError) notes.push(jsx(Note, { warn: true, children: t('storageError', storageError) }, 'st'))
   if (totals.unpricedTokens) notes.push(jsx(Note, { warn: true, children: t('unpricedNote', fmtTokens(totals.unpricedTokens)) }, 'up'))
+  if (totals.unpricedCalls) notes.push(jsx(Note, { warn: true, children: t('unpricedCallsNote', fmtTokens(totals.unpricedCalls)) }, 'uc'))
+  if (totals.missingUsageCalls) notes.push(jsx(Note, { warn: true, children: t('missingUsageCallsNote', fmtTokens(totals.missingUsageCalls)) }, 'mu'))
   if (totals.foreignTokens) notes.push(jsx(Note, { warn: true, children: t('foreignNote', fmtTokens(totals.foreignTokens)) }, 'fo'))
   if (totals.legacyTokens) notes.push(jsx(Note, { children: t('legacyNote', fmtTokens(totals.legacyTokens)) }, 'lg'))
   if (totals.cacheCoverage != null) notes.push(jsx(Note, { children: t('cacheCoverageRange', Math.round(totals.cacheCoverage * 100)) }, 'cc'))
@@ -2391,9 +2434,21 @@ function analyticsTrend(buckets, metric = 'tokens') {
 }
 
 function analyticsPricing(row, t = needsAttentionEn) {
+  const calls = num(row.unpriced_calls)
+  const gaps = row.pricing_gaps || {}
+  if (calls > 0) {
+    if (num(gaps.provider_not_recorded)) return t('usagePricingProviderUnknown', num(gaps.provider_not_recorded))
+    if (num(gaps.provider_not_in_catalogue)) return t('usagePricingProviderUnpriced', num(gaps.provider_not_in_catalogue))
+    if (num(gaps.model_not_in_catalogue)) return t('usagePricingModelUnpriced', num(gaps.model_not_in_catalogue))
+    if (!num(row.tokens)) return t('usagePricingCallsNoTokens', calls)
+    if (finiteValue(row.list_usd) == null || !num(row.priced_tokens) || !num(row.unpriced_tokens))
+      return t('usagePricingCallsUnknown', calls)
+  }
   if (!num(row.tokens)) return t('usagePricingNone')
   if (finiteValue(row.list_usd) == null || !num(row.priced_tokens)) return t('usagePricingUnpriced')
   const fallback = num(row.fallback_calls)
+  if (calls) return t('usagePricingPartialCalls',
+    ((num(row.priced_tokens) / num(row.tokens)) * 100).toFixed(1), calls, fallback)
   if (num(row.unpriced_tokens)) return t('usagePricingPartial', ((num(row.priced_tokens) / num(row.tokens)) * 100).toFixed(1), fallback)
   if (fallback) return t('usagePricingFallback', fallback)
   return t('usagePricingComplete')
@@ -2777,7 +2832,8 @@ const ANALYTICS_CORE_COLUMNS = ['model','provider','calls','tokens','input_token
 function explorerUnitCosts(row) {
   if (!row || num(row.unpriced_tokens)) return { per_call: null, per_million: null }
   return {
-    per_call: finiteValue(row.list_usd) != null && num(row.calls) ? num(row.list_usd) / num(row.calls) : null,
+    per_call: !num(row.unpriced_calls) && finiteValue(row.list_usd) != null && num(row.calls)
+      ? num(row.list_usd) / num(row.calls) : null,
     per_million: finiteValue(row.list_usd) != null && num(row.tokens) ? num(row.list_usd) / num(row.tokens) * 1_000_000 : null
   }
 }
@@ -2830,14 +2886,18 @@ function AnalyticsExplorer({data,state,dispatch}) {
       jsx('thead',{children:jsx('tr',{children:columns.map(([key])=>jsx('th',{scope:'col','aria-sort':state.sortKey===key?(state.sortDirection==='asc'?'ascending':'descending'):'none',children:jsx('button',{type:'button','aria-label':t('usageExplorerSortBy', t(EXPLORER_COLUMN_KEYS[key])),onClick:()=>dispatch({type:'sort',key}),children:t('usageExplorerSortLabel', t(EXPLORER_COLUMN_KEYS[key]), state.sortKey===key?(state.sortDirection==='desc'?' ↓':' ↑'):'')})},key))})}),
       jsx('tbody',{children:visible.map(row=>jsx('tr',{children:columns.map(([key])=>{
         let content
+        const partial = num(row.unpriced_tokens) || num(row.unpriced_calls)
         if(key==='model') content=jsx('button',{type:'button',className:'wm-modelbutton',title:row.model,'aria-label':t('usageLegendFilter', row.model, row.provider),onClick:()=>dispatch({type:'select',group:'model',row}),children:row.model || t('usageUnknownModel')})
         else if(key==='provider') content=jsx('span',{className:'wm-subtle',children:row.provider || t('usageUnknown')})
         else if(key==='billing') content=jsx('span',{className:'wm-badge',title:t('usageExplorerBillingTitle'),children:Object.keys(row.billing_mix || {}).filter(kind=>row.billing_mix[kind]>0).sort().join(' + ') || t('unknown')})
         else if(key==='cache_hit_rate') content=jsxs('div',{title:t('usageExplorerCacheTitle', row.cache_known_calls || 0, row.cache_unknown_calls || 0),children:[percent(row.cache_hit_rate),row.cache_hit_rate!=null?jsx('div',{className:'wm-meter',children:jsx('span',{style:{width:`${Math.max(0,Math.min(1,row.cache_hit_rate))*100}%`}})}):null]})
         else if(key==='savings') content=jsx('span',{className:row.economics?.savings_usd<0?'wm-warn':row.economics?.savings_usd>0?'wm-good':'wm-dim',children:analyticMoney(row.economics?.savings_usd)})
-        else if(key==='list_usd') content=jsxs('span',{className:num(row.unpriced_tokens)?'wm-warn':'',children:[analyticMoney(row.list_usd),num(row.unpriced_tokens)&&row.list_usd!=null?jsx('small',{children:t('usageExplorerPartial')}):null]})
-        else if(key==='per_call'||key==='per_million') content=jsx('span',{title:num(row.unpriced_tokens)?t('usageExplorerUnitUnknown'):undefined,children:row[key]==null?'—':`$${num(row[key]).toFixed(num(row[key])<1?4:2)}`})
-        else if(key==='pricing') content=jsx('span',{className:cn('wm-badge',num(row.unpriced_tokens)&&'wm-warn'),title:t('usageExplorerPricingTitle', exactTokens(row.priced_tokens), exactTokens(row.tokens)),children:analyticsPricing(row, t)})
+        else if(key==='list_usd') content=jsxs('span',{className:partial?'wm-warn':'',children:[analyticMoney(row.list_usd),partial&&row.list_usd!=null?jsx('small',{children:t('usageExplorerPartial')}):null]})
+        else if(key==='per_call'||key==='per_million') {
+          const unitCoverageUnknown = num(row.unpriced_tokens) || (key==='per_call' && num(row.unpriced_calls))
+          content=jsx('span',{title:unitCoverageUnknown?t('usageExplorerUnitUnknown'):undefined,children:row[key]==null?'—':`$${num(row[key]).toFixed(num(row[key])<1?4:2)}`})
+        }
+        else if(key==='pricing') content=jsx('span',{className:cn('wm-badge',partial&&'wm-warn'),title:t('usageExplorerPricingTitle', exactTokens(row.priced_tokens), exactTokens(row.tokens)),children:analyticsPricing(row, t)})
         else content=jsx('span',{title:exactTokens(row[key]),children:key==='calls'?exactTokens(row[key]):fmtTokens(row[key])})
         return jsx('td',{className:['model','provider','pricing'].includes(key)?'':'wm-mono',children:content},key)
       })},analyticsId(row)))})]})}),rows.length>25?jsx('p',{className:'wm-subtle',style:{marginTop:10},children:state.showAllModels?t('usageExplorerShowingAll', rows.length):t('usageExplorerShowingTop', rows.length)}):null]}),
@@ -2922,17 +2982,18 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('div',{className:'wm-eyebrow',children:'WolfMark / SpendSense'}),jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
     jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')}),jsx(AnalyticsButton,{label:t('usageCloseTip'),onClick:closeLedger,children:t('usageClose')})]})]})
   const content = jsxs('div',{className:'wm-shell',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
-    query.error?jsxs('div',{className:'wm-alert',role:'alert',children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:String(query.error.message || query.error)}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
+      query.error?jsxs('div',{className:'wm-alert',role:'alert',children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
     totals?jsxs('div',{className:'wm-stats',children:[
-      jsx(AnalyticsStat,{label:t('usageStatApiEquiv'),value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',num(totals.unpriced_tokens)&&'wm-warn'),children:analyticsPricing(totals, t)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd, t)) || t('usageStatApiExtra')}),
+      jsx(AnalyticsStat,{label:t('usageStatApiEquiv'),value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',(num(totals.unpriced_tokens)||num(totals.unpriced_calls))&&'wm-warn'),children:analyticsPricing(totals, t)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd, t)) || t('usageStatApiExtra')}),
       jsx(AnalyticsStat,{label:t('weightedCacheHit'),value:percent(totals.cache_hit_rate),tone:'wm-good',hint: totals.cache_prompt_coverage == null ? t('cacheCoverageUnavailable') : t('cacheCoveragePrompt', percent(totals.cache_prompt_coverage)),extra:t('cacheCoverageBasis')}),
       jsx(AnalyticsStat,{label:t('usageStatSavings'),value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:t('usageStatSavingsHint'),extra:t('usageStatSavingsExtra', percent(economics.coverage))}),
       jsx(AnalyticsStat,{label:t('usageStatTokens'),value:fmtTokens(totals.tokens),hint:t('usageStatTokensHint', exactTokens(totals.calls)),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens, t)) || t('usageStatTokensExtra', fmtTokens(totals.input_tokens), fmtTokens(totals.output_tokens))}),
-      jsx(AnalyticsStat,{label:t('usageStatCoverage'),value:percent(data.pricing_coverage?.coverage),hint:t('usageStatCoverageHint', exactTokens(totals.unpriced_tokens)),extra:analyticsPricing(totals, t)})]}):null,
+      jsx(AnalyticsStat,{label:t('usageStatCoverage'),value:num(totals.tokens)?percent(data.pricing_coverage?.coverage):t('usageUnknown'),hint:t('usageStatCoverageHint', exactTokens(totals.unpriced_tokens), exactTokens(totals.unpriced_calls)),extra:analyticsPricing(totals, t)})]}):null,
     totals&&analyticsInsights(data, t).length?jsx('div',{className:'wm-insights','aria-label':t('usageInsightsAria'),children:analyticsInsights(data, t).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{children:item.text})]},item.label))}):null,
     totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:billingMix || t('usageBillingTitle'),children:[jsx('strong',{children:t('usageBillingLabel')}),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),' ',jsx('span',{className:cn('wm-badge',!totals.billed_complete&&'wm-warn'),children:totals.billed_complete?t('usageBillingComplete'):totals.billed_usd==null?t('usageUnknown'):t('usageBillingPartial')}),t('usageBillingNote')]}),jsx('span',{className:'wm-mono',children:data.window?t('usageWindowDash', String(data.window.since_local || data.window.since || '').slice(0,10), String(data.window.until_local || data.window.until || '').slice(0,10), data.window.since_local ? data.window.timezone || 'local' : 'UTC'):t('usageWindowPending')})]}):null,
-    totals&&num(totals.unpriced_tokens)?jsx('div',{className:'wm-alert',children:t('usageUnpricedAlert', exactTokens(totals.unpriced_tokens))}):null,
+    totals&&data.previous&&!data.previous.comparable?jsx('div',{className:'wm-alert',children:t(data.previous.reason==='no_previous_calls'?'usagePreviousNoCalls':data.previous.reason==='insufficient_history'?'usagePreviousInsufficient':'usagePreviousUnavailable')}):null,
+    totals&&(num(totals.unpriced_tokens)||num(totals.unpriced_calls))?jsxs('div',{className:'wm-alert',children:[num(totals.unpriced_tokens)?t('usageUnpricedAlert', exactTokens(totals.unpriced_tokens)):'',num(totals.unpriced_calls)?t('usageUnpricedCallsAlert', exactTokens(totals.unpriced_calls), analyticsPricing(totals,t)):'']}):null,
     totals&&!num(totals.calls)?jsxs('div',{className:'wm-empty',role:'status',children:[jsx('h2',{children:t('usageEmptyTitle')}),jsx('p',{children:t('usageEmptyBody')}),jsx(AnalyticsButton,{label:t('usageEmptyShowDesktop'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageEmptyShowDesktop')}),jsx(AnalyticsButton,{label:t('usageEmptyClear'),onClick:()=>dispatch({type:'clear'})})]}):null,
     !totals&&!query.isLoading&&!query.error?jsx('div',{className:'wm-empty',role:'status',children:t('usageNoData')}):null,
     totals?jsxs('div',{className:'wm-charts',children:[jsx(AnalyticsDistribution,{data,state,dispatch}),jsx(AnalyticsTrendChart,{data,state,dispatch}),jsx(AnalyticsDelegation,{data,state,dispatch}),jsx(AnalyticsRanking,{data,state,dispatch}),jsx(AnalyticsComposition,{data,state,dispatch})]}):null,
@@ -3232,8 +3293,13 @@ const ANALYTICS_NOTE_KEYS = {
 const OV_GAP_REASON_KEYS = {
   call_failed: 'ovGapCallFailed',
   usage_missing: 'ovGapUsageMissing',
+  provider_unidentified: 'ovGapProviderMissing',
+  model_unidentified: 'ovGapModelMissing',
   cache_provenance_unknown: 'ovGapCacheProvenance',
+  provider_price_catalogue_missing: 'ovGapProviderPrice',
+  price_evidence_missing: 'ovGapModelPrice',
   rate_unavailable: 'ovGapRateUnavailable',
+  tier_rate_unavailable: 'ovGapTierRate',
   missing_base_rate: 'ovGapMissingBaseRate',
   missing_cache_read_rate: 'ovGapMissingCacheRead',
   missing_cache_write_rate: 'ovGapMissingCacheWrite',
@@ -3274,6 +3340,8 @@ const ECON_NOTE_KEYS = {
   econ_group_unknown_currency: 'econGroupUnknownCurrency',
   econ_group_missing: 'econGroupMissing',
   econ_group_partial: 'econGroupPartial',
+  econ_group_window_history_missing: 'econGroupWindowHistory',
+  econ_group_insufficient_history: 'econGroupHistory',
   econ_unattributed: 'econUnattributed',
   econ_ambiguous: 'econAmbiguous',
 }
@@ -3288,6 +3356,9 @@ function econNoteText(entry, fallback, t) {
     return t('econGroupNoFx', params.currency)
   if (code === 'econ_head_fx_error' && params.error !== undefined)
     return t('econHeadFxError', params.error)
+  if (code === 'econ_group_window_history_missing')
+    return t('econGroupWindowHistory', Number.isSafeInteger(params.count) && params.count >= 0
+      ? params.count : null)
   const key = code ? ECON_NOTE_KEYS[code] : null
   return key ? t(key) : fallback
 }
@@ -3325,22 +3396,59 @@ function econExplanationText(row, t) {
 
 /** One line for a usage value and its pricing coverage. */
 function econCoverageLabel(t, usage) {
-  if (!usage || !num(usage.tokens)) return t('econNoUsage')
+  if (!usage || (!num(usage.calls) && !num(usage.tokens))) return t('econNoUsage')
   if (usage.list_usd == null) return t('econNoPrice')
   if (usage.coverage == null) return t('econCoverageUnknown')
   const pct = Math.round(usage.coverage * 100)
   // Coverage rounds to whole percent: only the exact unpriced count can
   // certify fully priced, matching the backend status in the same cell.
   // A rounded 100% with unpriced tokens left is "nearly all", never exact.
-  if (pct >= 100) return num(usage.unpriced_tokens) > 0 ? t('econNearlyAllPriced') : t('econFullyPriced')
+  if (pct >= 100) return num(usage.unpriced_tokens) > 0 || num(usage.unpriced_calls) > 0
+    ? t('econNearlyAllPriced') : t('econFullyPriced')
   return t('econPricedPct', pct)
 }
 
+function econBlockerText(blocker, t) {
+  const code = blocker?.code
+  if (code === 'subscription_fee_missing') return t('econBlockFeeMissing')
+  if (code === 'dated_fx_rate_missing') return t('econBlockFxMissing', blocker.currency || 'currency')
+  if (code === 'window_fee_history_missing') return t('econBlockWindowHistory')
+  if (code === 'window_fee_allocation_unavailable') return t('econBlockWindowUnavailable')
+  if (code === 'no_usage_recorded') return t('econBlockNoUsage')
+  if (code === 'insufficient_comparison_history') return t('econBlockHistory')
+  if (code === 'provider_unidentified' || code === 'provider_not_recorded') return t('econBlockProviderMissing')
+  if (code === 'model_unidentified') return t('econBlockModelMissing')
+  if (code === 'provider_price_catalogue_missing' || code === 'provider_not_in_catalogue') return t('econBlockProviderPrice')
+  if (code === 'price_evidence_missing' || code === 'model_not_in_catalogue') return t('econBlockModelPrice')
+  if (code === 'historical_ownership_billing_rule_incomplete') return t('econBlockOwnership')
+  if (code === 'usage_price_incomplete' || code === 'usage_unknown' || code === 'usage_missing') return t('econBlockUsageEvidence')
+  if (code === 'missing_base_rate') return t('econBlockBaseRate')
+  if (code === 'tier_rate_unavailable') return t('econBlockTierRate')
+  if (['cache_rate_unavailable', 'missing_cache_rate', 'missing_cache_read_rate',
+    'missing_cache_write_rate'].includes(code)) return t('econBlockCacheRate')
+  return code ? t('econBlockGeneric', code) : t('econBlockGeneric', t('econBlockUnknown'))
+}
+
+function econGroupNotes(group, t) {
+  const notes = econNotesText(group?.notes, group?.note_codes, t)
+  for (const blocker of group?.blockers || []) {
+    notes.push(`${blocker.account_id || t('econBlockUnknown')}: ${econBlockerText(blocker, t)}`)
+  }
+  return notes.join(' ')
+}
+
+function econMoneyValue(amount, currency, complete = true) {
+  const money = fmtMoney(amount, currency)
+  if (!money || (!complete && finiteValue(amount) === 0)) return '—'
+  return complete ? money : `≥${money}`
+}
+
 /** Window-allocated expenditure lines, one per currency — never summed here. */
-function econWindowLines(fees) {
+function econWindowLines(fees, groups = []) {
   const rows = Array.isArray(fees) ? fees : []
   if (!rows.length) return ['—']
-  return rows.map(({ amount, currency }) => fmtMoney(amount, currency) || '—')
+  const completeness = new Map((groups || []).map(group => [group.currency, group.window_fee_complete !== false]))
+  return rows.map(({ amount, currency }) => econMoneyValue(amount, currency, completeness.get(currency) !== false))
 }
 
 /** Display span of the reporting window for "in the last N days" labels. */
@@ -3351,12 +3459,13 @@ function windowSpanLabel(t, windowDays) {
 }
 
 /** Monthly-equivalent fee lines, one per currency — never summed here. */
-function econFeeLines(t, fees) {
+function econFeeLines(t, fees, groups = []) {
   const rows = Array.isArray(fees) ? fees : []
   if (!rows.length) return ['—']
+  const completeness = new Map((groups || []).map(group => [group.currency, group.fee_complete !== false]))
   return rows.map(({ amount, currency }) => {
-    const money = fmtMoney(amount, currency)
-    return money ? t('econPerMonth', money) : '—'
+    const money = econMoneyValue(amount, currency, completeness.get(currency) !== false)
+    return money !== '—' ? t('econPerMonth', money) : '—'
   })
 }
 
@@ -4077,13 +4186,16 @@ function EconomicsAccountRow({ row, t }) {
       ? t('econDue', fmtMoney(renewal.amount, renewal.currency), fmtDay(renewal.date))
       : t('econRenewalUnknown', fmtMoney(renewal.amount, renewal.currency))
   const usageText = usage.list_usd == null ? '—' : analyticMoney(usage.list_usd)
-  const usageDetail = usage.tokens ? t('econUsageDetail', fmtTokens(usage.tokens), usage.calls) : null
+  const usageDetail = usage.tokens || usage.calls ? t('econUsageDetail', fmtTokens(usage.tokens), usage.calls) : null
   const routes = (row.attribution?.routes || []).map(r => r.route).join(', ')
   const difference = finiteValue(row.difference_usd)
+  const blockers = (row.blockers || []).map((blocker, index) =>
+    jsx('li', { children: econBlockerText(blocker, t) }, `${blocker.code || 'unknown'}-${index}`))
   return jsxs('tr', { children: [
     jsxs('td', { children: [
       jsx('div', { className: 'wm-econ-account', children: row.label || row.family }),
-      jsx('div', { className: 'wm-econ-dim', children: [row.plan_name || t('econNoPlan'), row.family].filter(Boolean).join(' · ') || null })
+      jsx('div', { className: 'wm-econ-dim', children: [row.plan_name || t('econNoPlan'), row.family].filter(Boolean).join(' · ') || null }),
+      blockers.length ? jsx('ul', { className: 'wm-econ-notes', children: blockers }) : null
     ] }),
     jsxs('td', { children: [
       jsx('div', { children: feeText }),
@@ -4249,9 +4361,9 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
   const accounts = data?.accounts || []
   const others = data?.non_subscription_accounts || []
   const difference = finiteValue(headline.difference_usd)
-  const feeLines = econFeeLines(t, headline.fees_monthly_by_currency)
+  const feeLines = econFeeLines(t, headline.fees_monthly_by_currency, groups)
   const span = windowSpanLabel(t, data?.window_days)
-  const windowLines = econWindowLines(headline.fees_window_by_currency)
+  const windowLines = econWindowLines(headline.fees_window_by_currency, groups)
   return jsxs('section', { className: 'wm-product-section', 'aria-label': t('econTitle'), children: [
     jsx('h2', { children: t('econTitle') }),
     jsx('p', { children: t('econIntro') }),
@@ -4283,16 +4395,18 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
       ...groups.map(group => group.difference_usd == null && !group.usage_usd && group.status === 'unavailable'
         ? jsxs('div', { className: 'wm-econ-group', children: [
             jsx('strong', { children: group.currency }),
-            jsx('span', { className: 'wm-econ-dim', children: ` ${t('econPerMonth', fmtMoney(group.monthly_fees, group.currency))} · ${econNotesText(group.notes, group.note_codes, t).join(' ') || t('econNoComparison')}` })
+              jsx('span', { className: 'wm-econ-dim', children: ` ${t('econPerMonth', econMoneyValue(group.monthly_fees, group.currency, group.fee_complete !== false))} · ${econGroupNotes(group, t) || t('econNoComparison')}` })
           ] }, group.currency)
         : jsxs('div', { className: 'wm-econ-group', children: [
             jsxs('div', { className: 'wm-econ-group-head', children: [
               jsx('strong', { children: group.currency }),
               jsx('span', { className: 'wm-econ-dim', children:
-                t('econGroupHead', fmtMoney(group.monthly_fees, group.currency), group.window_fees == null ? '—' : fmtMoney(group.window_fees, group.currency), analyticMoney(group.usage_usd), econStatusLabel(t, group.status)) })
+                t('econGroupHead', econMoneyValue(group.monthly_fees, group.currency, group.fee_complete !== false),
+                  econMoneyValue(group.window_fees, group.currency, group.window_fee_complete !== false),
+                  analyticMoney(group.usage_usd), econStatusLabel(t, group.status)) })
             ] }),
             group.difference_usd == null
-              ? jsx('p', { className: 'wm-subtle', children: econNotesText(group.notes, group.note_codes, t).join(' ') || t('econNoComparison') })
+              ? jsx('p', { className: 'wm-subtle', children: econGroupNotes(group, t) || t('econNoComparison') })
               : jsx(EconomicsBars, { group, t })
           ] }, group.currency))
     ] }) : null,
@@ -4370,7 +4484,9 @@ function EconomicsPanel({ identity }) {
     return jsx('section', { className: 'wm-product-section', children: keyedElementChildren([
       jsx('h2', { children: t('econTitle') }),
       jsx('div', { className: 'wm-alert', role: 'alert',
-        children: String(economics.error.message || economics.error) })
+        children: jsxs('div', { children: [jsx('p', { children: t('econReadFailure') }),
+          jsx(ProductButton, { type: 'button', disabled: economics.isFetching,
+            onClick: () => economics.refetch?.(), children: t('econRetry') })] }) })
     ], 'econ-error') })
   }
   if (!current) {
@@ -4456,10 +4572,14 @@ function settledDesktopMonth(ledger, now = new Date()) {
   let cost = 0
   let priced = 0
   let unpriced = 0
+  let unpricedCalls = 0
+  let missingUsageCalls = 0
   for (const [day, buckets] of Object.entries(ledger?.days || {})) {
     if (!day.startsWith(month)) continue
     for (const bucket of Object.values(buckets || {})) {
       unpriced += Number(bucket?.unpricedTokens) || 0
+      unpricedCalls += Number(bucket?.unpricedCalls) || 0
+      missingUsageCalls += Number(bucket?.missingUsageCalls) || 0
       if (bucket?.legacy || !Number(bucket?.pricedTokens)) continue
       const value = Number(bucket?.cost)
       if (!Number.isFinite(value)) continue
@@ -4467,7 +4587,7 @@ function settledDesktopMonth(ledger, now = new Date()) {
       priced += Number(bucket.pricedTokens)
     }
   }
-  return { known: priced > 0, cost, pricedTokens: priced, unpricedTokens: unpriced }
+  return { known: priced > 0, cost, pricedTokens: priced, unpricedTokens: unpriced, unpricedCalls, missingUsageCalls }
 }
 
 function overviewTopModels(rows, limit = 4) {
@@ -4520,7 +4640,9 @@ function OverviewPage() {
   const weatherStale = weatherById.size > 0 && !!(weather.error && membershipIdentityCurrent(identity))
   const local = settledDesktopMonth(ledger)
   const result = analytics.data?.totals || {}
-  const unpriced = Number(result.unpriced_tokens || 0)
+  const unpricedTokens = Number(result.unpriced_tokens || 0)
+  const unpricedCalls = Number(result.unpriced_calls || 0)
+  const unpriced = unpricedTokens > 0 || unpricedCalls > 0
   const topModels = overviewTopModels(analytics.data?.by_model)
   const topModelMax = topModels[0]?.calls || 1
   // Accounts that could carry a recurring fee but have no known amount —
@@ -4547,17 +4669,20 @@ function OverviewPage() {
   return jsx(ProductShell, { children:
     jsxs('main', { className: 'wm-shell', children: [
       jsx(ProductHeader, { title: t('ovTitle'), subtitle: t('ovSubtitle') }),
-      analytics.error ? jsx('div', { className: 'wm-alert', role: 'alert',
-        children: String(analytics.error.message || analytics.error) }) : null,
+      analytics.error ? jsxs('div', { className: 'wm-alert', role: 'alert', children: [
+        jsx('p', { children: t('ovBackendReadFailure') }),
+        jsx(ProductButton, { type: 'button', disabled: analytics.isFetching,
+          onClick: () => analytics.refetch?.(), children: t('econRetry') })
+      ] }) : null,
       jsxs('section', { className: 'wm-product-summary wm-overview-grid', 'aria-label': t('ovFigures'), children: [
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'recorded-usage', children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovRecordedLabel') }),
           jsx('div', { className: 'wm-kpi-figure', children: !local.known ? t('ovUnknown')
-            : local.unpricedTokens ? [fmtUsd(local.cost), jsx('small', { children: ' ' + t('ovLowerBound') }, 'lb')] : fmtUsd(local.cost) }),
+          : local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls ? [fmtUsd(local.cost), jsx('small', { children: ' ' + t('ovLowerBound') }, 'lb')] : fmtUsd(local.cost) }),
           jsx('p', { className: 'wm-kpi-prov', children: t('ovRecordedProv') }),
           jsxs('div', { className: 'wm-kpi-foot', children: [
             certaintyChip('estimated', t('ovCertRecorded'), 'recorded'),
-            local.known && local.unpricedTokens ? certaintyChip('partial', t('ovCertPartial'), 'rpart') : null
+            (local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls) ? certaintyChip('partial', t('ovCertPartial'), 'rpart') : null
           ].filter(Boolean) })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'actual-charges', 'aria-label': t('ovChargesLabel'), children: [
@@ -4574,7 +4699,8 @@ function OverviewPage() {
           jsx('p', { className: 'wm-kpi-prov', children: analytics.isLoading && !analytics.data ? t('ovBackendLoading')
             : analytics.error && !analytics.data ? t('ovBackendError')
             : !analytics.data ? t('ovBackendNone')
-            : result.calls === 0 ? t('ovBackendEmpty') : t('ovBackendProv') }),
+            : result.calls === 0 ? t('ovBackendEmpty') : unpricedCalls
+              ? t('ovBackendUnpricedCalls', analyticsPricing(result, t)) : t('ovBackendProv') }),
           jsxs('div', { className: 'wm-kpi-foot', children: [
             certaintyChip('estimated', t('ovCertEstimated'), 'est'),
             unpriced ? certaintyChip('partial', t('ovCertPartial'), 'part') : null
@@ -4626,7 +4752,7 @@ function OverviewPage() {
                 jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
                 jsxs('div', { className: 'wm-attn-main', children: [
                   jsx('strong', { children: t('ovPricingTitle') }),
-                  jsx('span', { children: t('ovUnpriced', unpriced.toLocaleString('en-GB')) })
+                  jsx('span', { children: t('ovUnpriced', unpricedTokens, unpricedCalls) })
                 ] }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
                   onClick: () => goLedgerTab('usage'), children: t('ovOpenUsage') })
@@ -9393,7 +9519,11 @@ function LedgerPage() {
       jsxs('td', {
         className: 'py-1.5 text-right tabular-nums',
         children: [
-          jsx('div', { children: r.cost == null ? '—' : `${r.unpricedTokens && r.cost != null ? '≥' : ''}${fmtUsd(r.cost)}` }),
+          jsx('div', { children: r.cost == null ? '—' : `${(r.unpricedTokens || r.unpricedCalls || r.missingUsageCalls) && r.cost != null ? '≥' : ''}${fmtUsd(r.cost)}` }),
+          r.unpricedCalls ? jsx('div', { className: 'text-[0.625rem] text-(--ui-warning)',
+            children: t('unpricedCallsNote', fmtTokens(r.unpricedCalls)) }) : null,
+          r.missingUsageCalls ? jsx('div', { className: 'text-[0.625rem] text-(--ui-warning)',
+            children: t('missingUsageCallsNote', fmtTokens(r.missingUsageCalls)) }) : null,
           jsx('div', {
             className: cn('text-[0.625rem]', warn ? 'text-(--ui-warning)' : 'text-(--ui-text-quaternary)'),
             children: rowBasis(t, r)
@@ -9436,7 +9566,7 @@ function LedgerPage() {
         children: [
           jsx('div', {
             className: 'text-3xl font-semibold tabular-nums text-(--ui-accent)',
-            children: totals.known ? `${totals.unpricedTokens ? '≥' : ''}${fmtUsd(totals.cost)}` : '—'
+            children: totals.known ? `${(totals.unpricedTokens || totals.unpricedCalls || totals.missingUsageCalls) ? '≥' : ''}${fmtUsd(totals.cost)}` : '—'
           }),
           jsx('span', { className: 'text-xs text-(--ui-text-quaternary)', children: t('grandHint') })
         ]
@@ -9590,6 +9720,8 @@ const I18N = {
     coverageLabel: 'Coverage',
     savingsInfo: 'Theoretical API-equivalent saving versus pricing the same covered prompt tokens at uncached input rates. Cache writes can cost more or less than the input rate, so this is an estimate, not a credit, refund or billed charge. Rates are the catalogue card for the route; a peak/off-peak window may price the same calls differently.',
     partialShort: n => `${n} unpriced`,
+    partialCallsShort: n => `${n} calls lacked a price`,
+    missingUsageCallsShort: n => `${n} calls lack usage data`,
     // Subscription economics.
     econTitle: 'Subscription economics',
     econIntro: 'Subscription spending against the API-equivalent value of the usage recorded against it, over the same window. The difference is an estimated value comparison, not cash saved.',
@@ -9603,6 +9735,10 @@ const I18N = {
     econGroupsTitle: 'Fees vs usage by currency',
     econNoComparison: 'No comparison available.',
     econGroupHead: (m, w, u, st) => `${m}/mo fees · ${w} in window · ${u} usage · ${st}`,
+    econGroupWindowHistory: count => Number.isSafeInteger(count) && count >= 0
+      ? `Known monthly fees are shown, but historical fee evidence is missing for ${count} account(s); their window amounts are unavailable.`
+      : 'Known monthly fees are shown, but some accounts lack historical fee evidence; their window amounts are unavailable.',
+    econGroupHistory: 'Recorded history does not cover the full comparison window.',
     econAccountsTitle: 'Provider and account breakdown',
     econColAccount: 'Account',
     econColMembership: 'Membership',
@@ -9620,11 +9756,30 @@ const I18N = {
     econFxTitle: 'Currency conversion',
     econFxHint: 'Converted totals appear only with a dated rate you supply. No rates are fetched automatically.',
     econReading: 'Reading subscription economics for this connection…',
+    econReadFailure: 'Subscription economics could not be read or processed. Retry to refresh this comparison.',
+    econRetry: 'Retry',
     econStatusOk: 'Complete',
     econStatusPartial: 'Partial',
     econStatusUnavailable: 'Unavailable',
     econNoUsage: 'No usage observed',
     econNoPrice: 'No published price',
+    econBlockFeeMissing: 'Set or confirm this account’s subscription fee in Memberships.',
+    econBlockFxMissing: currency => `Add a dated user-supplied ${currency} to USD rate in Costs. No automatic conversion is used.`,
+    econBlockWindowHistory: 'Historical fee evidence is incomplete; add its effective date and amount in Memberships.',
+    econBlockWindowUnavailable: 'The fee cannot be allocated to this window; check its period and effective dates in Memberships.',
+    econBlockNoUsage: 'No calls were recorded for this account in the selected window.',
+    econBlockHistory: 'Recording history does not cover this window. Extend the window or continue recording before comparing.',
+    econBlockProviderMissing: 'Provider is unidentified on recorded calls; confirm the provider in Usage.',
+    econBlockModelMissing: 'Model is unidentified on recorded calls; confirm the model in Usage.',
+    econBlockProviderPrice: 'This provider is missing from the pricing catalogue; confirm its route or wait for catalogue support.',
+    econBlockModelPrice: 'No catalogue price matches this provider and model; check the recorded model and provider in Usage.',
+    econBlockOwnership: 'Historical route ownership or billing rules are incomplete; confirm the arrangement in Memberships and Costs.',
+    econBlockUsageEvidence: 'Some calls lack complete usage or price evidence; review the affected calls in Usage.',
+    econBlockBaseRate: 'A base price is missing; check the provider and model in Usage.',
+    econBlockTierRate: 'A tier price is unavailable; check the provider’s price evidence.',
+    econBlockCacheRate: 'A cache rate is unavailable; check the provider’s cache price evidence.',
+    econBlockGeneric: reason => `This account has an unresolved comparison blocker (${reason}). Review its fee and usage evidence in Memberships, Costs and Usage.`,
+    econBlockUnknown: 'unknown',
     econCoverageUnknown: 'Coverage unknown',
     econFullyPriced: 'Fully priced',
     econNearlyAllPriced: 'Nearly all priced',
@@ -9674,9 +9829,11 @@ const I18N = {
     ovLowerBound: 'lower bound',
     ovBackendLoading: 'Reading backend usage…',
     ovBackendError: 'Backend usage could not be read for this connection.',
+    ovBackendReadFailure: 'Backend usage could not be read or processed. Retry to refresh the estimate.',
     ovBackendNone: 'Backend usage data is not available for this connection.',
     ovBackendEmpty: 'No backend calls recorded in the last 30 days.',
     ovBackendProv: 'Current catalogue rates; not provider charges.',
+    ovBackendUnpricedCalls: reason => `API-equivalent estimate; not provider charges. ${reason}`,
     ovChargesLabel: 'Actual provider charges · 30 days',
     ovNotRecorded: 'Not recorded',
     ovChargesEndpointProv: 'The 30-day analytics endpoint does not include per-call actual-charge evidence.',
@@ -9961,7 +10118,12 @@ const I18N = {
     ovAttentionHint: 'Each item names the account and the action.',
     ovNothingToDo: 'Nothing needs confirming right now.',
     ovPricingTitle: 'Usage pricing',
-    ovUnpriced: u => `${u} tokens in the last 30 days have no published price, so API-equivalent totals are partial.`,
+    ovUnpriced: (tokens, calls) => {
+      const gaps = []
+      if (Number(tokens) > 0) gaps.push(`${Number(tokens).toLocaleString('en-GB')} tokens have no published price`)
+      if (Number(calls) > 0) gaps.push(`${Number(calls).toLocaleString('en-GB')} call(s) lack complete usage or price evidence`)
+      return `${gaps.join('; ')} in the last 30 days, so API-equivalent totals are partial.`
+    },
     ovWeatherStale: 'Refresh failed — weather warnings may be stale.',
     ovStrip: n => `${n} need attention`,
     ovStripReview: 'Review',
@@ -10151,13 +10313,18 @@ const I18N = {
     ovNoteBilling: 'Billing mix is the latest route/model classification, not a per-call invoice. Only included routes have known $0 marginal billing.',
     ovNotePrevious: 'Previous totals cover the equal-length window immediately before this one under the same filters, for comparison only; deltas are omitted when that window has no recorded calls and it may predate recording.',
     ovNoteGap: (count, reason) => `Economics excluded ${count} calls: ${reason}.`,
-    ovGapCallFailed: 'call_failed',
-    ovGapUsageMissing: 'usage_missing',
-    ovGapCacheProvenance: 'cache_provenance_unknown',
-    ovGapRateUnavailable: 'rate_unavailable',
-    ovGapMissingBaseRate: 'missing_base_rate',
-    ovGapMissingCacheRead: 'missing_cache_read_rate',
-    ovGapMissingCacheWrite: 'missing_cache_write_rate',
+    ovGapCallFailed: 'Call failed, so usage could not be valued',
+    ovGapUsageMissing: 'Usage data is missing',
+    ovGapProviderMissing: 'Provider is not recorded',
+    ovGapModelMissing: 'Model is not recorded',
+    ovGapCacheProvenance: 'Cache source cannot be determined',
+    ovGapProviderPrice: 'No published price catalogue is available for this provider',
+    ovGapModelPrice: 'No price evidence is available for this model',
+    ovGapRateUnavailable: 'Price rate is unavailable',
+    ovGapTierRate: 'The tiered rate cannot be determined for this usage',
+    ovGapMissingBaseRate: 'Base input or output rate is missing',
+    ovGapMissingCacheRead: 'Cache-read rate is missing',
+    ovGapMissingCacheWrite: 'Cache-write rate is missing',
     econHeadNoFees: 'No subscription has a known fee; declare fees in Memberships.',
     econHeadUnpriced: count => `${count} subscription(s) have no fee; the headline cannot be compared.`,
     econHeadIncomparable: 'At least one subscription cannot be compared (missing price, coverage or FX rate); see the rows.',
@@ -10317,6 +10484,8 @@ const I18N = {
     today: 'today',
     total: 'Total',
     unpricedNote: n => `${n} tokens had no known rate and are not in the total (shown as ≥).`,
+    unpricedCallsNote: n => `${n} calls had no known rate and are not in the total (shown as ≥).`,
+    missingUsageCallsNote: n => `${n} calls lacked usage data and are not in the API-equivalent total (shown as ≥).`,
     // Ledger tabs.
     tabOverview: 'Overview',
     tabUsage: 'Usage',
@@ -10519,6 +10688,12 @@ const I18N = {
     usagePricingNone: 'No usage',
     usagePricingUnpriced: 'Unpriced',
     usagePricingPartial: (pct, fallback) => `Partial · ${pct}%${fallback ? ' · fallback rates' : ''}`,
+    usagePricingPartialCalls: (pct, calls, fallback) => `Partial · ${pct}% of tokens priced · ${calls} call(s) lack price evidence${fallback ? ' · fallback rates' : ''}`,
+    usagePricingCallsNoTokens: count => `${count} call(s) have no token usage; value cannot be confirmed. Review Usage evidence.`,
+    usagePricingCallsUnknown: count => `Price evidence incomplete · ${count} call(s). Check provider, model and captured usage in Usage.`,
+    usagePricingProviderUnknown: count => `Provider unidentified · ${count} call(s). Confirm provider in Usage.`,
+    usagePricingProviderUnpriced: count => `Provider price missing · ${count} call(s). Check the provider route in Usage.`,
+    usagePricingModelUnpriced: count => `Model price missing · ${count} call(s). Check the provider and model in Usage.`,
     usagePricingFallback: n => `Fallback rates · ${n} calls`,
     usagePricingComplete: 'Complete',
     usageInsightDriver: 'Biggest driver',
@@ -10724,6 +10899,7 @@ const I18N = {
     usageLoadTitle: 'Analytics unavailable',
     usageLoadStale: 'The visible snapshot is stale. Retry before using these values.',
     usageLoadFallback: 'The live chip and this desktop’s ledger are still available.',
+    usageReadFailure: 'Usage data could not be read or processed.',
     usageRetryTip: 'Retry analytics',
     usageLoading: 'Reading timestamped calls…',
     usageStatApiEquiv: 'API-equivalent',
@@ -10735,16 +10911,20 @@ const I18N = {
     usageStatTokensHint: calls => `${calls} recorded calls`,
     usageStatTokensExtra: (input, output) => `${input} in · ${output} out`,
     usageStatCoverage: 'Pricing coverage',
-    usageStatCoverageHint: tokens => `${tokens} unpriced tokens`,
+    usageStatCoverageHint: (tokens, calls) => `${tokens} unpriced tokens · ${calls} calls without complete price evidence`,
     usageInsightsAria: 'What matters in this period',
-    usageBillingTitle: 'Only explicit per-call charges are shown; unknown is not zero.',
-    usageBillingLabel: 'Recorded billing ',
+    usageBillingTitle: 'Route/model billing classification from recorded calls; it can include estimates or included-route zero values and is not a provider invoice.',
+    usageBillingLabel: 'Billing classification ',
     usageBillingComplete: 'Complete',
     usageBillingPartial: 'Partial',
-    usageBillingNote: ' · includes only recorded charges; unknown routes are not $0.',
+    usageBillingNote: ' · route/model classification, not actual provider-recorded charges.',
     usageWindowDash: (since, until, tz) => `${since} → ${until} · ${tz}`,
     usageWindowPending: 'Timestamped window',
     usageUnpricedAlert: tokens => `${tokens} unpriced tokens. API-equivalent cost is a partial priced subtotal; unknown prices are excluded, not counted as zero.`,
+    usageUnpricedCallsAlert: (calls, reason) => `${calls} call(s) lack complete price evidence. ${reason}`,
+    usagePreviousNoCalls: 'No calls were recorded in the previous window, so changes are unavailable.',
+    usagePreviousInsufficient: 'Recorded history does not cover the previous window; continue recording or choose a shorter period.',
+    usagePreviousUnavailable: 'The previous-window comparison is unavailable.',
     usageEmptyTitle: 'No backend calls recorded for this period',
     usageEmptyBody: 'This report covers backend analytics. Desktop-recorded usage shown on Overview is separate; open the local ledger to view calls captured by this Desktop. Try a longer period or clear filters to check this report. The historical baseline remains separate below.',
     usageEmptyShowDesktop: 'Show Desktop-recorded usage',
@@ -10850,6 +11030,8 @@ const I18N = {
     coverageLabel: '覆盖率',
     savingsInfo: '与按未缓存输入价计算同一批已覆盖提示令牌的理论差值（API 等价估算）。缓存写入可能高于或低于输入价，此为估算，不是抵扣、退款或实际账单。费率取该线路的目录卡；峰谷时段可能对同一批调用给出不同价格。',
     partialShort: n => `${n} 未定价`,
+    partialCallsShort: n => `${n} 次调用缺少价格`,
+    missingUsageCallsShort: n => `${n} 次调用缺少用量数据`,
     // 订阅经济分析。
     econTitle: '订阅经济分析',
     econIntro: '同一窗口内，订阅支出与记录用量的 API 等值价值对比。差值为估算的价值比较，不是实际节省的现金。',
@@ -10863,6 +11045,10 @@ const I18N = {
     econGroupsTitle: '按货币对比费用与用量',
     econNoComparison: '无可用的比较。',
     econGroupHead: (m, w, u, st) => `${m}/月费用 · ${w}（窗口内）· 用量 ${u} · ${st}`,
+    econGroupWindowHistory: count => Number.isSafeInteger(count) && count >= 0
+      ? `已显示已知月费，但有 ${count} 个账户缺少历史费用证据；其窗口金额不可用。`
+      : '已显示已知月费，但部分账户缺少历史费用证据；其窗口金额不可用。',
+    econGroupHistory: '已记录历史未覆盖完整的比较窗口。',
     econAccountsTitle: '按供应商和账户明细',
     econColAccount: '账户',
     econColMembership: '会员',
@@ -10880,11 +11066,30 @@ const I18N = {
     econFxTitle: '货币换算',
     econFxHint: '仅在您提供注明日期的费率时才显示换算总额。不会自动获取任何费率。',
     econReading: '正在读取此连接的订阅经济分析…',
+    econReadFailure: '无法读取或处理订阅经济分析。请重试以刷新比较。',
+    econRetry: '重试',
     econStatusOk: '完成',
     econStatusPartial: '部分',
     econStatusUnavailable: '不可用',
     econNoUsage: '暂无用量',
     econNoPrice: '无公开价格',
+    econBlockFeeMissing: '请在“会员”中设置或确认此账户的订阅费用。',
+    econBlockFxMissing: currency => `请在“费用”中添加注明日期的 ${currency} 兑 USD 用户提供汇率。不会自动换算。`,
+    econBlockWindowHistory: '历史费用证据不完整；请在“会员”中补充生效日期和金额。',
+    econBlockWindowUnavailable: '无法将费用分配到此窗口；请在“会员”中检查周期和生效日期。',
+    econBlockNoUsage: '所选窗口内没有此账户的调用记录。',
+    econBlockHistory: '记录历史未覆盖此窗口。请延长记录时间或选择较短周期后再比较。',
+    econBlockProviderMissing: '记录的调用没有可识别的供应商；请在“用量”中确认供应商。',
+    econBlockModelMissing: '记录的调用没有可识别的模型；请在“用量”中确认模型。',
+    econBlockProviderPrice: '价格目录中没有此供应商；请确认线路或等待目录支持。',
+    econBlockModelPrice: '价格目录中没有匹配此供应商和模型的价格；请在“用量”中检查记录。',
+    econBlockOwnership: '历史线路归属或计费规则不完整；请在“会员”和“费用”中确认安排。',
+    econBlockUsageEvidence: '部分调用缺少完整用量或价格证据；请在“用量”中查看相关调用。',
+    econBlockBaseRate: '缺少基础价格；请在“用量”中检查供应商和模型。',
+    econBlockTierRate: '阶梯价格不可用；请检查供应商价格证据。',
+    econBlockCacheRate: '缓存费率不可用；请检查供应商缓存价格证据。',
+    econBlockGeneric: reason => `此账户有未解决的比较问题（${reason}）。请在“会员”、“费用”和“用量”中检查费用与用量证据。`,
+    econBlockUnknown: '未知',
     econCoverageUnknown: '覆盖率未知',
     econFullyPriced: '已全部定价',
     econNearlyAllPriced: '几乎全部定价',
@@ -10934,9 +11139,11 @@ const I18N = {
     ovLowerBound: '下限',
     ovBackendLoading: '正在读取后端用量…',
     ovBackendError: '无法读取此连接的后端用量。',
+    ovBackendReadFailure: '无法读取或处理后端用量。请重试以刷新估算。',
     ovBackendNone: '此连接没有可用的后端用量数据。',
     ovBackendEmpty: '过去 30 天没有后端调用记录。',
     ovBackendProv: '按当前价格目录估算；不是服务商费用。',
+    ovBackendUnpricedCalls: reason => `API 等值估算；不是服务商费用。${reason}`,
     ovChargesLabel: '实际服务商费用 · 30 天',
     ovNotRecorded: '未记录',
     ovChargesEndpointProv: '30 天分析接口不包含逐次调用的实际费用证据。',
@@ -11221,7 +11428,12 @@ const I18N = {
     ovAttentionHint: '每一项都列出账户与操作。',
     ovNothingToDo: '目前没有需要确认的事项。',
     ovPricingTitle: '用量定价',
-    ovUnpriced: u => `过去 30 天有 ${u} 个 token 没有公布价格，因此 API 等价总额为部分数据。`,
+    ovUnpriced: (tokens, calls) => {
+      const gaps = []
+      if (Number(tokens) > 0) gaps.push(`${Number(tokens).toLocaleString('zh-CN')} 个 token 没有公布价格`)
+      if (Number(calls) > 0) gaps.push(`${Number(calls).toLocaleString('zh-CN')} 次调用缺少完整用量或价格证据`)
+      return `过去 30 天${gaps.join('；')}，因此 API 等价总额为部分数据。`
+    },
     ovWeatherStale: '刷新失败——额度预警可能已过期。',
     ovStrip: n => `有 ${n} 项需要注意`,
     ovStripReview: '查看',
@@ -11411,13 +11623,18 @@ const I18N = {
     ovNoteBilling: 'Billing mix 是最新的路由/模型分类，不是逐调用账单。只有 included 路由的边际账单确认为 $0。',
     ovNotePrevious: 'Previous 总量覆盖同一过滤条件下紧邻的前一个等长窗口，仅用于对比；当前一窗口无记录调用时省略差值，且该窗口可能早于记录起点。',
     ovNoteGap: (count, reason) => `Economics 已排除 ${count} 次调用：${reason}。`,
-    ovGapCallFailed: '调用失败',
-    ovGapUsageMissing: '用量缺失',
-    ovGapCacheProvenance: '缓存来源未知',
-    ovGapRateUnavailable: '价格不可用',
-    ovGapMissingBaseRate: '缺失基础价格',
-    ovGapMissingCacheRead: '缺失缓存读取价格',
-    ovGapMissingCacheWrite: '缺失缓存写入价格',
+    ovGapCallFailed: '调用失败，无法估值用量',
+    ovGapUsageMissing: '缺少用量数据',
+    ovGapProviderMissing: '未记录供应商',
+    ovGapModelMissing: '未记录模型',
+    ovGapCacheProvenance: '无法确定缓存来源',
+    ovGapProviderPrice: '缺少此供应商的已发布价格目录',
+    ovGapModelPrice: '缺少此模型的价格证据',
+    ovGapRateUnavailable: '价格费率不可用',
+    ovGapTierRate: '无法确定此用量对应的分档费率',
+    ovGapMissingBaseRate: '缺少基础输入或输出费率',
+    ovGapMissingCacheRead: '缺少缓存读取费率',
+    ovGapMissingCacheWrite: '缺少缓存写入费率',
     econHeadNoFees: '没有订阅登记了已知费用；请在会员中登记费用。',
     econHeadUnpriced: count => `${count} 个订阅没有费用；无法对比汇总数字。`,
     econHeadIncomparable: '至少一个订阅无法对比（缺失价格、覆盖或汇率）；请查看各行。',
@@ -11517,6 +11734,8 @@ const I18N = {
     today: '今日',
     total: '合计',
     unpricedNote: n => `有 ${n} 令牌没有可用单价，未计入总额（显示为 ≥）。`,
+    unpricedCallsNote: n => `有 ${n} 次调用没有可用单价，未计入总额（显示为 ≥）。`,
+    missingUsageCallsNote: n => `有 ${n} 次调用缺少用量数据，未计入 API 等值总额（显示为 ≥）。`,
     // Ledger header, record stats, baseline reconciliation and grouping.
     pageTitleDesktop: 'SpendSense — 本机',
     allHermesTitle: 'SpendSense',
@@ -11779,6 +11998,12 @@ const I18N = {
     usagePricingNone: '无用量',
     usagePricingUnpriced: '未定价',
     usagePricingPartial: (pct, fallback) => `部分 · ${pct}%${fallback ? ' · 回退单价' : ''}`,
+    usagePricingPartialCalls: (pct, calls, fallback) => `部分 · ${pct}% 的 token 已定价 · ${calls} 次调用缺少价格证据${fallback ? ' · 回退单价' : ''}`,
+    usagePricingCallsNoTokens: count => `${count} 次调用没有令牌用量；无法确认价值。请检查“用量”证据。`,
+    usagePricingCallsUnknown: count => `价格证据不完整 · ${count} 次调用。请在“用量”中检查供应商、模型和捕获的用量。`,
+    usagePricingProviderUnknown: count => `供应商未知 · ${count} 次调用。请在“用量”中确认供应商。`,
+    usagePricingProviderUnpriced: count => `缺少供应商价格 · ${count} 次调用。请在“用量”中检查供应商线路。`,
+    usagePricingModelUnpriced: count => `缺少模型价格 · ${count} 次调用。请在“用量”中检查供应商和模型。`,
     usagePricingFallback: n => `回退单价 · ${n} 次调用`,
     usagePricingComplete: '完成',
     usageInsightDriver: '最大驱动',
@@ -11984,6 +12209,7 @@ const I18N = {
     usageLoadTitle: '分析不可用',
     usageLoadStale: '可见快照已过期。使用这些值之前请重试。',
     usageLoadFallback: '实时芯片与此桌面的账本仍可用。',
+    usageReadFailure: '无法读取或处理用量数据。',
     usageRetryTip: '重试分析',
     usageLoading: '正在读取带时间戳调用…',
     usageStatApiEquiv: 'API 等值',
@@ -11995,16 +12221,20 @@ const I18N = {
     usageStatTokensHint: calls => `${calls} 已记录调用`,
     usageStatTokensExtra: (input, output) => `${input} 输入 · ${output} 输出`,
     usageStatCoverage: '定价覆盖率',
-    usageStatCoverageHint: tokens => `${tokens} 未定价令牌`,
+    usageStatCoverageHint: (tokens, calls) => `${tokens} 个未定价令牌 · ${calls} 次调用缺少完整价格证据`,
     usageInsightsAria: '本期要点',
-    usageBillingTitle: '仅显示明确的按次费用；未知不是零。',
-    usageBillingLabel: '已记录账单 ',
+    usageBillingTitle: '来自已记录调用的线路／模型计费分类；可能包括估算值或 included 线路的零值，并非供应商账单。',
+    usageBillingLabel: '计费分类 ',
     usageBillingComplete: '完成',
     usageBillingPartial: '部分',
-    usageBillingNote: ' · 仅包含已记录费用；未知线路不是 $0。',
+    usageBillingNote: ' · 线路／模型分类，不是供应商实际记录的费用。',
     usageWindowDash: (since, until, tz) => `${since} → ${until} · ${tz}`,
     usageWindowPending: '带时间戳窗口',
     usageUnpricedAlert: tokens => `${tokens} 未定价令牌。API 等值成本为部分已定价小计；未知价格予以排除，不计为零。`,
+    usageUnpricedCallsAlert: (calls, reason) => `${calls} 次调用缺少完整价格证据。${reason}`,
+    usagePreviousNoCalls: '前一窗口没有记录到调用，因此无法显示变化。',
+    usagePreviousInsufficient: '已记录历史未覆盖前一窗口；请继续记录或选择较短周期。',
+    usagePreviousUnavailable: '前一窗口对比不可用。',
     usageEmptyTitle: '本期未记录后端调用',
     usageEmptyBody: '本报告涵盖后端分析。概览中显示的桌面记录用量是独立的；打开本地账本以查看此桌面捕获的调用。尝试更长周期或清除筛选以检查本报告。历史基线仍在下方独立列出。',
     usageEmptyShowDesktop: '显示桌面记录用量',

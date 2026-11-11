@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from wolfmark_ledger import analytics
+from wolfmark_ledger import billing
 from wolfmark_ledger import digest as D
 from wolfmark_ledger import economics
 from wolfmark_ledger import membership as M
@@ -245,7 +246,19 @@ class DigestContentTests(DigestCase):
                            baseline_at=NOW - 40 * DAY)
         self.create_state(1_000_000)
         result = self.report()
-        self.assertNotIn("changes", [s["id"] for s in result["sections"]])
+        changes = self.section(result, "changes")
+        self.assertTrue(all(line["value"].startswith("—") for line in changes["lines"]))
+        self.assertTrue(any("No calls were recorded in the previous" in note
+                            for note in changes["notes"]))
+
+    def test_insufficient_previous_history_has_a_distinct_reason(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([{"input_tokens": 1_000_000}], baseline_at=NOW - 10 * DAY)
+        self.create_state(1_000_000)
+        changes = self.section(self.report(), "changes")
+        self.assertTrue(all(line["value"].startswith("—") for line in changes["lines"]))
+        self.assertTrue(any("Not enough recorded history" in note for note in changes["notes"]))
 
     def test_genuine_zero_when_recording_covers_an_empty_window(self):
         self.write_store([account("test:default", "test", plan_id="test.plus")])
@@ -356,9 +369,11 @@ class DigestReviewFixesTests(DigestCase):
         self.create_state(0)
         result = self.report()
         spending = self.section(result, "spending")
-        values = self.values_text(spending)
-        self.assertNotIn("—", values)
-        self.assertIn("$0.00", values)
+        by_label = {line["label"]: line["value"] for line in spending["lines"]}
+        self.assertEqual(by_label["Metered (allowance) spending"], "$0.00")
+        self.assertEqual(by_label["Extra cash (incremental) spending"], "$0.00")
+        self.assertEqual(by_label["Credits consumed"], "$0.00")
+        self.assertEqual(by_label["Provider-reported charges"], "—")
 
     def test_spending_scope_follows_billing_exclusions(self):
         self.standard_fixture()
@@ -411,9 +426,138 @@ class DigestReviewFixesTests(DigestCase):
         self.assertEqual(by_label["Metered (allowance) spending"], "≥$2.00")
         # One call has no price at all: extra cash is unknown, never $0.00.
         self.assertEqual(by_label["Extra cash (incremental) spending"], "—")
-        self.assertIn("Unvalued usage", by_label)
+        self.assertEqual(by_label["Unclassified calls"], "1")
         notes = " ".join(spending["notes"])
         self.assertIn("lower bound", notes.lower())
+
+    def test_unclassified_calls_do_not_claim_that_pricing_is_missing(self):
+        billing = {
+            "metered_usd": 2.0, "excluded_out_of_cycle": 0,
+            "unclassified_tokens": 0, "unclassified_calls": 1,
+            "evidence": {
+                "provider_reported": {"usd": None, "basis": "none", "calls": 0},
+                "incremental_cash": {"usd": None, "basis": "unknown"},
+                "credits_consumed": {"usd": None},
+            },
+        }
+        section = D._spending_section(D.STRINGS["en"], "Last 7 days", billing, True, 10)
+        notes = " ".join(section["notes"]).lower()
+        self.assertIn("record does not say whether no rule matched", notes)
+        self.assertNotIn("no matching billing rule", notes)
+        self.assertNotIn("a billing rule matched", notes)
+        self.assertNotIn("some usage is unpriced", notes)
+        self.assertEqual(
+            next(line["value"] for line in section["lines"]
+                 if line["label"] == "Metered (allowance) spending"), "≥$2.00")
+        self.assertEqual(
+            next(line["value"] for line in section["lines"]
+                 if line["label"] == "Provider-reported charges"), "—")
+        self.assertTrue(any("Actual provider charges are incomplete" in note
+                            for note in section["notes"]))
+
+    def test_matching_billing_rule_without_price_or_charge_has_specific_explanation(self):
+        row = {
+            "provider": "test", "model": "m", "list_usd": None,
+            "_provider_cost_usd": None, "_tokens": 50, "last_seen": NOW - 1,
+            "_input": 50, "_output": 0, "_cache_read": 0, "_cache_write": 0,
+            "_failure": False, "_missing": False, "outcome": "ok",
+        }
+        for lang, matched_text, evidence_text in (
+            ("en", "a billing rule matched", "price or provider charge evidence"),
+            ("zh", "匹配了计费规则", "价格或服务商费用记录证据"),
+        ):
+            matched = billing.classify([row], {
+                "profiles": [{"id": "api", "provider": "test", "kind": "api"}],
+                "defaults": {}, "loaded": True})
+            section = D._spending_section(D.STRINGS[lang], "Last 7 days", matched, True, 1)
+            notes = " ".join(section["notes"]).lower()
+            self.assertIn(matched_text, notes)
+            self.assertIn(evidence_text, notes)
+            if lang == "en":
+                self.assertNotIn("no matching billing rule", notes)
+
+        unmatched = billing.classify([row], {"profiles": [], "defaults": {}, "loaded": True})
+        notes = " ".join(D._spending_section(
+            D.STRINGS["en"], "Last 7 days", unmatched, True, 1)["notes"]).lower()
+        self.assertIn("no matching billing rule", notes)
+        self.assertNotIn("a billing rule matched", notes)
+
+    def test_zh_unpriced_calls_uses_token_terminology(self):
+        section = D._usage_section(
+            D.STRINGS["zh"], "最近 7 天",
+            {"unpriced_calls": 1, "unpriced_tokens": 0, "list_usd": None},
+            True, 1)
+        notes = " ".join(section["notes"])
+        self.assertIn("未定价 token", notes)
+        self.assertNotIn("未定价令牌", notes)
+
+    def test_provider_reported_charge_keeps_its_own_basis_and_currency_line(self):
+        billing = {
+            "metered_usd": 2.0, "excluded_out_of_cycle": 0,
+            "unclassified_tokens": 0, "unclassified_calls": 0,
+            "evidence": {
+                "provider_reported": {"usd": 3.25, "basis": "confirmed", "calls": 1},
+                "incremental_cash": {"usd": 2.0, "basis": "inferred"},
+                "credits_consumed": {"usd": 1.0},
+            },
+        }
+        section = D._spending_section(D.STRINGS["en"], "Last 7 days", billing, True, 1)
+        by_label = {line["label"]: line["value"] for line in section["lines"]}
+        self.assertEqual(by_label["Provider-reported charges"], "$3.25")
+        self.assertEqual(by_label["Metered (allowance) spending"], "$2.00")
+        self.assertEqual(by_label["Extra cash (incremental) spending"], "$2.00")
+        self.assertEqual(by_label["Credits consumed"], "$1.00")
+
+    def test_partial_provider_charge_subtotal_names_confirmed_call_coverage(self):
+        billing = {
+            "metered_usd": 0.0, "excluded_out_of_cycle": 0,
+            "unclassified_tokens": 0, "unclassified_calls": 0,
+            "evidence": {
+                "provider_reported": {"usd": 3.25, "basis": "confirmed", "calls": 1},
+                "incremental_cash": {"usd": 0.0, "basis": "inferred"},
+                "credits_consumed": {"usd": 0.0},
+            },
+        }
+        for language, expected in (
+                ("en", "(1 of 2 recorded calls confirmed)"),
+                ("zh", "（2 次已记录调用中有 1 次已确认）")):
+            section = D._spending_section(D.STRINGS[language], "Last 7 days", billing, False, 2)
+            by_label = {line["label"]: line["value"] for line in section["lines"]}
+            self.assertIn(expected, by_label[D.STRINGS[language]["label_provider_charges"]])
+            self.assertEqual(by_label[D.STRINGS[language]["label_metered"]], D.STRINGS[language]["unknown"])
+            self.assertEqual(by_label[D.STRINGS[language]["label_incremental"]], D.STRINGS[language]["unknown"])
+            self.assertEqual(by_label[D.STRINGS[language]["label_credits"]], D.STRINGS[language]["unknown"])
+
+    def test_incomplete_recording_qualifies_usage_and_ranked_api_subtotals(self):
+        totals = {"calls": 2, "tokens": 100, "list_usd": 2.0, "unpriced_tokens": 0,
+                  "unpriced_calls": 0, "input_tokens": 100, "output_tokens": 0,
+                  "cache_read_tokens": 0, "cache_write_tokens": 0}
+        usage = D._usage_section(D.STRINGS["en"], "Last 7 days", totals, False, 2)
+        usage_value = next(line["value"] for line in usage["lines"]
+                           if line["label"] == D.STRINGS["en"]["label_api_value"])
+        self.assertTrue(usage_value.startswith("≥"))
+        ranked = D._ranked_table(
+            D.STRINGS["en"], "models", "Models", "Last 7 days", [],
+            [{"name": "m", "calls": 2, "tokens": 100, "list_usd": 2.0,
+              "unpriced_tokens": 0, "unpriced_calls": 0}], "empty", False, 2)
+        self.assertTrue(ranked["rows"][0][-1].startswith("≥"))
+        value = D._value_section(D.STRINGS["en"], "Last 7 days", totals,
+                                 {"coverage": 1.0, "unpriced_tokens": 0}, False, 2)
+        api_value = next(line["value"] for line in value["lines"]
+                         if line["label"] == D.STRINGS["en"]["label_api_value"])
+        self.assertTrue(api_value.startswith("≥"))
+
+    def test_zero_token_price_gap_makes_the_attributed_comparison_partial(self):
+        partial = D._attributed_pricing_partial([{"usage": {
+            "unpriced_tokens": 0, "unpriced_calls": 1}}])
+        self.assertTrue(partial)
+        section = D._fees_section(D.STRINGS["en"], "Last 7 days", {
+            "fees_monthly_by_currency": [], "fees_window_by_currency": [],
+            "usage_usd": 2.0, "difference_usd": 1.0, "status": "partial",
+        }, True, 2, partial)
+        usage_value = next(line["value"] for line in section["lines"]
+                           if line["label"] == D.STRINGS["en"]["label_usage_value"])
+        self.assertTrue(usage_value.startswith("≥"))
 
     def test_value_comparison_withheld_when_current_window_partly_priced(self):
         self.standard_fixture()
@@ -546,6 +690,34 @@ class DigestFeesCoverageTests(DigestCase):
         self.assertEqual(by_label["Attributed usage value"], "$0.00")
         for value in by_label.values():
             self.assertNotIn("≥", value, value)
+        self.assertTrue(any("No calls were recorded" in note for note in fees["notes"]))
+        spending = self.section(result, "spending")
+        provider_line = next(line for line in spending["lines"]
+                             if line["label"] == "Provider-reported charges")
+        self.assertEqual(provider_line["value"], "—")
+
+    def test_report_keeps_known_monthly_fee_when_window_allocation_is_unavailable(self):
+        plans = plans_doc(
+            {"id": "test.unknown-history", "provider_family": "test", "name": "Test Plus",
+             "price": {"amount": None, "currency": "USD", "period": "month"}},
+        )
+        self.write_store([account(
+            "test:default", "test", plan_id="test.unknown-history",
+            fee_overrides=[{"id": "current", "amount": 30.0, "currency": "USD",
+                            "period": "month",
+                            "effective_from": datetime.fromtimestamp(
+                                NOW - 3 * DAY).strftime("%Y-%m-%dT%H:%M:%SZ")}])])
+        self.write_profiles([])
+        self.create_events([{"input_tokens": 1_000_000}], baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report(plans=plans)
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(by_label["Known monthly fees (USD)"], "$30.00/mo")
+        self.assertEqual(by_label["Fees in window (USD)"], "—")
+        notes = " ".join(fees["notes"]).lower()
+        self.assertIn("historical fee evidence", notes)
+        self.assertNotIn("estimated effective date", notes)
 
     def test_fees_exact_when_fully_priced_and_covered(self):
         self.standard_fixture()

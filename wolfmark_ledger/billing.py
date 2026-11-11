@@ -323,6 +323,9 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
     fees: dict[str, float] = {}
     unclassified_tokens = 0
     unclassified_calls = 0
+    unclassified_missing_rule_calls = 0
+    unclassified_missing_evidence_calls = 0
+    unclassified_rule_state_unknown_calls = 0
     applied: dict[str, int] = {}
     total_api = metered = incremental = credits = 0.0
     confirmed_total = 0.0
@@ -362,6 +365,12 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
         if value is None and provider_cost is None and override is None:
             unclassified_tokens += row.get("_tokens") or 0
             unclassified_calls += 1
+            if profile is not None:
+                unclassified_missing_evidence_calls += 1
+            elif profiles.get("error"):
+                unclassified_rule_state_unknown_calls += 1
+            else:
+                unclassified_missing_rule_calls += 1
             continue
         # Provider-reported use value is evidence in its own right, even when the
         # published catalogue cannot price the row.
@@ -465,6 +474,9 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
         "applied": applied,
         "unclassified_tokens": unclassified_tokens,
         "unclassified_calls": unclassified_calls,
+        "unclassified_missing_rule_calls": unclassified_missing_rule_calls,
+        "unclassified_missing_evidence_calls": unclassified_missing_evidence_calls,
+        "unclassified_rule_state_unknown_calls": unclassified_rule_state_unknown_calls,
         "excluded_out_of_cycle": excluded_out_of_cycle,
         "cycle_basis": "per-profile billing cycle, not the reporting window",
         "allowances": _allowance_report(usage_by_model, allowance_meta, profiles.get("profiles") or []),

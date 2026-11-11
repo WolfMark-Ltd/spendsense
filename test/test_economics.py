@@ -279,6 +279,35 @@ class ComparisonTests(EconomicsCase):
         self.assertAlmostEqual(row["difference_usd"],
                                round(2.0 - self.windowed(20.0, result), 6))
 
+    def test_override_with_unknown_period_does_not_borrow_published_period(self):
+        self.anchor_coverage()
+        self.write_store([account("a", "test", plan_id="test.plus",
+                                  fee_overrides=[override(40, "USD", None,
+                                                          effective_from=NOW - 60 * 86400)])])
+        self.create_events([{"ts": NOW - 100, "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=0)
+        row = result["accounts"][0]
+        self.assertEqual(row["fee"]["amount"], 40)
+        self.assertIsNone(row["fee"]["period"])
+        self.assertIsNone(row["monthly_equivalent"]["amount"])
+        self.assertIsNone(row["window_expenditure"]["amount"])
+        self.assertEqual(row["status"], "unavailable")
+
+    def test_window_split_keeps_unknown_override_period_unallocated(self):
+        self.anchor_coverage()
+        change = NOW - 15 * 86400
+        self.write_store([account("a", "test", plan_id="test.plus",
+                                  fee_overrides=[override(40, "USD", None,
+                                                          effective_from=change)])])
+        self.create_events([{"ts": NOW - 100, "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=0)
+        row = result["accounts"][0]
+        self.assertIsNone(row["fee"]["period"])
+        self.assertIsNone(row["monthly_equivalent"]["amount"])
+        self.assertIsNone(row["window_expenditure"]["amount"])
+        self.assertIsNone(row["difference_usd"])
+        self.assertEqual(row["status"], "unavailable")
+
     def test_missing_fee_is_unavailable_not_zero(self):
         self.anchor_coverage()
         self.write_store([account("a", "test", plan_id="test.plus",
@@ -296,6 +325,22 @@ class ComparisonTests(EconomicsCase):
         self.assertEqual(row["usage"]["list_usd"], 2.0)
         self.assertEqual(result["headline"]["status"], "unavailable")
         self.assertIsNone(result["headline"]["difference_usd"])
+
+    def test_currency_group_does_not_report_zero_when_no_fee_is_known(self):
+        self.anchor_coverage()
+        bare_usd = plans_doc({"id": "test.plus", "provider_family": "test",
+                              "name": "Test Plus",
+                              "price": {"amount": None, "currency": "USD", "period": "month"}})
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        self.create_events([{"ts": NOW - 100, "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=0, plans=bare_usd)
+        group = next(group for group in result["groups"] if group["currency"] == "USD")
+        self.assertIsNone(group["monthly_fees"])
+        self.assertEqual(group["fee_accounts"], 0)
+        self.assertEqual(group["unknown_fee_accounts"], ["a"])
+        monthly = next(row for row in result["headline"]["fees_monthly_by_currency"]
+                       if row["currency"] == "USD")
+        self.assertIsNone(monthly["amount"])
 
     def test_headline_withholds_difference_when_any_fee_unknown(self):
         # One priced subscription plus one without a fee: the headline must
@@ -564,6 +609,21 @@ class ComparisonTests(EconomicsCase):
         self.assertEqual(result["accounts"][0]["status"], "partial")
         self.assertEqual(result["headline"]["status"], "partial")
 
+    def test_unavailable_group_keeps_the_incomplete_history_explanation(self):
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        self.create_events([{"ts": NOW - 100, "model": "unknown-model",
+                             "input_tokens": 1_000_000}])
+        result = self.report(days=30, trend_months=0)
+        group = next(group for group in result["groups"] if group["currency"] == "USD")
+        self.assertFalse(result["coverage"]["recording_covers_window"])
+        self.assertIsNone(group["difference_usd"])
+        self.assertEqual(group["status"], "unavailable")
+        codes = [entry["code"] for entry in group["note_codes"]]
+        self.assertIn("econ_group_missing", codes)
+        self.assertIn("econ_group_insufficient_history", codes)
+        self.assertTrue(any("Usage price evidence" in note for note in group["notes"]))
+        self.assertTrue(any("Recording does not cover" in note for note in group["notes"]))
+
     def test_zero_observed_usage_with_full_coverage_is_a_real_zero(self):
         # The anchor is outside the window, so nothing is observed in it.
         self.anchor_coverage()
@@ -639,6 +699,70 @@ class CurrencyTests(EconomicsCase):
         self.assertAlmostEqual(groups["USD"]["difference_usd"],
                                round(2.0 - self.windowed(20.0, result), 6))
         self.assertIsNone(groups["GBP"]["difference_usd"])
+        self.assertEqual(groups["GBP"]["blockers"][0]["code"], "dated_fx_rate_missing")
+
+    def test_currency_group_keeps_known_window_fee_subtotal_when_history_is_missing(self):
+        self.anchor_coverage()
+        plans = plans_doc(
+            {"id": "test.plus", "provider_family": "test", "name": "Test Plus",
+             "price": {"amount": 20.0, "currency": "USD", "period": "month"}},
+            {"id": "other.unknown-history", "provider_family": "other", "name": "Other Plus",
+             "price": {"amount": None, "currency": "USD", "period": "month"}},
+        )
+        missing_history = override(30, "USD", "month",
+                                   effective_from=datetime.fromtimestamp(NOW - 10 * 86400,
+                                                                         timezone.utc).isoformat())
+        self.write_store([
+            account("a", "test", plan_id="test.plus"),
+            account("b", "other", plan_id="other.unknown-history",
+                    fee_overrides=[missing_history]),
+        ])
+        self.create_events([
+            {"ts": NOW - 100, "provider": "test", "input_tokens": 1_000_000},
+            {"ts": NOW - 90, "provider": "other", "input_tokens": 1_000_000},
+        ])
+        result = self.report(days=30, trend_months=0, plans=plans)
+        group = next(group for group in result["groups"] if group["currency"] == "USD")
+        self.assertEqual(group["monthly_fees"], 50.0)
+        self.assertEqual(group["fee_accounts"], 2)
+        self.assertFalse(group["window_fee_complete"])
+        self.assertEqual(group["window_fee_accounts"], 1)
+        self.assertAlmostEqual(group["window_fees"], self.windowed(20.0, result))
+        self.assertEqual(group["unallocated_window_accounts"], ["b"])
+        blocker = next(item for item in group["blockers"] if item["account_id"] == "b")
+        self.assertEqual(blocker["code"], "window_fee_history_missing")
+        account_row = next(row for row in result["accounts"] if row["account_id"] == "b")
+        self.assertIsNone(account_row["window_expenditure"]["amount"])
+
+    def test_window_fee_gap_also_explains_incomplete_recording_history(self):
+        plans = plans_doc(
+            {"id": "test.plus", "provider_family": "test", "name": "Test Plus",
+             "price": {"amount": 20.0, "currency": "USD", "period": "month"}},
+            {"id": "other.unknown-history", "provider_family": "other", "name": "Other Plus",
+             "price": {"amount": None, "currency": "USD", "period": "month"}},
+        )
+        missing_history = override(30, "USD", "month",
+                                   effective_from=datetime.fromtimestamp(NOW - 10 * 86400,
+                                                                         timezone.utc).isoformat())
+        self.write_store([
+            account("a", "test", plan_id="test.plus"),
+            account("b", "other", plan_id="other.unknown-history",
+                    fee_overrides=[missing_history]),
+        ])
+        self.create_events([
+            {"ts": NOW - 100, "provider": "test", "input_tokens": 1_000_000},
+            {"ts": NOW - 90, "provider": "other", "input_tokens": 1_000_000},
+        ])
+
+        result = self.report(days=30, trend_months=0, plans=plans)
+        group = next(group for group in result["groups"] if group["currency"] == "USD")
+        codes = [entry["code"] for entry in group["note_codes"]]
+        self.assertFalse(result["coverage"]["recording_covers_window"])
+        self.assertEqual(group["status"], "unavailable")
+        self.assertIn("econ_group_window_history_missing", codes)
+        self.assertIn("econ_group_insufficient_history", codes)
+        self.assertTrue(any("historical fee evidence is missing" in note for note in group["notes"]))
+        self.assertTrue(any("Recording does not cover" in note for note in group["notes"]))
 
     def test_explicit_fx_rate_enables_a_cited_conversion(self):
         self.two_currency_store()

@@ -109,6 +109,10 @@ test('all explorer columns sort deterministically, preserve negative savings and
  assert.equal(T.analyticsPricing({tokens:10,priced_tokens:0,unpriced_tokens:10,list_usd:null}),'Unpriced')
  assert.equal(T.analyticsPricing({tokens:10,priced_tokens:5,unpriced_tokens:5,list_usd:0}),'Partial · 50.0%')
  assert.equal(T.analyticsPricing({tokens:10,priced_tokens:10,unpriced_tokens:0,list_usd:0}),'Complete')
+ assert.equal(T.analyticsPricing({tokens:0,calls:1,priced_tokens:0,unpriced_tokens:0,unpriced_calls:1,list_usd:null}),
+  '1 call(s) have no token usage; value cannot be confirmed. Review Usage evidence.')
+ assert.equal(T.analyticsPricing({tokens:0,calls:1,priced_tokens:0,unpriced_tokens:0,unpriced_calls:1,list_usd:null,
+  pricing_gaps:{provider_not_recorded:1}}),'Provider unidentified · 1 call(s). Confirm provider in Usage.')
  assert.equal(T.analyticsPricing({tokens:10,priced_tokens:10,unpriced_tokens:0,list_usd:1,fallback_calls:2}),'Fallback rates · 2 calls')
  assert.equal(T.analyticsPricing({tokens:10,priced_tokens:5,unpriced_tokens:5,list_usd:1,fallback_calls:2}),'Partial · 50.0% · fallback rates')
 })
@@ -296,8 +300,8 @@ test('dashboard renders three SVG analytics, honest pricing/billing/cache covera
  const tree=page()
  for(const title of ['Usage analytics','API-equivalent','Weighted cache hit','Theoretical net savings','Pricing coverage','Model Explorer','Cache economics']) assert.ok(text(tree).includes(title),title)
  assert.ok(text(tree).includes('Partial'))
- assert.ok(text(tree).includes('Recorded billing'))
- assert.ok(text(tree).includes('Unknown is not zero'))
+ assert.ok(text(tree).includes('Billing classification'))
+ assert.ok(text(tree).includes('not actual provider-recorded charges'))
  assert.equal(nodes(tree,n=>n.type==='svg' && !!n.props['data-chart']).length,3,'distribution is bars; trend, ranking and composition stay SVG')
  assert.equal(nodes(tree,n=>n.type==='section').length,7,'charts, delegation, explorer, economics')
  assert.ok(text(tree).includes('Delegated operations'))
@@ -355,7 +359,8 @@ test('error, retry, loading and no-results remain actionable without invented ze
  assert.equal(typeof T.AnalyticsPage,'function','analytics page is exported')
  T.$analytics.set({})
  const failed=page(undefined,{data:undefined,error:new Error('offline')})
- assert.ok(text(failed).includes('offline'))
+ assert.ok(text(failed).includes('Usage data could not be read or processed'))
+ assert.ok(!text(failed).includes('offline'))
  button(failed,'Retry analytics').props.onClick()
  assert.equal(globalThis.analyticsRefetch,1)
  assert.ok(button(failed,'Use this desktop’s ledger'))
@@ -632,6 +637,27 @@ test('explorer unit costs stay unknown while any tokens are unpriced', () => {
  assert.deepEqual(T.explorerUnitCosts({calls:10,tokens:100,list_usd:null,unpriced_tokens:0}),{per_call:null,per_million:null})
 })
 
+test('unpriced zero-token calls withhold per-call cost and mark the API subtotal partial', () => {
+ const row = {model:'m',provider:'p',calls:10,tokens:100,list_usd:1,
+  priced_tokens:100,unpriced_tokens:0,unpriced_calls:1}
+ assert.deepEqual(T.explorerUnitCosts(row),{per_call:null,per_million:10000},
+  'per-call cost cannot divide a known subtotal by calls whose value is incomplete')
+ const tree = render(T.AnalyticsExplorer({data:{by_model:[row]},
+  state:{...T.analyticsInitialState(),showAllModels:true,columnMode:'all'},dispatch:()=>{}}))
+ const apiCell = nodes(tree,n=>n.type==='span' && n.props?.className==='wm-warn'
+  && text(n).includes('$1.00'))[0]
+ assert.ok(apiCell,'the known API-equivalent subtotal is visibly partial when a call is unpriced')
+ assert.ok(text(apiCell).includes('partial'))
+ const cells = nodes(tree,n=>n.type==='td')
+ const rowCells = cells.slice(0,T.ANALYTICS_COLUMNS.length)
+ const perCallIndex = T.ANALYTICS_COLUMNS.findIndex(([key])=>key==='per_call')
+ const perMillionIndex = T.ANALYTICS_COLUMNS.findIndex(([key])=>key==='per_million')
+ const pricingIndex = T.ANALYTICS_COLUMNS.findIndex(([key])=>key==='pricing')
+ assert.equal(text(rowCells[perCallIndex]),'—')
+ assert.equal(text(rowCells[perMillionIndex]),'$10000.00')
+ assert.match(text(rowCells[pricingIndex]),/Price evidence incomplete · 1 call\(s\)/)
+})
+
 test('explorer CSV keeps price coverage beside the unit costs', () => {
  const csv=T.analyticsExplorerCsv([{model:'m',provider:'p',calls:10,tokens:100,list_usd:1,per_call:null,per_million:null,
    priced_tokens:10,unpriced_tokens:90,cache_hit_rate:.5}])
@@ -649,6 +675,43 @@ const noteZh = (key, ...args) => {
  const entry = T.I18N.zh[key]
  return typeof entry === 'function' ? entry(...args) : entry ?? key
 }
+
+test('every emitted analytics economics gap reason has a readable English and Chinese label', () => {
+ const reasons = ['call_failed','usage_missing','provider_unidentified','model_unidentified',
+  'cache_provenance_unknown','provider_price_catalogue_missing','price_evidence_missing',
+  'rate_unavailable','tier_rate_unavailable','missing_base_rate',
+  'missing_cache_read_rate','missing_cache_write_rate']
+ for (const reason of reasons) {
+  const key = T.OV_GAP_REASON_KEYS[reason]
+  assert.ok(key, `mapped reason ${reason}`)
+  assert.notEqual(noteEn(key), key, `English translates ${key}`)
+  assert.notEqual(noteZh(key), key, `Chinese translates ${key}`)
+  assert.notEqual(T.analyticsGapReasonLabel(reason, noteEn), key)
+  assert.notEqual(T.analyticsGapReasonLabel(reason, noteZh), key)
+  assert.notEqual(T.analyticsGapReasonLabel(reason, noteEn), reason)
+  assert.notEqual(T.analyticsGapReasonLabel(reason, noteZh), reason)
+ }
+})
+
+test('analytics pricing keeps token coverage separate from calls lacking evidence in both locales', () => {
+ for (const language of ['en','zh']) {
+  const t = (key, ...args) => {
+   const entry = T.I18N[language][key]
+   return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const allTokensPriced = T.analyticsPricing({tokens:100,calls:10,priced_tokens:100,
+   unpriced_tokens:0,unpriced_calls:1,list_usd:1},t)
+  assert.match(allTokensPriced,/1/)
+  assert.match(allTokensPriced,/evidence|证据/)
+  const mixed = T.analyticsPricing({tokens:100,calls:10,priced_tokens:90,
+   unpriced_tokens:10,unpriced_calls:1,list_usd:0.9},t)
+  assert.match(mixed,/90\.0%/)
+  assert.match(mixed,/1/)
+  const overview = T.I18N[language].ovUnpriced(0,1)
+  assert.match(overview,language==='en'?/1 call\(s\)/:/1 次调用/)
+  assert.doesNotMatch(overview,language==='en'?/0 tokens/:/0 个 token/)
+ }
+})
 
 test('analytics notes render backend-identical English from codes', () => {
  const notes = [
@@ -677,13 +740,13 @@ test('analytics notes translate to Chinese and fall back per entry', () => {
  assert.equal(T.analyticsNoteText({ code: 'ov_note_gap', params: {} }, notes[1], noteEn), notes[1])
 })
 
-test('gap reasons label in Chinese and echo the identifier in English', () => {
+test('known gap reasons translate in both languages and unknown ids pass through', () => {
  const entry = reason => ({ code: 'ov_note_gap', params: { count: 4, reason } })
  assert.equal(T.analyticsNoteText(entry('cache_provenance_unknown'), 'x', noteEn),
-  'Economics excluded 4 calls: cache_provenance_unknown.')
+  'Economics excluded 4 calls: Cache source cannot be determined.')
  assert.equal(T.analyticsNoteText(entry('cache_provenance_unknown'), 'x', noteZh),
-  'Economics 已排除 4 次调用：缓存来源未知。')
- assert.equal(T.analyticsGapReasonLabel('missing_cache_write_rate', noteZh), '缺失缓存写入价格')
+  'Economics 已排除 4 次调用：无法确定缓存来源。')
+ assert.equal(T.analyticsGapReasonLabel('missing_cache_write_rate', noteZh), '缺少缓存写入费率')
  // Unknown future reasons pass through raw in both locales.
  assert.equal(T.analyticsGapReasonLabel('future_reason', noteZh), 'future_reason')
  assert.equal(T.analyticsNoteText(entry('future_reason'), 'x', noteEn),

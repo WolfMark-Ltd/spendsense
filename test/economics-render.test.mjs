@@ -70,6 +70,22 @@ i18nBackend.t = (key, ...args) => {
   return typeof entry === 'function' ? entry(...args) : entry ?? key
 }
 
+test('historical fee note passes its account count in English and Simplified Chinese', () => {
+  for (const language of ['en', 'zh']) {
+    const t = (key, ...args) => {
+      const entry = T.I18N[language][key]
+      return typeof entry === 'function' ? entry(...args) : entry ?? key
+    }
+    const counted = T.econNoteText({ code: 'econ_group_window_history_missing',
+      params: { count: 3 } }, 'fallback', t)
+    assert.match(counted, /3/)
+    const withoutCount = T.econNoteText({ code: 'econ_group_window_history_missing',
+      params: {} }, 'fallback', t)
+    assert.doesNotMatch(withoutCount, /undefined/)
+    assert.notEqual(withoutCount, 'fallback')
+  }
+})
+
 function controller() {
   const calls = []
   let responder = () => ({ ok: true })
@@ -251,6 +267,59 @@ test('a missing comparison renders an unavailable state, not a zero', async () =
   assert.match(text(), /Unavailable/)
   assert.match(text(), /No subscription has a known fee/)
   assert.doesNotMatch(text(), /\$0\.00/)
+})
+
+test('missing fees, dated FX and historical window fees have per-account blockers in both languages', async () => {
+  const data = econFixture()
+  data.headline = {
+    status: 'unavailable',
+    fees_monthly_by_currency: [
+      { currency: 'GBP', amount: null, complete: false, unknown_fee_accounts: ['gbp:default'] },
+      { currency: 'USD', amount: 30, complete: true, unknown_fee_accounts: [] },
+    ],
+    fees_window_by_currency: [], usage_usd: null, difference_usd: null,
+    notes: ['Historical fee evidence is missing for the reporting window.'],
+  }
+  data.groups = [
+    { currency: 'GBP', monthly_fees: null, window_fees: null, fee_accounts: 0,
+      unknown_fee_accounts: ['gbp:default'], fee_complete: false, window_fee_complete: false,
+      usage_usd: 1, difference_usd: null, status: 'unavailable', notes: [],
+      blockers: [{ account_id: 'gbp:default', code: 'subscription_fee_missing' },
+        { account_id: 'gbp:default', code: 'dated_fx_rate_missing', currency: 'GBP' }] },
+    { currency: 'USD', monthly_fees: 30, window_fees: null, fee_accounts: 1,
+      unknown_fee_accounts: [], fee_complete: true, window_fee_complete: false,
+      usage_usd: 2, difference_usd: null, status: 'unavailable', notes: [],
+      blockers: [{ account_id: 'test:default', code: 'window_fee_history_missing' }] },
+  ]
+  data.accounts[0].window_expenditure.amount = null
+  data.accounts[0].blockers = [
+    { code: 'window_fee_history_missing' },
+    { code: 'missing_cache_read_rate' },
+  ]
+  const previousTranslator = i18nBackend.t
+  try {
+    for (const [language, expected, knownFee] of [
+      ['en', ['Set or confirm this account’s subscription fee in Memberships.',
+        'Add a dated user-supplied GBP to USD rate in Costs.',
+        'Historical fee evidence is incomplete; add its effective date and amount in Memberships.',
+        'A cache rate is unavailable; check the provider’s cache price evidence.'], '$30.00/mo'],
+      ['zh', ['请在“会员”中设置或确认此账户的订阅费用。',
+        '请在“费用”中添加注明日期的 GBP 兑 USD 用户提供汇率。',
+        '历史费用证据不完整；请在“会员”中补充生效日期和金额。',
+        '缓存费率不可用；请检查供应商缓存价格证据。'], '$30.00/月'],
+    ]) {
+      i18nBackend.t = (key, ...args) => {
+        const entry = T.I18N[language][key]
+        return typeof entry === 'function' ? entry(...args) : entry ?? key
+      }
+      const { text } = await renderSection(data)
+      for (const phrase of expected) assert.ok(text().includes(phrase), `${language}: ${phrase}`)
+      assert.ok(text().includes(knownFee), `${language}: known current USD fee remains visible`)
+      assert.doesNotMatch(text(), /\$0\.00/)
+    }
+  } finally {
+    i18nBackend.t = previousTranslator
+  }
 })
 
 test('the fx editor stages a rate and saves the whole document', async () => {
