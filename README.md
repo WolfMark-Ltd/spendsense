@@ -60,6 +60,8 @@ hermes plugins install WolfMark-Ltd/spendsense
 hermes plugins enable spend-sense
 ```
 
+To upgrade a command-line install, check first with the read-only `hermes plugins check-updates`, then apply with `hermes plugins update spend-sense` — only from a verified backup of the profile's plugin data (see [Backup, upgrade and recovery](docs/quickstart.md#backup-upgrade-and-recovery)).
+
 To validate a source tree before installing (recommended for exact-commit installs):
 
 ```bash
@@ -245,6 +247,7 @@ Do not run integration tests against production data.
 ## Support
 
 - Questions, bugs and feature requests: [GitHub issues](https://github.com/WolfMark-Ltd/spendsense/issues).
+- Release notes: [GitHub Releases](https://github.com/WolfMark-Ltd/spendsense/releases).
 - Product support: [Contact WolfMark](https://wolfmark.co.uk/contact).
 
 ## Attribution and licence
