@@ -4239,6 +4239,8 @@ const PRODUCT_CSS = [
   '.wm-product .wm-source-link:hover{color:var(--ui-text-primary)}',
   '.wm-product .wm-settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}',
   '.wm-product .wm-settings-grid .wm-product-section{min-width:0}',
+  '.wm-product .wm-settings-grid [id]{scroll-margin-top:70px}',
+  '.wm-product a.wm-account-chip{text-decoration:none}',
   '.wm-product .wm-setting-action{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}',
   '.wm-product .wm-setting-toggle{display:flex;align-items:flex-start;gap:9px;margin:10px 0;padding:10px;border:1px solid var(--ui-stroke-secondary);border-radius:7px;background:var(--ui-fill-secondary);color:var(--ui-text-primary);font-size:12px;line-height:1.45}',
   '.wm-product .wm-setting-toggle input{margin:2px 0 0;accent-color:var(--ui-accent)}',
@@ -5215,48 +5217,21 @@ function SettingsPage() {
     jsxs('main', { className: 'wm-shell', children: [
       jsx(ProductHeader, { title: t('settingsTitle'),
         subtitle: t('settingsSubtitle') }),
+      jsx('nav', { className: 'wm-account-jump', 'aria-label': t('settingsNavLabel'), children: [
+        ['settings-budgets', 'budgetTitle'],
+        ['settings-pricing', 'settingsPricingHeading'],
+        ['settings-live', 'newsLiveTitle'],
+        ['settings-models', 'settingsModelsHeading'],
+        ['settings-billing', 'advRulesTitle'],
+        ['settings-data', 'settingsRecoveryHeading'],
+        ['settings-diagnostics', 'settingsDiagnosticsHeading'],
+        ['settings-about', 'settingsAboutHeading'],
+      ].map(([id, key]) => jsx('a', { className: 'wm-account-chip', href: '#' + id, children: t(key) }, id)) }),
       jsxs('div', { className: 'wm-settings-grid', children: keyedElementChildren([
-        jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: t('settingsPrivacyHeading') }),
-          jsx('p', { children: t('settingsPrivacyP1') }),
-          jsx('p', { children: t('settingsPrivacyP2') }),
-          jsx('p', { children: t('settingsPrivacyP3') }),
-          jsx('p', { children: t('settingsPrivacyP4') })
-        ] }),
-        jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: t('newsLiveTitle') }),
-          jsx('p', { children: t('newsLiveExplain') }),
-          jsx('p', { children: t('newsLiveIp') }),
-          newsSettings.error && membershipIdentityCurrent(identity)
-            ? jsx('p', { className: 'wm-warn-note', role: 'status', children: t('newsLiveFailed') }) : null,
-          jsx('label', { className: 'wm-setting-toggle', children: [
-            jsx('input', { type: 'checkbox', checked: liveNewsOn === true, disabled: liveNewsOn == null,
-              onChange: event => {
-                if (!membershipIdentityCurrent(identity)) return
-                if (event.target.checked) $newsLiveState.set({ origin: identity, stage: 'confirm-live' })
-                else saveLiveNews(false)
-              } }),
-            jsx('span', { children: t('newsLiveToggle') }),
-          ] }),
-          liveNewsView?.stage === 'confirm-live'
-            ? jsx('div', { className: 'wm-confirm-box', children: [
-                jsx('p', { role: 'alert', children: t('newsLiveConfirmText') }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button',
-                  onClick: () => saveLiveNews(true), children: t('newsLiveConfirm') }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button',
-                  onClick: () => $newsLiveState.set(null), children: t('newsLiveCancel') }),
-              ] })
-            : null,
-          liveNewsView?.text
-            ? jsx('p', { className: liveNewsView.tone === 'warn' ? 'wm-warn-note' : 'wm-subtle',
-                role: 'status', children: liveNewsView.text })
-            : null,
-          liveNewsOn === true ? jsx('p', { className: 'wm-subtle', children: t('newsLiveOn') })
-            : liveNewsOn === false ? jsx('p', { className: 'wm-subtle', children: t('newsLiveOff') })
-              : null,
-        ] }),
-        jsxs('section', { className: 'wm-product-section', children: [
+        jsx('div', { id: 'settings-budgets', children: jsx(BudgetPanel, { manage: true }) }),
+        jsxs('section', { id: 'settings-pricing', className: 'wm-product-section', children: [
           jsx('h2', { children: t('settingsPricingHeading') }),
+          jsx('p', { children: t('settingsPrivacyP1') }),
           status.error ? jsx('p', { className: 'wm-warn-note', children: t('settingsPricingUnavailable') }) : null,
           pricing ? jsxs('p', { children: [
             t('settingsPricingSourceLabel'), jsx('strong', { children: pricing.source || t('settingsPricingNoSource') }),
@@ -5304,16 +5279,48 @@ function SettingsPage() {
             ] })
           ] }) : planCatalogue.error ? jsx('p', { className: 'wm-warn-note', children: t('settingsCatalogueProvenanceUnavailable') }) : null
         ] }),
-        jsx(BudgetPanel, { manage: true }),
-        jsx(AdvancedBillingRules, {}),
-        jsxs('section', { className: 'wm-product-section', children: [
+        jsxs('section', { id: 'settings-live', className: 'wm-product-section', children: [
+          jsx('h2', { children: t('newsLiveTitle') }),
+          jsx('p', { children: t('newsLiveExplain') }),
+          jsx('p', { children: t('newsLiveIp') }),
+          newsSettings.error && membershipIdentityCurrent(identity)
+            ? jsx('p', { className: 'wm-warn-note', role: 'status', children: t('newsLiveFailed') }) : null,
+          jsx('label', { className: 'wm-setting-toggle', children: [
+            jsx('input', { type: 'checkbox', checked: liveNewsOn === true, disabled: liveNewsOn == null,
+              onChange: event => {
+                if (!membershipIdentityCurrent(identity)) return
+                if (event.target.checked) $newsLiveState.set({ origin: identity, stage: 'confirm-live' })
+                else saveLiveNews(false)
+              } }),
+            jsx('span', { children: t('newsLiveToggle') }),
+          ] }),
+          liveNewsView?.stage === 'confirm-live'
+            ? jsx('div', { className: 'wm-confirm-box', children: [
+                jsx('p', { role: 'alert', children: t('newsLiveConfirmText') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button',
+                  onClick: () => saveLiveNews(true), children: t('newsLiveConfirm') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button',
+                  onClick: () => $newsLiveState.set(null), children: t('newsLiveCancel') }),
+              ] })
+            : null,
+          liveNewsView?.text
+            ? jsx('p', { className: liveNewsView.tone === 'warn' ? 'wm-warn-note' : 'wm-subtle',
+                role: 'status', children: liveNewsView.text })
+            : null,
+          liveNewsOn === true ? jsx('p', { className: 'wm-subtle', children: t('newsLiveOn') })
+            : liveNewsOn === false ? jsx('p', { className: 'wm-subtle', children: t('newsLiveOff') })
+              : null,
+        ] }),
+        jsxs('section', { id: 'settings-models', className: 'wm-product-section', children: [
           jsx('h2', { children: t('settingsModelsHeading') }),
           jsx('p', { children: t('settingsModelsExplain') }),
+          jsx('p', { children: t('settingsPrivacyP2') }),
           jsx('label', { className: 'wm-setting-toggle', children: [
             jsx('input', { type: 'checkbox', checked: automaticModelOptions,
               onChange: event => $automaticModelOptions.set(Boolean(event.target.checked)) }),
             jsx('span', { children: t('settingsAutoRefreshToggle') })
           ] }),
+          jsx('p', { children: t('settingsPrivacyP4') }),
           liveRefresh?.stage === 'confirm-models'
             ? jsx('div', { className: 'wm-confirm-box', children: [
                 jsx('p', { role: 'alert', children: t('settingsModelsConfirmText') }),
@@ -5324,7 +5331,31 @@ function SettingsPage() {
           liveRefresh?.text ? jsx('p', { className: liveRefresh.tone === 'warn' ? 'wm-warn-note' : 'wm-subtle',
             role: 'status', children: liveRefresh.text }) : null
         ] }),
-        jsxs('section', { className: 'wm-product-section', children: [
+        jsx('div', { id: 'settings-billing', children: jsx(AdvancedBillingRules, {}) }),
+        jsxs('section', { id: 'settings-data', className: 'wm-product-section', children: [
+          jsx('h2', { children: t('settingsRecoveryHeading') }),
+          jsx('p', { children: t('settingsRecoveryPrefsExplain') }),
+          liveConfirmation?.stage === 'reset-preferences'
+            ? jsx('div', { className: 'wm-confirm-box', children: [
+                jsx('p', { role: 'alert', children: t('settingsRecoveryPrefsConfirmText') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetPreferences, children: t('settingsRecoveryPrefsConfirm') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: t('settingsCancel') })
+              ] })
+            : jsx(ProductButton, { type: 'button', className: 'wm-button',
+                onClick: () => $settingsConfirmation.set({ origin: identity, stage: 'reset-preferences' }),
+                children: t('settingsResetPrefs') }),
+          jsx('p', { children: t('settingsRecoveryDataExplain') }),
+          jsx('p', { children: t('settingsPrivacyP3') }),
+          liveConfirmation?.stage === 'data-copied'
+            ? jsx('div', { className: 'wm-confirm-box', children: [
+                jsx('p', { role: 'alert', children: t('settingsRecoveryBackupText') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetUserData, children: t('settingsRecoveryDataConfirm') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: t('settingsCancel') })
+              ] })
+            : jsx(ProductButton, { type: 'button', className: 'wm-button',
+                onClick: copyRecovery, children: t('settingsCopyBackup') })
+        ] }),
+        jsxs('section', { id: 'settings-diagnostics', className: 'wm-product-section', children: [
           jsx('h2', { children: t('settingsDiagnosticsHeading') }),
           jsx('p', { children: t('settingsDiagnosticsVersions', PLUGIN_VERSION,
             last?.version ? t('settingsDiagnosticsBackend', last.version)
@@ -5342,36 +5373,25 @@ function SettingsPage() {
           ] }),
           jsx('p', { className: 'wm-subtle', children: t('settingsDiagnosticsNote') })
         ] }),
-        jsxs('section', { className: 'wm-product-section', children: [
-          jsx('h2', { children: t('settingsRecoveryHeading') }),
-          jsx('p', { children: t('settingsRecoveryPrefsExplain') }),
-          liveConfirmation?.stage === 'reset-preferences'
-            ? jsx('div', { className: 'wm-confirm-box', children: [
-                jsx('p', { role: 'alert', children: t('settingsRecoveryPrefsConfirmText') }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetPreferences, children: t('settingsRecoveryPrefsConfirm') }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: t('settingsCancel') })
-              ] })
-            : jsx(ProductButton, { type: 'button', className: 'wm-button',
-                onClick: () => $settingsConfirmation.set({ origin: identity, stage: 'reset-preferences' }),
-                children: t('settingsResetPrefs') }),
-          jsx('p', { children: t('settingsRecoveryDataExplain') }),
-          liveConfirmation?.stage === 'data-copied'
-            ? jsx('div', { className: 'wm-confirm-box', children: [
-                jsx('p', { role: 'alert', children: t('settingsRecoveryBackupText') }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: resetUserData, children: t('settingsRecoveryDataConfirm') }),
-                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: t('settingsCancel') })
-              ] })
-            : jsx(ProductButton, { type: 'button', className: 'wm-button',
-                onClick: copyRecovery, children: t('settingsCopyBackup') })
-        ] }),
-        jsxs('section', { className: 'wm-product-section', children: [
+        jsxs('section', { id: 'settings-about', className: 'wm-product-section', children: [
           jsx('h2', { children: t('settingsAboutHeading') }),
           jsx(BrandMark, { size: 32, id: 'about' }),
           jsx('p', { children: t('settingsAboutVersion', PLUGIN_VERSION) }),
           jsx('p', { children: t('settingsAboutCredit') }),
           jsx('p', { children: t('settingsAboutSupport') }),
-          jsx('a', { href: 'https://wolfmark.co.uk/contact', target: '_blank', rel: 'noreferrer',
-            className: 'wm-source-link', children: t('settingsAboutContact') }),
+          jsx('ul', { style: { listStyle: 'none', margin: '8px 0 12px', padding: 0, display: 'grid', gap: '6px' }, children: [
+            ['https://wolfmark.co.uk/', 'settingsLinkWolfmark'],
+            ['https://github.com/WolfMark-Ltd/spendsense', 'settingsLinkRepo'],
+            ['https://github.com/WolfMark-Ltd/spendsense/issues/new?template=bug-report.yml', 'settingsLinkBug'],
+            ['https://github.com/WolfMark-Ltd/spendsense/issues/new?template=feature-request.yml', 'settingsLinkFeature'],
+            ['https://github.com/WolfMark-Ltd/spendsense/blob/main/docs/quickstart.md', 'settingsLinkDocs'],
+            ['https://wolfmark.co.uk/contact', 'settingsAboutContact'],
+          ].map(([href, key]) => jsx('li', { children: jsx('a', { href, target: '_blank', rel: 'noreferrer',
+            className: 'wm-source-link', children: t(key) }) }, key)) }),
+          jsxs('details', { children: [
+            jsx('summary', { children: t('settingsAboutLicenceHeading') }),
+            jsx('p', { children: t('settingsAboutLicenceText') }),
+          ] }),
           jsx('p', { className: 'wm-subtle', children: t('settingsAboutCatalogueNote') })
         ] })
       ], 'settings-grid') }),
@@ -10862,7 +10882,8 @@ const I18N = {
     settingsNotifyCatalogueFailed: f => `Membership catalogue could not be refreshed: ${f}`,
     settingsNotifyLiveOff: 'SpendSense Live Updates is off, so the bundled catalogue is shown. Stored memberships, fees and selections are unchanged.',
     settingsTitle: 'Settings & About',
-    settingsSubtitle: 'Privacy, pricing provenance, diagnostics and recovery.',
+    settingsSubtitle: 'Budgets, pricing, updates, billing, maintenance, diagnostics and about.',
+    settingsNavLabel: 'On this page',
     settingsPrivacyHeading: 'External data and privacy',
     settingsPrivacyP1: 'SpendSense makes no direct HTTP pricing requests. It reads Hermes model-pricing metadata when available and falls back to its bundled offline rate snapshot. Membership plans are bundled; user-defined plans stay in your plugin data.',
     settingsPrivacyP2: 'Automatic Hermes model-options refresh is off by default. When enabled, the live pane asks Hermes for current options on session/model changes and every 15 minutes. Hermes may refresh public models.dev metadata or make authenticated requests to configured provider endpoints using credentials it manages. Membership discovery parses Hermes authentication storage to count configured credential slots; it does not return or log credential values.',
@@ -10927,6 +10948,13 @@ const I18N = {
     settingsAboutCredit: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.',
     settingsAboutSupport: 'Support and product information are available from WolfMark.',
     settingsAboutContact: 'Contact WolfMark support',
+    settingsLinkWolfmark: 'WolfMark website',
+    settingsLinkRepo: 'GitHub repository',
+    settingsLinkBug: 'Report a bug',
+    settingsLinkFeature: 'Request a feature',
+    settingsLinkDocs: 'Quick-start guide',
+    settingsAboutLicenceHeading: 'Licence & credits',
+    settingsAboutLicenceText: 'SpendSense is distributed under GPL-3.0 — see LICENSE in the repository. Third-party credits are in NOTICE, and the Apache License 2.0 text covering the AFei component is in licences/Apache-2.0.txt.',
     settingsAboutCatalogueNote: 'The bundled pricing and membership catalogue is maintained through normal reviewed plugin releases. No user-defined plan is overwritten by a catalogue update.',
     settingsPanePlacement: 'The SpendSense pane can be dragged to the left or right using Hermes’ supported layout controls. Hermes remembers your placement across reloads.',
     // Usage analytics helpers.
@@ -12174,7 +12202,8 @@ const I18N = {
     settingsNotifyCatalogueFailed: f => `会员目录未能刷新：${f}`,
     settingsNotifyLiveOff: 'SpendSense 实时更新已关闭，当前显示内置目录。已存储的会员、费用与选择不变。',
     settingsTitle: '设置与关于',
-    settingsSubtitle: '隐私、价格溯源、诊断与恢复。',
+    settingsSubtitle: '预算、价格、更新、计费、维护、诊断与关于。',
+    settingsNavLabel: '本页导航',
     settingsPrivacyHeading: '外部数据与隐私',
     settingsPrivacyP1: 'SpendSense 不直接发起 HTTP 价格请求。它在可用时读取 Hermes 模型价格元数据，并回退到内置离线单价快照。会员方案为内置方案；自定义方案保留在您的插件数据中。',
     settingsPrivacyP2: 'Hermes 模型选项自动刷新默认关闭。开启后，实时面板将在会话/模型变化时及每 15 分钟向 Hermes 请求当前选项。Hermes 可能刷新公开 models.dev 元数据，或使用其管理的凭据向已配置的供应商端点发起认证请求。会员发现会解析 Hermes 认证存储以统计已配置的凭据槽位；不会返回或记录凭据值。',
@@ -12239,6 +12268,13 @@ const I18N = {
     settingsAboutCredit: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.',
     settingsAboutSupport: '可从 WolfMark 获取支持与产品信息。',
     settingsAboutContact: '联系 WolfMark 支持',
+    settingsLinkWolfmark: 'WolfMark 官网',
+    settingsLinkRepo: 'GitHub 仓库',
+    settingsLinkBug: '报告问题',
+    settingsLinkFeature: '功能建议',
+    settingsLinkDocs: '快速入门指南',
+    settingsAboutLicenceHeading: '许可与致谢',
+    settingsAboutLicenceText: 'SpendSense 遵循 GPL-3.0 发布——见仓库中的 LICENSE。第三方致谢见 NOTICE，涵盖 AFei 组件的 Apache License 2.0 全文见 licences/Apache-2.0.txt。',
     settingsAboutCatalogueNote: '内置价格与会员目录通过常规评审插件版本维护。目录更新不会覆盖任何用户自定义方案。',
     settingsPanePlacement: '可使用 Hermes 支持的布局控件将 SpendSense 面板拖到左侧或右侧。Hermes 会在重新加载后记住您的位置。',
     // 用量分析助手。
