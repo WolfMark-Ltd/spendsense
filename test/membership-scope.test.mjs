@@ -1056,7 +1056,7 @@ test('Settings remain usable when cached pricing status is unavailable', async (
   assert.match(container.textContent, /2026-10-30.5/)
 })
 
-test('Costs renders Memberships as the sole recurring-fee source', async () => {
+test('Costs summarizes recurring fees without duplicating Memberships account detail', async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')
   const commandcode = account('commandcode:default', {
@@ -1082,10 +1082,8 @@ test('Costs renders Memberships as the sole recurring-fee source', async () => {
   const root = ReactDOMClient.createRoot(container); roots.push(root)
   await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient }, React.createElement(T.CostsPage))))
   await flush(4)
-  assert.match(container.textContent, /GOAT/)
-  assert.match(container.textContent, /ChatGPT Plus/)
-  assert.match(container.textContent, /\$30\.00\/mo/)
-  assert.match(container.textContent, /Monthly credit allocation/)
+  assert.deepEqual([...container.querySelectorAll('.wm-cost-fee-lines li')].map(line => line.textContent), ['$30.00/mo'])
+  assert.doesNotMatch(container.textContent, /GOAT|ChatGPT Plus|Monthly credit allocation/)
   assert.equal(container.querySelectorAll('.wm-analytics').length, 1,
     'the page has one scroll container; the tab strip does not add a full-height nested container')
   assert.equal(container.querySelectorAll('.wm-product-tabs').length, 1)
@@ -1105,13 +1103,14 @@ test('Costs explains pending membership data instead of showing an empty total',
   const root = ReactDOMClient.createRoot(container); roots.push(root)
   await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient }, React.createElement(T.CostsPage))))
   await flush(2)
-  const summary = container.querySelector('.wm-product-summary')
-  assert.match(container.textContent, /Reading memberships for this connection/)
-  assert.doesNotMatch(summary.textContent, /0 of 0|\$0\.00\/mo/)
+  const fees = container.querySelector('[data-cost-kind="fees"]')
+  assert.match(fees.textContent, /Reading/)
+  assert.doesNotMatch(fees.textContent, /0 of 0|\$0\.00\/mo/)
 
   await React.act(async () => pendingAccounts.resolve({ ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] }))
   await flush(3)
-  assert.match(container.textContent, /No saved memberships yet/)
+  assert.match(container.querySelector('[data-cost-kind="fees"]').textContent, /No saved recurring fees/)
+  assert.equal(container.querySelector('[data-cost-kind="allowances"] .wm-cost-card-value').textContent, '0 limits')
 })
 
 test('a rule save refreshes dependents even when the draft moves mid-write', async () => {
