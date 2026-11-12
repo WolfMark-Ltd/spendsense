@@ -339,20 +339,27 @@ test('Costs distinguishes reported use, API-equivalent zero, missing charges, mi
   assert.equal(container.querySelectorAll('.wm-cost-other-billing:not([open])').length, 1)
 })
 
-test('Costs labels priced API-equivalent subtotals as partial and discloses exact coverage', async () => {
-  const { container } = await renderCostsSummary({ billing: { evidence: {
-    api_equivalent: { usd: 1.25, basis: 'estimated', source: 'Published catalogue',
-      pricing_coverage: { priced_tokens: 100, unpriced_tokens: 50, priced_calls: 1, unpriced_calls: 2 } },
-  } } })
-  const card = container.querySelector('[data-cost-kind="api"]')
-  assert.equal(card.querySelector('.wm-cost-card-value').textContent, '$1.25')
-  assert.match(card.textContent, /Partial/)
-  assert.match(card.textContent, /Priced subtotal/)
+test('Costs labels API-equivalent subtotals as partial and discloses exact coverage in both languages', async () => {
+  for (const [language, partialLabel, customPhrase, counts] of [
+    ['en', 'Priced subtotal', 'configured custom rates',
+      '100 tokens priced across 1 calls; 50 tokens across 2 calls have no API-equivalent price'],
+    ['zh', '已定价小计', '已配置自定义费率',
+      '100 个 token 已定价，涉及 1 次调用；50 个 token、2 次调用缺少 API 等值价格'],
+  ]) {
+    const { container } = await renderCostsSummary({ billing: { evidence: {
+      api_equivalent: { usd: 1.25, basis: 'estimated', source: 'Published catalogue or configured custom rate',
+        pricing_coverage: { priced_tokens: 100, unpriced_tokens: 50, priced_calls: 1, unpriced_calls: 2 } },
+    } } }, language)
+    const card = container.querySelector('[data-cost-kind="api"]')
+    assert.equal(card.querySelector('.wm-cost-card-value').textContent, '$1.25')
+    assert.match(card.textContent, /Partial|部分/)
+    assert.match(card.textContent, new RegExp(partialLabel))
 
-  container.querySelector('.wm-cost-other-billing').open = true
-  const apiDetails = [...container.querySelectorAll('.wm-cost-detail-row')]
-    .find(row => row.querySelector('h3')?.textContent === 'API-equivalent value')
-  assert.match(apiDetails.textContent, /100 tokens priced across 1 calls; 50 tokens across 2 calls have no API-equivalent price/)
+    container.querySelector('.wm-cost-other-billing').open = true
+    const apiDetails = container.querySelector('.wm-cost-detail-row')
+    assert.match(apiDetails.textContent, new RegExp(customPhrase))
+    assert.match(apiDetails.textContent, new RegExp(counts))
+  }
 })
 
 test('Costs treats missing API-equivalent coverage as unknown, even when an amount is present', async () => {

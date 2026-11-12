@@ -334,6 +334,7 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
     api_priced_tokens = 0
     api_unpriced_tokens = 0
     api_unpriced_calls = 0
+    api_sources: set[str] = set()
     unknown_seen = False
     seen_calls: set[str] = set()
     _defaults = profiles.get("defaults") or {}
@@ -385,6 +386,7 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
         if api is not None:
             api_priced += 1
             api_priced_tokens += row.get("_tokens") or 0
+            api_sources.add("custom" if override is not None else "published")
         else:
             api_unpriced_tokens += row.get("_tokens") or 0
             api_unpriced_calls += 1
@@ -463,6 +465,11 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
 
     final_incremental = round(incremental + _cumulative_overage(usage_by_rule, profiles), 6)
     final_api = round(total_api, 6) if api_priced else None
+    api_source = ("published catalogue / official overlay and configured custom rate overrides"
+                  if api_sources == {"published", "custom"}
+                  else "configured custom rate overrides" if api_sources == {"custom"}
+                  else "published catalogue / official overlay" if api_sources == {"published"}
+                  else "no published or configured rate for these calls")
 
     for bucket in by_kind.values():
         for key in ("api_equivalent_usd", "metered_usd", "incremental_usd", "credits_usd"):
@@ -497,8 +504,7 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                                             else "no provider-reported charge recorded for these calls"},
             "api_equivalent": {"usd": final_api,
                                "basis": "estimated" if final_api is not None else "unpriced",
-                               "source": "published catalogue / official overlay" if final_api is not None
-                                         else "no published rate for these calls",
+                               "source": api_source,
                                "pricing_coverage": {
                                    "priced_tokens": api_priced_tokens,
                                    "unpriced_tokens": api_unpriced_tokens,

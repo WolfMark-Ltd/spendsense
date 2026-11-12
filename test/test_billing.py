@@ -73,6 +73,7 @@ class BillingTests(unittest.TestCase):
              "rate_override": {"input": 1, "output": 2}}]})
         report = billing.classify([row(value=99, _input=1_000_000, _output=1_000_000)], loaded)
         self.assertAlmostEqual(report["api_equivalent_usd"], 3.0)
+        self.assertEqual(report["evidence"]["api_equivalent"]["source"], "configured custom rate overrides")
 
     def test_unpriced_rows_are_reported_not_dropped(self):
         loaded = self.profiles({"profiles": []})
