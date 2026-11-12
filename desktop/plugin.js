@@ -3325,7 +3325,8 @@ function billingEvidence(billing, t = needsAttentionEn) {
     key, label, explanation, empty,
     usd: ev[key]?.usd ?? null,
     basis: ev[key]?.basis || 'none',
-    source: ev[key]?.source || ''
+    source: ev[key]?.source || '',
+    pricingCoverage: ev[key]?.pricing_coverage || null
   }))
 }
 
@@ -3728,12 +3729,47 @@ function econBlockerText(blocker, t) {
   return code ? t('econBlockGeneric', code) : t('econBlockGeneric', t('econBlockUnknown'))
 }
 
-function econGroupNotes(group, t) {
-  const notes = econNotesText(group?.notes, group?.note_codes, t)
-  for (const blocker of group?.blockers || []) {
-    notes.push(`${blocker.account_id || t('econBlockUnknown')}: ${econBlockerText(blocker, t)}`)
-  }
-  return notes.join(' ')
+function econBlockerDestination(blocker) {
+  const code = blocker?.code
+  if (['subscription_fee_missing', 'historical_ownership_billing_rule_incomplete',
+    'window_fee_history_missing', 'window_fee_allocation_unavailable'].includes(code)) return 'memberships'
+  if (code === 'dated_fx_rate_missing') return 'fx'
+  if (['no_usage_recorded', 'insufficient_comparison_history', 'provider_unidentified',
+    'provider_not_recorded', 'model_unidentified', 'usage_price_incomplete', 'usage_unknown', 'usage_missing'].includes(code)) return 'usage'
+  if (['provider_price_catalogue_missing', 'provider_not_in_catalogue', 'price_evidence_missing',
+    'model_not_in_catalogue', 'missing_base_rate', 'tier_rate_unavailable', 'cache_rate_unavailable',
+    'missing_cache_rate', 'missing_cache_read_rate', 'missing_cache_write_rate'].includes(code)) return 'settings'
+  return null
+}
+
+function econBlockerActionLabel(destination, t) {
+  return destination === 'memberships' ? t('econActionMemberships')
+    : destination === 'fx' ? t('econActionFx')
+    : destination === 'usage' ? t('econActionUsage')
+    : destination === 'settings' ? t('econActionPricing') : null
+}
+
+function openEconomicsDestination(destination, onOpenFx) {
+  if (destination === 'fx') return onOpenFx?.()
+  if (destination) goLedgerTab(destination)
+}
+
+function EconomicsBlockers({ blockers = [], notes = [], t, onOpenFx }) {
+  const visibleNotes = Array.isArray(notes) ? notes : []
+  const visibleBlockers = Array.isArray(blockers) ? blockers : []
+  if (!visibleNotes.length && !visibleBlockers.length) return null
+  return jsxs('ul', { className: 'wm-econ-notes wm-econ-blockers', children: [
+    ...visibleNotes.map((note, index) => jsx('li', { children: note }, `note-${index}`)),
+    ...visibleBlockers.map((blocker, index) => {
+      const destination = econBlockerDestination(blocker)
+      return jsxs('li', { children: [
+        jsx('span', { children: `${blocker.account_id || ''}${blocker.account_id ? ': ' : ''}${econBlockerText(blocker, t)}` }),
+        destination ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-action',
+          onClick: () => openEconomicsDestination(destination, onOpenFx),
+          children: econBlockerActionLabel(destination, t) }) : null
+      ].filter(Boolean) }, `${blocker.code || 'unknown'}-${index}`)
+    })
+  ] })
 }
 
 function econMoneyValue(amount, currency, complete = true) {
@@ -4356,6 +4392,183 @@ function membershipEntitlementSummary(account, t = needsAttentionEn) {
   return parts.join(' · ')
 }
 
+function costsUnknownFeeCount(accounts) {
+  return accounts.filter(account => !['api_only', 'prepaid', 'included', 'no_plan'].includes(account.effective_arrangement)
+    && (account.fee?.effective?.amount === null || account.fee?.effective?.amount === undefined)).length
+}
+
+function costsFeeLines(summary, t) {
+  return Object.entries(summary?.byCurrencyPeriod || {}).map(([key, amount]) => {
+    const [currency, period = 'month'] = key.split('/')
+    return { currency, period, amount, label: `${fmtMoney(amount, currency)}/${t('memFeesPeriod', period)}` }
+  })
+}
+
+function costsAllowanceCount(accounts) {
+  return accounts.reduce((count, account) => count +
+    (Array.isArray(account.plan?.entitlements?.windows) ? account.plan.entitlements.windows.length : 0), 0)
+}
+
+function CostsEvidenceCard({ kind, label, value, status, note, action }) {
+  return jsxs('article', { className: `wm-cost-card wm-cost-card-${kind}`, 'data-cost-kind': kind, children: [
+    jsx('h3', { className: 'wm-cost-card-label', children: label }),
+    jsx('div', { className: 'wm-cost-card-value', children: value }),
+    status ? jsx('span', { className: 'wm-cost-card-status', children: status }) : null,
+    note ? jsx('p', { className: 'wm-cost-card-note', children: note }) : null,
+    action ? jsx('div', { className: 'wm-cost-card-action', children: action }) : null
+  ].filter(Boolean) })
+}
+
+function CostsEvidenceDetail({ label, value, children }) {
+  return jsxs('article', { className: 'wm-cost-detail-row', children: [
+    jsx('h3', { children: label }),
+    value !== undefined ? jsx('div', { className: 'wm-cost-detail-value', children: value }) : null,
+    children ? jsx('div', { className: 'wm-cost-detail-copy', children }) : null
+  ].filter(Boolean) })
+}
+
+function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, summaryLoading, accountsLoading, summaryReady, accountsFailed, t }) {
+  const rows = billingEvidence(billing, t)
+  const evidence = Object.fromEntries(rows.map(row => [row.key, row]))
+  const unknownFees = accountsReady ? costsUnknownFeeCount(accounts) : null
+  const feeLines = costsFeeLines(fees, t)
+  const allowances = accountsReady ? costsAllowanceCount(accounts) : null
+  const cache = totals?.economics || {}
+  const savings = finiteValue(cache.savings_usd)
+  const excludedCalls = finiteValue(cache.excluded_calls)
+  const coveredCalls = finiteValue(cache.covered_calls)
+  const cacheCoverage = finiteValue(cache.coverage)
+  const cachePartial = (excludedCalls !== null && excludedCalls > 0) ||
+    (cacheCoverage !== null && cacheCoverage < 1)
+  const unreadable = !summaryReady && !summaryLoading
+  const cacheStatus = summaryLoading ? t('costsLoadingShort')
+    : savings === null ? t('costsUnknownTag')
+    : cachePartial ? t('costsPartialTag')
+    : cacheCoverage === null ? t('costsCoverageUnknownTag') : t('costsCompleteTag')
+  const cacheNote = summaryLoading ? t('costsEvidenceLoading')
+    : unreadable ? t('costsEvidenceUnavailable')
+    : savings === null ? t('costsCacheUnknown')
+    : savings < 0 ? t('costsCacheNegative')
+    : savings === 0 ? t('costsCacheZero') : t('costsCachePositive')
+  const cacheGaps = Object.entries(cache.gap_reasons || {}).filter(([, count]) => Number(count) > 0)
+  const cacheDetails = jsxs('div', { children: [
+    jsx('p', { children: t('costsCacheSource') }),
+    jsx('p', { children: t('costsCacheValues', analyticMoney(cache.uncached_usd), analyticMoney(cache.cached_usd)) }),
+    jsx('p', { children: t('costsCacheTokens', exactTokens(cache.covered_tokens), exactTokens(totals?.tokens)) }),
+    jsx('p', { children: t('costsCacheCalls', exactTokens(coveredCalls), exactTokens(excludedCalls)) }),
+    cacheGaps.length ? jsxs('ul', { children: cacheGaps.map(([reason, count]) =>
+      jsx('li', { children: t('costsCacheGap', analyticsGapReasonLabel(reason, t), exactTokens(Number(count))) }, reason)) }) : null
+  ].filter(Boolean) })
+  const api = evidence.api_equivalent
+  const reported = evidence.provider_reported
+  const apiCoverage = api.pricingCoverage
+  const apiCoverageKnown = apiCoverage && finiteValue(apiCoverage.priced_tokens) !== null
+    && finiteValue(apiCoverage.unpriced_tokens) !== null
+    && finiteValue(apiCoverage.priced_calls) !== null
+    && finiteValue(apiCoverage.unpriced_calls) !== null
+  const apiUnpricedTokens = finiteValue(apiCoverage?.unpriced_tokens)
+  const apiUnpricedCalls = finiteValue(apiCoverage?.unpriced_calls)
+  const apiPartial = apiCoverageKnown && (apiUnpricedTokens > 0 || apiUnpricedCalls > 0)
+  const apiCoverageUnknown = !apiCoverageKnown
+  const apiStatus = summaryLoading ? t('costsLoadingShort')
+    : api.usd == null ? t('costsUnknownTag')
+    : apiPartial ? t('costsPartialTag')
+    : apiCoverageUnknown ? t('costsCoverageUnknownTag') : t('costsCompleteTag')
+  const apiNote = summaryLoading ? t('costsEvidenceLoading')
+    : unreadable ? t('costsEvidenceUnavailable')
+    : api.usd == null ? apiPartial ? t('costsApiNoPricedSubtotal') : api.empty
+    : apiPartial ? t('costsApiPartialShort')
+    : apiCoverageUnknown ? t('costsApiCoverageUnknownShort') : t('costsApiShort')
+  const apiCoverageDetails = apiCoverageKnown
+    ? t('costsApiCoverageCounts', exactTokens(apiCoverage.priced_tokens), exactTokens(apiCoverage.priced_calls),
+      exactTokens(apiCoverage.unpriced_tokens), exactTokens(apiCoverage.unpriced_calls))
+    : t('costsApiCoverageUnavailable')
+  const apiExplanation = api.usd == null ? t('costsApiNoPricedExplain')
+    : apiPartial ? t('costsApiPartialExplain')
+    : apiCoverageUnknown ? t('costsApiCoverageUnknownExplain') : api.explanation
+  const additional = ['credits_consumed', 'incremental_cash'].map(key => evidence[key])
+  const feeValue = feeLines.length ? jsx('ul', { className: 'wm-cost-detail-fees', children: feeLines.map(line =>
+    jsx('li', { children: line.label }, `${line.currency}/${line.period}`)) })
+    : accountsReady ? unknownFees ? t('costsFeesUnknown') : t('ovNoFees') : t('costsEvidenceUnavailable')
+  const evidenceDetails = [
+    jsx(CostsEvidenceDetail, { label: api.label, value: api.usd == null ? api.empty : fmtUsd(api.usd),
+      children: jsxs('div', { children: [jsx('p', { children: apiExplanation }),
+        jsx('p', { children: `${t('costsBasisLabel')}: ${api.basis}` }),
+        api.source ? jsx('p', { children: `${t('costsSourceLabel')}: ${api.source}` }) : null,
+        jsx('p', { children: apiCoverageDetails })
+      ].filter(Boolean) }) }, 'api'),
+    jsx(CostsEvidenceDetail, { label: reported.label, value: reported.usd == null ? reported.empty : fmtUsd(reported.usd),
+      children: jsxs('div', { children: [jsx('p', { children: reported.explanation }),
+        jsx('p', { children: `${t('costsBasisLabel')}: ${reported.basis}` }),
+        reported.source ? jsx('p', { children: `${t('costsSourceLabel')}: ${reported.source}` }) : null
+      ].filter(Boolean) }) }, 'reported'),
+    jsx(CostsEvidenceDetail, { label: t('costsActualCharges'), value: t('ovNotRecorded'),
+      children: jsx('p', { children: t('costsActualChargesDetail') }) }, 'charges'),
+    jsx(CostsEvidenceDetail, { label: t('costsCacheLabel'),
+      value: savings === null ? t('costsUnknownTag') : analyticMoney(savings), children: cacheDetails }, 'cache'),
+    jsx(CostsEvidenceDetail, { label: t('costsFeesLabel'), value: feeValue,
+      children: jsx('p', { children: t('costsFeesDetails') }) }, 'fees'),
+    jsx(CostsEvidenceDetail, { label: t('costsAllowancesLabel'),
+      value: allowances === null ? t('costsEvidenceUnavailable') : t('costsAllowanceCount', allowances),
+      children: jsx('p', { children: t('costsAllowancesDetails') }) }, 'allowances'),
+    ...additional.map(row => jsx(CostsEvidenceDetail, { label: row.label,
+      value: row.usd == null ? row.empty : fmtUsd(row.usd),
+      children: jsxs('div', { children: [jsx('p', { children: row.explanation }),
+        jsx('p', { children: `${t('costsBasisLabel')}: ${row.basis}` }),
+        row.source ? jsx('p', { children: `${t('costsSourceLabel')}: ${row.source}` }) : null
+      ].filter(Boolean) }) }, row.key))
+  ]
+  return jsxs('section', { className: 'wm-product-section wm-cost-overview', 'aria-label': t('costsOverviewTitle'), children: [
+    jsx('h2', { children: t('costsOverviewTitle') }),
+    jsx('p', { children: t('costsOverviewIntro') }),
+    summaryLoading ? jsx('p', { className: 'wm-subtle', children: t('costsEvidenceLoading') }) : null,
+    jsxs('div', { className: 'wm-cost-summary-grid', children: [
+      jsx(CostsEvidenceCard, { kind: 'api', label: api.label,
+        value: summaryLoading ? '—' : unreadable ? t('costsEvidenceUnavailable')
+          : api.usd == null ? api.empty : fmtUsd(api.usd),
+        status: apiStatus, note: apiNote }),
+      jsx(CostsEvidenceCard, { kind: 'reported', label: reported.label,
+        value: summaryLoading ? '—' : unreadable ? t('costsEvidenceUnavailable')
+          : reported.usd == null ? reported.empty : fmtUsd(reported.usd),
+        status: t('costsReportedTag'), note: t('costsReportedShort') }),
+      jsx(CostsEvidenceCard, { kind: 'charges', label: t('costsActualCharges'),
+        value: summaryLoading ? '—' : summaryReady ? t('ovNotRecorded') : t('costsEvidenceUnavailable'),
+        status: summaryReady ? t('costsUnknownTag') : summaryLoading ? t('costsLoadingShort') : t('costsUnknownTag'),
+        note: summaryReady ? t('costsActualChargesShort') : unreadable ? t('costsEvidenceUnavailable') : t('costsEvidenceLoading') }),
+      jsx(CostsEvidenceCard, { kind: savings !== null && savings < 0 ? 'cache-negative' : 'cache',
+        label: t('costsCacheLabel'), value: summaryLoading ? '—'
+          : savings === null ? t('costsUnknownTag') : analyticMoney(savings),
+        status: cacheStatus, note: cacheNote }),
+      jsx(CostsEvidenceCard, { kind: 'fees', label: t('costsFeesLabel'),
+        value: !accountsReady ? accountsFailed && !accountsLoading ? t('costsEvidenceUnavailable') : '—' : feeLines.length
+          ? jsx('ul', { className: 'wm-cost-fee-lines', children: feeLines.map(line => jsx('li', {
+              children: line.label
+            }, `${line.currency}/${line.period}`)) })
+          : unknownFees ? t('costsFeesUnknown') : t('ovNoFees'),
+        status: !accountsReady ? accountsFailed && !accountsLoading ? t('costsEvidenceUnavailable') : t('costsLoadingShort')
+          : unknownFees ? t('costsKnownFeesPartial', unknownFees)
+          : feeLines.length ? t('costsDeclaredTag') : t('ovNoFees'),
+        note: t('costsFeesShort'),
+        action: jsx('button', { type: 'button', className: 'wm-source-link', disabled: !accountsReady,
+          onClick: () => goLedgerTab('memberships'), children: t('costsManageMemberships') }) }),
+      jsx(CostsEvidenceCard, { kind: 'allowances', label: t('costsAllowancesLabel'),
+        value: allowances === null ? accountsFailed && !accountsLoading ? t('costsEvidenceUnavailable') : '—'
+          : t('costsAllowanceCount', allowances),
+        status: accountsReady ? t('costsLimitTag')
+          : accountsFailed && !accountsLoading ? t('costsEvidenceUnavailable') : t('costsLoadingShort'),
+        note: t('costsAllowancesShort'),
+        action: jsx('button', { type: 'button', className: 'wm-source-link', disabled: !accountsReady,
+          onClick: () => goLedgerTab('memberships'), children: t('costsManageMemberships') }) })
+    ] }),
+    summaryReady ? jsxs('details', { className: 'wm-econ-disclosure wm-cost-other-billing', children: [
+      jsx('summary', { children: t('costsEvidenceDetails') }),
+      jsx('div', { className: 'wm-cost-evidence-details', children: evidenceDetails })
+    ] }) : null,
+    !accountsReady && !accountsLoading && !accountsFailed
+      ? jsx('p', { className: 'wm-subtle', children: t('costsLoading') }) : null
+  ] })
+}
+
 function CostsPage() {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
@@ -4367,8 +4580,9 @@ function CostsPage() {
   const accountsReady = !!current
   const list = current ? membershipAccounts(current) : []
   const fees = membershipSummary(list)
-  const billing = summary.data?.billing || {}
-  const evidence = billingEvidence(billing, t).filter(row => row.key !== 'subscription_fee')
+  const summaryReady = summary.data?.identity === identity && membershipIdentityCurrent(identity)
+  const billing = summaryReady ? summary.data?.billing || {} : {}
+  const totals = summaryReady ? summary.data?.totals || {} : {}
   const ignored = Number(billing.legacy_membership_arrangements_ignored || 0)
   const status = pricing.data
   const sourceText = status
@@ -4388,58 +4602,16 @@ function CostsPage() {
       accounts.error
         ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read', t) })
         : null,
-      jsx(BudgetPanel, { forecasts: true }),
+      jsx(CostsEvidenceSummary, { billing, totals, fees, accounts: list, accountsReady,
+        summaryLoading: summary.isPending, accountsLoading: accounts.isPending,
+        summaryReady, accountsFailed: !!accounts.error, t }),
       jsx(EconomicsPanel, { identity }),
-      jsxs('section', { className: 'wm-product-section', children: [
-        jsx('h2', { children: t('costsMembershipTitle') }),
-        jsx('p', { children: t('costsMembershipIntro') }),
-        jsxs('div', { className: 'wm-product-summary', children: [
-          jsxs('div', { className: 'wm-product-stat', children: [
-            jsx('label', { children: t('costsSavedMemberships') }),
-            jsx('strong', { children: accountsReady ? t('costsMembershipCount', fees.withPlan, fees.total) : '—' })
-          ] }),
-          jsxs('div', { className: 'wm-product-stat', children: [
-            jsx('label', { children: t('costsCombinedFees') }),
-            jsx('strong', { children: accountsReady ? feesLabel(fees, t) : '—' })
-          ] })
-        ] }),
-        !accountsReady && !accounts.error
-          ? jsx('p', { className: 'wm-subtle', children: t('costsLoading') })
-          : null,
-        list.length
-          ? jsx('div', { className: 'wm-cost-list', children: list.map(account => jsxs('div', {
-              className: 'wm-cost-row', children: [
-                jsxs('div', { children: [
-                  jsx('strong', { children: account.plan?.name || account.label || account.family }),
-                  jsx('small', { children:
-                    (account.label !== account.family ? account.label + ' · ' : '') +
-                    (account.fee?.basis === 'catalogue' ? t('costsBasisCatalogue')
-                      : account.fee?.basis === 'custom' ? t('costsBasisCustom')
-                      : account.fee?.basis === 'declared' ? t('costsBasisDeclared')
-                      : account.fee?.basis === 'unpriced' ? t('costsBasisUnpriced') : account.family)
-                    + (membershipEntitlementSummary(account, t) ? ' · ' + membershipEntitlementSummary(account, t) : '')
-                  })
-                ] }),
-                jsx('strong', { children: feeLabel(account.fee, t) })
-              ]
-            }, account.id)) })
-          : accountsReady ? jsx('p', { className: 'wm-subtle', children: t('costsEmpty') }) : null,
-        ignored
-          ? jsx('p', { className: 'wm-subtle', children: t('costsLegacyIgnored', ignored) })
-          : null
-      ] }),
-      jsxs('section', { className: 'wm-product-section', children: [
-        jsx('h2', { children: t('costsEvidenceTitle') }),
-        jsx('p', { children: t('costsEvidenceIntro') }),
-        summary.isPending ? jsx('p', { className: 'wm-subtle', children: t('costsEvidenceLoading') }) : null,
-        jsx('div', { className: 'wm-product-summary', children: evidence.map(row => jsx('div', {
-          className: 'wm-product-stat', children: [
-            jsx('label', { children: row.label }),
-            jsx('strong', { children: row.usd == null ? row.empty : fmtUsd(row.usd) }),
-            jsx('small', { className: 'wm-subtle', children: row.basis + ' · ' + row.explanation })
-          ]
-        }, row.key)) })
-      ] }),
+      jsx(BudgetPanel, { forecasts: true }),
+      ignored
+        ? jsx('details', { className: 'wm-method wm-cost-extra', children: [
+            jsx('summary', { children: t('costsMoreEvidence') }),
+            jsx('p', { children: t('costsLegacyIgnored', ignored) })
+          ] }) : null,
       jsx('p', { className: 'wm-subtle', children: t('costsFooterNote') })
     ] })
   })
@@ -4472,7 +4644,7 @@ function EconomicsBars({ group, t }) {
 }
 
 /** One account row of the economics breakdown table. */
-function EconomicsAccountRow({ row, t }) {
+function EconomicsAccountRow({ row, t, onOpenFx }) {
   const fee = row.fee || {}
   const monthly = row.monthly_equivalent || {}
   const windowFee = row.window_expenditure || {}
@@ -4490,13 +4662,12 @@ function EconomicsAccountRow({ row, t }) {
   const usageDetail = usage.tokens || usage.calls ? t('econUsageDetail', fmtTokens(usage.tokens), usage.calls) : null
   const routes = (row.attribution?.routes || []).map(r => r.route).join(', ')
   const difference = finiteValue(row.difference_usd)
-  const blockers = (row.blockers || []).map((blocker, index) =>
-    jsx('li', { children: econBlockerText(blocker, t) }, `${blocker.code || 'unknown'}-${index}`))
+  const blockers = row.blockers || []
   return jsxs('tr', { children: [
     jsxs('td', { children: [
       jsx('div', { className: 'wm-econ-account', children: row.label || row.family }),
       jsx('div', { className: 'wm-econ-dim', children: [row.plan_name || t('econNoPlan'), row.family].filter(Boolean).join(' · ') || null }),
-      blockers.length ? jsx('ul', { className: 'wm-econ-notes', children: blockers }) : null
+      blockers.length ? jsx(EconomicsBlockers, { blockers, t, onOpenFx }) : null
     ] }),
     jsxs('td', { children: [
       jsx('div', { children: feeText }),
@@ -4540,14 +4711,14 @@ function EconomicsTrend({ trend, t }) {
       partialPricing ? t('econFlagPricing') : null,
       entry.partial_attribution ? t('econFlagAttribution') : null].filter(Boolean).join(' · ')
     const feesText = (entry.fees_by_currency || []).map(({ amount, currency }) =>
-      t('econPerMonth', fmtMoney(amount, currency))).join(' + ') || t('econNoFees')
+      t('econPerMonth', fmtMoney(amount, currency))).join(' · ') || t('econNoFees')
     // Bars need the backend's converted fee total; without it (or without a
     // difference) the month renders as an honest text row instead of a
     // client-side currency sum.
     if (difference == null || feeUsd == null) {
       return jsxs('div', { className: 'wm-econ-trend-row', children: [
         jsx('span', { className: 'wm-econ-trend-month', children: entry.month }, 'month'),
-        jsxs('span', { className: 'wm-econ-dim', children: [
+        jsx('span', { className: 'wm-econ-dim', children: [
           t('econTrendUsage', feesText, analyticMoney(entry.usage_usd)),
           flags ? ` · ${flags}` : '',
           entry.difference_note ? ` · ${entry.difference_note}` : ''
@@ -4655,7 +4826,7 @@ function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave, t }) 
  * Subscription economics, rendered from one report payload. Pure presentation:
  * the container owns the queries, so the harness can drive this with fixtures.
  */
-function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx, onSaveFx }) {
+function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx, onSaveFx, onOpenFx }) {
   const t = usePluginI18n(ID)
   const headline = data?.headline || {}
   const groups = data?.groups || []
@@ -4671,8 +4842,8 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
     jsxs('div', { className: 'wm-product-summary', children: [
       jsxs('div', { className: 'wm-product-stat', children: [
         jsx('label', { children: t('econMonthlySubs') }),
-        jsx('strong', { children: feeLines.join(' + ') }),
-        jsx('small', { children: t('econSubsSmall', windowLines.join(' + '), span, accounts.length, econStatusLabel(t, headline.status)) })
+        jsx('strong', { children: feeLines.join(' · ') }),
+        jsx('small', { children: t('econSubsSmall', windowLines.join(' · '), span, accounts.length, econStatusLabel(t, headline.status)) })
       ] }),
       jsxs('div', { className: 'wm-product-stat', children: [
         jsx('label', { children: t('econUsageLabel') }),
@@ -4688,15 +4859,23 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
       ] })
     ] }),
     (headline.notes || []).length
-      ? jsx('ul', { className: 'wm-econ-notes', children: econNotesText(headline.notes, headline.note_codes, t).map((note, i) =>
-          jsx('li', { children: note }, i)) })
+      ? jsxs('details', { className: 'wm-econ-disclosure wm-econ-summary-notes', children: [
+          jsx('summary', { children: t('econSummaryNotes') }),
+          jsx('ul', { className: 'wm-econ-notes', children: econNotesText(headline.notes, headline.note_codes, t).map((note, i) =>
+            jsx('li', { children: note }, i)) })
+        ] })
       : null,
     groups.length ? jsxs('div', { className: 'wm-econ-groups', children: [
       jsx('h3', { children: t('econGroupsTitle') }),
-      ...groups.map(group => group.difference_usd == null && !group.usage_usd && group.status === 'unavailable'
+      ...groups.map(group => group.difference_usd == null && finiteValue(group.usage_usd) == null && group.status === 'unavailable'
         ? jsxs('div', { className: 'wm-econ-group', children: [
             jsx('strong', { children: group.currency }),
-              jsx('span', { className: 'wm-econ-dim', children: ` ${t('econPerMonth', econMoneyValue(group.monthly_fees, group.currency, group.fee_complete !== false))} · ${econGroupNotes(group, t) || t('econNoComparison')}` })
+            jsx('span', { className: 'wm-econ-dim', children:
+              ` ${t('econPerMonth', econMoneyValue(group.monthly_fees, group.currency, group.fee_complete !== false))}` }),
+            jsx(EconomicsBlockers, { notes: econNotesText(group.notes, group.note_codes, t),
+              blockers: group.blockers, t, onOpenFx }),
+            !(group.notes || []).length && !(group.blockers || []).length
+              ? jsx('p', { className: 'wm-subtle', children: t('econNoComparison') }) : null
           ] }, group.currency)
         : jsxs('div', { className: 'wm-econ-group', children: [
             jsxs('div', { className: 'wm-econ-group-head', children: [
@@ -4707,45 +4886,59 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
                   analyticMoney(group.usage_usd), econStatusLabel(t, group.status)) })
             ] }),
             group.difference_usd == null
-              ? jsx('p', { className: 'wm-subtle', children: econGroupNotes(group, t) || t('econNoComparison') })
-              : jsx(EconomicsBars, { group, t })
+              ? jsxs('div', { children: [
+                  jsx(EconomicsBlockers, { notes: econNotesText(group.notes, group.note_codes, t),
+                    blockers: group.blockers, t, onOpenFx }),
+                  !(group.notes || []).length && !(group.blockers || []).length
+                    ? jsx('p', { className: 'wm-subtle', children: t('econNoComparison') }) : null
+                ] })
+              : jsxs('div', { children: [
+                  jsx(EconomicsBars, { group, t }),
+                  jsx(EconomicsBlockers, { notes: econNotesText(group.notes, group.note_codes, t),
+                    blockers: group.blockers, t, onOpenFx })
+                ] })
           ] }, group.currency))
     ] }) : null,
-    accounts.length ? jsxs('div', { className: 'wm-econ-accounts', children: [
-      jsx('h3', { children: t('econAccountsTitle') }),
-      jsx('div', { className: 'wm-econ-scroll', children:
-        jsxs('table', { className: 'wm-econ-table', children: [
-          jsx('thead', { children: jsx('tr', { children:
-            [['econColAccount', t('econColAccount')], ['econColMembership', t('econColMembership')],
-             ['econColMonthly', t('econColMonthly')], ['econApiUsage', t('econApiUsage')],
-             ['econColDifference', t('econColDifference')], ['econColCoverage', t('econColCoverage')]]
-              .map(([key, name]) => jsx('th', { children: name }, key)) }) }),
-          jsx('tbody', { children: accounts.map(row =>
-            jsx(EconomicsAccountRow, { row, t }, row.account_id)) })
-        ] }) })
+    accounts.length ? jsxs('details', { className: 'wm-econ-disclosure', children: [
+      jsx('summary', { children: t('econAccountsTitle') }),
+      jsx('div', { className: 'wm-econ-accounts', children:
+        jsx('div', { className: 'wm-econ-scroll', children:
+          jsxs('table', { className: 'wm-econ-table', children: [
+            jsx('thead', { children: jsx('tr', { children:
+              [['econColAccount', t('econColAccount')], ['econColMembership', t('econColMembership')],
+               ['econColMonthly', t('econColMonthly')], ['econApiUsage', t('econApiUsage')],
+               ['econColDifference', t('econColDifference')], ['econColCoverage', t('econColCoverage')]]
+                .map(([key, name]) => jsx('th', { children: name }, key)) }) }),
+            jsx('tbody', { children: accounts.map(row =>
+              jsx(EconomicsAccountRow, { row, t, onOpenFx }, row.account_id)) })
+          ] }) }) })
     ] }) : null,
-    (data?.trend?.months || []).length ? jsxs('div', { className: 'wm-econ-accounts', children: [
-      jsx('h3', { children: t('econTrendTitle') }),
-      jsx(EconomicsTrend, { trend: data.trend, t })
+    (data?.trend?.months || []).length ? jsxs('details', { className: 'wm-econ-disclosure', children: [
+      jsx('summary', { children: t('econTrendTitle') }),
+      jsx('div', { className: 'wm-econ-accounts', children: jsx(EconomicsTrend, { trend: data.trend, t }) })
     ] }) : null,
-    others.length ? jsxs('div', { className: 'wm-econ-accounts', children: [
-      jsx('h3', { children: t('econOthersTitle') }),
-      jsx('ul', { className: 'wm-econ-notes', children: others.map(row =>
-        jsx('li', { children:
-          `${row.label || row.family}: ${row.usage?.list_usd == null ? t('econNoPricedUsageShort') : t('econApiUsageMoney', analyticMoney(row.usage.list_usd))} · ${econExplanationText(row, t)}` },
-        row.account_id)) })
-    ] }) : null,
-    (data?.unattributed?.usage?.tokens || data?.ambiguous?.usage?.tokens) ? jsxs('div', { className: 'wm-econ-accounts', children: [
-      jsx('h3', { children: t('econOutsideTitle') }),
-      jsx('ul', { className: 'wm-econ-notes', children: [
-        data?.unattributed?.usage?.tokens ? jsx('li', { children:
-          t('econUnattributedLine', analyticMoney(data.unattributed.usage.list_usd), (data.unattributed.routes || []).join(', ') || t('econUnknownRoutes'), econSingularNoteText(data.unattributed, t)) }, 'unattributed') : null,
-        data?.ambiguous?.usage?.tokens ? jsx('li', { children:
-          t('econAmbiguousLine', analyticMoney(data.ambiguous.usage.list_usd)) }, 'ambiguous') : null
-      ].filter(Boolean) })
-    ] }) : null,
-    jsxs('div', { className: 'wm-econ-accounts', children: [
-      jsx('h3', { children: t('econFxTitle') }),
+    others.length || data?.unattributed?.usage?.tokens || data?.ambiguous?.usage?.tokens
+      ? jsxs('details', { className: 'wm-econ-disclosure', children: [
+          jsx('summary', { children: t('econMoreEvidence') }),
+          others.length ? jsxs('div', { className: 'wm-econ-accounts', children: [
+            jsx('h3', { children: t('econOthersTitle') }),
+            jsx('ul', { className: 'wm-econ-notes', children: others.map(row =>
+              jsx('li', { children:
+                `${row.label || row.family}: ${row.usage?.list_usd == null ? t('econNoPricedUsageShort') : t('econApiUsageMoney', analyticMoney(row.usage.list_usd))} · ${econExplanationText(row, t)}` },
+              row.account_id)) })
+          ] }) : null,
+          (data?.unattributed?.usage?.tokens || data?.ambiguous?.usage?.tokens) ? jsxs('div', { className: 'wm-econ-accounts', children: [
+            jsx('h3', { children: t('econOutsideTitle') }),
+            jsx('ul', { className: 'wm-econ-notes', children: [
+              data?.unattributed?.usage?.tokens ? jsx('li', { children:
+                t('econUnattributedLine', analyticMoney(data.unattributed.usage.list_usd), (data.unattributed.routes || []).join(', ') || t('econUnknownRoutes'), econSingularNoteText(data.unattributed, t)) }, 'unattributed') : null,
+              data?.ambiguous?.usage?.tokens ? jsx('li', { children:
+                t('econAmbiguousLine', analyticMoney(data.ambiguous.usage.list_usd)) }, 'ambiguous') : null
+            ].filter(Boolean) })
+          ] }) : null
+        ] }) : null,
+    jsxs('details', { id: 'wm-cost-fx-details', className: 'wm-econ-disclosure', children: [
+      jsx('summary', { children: t('econFxTitle') }),
       jsx('p', { className: 'wm-subtle', children: t('econFxHint') }),
       jsx(EconomicsFx, { fxError, fxReady, identity, rates: fxRates || [], onRetry: onRetryFx, onSave: onSaveFx, t })
     ] })
@@ -4759,6 +4952,15 @@ function EconomicsPanel({ identity }) {
   const fx = useQuery(fxQuery(identity))
   const current = economics.data?.identity === identity && membershipIdentityCurrent(identity)
   const fxCurrent = fx.data?.identity === identity && membershipIdentityCurrent(identity)
+  const openFx = () => {
+    if (typeof document === 'undefined') return
+    const disclosure = document.getElementById('wm-cost-fx-details')
+    if (!disclosure) return
+    disclosure.open = true
+    const summary = disclosure.querySelector('summary')
+    try { summary?.scrollIntoView?.({ block: 'nearest' }) } catch {}
+    summary?.focus?.()
+  }
   const saveFx = async rates => {
     const captured = identity
     if (!membershipIdentityCurrent(captured)) return
@@ -4803,10 +5005,39 @@ function EconomicsPanel({ identity }) {
     : ''
   return jsx(EconomicsSection, { data: economics.data, identity,
     fxRates: fxReady ? fx.data?.rates || [] : [], fxReady, fxError,
-    onRetryFx: () => fx.refetch?.(), onSaveFx: saveFx })
+    onRetryFx: () => fx.refetch?.(), onSaveFx: saveFx, onOpenFx: openFx })
 }
 
 const ECONOMICS_CSS = [
+  '.wm-product .wm-cost-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}',
+  '.wm-product .wm-cost-card{display:grid;align-content:start;gap:7px;min-width:0;padding:13px 14px;border:1px solid var(--wm-border);border-left:3px solid var(--wm-cost-accent,var(--wm-border));border-radius:var(--wm-radius-card);background:var(--wm-surface)}',
+  '.wm-product .wm-cost-card-api{--wm-cost-accent:var(--ui-accent)}.wm-product .wm-cost-card-reported{--wm-cost-accent:var(--ui-success)}.wm-product .wm-cost-card-charges{--wm-cost-accent:var(--ui-warning)}.wm-product .wm-cost-card-cache{--wm-cost-accent:var(--ui-success)}.wm-product .wm-cost-card-cache-negative{--wm-cost-accent:var(--ui-warning)}.wm-product .wm-cost-card-fees{--wm-cost-accent:var(--ui-accent)}.wm-product .wm-cost-card-allowances{--wm-cost-accent:var(--ui-accent)}',
+  '.wm-product .wm-cost-card-label{margin:0;color:var(--ui-text-secondary);font-size:12px;font-weight:600;line-height:1.4}',
+  '.wm-product .wm-cost-card-value{font-size:20px;line-height:1.25;font-weight:620;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
+  '.wm-product .wm-cost-card-status{justify-self:start;padding:2px 7px;border:1px solid color-mix(in srgb,var(--wm-cost-accent) 45%,var(--ui-stroke-secondary));border-radius:99px;color:var(--ui-text-primary);font-size:10.5px;font-weight:600;line-height:1.4}',
+  '.wm-product .wm-cost-card-note{margin:0;color:var(--ui-text-tertiary);font-size:11px;line-height:1.45}',
+  '.wm-product .wm-cost-card-action{margin-top:2px}',
+  '.wm-product .wm-cost-fee-lines{list-style:none;display:grid;gap:3px;margin:0;padding:0;font-size:16px;line-height:1.4;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
+  '.wm-product .wm-cost-evidence-details{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}',
+  '.wm-product .wm-cost-detail-row{padding:10px;border:1px solid var(--ui-stroke-secondary);border-radius:7px;background:var(--ui-fill-primary);min-width:0}',
+  '.wm-product .wm-cost-detail-row h3{margin:0;color:var(--ui-text-secondary);font-size:12px}',
+  '.wm-product .wm-cost-detail-value{margin-top:5px;font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
+  '.wm-product .wm-cost-detail-copy{color:var(--ui-text-secondary);font-size:11px;line-height:1.45;overflow-wrap:anywhere}',
+  '.wm-product .wm-cost-detail-copy p{margin:5px 0}',
+  '.wm-product .wm-cost-detail-fees{list-style:none;margin:0;padding:0;display:grid;gap:2px}',
+  '.wm-product .wm-cost-extra{margin-top:10px}',
+  '.wm-product .wm-econ-disclosure{margin-top:12px;padding:10px 12px;border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-secondary)}',
+  '.wm-product .wm-econ-disclosure>summary{min-height:34px;display:flex;align-items:center;cursor:pointer;color:var(--ui-text-secondary);font-size:12.5px;font-weight:600}',
+  '.wm-product .wm-econ-disclosure[open]>summary{margin-bottom:8px;color:var(--ui-text-primary)}',
+  '.wm-product .wm-econ-disclosure .wm-econ-accounts{margin-top:8px}',
+  '.wm-product .wm-econ-summary-notes{padding-top:4px;padding-bottom:4px}',
+  '.wm-product .wm-econ-blockers{margin-top:3px}',
+  '.wm-product .wm-econ-blockers li{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}',
+  '.wm-product .wm-econ-action{font-size:11px;white-space:nowrap}',
+  '.wm-product .wm-econ-group .wm-econ-notes{max-width:100%}',
+  '@container(max-width:760px){.wm-product .wm-cost-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.wm-product .wm-cost-evidence-details{grid-template-columns:repeat(2,minmax(0,1fr))}}',
+  '@container(max-width:430px){.wm-product .wm-cost-evidence-details{grid-template-columns:1fr}}',
+  '@container(max-width:350px){.wm-product .wm-cost-summary-grid{grid-template-columns:1fr}}',
   '.wm-product .wm-econ-notes{margin:6px 0 4px;padding-left:18px;display:grid;gap:4px;font-size:12px;line-height:1.5;color:var(--ui-text-secondary)}',
   '.wm-product .wm-econ-groups,.wm-product .wm-econ-accounts{display:grid;gap:10px;margin-top:16px}',
   '.wm-product .wm-econ-groups h3,.wm-product .wm-econ-accounts h3{margin:0;font-size:13px;font-weight:600}',
@@ -10226,6 +10457,12 @@ const I18N = {
       : 'Known monthly fees are shown, but some accounts lack historical fee evidence; their window amounts are unavailable.',
     econGroupHistory: 'Recorded history does not cover the full comparison window.',
     econAccountsTitle: 'Provider and account breakdown',
+    econMoreEvidence: 'Other comparison evidence',
+    econSummaryNotes: 'Comparison notes',
+    econActionMemberships: 'Review in Memberships',
+    econActionFx: 'Add dated FX rate',
+    econActionUsage: 'Review in Usage',
+    econActionPricing: 'Check pricing settings',
     econColAccount: 'Account',
     econColMembership: 'Membership',
     econColMonthly: 'Monthly equiv.',
@@ -11005,7 +11242,57 @@ const I18N = {
     costsPricingStale: ' · stale',
     costsPricingTitle: 'Pricing sources and privacy',
     costsTitle: 'Costs',
-    costsSubtitle: 'Recorded usage, current price estimates and the memberships you have declared.',
+    costsSubtitle: 'Active profile · estimates, provider reports and plan limits stay separate.',
+    costsOverviewTitle: 'Financial evidence',
+    costsOverviewIntro: 'Values keep their source and scope. Unknown is not zero; provider-reported use is not a payment.',
+    costsEvidenceDetails: 'Evidence sources and calculation details',
+    costsEvidenceUnavailable: 'Evidence could not be read',
+    costsBasisLabel: 'Basis',
+    costsSourceLabel: 'Source',
+    costsEstimateTag: 'API-equivalent estimate',
+    costsApiShort: 'Current rates · not provider charges',
+    costsApiPartialShort: 'Priced subtotal · some usage is unpriced; not provider charges.',
+    costsApiCoverageUnknownShort: 'Pricing coverage for this value is unknown; the amount may be partial.',
+    costsApiNoPricedSubtotal: 'No priced subtotal; unpriced usage is not zero.',
+    costsApiPartialExplain: 'Only rows with published API rates or configured custom rates contribute to this subtotal; unpriced rows are excluded. It is not a charge.',
+    costsApiCoverageUnknownExplain: 'Coverage counts for the rows behind this value are unavailable, so completeness cannot be confirmed.',
+    costsApiNoPricedExplain: 'No API-equivalent subtotal could be calculated from the available published or configured custom rates.',
+    costsApiCoverageCounts: (pricedTokens, pricedCalls, unpricedTokens, unpricedCalls) =>
+      `Rows used for this estimate: ${pricedTokens} tokens priced across ${pricedCalls} calls; ${unpricedTokens} tokens across ${unpricedCalls} calls have no API-equivalent price.`,
+    costsApiCoverageUnavailable: 'Coverage counts are unavailable for these rows. The displayed API-equivalent amount may be partial.',
+    costsReportedTag: 'Provider reported',
+    costsReportedShort: 'Reported use · not a payment',
+    costsActualCharges: 'Actual provider charges',
+    costsActualChargesShort: 'Per-call charge evidence unavailable',
+    costsActualChargesDetail: 'This analytics endpoint does not supply actual-charge evidence. Unknown is not zero.',
+    costsUnknownTag: 'Unknown',
+    costsPartialTag: 'Partial',
+    costsCoverageUnknownTag: 'Coverage unknown',
+    costsCompleteTag: 'Fully priced',
+    costsCacheLabel: 'Cache impact · API-equivalent',
+    costsCacheUnknown: 'No complete cache price evidence; the value remains unknown.',
+    costsCacheNegative: 'Negative savings means the estimated cached API-equivalent cost exceeded the uncached equivalent at these rates.',
+    costsCacheZero: 'No modeled price difference; the API-equivalent value is zero.',
+    costsCachePositive: 'Estimated API-equivalent value difference; not cash saved.',
+    costsCacheSource: 'Calculated from captured usage and rate evidence in the backend report. Not a charge.',
+    costsCacheValues: (uncached, cached) => `Uncached API-equivalent ${uncached}; cached API-equivalent ${cached}.`,
+    costsCacheTokens: (covered, total) => `Tokens with cache rate evidence: ${covered} of ${total}.`,
+    costsCacheCalls: (covered, excluded) => `Calls with cache rate evidence: ${covered}; calls without complete cache rates: ${excluded}.`,
+    costsCacheGap: (reason, count) => `${reason}: ${count} call(s)`,
+    costsFeesLabel: 'Saved subscription fees',
+    costsLoadingShort: 'Reading',
+    costsDeclaredTag: 'Saved',
+    costsKnownFeesPartial: count => `Known subtotal · ${count} ${count === 1 ? 'fee unknown' : 'fees unknown'}`,
+    costsFeesShort: 'Currency and period stay separate.',
+    costsFeesDetails: 'Fees come from saved Memberships records. Unknown account fees are excluded from the known subtotal.',
+    costsFeesUnknown: 'No known fee',
+    costsManageMemberships: 'Manage in Memberships',
+    costsAllowancesLabel: 'Plan allowances',
+    costsAllowanceCount: count => `${count} limit${count === 1 ? '' : 's'}`,
+    costsLimitTag: 'Limits · not spend',
+    costsAllowancesShort: 'Limits, not spend. Details in Memberships.',
+    costsAllowancesDetails: 'Plan allowance amounts are limits, not usage or fees. Readings and plan details are managed in Memberships.',
+    costsOtherBillingEvidence: 'Other billing evidence',
     costsMembershipTitle: 'Membership costs',
     costsMembershipIntro: 'Each account appears once. Totals keep currencies and billing periods separate.',
     costsSavedMemberships: 'Saved memberships',
@@ -11032,7 +11319,7 @@ const I18N = {
     billEvProviderExplain: 'Confirmed by the provider’s own request history.',
     billEvProviderEmpty: 'Not recorded',
     billEvApiLabel: 'API-equivalent value',
-    billEvApiExplain: 'Published rates applied to these tokens. Theoretical, not an invoice.',
+    billEvApiExplain: 'Published or configured custom rates applied to priced tokens. Theoretical, not an invoice.',
     billEvApiEmpty: 'Not priced',
     billEvCreditsLabel: 'Credits consumed',
     billEvCreditsExplain: 'Inferred from your membership profile — not a provider-confirmed deduction.',
@@ -11558,6 +11845,12 @@ const I18N = {
       : '已显示已知月费，但部分账户缺少历史费用证据；其窗口金额不可用。',
     econGroupHistory: '已记录历史未覆盖完整的比较窗口。',
     econAccountsTitle: '按供应商和账户明细',
+    econMoreEvidence: '其他比较证据',
+    econSummaryNotes: '比较说明',
+    econActionMemberships: '在“会员”中查看',
+    econActionFx: '添加注明日期的汇率',
+    econActionUsage: '在“用量”中查看',
+    econActionPricing: '检查价格设置',
     econColAccount: '账户',
     econColMembership: '会员',
     econColMonthly: '月均费用',
@@ -12337,7 +12630,57 @@ const I18N = {
     costsPricingStale: ' · 已过期',
     costsPricingTitle: '价格来源与隐私',
     costsTitle: '费用',
-    costsSubtitle: '已记录用量、当前价格估算，以及您申报的会员。',
+    costsSubtitle: '当前活动配置 · 估算、供应商上报值和方案限额分别显示。',
+    costsOverviewTitle: '财务证据',
+    costsOverviewIntro: '数值保留来源和范围。未知不等于零；供应商上报用量不是付款。',
+    costsEvidenceDetails: '证据来源与计算详情',
+    costsEvidenceUnavailable: '无法读取证据',
+    costsBasisLabel: '依据',
+    costsSourceLabel: '来源',
+    costsEstimateTag: 'API 等值估算',
+    costsApiShort: '当前费率 · 非供应商费用',
+    costsApiPartialShort: '已定价小计 · 部分用量未定价；并非供应商收费。',
+    costsApiCoverageUnknownShort: '此值的定价覆盖情况未知；金额可能仅为部分小计。',
+    costsApiNoPricedSubtotal: '没有可显示的已定价小计；未定价用量不代表零。',
+    costsApiPartialExplain: '此小计仅包含使用公开 API 费率或已配置自定义费率的记录；未定价记录已排除。它不是实际收费。',
+    costsApiCoverageUnknownExplain: '此金额所依据记录的覆盖计数不可用，因此无法确认是否完整。',
+    costsApiNoPricedExplain: '根据现有公开费率或已配置的自定义费率，无法计算 API 等值小计。',
+    costsApiCoverageCounts: (pricedTokens, pricedCalls, unpricedTokens, unpricedCalls) =>
+      `此估算所用记录：${pricedTokens} 个 token 已定价，涉及 ${pricedCalls} 次调用；${unpricedTokens} 个 token、${unpricedCalls} 次调用缺少 API 等值价格。`,
+    costsApiCoverageUnavailable: '这些记录的覆盖计数不可用。显示的 API 等值金额可能只包含已定价用量。',
+    costsReportedTag: '供应商上报',
+    costsReportedShort: '上报用量 · 非付款',
+    costsActualCharges: '供应商实际费用',
+    costsActualChargesShort: '无法获取逐次调用的费用证据',
+    costsActualChargesDetail: '此分析接口不提供实际费用证据。未知不等于零。',
+    costsUnknownTag: '未知',
+    costsPartialTag: '部分',
+    costsCoverageUnknownTag: '覆盖情况未知',
+    costsCompleteTag: '已完整定价',
+    costsCacheLabel: '缓存影响 · API 等值',
+    costsCacheUnknown: '没有完整的缓存费率证据；数值保持未知。',
+    costsCacheNegative: '负节省值表示按这些费率估算，缓存用量的 API 等值成本高于未缓存等值。',
+    costsCacheZero: '模型计算的价格差为零。',
+    costsCachePositive: 'API 等值估算差额；不是节省的现金。',
+    costsCacheSource: '根据后端报告中的已记录用量与费率证据计算，不是费用。',
+    costsCacheValues: (uncached, cached) => `未缓存 API 等值 ${uncached}；缓存 API 等值 ${cached}。`,
+    costsCacheTokens: (covered, total) => `具有缓存费率证据的令牌：${covered} / ${total}。`,
+    costsCacheCalls: (covered, excluded) => `具有缓存费率证据的调用：${covered}；费率不完整的调用：${excluded}。`,
+    costsCacheGap: (reason, count) => `${reason}：${count} 次调用`,
+    costsFeesLabel: '已保存的订阅费用',
+    costsLoadingShort: '读取中',
+    costsDeclaredTag: '已保存',
+    costsKnownFeesPartial: count => `已知小计 · ${count} 项费用未知`,
+    costsFeesShort: '币种和周期分别显示。',
+    costsFeesDetails: '费用来自“会员”中保存的记录。已知小计不包括费用未知的账户。',
+    costsFeesUnknown: '没有已知费用',
+    costsManageMemberships: '在“会员”中管理',
+    costsAllowancesLabel: '方案额度',
+    costsAllowanceCount: count => `${count} 项限额`,
+    costsLimitTag: '限额 · 非支出',
+    costsAllowancesShort: '限额不是支出。详情见“会员”。',
+    costsAllowancesDetails: '方案额度是限额，不是用量或费用。请在“会员”中查看读数和管理方案详情。',
+    costsOtherBillingEvidence: '其他账单证据',
     costsMembershipTitle: '会员费用',
     costsMembershipIntro: '每个账户只出现一次。合计按币种与账单周期分开。',
     costsSavedMemberships: '已保存会员',
@@ -12364,7 +12707,7 @@ const I18N = {
     billEvProviderExplain: '经供应商自有请求历史确认。',
     billEvProviderEmpty: '未记录',
     billEvApiLabel: 'API 等值价值',
-    billEvApiExplain: '按公开单价对这些令牌计价。理论值，非账单。',
+    billEvApiExplain: '按公开或已配置的自定义费率为已定价令牌计价。理论值，非账单。',
     billEvApiEmpty: '未定价',
     billEvCreditsLabel: '已消耗额度',
     billEvCreditsExplain: '根据您的会员资料推断——未经供应商确认扣减。',
@@ -12925,7 +13268,7 @@ export const __test = {
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
-  CostsPage, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
+  CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
   $settingsConfirmation, $modelRefreshState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, desktopTodayText, desktopTodayAmount, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,

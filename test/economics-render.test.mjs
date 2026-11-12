@@ -179,6 +179,26 @@ const renderSection = async (data, extra = {}) => {
   return { container, saved, text: () => container.textContent }
 }
 
+const renderCostsSummary = async ({ billing = {}, totals = {}, accounts = [], summaryReady = true } = {}, language = 'en') => {
+  i18nCalls.length = 0
+  const t = (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  const ready = summaryReady
+  await React.act(async () => {
+    root.render(React.createElement(T.CostsEvidenceSummary, {
+      billing, totals, accounts, fees: T.membershipSummary(accounts), accountsReady: true,
+      summaryLoading: false, accountsLoading: false, summaryReady: ready, accountsFailed: false, t,
+    }))
+  })
+  return { container, text: () => container.textContent }
+}
+
 const flush = async (times = 6) => {
   await React.act(async () => {
     for (let i = 0; i < times; i += 1) {
@@ -267,6 +287,190 @@ test('a missing comparison renders an unavailable state, not a zero', async () =
   assert.match(text(), /Unavailable/)
   assert.match(text(), /No subscription has a known fee/)
   assert.doesNotMatch(text(), /\$0\.00/)
+})
+
+test('a currency group with no comparison reason still explains the unavailable state', async () => {
+  const data = econFixture()
+  data.groups = [{ currency: 'USD', monthly_fees: 0, usage_usd: null,
+    difference_usd: null, status: 'unavailable', notes: [], blockers: [] }]
+  data.accounts = []
+  const { text } = await renderSection(data)
+  assert.match(text(), /No comparison available\./)
+})
+
+test('Costs distinguishes reported use, API-equivalent zero, missing charges, mixed fee currencies and partial cache evidence', async () => {
+  const accounts = [
+    { id: 'usd-zero', effective_arrangement: 'subscription', fee: { effective: { amount: 0, currency: 'USD', period: 'month' } },
+      plan: { entitlements: { windows: [{ id: 'allowance', label: 'Allowance', amount: 100, currency: 'USD' }] } } },
+    { id: 'gbp-month', effective_arrangement: 'subscription', fee: { effective: { amount: 20, currency: 'GBP', period: 'month' } }, plan: null },
+    { id: 'fee-unknown', effective_arrangement: 'subscription', fee: { effective: { amount: null } }, plan: null },
+  ]
+  const { container, text } = await renderCostsSummary({
+    billing: { evidence: {
+      provider_reported: { usd: 0, basis: 'provider_history', source: 'Provider request history' },
+      api_equivalent: { usd: 0, basis: 'current_catalogue', source: 'Current catalogue',
+        pricing_coverage: { priced_tokens: 0, unpriced_tokens: 0, priced_calls: 1, unpriced_calls: 0 } },
+      credits_consumed: { usd: 0, basis: 'membership_allowance', source: 'Declared allowance' },
+      incremental_cash: { usd: null, basis: 'incomplete', source: 'No complete evidence' },
+    } },
+    totals: { tokens: 200, economics: { savings_usd: 0, uncached_usd: 2, cached_usd: 2,
+      coverage: 0.5, covered_tokens: 100, covered_calls: 1, excluded_calls: 1,
+      gap_reasons: { missing_cache_read_rate: 1 } } },
+    accounts,
+  })
+  assert.equal(container.querySelector('[data-cost-kind="api"] .wm-cost-card-value').textContent, '$0.00')
+  assert.match(container.querySelector('[data-cost-kind="api"]').textContent, /Fully priced/,
+    'a zero amount remains a known value when all API-equivalent usage is priced')
+  assert.equal(container.querySelector('[data-cost-kind="reported"] .wm-cost-card-value').textContent, '$0.00')
+  assert.equal(container.querySelector('[data-cost-kind="charges"] .wm-cost-card-value').textContent, 'Not recorded')
+  assert.doesNotMatch(container.querySelector('[data-cost-kind="charges"]').textContent, /\$0\.00/)
+  const cache = container.querySelector('[data-cost-kind="cache"]')
+  assert.equal(cache.querySelector('.wm-cost-card-value').textContent, '$0.00')
+  assert.match(cache.textContent, /Partial/)
+  assert.match(cache.textContent, /API-equivalent value is zero/)
+  const fees = [...container.querySelectorAll('.wm-cost-fee-lines li')].map(line => line.textContent)
+  assert.deepEqual(fees, ['$0.00/mo', '£20.00/mo'])
+  assert.match(container.querySelector('[data-cost-kind="fees"]').textContent, /1 fee unknown/)
+  assert.match(container.querySelector('[data-cost-kind="allowances"]').textContent, /1 limit/)
+  assert.match(text(), /Credits consumed/)
+  assert.match(text(), /Provider request history/)
+  assert.match(text(), /Tokens with cache rate evidence: 100 of 200/)
+  assert.equal(container.querySelectorAll('.wm-cost-card-details').length, 0)
+  assert.equal(container.querySelectorAll('.wm-cost-other-billing:not([open])').length, 1)
+})
+
+test('Costs labels API-equivalent subtotals as partial and discloses exact coverage in both languages', async () => {
+  for (const [language, partialLabel, customPhrase, counts] of [
+    ['en', 'Priced subtotal', 'configured custom rates',
+      '100 tokens priced across 1 calls; 50 tokens across 2 calls have no API-equivalent price'],
+    ['zh', '已定价小计', '已配置自定义费率',
+      '100 个 token 已定价，涉及 1 次调用；50 个 token、2 次调用缺少 API 等值价格'],
+  ]) {
+    const { container } = await renderCostsSummary({ billing: { evidence: {
+      api_equivalent: { usd: 1.25, basis: 'estimated', source: 'Published catalogue or configured custom rate',
+        pricing_coverage: { priced_tokens: 100, unpriced_tokens: 50, priced_calls: 1, unpriced_calls: 2 } },
+    } } }, language)
+    const card = container.querySelector('[data-cost-kind="api"]')
+    assert.equal(card.querySelector('.wm-cost-card-value').textContent, '$1.25')
+    assert.match(card.textContent, /Partial|部分/)
+    assert.match(card.textContent, new RegExp(partialLabel))
+
+    container.querySelector('.wm-cost-other-billing').open = true
+    const apiDetails = container.querySelector('.wm-cost-detail-row')
+    assert.match(apiDetails.textContent, new RegExp(customPhrase))
+    assert.match(apiDetails.textContent, new RegExp(counts))
+  }
+})
+
+test('Costs treats missing API-equivalent coverage as unknown, even when an amount is present', async () => {
+  const { container } = await renderCostsSummary({ billing: { evidence: {
+    api_equivalent: { usd: 0, basis: 'estimated', source: 'Published catalogue' },
+  } } })
+  const card = container.querySelector('[data-cost-kind="api"]')
+  assert.equal(card.querySelector('.wm-cost-card-value').textContent, '$0.00')
+  assert.match(card.textContent, /Coverage unknown/)
+  assert.match(card.textContent, /amount may be partial/)
+  assert.doesNotMatch(card.textContent, /Fully priced/)
+
+  const unpriced = await renderCostsSummary({ billing: { evidence: {
+    api_equivalent: { usd: null, basis: 'unpriced', source: 'No published rate',
+      pricing_coverage: { priced_tokens: 0, unpriced_tokens: 50, priced_calls: 0, unpriced_calls: 1 } },
+  } } })
+  const unpricedCard = unpriced.container.querySelector('[data-cost-kind="api"]')
+  assert.match(unpricedCard.textContent, /Unknown/)
+  assert.match(unpricedCard.textContent, /No priced subtotal/)
+})
+
+test('Costs does not count included or no-plan routes as subscriptions with unknown fees', async () => {
+  const paidOwner = { id: 'owner', effective_arrangement: 'subscription',
+    fee: { effective: { amount: 20, currency: 'USD', period: 'month' } } }
+  const includedRoute = { id: 'included', effective_arrangement: 'included',
+    fee: { basis: 'included', effective: { amount: null } } }
+  const noPlanRoute = { id: 'no-plan', effective_arrangement: 'no_plan',
+    fee: { basis: 'no_plan', effective: { amount: null } } }
+
+  const withIncluded = await renderCostsSummary({ accounts: [paidOwner, includedRoute] })
+  const includedFees = withIncluded.container.querySelector('[data-cost-kind="fees"]')
+  assert.deepEqual([...includedFees.querySelectorAll('.wm-cost-fee-lines li')].map(line => line.textContent), ['$20.00/mo'])
+  assert.match(includedFees.textContent, /Saved/)
+  assert.doesNotMatch(includedFees.textContent, /fee unknown|No known fee/)
+
+  const noPlanOnly = await renderCostsSummary({ accounts: [noPlanRoute] })
+  const noPlanFees = noPlanOnly.container.querySelector('[data-cost-kind="fees"]')
+  assert.match(noPlanFees.textContent, /No saved recurring fees/)
+  assert.doesNotMatch(noPlanFees.textContent, /No known fee|fee unknown/)
+})
+
+test('Costs keeps negative cache savings and unknown coverage distinct in both languages', async () => {
+  for (const [language, negative, unknown, partial, coverageUnknown, negativeExplanation] of [
+    ['en', '−$0.400', 'No complete cache price evidence', 'Partial', 'Coverage unknown',
+      'cached API-equivalent cost exceeded the uncached equivalent'],
+    ['zh', '−$0.400', '没有完整的缓存费率证据', '部分', '覆盖情况未知',
+      '缓存用量的 API 等值成本高于未缓存等值'],
+  ]) {
+    const { container } = await renderCostsSummary({
+      totals: { tokens: 10, economics: { savings_usd: -0.4, uncached_usd: 0.1, cached_usd: 0.5,
+        coverage: 0.2, covered_tokens: 2, covered_calls: 1, excluded_calls: 4, gap_reasons: {} } },
+    }, language)
+    const negativeCard = container.querySelector('[data-cost-kind="cache-negative"]')
+    assert.equal(negativeCard.querySelector('.wm-cost-card-value').textContent, negative)
+    assert.match(negativeCard.textContent, new RegExp(partial))
+    assert.match(negativeCard.textContent, new RegExp(negativeExplanation))
+    await React.act(async () => { roots.pop().unmount() })
+
+    const missing = await renderCostsSummary({
+      totals: { tokens: 10, economics: { savings_usd: null, uncached_usd: null, cached_usd: null,
+        coverage: null, covered_tokens: 0, covered_calls: 0, excluded_calls: 4, gap_reasons: {} } },
+    }, language)
+    const unknownCard = missing.container.querySelector('[data-cost-kind="cache"]')
+    assert.match(unknownCard.textContent, new RegExp(unknown))
+    assert.doesNotMatch(unknownCard.querySelector('.wm-cost-card-value').textContent, /\$0\.00/)
+    await React.act(async () => { roots.pop().unmount() })
+
+    const partialCoverage = await renderCostsSummary({
+      totals: { tokens: 0, economics: { savings_usd: 0, coverage: 0.5,
+        covered_calls: 1, excluded_calls: 0 } },
+    }, language)
+    const partialCard = partialCoverage.container.querySelector('[data-cost-kind="cache"]')
+    assert.match(partialCard.textContent, new RegExp(partial), 'known coverage below 100% remains partial even with no excluded calls')
+    await React.act(async () => { roots.pop().unmount() })
+
+    const unknownCoverage = await renderCostsSummary({
+      totals: { tokens: 10, economics: { savings_usd: 0.1, coverage: null,
+        covered_calls: 1, excluded_calls: 0 } },
+    }, language)
+    const unknownCoverageCard = unknownCoverage.container.querySelector('[data-cost-kind="cache"]')
+    assert.match(unknownCoverageCard.textContent, new RegExp(coverageUnknown))
+    assert.doesNotMatch(unknownCoverageCard.textContent, new RegExp(partial))
+  }
+})
+
+test('blocked comparison reasons provide Memberships, Usage, pricing and FX actions, including zero usage', async () => {
+  const data = econFixture()
+  data.groups = [{ currency: 'GBP', monthly_fees: 20, window_fees: 20, fee_complete: true,
+    window_fee_complete: true, usage_usd: 0, difference_usd: null, converted: false,
+    fx: null, status: 'unavailable', notes: [], blockers: [
+      { account_id: 'fee', code: 'subscription_fee_missing' },
+      { account_id: 'fx', code: 'dated_fx_rate_missing', currency: 'GBP' },
+      { account_id: 'usage', code: 'no_usage_recorded' },
+      { account_id: 'price', code: 'provider_price_catalogue_missing' },
+    ] }]
+  data.accounts = []
+  const fxOpened = []
+  const { container, text } = await renderSection(data, { onOpenFx: () => fxOpened.push(true) })
+  assert.match(text(), /\$0\.00 usage/, 'a valid zero is not mistaken for missing usage')
+  const actions = [...container.querySelectorAll('.wm-econ-action')]
+  assert.deepEqual(actions.map(button => button.textContent), [
+    'Review in Memberships', 'Add dated FX rate', 'Review in Usage', 'Check pricing settings',
+  ])
+  await React.act(async () => { actions[1].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  assert.deepEqual(fxOpened, [true])
+  await React.act(async () => { actions[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  assert.equal(T.$ledgerTab.get(), 'memberships')
+  await React.act(async () => { actions[2].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  assert.equal(T.$ledgerTab.get(), 'usage')
+  await React.act(async () => { actions[3].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  assert.equal(T.$ledgerTab.get(), 'settings')
 })
 
 test('missing fees, dated FX and historical window fees have per-account blockers in both languages', async () => {
