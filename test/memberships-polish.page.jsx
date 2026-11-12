@@ -129,12 +129,24 @@ try {
     (async () => {
       try {
         const narrow = document.getElementById('app-380')
-        // Rows start collapsed, so expand all three before measuring.
+        // Rows start collapsed, so expand all three before measuring. Groups
+        // start closed too, and closed content takes no space, so open each
+        // card's Plan & billing group before the geometry pass.
         await step(200, () => {
           for (const card of narrow.querySelectorAll('[data-account]')) {
             const details = [...card.querySelectorAll('.wm-row-head button')]
               .find(b => b.textContent.includes('memDetails'))
             if (details && details.getAttribute('aria-expanded') !== 'true') click(details)
+          }
+        })
+        // Plan groups are native disclosures with per-element state, so each
+        // root opens its own after the shared expansion has rendered.
+        await step(300, () => {
+          for (const host of [narrow, document.getElementById('app-1200')]) {
+            for (const card of host.querySelectorAll('[data-account]')) {
+              const plan = card.querySelector('[data-group="plan"]')
+              if (plan && !plan.open) click(plan.querySelector('summary'))
+            }
           }
         })
         await step(300, () => {})
@@ -166,6 +178,15 @@ try {
           cssFlash: T.MEMBERSHIP_CSS.includes('.wm-flash'),
           cssReducedMotion: T.MEMBERSHIP_CSS.includes('prefers-reduced-motion'),
         }
+        // Re-close the attention targets' Plan groups so the steps below prove
+        // navigation opens a closed group rather than a pre-opened one.
+        await step(200, () => {
+          for (const id of ['xai:default', 'nous:default']) {
+            const group = narrow.querySelector(`[data-account="${id}"] [data-group="plan"]`)
+            if (group && group.open) click(group.querySelector('summary'))
+          }
+        })
+        await step(300, () => {})
         const attnLi = label => [...narrow.querySelectorAll('.wm-attention li')]
           .find(li => (li.textContent || '').includes(label))
         // xai: arrangement target.

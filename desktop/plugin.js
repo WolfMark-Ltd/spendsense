@@ -6195,21 +6195,37 @@ const $membershipExpanded = atom({ origin: null, ids: [] })
 // MembershipsPage once the target identity's accounts are on screen. Stamped
 // with the connection identity so a gateway/profile switch discards it.
 const $membershipTarget = atom(null)
-// Groups the user has collapsed while their draft is active. A draft opens
-// its group, but the user's own toggle always wins afterwards: re-renders
-// never snap a collapsed group back open, and draft values are untouched.
-// Without a draft the groups are fully uncontrolled.
+// Groups the user has collapsed. A draft opens its group, but the user's own
+// toggle always wins otherwise: re-renders never snap a collapsed group back
+// open, and draft values are untouched.
 const membershipGroupClosed = new Set()
+// Groups a draft opened stay open after the draft clears, so saving or
+// cancelling never collapses the context the user was working in (and the
+// opener stays laid out and focusable). The user's own close always wins:
+// closing deletes the draft-opened mark and re-renders never snap it back,
+// while reopening restores the mark so a later render cannot undo the reopen.
+const membershipGroupDraftOpened = new Set()
 function membershipGroupOpen(accountId, group, active) {
   const key = `${accountId}:${group}`
-  if (!active) { membershipGroupClosed.delete(key); return {} }
   if (membershipGroupClosed.has(key)) return {}
-  return { open: true }
+  if (active) {
+    membershipGroupDraftOpened.add(key)
+    return { open: true }
+  }
+  return membershipGroupDraftOpened.has(key) ? { open: true } : {}
 }
 function membershipGroupToggled(accountId, group, open) {
   const key = `${accountId}:${group}`
-  if (open) membershipGroupClosed.delete(key)
-  else membershipGroupClosed.add(key)
+  if (open) {
+    // Reopening restores the draft-opened mark a close removed, so a later
+    // render (for example after Cancel) cannot collapse the group the user
+    // just reopened. Toggles never render on their own.
+    membershipGroupClosed.delete(key)
+    membershipGroupDraftOpened.add(key)
+  } else {
+    membershipGroupClosed.add(key)
+    membershipGroupDraftOpened.delete(key)
+  }
 }
 /**
  * Last good account payload. A refetch with a new query key unmounts the cards
@@ -6415,6 +6431,7 @@ button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
 .wm-group > summary::before{content:"›";display:inline-block;font-size:17px;line-height:1;font-weight:700;color:var(--ui-text-primary);transition:transform .15s ease}
 .wm-group[open] > summary::before{transform:rotate(90deg)}
 .wm-group-body{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;padding:4px 0 10px}
+.wm-group:not([open]) > .wm-group-body{display:none}
 @container(max-width:760px){.wm-row-head{grid-template-columns:minmax(0,1fr)}.wm-row-mid{grid-template-columns:minmax(0,1.35fr) minmax(92px,.7fr) auto auto}}
 @container(max-width:620px){.wm-row-head{align-items:start}.wm-row-mid{grid-template-columns:minmax(0,1fr) minmax(92px,auto);gap:8px 12px}.wm-row-state{grid-column:1}.wm-row-actions{grid-column:2;grid-row:2;align-self:center}.wm-row-actions .wm-button{min-height:38px}.wm-memberships .wm-seg button{min-height:38px}.wm-memberships .wm-attention li{flex-wrap:wrap}.wm-memberships .wm-attention li .wm-button{width:100%}}
 @container(max-width:620px){.wm-memberships nav.wm-account-jump.wm-membership-account-nav{grid-template-columns:minmax(0,1fr);align-items:start}.wm-membership-shortcuts{grid-template-columns:minmax(0,1fr);gap:6px}}
@@ -6797,6 +6814,7 @@ const WEATHER_CSS = `
 .wm-weather[data-verdict="on_track"] .wm-weather-verdict{color:var(--ui-success,#3fb950)}
 .wm-weather-details{font-size:11.5px;color:var(--ui-text-secondary)}
 .wm-weather-details ul{margin:6px 0 0;padding-left:16px;display:grid;gap:3px}
+.wm-weather-details:not([open]) > ul{display:none}
 .wm-weather-details ul.wm-weather-subnotes{margin:4px 0 2px;padding-left:16px;display:grid;gap:2px;font-size:11px;color:var(--ui-text-tertiary)}
 .wm-weather-notes{margin:0;padding-left:16px;display:grid;gap:3px;font-size:11.5px;color:var(--ui-text-secondary)}
 `
@@ -7816,6 +7834,7 @@ function MembershipsPage() {
     $membershipAttentionOnly.set(false)
     $membershipExpanded.set({ origin: null, ids: [] })
     membershipGroupClosed.clear()
+    membershipGroupDraftOpened.clear()
     // The request log is deliberately *not* cleared: it is already bounded, and
     // wiping it would erase the very requests that failed to load.
   }, [identity])
@@ -7998,6 +8017,7 @@ function MembershipsPage() {
       // The draft carries the identity it was opened in, so a save can tell
       // whether the form it is submitting still belongs to this connection.
       $membershipNotice.set(null)
+      membershipGroupClosed.delete(`${account.id}:plan`)
       $membershipDraft.set({ ...feeDraft(account), origin: membershipIdentityNow() })
       return { ok: true }
     }
@@ -8008,6 +8028,7 @@ function MembershipsPage() {
                  { ...account, fee_overrides }, 'PUT')
     }
     if (kind === 'edit-custom-plan') {
+      membershipGroupClosed.delete(`${account.id}:advanced`)
       $customPlanDraft.set(customPlanDraftFor(account, identity))
       return { ok: true }
     }
@@ -8031,6 +8052,7 @@ function MembershipsPage() {
     }
     if (kind === 'exhaust') {
       const wholeAccount = value === ACCOUNT_SCOPE
+      membershipGroupClosed.delete(`${account.id}:allowances`)
       $exhaustionDraft.set({ origin: identity, account_id: account.id,
         scope_id: wholeAccount ? 'account' : value,
         scope_kind: wholeAccount ? 'account' : 'window',
