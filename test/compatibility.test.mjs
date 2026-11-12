@@ -430,3 +430,164 @@ test('the installed transport wrapper records one translated warning and removes
     restoreGlobals(globals)
   }
 })
+
+// WP15: the pair's identity and contract, read from /health before any request fails.
+test('a backend older than the contract field is treated as an older pair', () => {
+  const legacy = { ok: true, version: '0.6.0' }
+  const pair = T.backendPairState('conn-1', legacy)
+  assert.ok(pair, 'a backend that reports no build block cannot be this bundle`s pair')
+  assert.equal(pair.found, 1)
+  assert.equal(pair.required, T.REQUIRED_BACKEND_CONTRACT)
+  assert.equal(pair.desktop, T.DESKTOP_CONTRACT)
+  assert.equal(pair.revision, null)
+  assert.equal(pair.desktopSha256, null)
+
+  // A recorded zero or a non-integer is not a contract level.
+  assert.equal(T.backendContract({ build: { contract: 0 } }), 1)
+  assert.equal(T.backendContract({ build: { contract: '3' } }), 3)
+  assert.equal(T.backendContract({ build: { contract: 3.5 } }), 1)
+  assert.equal(T.backendContract(null), 1)
+})
+
+test('a backend at or above the required contract raises no pair verdict', () => {
+  for (const contract of [T.REQUIRED_BACKEND_CONTRACT, T.REQUIRED_BACKEND_CONTRACT + 1]) {
+    assert.equal(T.backendPairState('conn-1', { ok: true, version: '0.6.0', build: { contract } }), null,
+      String(contract))
+  }
+  assert.equal(T.backendPairState('conn-1', undefined), null)
+  assert.equal(T.backendPairState('conn-1', { ok: true, version: '0.6.0', build: {} })?.found, 1)
+})
+
+test('only a health payload can judge the pair', () => {
+  // Another route's body, or a proxy's JSON, is not evidence about the backend build.
+  for (const payload of [
+    { ok: true },
+    { ok: true, generated_at: '2026-10-31T12:00:00Z', sections: [] },
+    { ok: true, build: { contract: 1 } },
+    { error: 'nope' },
+    null
+  ]) {
+    assert.equal(T.backendPairState('conn-1', payload), null, JSON.stringify(payload))
+  }
+  assert.ok(T.backendPairState('conn-1', { ok: true, rate_card: {}, build: { contract: 1 } }))
+  assert.ok(T.backendPairState('conn-1', { ok: true, db_present: true, build: { contract: 1 } }))
+})
+
+test('the pair verdict carries the backend revision and the expected bundle digest', () => {
+  const revision = 'a'.repeat(40)
+  const digest = 'b'.repeat(64)
+  const pair = T.backendPairState('conn-1', {
+    ok: true, version: '0.6.0', build: { contract: 1, revision, desktop_sha256: digest }
+  })
+  assert.equal(pair.revision, revision)
+  assert.equal(pair.desktopSha256, digest)
+
+  // A shortened or non-hex value is not repeated back as an identity.
+  const forged = T.backendPairState('conn-1', {
+    ok: true, version: '0.6.0', build: { contract: 1, revision: 'a'.repeat(39), desktop_sha256: '<script>' }
+  })
+  assert.equal(forged.revision, null)
+  assert.equal(forged.desktopSha256, null)
+})
+
+test('the halves shipped by one revision declare a compatible contract', () => {
+  const api = readFileSync(new URL('../dashboard/plugin_api.py', import.meta.url), 'utf8')
+  const declared = Number((api.match(/^API_CONTRACT = (\d+)$/m) || [])[1])
+  assert.ok(Number.isInteger(declared) && declared > 0,
+    'dashboard/plugin_api.py must declare API_CONTRACT')
+  assert.ok(T.DESKTOP_CONTRACT > 0 && T.REQUIRED_BACKEND_CONTRACT > 0)
+  // The release that ships this bundle must accept its own pair. Raising the
+  // requirement without the backend, or the backend without the requirement,
+  // is the mistake this catches.
+  assert.ok(T.REQUIRED_BACKEND_CONTRACT <= declared,
+    `this bundle needs backend contract ${T.REQUIRED_BACKEND_CONTRACT}, the same revision offers ${declared}`)
+  assert.ok(T.DESKTOP_CONTRACT <= declared)
+})
+
+test('a health payload is judged even when the usage stores are absent', async () => {
+  // `ok` reports store readiness, not identity: a fresh profile must still learn
+  // that its backend is too old, before it opens a single tab.
+  const globals = snapshotGlobals(['compatibilityLanguage', 'compatibilityQueryResponse'])
+  const previousRest = T.getRest()
+  const previousCompatibility = T.$backendCompatibility.get()
+  try {
+    T.$backendCompatibility.set([])
+    const payload = {
+      ok: false, version: '0.6.0', db_present: false, event_db_present: false,
+      build: { contract: 1, revision: 'e'.repeat(40) }
+    }
+    T.setRest(async () => payload)
+    const query = T.backendHealthQuery(T.membershipIdentityNow())
+    assert.deepEqual(await query.queryFn(), payload)
+    assert.equal(T.backendPairState('conn-1', payload).found, 1)
+
+    globalThis.compatibilityQueryResponse = { data: payload }
+    const shell = T.ProductShell({ children: [] })
+    assert.equal(shell.props.children
+      .filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility').length, 1)
+  } finally {
+    T.restoreRest(previousRest)
+    T.$backendCompatibility.set(previousCompatibility)
+    restoreGlobals(globals)
+  }
+})
+
+test('the shell health read is a health response, not a store verdict', async () => {
+  const previousRest = T.getRest()
+  try {
+    T.setRest(async () => null)
+    const query = T.backendHealthQuery(T.membershipIdentityNow())
+    await assert.rejects(query.queryFn(), /Health check failed/)
+  } finally {
+    T.restoreRest(previousRest)
+  }
+  assert.equal(T.backendHealthQuery('conn-1').queryKey[1], 'health')
+})
+
+test('a mismatched pair renders recovery instructions, not the bare banner', () => {
+  const globals = snapshotGlobals(['compatibilityQueryResponse', 'compatibilityLanguage'])
+  const previousCompatibility = T.$backendCompatibility.get()
+  try {
+    T.$backendCompatibility.set([])
+    const revision = 'c'.repeat(40)
+    const digest = 'd'.repeat(64)
+    globalThis.compatibilityQueryResponse = { data: {
+      ok: true, version: '0.6.0', build: { contract: 1, revision, desktop_sha256: digest }
+    } }
+
+    const shell = T.ProductShell({ children: [] })
+    const warnings = shell.props.children
+      .filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility')
+    assert.equal(warnings.length, 1)
+    const text = allText(warnings[0])
+    assert.match(text, /different releases/)
+    assert.match(text, new RegExp(revision))
+    assert.match(text, new RegExp(digest))
+    assert.match(text, /desktop-plugins\/spend-sense\/plugin\.js/)
+    assert.match(text, /changes no data/)
+    assert.match(text, /Saves may fail/)
+    assert.doesNotMatch(text, /The backend may be older than this SpendSense Desktop UI/)
+
+    globalThis.compatibilityLanguage = 'zh'
+    const zhShell = T.ProductShell({ children: [] })
+    const zhWarnings = zhShell.props.children
+      .filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility')
+    assert.equal(zhWarnings.length, 1)
+    const zhText = allText(zhWarnings[0])
+    assert.match(zhText, /前后端来自不同版本/)
+    assert.match(zhText, new RegExp(revision))
+    assert.match(zhText, /一起更新|同时更新/)
+
+    // A healthy, matching pair keeps the shell quiet.
+    globalThis.compatibilityLanguage = 'en'
+    globalThis.compatibilityQueryResponse = { data: {
+      ok: true, version: '0.6.0', build: { contract: T.REQUIRED_BACKEND_CONTRACT }
+    } }
+    const matched = T.ProductShell({ children: [] })
+    assert.equal(matched.props.children
+      .filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility').length, 0)
+  } finally {
+    T.$backendCompatibility.set(previousCompatibility)
+    restoreGlobals(globals)
+  }
+})

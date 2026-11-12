@@ -15,7 +15,10 @@ see ``wolfmark_ledger.news`` and ``wolfmark_ledger.membership_live``.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -48,6 +51,139 @@ router = APIRouter()
 
 VERSION = "0.6.0"
 
+#: Pairing level between the two halves of one release. Every build in this
+#: line ships the same ``VERSION`` string, so that string cannot tell two builds
+#: apart; this integer is what a Desktop bundle can act on. Bump it in the same
+#: commit as any backend change the UI relies on, and raise
+#: ``REQUIRED_BACKEND_CONTRACT`` in ``desktop/plugin.js`` to match.
+API_CONTRACT = 3
+
+_REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _read_optional_text(path: Path) -> str:
+    """Text of *path*, or ``''``. Health must stay total, so every read is optional."""
+    try:
+        return path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return ""
+
+
+def _git_dir(root: Path) -> Path | None:
+    """The Git metadata directory for *root*, following a ``gitdir:`` indirection.
+
+    A linked worktree (``git worktree add``) and a submodule replace ``.git`` with
+    a file naming the real metadata directory, relative to the tree holding the
+    file. Reading ``.git/HEAD`` in that layout raises, so it has to be resolved
+    first.
+    """
+    dot = root / ".git"
+    try:
+        if dot.is_dir():
+            return dot
+    except OSError:
+        return None
+    text = _read_optional_text(dot).strip()
+    if not text.startswith("gitdir:"):
+        return None
+    target = Path(text[len("gitdir:"):].strip())
+    if not target.is_absolute():
+        target = root / target
+    try:
+        return target.resolve() if target.is_dir() else None
+    except OSError:
+        return None
+
+
+def _git_refs_base(git_dir: Path) -> Path:
+    """Where refs and ``packed-refs`` live: the common dir for a linked worktree."""
+    common = _read_optional_text(git_dir / "commondir").strip()
+    if not common:
+        return git_dir
+    path = Path(common)
+    if not path.is_absolute():
+        path = git_dir / path
+    try:
+        return path.resolve() if path.is_dir() else git_dir
+    except OSError:
+        return git_dir
+
+
+def _git_head_revision(root: Path) -> str | None:
+    """The checked-out commit, read from Git's own files rather than a subprocess.
+
+    ``hermes plugins install`` leaves a detached checkout, so ``HEAD`` usually
+    holds the SHA itself. A branch checkout names a ref, which may be a loose file
+    or a line in ``packed-refs``.
+    """
+    git_dir = _git_dir(root)
+    if git_dir is None:
+        return None
+    head = _read_optional_text(git_dir / "HEAD").strip()
+    if not head:
+        return None
+    if head.startswith("ref:"):
+        ref = head[4:].strip()
+        refs = _git_refs_base(git_dir)
+        revision = _read_optional_text(refs / ref).strip()
+        if not revision:
+            for line in _read_optional_text(refs / "packed-refs").splitlines():
+                parts = line.strip().split()
+                if len(parts) == 2 and parts[1] == ref:
+                    revision = parts[0]
+                    break
+    else:
+        revision = head
+    return revision if _REVISION_RE.match(revision) else None
+
+
+def _installer_revision(root: Path) -> str | None:
+    """The revision an installer recorded, for a tree that carries no ``.git``."""
+    try:
+        catalog = json.loads((root / ".hermes-catalog.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        catalog = None
+    if isinstance(catalog, dict):
+        recorded = catalog.get("sha")
+        if isinstance(recorded, str) and _REVISION_RE.match(recorded):
+            return recorded
+    try:
+        registry = json.loads((root.parent / ".install-metadata.json").read_text(encoding="utf-8-sig"))
+        recorded = (registry.get(root.name) or {}).get("revision")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return recorded if isinstance(recorded, str) and _REVISION_RE.match(recorded) else None
+
+
+def _desktop_bundle_sha256(root: Path) -> str | None:
+    """SHA-256 of the Desktop half this release ships.
+
+    The Desktop app cannot hash its own bundle, so a pair is only provable across
+    hosts if one half publishes the other's digest. This is the digest of
+    ``desktop/plugin.js`` in *this* tree: the bundle the same commit released.
+    """
+    try:
+        return hashlib.sha256((root / "desktop" / "plugin.js").read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _build_identity() -> dict[str, Any]:
+    """Identity of the installed pair, for ``/health``. Never raises."""
+    return {
+        "contract": API_CONTRACT,
+        "revision": _git_head_revision(_ROOT) or _installer_revision(_ROOT),
+        "desktop_sha256": _desktop_bundle_sha256(_ROOT),
+    }
+
+
+#: The identity of the code this module was imported from, resolved once.
+#: ``/health`` must describe the *running* build: a tree replaced in place before
+#: the backend restarts is a different release, and reporting its revision against
+#: the old process's ``API_CONTRACT`` would make an unfinished upgrade look
+#: verified. After the restart this is recomputed from the new tree.
+_BUILD_IDENTITY = _build_identity()
+
 
 def _exists_for_health(path: Path) -> bool:
     """Presence check that keeps health's never-raises contract."""
@@ -59,7 +195,13 @@ def _exists_for_health(path: Path) -> bool:
 
 @router.get("/health")
 def health() -> dict[str, Any]:
-    """Cheap liveness/readiness probe. Never raises."""
+    """Cheap liveness/readiness probe. Never raises.
+
+    ``build`` carries the identity a Desktop bundle needs to tell whether it is
+    paired with a backend from the same release: the contract level, the
+    revision this module was imported from, and the digest of the Desktop half
+    that release shipped. All three are optional and never raise.
+    """
     db = default_db_path()
     event_db = store.event_db_path()
     catalogue = load_catalogue()
@@ -68,6 +210,7 @@ def health() -> dict[str, Any]:
     return {
         "ok": db_present or event_db_present,
         "version": VERSION,
+        "build": dict(_BUILD_IDENTITY),
         "db_present": db_present,
         "event_db_present": event_db_present,
         "event_db_status": _event_db_status(event_db),
