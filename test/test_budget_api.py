@@ -18,13 +18,12 @@ TestClient = None
 try:
     from fastapi import FastAPI  # type: ignore[no-redef]
     from fastapi.testclient import TestClient  # type: ignore[no-redef]
-
-    from dashboard import plugin_api  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - depends on the test interpreter
-    # dashboard.plugin_api raises ModuleNotFoundError (an ImportError) when
-    # FastAPI is absent; any other import failure propagates instead of
-    # silently skipping the suite.
     pass
+else:
+    # Imported outside the guard: only a missing FastAPI/TestClient skips
+    # the suite, while failures here propagate with their original error.
+    from dashboard import plugin_api  # type: ignore[no-redef]
 
 
 @unittest.skipUnless(FastAPI is not None and TestClient is not None,
