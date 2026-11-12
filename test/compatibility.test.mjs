@@ -581,7 +581,7 @@ test('a mismatched pair renders recovery instructions, not the bare banner', () 
     // A healthy, matching pair keeps the shell quiet.
     globalThis.compatibilityLanguage = 'en'
     globalThis.compatibilityQueryResponse = { data: {
-      ok: true, build: { contract: T.REQUIRED_BACKEND_CONTRACT }
+      ok: true, version: '0.6.0', build: { contract: T.REQUIRED_BACKEND_CONTRACT }
     } }
     const matched = T.ProductShell({ children: [] })
     assert.equal(matched.props.children

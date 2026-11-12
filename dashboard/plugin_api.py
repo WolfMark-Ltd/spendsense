@@ -69,22 +69,65 @@ def _read_optional_text(path: Path) -> str:
         return ""
 
 
+def _git_dir(root: Path) -> Path | None:
+    """The Git metadata directory for *root*, following a ``gitdir:`` indirection.
+
+    A linked worktree (``git worktree add``) and a submodule replace ``.git`` with
+    a file naming the real metadata directory, relative to the tree holding the
+    file. Reading ``.git/HEAD`` in that layout raises, so it has to be resolved
+    first.
+    """
+    dot = root / ".git"
+    try:
+        if dot.is_dir():
+            return dot
+    except OSError:
+        return None
+    text = _read_optional_text(dot).strip()
+    if not text.startswith("gitdir:"):
+        return None
+    target = Path(text[len("gitdir:"):].strip())
+    if not target.is_absolute():
+        target = root / target
+    try:
+        return target.resolve() if target.is_dir() else None
+    except OSError:
+        return None
+
+
+def _git_refs_base(git_dir: Path) -> Path:
+    """Where refs and ``packed-refs`` live: the common dir for a linked worktree."""
+    common = _read_optional_text(git_dir / "commondir").strip()
+    if not common:
+        return git_dir
+    path = Path(common)
+    if not path.is_absolute():
+        path = git_dir / path
+    try:
+        return path.resolve() if path.is_dir() else git_dir
+    except OSError:
+        return git_dir
+
+
 def _git_head_revision(root: Path) -> str | None:
     """The checked-out commit, read from Git's own files rather than a subprocess.
 
-    ``hermes plugins install`` leaves a detached checkout, so ``.git/HEAD``
-    usually holds the SHA itself. A branch checkout names a ref, which may be a
-    loose file or a line in ``packed-refs``.
+    ``hermes plugins install`` leaves a detached checkout, so ``HEAD`` usually
+    holds the SHA itself. A branch checkout names a ref, which may be a loose file
+    or a line in ``packed-refs``.
     """
-    git = root / ".git"
-    head = _read_optional_text(git / "HEAD").strip()
+    git_dir = _git_dir(root)
+    if git_dir is None:
+        return None
+    head = _read_optional_text(git_dir / "HEAD").strip()
     if not head:
         return None
     if head.startswith("ref:"):
         ref = head[4:].strip()
-        revision = _read_optional_text(git / ref).strip()
+        refs = _git_refs_base(git_dir)
+        revision = _read_optional_text(refs / ref).strip()
         if not revision:
-            for line in _read_optional_text(git / "packed-refs").splitlines():
+            for line in _read_optional_text(refs / "packed-refs").splitlines():
                 parts = line.strip().split()
                 if len(parts) == 2 and parts[1] == ref:
                     revision = parts[0]

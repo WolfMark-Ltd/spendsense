@@ -343,6 +343,33 @@ class BuildIdentityTests(unittest.TestCase):
                 encoding="utf-8")
             self.assertEqual(self.api()._git_head_revision(root), self.REV)
 
+    def test_a_linked_worktree_resolves_through_its_gitdir(self):
+        import os
+
+        with tempfile.TemporaryDirectory() as scratch:
+            parent = Path(scratch)
+            common = parent / "main" / ".git"
+            (common / "refs" / "heads").mkdir(parents=True)
+            (common / "packed-refs").write_text(
+                f"# pack-refs with: peeled fully-peeled\n{self.REV} refs/heads/main\n", encoding="utf-8")
+            worktree = parent / "wt"
+            metadata = common / "worktrees" / "wt"
+            metadata.mkdir(parents=True)
+            (metadata / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+            (metadata / "commondir").write_text("../..\n", encoding="utf-8")
+            worktree.mkdir()
+            # Git writes a relative gitdir for submodules and an absolute one for
+            # `git worktree add`; the relative form resolves from the tree holding
+            # the .git file, not from the working directory.
+            relative = os.path.relpath(metadata, worktree)
+            (worktree / ".git").write_text(f"gitdir: {relative}\n", encoding="utf-8")
+            self.assertEqual(self.api()._git_head_revision(worktree), self.REV)
+
+            (worktree / ".git").write_text(f"gitdir: {metadata}\n", encoding="utf-8")
+            self.assertEqual(self.api()._git_head_revision(worktree), self.REV)
+            # The branch's ref lives in the common dir, not in the worktree metadata.
+            self.assertEqual(self.api()._git_refs_base(metadata), common.resolve())
+
     def test_a_missing_or_malformed_revision_is_not_invented(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = self._tree(scratch)
