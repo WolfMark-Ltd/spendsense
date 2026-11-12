@@ -7,6 +7,7 @@ Skipped when FastAPI/httpx are not installed (the pure ledger tests still run).
 
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from contextlib import closing, nullcontext
@@ -219,6 +220,17 @@ class ApiTests(unittest.TestCase):
         self.assertIn("ok", body)
         self.assertIn("rate_card", body)
 
+    def test_health_reports_the_pair_identity(self):
+        body = self.client.get("/api/plugins/spend-sense/health").json()
+        build = body["build"]
+        self.assertEqual(build["contract"], plugin_api.API_CONTRACT)
+        root = Path(plugin_api.__file__).resolve().parent.parent
+        expected = hashlib.sha256((root / "desktop" / "plugin.js").read_bytes()).hexdigest()
+        # The published digest must describe the Desktop half this tree ships,
+        # not a manifest that could drift from it.
+        self.assertEqual(build["desktop_sha256"], expected)
+        self.assertTrue(build["revision"] is None or len(build["revision"]) == 40)
+
     def test_real_report_endpoint_uses_a_synthetic_state_database(self):
         from wolfmark_ledger import build_ledger_report as real_report
 
@@ -289,6 +301,96 @@ class ApiTests(unittest.TestCase):
         self.assertIn("baseline", body)
         self.assertEqual(body["baseline"]["totals"]["tokens"], 30)
         self.assertIn("reconciliation", body)
+
+
+@unittest.skipIf(plugin_api is None, "dashboard.plugin_api is not importable in this interpreter")
+class BuildIdentityTests(unittest.TestCase):
+    """The pair identity must be readable from an installed tree, without Git on PATH."""
+
+    REV = "0123456789abcdef0123456789abcdef01234567"
+
+    @staticmethod
+    def api():
+        assert plugin_api is not None  # narrowed for the type checker; the class is skipped otherwise
+        return plugin_api
+
+    def _tree(self, scratch: str) -> Path:
+        root = Path(scratch)
+        (root / ".git").mkdir()
+        return root
+
+    def test_detached_head_revision_is_read_from_the_head_file(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = self._tree(scratch)
+            (root / ".git" / "HEAD").write_text(self.REV + "\n", encoding="utf-8")
+            self.assertEqual(self.api()._git_head_revision(root), self.REV)
+
+    def test_a_loose_branch_ref_resolves(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = self._tree(scratch)
+            (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+            (root / ".git" / "refs" / "heads").mkdir(parents=True)
+            (root / ".git" / "refs" / "heads" / "main").write_text(self.REV + "\n", encoding="utf-8")
+            self.assertEqual(self.api()._git_head_revision(root), self.REV)
+
+    def test_a_packed_branch_ref_resolves(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = self._tree(scratch)
+            (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+            (root / ".git" / "packed-refs").write_text(
+                "# pack-refs with: peeled fully-peeled\n"
+                f"aaaabbbbccccddddeeeeffff0000111122223333 refs/heads/other\n{self.REV} refs/heads/main\n",
+                encoding="utf-8")
+            self.assertEqual(self.api()._git_head_revision(root), self.REV)
+
+    def test_a_missing_or_malformed_revision_is_not_invented(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = self._tree(scratch)
+            self.assertIsNone(self.api()._git_head_revision(root))
+            (root / ".git" / "HEAD").write_text("ref: refs/heads/feature\n", encoding="utf-8")
+            self.assertIsNone(self.api()._git_head_revision(root))
+            (root / ".git" / "HEAD").write_text("not-a-sha\n", encoding="utf-8")
+            self.assertIsNone(self.api()._git_head_revision(root))
+        with tempfile.TemporaryDirectory() as scratch:
+            self.assertIsNone(self.api()._git_head_revision(Path(scratch)))
+
+    def test_an_installer_record_stands_in_for_missing_git_metadata(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            parent = Path(scratch)
+            root = parent / "spend-sense"
+            root.mkdir()
+            (root / ".hermes-catalog.json").write_text(
+                '{"catalogName": "spend-sense", "sha": "%s"}' % self.REV, encoding="utf-8")
+            self.assertEqual(self.api()._installer_revision(root), self.REV)
+
+        with tempfile.TemporaryDirectory() as scratch:
+            parent = Path(scratch)
+            root = parent / "spend-sense"
+            root.mkdir()
+            (parent / ".install-metadata.json").write_text(
+                '{"spend-sense": {"revision": "%s"}}' % self.REV, encoding="utf-8")
+            self.assertEqual(self.api()._installer_revision(root), self.REV)
+            # A registry that records a branch name or a short SHA is not an identity.
+            (parent / ".install-metadata.json").write_text(
+                '{"spend-sense": {"revision": "main"}}', encoding="utf-8")
+            self.assertIsNone(self.api()._installer_revision(root))
+
+    def test_a_tree_without_a_desktop_half_publishes_no_digest(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            self.assertIsNone(self.api()._desktop_bundle_sha256(Path(scratch)))
+
+    def test_the_digest_describes_the_desktop_half_and_follows_a_reinstall(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            (root / "desktop").mkdir()
+            bundle = root / "desktop" / "plugin.js"
+            bundle.write_bytes(b"first bundle")
+            first = self.api()._desktop_bundle_sha256(root)
+            self.assertEqual(first, hashlib.sha256(b"first bundle").hexdigest())
+            self.assertEqual(self.api()._desktop_bundle_sha256(root), first)
+            # A replaced half must not keep the previous digest.
+            bundle.write_bytes(b"second bundle, longer than the first")
+            self.assertNotEqual(self.api()._desktop_bundle_sha256(root), first)
 
 
 @unittest.skipUnless(FastAPI is not None and TestClient is not None,

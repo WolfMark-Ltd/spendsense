@@ -15,7 +15,10 @@ see ``wolfmark_ledger.news`` and ``wolfmark_ledger.membership_live``.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -48,6 +51,103 @@ router = APIRouter()
 
 VERSION = "0.6.0"
 
+#: Pairing level between the two halves of one release. Every build in this
+#: line ships the same ``VERSION`` string, so that string cannot tell two builds
+#: apart; this integer is what a Desktop bundle can act on. Bump it in the same
+#: commit as any backend change the UI relies on, and raise
+#: ``REQUIRED_BACKEND_CONTRACT`` in ``desktop/plugin.js`` to match.
+API_CONTRACT = 3
+
+_REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
+
+#: ``((path, mtime_ns, size), digest)`` of a Desktop half already hashed by :func:`_desktop_bundle_sha256`.
+_desktop_digest: tuple[tuple[str, int, int], str] | None = None
+
+
+def _read_optional_text(path: Path) -> str:
+    """Text of *path*, or ``''``. Health must stay total, so every read is optional."""
+    try:
+        return path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return ""
+
+
+def _git_head_revision(root: Path) -> str | None:
+    """The checked-out commit, read from Git's own files rather than a subprocess.
+
+    ``hermes plugins install`` leaves a detached checkout, so ``.git/HEAD``
+    usually holds the SHA itself. A branch checkout names a ref, which may be a
+    loose file or a line in ``packed-refs``.
+    """
+    git = root / ".git"
+    head = _read_optional_text(git / "HEAD").strip()
+    if not head:
+        return None
+    if head.startswith("ref:"):
+        ref = head[4:].strip()
+        revision = _read_optional_text(git / ref).strip()
+        if not revision:
+            for line in _read_optional_text(git / "packed-refs").splitlines():
+                parts = line.strip().split()
+                if len(parts) == 2 and parts[1] == ref:
+                    revision = parts[0]
+                    break
+    else:
+        revision = head
+    return revision if _REVISION_RE.match(revision) else None
+
+
+def _installer_revision(root: Path) -> str | None:
+    """The revision an installer recorded, for a tree that carries no ``.git``."""
+    try:
+        catalog = json.loads((root / ".hermes-catalog.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        catalog = None
+    if isinstance(catalog, dict):
+        recorded = catalog.get("sha")
+        if isinstance(recorded, str) and _REVISION_RE.match(recorded):
+            return recorded
+    try:
+        registry = json.loads((root.parent / ".install-metadata.json").read_text(encoding="utf-8-sig"))
+        recorded = (registry.get(root.name) or {}).get("revision")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return recorded if isinstance(recorded, str) and _REVISION_RE.match(recorded) else None
+
+
+def _desktop_bundle_sha256(root: Path) -> str | None:
+    """SHA-256 of the Desktop half this release ships.
+
+    The Desktop app cannot hash its own bundle, so a pair is only provable across
+    hosts if one half publishes the other's digest. This is the digest of
+    ``desktop/plugin.js`` in *this* tree: the bundle the same commit released.
+
+    Health is polled, so the digest is cached against the file's own stat: an
+    install replaced in place changes the key and is re-read.
+    """
+    global _desktop_digest
+    path = root / "desktop" / "plugin.js"
+    try:
+        entry = path.stat()
+    except OSError:
+        return None
+    key = (str(path), entry.st_mtime_ns, entry.st_size)
+    if _desktop_digest is None or _desktop_digest[0] != key:
+        try:
+            _desktop_digest = (key, hashlib.sha256(path.read_bytes()).hexdigest())
+        except OSError:
+            return None
+    return _desktop_digest[1]
+
+
+def _build_identity() -> dict[str, Any]:
+    """Identity of the installed pair, for ``/health``. Never raises."""
+    return {
+        "contract": API_CONTRACT,
+        "revision": _git_head_revision(_ROOT) or _installer_revision(_ROOT),
+        "desktop_sha256": _desktop_bundle_sha256(_ROOT),
+    }
+
 
 def _exists_for_health(path: Path) -> bool:
     """Presence check that keeps health's never-raises contract."""
@@ -59,7 +159,13 @@ def _exists_for_health(path: Path) -> bool:
 
 @router.get("/health")
 def health() -> dict[str, Any]:
-    """Cheap liveness/readiness probe. Never raises."""
+    """Cheap liveness/readiness probe. Never raises.
+
+    ``build`` carries the identity a Desktop bundle needs to tell whether it is
+    paired with a backend from the same release: the contract level, the
+    revision this tree was checked out at, and the digest of the Desktop half
+    the same commit shipped. All three are optional and never raise.
+    """
     db = default_db_path()
     event_db = store.event_db_path()
     catalogue = load_catalogue()
@@ -68,6 +174,7 @@ def health() -> dict[str, Any]:
     return {
         "ok": db_present or event_db_present,
         "version": VERSION,
+        "build": _build_identity(),
         "db_present": db_present,
         "event_db_present": event_db_present,
         "event_db_status": _event_db_status(event_db),

@@ -43,6 +43,10 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
 const PLUGIN_VERSION = '0.6.0'
+/** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
+const DESKTOP_CONTRACT = 3
+/** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
+const REQUIRED_BACKEND_CONTRACT = 3
 const LEDGER_KEY = 'ledger.v2'
 /** Pre-1.0 ledger. Migrated on first load and left untouched as a backup. */
 const LEGACY_LEDGER_KEY = 'ledger.v1'
@@ -1338,6 +1342,85 @@ function makeBackendCompatibilityError(path, kind) {
 
 function backendCompatibilityText(error, t = needsAttentionEn) {
   return isBackendCompatibilityError(error) ? t('backendCompatibility') : null
+}
+
+/** A backend that predates the contract field reports nothing; read that as level 1. */
+function backendContract(health) {
+  const value = Number(health?.build?.contract)
+  return Number.isInteger(value) && value > 0 ? value : 1
+}
+
+function backendRevision(value) {
+  return typeof value === 'string' && /^[0-9a-f]{40}$/.test(value) ? value : null
+}
+
+function backendDigest(value) {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value) ? value : null
+}
+
+/** Fields only a `/health` response carries. Another route's body must not judge the pair. */
+const HEALTH_FIELDS = ['version', 'rate_card', 'db_present', 'event_db_present', 'event_db_status']
+
+function backendHealthPayload(health) {
+  if (!health || typeof health !== 'object') return null
+  if (typeof health.ok !== 'boolean') return null
+  return HEALTH_FIELDS.some(key => health[key] !== undefined) ? health : null
+}
+
+/**
+ * The pair verdict for one connection, or null when both halves agree.
+ *
+ * Only one direction breaks: this bundle cannot drive an older backend. An older
+ * UI against a newer backend ignores the added fields and degrades safely, and it
+ * cannot know it is old, so the check belongs on this side. Reading the contract
+ * from /health makes the verdict independent of whether a request has failed yet.
+ */
+function backendPairState(identity, health) {
+  const payload = backendHealthPayload(health)
+  if (!payload) return null
+  const found = backendContract(payload)
+  if (found >= REQUIRED_BACKEND_CONTRACT) return null
+  const build = payload.build && typeof payload.build === 'object' ? payload.build : {}
+  return {
+    identity,
+    found,
+    required: REQUIRED_BACKEND_CONTRACT,
+    desktop: DESKTOP_CONTRACT,
+    revision: backendRevision(build.revision),
+    desktopSha256: backendDigest(build.desktop_sha256)
+  }
+}
+
+/** Shared by the shell banner and Settings: one key, one request, one freshness rule. */
+function backendHealthQuery(identity) {
+  return {
+    queryKey: [ID, 'health', identity],
+    queryFn: async () => {
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      const result = await rest('/health')
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
+      if (!result?.ok) throw new Error(result?.error || 'Health check failed.')
+      return result
+    },
+    retry: false,
+    staleTime: 30_000
+  }
+}
+
+/** Recovery block for a half-pair: what was found, what is expected, what to do. */
+function backendPairNotice(pair, t) {
+  return jsxs('div', { className: 'wm-alert wm-backend-compatibility', role: 'alert', children: [
+    jsx('strong', { children: t('backendPairHeading') }, 'h'),
+    jsx('p', { children: t('backendPairDetail', pair.found, pair.required) }, 'd'),
+    jsx('p', { children: pair.revision
+      ? t('backendPairRevision', pair.revision)
+      : t('backendPairRevisionUnknown') }, 'r'),
+    jsx('p', { children: t('backendPairFix') }, 'f'),
+    pair.desktopSha256
+      ? jsx('p', { children: t('backendPairVerify', pair.desktopSha256) }, 'v')
+      : null,
+    jsx('p', { className: 'wm-subtle', children: t('backendPairDataSafe') }, 'g')
+  ].filter(Boolean) }, 'pair')
 }
 
 function rememberBackendCompatibilityFailure(failure) {
@@ -2913,6 +2996,9 @@ function ProductShell({ children, pageStyles = '' }) {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const compatibility = useValue($backendCompatibility)
+  // Identity is checked on load, not only after a request has already failed.
+  const health = useQuery(backendHealthQuery(identity)) || {}
+  const pair = backendPairState(identity, health.data)
   const supplementalStyles = Array.isArray(pageStyles) ? pageStyles.join('') : pageStyles
   // Mirror the Meter pane: a hover-opened tip has no focused button to catch
   // Escape, so dismiss it here on capture and keep the window-level ledger
@@ -2927,10 +3013,12 @@ function ProductShell({ children, pageStyles = '' }) {
     children: [
       jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + (supplementalStyles || '') }),
       jsx(LedgerTabs, {}),
-      compatibility.some(failure => failure.identity === identity)
-        ? jsx('div', { className: 'wm-alert wm-backend-compatibility', role: 'alert',
-            children: t('backendCompatibility') })
-        : null,
+      pair
+        ? backendPairNotice(pair, t)
+        : compatibility.some(failure => failure.identity === identity)
+          ? jsx('div', { className: 'wm-alert wm-backend-compatibility', role: 'alert',
+              children: t('backendCompatibility') })
+          : null,
       children
     ].filter(Boolean) })
 }
@@ -4321,7 +4409,12 @@ const PRODUCT_CSS = [
   '@container(max-width:760px){.wm-product .wm-product-tabs{padding:6px 14px;gap:2px}.wm-product .wm-product-brand{flex:0 0 100%;min-height:39px;align-self:auto;margin:0;padding:0 0 8px;border-right:0;border-bottom:1px solid var(--wm-border)}}',
   '@media(prefers-reduced-motion:reduce){.wm-product .wm-product-tab,.wm-product .wm-button,.wm-product .wm-account-chip{transition:none!important}.wm-product .wm-button:active:not(:disabled){transform:none}}',
   '@container(max-width:760px){.wm-product .wm-overview-panels{grid-template-columns:1fr}}',
-  '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-overview-grid{grid-template-columns:1fr}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}}'
+  '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-overview-grid{grid-template-columns:1fr}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}}',
+  // The pairing notice is shown by the shell on every tab, so its type rules
+  // live with the shell rather than in a page stylesheet.
+  '.wm-product .wm-backend-compatibility strong{display:block;font-weight:600;font-size:12px}',
+  '.wm-product .wm-backend-compatibility p{margin:5px 0 0;font-size:11.5px;line-height:1.5;color:var(--ui-text-secondary)}',
+  '.wm-product .wm-backend-compatibility p.wm-subtle{color:var(--ui-text-tertiary)}'
 ].join('') + BUDGET_CSS;
 
 function pricingStatusQuery(identity = membershipIdentityNow()) {
@@ -5134,17 +5227,7 @@ function SettingsPage() {
   const identity = useValue($membershipIdentity)
   const status = useQuery(pricingStatusQuery(identity))
   const planCatalogue = useQuery(membershipPlansQuery(identity))
-  const health = useQuery({
-    queryKey: [ID, 'health', identity],
-    queryFn: async () => {
-      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
-      const result = await rest('/health')
-      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
-      if (!result?.ok) throw new Error(result?.error || 'Health check failed.')
-      return result
-    },
-    retry: false, staleTime: 30_000
-  })
+  const health = useQuery(backendHealthQuery(identity))
   const confirmation = useValue($settingsConfirmation)
   const refreshState = useValue($modelRefreshState)
   const automaticModelOptions = useValue($automaticModelOptions)
@@ -5447,6 +5530,12 @@ function SettingsPage() {
           jsx('p', { children: t('settingsDiagnosticsVersions', PLUGIN_VERSION,
             last?.version ? t('settingsDiagnosticsBackend', last.version)
               : health.isPending ? t('settingsDiagnosticsChecking') : t('settingsDiagnosticsNoBackend')) }),
+          last?.build
+            ? jsx('p', { className: 'wm-subtle', children: t('settingsDiagnosticsIdentity',
+                String(last.build.contract ?? '—'),
+                last.build.revision || t('settingsDiagnosticsUnrecorded'),
+                last.build.desktop_sha256 || t('settingsDiagnosticsUnrecorded')) })
+            : null,
           health.error ? jsx('p', { className: 'wm-warn-note', role: 'status',
             children: t('settingsHealthFailed', String(health.error.message || health.error)) }) : null,
           last ? jsx('p', { children: last.ok ? t('settingsHealthReady') : t('settingsHealthUnavailable') }) : null,
@@ -10547,6 +10636,13 @@ const I18N = {
     memErrRefresh: 'Readings could not be refreshed. The previous reading is still shown.',
     memErrGeneric: 'That did not complete. Please retry; if it persists, check the backend log.',
     backendCompatibility: 'The backend may be older than this SpendSense Desktop UI. Update the Hermes plugin backend and Desktop together, then try again.',
+    backendPairHeading: 'SpendSense halves are from different releases',
+    backendPairDetail: (found, required) => `This Desktop bundle needs backend contract ${required} or newer; the backend reports ${found}.`,
+    backendPairRevision: revision => `Backend revision ${revision}.`,
+    backendPairRevisionUnknown: 'Backend revision is not recorded for this install.',
+    backendPairFix: 'Update both halves together: install the backend at the same revision as this Desktop bundle, or restore the matching pair from your last rollback archive. Restart the backend before reloading Desktop.',
+    backendPairVerify: digest => `On the machine running Desktop, confirm the bundle: sha256sum ~/.hermes/desktop-plugins/spend-sense/plugin.js should print ${digest}.`,
+    backendPairDataSafe: 'Membership, budget and usage data are unaffected by a pairing mismatch, and nothing is rewritten while the halves disagree.',
     // Fee-override reasons (mirrors REASON_LABELS).
     memReasonDiscount: 'Discount',
     memReasonLegacyPricing: 'Legacy price',
@@ -11152,6 +11248,8 @@ const I18N = {
     settingsDiagnosticsHeading: 'Diagnostics',
     settingsDiagnosticsVersions: (plugin, backend) => `Plugin version ${plugin} · ${backend}`,
     settingsDiagnosticsBackend: v => `backend version ${v}`,
+    settingsDiagnosticsIdentity: (contract, revision, digest) => `Backend contract ${contract} · revision ${revision} · paired Desktop bundle SHA-256 ${digest}`,
+    settingsDiagnosticsUnrecorded: 'not recorded',
     settingsDiagnosticsChecking: 'checking backend…',
     settingsDiagnosticsNoBackend: 'backend status unavailable',
     settingsHealthFailed: f => `Backend health check failed: ${f}`,
@@ -11879,6 +11977,13 @@ const I18N = {
     memErrRefresh: '读数无法刷新，仍显示之前的读数。',
     memErrGeneric: '没有完成。请重试；如果仍然不行，请查看后端日志。',
     backendCompatibility: '后端可能比此 SpendSense Desktop 界面版本旧。请将 Hermes 插件后端与 Desktop 一起更新，然后再试。',
+    backendPairHeading: 'SpendSense 的前后端来自不同版本',
+    backendPairDetail: (found, required) => `此 Desktop 版本需要后端契约 ${required} 或更新版本；后端报告的是 ${found}。`,
+    backendPairRevision: revision => `后端修订版本 ${revision}。`,
+    backendPairRevisionUnknown: '此安装未记录后端修订版本。',
+    backendPairFix: '请同时更新前后端：将后端安装到此 Desktop 版本对应的修订版本，或从最近的回滚归档还原匹配的一对。重新加载 Desktop 前先重启后端。',
+    backendPairVerify: digest => `在运行 Desktop 的机器上核对版本包：sha256sum ~/.hermes/desktop-plugins/spend-sense/plugin.js 应输出 ${digest}。`,
+    backendPairDataSafe: '配对不一致不会影响会员、预算和用量数据；在两端不一致期间不会改写任何数据。',
     // 费用覆盖原因（与 REASON_LABELS 对应）。
     memReasonDiscount: '折扣',
     memReasonLegacyPricing: '历史价格',
@@ -12484,6 +12589,8 @@ const I18N = {
     settingsDiagnosticsHeading: '诊断',
     settingsDiagnosticsVersions: (plugin, backend) => `插件版本 ${plugin} · ${backend}`,
     settingsDiagnosticsBackend: v => `后端版本 ${v}`,
+    settingsDiagnosticsIdentity: (contract, revision, digest) => `后端契约 ${contract} · 修订版本 ${revision} · 配对的 Desktop 版本包 SHA-256 ${digest}`,
+    settingsDiagnosticsUnrecorded: '未记录',
     settingsDiagnosticsChecking: '正在检查后端…',
     settingsDiagnosticsNoBackend: '后端状态不可用',
     settingsHealthFailed: f => `后端健康检查失败：${f}`,
@@ -12934,6 +13041,9 @@ export const __test = {
   getRest: () => rest,
   restoreRest: value => { rest = value },
   backendRequest, isBackendCompatibilityError, backendCompatibilityText,
+  // WP15: the released pair's contract level, its identity and the recovery notice.
+  DESKTOP_CONTRACT, REQUIRED_BACKEND_CONTRACT, backendContract, backendPairState,
+  backendHealthQuery, backendPairNotice,
   $backendCompatibility,
   PANE_DATA,
   applyUsage,
