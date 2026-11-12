@@ -3325,7 +3325,8 @@ function billingEvidence(billing, t = needsAttentionEn) {
     key, label, explanation, empty,
     usd: ev[key]?.usd ?? null,
     basis: ev[key]?.basis || 'none',
-    source: ev[key]?.source || ''
+    source: ev[key]?.source || '',
+    pricingCoverage: ev[key]?.pricing_coverage || null
   }))
 }
 
@@ -4460,15 +4461,41 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   ].filter(Boolean) })
   const api = evidence.api_equivalent
   const reported = evidence.provider_reported
+  const apiCoverage = api.pricingCoverage
+  const apiCoverageKnown = apiCoverage && finiteValue(apiCoverage.priced_tokens) !== null
+    && finiteValue(apiCoverage.unpriced_tokens) !== null
+    && finiteValue(apiCoverage.priced_calls) !== null
+    && finiteValue(apiCoverage.unpriced_calls) !== null
+  const apiUnpricedTokens = finiteValue(apiCoverage?.unpriced_tokens)
+  const apiUnpricedCalls = finiteValue(apiCoverage?.unpriced_calls)
+  const apiPartial = apiCoverageKnown && (apiUnpricedTokens > 0 || apiUnpricedCalls > 0)
+  const apiCoverageUnknown = !apiCoverageKnown
+  const apiStatus = summaryLoading ? t('costsLoadingShort')
+    : api.usd == null ? t('costsUnknownTag')
+    : apiPartial ? t('costsPartialTag')
+    : apiCoverageUnknown ? t('costsCoverageUnknownTag') : t('costsCompleteTag')
+  const apiNote = summaryLoading ? t('costsEvidenceLoading')
+    : unreadable ? t('costsEvidenceUnavailable')
+    : api.usd == null ? apiPartial ? t('costsApiNoPricedSubtotal') : api.empty
+    : apiPartial ? t('costsApiPartialShort')
+    : apiCoverageUnknown ? t('costsApiCoverageUnknownShort') : t('costsApiShort')
+  const apiCoverageDetails = apiCoverageKnown
+    ? t('costsApiCoverageCounts', exactTokens(apiCoverage.priced_tokens), exactTokens(apiCoverage.priced_calls),
+      exactTokens(apiCoverage.unpriced_tokens), exactTokens(apiCoverage.unpriced_calls))
+    : t('costsApiCoverageUnavailable')
+  const apiExplanation = api.usd == null ? t('costsApiNoPricedExplain')
+    : apiPartial ? t('costsApiPartialExplain')
+    : apiCoverageUnknown ? t('costsApiCoverageUnknownExplain') : api.explanation
   const additional = ['credits_consumed', 'incremental_cash'].map(key => evidence[key])
   const feeValue = feeLines.length ? jsx('ul', { className: 'wm-cost-detail-fees', children: feeLines.map(line =>
     jsx('li', { children: line.label }, `${line.currency}/${line.period}`)) })
     : accountsReady ? unknownFees ? t('costsFeesUnknown') : t('ovNoFees') : t('costsEvidenceUnavailable')
   const evidenceDetails = [
     jsx(CostsEvidenceDetail, { label: api.label, value: api.usd == null ? api.empty : fmtUsd(api.usd),
-      children: jsxs('div', { children: [jsx('p', { children: api.explanation }),
+      children: jsxs('div', { children: [jsx('p', { children: apiExplanation }),
         jsx('p', { children: `${t('costsBasisLabel')}: ${api.basis}` }),
-        api.source ? jsx('p', { children: `${t('costsSourceLabel')}: ${api.source}` }) : null
+        api.source ? jsx('p', { children: `${t('costsSourceLabel')}: ${api.source}` }) : null,
+        jsx('p', { children: apiCoverageDetails })
       ].filter(Boolean) }) }, 'api'),
     jsx(CostsEvidenceDetail, { label: reported.label, value: reported.usd == null ? reported.empty : fmtUsd(reported.usd),
       children: jsxs('div', { children: [jsx('p', { children: reported.explanation }),
@@ -4499,7 +4526,7 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
       jsx(CostsEvidenceCard, { kind: 'api', label: api.label,
         value: summaryLoading ? '—' : unreadable ? t('costsEvidenceUnavailable')
           : api.usd == null ? api.empty : fmtUsd(api.usd),
-        status: t('costsEstimateTag'), note: t('costsApiShort') }),
+        status: apiStatus, note: apiNote }),
       jsx(CostsEvidenceCard, { kind: 'reported', label: reported.label,
         value: summaryLoading ? '—' : unreadable ? t('costsEvidenceUnavailable')
           : reported.usd == null ? reported.empty : fmtUsd(reported.usd),
@@ -11224,6 +11251,15 @@ const I18N = {
     costsSourceLabel: 'Source',
     costsEstimateTag: 'API-equivalent estimate',
     costsApiShort: 'Current rates · not provider charges',
+    costsApiPartialShort: 'Priced subtotal · some usage is unpriced; not provider charges.',
+    costsApiCoverageUnknownShort: 'Pricing coverage for this value is unknown; the amount may be partial.',
+    costsApiNoPricedSubtotal: 'No priced subtotal; unpriced usage is not zero.',
+    costsApiPartialExplain: 'Only rows with published API rates contribute to this subtotal; unpriced rows are excluded. It is not a charge.',
+    costsApiCoverageUnknownExplain: 'Coverage counts for the rows behind this value are unavailable, so completeness cannot be confirmed.',
+    costsApiNoPricedExplain: 'No API-equivalent subtotal could be calculated from the available published rates.',
+    costsApiCoverageCounts: (pricedTokens, pricedCalls, unpricedTokens, unpricedCalls) =>
+      `Rows used for this estimate: ${pricedTokens} tokens priced across ${pricedCalls} calls; ${unpricedTokens} tokens across ${unpricedCalls} calls have no API-equivalent price.`,
+    costsApiCoverageUnavailable: 'Coverage counts are unavailable for these rows. The displayed API-equivalent amount may be partial.',
     costsReportedTag: 'Provider reported',
     costsReportedShort: 'Reported use · not a payment',
     costsActualCharges: 'Actual provider charges',
@@ -12603,6 +12639,15 @@ const I18N = {
     costsSourceLabel: '来源',
     costsEstimateTag: 'API 等值估算',
     costsApiShort: '当前费率 · 非供应商费用',
+    costsApiPartialShort: '已定价小计 · 部分用量未定价；并非供应商收费。',
+    costsApiCoverageUnknownShort: '此值的定价覆盖情况未知；金额可能仅为部分小计。',
+    costsApiNoPricedSubtotal: '没有可显示的已定价小计；未定价用量不代表零。',
+    costsApiPartialExplain: '此小计仅包含有公开 API 费率的记录；未定价记录已排除。它不是实际收费。',
+    costsApiCoverageUnknownExplain: '此金额所依据记录的覆盖计数不可用，因此无法确认是否完整。',
+    costsApiNoPricedExplain: '根据现有公开费率，无法计算 API 等值小计。',
+    costsApiCoverageCounts: (pricedTokens, pricedCalls, unpricedTokens, unpricedCalls) =>
+      `此估算所用记录：${pricedTokens} 个 token 已定价，涉及 ${pricedCalls} 次调用；${unpricedTokens} 个 token、${unpricedCalls} 次调用缺少 API 等值价格。`,
+    costsApiCoverageUnavailable: '这些记录的覆盖计数不可用。显示的 API 等值金额可能只包含已定价用量。',
     costsReportedTag: '供应商上报',
     costsReportedShort: '上报用量 · 非付款',
     costsActualCharges: '供应商实际费用',

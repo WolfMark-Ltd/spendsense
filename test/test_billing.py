@@ -178,6 +178,23 @@ class CommandCodeGoatReconciliation(unittest.TestCase):
         self.assertAlmostEqual(report["api_equivalent_usd"], 0.5)
         self.assertAlmostEqual(report["metered_usd"], 0.25, msg="metered uses the provider figure")
 
+    def test_api_equivalent_coverage_uses_the_same_rows_as_its_priced_subtotal(self):
+        loaded = self.profiles({"profiles": []})
+        rows = [
+            row(value=0.5, tokens=100, _provider_cost_usd=0.25),
+            row(value=None, tokens=50, _provider_cost_usd=0.10),
+            row(value=None, tokens=25, _provider_cost_usd=None),
+        ]
+        report = billing.classify(rows, loaded)
+
+        self.assertAlmostEqual(report["api_equivalent_usd"], 0.5,
+                               msg="coverage metadata does not change the priced API-equivalent subtotal")
+        self.assertEqual(report["evidence"]["api_equivalent"]["pricing_coverage"], {
+            "priced_tokens": 100, "unpriced_tokens": 75,
+            "priced_calls": 1, "unpriced_calls": 2,
+            "scope": "same rows used for api_equivalent_usd",
+        })
+
     def test_usage_limits_are_not_treated_as_money(self):
         limits = self.fixture["billing_month"]["usage_limits_pct"]
         loaded = self.profiles({"profiles": []})

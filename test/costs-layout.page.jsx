@@ -33,7 +33,8 @@ const billingSummary = {
   window: { days: 30 },
   billing: { evidence: {
     provider_reported: { usd: 0, basis: 'provider_history', source: 'Synthetic provider request history' },
-    api_equivalent: { usd: 0, basis: 'current_catalogue', source: 'Synthetic current catalogue' },
+    api_equivalent: { usd: 0, basis: 'current_catalogue', source: 'Synthetic current catalogue',
+      pricing_coverage: { priced_tokens: 50, unpriced_tokens: 0, priced_calls: 1, unpriced_calls: 0 } },
     credits_consumed: { usd: 0, basis: 'membership_allowance', source: 'Synthetic plan allowance' },
     incremental_cash: { usd: null, basis: 'incomplete', source: 'No complete evidence' },
     subscription_fee: { usd: 0, basis: 'membership_catalogue_or_declared', source: 'Memberships' },

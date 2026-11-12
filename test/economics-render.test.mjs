@@ -308,7 +308,8 @@ test('Costs distinguishes reported use, API-equivalent zero, missing charges, mi
   const { container, text } = await renderCostsSummary({
     billing: { evidence: {
       provider_reported: { usd: 0, basis: 'provider_history', source: 'Provider request history' },
-      api_equivalent: { usd: 0, basis: 'current_catalogue', source: 'Current catalogue' },
+      api_equivalent: { usd: 0, basis: 'current_catalogue', source: 'Current catalogue',
+        pricing_coverage: { priced_tokens: 0, unpriced_tokens: 0, priced_calls: 1, unpriced_calls: 0 } },
       credits_consumed: { usd: 0, basis: 'membership_allowance', source: 'Declared allowance' },
       incremental_cash: { usd: null, basis: 'incomplete', source: 'No complete evidence' },
     } },
@@ -318,6 +319,8 @@ test('Costs distinguishes reported use, API-equivalent zero, missing charges, mi
     accounts,
   })
   assert.equal(container.querySelector('[data-cost-kind="api"] .wm-cost-card-value').textContent, '$0.00')
+  assert.match(container.querySelector('[data-cost-kind="api"]').textContent, /Fully priced/,
+    'a zero amount remains a known value when all API-equivalent usage is priced')
   assert.equal(container.querySelector('[data-cost-kind="reported"] .wm-cost-card-value').textContent, '$0.00')
   assert.equal(container.querySelector('[data-cost-kind="charges"] .wm-cost-card-value').textContent, 'Not recorded')
   assert.doesNotMatch(container.querySelector('[data-cost-kind="charges"]').textContent, /\$0\.00/)
@@ -334,6 +337,41 @@ test('Costs distinguishes reported use, API-equivalent zero, missing charges, mi
   assert.match(text(), /Tokens with cache rate evidence: 100 of 200/)
   assert.equal(container.querySelectorAll('.wm-cost-card-details').length, 0)
   assert.equal(container.querySelectorAll('.wm-cost-other-billing:not([open])').length, 1)
+})
+
+test('Costs labels priced API-equivalent subtotals as partial and discloses exact coverage', async () => {
+  const { container } = await renderCostsSummary({ billing: { evidence: {
+    api_equivalent: { usd: 1.25, basis: 'estimated', source: 'Published catalogue',
+      pricing_coverage: { priced_tokens: 100, unpriced_tokens: 50, priced_calls: 1, unpriced_calls: 2 } },
+  } } })
+  const card = container.querySelector('[data-cost-kind="api"]')
+  assert.equal(card.querySelector('.wm-cost-card-value').textContent, '$1.25')
+  assert.match(card.textContent, /Partial/)
+  assert.match(card.textContent, /Priced subtotal/)
+
+  container.querySelector('.wm-cost-other-billing').open = true
+  const apiDetails = [...container.querySelectorAll('.wm-cost-detail-row')]
+    .find(row => row.querySelector('h3')?.textContent === 'API-equivalent value')
+  assert.match(apiDetails.textContent, /100 tokens priced across 1 calls; 50 tokens across 2 calls have no API-equivalent price/)
+})
+
+test('Costs treats missing API-equivalent coverage as unknown, even when an amount is present', async () => {
+  const { container } = await renderCostsSummary({ billing: { evidence: {
+    api_equivalent: { usd: 0, basis: 'estimated', source: 'Published catalogue' },
+  } } })
+  const card = container.querySelector('[data-cost-kind="api"]')
+  assert.equal(card.querySelector('.wm-cost-card-value').textContent, '$0.00')
+  assert.match(card.textContent, /Coverage unknown/)
+  assert.match(card.textContent, /amount may be partial/)
+  assert.doesNotMatch(card.textContent, /Fully priced/)
+
+  const unpriced = await renderCostsSummary({ billing: { evidence: {
+    api_equivalent: { usd: null, basis: 'unpriced', source: 'No published rate',
+      pricing_coverage: { priced_tokens: 0, unpriced_tokens: 50, priced_calls: 0, unpriced_calls: 1 } },
+  } } })
+  const unpricedCard = unpriced.container.querySelector('[data-cost-kind="api"]')
+  assert.match(unpricedCard.textContent, /Unknown/)
+  assert.match(unpricedCard.textContent, /No priced subtotal/)
 })
 
 test('Costs does not count included or no-plan routes as subscriptions with unknown fees', async () => {
