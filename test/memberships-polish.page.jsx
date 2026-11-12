@@ -178,6 +178,15 @@ try {
           cssFlash: T.MEMBERSHIP_CSS.includes('.wm-flash'),
           cssReducedMotion: T.MEMBERSHIP_CSS.includes('prefers-reduced-motion'),
         }
+        // Re-close the attention targets' Plan groups so the steps below prove
+        // navigation opens a closed group rather than a pre-opened one.
+        await step(200, () => {
+          for (const id of ['xai:default', 'nous:default']) {
+            const group = narrow.querySelector(`[data-account="${id}"] [data-group="plan"]`)
+            if (group && group.open) click(group.querySelector('summary'))
+          }
+        })
+        await step(300, () => {})
         const attnLi = label => [...narrow.querySelectorAll('.wm-attention li')]
           .find(li => (li.textContent || '').includes(label))
         // xai: arrangement target.

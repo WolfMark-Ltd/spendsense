@@ -6201,7 +6201,8 @@ const membershipGroupClosed = new Set()
 // Groups a draft opened stay open after the draft clears, so saving or
 // cancelling never collapses the context the user was working in (and the
 // opener stays laid out and focusable). The user's own close always wins:
-// closing deletes the draft-opened mark, and re-renders never snap it back.
+// closing deletes the draft-opened mark and re-renders never snap it back,
+// while reopening restores the mark so a later render cannot undo the reopen.
 const membershipGroupDraftOpened = new Set()
 function membershipGroupOpen(accountId, group, active) {
   const key = `${accountId}:${group}`
@@ -6214,8 +6215,13 @@ function membershipGroupOpen(accountId, group, active) {
 }
 function membershipGroupToggled(accountId, group, open) {
   const key = `${accountId}:${group}`
-  if (open) membershipGroupClosed.delete(key)
-  else {
+  if (open) {
+    // Reopening restores the draft-opened mark a close removed, so a later
+    // render (for example after Cancel) cannot collapse the group the user
+    // just reopened. Toggles never render on their own.
+    membershipGroupClosed.delete(key)
+    membershipGroupDraftOpened.add(key)
+  } else {
     membershipGroupClosed.add(key)
     membershipGroupDraftOpened.delete(key)
   }

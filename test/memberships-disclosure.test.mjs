@@ -88,6 +88,8 @@ if (!chrome) {
         }
         assert.equal(result.flow.formOpened, true, `${locale}: Edit fee opens the fee form`)
         assert.equal(result.flow.groupOpenWithDraft, true, `${locale}: the draft opens its group`)
+        assert.equal(result.flow.closedDuringDraft, true, `${locale}: the group closes during the draft`)
+        assert.equal(result.flow.reopenedDuringDraft, true, `${locale}: the group reopens during the draft`)
         assert.equal(result.flow.formClosed, true, `${locale}: Cancel closes the fee form`)
         assert.equal(result.flow.groupOpenAfterCancel, true, `${locale}: Cancel keeps the group open`)
         assert.ok(result.flow.editHeight > 0, `${locale}: the opener stays laid out after Cancel`)

@@ -140,6 +140,21 @@ try {
           const form = card.querySelector('form.wm-fee-form')
           out.flow.formOpened = !!form
           out.flow.groupOpenWithDraft = plan.open === true
+        })
+        // Close and reopen the group while the draft is active. Each toggle
+        // settles (toggle events are tasks) with no render in between: the
+        // harness stubs intervals, and toggles never render on their own.
+        // Cancelling afterwards must keep the reopened group open.
+        await step(200, () => {
+          plan.querySelector(':scope > summary').click()
+          out.flow.closedDuringDraft = plan.open === false
+        })
+        await step(200, () => {
+          plan.querySelector(':scope > summary').click()
+          out.flow.reopenedDuringDraft = plan.open === true
+        })
+        await step(200, () => {
+          const form = card.querySelector('form.wm-fee-form')
           const cancel = form ? [...form.querySelectorAll('button')].find(b => b.type !== 'submit') : null
           cancel?.click()
         })
