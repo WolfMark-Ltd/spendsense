@@ -1,18 +1,31 @@
-"""HTTP budget contract with a synthetic profile and no network."""
+"""HTTP budget contract with a synthetic profile and no network.
+
+Skipped when FastAPI/httpx are not installed, like the other API suites.
+"""
 import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from dashboard import plugin_api
 from wolfmark_ledger import budgets
 from wolfmark_ledger.pricing import Catalogue, Rate
 from test_budgets import budget, NOW, START
 
+plugin_api = None
+FastAPI = None
+TestClient = None
+try:
+    from fastapi import FastAPI  # type: ignore[no-redef]
+    from fastapi.testclient import TestClient  # type: ignore[no-redef]
 
+    from dashboard import plugin_api  # type: ignore[no-redef]
+except Exception:  # pragma: no cover - depends on the test interpreter
+    pass
+
+
+@unittest.skipUnless(FastAPI is not None and TestClient is not None,
+                     "FastAPI/httpx not installed in this interpreter")
 class BudgetApiTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
