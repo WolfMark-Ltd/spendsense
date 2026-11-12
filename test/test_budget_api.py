@@ -20,7 +20,10 @@ try:
     from fastapi.testclient import TestClient  # type: ignore[no-redef]
 
     from dashboard import plugin_api  # type: ignore[no-redef]
-except Exception:  # pragma: no cover - depends on the test interpreter
+except ImportError:  # pragma: no cover - depends on the test interpreter
+    # dashboard.plugin_api raises ModuleNotFoundError (an ImportError) when
+    # FastAPI is absent; any other import failure propagates instead of
+    # silently skipping the suite.
     pass
 
 

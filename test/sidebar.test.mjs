@@ -804,13 +804,13 @@ test('the composition bar labels every part with its share', async () => {
 // --- WP13: compact sidebar ------------------------------------------------------
 const WP13_LONG_MODEL = 'claude-opus-4-6-thinking-20250601-xlarge-extended-reasoning'
 
-const renderHeader = async (view, presence = 'live') => {
+const renderHeader = async (view, presence = 'live', t = key => key) => {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = ReactDOMClient.createRoot(container)
   roots.push(root)
   await React.act(async () => {
-    root.render(React.createElement(T.MeterHeader, { presence, t: key => key, view }))
+    root.render(React.createElement(T.MeterHeader, { presence, t, view }))
   })
   return container
 }
@@ -854,6 +854,21 @@ test('an unmapped provider prints its id as-is with the raw-id tooltip', async (
   const unknownBadge = unknown.querySelector('.wm-provider-badge')
   assert.equal(unknownBadge.textContent, 'providerUnknown')
   assert.equal(unknownBadge.getAttribute('title'), 'providerUnknownTip')
+})
+
+test('the provider badge tooltip carries the raw provider id', async () => {
+  const enT = (key, ...args) => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry
+  }
+  const mapped = await renderHeader({ model: 'gpt-4o', provider: 'anthropic', fromHistory: true }, 'recorded', enT)
+  const mappedBadge = mapped.querySelector('.wm-provider-badge')
+  assert.equal(mappedBadge.textContent, 'Anthropic')
+  assert.match(mappedBadge.getAttribute('title'), /anthropic/, 'the mapped badge keeps the raw id in its tooltip')
+  const raw = await renderHeader({ model: 'gpt-4o', provider: 'openai', fromHistory: true }, 'recorded', enT)
+  const rawBadge = raw.querySelector('.wm-provider-badge')
+  assert.equal(rawBadge.textContent, 'openai')
+  assert.match(rawBadge.getAttribute('title'), /openai/, 'the unmapped badge keeps the raw id in its tooltip')
 })
 
 test('the WP13 labels exist in English and Chinese', () => {

@@ -38,6 +38,15 @@ try {
           providerUnknown: true, sinceAt: null, partial: false } }))))
   setTimeout(() => {
     try {
+      // wp13-compact captures: move the fixture above the fold up front so
+      // the screenshot cannot miss it — capture-time scrolling is unreliable
+      // (the pre-existing tip captures show the same quirk). Matrix runs
+      // never pass ?shot, so assertions are unaffected.
+      if (new URLSearchParams(location.search).get('shot') === 'wp13-compact') {
+        const app = document.getElementById('app')
+        const early = document.getElementById('wp13-wrap')
+        if (app && early) app.prepend(early)
+      }
       const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
       const fire = (el, type, init) => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, ...init }))
       const rectOf = el => {
@@ -187,7 +196,20 @@ try {
         }
         // Screenshot mode: leave one tip open for visual evidence.
         const shotId = new URLSearchParams(location.search).get('shot')
-        if (shotId) {
+        if (shotId === 'wp13-compact') {
+          // The compact fixture is not an InfoTip trigger, so bring it into
+          // the capture viewport directly instead of button-scrolling.
+          const fixture = document.getElementById('wp13-wrap')
+          if (fixture) {
+            // Explicit document scroll: scrollIntoView can stop at the
+            // fixture's own overflow:auto pane instead of moving the page.
+            window.scrollTo(0, Math.max(0, fixture.offsetTop - 120))
+            await wait(60)
+            const rect = fixture.getBoundingClientRect()
+            out.shot = { id: shotId, opened: rect.top >= 0 && rect.top < window.innerHeight }
+          }
+        }
+        if (shotId && shotId !== 'wp13-compact') {
           const btn = document.querySelector(`.wm-info-btn[aria-controls="wm-info-${shotId}"]`)
           if (btn) {
             btn.scrollIntoView({ block: 'center' })
