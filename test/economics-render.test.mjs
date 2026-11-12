@@ -526,6 +526,31 @@ test('missing fees, dated FX and historical window fees have per-account blocker
   }
 })
 
+test('the insufficient-history blocker agrees across languages on continued recording', async () => {
+  const data = econFixture()
+  data.groups[0].status = 'unavailable'
+  data.groups[0].blockers = [{ account_id: 'test:default', code: 'insufficient_comparison_history' }]
+  data.accounts[0].status = 'unavailable'
+  data.accounts[0].blockers = [{ account_id: 'test:default', code: 'insufficient_comparison_history' }]
+  const previousTranslator = i18nBackend.t
+  try {
+    for (const [language, phrase, unavailable] of [
+      ['en', 'Continue recording before comparing.', /shorter period|Extend the window/],
+      ['zh', '延长记录时间后再比较', /较短周期/],
+    ]) {
+      i18nBackend.t = (key, ...args) => {
+        const entry = T.I18N[language][key]
+        return typeof entry === 'function' ? entry(...args) : entry ?? key
+      }
+      const { text } = await renderSection(data)
+      assert.ok(text().includes(phrase), `${language}: ${phrase}`)
+      assert.doesNotMatch(text(), unavailable, `${language} never advises changing the fixed comparison window`)
+    }
+  } finally {
+    i18nBackend.t = previousTranslator
+  }
+})
+
 test('the fx editor stages a rate and saves the whole document', async () => {
   const { container, saved } = await renderSection(econFixture())
   const form = container.querySelector('form.wm-econ-fx-form')

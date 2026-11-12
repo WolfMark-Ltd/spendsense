@@ -3037,7 +3037,7 @@ function AnalyticsButton({label,children,onClick,disabled}) {
 }
 function AnalyticsSegments({label,value,options,onChange}) {
   return jsx('div',{className:'wm-segments',role:'group','aria-label':label,children:options.map(([id,text,aria])=>
-    jsx('button',{type:'button','aria-label':aria || `${label} ${id}`,'aria-pressed':value===id,onClick:()=>onChange(id),children:text},id))})
+    jsx('button',{type:'button','aria-label':aria || `${label} ${text}`,'aria-pressed':value===id,onClick:()=>onChange(id),children:text},id))})
 }
 function AnalyticsPanel({number,title,subtitle,controls,children,footer}) {
   return jsxs(ProductCard,{as:'section',className:'wm-panel','aria-label':title,children:[
@@ -5654,7 +5654,7 @@ function SettingsPage() {
           membershipBook ? jsxs('div', { className: 'wm-note', children: [
             jsx('p', { children: t('settingsCatalogueVersion',
               membershipBook.source === 'live' ? t('settingsCatalogueLive') : t('settingsCatalogueBundled'),
-              membershipBook.catalogue_version,
+              membershipBook.catalogue_version || '',
               membershipBook.generated_at ? t('settingsCatalogueGenerated', new Date(membershipBook.generated_at).toLocaleString()) : '') }),
             membershipBook.source === 'live' && membershipBook.central
               ? jsx('p', { className: 'wm-subtle', children: t('settingsCatalogueFetched',
@@ -6564,8 +6564,8 @@ function membershipErrorText(error, operation = 'read', t = needsAttentionEn) {
 }
 
 /** Kept for older call sites: a read error is the common case. */
-function membershipErrorMessage(error) {
-  return membershipErrorText(error, 'read')
+function membershipErrorMessage(error, operation = 'read', t = needsAttentionEn) {
+  return membershipErrorText(error, operation, t)
 }
 
 function membershipAccounts(payload) {
@@ -9543,6 +9543,8 @@ const NEWS_CSS = `
 .wm-news-routes{display:flex;gap:6px;flex-wrap:wrap;margin:9px 0 0;font-size:11.5px;color:var(--ui-text-tertiary)}
 .wm-news-route{border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:2px 9px;color:var(--ui-text-secondary)}
 .wm-news-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.wm-news-controls>[data-news-category]{min-width:0}
+.wm-news-controls .wm-segments{flex-wrap:wrap;max-width:100%}
 .wm-news-note{margin:0;font-size:12px;line-height:1.55;color:var(--ui-text-tertiary);max-width:78ch}
 .wm-news-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 /* Persistent selected ring for the scope and category controls: not
@@ -10584,7 +10586,7 @@ const I18N = {
     econBlockWindowHistory: 'Historical fee evidence is incomplete; add its effective date and amount in Memberships.',
     econBlockWindowUnavailable: 'The fee cannot be allocated to this window; check its period and effective dates in Memberships.',
     econBlockNoUsage: 'No calls were recorded for this account in the selected window.',
-    econBlockHistory: 'Recording history does not cover this window. Extend the window or continue recording before comparing.',
+    econBlockHistory: 'Recording history does not cover this window. Continue recording before comparing.',
     econBlockProviderMissing: 'Provider is unidentified on recorded calls; confirm the provider in Usage.',
     econBlockModelMissing: 'Model is unidentified on recorded calls; confirm the model in Usage.',
     econBlockProviderPrice: 'This provider is missing from the pricing catalogue; confirm its route or wait for catalogue support.',
@@ -11981,7 +11983,7 @@ const I18N = {
     econBlockWindowHistory: '历史费用证据不完整；请在“会员”中补充生效日期和金额。',
     econBlockWindowUnavailable: '无法将费用分配到此窗口；请在“会员”中检查周期和生效日期。',
     econBlockNoUsage: '所选窗口内没有此账户的调用记录。',
-    econBlockHistory: '记录历史未覆盖此窗口。请延长记录时间或选择较短周期后再比较。',
+    econBlockHistory: '记录历史未覆盖此窗口。请延长记录时间后再比较。',
     econBlockProviderMissing: '记录的调用没有可识别的供应商；请在“用量”中确认供应商。',
     econBlockModelMissing: '记录的调用没有可识别的模型；请在“用量”中确认模型。',
     econBlockProviderPrice: '价格目录中没有此供应商；请确认线路或等待目录支持。',
@@ -12552,7 +12554,7 @@ const I18N = {
     ovGapMissingBaseRate: '缺少基础输入或输出费率',
     ovGapMissingCacheRead: '缺少缓存读取费率',
     ovGapMissingCacheWrite: '缺少缓存写入费率',
-    econHeadNoFees: '没有订阅登记了已知费用；请在会员中登记费用。',
+    econHeadNoFees: '没有订阅登记了已知费用；请在“会员”中登记费用。',
     econHeadUnpriced: count => `${count} 个订阅没有费用；无法对比汇总数字。`,
     econHeadIncomparable: '至少一个订阅无法对比（缺失价格、覆盖或汇率）；请查看各行。',
     econHeadPartial: '估算价值对比；至少一项输入为部分数据。',
@@ -12563,7 +12565,7 @@ const I18N = {
     econGroupNoFx: currency => `费用为 ${currency} 但没有汇率；请添加带日期的汇率以便与按 USD 计价的用量对比。`,
     econGroupMissing: '该分组缺失用量或费用。',
     econGroupPartial: '至少一个帐户对比为部分数据；请查看各行。',
-    econUnattributed: '用量位于无帐户认领的路由。请在会员中确认该路由的帐户以完成归属。',
+    econUnattributed: '用量位于无帐户认领的路由。请在“会员”中确认该路由的帐户以完成归属。',
     econAmbiguous: '用量位于被多个帐户认领的路由。此处仅计数一次，不归属任何一方。',
     econExplApiOnly: '纯 API：按量付费，没有可对比的订阅。',
     econExplPrepaid: '预付额度：请将该用量与充值和钱包余额对比，而非与周期性费用对比。',
@@ -13329,7 +13331,7 @@ export const __test = {
   Chip, BudgetPanel, BudgetStatusIndicator, budgetLevel, budgetColour, sessionBudgetStatus, usageValueDelta, budgetQuery, budgetWrite, budgetPayload, newBudgetDraft, budgetTooltip, $budgetDraft, $budgetBusy, $budgetNotice, BUDGET_CSS,
   analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS,
   AnalyticsPage, AnalyticsDashboard, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
-  AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS,
+  AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS, AnalyticsSegments,
   usageFilterChipName, USAGE_FILTER_CHIP_KEYS, usageFilterChipValue, USAGE_FILTER_SCOPE_KEYS,
   backendQuery, catalogQuery, liveProvider, sameModel, getCatalog, ensureBackendRate, $view, $automaticModelOptions,
   // Memberships: page, scope, error classification and diagnostics are exported

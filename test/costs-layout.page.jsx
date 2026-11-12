@@ -2,7 +2,8 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import plugin, { __test as T } from '../desktop/plugin.js'
 
-globalThis.__overviewI18n = Object.fromEntries(Object.entries(T.I18N.en).map(([key, value]) => [
+const pageLang = new URLSearchParams(location.search).get('lang') === 'zh' ? 'zh' : 'en'
+globalThis.__overviewI18n = Object.fromEntries(Object.entries(T.I18N[pageLang]).map(([key, value]) => [
   key, typeof value === 'function' ? (...args) => value(...args) : value,
 ]))
 
@@ -154,7 +155,7 @@ setTimeout(() => {
   if (!selected) {
     const first = document.getElementById(cases[0])
     const fxDetails = first.querySelector('#wm-cost-fx-details')
-    const fxAction = [...first.querySelectorAll('button')].find(button => button.textContent === 'Add dated FX rate')
+    const fxAction = [...first.querySelectorAll('button')].find(button => button.textContent === globalThis.__overviewI18n.econActionFx)
     output.interactions.closedBeforeAction = !!fxDetails && !fxDetails.open
     fxAction?.click()
     output.interactions.fxOpensFromBlocker = !!fxDetails?.open
