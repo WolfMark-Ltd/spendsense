@@ -544,6 +544,30 @@ test('the shell health read is a health response, not a store verdict', async ()
   assert.equal(T.backendHealthQuery('conn-1').queryKey[1], 'health')
 })
 
+test('an error-only body is a failed health read, not health data', async () => {
+  // A bridge that resolves `{ok: false, error}` rather than throwing must still
+  // reach Settings as a failure. Binding the response to the payload shape keeps
+  // that message from being swallowed, while a genuine unhealthy payload passes.
+  const previousRest = T.getRest()
+  try {
+    T.setRest(async () => ({ ok: false, error: 'store unreadable' }))
+    await assert.rejects(
+      T.backendHealthQuery(T.membershipIdentityNow()).queryFn(), /store unreadable/)
+
+    for (const payload of [
+      { ok: false, version: '0.6.0', event_db_status: 'unreadable' },
+      { ok: false, db_present: false, event_db_present: false, build: { contract: 1 } }
+    ]) {
+      T.setRest(async () => payload)
+      assert.deepEqual(await T.backendHealthQuery(T.membershipIdentityNow()).queryFn(), payload)
+      // A fresh profile with no stores still names the pair it is talking to.
+      assert.equal(T.backendPairState('conn-1', payload)?.found, 1)
+    }
+  } finally {
+    T.restoreRest(previousRest)
+  }
+})
+
 test('a mismatched pair renders recovery instructions, not the bare banner', () => {
   const globals = snapshotGlobals(['compatibilityQueryResponse', 'compatibilityLanguage'])
   const previousCompatibility = T.$backendCompatibility.get()

@@ -237,6 +237,15 @@ plugin.register({
       return { ok: true, live_updates: FIXTURES[fixtureName]?.settings?.live_updates ?? false }
     }
     if (path === '/news/settings' && options.method === 'PUT') return { ok: true }
+    if (path === '/health') {
+      // The shell asks every page for the pair identity. A bare `{ ok: true }` is
+      // not a health response, and the query would reject — so answer as a
+      // matched-pair backend would, tracking the bundle's own contract level.
+      return {
+        ok: true, version: '0.6.0-test', db_present: true, event_db_present: true,
+        build: { contract: T.REQUIRED_BACKEND_CONTRACT }
+      }
+    }
     return { ok: true }
   },
   storage: { get: (_key, fallback) => fallback, set() {}, delete() {} },

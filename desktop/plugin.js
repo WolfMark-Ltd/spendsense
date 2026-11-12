@@ -1399,9 +1399,10 @@ function backendHealthQuery(identity) {
       if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
       const result = await rest('/health')
       if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
-      // `ok` reports store readiness, not identity. A fresh profile with neither
-      // usage store still publishes the contract the pair is judged by.
-      if (!result || typeof result !== 'object') {
+      // `ok` reports store readiness, not identity, so a health payload is judged
+      // whichever way it reads. An error-only body is not health: reject it here
+      // so Settings still shows its failure text instead of an empty verdict.
+      if (!backendHealthPayload(result)) {
         throw new Error(result?.error || 'Health check failed.')
       }
       return result

@@ -58,18 +58,31 @@ globalThis.__settingsT = (key, ...args) => typeof T.I18N.${locale}[key] === 'fun
 globalThis.__settingsCanned = {
   'pricing-status': { source: 'synthetic bundled snapshot', as_of: '2026-11-10T00:00:00.000Z', age_seconds: 7200, stale: false },
   'membership-plans': { ok: true, source: 'bundled', catalogue_version: 'test-2026-11-11.1', generated_at: '2026-11-10T00:00:00.000Z', central: null, totals: { plans: 2, verified: 1, provisional: 1, placeholders: 0 }, sources: [{ id: 'synthetic-source', evidence_kind: 'official', retrieved_at: '2026-11-09', url: 'https://example.com/synthetic-provider/pricing' }] },
-  'health': { ok: true, version: '0.6.0-test' },
+  // A matched pair: WP15's shell reads build.contract, and a fixture without one
+  // would paint the mismatch notice over every container. The notice itself is
+  // covered by test/compatibility.test.mjs.
+  'health': { ok: true, version: '0.6.0-test', db_present: true, build: { contract: 3 } },
   'news-settings': { ok: true, settings: { live_updates: false } },
   'budget-status': { ok: true, rev: 'fixture', budgets: [], statuses: [] },
   'billing-profiles': { ok: true, profiles: [] },
 }
-for(const id of ['narrow-dark','wide-dark','narrow-light','wide-light']) {
+const cases = ['narrow-dark','wide-dark','narrow-light','wide-light']
+for(const id of cases) {
   const el = document.getElementById(id)
   createRoot(el).render(<T.SettingsPage />)
 }
-setTimeout(() => {
+// Each root renders on React's own schedule, not the harness's. A fixed sleep
+// measured the page before it existed once the compatibility block made the
+// roots heavier, so wait for every root to carry its sections and bound the wait.
+let readyChecks = 0
+const begin = () => {
+  const ready = cases.every(id => document.querySelector('#'+id+' #settings-about'))
+  if (!ready && ++readyChecks <= 120) return setTimeout(begin, 25)
+  measure()
+}
+const measure = () => {
   const out = {calls:calls.length, layouts:[]}
-  for(const id of ['narrow-dark','wide-dark','narrow-light','wide-light']) {
+  for(const id of cases) {
     const el=document.getElementById(id), rect=el.getBoundingClientRect()
     const nav=el.querySelector('nav[aria-label]')
     const jumps=[...(nav?.querySelectorAll('button') || [])].map(b=>b.textContent)
@@ -118,7 +131,8 @@ setTimeout(() => {
     out.focusedJump = document.activeElement === jump
     document.getElementById('result').textContent=JSON.stringify(out)
   }, 100)
-},500)
+}
+begin()
 `)
       const esbuild = (await import(pathToFileURL(join(modules, 'esbuild/lib/main.js')))).default
       await esbuild.build({ entryPoints: [entry], bundle: true, platform: 'browser', format: 'iife', outfile: join(dir, `page-${locale}.js`),
