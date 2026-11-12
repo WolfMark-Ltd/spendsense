@@ -177,15 +177,7 @@ const runProbe = async (h, caseId) => {
 // WP11 candidate layout fixes a defect, its matches() stops firing and the
 // entry becomes inert — remove it then. Under a mandatory candidate run the
 // waivers are disabled entirely: the candidate must clear the strict bar.
-const KNOWN_BASELINE_DEFECTS = [{
-  id: 'news-category-segments-overflow-380en',
-  reason: 'Baseline defect: the real category AnalyticsSegments row cannot wrap '
-    + 'or shrink (.wm-analytics .wm-segments is inline-flex with flex-shrink:0), '
-    + 'so .wm-news-controls overflows by ~12-14px at 380px (both locales, both '
-    + 'themes). Expected to be fixed by the WP11 candidate layout.',
-  matches: r => r.w === 380 && r.overflow.length > 0
-    && r.overflow.every(o => o.cls === 'wm-news-controls' && o.excess > 0 && o.excess <= 24),
-}]
+const KNOWN_BASELINE_DEFECTS = []
 
 // Exact model-ID strings that must render verbatim (mirrors the page's list).
 const EXACT_IDS = [
