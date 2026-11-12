@@ -4392,7 +4392,7 @@ function membershipEntitlementSummary(account, t = needsAttentionEn) {
 }
 
 function costsUnknownFeeCount(accounts) {
-  return accounts.filter(account => !['api_only', 'prepaid'].includes(account.effective_arrangement)
+  return accounts.filter(account => !['api_only', 'prepaid', 'included', 'no_plan'].includes(account.effective_arrangement)
     && (account.fee?.effective?.amount === null || account.fee?.effective?.amount === undefined)).length
 }
 

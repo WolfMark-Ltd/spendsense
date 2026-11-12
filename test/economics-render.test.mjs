@@ -336,6 +336,26 @@ test('Costs distinguishes reported use, API-equivalent zero, missing charges, mi
   assert.equal(container.querySelectorAll('.wm-cost-other-billing:not([open])').length, 1)
 })
 
+test('Costs does not count included or no-plan routes as subscriptions with unknown fees', async () => {
+  const paidOwner = { id: 'owner', effective_arrangement: 'subscription',
+    fee: { effective: { amount: 20, currency: 'USD', period: 'month' } } }
+  const includedRoute = { id: 'included', effective_arrangement: 'included',
+    fee: { basis: 'included', effective: { amount: null } } }
+  const noPlanRoute = { id: 'no-plan', effective_arrangement: 'no_plan',
+    fee: { basis: 'no_plan', effective: { amount: null } } }
+
+  const withIncluded = await renderCostsSummary({ accounts: [paidOwner, includedRoute] })
+  const includedFees = withIncluded.container.querySelector('[data-cost-kind="fees"]')
+  assert.deepEqual([...includedFees.querySelectorAll('.wm-cost-fee-lines li')].map(line => line.textContent), ['$20.00/mo'])
+  assert.match(includedFees.textContent, /Saved/)
+  assert.doesNotMatch(includedFees.textContent, /fee unknown|No known fee/)
+
+  const noPlanOnly = await renderCostsSummary({ accounts: [noPlanRoute] })
+  const noPlanFees = noPlanOnly.container.querySelector('[data-cost-kind="fees"]')
+  assert.match(noPlanFees.textContent, /No saved recurring fees/)
+  assert.doesNotMatch(noPlanFees.textContent, /No known fee|fee unknown/)
+})
+
 test('Costs keeps negative cache savings and unknown coverage distinct in both languages', async () => {
   for (const [language, negative, unknown, partial, coverageUnknown, negativeExplanation] of [
     ['en', '−$0.400', 'No complete cache price evidence', 'Partial', 'Coverage unknown',
