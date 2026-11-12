@@ -36,7 +36,11 @@ is carried by three facts instead:
 
 `build.revision` is read from `.git/HEAD` — an install is a detached checkout — or
 from the installer's own record when the tree carries no Git metadata. It is
-`null` rather than guessed when neither exists.
+`null` rather than guessed when neither exists. All three values are resolved when
+the backend module is imported, so they describe the **running** build: a tree
+replaced in place before the backend restarts keeps reporting the revision it
+started from, which is the truthful answer and the reason to restart the backend
+before reloading Desktop.
 
 `build.desktop_sha256` is computed from `desktop/plugin.js` **in the installed
 tree**, so it describes the half that commit shipped rather than a manifest that

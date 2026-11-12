@@ -1399,7 +1399,11 @@ function backendHealthQuery(identity) {
       if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
       const result = await rest('/health')
       if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
-      if (!result?.ok) throw new Error(result?.error || 'Health check failed.')
+      // `ok` reports store readiness, not identity. A fresh profile with neither
+      // usage store still publishes the contract the pair is judged by.
+      if (!result || typeof result !== 'object') {
+        throw new Error(result?.error || 'Health check failed.')
+      }
       return result
     },
     retry: false,
@@ -10642,7 +10646,7 @@ const I18N = {
     backendPairRevisionUnknown: 'Backend revision is not recorded for this install.',
     backendPairFix: 'Update both halves together: install the backend at the same revision as this Desktop bundle, or restore the matching pair from your last rollback archive. Restart the backend before reloading Desktop.',
     backendPairVerify: digest => `On the machine running Desktop, confirm the bundle: sha256sum ~/.hermes/desktop-plugins/spend-sense/plugin.js should print ${digest}.`,
-    backendPairDataSafe: 'Membership, budget and usage data are unaffected by a pairing mismatch, and nothing is rewritten while the halves disagree.',
+    backendPairDataSafe: 'Detecting a mismatch changes no data — nothing is migrated or rewritten. Saves may fail until both halves match, so update them before editing memberships, budgets or settings.',
     // Fee-override reasons (mirrors REASON_LABELS).
     memReasonDiscount: 'Discount',
     memReasonLegacyPricing: 'Legacy price',
@@ -11983,7 +11987,7 @@ const I18N = {
     backendPairRevisionUnknown: '此安装未记录后端修订版本。',
     backendPairFix: '请同时更新前后端：将后端安装到此 Desktop 版本对应的修订版本，或从最近的回滚归档还原匹配的一对。重新加载 Desktop 前先重启后端。',
     backendPairVerify: digest => `在运行 Desktop 的机器上核对版本包：sha256sum ~/.hermes/desktop-plugins/spend-sense/plugin.js 应输出 ${digest}。`,
-    backendPairDataSafe: '配对不一致不会影响会员、预算和用量数据；在两端不一致期间不会改写任何数据。',
+    backendPairDataSafe: '检测到不一致不会更改任何数据——不会迁移或改写。在两端匹配前，保存可能失败；请先更新两端，再修改会员、预算或设置。',
     // 费用覆盖原因（与 REASON_LABELS 对应）。
     memReasonDiscount: '折扣',
     memReasonLegacyPricing: '历史价格',

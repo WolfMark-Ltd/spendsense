@@ -60,9 +60,6 @@ API_CONTRACT = 3
 
 _REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 
-#: ``((path, mtime_ns, size), digest)`` of a Desktop half already hashed by :func:`_desktop_bundle_sha256`.
-_desktop_digest: tuple[tuple[str, int, int], str] | None = None
-
 
 def _read_optional_text(path: Path) -> str:
     """Text of *path*, or ``''``. Health must stay total, so every read is optional."""
@@ -121,23 +118,11 @@ def _desktop_bundle_sha256(root: Path) -> str | None:
     The Desktop app cannot hash its own bundle, so a pair is only provable across
     hosts if one half publishes the other's digest. This is the digest of
     ``desktop/plugin.js`` in *this* tree: the bundle the same commit released.
-
-    Health is polled, so the digest is cached against the file's own stat: an
-    install replaced in place changes the key and is re-read.
     """
-    global _desktop_digest
-    path = root / "desktop" / "plugin.js"
     try:
-        entry = path.stat()
+        return hashlib.sha256((root / "desktop" / "plugin.js").read_bytes()).hexdigest()
     except OSError:
         return None
-    key = (str(path), entry.st_mtime_ns, entry.st_size)
-    if _desktop_digest is None or _desktop_digest[0] != key:
-        try:
-            _desktop_digest = (key, hashlib.sha256(path.read_bytes()).hexdigest())
-        except OSError:
-            return None
-    return _desktop_digest[1]
 
 
 def _build_identity() -> dict[str, Any]:
@@ -147,6 +132,14 @@ def _build_identity() -> dict[str, Any]:
         "revision": _git_head_revision(_ROOT) or _installer_revision(_ROOT),
         "desktop_sha256": _desktop_bundle_sha256(_ROOT),
     }
+
+
+#: The identity of the code this module was imported from, resolved once.
+#: ``/health`` must describe the *running* build: a tree replaced in place before
+#: the backend restarts is a different release, and reporting its revision against
+#: the old process's ``API_CONTRACT`` would make an unfinished upgrade look
+#: verified. After the restart this is recomputed from the new tree.
+_BUILD_IDENTITY = _build_identity()
 
 
 def _exists_for_health(path: Path) -> bool:
@@ -163,8 +156,8 @@ def health() -> dict[str, Any]:
 
     ``build`` carries the identity a Desktop bundle needs to tell whether it is
     paired with a backend from the same release: the contract level, the
-    revision this tree was checked out at, and the digest of the Desktop half
-    the same commit shipped. All three are optional and never raise.
+    revision this module was imported from, and the digest of the Desktop half
+    that release shipped. All three are optional and never raise.
     """
     db = default_db_path()
     event_db = store.event_db_path()
@@ -174,7 +167,7 @@ def health() -> dict[str, Any]:
     return {
         "ok": db_present or event_db_present,
         "version": VERSION,
-        "build": _build_identity(),
+        "build": dict(_BUILD_IDENTITY),
         "db_present": db_present,
         "event_db_present": event_db_present,
         "event_db_status": _event_db_status(event_db),

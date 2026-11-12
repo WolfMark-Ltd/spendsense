@@ -504,6 +504,46 @@ test('the halves shipped by one revision declare a compatible contract', () => {
   assert.ok(T.DESKTOP_CONTRACT <= declared)
 })
 
+test('a health payload is judged even when the usage stores are absent', async () => {
+  // `ok` reports store readiness, not identity: a fresh profile must still learn
+  // that its backend is too old, before it opens a single tab.
+  const globals = snapshotGlobals(['compatibilityLanguage', 'compatibilityQueryResponse'])
+  const previousRest = T.getRest()
+  const previousCompatibility = T.$backendCompatibility.get()
+  try {
+    T.$backendCompatibility.set([])
+    const payload = {
+      ok: false, version: '0.6.0', db_present: false, event_db_present: false,
+      build: { contract: 1, revision: 'e'.repeat(40) }
+    }
+    T.setRest(async () => payload)
+    const query = T.backendHealthQuery(T.membershipIdentityNow())
+    assert.deepEqual(await query.queryFn(), payload)
+    assert.equal(T.backendPairState('conn-1', payload).found, 1)
+
+    globalThis.compatibilityQueryResponse = { data: payload }
+    const shell = T.ProductShell({ children: [] })
+    assert.equal(shell.props.children
+      .filter(node => node?.props?.className === 'wm-alert wm-backend-compatibility').length, 1)
+  } finally {
+    T.restoreRest(previousRest)
+    T.$backendCompatibility.set(previousCompatibility)
+    restoreGlobals(globals)
+  }
+})
+
+test('the shell health read is a health response, not a store verdict', async () => {
+  const previousRest = T.getRest()
+  try {
+    T.setRest(async () => null)
+    const query = T.backendHealthQuery(T.membershipIdentityNow())
+    await assert.rejects(query.queryFn(), /Health check failed/)
+  } finally {
+    T.restoreRest(previousRest)
+  }
+  assert.equal(T.backendHealthQuery('conn-1').queryKey[1], 'health')
+})
+
 test('a mismatched pair renders recovery instructions, not the bare banner', () => {
   const globals = snapshotGlobals(['compatibilityQueryResponse', 'compatibilityLanguage'])
   const previousCompatibility = T.$backendCompatibility.get()
@@ -524,7 +564,8 @@ test('a mismatched pair renders recovery instructions, not the bare banner', () 
     assert.match(text, new RegExp(revision))
     assert.match(text, new RegExp(digest))
     assert.match(text, /desktop-plugins\/spend-sense\/plugin\.js/)
-    assert.match(text, /unaffected/)
+    assert.match(text, /changes no data/)
+    assert.match(text, /Saves may fail/)
     assert.doesNotMatch(text, /The backend may be older than this SpendSense Desktop UI/)
 
     globalThis.compatibilityLanguage = 'zh'

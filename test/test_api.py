@@ -379,7 +379,7 @@ class BuildIdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             self.assertIsNone(self.api()._desktop_bundle_sha256(Path(scratch)))
 
-    def test_the_digest_describes_the_desktop_half_and_follows_a_reinstall(self):
+    def test_the_digest_describes_the_desktop_half_it_reads(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
             (root / "desktop").mkdir()
@@ -388,9 +388,20 @@ class BuildIdentityTests(unittest.TestCase):
             first = self.api()._desktop_bundle_sha256(root)
             self.assertEqual(first, hashlib.sha256(b"first bundle").hexdigest())
             self.assertEqual(self.api()._desktop_bundle_sha256(root), first)
-            # A replaced half must not keep the previous digest.
             bundle.write_bytes(b"second bundle, longer than the first")
             self.assertNotEqual(self.api()._desktop_bundle_sha256(root), first)
+
+    def test_health_reports_one_identity_for_the_running_module(self):
+        # Identity is resolved at import: a tree replaced under a running process
+        # must not report the replacement's revision against the old contract.
+        first = self.api().health()["build"]
+        second = self.api().health()["build"]
+        self.assertEqual(first, second)
+        self.assertEqual(first, self.api()._BUILD_IDENTITY)
+        self.assertEqual(first["contract"], self.api().API_CONTRACT)
+        # A caller mutating the payload cannot change what the process publishes.
+        first["contract"] = 999
+        self.assertEqual(self.api().health()["build"]["contract"], self.api().API_CONTRACT)
 
 
 @unittest.skipUnless(FastAPI is not None and TestClient is not None,
