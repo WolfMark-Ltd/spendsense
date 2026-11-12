@@ -2146,6 +2146,15 @@ function InfoTip({ dir = 'down', id, label, text, wide = false }) {
   })
 }
 
+/**
+ * Friendly provider label for the compact pane header (F60). Display-only:
+ * the raw provider id stays in the badge tooltip so long ids remain
+ * traceable. Unknown ids pass through untouched — never synthesised.
+ */
+function meterProviderLabel(provider, t) {
+  return membershipProviderLabel(provider, t)
+}
+
 /** Section A: brand, live presence, model, provider, scope. Always mounted. */
 function MeterHeader({ presence, t, view }) {
   const stateLabel = presence === 'live' ? t('meterLive')
@@ -2166,7 +2175,7 @@ function MeterHeader({ presence, t, view }) {
       jsx('span', {
         className: 'wm-provider-badge',
         title: view.provider ? t('providerTip', view.provider) : t('providerUnknownTip'),
-        children: view.provider || t('providerUnknown')
+        children: view.provider ? meterProviderLabel(view.provider, t) : t('providerUnknown')
       }, 'provider')
     ] }, 'modelrow')
   ] })
@@ -2415,7 +2424,9 @@ function MeterEmpty({ t }) {
       jsx('span', { className: 'wm-meter-mark', children: jsx(BrandMark, { size: 18, id: 'pane' }) }, 'mark'),
       jsx('span', { className: 'wm-meter-name', children: 'SpendSense' }, 'name')
     ] }, 'brand'),
-    jsx(Note, { children: t('empty') }, 'note')
+    jsx(Note, { children: t('empty') }, 'note'),
+    jsx('button', { type: 'button', className: 'wm-open-ledger',
+      onClick: openLedger, children: t('openLedger') }, 'open')
   ] })
 }
 
@@ -2499,14 +2510,14 @@ const SHARED_CSS = [
 
 const METER_CSS = [
   SHARED_CSS,
-  '.wm-pane{display:flex;height:100%;flex-direction:column;gap:10px;overflow:auto;padding:12px;min-width:0}',
+  '.wm-pane{display:flex;height:100%;flex-direction:column;gap:10px;overflow:auto;padding:12px;min-width:0;container-type:inline-size}',
   '.wm-pane .wm-info{position:static}',
   '.wm-pane .wm-info-pop{max-width:min(260px,calc(100% - 24px))}',
   '.wm-pane .wm-info-pop-wide{max-width:min(260px,100%)}',
   '.wm-meter-head{display:flex;flex-direction:column;gap:7px;padding-bottom:10px;border-bottom:1px solid var(--ui-stroke-secondary)}',
   '.wm-meter-brandrow{display:flex;align-items:center;gap:8px;min-width:0}',
   '.wm-meter-mark{display:grid;place-items:center;width:22px;height:22px;flex-shrink:0}',
-  '.wm-meter-name{font-size:12px;font-weight:620;letter-spacing:-.15px;color:var(--ui-text-primary);white-space:nowrap}',
+  '.wm-meter-name{font-size:12px;font-weight:620;letter-spacing:-.15px;color:var(--ui-text-primary);white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}',
   '.wm-meter-presence{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:10px;color:var(--ui-text-tertiary);white-space:nowrap}',
   '.wm-dot{width:7px;height:7px;border-radius:50%;background:var(--ui-text-quaternary);flex-shrink:0}',
   '.wm-dot[data-state="live"]{background:var(--ui-success)}',
@@ -2558,6 +2569,10 @@ const METER_CSS = [
   '.wm-partial-chip{position:relative;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-warning)}',
   '.wm-stale .wm-kpi-figure,.wm-stale .wm-metric-value,.wm-stale .wm-legend-value,.wm-stale .wm-ring-text{opacity:.62}',
   '.wm-meter-empty{display:flex;flex-direction:column;gap:10px}',
+  '.wm-open-ledger{display:flex;align-items:center;justify-content:center;width:100%;padding:7px 10px;border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-secondary);color:var(--ui-text-secondary);font:inherit;font-size:12px;font-weight:600;cursor:pointer}',
+  '.wm-open-ledger:hover{border-color:var(--ui-accent);color:var(--ui-accent)}',
+  '.wm-open-ledger:active{background:var(--ui-fill-tertiary)}',
+  '@container(max-width:320px){.wm-pane .wm-card{padding-top:9px;padding-bottom:9px}.wm-pane .wm-rates-grid{grid-template-columns:minmax(0,1fr)}.wm-pane .wm-provider-badge{max-width:38%}.wm-pane .wm-model{font-size:12px}.wm-pane .wm-meter-brandrow{gap:6px}.wm-pane .wm-scope-chip{padding:2px 5px;letter-spacing:.02em}}',
   '.wm-pane :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}',
   '@media (prefers-reduced-motion:reduce){.wm-chevron{transition:none}}'
 ].join('');
@@ -2600,7 +2615,9 @@ function Meter() {
           jsx(CostKpi, { t, view }, 'cost'),
           jsx(TokenComposition, { t, view }, 'mix'),
           jsx(CacheGauge, { t, view }, 'cache'),
-          jsx(RatesPanel, { t, view }, 'rates')
+          jsx(RatesPanel, { t, view }, 'rates'),
+          jsx('button', { type: 'button', className: 'wm-open-ledger',
+            onClick: openLedger, children: t('openLedger') }, 'open')
         ] }, 'body'),
     storageError
       ? jsx(Note, { warn: true, children: t('storageError', storageError) }, 'st')
@@ -10172,6 +10189,7 @@ const I18N = {
     noLedger: 'Nothing recorded in this range. Usage is folded in as turns complete.',
     noPrice: 'n/a',
     noPriceLong: 'No rate for this model in the provider catalog or the bundled models.dev table. Run scripts/gen-rates.py to refresh it.',
+    openLedger: 'Open SpendSense',
     meterLive: 'Live',
     meterRecorded: 'Recorded',
     meterUpdating: 'Updating…',
@@ -11503,6 +11521,7 @@ const I18N = {
     noLedger: '该区间没有记录。每轮对话结束后会自动累加。',
     noPrice: '无',
     noPriceLong: '供应商目录与内置 models.dev 价格表中都没有该模型。可运行 scripts/gen-rates.py 刷新价格表。',
+    openLedger: '打开 SpendSense',
     meterLive: '实时',
     meterRecorded: '已记录',
     meterUpdating: '更新中…',

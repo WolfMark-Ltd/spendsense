@@ -28,9 +28,25 @@ try {
           React.createElement('div', { style: { height: '560px' } }),
           React.createElement('div', { id: 'edge-bottom-row', style: { display: 'flex', justifyContent: 'flex-end' } },
             React.createElement(T.InfoTip, { id: 'wp02-edge-bottom', label: t('infoLabel'), text: t('budgetHelp') })))
-      }))))
+      })),
+    // WP13: compact-header fixture — long model, unknown provider, unknown cost.
+    React.createElement('div', { id: 'wp13-wrap', className: 'wm-pane' },
+      React.createElement(T.MeterHeader, { presence: 'recorded', t,
+        view: { model: 'claude-opus-4-6-thinking-20250601-xlarge-extended-reasoning', provider: null, fromHistory: true } }),
+      React.createElement(T.CostKpi, { t,
+        view: { cost: null, costSource: 'none', bucket: {}, foreignSlug: null,
+          providerUnknown: true, sinceAt: null, partial: false } }))))
   setTimeout(() => {
     try {
+      // wp13-compact captures: move the fixture above the fold up front so
+      // the screenshot cannot miss it — capture-time scrolling is unreliable
+      // (the pre-existing tip captures show the same quirk). Matrix runs
+      // never pass ?shot, so assertions are unaffected.
+      if (new URLSearchParams(location.search).get('shot') === 'wp13-compact') {
+        const app = document.getElementById('app')
+        const early = document.getElementById('wp13-wrap')
+        if (app && early) app.prepend(early)
+      }
       const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
       const fire = (el, type, init) => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, ...init }))
       const rectOf = el => {
@@ -151,6 +167,27 @@ try {
             scrollHeight: product.scrollHeight, clientHeight: product.clientHeight,
           }
         }
+        // WP13: compact-header worst case — long model, unknown provider/cost at 268px.
+        {
+          const fixture = document.querySelector('#wp13-wrap')
+          out.wp13 = { fixtureFound: !!fixture }
+          if (fixture) {
+            const badge = fixture.querySelector('.wm-provider-badge')
+            const model = fixture.querySelector('.wm-model')
+            const figure = fixture.querySelector('.wm-kpi-figure')
+            out.wp13.fixtureWidth = Math.round(rectOf(fixture).width)
+            out.wp13.overflowX = fixture.scrollWidth - fixture.clientWidth
+            out.wp13.badge = badge ? {
+              text: badge.textContent.trim(),
+              title: badge.getAttribute('title') || '',
+            } : null
+            out.wp13.model = model ? {
+              text: model.textContent.trim(),
+              title: model.getAttribute('title') || '',
+            } : null
+            out.wp13.figure = figure ? figure.textContent.trim() : null
+          }
+        }
         // Locale markers: real dictionary copy behind the shared tips.
         out.markers = {
           rates: typeof dict.ratesNote === 'string' ? dict.ratesNote.slice(0, 24) : '',
@@ -159,7 +196,20 @@ try {
         }
         // Screenshot mode: leave one tip open for visual evidence.
         const shotId = new URLSearchParams(location.search).get('shot')
-        if (shotId) {
+        if (shotId === 'wp13-compact') {
+          // The compact fixture is not an InfoTip trigger, so bring it into
+          // the capture viewport directly instead of button-scrolling.
+          const fixture = document.getElementById('wp13-wrap')
+          if (fixture) {
+            // Explicit document scroll: scrollIntoView can stop at the
+            // fixture's own overflow:auto pane instead of moving the page.
+            window.scrollTo(0, Math.max(0, fixture.offsetTop - 120))
+            await wait(60)
+            const rect = fixture.getBoundingClientRect()
+            out.shot = { id: shotId, opened: rect.top >= 0 && rect.top < window.innerHeight }
+          }
+        }
+        if (shotId && shotId !== 'wp13-compact') {
           const btn = document.querySelector(`.wm-info-btn[aria-controls="wm-info-${shotId}"]`)
           if (btn) {
             btn.scrollIntoView({ block: 'center' })
