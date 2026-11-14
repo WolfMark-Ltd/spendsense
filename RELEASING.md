@@ -31,9 +31,10 @@ assets have separate terms in BRANDING.md.
 
 ## Release identity and the pairing contract
 
-Every build in this line ships `0.6.0` in `plugin.yaml`, `PLUGIN_VERSION` and
-`plugin_api.VERSION`, so a version string cannot tell two releases apart. Identity
-is carried by three facts instead:
+The current release declares `0.6.1` in `plugin.yaml`, `PLUGIN_VERSION`,
+`dashboard/manifest.json` and `plugin_api.VERSION`. Matching version labels alone
+do not establish installed file identity or runtime compatibility: earlier builds
+shared `0.6.0`. Verify these three facts as well:
 
 | Fact | Read it from | Proves |
 | --- | --- | --- |
@@ -81,7 +82,7 @@ without installation evidence. Check the actual Hermes build and installed bytes
 - Install the backend, reconcile the Desktop half, restart the process serving
   Desktop's API, then reload Desktop. A separate API service is not restarted by
   a gateway restart. Afterwards check `build` in `/health` and the installed
-  bundle digest; matching `0.6.0` labels do not establish compatibility.
+  bundle digest; matching version labels do not establish compatibility.
 - A rollback restores the backend tree, the Desktop half and **only** the
   `spend-sense` entry of `.install-metadata.json`. `plugin-data` is replaced only
   when the older build cannot read it, and the outgoing copy is moved aside,

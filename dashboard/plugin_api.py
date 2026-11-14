@@ -49,12 +49,12 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 
-#: Pairing level between the two halves of one release. Every build in this
-#: line ships the same ``VERSION`` string, so that string cannot tell two builds
-#: apart; this integer is what a Desktop bundle can act on. Bump it in the same
-#: commit as any backend change the UI relies on, and raise
+#: Pairing level between the two halves of one release. A ``VERSION`` string
+#: alone does not establish build compatibility; this integer is what a Desktop
+#: bundle can act on. Bump it in the same commit as any backend change the UI
+#: relies on, and raise
 #: ``REQUIRED_BACKEND_CONTRACT`` in ``desktop/plugin.js`` to match.
 API_CONTRACT = 3
 

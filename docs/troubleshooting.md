@@ -35,7 +35,7 @@ does not itself migrate or rewrite data.
 
 - Confirm the intended connection and profile first.
 - Check the live backend identity in Settings diagnostics, when available.
-  Matching `0.6.0` version labels do not establish build compatibility.
+  Matching `0.6.1` version labels do not establish build compatibility.
 - “Backend reports 1” may be the UI's fallback when `build.contract` is absent
   or invalid. It does not necessarily mean the backend explicitly returned 1.
 - Install both components from the same approved revision, then restart the
@@ -152,10 +152,15 @@ After reinstalling, identify and restart the actual API owner below.
 
 ### Identify and restart the API process
 
-Find the API port from the connection selected in Desktop. On a remote setup,
-inspect the listener on the backend machine, not a local tunnel's forwarding
-process. Inspect output locally because commands and service details may be
-private.
+Start with the connection selected in Desktop. For a direct connection, use its
+API port. If that connection goes through a reverse proxy, inspect the proxy's
+upstream configuration and identify the listener actually serving Hermes' API;
+do not restart the proxy just because it owns the public port. On a remote
+setup, inspect that upstream listener on its backend machine, not a local
+tunnel's forwarding process. The upstream may use a different port or a Unix
+socket; for a socket, inspect its process owner with the platform's socket or
+service tools instead of the TCP commands below. Inspect output locally because
+commands and service details may be private.
 
 **Linux:** identify the listener and its owner:
 
@@ -234,8 +239,10 @@ confirming all of the following:
   the same unverified download twice.
 
 Save this Python 3 script outside the plugin directory as
-`repair-desktop-plugin.py`. Edit the three placeholders. It downloads only
-`desktop/plugin.js` at the exact commit, verifies its hash before touching the
+`repair-desktop-plugin.py`. Edit the three placeholders. Keep the raw-string
+prefix on `TARGET` so copied Windows backslashes remain literal; omit any
+trailing directory separator because this path must end in `plugin.js`. It downloads
+only `desktop/plugin.js` at the exact commit, verifies its hash before touching the
 installation, creates and verifies an exclusive timestamped rollback copy, then
 stages the replacement beside the target for an atomic rename.
 
@@ -257,7 +264,7 @@ from uuid import uuid4
 
 REVISION = "FULL_40_CHARACTER_COMMIT_SHA"
 EXPECTED = "REVIEWED_64_CHARACTER_SHA256"
-TARGET = Path("ABSOLUTE_PATH_TO_INSTALLED_PLUGIN_JS").expanduser()
+TARGET = Path(r"ABSOLUTE_PATH_TO_INSTALLED_PLUGIN_JS").expanduser()
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
