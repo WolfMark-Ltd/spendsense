@@ -1,25 +1,17 @@
 /** Modified by WolfMark Ltd from Token & Cost Meter; see NOTICE and licenses/Apache-2.0.txt. */
 /**
- * BUILD 0.2.4-ui-1 (branch fix/token-cost-ui-consistency): folds live
- * counters only from monotonic provider fields, so a derived cache estimate can
- * no longer re-adopt a whole run, and labels the conversation bucket it shows.
- * Candidate for private installation; installed builds are identified by hash.
- */
-/**
- * token-cost-meter — live token usage + model-aware USD cost, with a
- * persistent local ledger that survives restarting Hermes.
+ * SpendSense — AI usage accounting, cost estimates, memberships and reports
+ * for Hermes Desktop.
  *
- * Live  : host.state.focusedUsage (streamed UsageStats, no RPC)
- * Prices: host.request('model.options', { session_id }) — scoped to the
- *         session whose usage is being priced, so a split tile never borrows
- *         another tile's provider. pricing[model] = {input,output,cache} as
- *         "$/Mtok" strings ("free", "" = unknown).
- * Ledger: ctx.storage (namespaced, app-level — shared by every profile). The
- *         gateway's in-memory counters reset on restart, so usage is folded
- *         into per-day buckets keyed by profile + provider + model, and the
- *         cost of every delta is SETTLED at the moment it is recorded, with
- *         the rate source that priced it. Re-pricing history at read time
- *         would make yesterday's total move whenever a catalog changes.
+ * The release version is declared in PLUGIN_VERSION below. Exact builds are
+ * identified by repository revision and Desktop bundle SHA-256; compatibility
+ * is tracked separately by the Desktop and backend contract levels.
+ *
+ * Live usage comes from host.state.focusedUsage. Model pricing requests are
+ * scoped to the session being priced so split tiles keep their own providers.
+ * The Desktop ledger uses app-level ctx.storage, with per-profile buckets and
+ * rates settled when each delta is recorded. Backend analytics use a separate
+ * profile-scoped call store and price recorded usage at current catalogue rates.
  */
 
 import {
@@ -42,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.0'
+const PLUGIN_VERSION = '0.6.1'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 3
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */

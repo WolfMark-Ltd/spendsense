@@ -7,7 +7,7 @@
   <a href="https://github.com/WolfMark-Ltd/spendsense/actions/workflows/ci.yml"><img src="https://github.com/WolfMark-Ltd/spendsense/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/Hermes-%3E%3D0.22.5-informational" alt="Requires Hermes 0.22.5 or newer" />
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="GPL-3.0 license" />
-  <img src="https://img.shields.io/badge/version-0.6.0-informational" alt="Version 0.6.0" />
+  <img src="https://img.shields.io/badge/version-0.6.1-informational" alt="Version 0.6.1" />
   <a href="https://coderabbit.ai"><img src="https://img.shields.io/coderabbit/prs/github/WolfMark-Ltd/spendsense?label=Reviewed%20by%20CodeRabbit&logo=coderabbit" alt="Reviewed by CodeRabbit" /></a>
   <a href="https://www.greptile.com/?utm_source=oss_badge&utm_medium=readme&utm_campaign=greptile_for_open_source"><img src="https://www.greptile.com/badge.svg" alt="Greptile: The War on Bugs" /></a>
   <a href="https://github.com/WolfMark-Ltd/spendsense"><img src="https://img.shields.io/github/stars/WolfMark-Ltd/spendsense?logo=github" alt="GitHub stars" /></a>
@@ -31,6 +31,8 @@ Spend Sense is a Hermes plugin that shows what your AI usage is actually costing
 ## Installation
 
 First time installing? The [quick-start guide](docs/quickstart.md) walks through install, first figures, and recovery in one place. The reference details follow.
+
+Old UI after an update, or a release compatibility warning? See [Troubleshooting](docs/troubleshooting.md) before changing your installation.
 
 ### Requirements
 
