@@ -196,6 +196,8 @@ const setField = async (container, labelText, value, scope = container) => {
   })
 }
 
+const chooseFeeCurrency = async (container, value = 'USD') => setField(container, 'Currency', value)
+
 const plansOk = () => ({ ok: true, families: [], vocabulary: { override_reasons: ['discount'], currencies: ['USD', 'GBP'], periods: ['month'], window_scopes: ['account'] }, totals: {} })
 
 // ---------------------------------------------------------------------------
@@ -492,7 +494,7 @@ test('Metered API persists, disables subscription controls and restores the save
   assert.equal(saved.api_only, false)
   assert.equal(saved.billing_arrangement, 'subscription')
   assert.equal(planSelect.disabled, false)
-  assert.match(container.textContent, /£17.00\/yr/)
+  assert.match(container.textContent, /GBP 17.00\/yr/)
 })
 
 test('unconfirmed and prepaid accounts show their arrangements without subscription controls', async () => {
@@ -579,10 +581,10 @@ test('fee save updates the selected card, closes the editor and announces succes
     return { ok: true, accounts: [saved] }
   })
   const { container } = await boot(); await flush(3)
-  await clickByText(container, 'Edit fee'); await typeAmount(container, '23')
+  await clickByText(container, 'Edit fee'); await typeAmount(container, '23'); await chooseFeeCurrency(container)
   await clickByText(container, 'Save fee'); await flush(5)
   assert.equal(container.querySelector('.wm-fee-form'), null)
-  assert.match(container.querySelector('[data-account="fee"]').textContent, /Your price: \$23.00\/mo/)
+  assert.match(container.querySelector('[data-account="fee"]').textContent, /Your price: USD 23\.00\/mo/)
   assert.match(container.querySelector('[role="status"]').textContent, /Saved/)
 })
 
@@ -622,6 +624,7 @@ test('a rejected fee save keeps what the owner typed', async () => {
     setter.call(input, '19.5')
     input.dispatchEvent(new window.Event('input', { bubbles: true }))
   })
+  await chooseFeeCurrency(container)
   await flush(2)
 
   transportCtl.respond(call => {
@@ -687,6 +690,8 @@ test('a fee save submitted in the same tick as a switch emits no mutation', asyn
   await flush(2)
   const form = container.querySelector('form')
   assert.ok(form, 'the fee form is open on A')
+  await typeAmount(container, '17')
+  await chooseFeeCurrency(container)
   const submit = [...form.querySelectorAll('button')].find(b => (b.textContent || '') === 'Save fee')
 
   transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
@@ -719,7 +724,7 @@ test('a late post-save read cannot overwrite a newer successful read', async () 
     return readCount === 1 ? postSave.promise : { ok: true, accounts: [account('race', { label: 'Newest' })] }
   })
   const { container } = await boot(); await flush(3)
-  await clickByText(container, 'Edit fee'); await typeAmount(container, '17')
+  await clickByText(container, 'Edit fee'); await typeAmount(container, '17'); await chooseFeeCurrency(container)
   await clickByText(container, 'Save fee'); await flush(2)
   await React.act(async () => { await queryClient.refetchQueries({ queryKey: ['spend-sense', 'membership-accounts'], type: 'active' }) })
   await flush(3)
@@ -745,7 +750,7 @@ test('a newer failed read does not suppress a successful post-save read', async 
     throw new Error('503 unavailable')
   })
   const { container } = await boot(); await flush(3)
-  await clickByText(container, 'Edit fee'); await typeAmount(container, '17')
+  await clickByText(container, 'Edit fee'); await typeAmount(container, '17'); await chooseFeeCurrency(container)
   await clickByText(container, 'Save fee'); await flush(2)
   await React.act(async () => { await queryClient.refetchQueries({ queryKey: ['spend-sense', 'membership-accounts'], type: 'active' }) })
   await React.act(async () => postSave.resolve({ ok: true, accounts: [account('race', { label: 'Saved account' })] }))
@@ -775,7 +780,7 @@ test('a late reread from the previous scope cannot close a draft opened since', 
     if (call.method !== 'GET') return { ok: true, accounts: [account('a:acct', { label: 'A account' })] }
     return holdReread ? pendingReread.promise : { ok: true, accounts: [account('b:acct', { label: 'B account' })] }
   })
-  await typeAmount(container, '12.5')
+  await typeAmount(container, '12.5'); await chooseFeeCurrency(container)
   await clickByText(container, 'Save fee')
   await flush(2)
   assert.ok(T.$membershipBusy.get(), 'the save is still settling while its reread hangs')
@@ -886,7 +891,7 @@ test('a pending membership save disables mutation controls on other accounts and
   await clickByText(card('busy-b'), 'Create user-defined plan')
   await setField(container, 'Plan name', 'Test plan', card('busy-b').querySelector('.wm-custom-form'))
   await clickByText(card('busy-b'), 'Mark exhausted')
-  await clickByText(card('busy-a'), 'Edit fee'); await typeAmount(card('busy-a'), '17')
+  await clickByText(card('busy-a'), 'Edit fee'); await typeAmount(card('busy-a'), '17'); await chooseFeeCurrency(card('busy-a'))
   await clickByText(card('busy-a'), 'Save fee'); await flush(2)
   const button = name => [...card('busy-b').querySelectorAll('button')].find(el => el.textContent === name)
   for (const name of ['Mark exhausted', 'Clear mark', 'Mark account exhausted', 'Save manual status',
@@ -913,7 +918,7 @@ test('an action in the same tick as a save receives a busy explanation', async (
   const { container } = await boot(); await flush(3)
   const first = container.querySelector('[data-account="race-a"]')
   const second = container.querySelector('[data-account="race-b"]')
-  await clickByText(first, 'Edit fee'); await typeAmount(first, '17')
+  await clickByText(first, 'Edit fee'); await typeAmount(first, '17'); await chooseFeeCurrency(first)
   const save = [...first.querySelectorAll('button')].find(el => el.textContent === 'Save fee')
   const mark = second.querySelector('[data-action="exhaust-account"]')
   await React.act(async () => { save.click(); mark.click() })
@@ -930,7 +935,7 @@ test('a pending save disables duplicate submission and editing', async () => {
   transportCtl.respond(call => call.path.startsWith('/membership/plans') ? plansOk()
     : call.method === 'PUT' ? pending.promise : { ok: true, accounts: [account('same')] })
   const { container } = await boot(); await flush(3)
-  await clickByText(container, 'Edit fee'); await typeAmount(container, '17')
+  await clickByText(container, 'Edit fee'); await typeAmount(container, '17'); await chooseFeeCurrency(container)
   await clickByText(container, 'Save fee'); await flush(2)
   assert.ok([...container.querySelectorAll('button')].find(b => b.textContent === 'Saving…')?.disabled)
   assert.ok(container.querySelector('fieldset').disabled)
@@ -1082,7 +1087,7 @@ test('Costs summarizes recurring fees without duplicating Memberships account de
   const root = ReactDOMClient.createRoot(container); roots.push(root)
   await React.act(async () => root.render(React.createElement(QueryClientProvider, { client: queryClient }, React.createElement(T.CostsPage))))
   await flush(4)
-  assert.deepEqual([...container.querySelectorAll('.wm-cost-fee-lines li')].map(line => line.textContent), ['$30.00/mo'])
+  assert.deepEqual([...container.querySelectorAll('.wm-cost-fee-lines li')].map(line => line.textContent), ['USD 30.00/mo'])
   assert.doesNotMatch(container.textContent, /GOAT|ChatGPT Plus|Monthly credit allocation/)
   assert.equal(container.querySelectorAll('.wm-analytics').length, 1,
     'the page has one scroll container; the tab strip does not add a full-height nested container')
@@ -1105,7 +1110,7 @@ test('Costs explains pending membership data instead of showing an empty total',
   await flush(2)
   const fees = container.querySelector('[data-cost-kind="fees"]')
   assert.match(fees.textContent, /Reading/)
-  assert.doesNotMatch(fees.textContent, /0 of 0|\$0\.00\/mo/)
+  assert.doesNotMatch(fees.textContent, /0 of 0|USD 0\.00\/mo/)
 
   await React.act(async () => pendingAccounts.resolve({ ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] }))
   await flush(3)
@@ -1264,7 +1269,7 @@ test('Overview renders its settled Desktop cost summary without a React render e
   await React.act(async () => pendingAccounts.resolve({ ok: true, accounts: [commandcode, codex],
     store: { loaded: true, error: '' }, notes: [] }))
   await flush(3)
-  assert.match(summary.textContent, /\$30\.00\/mo/)
+  assert.match(summary.textContent, /USD 30\.00\/mo/)
   assert.match(summary.textContent, /2 of 2 accounts have a confirmed plan/)
   // Fee-basis honesty: both effective fees are catalogue prices, so the card
   // shows a Catalogue chip and never claims they are declared.
@@ -1534,7 +1539,7 @@ test('Overview fee heading describes billing periods, not a monthly conversion',
   await flush(4)
   assert.doesNotMatch(container.textContent, /monthly equivalent/i, 'no conversion is claimed')
   assert.match(container.textContent, /by currency and billing period/i)
-  assert.match(container.textContent, /\$120\.00\/yr/, 'the original period is preserved')
+  assert.match(container.textContent, /USD 120\.00\/yr/, 'the original period is preserved')
 })
 
 test('Overview distinguishes unknown subscription fees from having no recurring fees', async () => {
@@ -1609,7 +1614,7 @@ test('Overview shows a known fee subtotal as Partial when some fees are unknown'
     React.createElement(T.OverviewPage))))
   await flush(4)
   const card = container.querySelector('[data-kpi="saved-fees"]')
-  assert.match(card.textContent, /\$20\.00\/mo/, 'the known subtotal keeps its amount, currency and period')
+  assert.match(card.textContent, /USD 20\.00\/mo/, 'the known subtotal keeps its amount, currency and period')
   assert.match(card.textContent, /Partial/, 'an unknown subscription marks the subtotal Partial')
   assert.match(card.textContent, /1 account\(s\) have no known fee/, 'the missing fee is disclosed')
 })
@@ -1793,6 +1798,7 @@ test('the membership card saves a user-defined plan against its selected credent
   await setField(container, 'Window name', 'Five-hour window', allowance)
   await setField(container, 'Rolling duration', '300', allowance)
   await setField(container, 'Credit amount', '50', allowance)
+  await setField(container, 'Currency', 'USD', allowance)
   await clickByText(form, 'Save user-defined plan')
   await flush(4)
   const write = transportCtl.calls.find(call => call.method === 'PUT')
@@ -2026,7 +2032,7 @@ test('PR-C: account rows are compact, collapsed by default, and expand on Detail
   assert.ok(head, 'the card renders a compact row head')
   assert.match(head.textContent, /Anthropic · main/)
   assert.match(head.textContent, /Subscription · Claude Pro/)
-  assert.match(head.textContent, /£45\.00\/mo/)
+  assert.match(head.textContent, /GBP 45\.00\/mo/)
   assert.match(head.textContent, /Effective fee/)
   assert.match(head.textContent, /Allowance reading/)
   assert.equal(card.querySelector('.wm-row-mid [data-state="unreported"]')?.textContent, 'Unreported',
@@ -2040,7 +2046,7 @@ test('PR-C: account rows are compact, collapsed by default, and expand on Detail
   assert.ok(summary, 'headline figures render in a compact semantic summary strip')
   assert.equal(summary.getAttribute('aria-busy'), 'false', 'the loaded summary is not announced as busy')
   assert.match(summary.textContent, /Needs attention/)
-  assert.match(summary.textContent, /£45\.00\/mo/)
+  assert.match(summary.textContent, /GBP 45\.00\/mo/)
   const refreshNote = container.querySelector('.wm-membership-refresh-note')
   assert.match(refreshNote.textContent, /where supported/)
   assert.match(refreshNote.textContent, /never changes saved plans, fees or marks/)
@@ -2185,7 +2191,7 @@ test('PR-C: row order is stable by family, label, id across a reversed refetch',
   await openCard(card)
   await toggleGroup(card, 'plan')
   await clickByText(card, 'Edit fee')
-  await typeAmount(card, '23')
+  await typeAmount(card, '23'); await chooseFeeCurrency(card)
   await clickByText(card, 'Save fee')
   await flush(5)
   assert.equal(transportCtl.count(c => c.method === 'PUT'), 1, 'the fee saved')
@@ -3039,7 +3045,7 @@ test('seat controls save and clear a quantity with billing period', async () => 
   })
   const { container } = await boot(); await flush(3)
   assert.match(container.textContent, /Usually at least 2 seats/)
-  assert.match(container.textContent, /\$125\.00 per seat/)
+  assert.match(container.textContent, /USD 125\.00 per seat/)
   const form = container.querySelector('input[name="quantity"]').closest('form')
   assert.equal(form.querySelector('input[name="quantity"]').value, '2', 'future revisions do not replace current form values')
   await setField(container, 'Seats', '3', form)
@@ -3078,8 +3084,8 @@ test('seat comparison renders in Simplified Chinese', async () => {
       : { ok: true, accounts: [member], store: { loaded: true, error: '' }, notes: [] })
     const { container } = await boot(); await flush(3)
     assert.match(container.textContent, /席位数/)
-    assert.match(container.textContent, /目录总价 \$375\.00/)
-    assert.match(container.textContent, /\$330\.00/)
+    assert.match(container.textContent, /目录总价 USD 375\.00/)
+    assert.match(container.textContent, /USD 330\.00/)
     assert.ok(container.querySelector('input[name="quantity"]'))
   } finally { i18nBackend.t = originalTranslate }
 })

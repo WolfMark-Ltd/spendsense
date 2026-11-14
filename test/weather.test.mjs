@@ -56,8 +56,8 @@ test('wxVerdictLabel covers every backend verdict', () => {
 })
 
 test('wxLimitLabel renders structured limits, never a raw key', () => {
-  assert.equal(S.wxLimitLabel(en, { kind: 'amount', amount: 100, currency: 'USD' }), '$100.00 allowance')
-  assert.equal(S.wxLimitLabel(en, { kind: 'amount', amount: 5, currency: null }), '5 allowance')
+  assert.equal(S.wxLimitLabel(en, { kind: 'amount', amount: 100, currency: 'USD' }), 'USD 100.00 allowance')
+  assert.equal(S.wxLimitLabel(en, { kind: 'amount', amount: 5, currency: null }), 'Currency unknown 5.00 allowance')
   assert.equal(S.wxLimitLabel(en, { kind: 'credits', amount: 60000 }), '60000 credits')
   assert.equal(S.wxLimitLabel(en, { kind: 'percent' }), 'share of provider limit')
   assert.equal(S.wxLimitLabel(en, { kind: 'unknown' }), 'Limit unknown')
@@ -83,7 +83,7 @@ test('wxWindowRow keeps readings distinct from verdicts', () => {
     provider: { used_percent: 80, state: 'live', reset_at: '2026-11-01T00:00:00Z' },
     manual: null,
   })
-  assert.equal(line, 'Monthly credit: $100.00 allowance · Provider reports 80% used · Provider reset 2026-11-01 · Ahead of pace')
+  assert.equal(line, 'Monthly credit: USD 100.00 allowance · Provider reports 80% used · Provider reset 2026-11-01 · Ahead of pace')
 })
 
 test('wxWindowRow flags stale readings and manual marks', () => {

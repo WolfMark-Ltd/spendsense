@@ -67,7 +67,7 @@ test('econCoverageLabel never reports unknown pricing as priced', () => {
   assert.equal(S.econCoverageLabel(en, { tokens: 0, list_usd: 0 }), 'No usage observed')
   assert.equal(S.econCoverageLabel(en, { tokens: 10, list_usd: null }), 'No published price')
   assert.equal(S.econCoverageLabel(en, { tokens: 10, list_usd: 1, coverage: null }), 'Coverage unknown')
-  assert.equal(S.econCoverageLabel(en, { tokens: 10, list_usd: 1, coverage: 1 }), 'Fully priced')
+  assert.equal(S.econCoverageLabel(en, { tokens: 10, list_usd: 1, coverage: 1 }), 'Coverage unknown')
   assert.equal(S.econCoverageLabel(en, { tokens: 10, list_usd: 1, coverage: 0.5 }), '50% priced')
 })
 
@@ -75,14 +75,20 @@ test('econCoverageLabel withholds fully priced on rounded 100% coverage', () => 
   // 3M priced + 1 unpriced token rounds coverage to 1.0; the label must
   // not contradict the partial backend status shown in the same cell.
   assert.equal(S.econCoverageLabel(en,
-    { tokens: 3000001, list_usd: 6, coverage: 1, unpriced_tokens: 1 }), 'Nearly all priced')
+    { tokens: 3000001, list_usd: 6, coverage: 1, unpriced_tokens: 1, unpriced_calls: 0 }), 'Nearly all priced')
   assert.equal(S.econCoverageLabel(en,
-    { tokens: 3000000, list_usd: 6, coverage: 1, unpriced_tokens: 0 }), 'Fully priced')
+    { tokens: 3000000, list_usd: 6, coverage: 1, unpriced_tokens: 0, unpriced_calls: 0 }), 'Fully priced')
+  assert.equal(S.econCoverageLabel(en,
+    { tokens: 3000000, list_usd: 6, coverage: 1, unpriced_tokens: 0, unpriced_calls: undefined }), 'Coverage unknown')
+  assert.equal(S.econCoverageLabel(en,
+    { tokens: 3000000, list_usd: 6, coverage: 1, unpriced_tokens: 0, unpriced_calls: 1 }), 'Nearly all priced')
+  assert.equal(S.econCoverageLabel(en,
+    { tokens: 3000000, list_usd: 6, coverage: 1.01, unpriced_tokens: 0, unpriced_calls: 0 }), 'Coverage unknown')
   // Whole-percent rounding reaches 100% well before the ratio does.
   assert.equal(S.econCoverageLabel(en,
-    { tokens: 1000, list_usd: 2, coverage: 0.9995, unpriced_tokens: 1 }), 'Nearly all priced')
+    { tokens: 1000, list_usd: 2, coverage: 0.9995, unpriced_tokens: 1, unpriced_calls: 0 }), 'Nearly all priced')
   assert.equal(S.econCoverageLabel(zh,
-    { tokens: 3000001, list_usd: 6, coverage: 1, unpriced_tokens: 1 }), '几乎全部定价')
+    { tokens: 3000001, list_usd: 6, coverage: 1, unpriced_tokens: 1, unpriced_calls: 0 }), '几乎全部定价')
 })
 
 test('econFeeLines keeps one line per currency', () => {
@@ -90,7 +96,11 @@ test('econFeeLines keeps one line per currency', () => {
   assert.deepEqual(S.econFeeLines(en, null), ['—'])
   assert.deepEqual(S.econFeeLines(en, [
     { amount: 20, currency: 'USD' }, { amount: 4.25, currency: 'GBP' }
-  ]), ['$20.00/mo', '£4.25/mo'])
+  ]), ['USD 20.00/mo', 'GBP 4.25/mo'])
+})
+
+test('economics fee lines localise unknown currency disclosures', () => {
+  assert.match(S.econFeeLines(zh, [{ amount: 12, currency: 'XYZ' }])[0], /币种未知 12\.00/)
 })
 
 test('fxWrite posts the whole document and surfaces the server sentence', async () => {
@@ -152,7 +162,11 @@ test('econWindowLines keeps one expenditure line per currency', () => {
   assert.deepEqual(S.econWindowLines(null), ['—'])
   assert.deepEqual(S.econWindowLines([
     { amount: 19.37, currency: 'USD' }, { amount: 4.19, currency: 'GBP' }
-  ]), ['$19.37', '£4.19'])
+  ]), ['USD 19.37', 'GBP 4.19'])
+})
+
+test('economics window lines use the current translator for unknown currencies', () => {
+  assert.match(S.econWindowLines([{ amount: 9, currency: 'XYZ' }], [], zh)[0], /币种未知 9\.00/)
 })
 
 test('windowSpanLabel describes the reporting window', () => {

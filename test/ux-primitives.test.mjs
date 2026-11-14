@@ -599,7 +599,7 @@ test('membership fees are preserved per account; routes are never grouped or sup
   ])
   assert.equal(summary.total, 3)
   assert.equal(summary.withPlan, 3)
-  assert.equal(T.feesLabel(summary), '$30.00/mo + £160.00/mo')
+  assert.equal(T.feesLabel(summary), 'USD 30.00/mo + GBP 160.00/mo')
 })
 
 

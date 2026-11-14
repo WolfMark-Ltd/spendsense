@@ -136,7 +136,7 @@ const econFixture = () => ({
     renewal: { amount: 20, currency: 'USD', period: 'month', anchor_day: 12,
       date: '2026-11-12T00:00:00Z', date_known: true },
     usage: { list_usd: 2.0, tokens: 1_000_000, calls: 12, priced_tokens: 1_000_000,
-      unpriced_tokens: 0, coverage: 1 },
+      unpriced_tokens: 0, unpriced_calls: 0, coverage: 1 },
     attribution: { routes: [{ route: 'test', basis: 'route' }], basis: 'route', note: 'route evidence' },
     difference_usd: -17.37, status: 'ok', notes: [],
   }],
@@ -219,31 +219,56 @@ test.afterEach(async () => {
 test('the economics section leads with the three headline figures', async () => {
   const { container, text } = await renderSection(econFixture())
   assert.match(text(), /Monthly subscriptions/)
-  assert.match(text(), /\$20\.00\/mo/)
-  assert.equal(container.querySelector('.wm-product-stat strong').textContent, '$20.00/mo',
+  assert.match(text(), /USD 20\.00\/mo/)
+  assert.equal(container.querySelector('.wm-product-stat strong').textContent, 'USD 20.00/mo',
     'the headline fee amount renders in its own element')
   assert.match(text(), /API-equivalent usage/)
   assert.match(text(), /\$2\.00/)
   assert.match(text(), /Estimated value comparison/)
   assert.match(text(), /−\$17\.37/)
   assert.match(text(), /Not cash saved/)
-  assert.match(text(), /\$19\.37 in the last 30 days/)
+  assert.match(text(), /USD 19\.37 in the last 30 days/)
   assert.match(text(), /same window/)
-  assert.ok(translated('econPerMonth', '$20.00'), 'the monthly fee value is interpolated')
+  assert.ok(translated('econPerMonth', 'USD 20.00'), 'the monthly fee value is interpolated')
   assert.ok(translated('econSpanDays', 30), 'the span interpolates rounded days')
-  assert.ok(translated('econSubsSmall', '$19.37', 'in the last 30 days', 1, 'Complete'),
+  assert.ok(translated('econSubsSmall', 'USD 19.37', 'in the last 30 days', 1, 'Complete'),
     'the window value, span, count and status are interpolated')
+})
+
+test('unknown economics currencies stay localised in headline, window and group values', async () => {
+  const previousTranslator = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  try {
+    const data = econFixture()
+    data.headline.fees_monthly_by_currency = [{ currency: 'XYZ', amount: 20 }]
+    data.headline.fees_window_by_currency = [{ currency: 'XYZ', amount: 19.37 }]
+    data.groups = [{
+      currency: 'XYZ', monthly_fees: 20, window_fees: 19.37, fee_complete: true,
+      window_fee_complete: true, usage_usd: null, difference_usd: null,
+      status: 'unavailable', notes: [], blockers: []
+    }]
+    data.accounts = []
+    const { text } = await renderSection(data)
+    assert.match(text(), /币种未知 20\.00/)
+    assert.match(text(), /币种未知 19\.37/)
+    assert.doesNotMatch(text(), /Currency unknown/)
+  } finally {
+    i18nBackend.t = previousTranslator
+  }
 })
 
 test('the breakdown names the membership, renewal and coverage', async () => {
   const { container, text } = await renderSection(econFixture())
   assert.match(text(), /Test account/)
   assert.match(text(), /Test Plus/)
-  assert.match(text(), /\$20\.00 due 2026-11-12/)
-  assert.match(text(), /\$19\.37 in window/)
+  assert.match(text(), /USD 20\.00 due 2026-11-12/)
+  assert.match(text(), /USD 19\.37 in window/)
   assert.match(text(), /Fully priced/)
-  assert.ok(translated('econDue', '$20.00', '2026-11-12'), 'the renewal amount and date are interpolated')
-  assert.ok(translated('econInWindow', '$19.37'), 'the windowed fee is interpolated')
+  assert.ok(translated('econDue', 'USD 20.00', '2026-11-12'), 'the renewal amount and date are interpolated')
+  assert.ok(translated('econInWindow', 'USD 19.37'), 'the windowed fee is interpolated')
   const headers = [...container.querySelectorAll('th')].map(th => th.textContent)
   assert.deepEqual(headers, ['Account', 'Membership', 'Monthly equiv.', 'API-equivalent usage',
     'Est. value difference', 'Pricing coverage'])
@@ -329,7 +354,7 @@ test('Costs distinguishes reported use, API-equivalent zero, missing charges, mi
   assert.match(cache.textContent, /Partial/)
   assert.match(cache.textContent, /API-equivalent value is zero/)
   const fees = [...container.querySelectorAll('.wm-cost-fee-lines li')].map(line => line.textContent)
-  assert.deepEqual(fees, ['$0.00/mo', '£20.00/mo'])
+  assert.deepEqual(fees, ['USD 0.00/mo', 'GBP 20.00/mo'])
   assert.match(container.querySelector('[data-cost-kind="fees"]').textContent, /1 fee unknown/)
   assert.match(container.querySelector('[data-cost-kind="allowances"]').textContent, /1 limit/)
   assert.match(text(), /Credits consumed/)
@@ -391,7 +416,7 @@ test('Costs does not count included or no-plan routes as subscriptions with unkn
 
   const withIncluded = await renderCostsSummary({ accounts: [paidOwner, includedRoute] })
   const includedFees = withIncluded.container.querySelector('[data-cost-kind="fees"]')
-  assert.deepEqual([...includedFees.querySelectorAll('.wm-cost-fee-lines li')].map(line => line.textContent), ['$20.00/mo'])
+  assert.deepEqual([...includedFees.querySelectorAll('.wm-cost-fee-lines li')].map(line => line.textContent), ['USD 20.00/mo'])
   assert.match(includedFees.textContent, /Saved/)
   assert.doesNotMatch(includedFees.textContent, /fee unknown|No known fee/)
 
@@ -506,11 +531,11 @@ test('missing fees, dated FX and historical window fees have per-account blocker
       ['en', ['Set or confirm this account’s subscription fee in Memberships.',
         'Add a dated user-supplied GBP to USD rate in Costs.',
         'Historical fee evidence is incomplete; add its effective date and amount in Memberships.',
-        'A cache rate is unavailable; check the provider’s cache price evidence.'], '$30.00/mo'],
+        'A cache rate is unavailable; check the provider’s cache price evidence.'], 'USD 30.00/mo'],
       ['zh', ['请在“会员”中设置或确认此账户的订阅费用。',
         '请在“费用”中添加注明日期的 GBP 兑 USD 用户提供汇率。',
         '历史费用证据不完整；请在“会员”中补充生效日期和金额。',
-        '缓存费率不可用；请检查供应商缓存价格证据。'], '$30.00/月'],
+        '缓存费率不可用；请检查供应商缓存价格证据。'], 'USD 30.00/月'],
     ]) {
       i18nBackend.t = (key, ...args) => {
         const entry = T.I18N[language][key]
@@ -682,8 +707,8 @@ test('a trend month without a converted fee total degrades to a text row', async
   }], excluded_before_recording: 0, note: '' }
   const { container, text } = await renderSection(data)
   assert.equal(container.querySelector('.wm-econ-trend-bars'), null)
-  assert.match(text(), /£4\.25\/mo/)
-  assert.ok(translated('econPerMonth', '£4.25'), 'the fallback fee value is interpolated')
+  assert.match(text(), /GBP 4\.25\/mo/)
+  assert.ok(translated('econPerMonth', 'GBP 4.25'), 'the fallback fee value is interpolated')
   assert.match(text(), /no FX rate dated in this month/)
 })
 

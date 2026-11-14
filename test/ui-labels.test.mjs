@@ -404,9 +404,9 @@ test('billing evidence and entitlement summaries follow the chosen language', ()
   const account = { plan: { entitlements: { windows: [{ id: 'w', label: 'Nightly', amount: 5, currency: 'USD' }] },
     model_restrictions: ['m1'], effective: { effective_from: '2026-01-01' } } }
   assert.equal(T.membershipEntitlementSummary(account),
-    'plan allowances: Nightly · $5.00 allowance (usage in Memberships) · restricted models: m1 · effective 2026-01-01 to ongoing')
+    'plan allowances: Nightly · USD 5.00 allowance (usage in Memberships) · restricted models: m1 · effective 2026-01-01 to ongoing')
   assert.equal(T.membershipEntitlementSummary(account, translator('zh')),
-    '方案额度：Nightly · $5.00 额度（用量见“会员”） · 受限模型：m1 · 有效期 2026-01-01 至 持续有效')
+    '方案额度：Nightly · USD 5.00 额度（用量见“会员”） · 受限模型：m1 · 有效期 2026-01-01 至 持续有效')
 })
 
 test('every advanced-rule string exists in English and Chinese', () => {
@@ -804,10 +804,10 @@ test('membership helpers follow the chosen language', () => {
   const zhT = translator('zh')
   const declared = { basis: 'declared', effective: { amount: 17, currency: 'GBP', period: 'month' },
     published: { amount: 20, currency: 'USD' }, currency_comparable: true }
-  assert.equal(T.feeLabel(declared, enT), 'Your price: £17.00/mo (catalogue $20.00)')
-  assert.equal(T.feeLabel(declared, zhT), '你的价格：£17.00/月（目录 $20.00）')
+  assert.equal(T.feeLabel(declared, enT), 'Your price: GBP 17.00/mo (catalogue USD 20.00)')
+  assert.equal(T.feeLabel(declared, zhT), '你的价格：GBP 17.00/月（目录 USD 20.00）')
   assert.equal(T.feeLabel({ basis: 'catalogue', effective: { amount: 20, currency: 'USD', period: 'month' } }, zhT),
-    '目录价：$20.00/月')
+    '目录价：USD 20.00/月')
   assert.equal(T.feeLabel({ basis: 'api_only', effective: {} }, zhT), '按量 API · 无固定会员费')
   const rows = T.quotaRows({ quota: { windows: [
     { id: 'w', label: 'Weekly', used_percent: 24, state: 'live', basis: ['provider_reported'] },
@@ -815,9 +815,9 @@ test('membership helpers follow the chosen language', () => {
   assert.equal(rows[0].reading, '已用 24%')
   assert.equal(rows[0].source, '供应商')
   assert.equal(rows[0].stateLabel, '实时')
-  assert.equal(T.feesLabel({ byCurrencyPeriod: { 'USD/month': 20 } }, zhT), '$20.00/月')
+  assert.equal(T.feesLabel({ byCurrencyPeriod: { 'USD/month': 20 } }, zhT), 'USD 20.00/月')
   assert.equal(T.planOptionLabel({ name: 'Plus', price: { amount: 20, currency: 'USD', period: 'month' },
-    verification: { status: 'verified' } }, zhT), 'Plus — $20.00/月')
+    verification: { status: 'verified' } }, zhT), 'Plus — USD 20.00/月')
   assert.match(T.planOptionLabel({ name: 'Teams', price: { amount: 30, currency: 'USD' },
     verification: { status: 'provisional' } }, zhT), /暂定/)
   assert.match(T.membershipErrorText(new Error('409 conflict'), 'write', zhT), /重新加载/)
@@ -833,10 +833,10 @@ test('membership helpers follow the chosen language', () => {
 test('membership helpers default to the legacy English wording', () => {
   // No translator: the exact strings the pane rendered before localisation.
   assert.equal(T.feeLabel({ basis: 'catalogue', effective: { amount: 20, currency: 'USD', period: 'month' } }),
-    'Catalogue: $20.00/mo')
+    'Catalogue: USD 20.00/mo')
   assert.equal(T.planOptionLabel({ name: 'Plus', price: { amount: 20, currency: 'USD' },
-    verification: { status: 'verified' } }), 'Plus — $20.00/month')
-  assert.equal(T.feesLabel({ byCurrencyPeriod: { 'USD/month': 20 } }), '$20.00/mo')
+    verification: { status: 'verified' } }), 'Plus — USD 20.00/month')
+  assert.equal(T.feesLabel({ byCurrencyPeriod: { 'USD/month': 20 } }), 'USD 20.00/mo')
   assert.equal(T.quotaRows({ quota: { windows: [{ id: 'w', used_percent: 24 }] } })[0].reading, '24% used')
   assert.match(T.membershipErrorText(new Error('409 conflict'), 'write'), /changed since you loaded it/)
 })
