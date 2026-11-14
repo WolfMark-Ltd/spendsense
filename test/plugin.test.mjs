@@ -799,6 +799,13 @@ test('ledger v2 validation rejects malformed envelopes and stored numeric fields
     })(),
     (() => {
       const value = structuredClone(valid)
+      const day = Object.keys(value.days)[0]
+      const bucket = Object.keys(value.days[day])[0]
+      value.days[day][bucket].pricedTokens = '10'
+      return value
+    })(),
+    (() => {
+      const value = structuredClone(valid)
       value.snapshots.runtime.guardrail.usageValueCost = '0'
       return value
     })(),
