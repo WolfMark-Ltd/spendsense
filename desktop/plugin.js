@@ -678,31 +678,173 @@ function migrateV1(raw, now) {
 }
 
 function normalizeV2(raw) {
-  if (!isObj(raw) || raw.v !== LEDGER_VERSION) return null
-  return {
-    v: LEDGER_VERSION,
-    days: isObj(raw.days) ? raw.days : {},
-    legacyRates: isObj(raw.legacyRates) ? raw.legacyRates : {},
-    rates: isObj(raw.rates) ? raw.rates : {},
-    sessions: isObj(raw.sessions) ? raw.sessions : {},
-    since: typeof raw.since === 'string' ? raw.since : null,
-    snapshots: isObj(raw.snapshots) ? raw.snapshots : {}
+  const invalid = () => ({ ok: false, error: 'invalid-v2' })
+  const record = value => isObj(value) &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+  const has = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
+  const finite = value => typeof value === 'number' && Number.isFinite(value)
+  const nonNegative = value => finite(value) && value >= 0
+  const validDay = value => {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+    const date = new Date(`${value}T00:00:00.000Z`)
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
   }
+  const validCounterFields = (value, fields) => fields.every(field => nonNegative(value[field]))
+  const validBucket = (value, session = false) => {
+    if (!record(value) || !validCounterFields(value, ['input', 'output', 'cacheRead', 'cacheWrite', 'calls'])) return false
+    if (!(value.cost === null || nonNegative(value.cost)) || typeof value.model !== 'string' || !value.model ||
+        typeof value.profile !== 'string' || typeof value.provider !== 'string' || typeof value.legacy !== 'boolean' ||
+        !record(value.sources)) return false
+    if (!Object.values(value.sources).every(nonNegative)) return false
+    const optionalCounters = ['pricedTokens', 'unpricedTokens', 'unpricedCalls', 'missingUsageCalls',
+      'cacheCoveredPrompt', 'cacheCoveredRead', 'cacheExactPrompt', 'cacheEstimatedPrompt',
+      'netSavingsPrompt', 'firstAt', 'lastAt']
+    for (const field of optionalCounters) if (has(value, field) && !nonNegative(value[field])) return false
+    for (const field of ['usageValueCost', 'usageValuePriced', 'usageValueMissing', 'usageValueCallsTracked',
+      'usageValueMissingCalls']) if (has(value, field) && !nonNegative(value[field])) return false
+    if (has(value, 'usageValueVersion') && (!Number.isInteger(value.usageValueVersion) || value.usageValueVersion < 0)) return false
+    if (has(value, 'usageValueScope') && typeof value.usageValueScope !== 'string') return false
+    if (has(value, 'foreignSlug') && typeof value.foreignSlug !== 'string') return false
+    if (has(value, 'saved') && !nonNegative(value.saved)) return false
+    if (has(value, 'netSavings') && !finite(value.netSavings)) return false
+    if (has(value, 'cacheEstimated') && typeof value.cacheEstimated !== 'boolean') return false
+    if (has(value, 'coverageUnknown') && typeof value.coverageUnknown !== 'boolean') return false
+    if (has(value, 'cacheSource') && !['unknown', 'exact', 'estimated'].includes(value.cacheSource)) return false
+    return !session || nonNegative(value.firstAt) && nonNegative(value.lastAt)
+  }
+  const validBuckets = (map, session = false) => record(map) &&
+    Object.entries(map).every(([key, bucket]) => !!key && validBucket(bucket, session))
+  const validBucketDays = days => record(days) && Object.entries(days).every(([day, buckets]) =>
+    validDay(day) && validBuckets(buckets))
+  const validRatesMap = rates => record(rates) && Object.values(rates).every(rate => {
+    if (!record(rate) || !validRates(rate)) return false
+    if (has(rate, 'write') && rate.write !== null && !nonNegative(rate.write)) return false
+    for (const field of ['inputKnown', 'outputKnown', 'cacheKnown', 'usageTierKnown',
+      'usageInputKnown', 'usageOutputKnown', 'usageCacheKnown', 'usageWriteKnown']) {
+      if (has(rate, field) && typeof rate[field] !== 'boolean') return false
+    }
+    if (has(rate, 'usagePricingVersion') && !nonNegative(rate.usagePricingVersion)) return false
+    if (has(rate, 'usagePriceSource') && typeof rate.usagePriceSource !== 'string') return false
+    return true
+  })
+  const validGuardrail = value => {
+    if (!record(value) || !validCounterFields(value, ['input', 'output', 'cacheRead', 'cacheWrite', 'calls']) ||
+        !['usageValueVersion', 'usageValueCost', 'usageValuePriced', 'usageValueMissing',
+          'usageValueCallsTracked', 'usageValueMissingCalls', 'pendingUsageTokens'].every(field => has(value, field)) ||
+        !Number.isInteger(value.usageValueVersion) || value.usageValueVersion < 0 ||
+        typeof value.usageValueScope !== 'string' ||
+        !['usageValueCost', 'usageValuePriced', 'usageValueMissing', 'usageValueCallsTracked',
+          'usageValueMissingCalls', 'pendingUsageTokens'].every(field => nonNegative(value[field]))) return false
+    if (has(value, 'pendingUsageCall') && value.pendingUsageCall !== null && !nonNegative(value.pendingUsageCall)) return false
+    if (has(value, 'pendingUsageRef') && value.pendingUsageRef !== null) {
+      const ref = value.pendingUsageRef
+      if (!record(ref) || !validDay(ref.day) || typeof ref.bucketKey !== 'string' ||
+          !(ref.sessionId === null || typeof ref.sessionId === 'string')) return false
+    }
+    return true
+  }
+  const validSnapshots = snapshots => record(snapshots) && Object.entries(snapshots).every(([key, snapshot]) => {
+    if (!key || !record(snapshot) || !validCounterFields(snapshot, ['input', 'output', 'cacheRead', 'cacheWrite', 'calls']) ||
+        !nonNegative(snapshot.at)) return false
+    if (has(snapshot, 'costUsd') && snapshot.costUsd !== null && !nonNegative(snapshot.costUsd)) return false
+    for (const field of ['counterPrompt', 'counterInput', 'counterFreshInput', 'counterOutput', 'counterCalls']) {
+      if (has(snapshot, field) && snapshot[field] !== null && !nonNegative(snapshot[field])) return false
+    }
+    if (has(snapshot, 'counterPromptSource') &&
+        snapshot.counterPromptSource !== null && !['input', 'prompt'].includes(snapshot.counterPromptSource)) return false
+    if (has(snapshot, 'cacheEstimated') && typeof snapshot.cacheEstimated !== 'boolean') return false
+    if (has(snapshot, 'cacheSource') && !['unknown', 'exact', 'estimated'].includes(snapshot.cacheSource)) return false
+    return !has(snapshot, 'guardrail') || validGuardrail(snapshot.guardrail)
+  })
+
+  if (!record(raw) || raw.v !== LEDGER_VERSION) return invalid()
+  const required = ['v', 'days', 'rates', 'since', 'snapshots']
+  const allowed = new Set([...required, 'legacyRates', 'sessions'])
+  if (required.some(field => !has(raw, field)) || Object.keys(raw).some(field => !allowed.has(field))) return invalid()
+  if (!validBucketDays(raw.days) || !validRatesMap(raw.rates) || !validSnapshots(raw.snapshots)) return invalid()
+  if (raw.since !== null && !validDay(raw.since)) return invalid()
+  if (has(raw, 'legacyRates') && !validRatesMap(raw.legacyRates)) return invalid()
+  if (has(raw, 'sessions') && !validBuckets(raw.sessions, true)) return invalid()
+  return { ok: true, ledger: {
+    v: LEDGER_VERSION,
+    days: raw.days,
+    legacyRates: has(raw, 'legacyRates') ? raw.legacyRates : {},
+    rates: raw.rates,
+    sessions: has(raw, 'sessions') ? raw.sessions : {},
+    since: raw.since,
+    snapshots: raw.snapshots
+  } }
 }
 
-/** -> { ledger, migrated } from a ctx.storage-like `{ get(key, fallback) }`. */
+function storedLedgerVersion(raw) {
+  return isObj(raw) && Number.isSafeInteger(raw.v) && raw.v >= 0 ? raw.v : 'unknown'
+}
+
+function ledgerDiagnostics(sourceVersion, validationOutcome, recordingStatus, writeStatus) {
+  return { sourceVersion, validationOutcome, recordingStatus, writeStatus }
+}
+
+function ledgerDiagnosticText(diagnostics, t) {
+  const status = diagnostics || ledgerDiagnostics('unknown', 'not-loaded', 'unknown', 'unknown')
+  const source = status.sourceVersion === 'none' ? t('settingsLedgerSourceNone')
+    : status.sourceVersion === 'unknown' ? t('settingsLedgerSourceUnknown')
+      : `v${status.sourceVersion}`
+  const validationKeys = {
+    fresh: 'settingsLedgerFresh', 'valid-v2': 'settingsLedgerValidV2', 'invalid-v2': 'settingsLedgerInvalidV2',
+    'unsupported-version': 'settingsLedgerUnsupportedVersion', 'invalid-envelope': 'settingsLedgerInvalidEnvelope',
+    'v1-migrated': 'settingsLedgerV1Migrated', 'legacy-unrecognized': 'settingsLedgerLegacyUnrecognized',
+    'read-failed': 'settingsLedgerReadFailed', 'storage-unavailable': 'settingsLedgerStorageUnavailable',
+    'not-loaded': 'settingsLedgerNotLoaded'
+  }
+  const validation = t(validationKeys[status.validationOutcome] || 'settingsLedgerNotLoaded')
+  const recording = t(status.recordingStatus === 'active' ? 'settingsLedgerRecordingActive'
+    : status.recordingStatus === 'paused' ? 'settingsLedgerRecordingPaused' : 'settingsLedgerUnknown')
+  const writes = t(status.writeStatus === 'enabled' ? 'settingsLedgerWritesEnabled'
+    : status.writeStatus === 'blocked' ? 'settingsLedgerWritesBlocked'
+      : status.writeStatus === 'failed' ? 'settingsLedgerWritesFailed'
+        : status.writeStatus === 'unavailable' ? 'settingsLedgerWritesUnavailable' : 'settingsLedgerUnknown')
+  return t('settingsLedgerDiagnosticLine', source, validation, recording, writes)
+}
+
 function readStoredLedger(store, now) {
-  if (!store) return { ledger: emptyLedger(), migrated: false }
-  const v2 = normalizeV2(store.get(LEDGER_KEY, null))
-  if (v2) return { ledger: { ...v2, snapshots: collapseSnapshotKeys(v2.snapshots) }, migrated: false }
-  const v1 = store.get(LEGACY_LEDGER_KEY, null)
+  if (!store) return { ledger: emptyLedger(), migrated: false, error: 'storage-unavailable',
+    diagnostics: ledgerDiagnostics('unknown', 'storage-unavailable', 'paused', 'unavailable') }
+  const missing = Symbol('missing-storage-value')
+  let rawV2
+  try {
+    rawV2 = store.get(LEDGER_KEY, missing)
+  } catch {
+    return { ledger: emptyLedger(), migrated: false, error: 'read-failed',
+      diagnostics: ledgerDiagnostics('unknown', 'read-failed', 'paused', 'blocked') }
+  }
+  if (rawV2 !== missing) {
+    const v2 = normalizeV2(rawV2)
+    if (!v2.ok) {
+      const sourceVersion = storedLedgerVersion(rawV2)
+      const outcome = sourceVersion === LEDGER_VERSION ? 'invalid-v2'
+        : sourceVersion === 'unknown' ? 'invalid-envelope' : 'unsupported-version'
+      return { ledger: emptyLedger(), migrated: false, error: v2.error,
+        diagnostics: ledgerDiagnostics(sourceVersion, outcome, 'paused', 'blocked') }
+    }
+    return { ledger: { ...v2.ledger, snapshots: collapseSnapshotKeys(v2.ledger.snapshots) }, migrated: false, error: null,
+      diagnostics: ledgerDiagnostics(LEDGER_VERSION, 'valid-v2', 'active', 'enabled') }
+  }
+  let v1
+  try {
+    v1 = store.get(LEGACY_LEDGER_KEY, missing)
+  } catch {
+    return { ledger: emptyLedger(), migrated: false, error: 'read-failed',
+      diagnostics: ledgerDiagnostics('unknown', 'read-failed', 'paused', 'blocked') }
+  }
   if (isObj(v1) && v1.v === 1) {
     const migratedLedger = migrateV1(v1, now)
-    return { ledger: { ...migratedLedger, snapshots: collapseSnapshotKeys(migratedLedger.snapshots) }, migrated: true }
+    return { ledger: { ...migratedLedger, snapshots: collapseSnapshotKeys(migratedLedger.snapshots) }, migrated: true, error: null,
+      diagnostics: ledgerDiagnostics(1, 'v1-migrated', 'active', 'enabled') }
   }
-  return { ledger: emptyLedger(), migrated: false }
+  return { ledger: emptyLedger(), migrated: false, error: null,
+    diagnostics: ledgerDiagnostics(v1 === missing ? 'none' : storedLedgerVersion(v1),
+      v1 === missing ? 'fresh' : 'legacy-unrecognized', 'active', 'enabled') }
 }
-
 
 /** Collapse legacy `runtime::model` snapshot keys to runtime epochs, keeping the
  *  highest reading for each runtime. Structural migration only: totals and
@@ -1488,16 +1630,32 @@ function wrapBackendTransport(transport) {
 
 /** Last storage write failure (null when the latest write succeeded). */
 const $storageError = atom(null)
+const $ledgerReadError = atom(false)
+const $ledgerLoadDiagnostics = atom(ledgerDiagnostics('unknown', 'not-loaded', 'unknown', 'unknown'))
 let storage = null
 /** ctx.os (curated OS door) — absent on older app builds. */
 let osApi = null
 
+function setLedgerWriteStatus(writeStatus) {
+  const current = $ledgerLoadDiagnostics.get()
+  $ledgerLoadDiagnostics.set({ ...current, writeStatus })
+}
+
 function saveLedger(next) {
+  if ($ledgerReadError.get()) {
+    setLedgerWriteStatus('blocked')
+    return false
+  }
   $ledger.set(next)
-  if (!storage) return
+  if (!storage) {
+    setLedgerWriteStatus('unavailable')
+    return true
+  }
   try {
     storage.set(LEDGER_KEY, next)
     if ($storageError.get()) $storageError.set(null)
+    setLedgerWriteStatus('enabled')
+    return true
   } catch (err) {
     const message = String((err && err.message) || err)
     if (!$storageError.get()) {
@@ -1508,6 +1666,8 @@ function saveLedger(next) {
       }
     }
     $storageError.set(message)
+    setLedgerWriteStatus('failed')
+    return false
   }
 }
 
@@ -1598,7 +1758,7 @@ const chains = new Map()
 let pluginLifetime = 0
 
 function enqueueUsage(sessionId, usage) {
-  if (!sessionId || !usage) return null
+  if ($ledgerReadError.get() || !sessionId || !usage) return null
   const snapshot = { ...usage }
   const identity = membershipIdentityNow()
   const lifetime = pluginLifetime
@@ -2675,6 +2835,7 @@ function Meter() {
   const t = usePluginI18n(ID)
   const { view, stale } = useStableLive()
   const storageError = useValue($storageError)
+  const ledgerPaused = useValue($ledgerReadError)
   useValue($backendRates)
   const rateIdentity = useValue($membershipIdentity)
   const provider = view.provider
@@ -2696,8 +2857,11 @@ function Meter() {
     },
     children: [
     jsx('style', { children: METER_CSS }, 'css'),
-    !view.bucket
-      ? jsx(MeterEmpty, { t }, 'body')
+    jsx(LedgerSafetyNotice, {}, 'ledger-safety'),
+    ledgerPaused
+      ? jsx('p', { className: 'wm-meter-empty', role: 'status', children: t('ledgerHistoryUnavailable') }, 'body')
+      : !view.bucket
+        ? jsx(MeterEmpty, { t }, 'body')
       : jsxs('div', { className: cn('wm-meter-sections', stale && 'wm-stale'), children: [
           jsx(MeterHeader, { presence, t, view }, 'head'),
           jsx(CostKpi, { t, view }, 'cost'),
@@ -3018,6 +3182,7 @@ function ProductShell({ children, pageStyles = '' }) {
     children: [
       jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + (supplementalStyles || '') }),
       jsx(LedgerTabs, {}),
+      jsx(LedgerSafetyNotice, {}, 'ledger-safety'),
       pair
         ? backendPairNotice(pair, t)
         : compatibility.some(failure => failure.identity === identity)
@@ -3026,6 +3191,13 @@ function ProductShell({ children, pageStyles = '' }) {
           : null,
       children
     ].filter(Boolean) })
+}
+function LedgerSafetyNotice() {
+  const t = usePluginI18n(ID)
+  const paused = useValue($ledgerReadError)
+  return paused ? jsx('div', { className: 'wm-alert', role: 'alert', 'data-ledger-recording': 'paused',
+    children: [jsx('strong', { children: t('ledgerReadErrorTitle') }, 'title'),
+      jsx('p', { children: t('ledgerReadErrorBody') }, 'body')] }) : null
 }
 function keyedElementChildren(children, prefix) {
   return children.map((child, index) => {
@@ -3791,13 +3963,17 @@ function econExplanationText(row, t) {
 function econCoverageLabel(t, usage) {
   if (!usage || (!num(usage.calls) && !num(usage.tokens))) return t('econNoUsage')
   if (usage.list_usd == null) return t('econNoPrice')
-  if (usage.coverage == null) return t('econCoverageUnknown')
+  if (typeof usage.coverage !== 'number' || !Number.isFinite(usage.coverage) ||
+      usage.coverage < 0 || usage.coverage > 1) return t('econCoverageUnknown')
   const pct = Math.round(usage.coverage * 100)
   // Coverage rounds to whole percent: only the exact unpriced count can
   // certify fully priced, matching the backend status in the same cell.
-  // A rounded 100% with unpriced tokens left is "nearly all", never exact.
-  if (pct >= 100) return num(usage.unpriced_tokens) > 0 || num(usage.unpriced_calls) > 0
-    ? t('econNearlyAllPriced') : t('econFullyPriced')
+  if (pct >= 100) {
+    const validCount = value => Number.isSafeInteger(value) && value >= 0
+    if (!validCount(usage.unpriced_tokens) || !validCount(usage.unpriced_calls)) return t('econCoverageUnknown')
+    return usage.unpriced_tokens > 0 || usage.unpriced_calls > 0
+      ? t('econNearlyAllPriced') : t('econFullyPriced')
+  }
   return t('econPricedPct', pct)
 }
 
@@ -3866,7 +4042,7 @@ function EconomicsBlockers({ blockers = [], notes = [], t, onOpenFx }) {
 }
 
 function econMoneyValue(amount, currency, complete = true) {
-  const money = fmtMoney(amount, currency)
+  const money = fmtMembershipMoney(amount, currency)
   if (!money || (!complete && finiteValue(amount) === 0)) return '—'
   return complete ? money : `≥${money}`
 }
@@ -4476,7 +4652,8 @@ function pricingStatusQuery(identity = membershipIdentityNow()) {
 function membershipEntitlementSummary(account, t = needsAttentionEn) {
   const windows = account?.plan?.entitlements?.windows || []
   const names = windows.map(window => {
-    const amount = window.amount == null ? '' : t('costsEntAllowance', fmtMoney(window.amount, window.currency || 'USD'))
+    const amount = window.amount == null ? '' : t('costsEntAllowance', window.limit === 'credits' && !window.currency
+      ? t('memQuotaCredits', window.amount) : fmtMembershipMoney(window.amount, window.currency, t))
     return `${window.label || window.id}${amount}`
   })
   const restrictions = account?.plan?.model_restrictions || []
@@ -4498,7 +4675,7 @@ function costsUnknownFeeCount(accounts) {
 function costsFeeLines(summary, t) {
   return Object.entries(summary?.byCurrencyPeriod || {}).map(([key, amount]) => {
     const [currency, period = 'month'] = key.split('/')
-    return { currency, period, amount, label: `${fmtMoney(amount, currency)}/${t('memFeesPeriod', period)}` }
+    return { currency, period, amount, label: `${fmtMembershipMoney(amount, currency, t)}/${t('memFeesPeriod', period)}` }
   })
 }
 
@@ -4749,13 +4926,13 @@ function EconomicsAccountRow({ row, t, onOpenFx }) {
   const usage = row.usage || {}
   const renewal = row.renewal || {}
   const feeText = fee.amount == null ? t('econNoFee')
-    : `${fmtMoney(fee.amount, fee.currency)}/${t('econPeriodAbbr', fee.period)}`
+    : `${fmtMembershipMoney(fee.amount, fee.currency, t)}/${t('econPeriodAbbr', fee.period)}`
   const basisText = fee.basis === 'declared' ? t('econFeeDeclared') : fee.basis === 'custom' ? t('econFeeCustom')
     : fee.basis === 'catalogue' ? t('econFeeCatalogue') : null
   const renewalText = renewal.amount == null ? null
     : renewal.date_known && renewal.date
-      ? t('econDue', fmtMoney(renewal.amount, renewal.currency), fmtDay(renewal.date))
-      : t('econRenewalUnknown', fmtMoney(renewal.amount, renewal.currency))
+      ? t('econDue', fmtMembershipMoney(renewal.amount, renewal.currency, t), fmtDay(renewal.date))
+      : t('econRenewalUnknown', fmtMembershipMoney(renewal.amount, renewal.currency, t))
   const usageText = usage.list_usd == null ? '—' : analyticMoney(usage.list_usd)
   const usageDetail = usage.tokens || usage.calls ? t('econUsageDetail', fmtTokens(usage.tokens), usage.calls) : null
   const routes = (row.attribution?.routes || []).map(r => r.route).join(', ')
@@ -4774,10 +4951,10 @@ function EconomicsAccountRow({ row, t, onOpenFx }) {
     ].filter(Boolean) }),
     jsxs('td', { className: 'wm-econ-num', children: [
       jsx('div', { children: monthly.amount == null ? '—'
-        : t('econPerMonth', fmtMoney(monthly.amount, monthly.currency)) }),
+        : t('econPerMonth', fmtMembershipMoney(monthly.amount, monthly.currency, t)) }),
       windowFee.amount == null ? null
         : jsx('div', { className: 'wm-econ-dim',
-            children: t('econInWindow', fmtMoney(windowFee.amount, windowFee.currency)) })
+            children: t('econInWindow', fmtMembershipMoney(windowFee.amount, windowFee.currency, t)) })
     ].filter(Boolean) }),
     jsxs('td', { className: 'wm-econ-num', children: [
       jsx('div', { children: usageText }),
@@ -4809,7 +4986,7 @@ function EconomicsTrend({ trend, t }) {
       partialPricing ? t('econFlagPricing') : null,
       entry.partial_attribution ? t('econFlagAttribution') : null].filter(Boolean).join(' · ')
     const feesText = (entry.fees_by_currency || []).map(({ amount, currency }) =>
-      t('econPerMonth', fmtMoney(amount, currency))).join(' · ') || t('econNoFees')
+      t('econPerMonth', fmtMembershipMoney(amount, currency, t))).join(' · ') || t('econNoFees')
     // Bars need the backend's converted fee total; without it (or without a
     // difference) the month renders as an honest text row instead of a
     // client-side currency sum.
@@ -5264,6 +5441,7 @@ function OverviewPage() {
   // provider request, so attention stays passive.
   const weather = useQuery(weatherQuery(identity, false))
   const ledger = useValue($ledger)
+  const ledgerPaused = useValue($ledgerReadError)
   const accountsReady = accounts.data?.identity === identity && membershipIdentityCurrent(identity)
   const currentAccounts = accountsReady
     ? membershipAccounts({ accounts: accounts.data.accounts }) : []
@@ -5313,7 +5491,7 @@ function OverviewPage() {
       jsxs('section', { className: 'wm-product-summary wm-overview-grid', 'aria-label': t('ovFigures'), children: [
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'recorded-usage', children: [
           jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovRecordedLabel') }),
-          jsx('div', { className: 'wm-kpi-figure', children: !local.known ? t('ovUnknown')
+          jsx('div', { className: 'wm-kpi-figure', children: ledgerPaused ? t('ledgerHistoryUnavailable') : !local.known ? t('ovUnknown')
           : local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls || local.coverageUnknown
             ? [jsx('small', { children: '≥' }, 'gte'), fmtUsd(local.cost), jsx('small', { children: ' ' + t('ovLowerBound') }, 'lb')]
             : fmtUsd(local.cost) }),
@@ -5321,7 +5499,8 @@ function OverviewPage() {
           local.coverageUnknown ? jsx('p', { className: 'wm-kpi-prov', children: t('ovCoverageUnknown') }) : null,
           jsxs('div', { className: 'wm-kpi-foot', children: [
             certaintyChip('estimated', t('ovCertRecorded'), 'recorded'),
-            (local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls || local.coverageUnknown) ? certaintyChip('partial', t('ovCertPartial'), 'rpart') : null
+            !ledgerPaused && (local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls || local.coverageUnknown)
+              ? certaintyChip('partial', t('ovCertPartial'), 'rpart') : null
           ].filter(Boolean) })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'actual-charges', 'aria-label': t('ovChargesLabel'), children: [
@@ -5461,6 +5640,7 @@ function jumpToSettingsSection(id) {
 function SettingsPage() {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
+  const ledgerDiagnostics = useValue($ledgerLoadDiagnostics)
   const status = useQuery(pricingStatusQuery(identity))
   const planCatalogue = useQuery(membershipPlansQuery(identity))
   const health = useQuery(backendHealthQuery(identity))
@@ -5766,6 +5946,8 @@ function SettingsPage() {
           jsx('p', { children: t('settingsDiagnosticsVersions', PLUGIN_VERSION,
             last?.version ? t('settingsDiagnosticsBackend', last.version)
               : health.isPending ? t('settingsDiagnosticsChecking') : t('settingsDiagnosticsNoBackend')) }),
+          jsx('p', { className: 'wm-subtle', 'data-ledger-load-diagnostics': '',
+            children: ledgerDiagnosticText(ledgerDiagnostics, t) }),
           last?.build
             ? jsx('p', { className: 'wm-subtle', children: t('settingsDiagnosticsIdentity',
                 String(last.build.contract ?? '—'),
@@ -6616,11 +6798,29 @@ function fmtMoney(amount, currency) {
   return symbol ? `${symbol}${value.toFixed(2)}` : `${value.toFixed(2)} ${currency || ''}`.trim()
 }
 
+function membershipCurrencyCode(currency) {
+  const code = String(currency || '').trim()
+  return MEMBERSHIP_CURRENCY_CODES.has(code) ? code : null
+}
+
+const MEMBERSHIP_CURRENCY_CODES = new Set(['USD', 'GBP', 'EUR', 'AUD', 'CAD', 'JPY', 'CNY', 'CHF', 'SEK', 'PLN', 'INR'])
+
+function fmtMembershipMoney(amount, currency, t = needsAttentionEn) {
+  if (amount === null || amount === undefined ||
+      !(typeof amount === 'number' || typeof amount === 'string') ||
+      typeof amount === 'string' && !amount.trim()) return null
+  const numeric = Number(amount)
+  if (!Number.isFinite(numeric)) return null
+  const code = membershipCurrencyCode(currency)
+  const value = numeric.toFixed(2)
+  return code ? `${code} ${value}` : `${t('memCurrencyUnknown')} ${value}`
+}
+
 /** One sentence for the fee, always naming its basis. */
 function feeLabel(fee, t = needsAttentionEn) {
   if (!fee || typeof fee !== 'object') return t('memFeeNoInfo')
   const effective = fee.effective || {}
-  const amount = fmtMoney(effective.amount, effective.currency)
+  const amount = fmtMembershipMoney(effective.amount, effective.currency, t)
   const period = effective.period ? `/${t('memPeriodAbbr', String(effective.period))}` : ''
   if (fee.basis === 'included') return t('memFeeIncluded')
   if (fee.basis === 'free_tier') return t('memFeeFree')
@@ -6631,7 +6831,7 @@ function feeLabel(fee, t = needsAttentionEn) {
   if (fee.basis === 'unconfirmed') return t('memFeeUnconfirmed')
   if (fee.basis === 'declared') {
     const comparison = fee.published?.per_seat ? null : fee.published
-    const published = comparison ? fmtMoney(comparison.amount, comparison.currency) : null
+    const published = comparison ? fmtMembershipMoney(comparison.amount, comparison.currency, t) : null
     const comparable = fee.currency_comparable !== false
     const tail = published && comparable
       ? t('memFeeTail', fee.published.source === 'user_defined' ? t('memFeeSrcCustom') : t('memFeeSrcCatalogue'), published) : ''
@@ -6668,7 +6868,9 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
     } else if (window.amount !== null && window.amount !== undefined) {
       // A count of credits is not money; monetary allowances carry currency.
       reading = window.limit === 'credits' ? t('memQuotaCredits', window.amount) :
-        window.currency ? t('memQuotaAllowance', fmtMoney(window.amount, window.currency)) : t('memQuotaAllowance', window.amount)
+        window.currency || ['usd', 'credit_value_usd'].includes(window.limit)
+          ? t('memQuotaAllowance', fmtMembershipMoney(window.amount, window.currency, t))
+          : t('memQuotaAllowance', window.amount)
     } else {
       reading = t('memQuotaNoReading')
     }
@@ -6739,11 +6941,11 @@ function wxVerdictLabel(t, verdict) {
 function wxLimitLabel(t, declared) {
   const kind = declared?.kind || 'unknown'
   if (kind === 'amount' && declared.currency) {
-    const money = fmtMoney(declared.amount, declared.currency)
+    const money = fmtMembershipMoney(declared.amount, declared.currency, t)
     return money ? `${money} ${t('wxAllowance')}` : t('wxLimitUnknown')
   }
   if (kind === 'amount' && declared.amount !== null && declared.amount !== undefined) {
-    return `${declared.amount} ${t('wxAllowance')}`
+    return `${fmtMembershipMoney(declared.amount, null, t)} ${t('wxAllowance')}`
   }
   if (kind === 'credits') return t('wxCredits', declared.amount)
   if (kind === 'percent') return t('wxPercentLimit')
@@ -7068,7 +7270,7 @@ function membershipSummary(accounts) {
   for (const account of accounts) {
     const effective = account.fee?.effective
     if (!effective || effective.amount === null || effective.amount === undefined) continue
-    const code = String(effective.currency || 'USD').toUpperCase()
+    const code = membershipCurrencyCode(effective.currency) || 'UNKNOWN'
     const period = String(effective.period || 'month')
     byCurrency[code] = (byCurrency[code] || 0) + Number(effective.amount)
     const key = `${code}/${period}`
@@ -7083,7 +7285,7 @@ function feesLabel(summary, t = needsAttentionEn) {
   if (!entries.length) return '—'
   return entries.map(([key, amount]) => {
     const [code, period = 'month'] = key.split('/')
-    return `${fmtMoney(amount, code) || `${amount} ${code}`}/${t('memFeesPeriod', period)}`
+    return `${fmtMembershipMoney(amount, code === 'UNKNOWN' ? null : code, t)}/${t('memFeesPeriod', period)}`
   }).join(' + ')
 }
 
@@ -7094,15 +7296,15 @@ function customPlanDraftFor(account, identity = membershipIdentityNow()) {
   const allowances = Array.isArray(plan.allowances) ? plan.allowances : []
   return {
     origin: identity, account_id: account?.id,
-    name: plan.name || '', amount: price.amount ?? '', currency: price.currency || 'USD',
+    name: plan.name || '', amount: price.amount ?? '', currency: price.currency || '',
     period: price.period || 'month', anchor_day: cycle.anchor_day || '',
     effective_from: plan.effective_from || '', effective_to: plan.effective_to || '',
     model_restrictions: Array.isArray(plan.model_restrictions) ? plan.model_restrictions.join(', ') : '',
     allowances: allowances.length ? allowances.map(window => ({
       label: window.label || window.id || '', kind: window.kind || 'rolling',
       duration_minutes: window.duration_minutes ?? '', amount: window.amount ?? '',
-      currency: window.currency || 'USD', scope: window.scope || 'account'
-    })) : [{ label: '', kind: 'rolling', duration_minutes: '', amount: '', currency: 'USD', scope: 'account' }]
+      currency: window.currency || '', scope: window.scope || 'account'
+    })) : [{ label: '', kind: 'rolling', duration_minutes: '', amount: '', currency: '', scope: 'account' }]
   }
 }
 
@@ -7111,7 +7313,7 @@ function customPlanDraftErrors(draft, t = needsAttentionEn) {
   if (!draft || !String(draft.name || '').trim()) errors.push(t('memPlanErrName'))
   if (draft?.amount !== '' && draft?.amount != null &&
       (!Number.isFinite(Number(draft.amount)) || Number(draft.amount) < 0)) errors.push(t('memPlanErrAmount'))
-  if (draft?.amount !== '' && draft?.amount != null && !String(draft.currency || '').trim()) errors.push(t('memPlanErrCurrency'))
+  if (draft?.amount !== '' && draft?.amount != null && !membershipCurrencyCode(draft.currency)) errors.push(t('memPlanErrCurrency'))
   if (!['month', 'year', 'quarter', 'week'].includes(String(draft?.period || 'month'))) errors.push(t('memPlanErrPeriod'))
   if (draft?.anchor_day !== '' && draft?.anchor_day != null &&
       (!Number.isInteger(Number(draft.anchor_day)) || Number(draft.anchor_day) < 1 || Number(draft.anchor_day) > 31)) {
@@ -7131,6 +7333,7 @@ function customPlanDraftErrors(draft, t = needsAttentionEn) {
     if (window.amount !== '' && (!Number.isFinite(Number(window.amount)) || Number(window.amount) < 0)) {
       errors.push(t('memPlanErrAllowanceAmount'))
     }
+    if (window.amount !== '' && !membershipCurrencyCode(window.currency)) errors.push(t('memPlanErrAllowanceCurrency'))
   }
   return [...new Set(errors)]
 }
@@ -7173,7 +7376,7 @@ function excludedPlansNote(account, t = needsAttentionEn) {
 }
 
 function planOptionLabel(plan, t = needsAttentionEn) {
-  const amount = fmtMoney(plan?.price?.amount, plan?.price?.currency)
+  const amount = fmtMembershipMoney(plan?.price?.amount, plan?.price?.currency, t)
   const state = plan?.source === 'user_defined' ? t('memPlanUserDefined') :
     plan?.verification?.status === 'verified' ? '' :
     plan?.verification?.status === 'provisional' ? t('memPlanProvisional') : t('memPlanUnpriced')
@@ -7210,7 +7413,10 @@ function feeReasons(catalogue, t = needsAttentionEn) {
 
 function feeCurrencies(catalogue) {
   const served = catalogue?.vocabulary?.currencies
-  return Array.isArray(served) && served.length ? served : ['USD', 'GBP', 'EUR']
+  const supported = Array.isArray(served)
+    ? [...new Set(served.map(membershipCurrencyCode).filter(Boolean))]
+    : []
+  return supported.length ? supported : [...MEMBERSHIP_CURRENCY_CODES]
 }
 
 /** Saved plan the provider no longer reports: ask, never auto-change. */
@@ -7236,7 +7442,7 @@ function feeDraft(account) {
   return {
     account_id: account?.id,
     amount: override.amount ?? effective.amount ?? '',
-    currency: override.currency || effective.currency || 'USD',
+    currency: override.currency || effective.currency || '',
     period: override.period || effective.period || 'month',
     anchor_day: override.billing_cycle?.anchor_day || account?.billing_cycle?.anchor_day || 1,
     effective_from: new Date().toISOString().slice(0, 10),
@@ -7250,7 +7456,7 @@ function feeDraftErrors(draft, t = needsAttentionEn) {
   if (!draft) return [t('memFeeErrNoDraft')]
   const amount = Number(draft.amount)
   if (draft.amount === '' || Number.isNaN(amount) || amount < 0) errors.push(t('memFeeErrAmount'))
-  if (!/^[A-Z]{3}$/.test(String(draft.currency || ''))) errors.push(t('memFeeErrCurrency'))
+  if (!membershipCurrencyCode(draft.currency)) errors.push(t('memFeeErrCurrency'))
   if (!['month', 'year', 'quarter', 'week'].includes(String(draft.period))) errors.push(t('memFeeErrPeriod'))
   const day = Number(draft.anchor_day)
   if (!Number.isInteger(day) || day < 1 || day > 31) errors.push(t('memFeeErrDay'))
@@ -7451,7 +7657,8 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
       jsx('div', { className: 'wm-custom-grid', children: [
         field(t('memPlanName'), 'name'),
         field(t('memFeeOptional'), 'amount', { type: 'number' }),
-        field(t('memCurrency'), 'currency', { choices: feeCurrencies({ vocabulary: { currencies: ['USD', 'GBP', 'EUR', 'AUD', 'CAD', 'JPY', 'CNY', 'CHF', 'SEK', 'PLN', 'INR'] } }).map(code => [code, code]) }),
+        field(t('memCurrency'), 'currency', { choices: [ ['', t('memCurrencyUnknown')],
+          ...feeCurrencies({ vocabulary: { currencies: ['USD', 'GBP', 'EUR', 'AUD', 'CAD', 'JPY', 'CNY', 'CHF', 'SEK', 'PLN', 'INR'] } }).map(code => [code, code]) ] }),
         field(t('memBillingFrequency'), 'period', { choices: [['month', t('memPeriodMonthly')], ['year', t('memPeriodYearly')], ['quarter', t('memPeriodQuarterly')], ['week', t('memPeriodWeekly')]] }),
         field(t('memAnchorDay'), 'anchor_day', { type: 'number' }),
         field(t('memEffectiveFrom'), 'effective_from', { type: 'date' }),
@@ -7463,7 +7670,7 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
           jsx('strong', { children: t('memAllowancesTitle') }),
           jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () =>
             $customPlanDraft.set({ ...customDraft, allowances: [...(customDraft.allowances || []),
-              { label: '', kind: 'rolling', duration_minutes: '', amount: '', currency: 'USD', scope: 'account' }] }),
+              { label: '', kind: 'rolling', duration_minutes: '', amount: '', currency: '', scope: 'account' }] }),
             children: t('memAllowanceAdd') })
         ] }),
         ...(customDraft.allowances || []).map((window, index) => jsxs('div', { className: 'wm-allowance-editor',
@@ -7491,8 +7698,9 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
             jsx('label', { className: 'wm-filter', children: [
               jsx('span', { children: t('memCurrency') }),
               jsx('select', { value: window.currency, onChange: event => setAllowance(index, 'currency', event.target.value),
-                children: ['USD', 'GBP', 'EUR', 'AUD', 'CAD', 'JPY', 'CNY', 'CHF', 'SEK', 'PLN', 'INR']
-                  .map(code => jsx('option', { value: code, children: code }, code)) })
+                children: [jsx('option', { value: '', children: t('memCurrencyUnknown') }, 'unknown'),
+                  ...feeCurrencies({ vocabulary: { currencies: ['USD', 'GBP', 'EUR', 'AUD', 'CAD', 'JPY', 'CNY', 'CHF', 'SEK', 'PLN', 'INR'] } })
+                    .map(code => jsx('option', { value: code, children: code }, code))] })
             ] }),
             jsx('label', { className: 'wm-filter', children: [
               jsx('span', { children: t('memAppliesTo') }),
@@ -7627,7 +7835,7 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
       jsx('p', { className: 'wm-note', children: t('memSeatHelp') }),
       !seatPricing ? jsx('p', { className: 'wm-note', children: t('memSeatUnavailable') }) : null,
       ...Object.entries(seatPricing?.prices || {}).map(([period, price]) => jsx('p', { className: 'wm-note',
-        children: t('memSeatPrice', fmtMoney(price.amount, price.currency) || '—', t('memPeriodAbbr', period)) }, period)),
+        children: t('memSeatPrice', fmtMembershipMoney(price.amount, price.currency, t) || '—', t('memPeriodAbbr', period)) }, period)),
       seatPricing?.usual_minimum ? jsx('p', { className: 'wm-note', children: t('memSeatMinimum', seatPricing.usual_minimum) }) : null,
       jsxs('div', { className: 'wm-controls', children: [
         jsxs('label', { className: 'wm-filter', children: [
@@ -7645,8 +7853,8 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
       ] }),
       jsx('p', { className: 'wm-note', id: `seat-help-${account.id}`, children: t('memSeatClear') }),
       fee.calculated ? jsx('p', { className: 'wm-note', 'data-seat-total': 'true', children: t('memSeatTotal',
-        fmtMoney(fee.calculated.unit_amount, fee.calculated.currency), t('memPeriodAbbr', fee.calculated.period),
-        fee.calculated.quantity, fmtMoney(fee.calculated.amount, fee.calculated.currency)) }) : null
+        fmtMembershipMoney(fee.calculated.unit_amount, fee.calculated.currency, t), t('memPeriodAbbr', fee.calculated.period),
+        fee.calculated.quantity, fmtMembershipMoney(fee.calculated.amount, fee.calculated.currency, t)) }) : null
     ] }, `seats-${account.rev || ''}-${account.plan_id}`) : null,
     subscription || apiOnly ? jsxs('div', { className: 'wm-fee-row', children: [
       jsx('span', { className: 'wm-fee', children: feeLabel(fee, t) }),
@@ -7671,7 +7879,8 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
               jsxs('label', { className: 'wm-filter', children: [
                 jsx('span', { children: t('memCurrency') }),
                 jsx('select', { value: draft.currency, onChange: event => $membershipDraft.set({ ...draft, currency: event.target.value }),
-                  children: feeCurrencies(catalogue).map(code => jsx('option', { value: code, children: code }, code)) })
+                  children: [jsx('option', { value: '', children: t('memCurrencyUnknown') }, 'unknown'),
+                    ...feeCurrencies(catalogue).map(code => jsx('option', { value: code, children: code }, code))] })
               ] }),
               jsxs('label', { className: 'wm-filter', children: [
                 jsx('span', { children: t('memPeriod') }),
@@ -10284,6 +10493,7 @@ function LedgerPage() {
   const tab = useValue($ledgerTab)
   useValue($membershipIdentity)
   const storageError = useValue($storageError)
+  const ledgerReadError = useValue($ledgerReadError)
   const { rows, totals } = useSummary(range)
   // One rule for the figure and its coverage, shared with the sidebar gauge.
   const totalSaved = savingsState(totals, null)
@@ -10307,6 +10517,10 @@ function LedgerPage() {
 
   // The authoritative view is the default; the local ledger stays one click
   // away and remains the fallback when the backend is unreachable.
+  if (ledgerReadError && view !== VIEW_ALL) {
+    return jsx(ProductShell, { children: jsx('main', { className: 'wm-shell', children:
+      jsx('p', { className: 'wm-subtle', role: 'status', children: t('ledgerHistoryUnavailable') }) }) })
+  }
   if (view === VIEW_ALL) {
     if (tab === 'costs' || tab === 'billing') return jsx(CostsPage, {})
     if (tab === 'memberships') return jsx(MembershipsPage, {})
@@ -10849,6 +11063,7 @@ const I18N = {
     memQuotaUsed: (pct, manual) => `${pct}% used${manual ? ' (you reported)' : ''}`,
     memQuotaCredits: n => `${n} credits`,
     memQuotaAllowance: value => `${value} allowance`,
+    memCurrencyUnknown: 'Currency unknown',
     memQuotaNoReading: 'No reading',
     memQuotaSrcYou: 'You reported',
     memQuotaSrcProvider: 'Provider',
@@ -10885,6 +11100,7 @@ const I18N = {
     memPlanErrAllowanceName: 'Name each allowance window you define.',
     memPlanErrAllowanceDuration: 'Allowance duration must be positive minutes.',
     memPlanErrAllowanceAmount: 'Allowance amount must be zero or more.',
+    memPlanErrAllowanceCurrency: 'Choose an allowance currency.',
     // Backend failures.
     memErrStorage: 'The membership store could not be read, so nothing was changed. The file is preserved; fix or restore it before saving.',
     memErrSeatWriteUncertain: 'The seat data may have been saved, but the write could not be confirmed. Reload memberships before trying again.',
@@ -11341,6 +11557,9 @@ const I18N = {
     unpricedNote: n => `${n} tokens had no known rate and are not in the total (shown as ≥).`,
     unpricedCallsNote: n => `${n} calls had no known rate and are not in the total (shown as ≥).`,
     missingUsageCallsNote: n => `${n} calls lacked usage data and are not in the API-equivalent total (shown as ≥).`,
+    ledgerReadErrorTitle: 'Desktop ledger unavailable; recording is paused.',
+    ledgerReadErrorBody: 'SpendSense could not safely read the saved Desktop ledger. The stored data was left unchanged. Restore a known-good backup before recording resumes.',
+    ledgerHistoryUnavailable: 'Desktop ledger history is unavailable while recording is paused.',
     // Ledger tabs.
     tabOverview: 'Overview',
     tabUsage: 'Usage',
@@ -11568,6 +11787,26 @@ const I18N = {
     settingsDiagnosticsUnrecorded: 'not recorded',
     settingsDiagnosticsChecking: 'checking backend…',
     settingsDiagnosticsNoBackend: 'backend status unavailable',
+    settingsLedgerDiagnosticLine: (source, validation, recording, writes) => `Desktop ledger · source ${source} · validation ${validation} · recording ${recording} · writes ${writes}`,
+    settingsLedgerSourceNone: 'none',
+    settingsLedgerSourceUnknown: 'unknown',
+    settingsLedgerFresh: 'fresh',
+    settingsLedgerValidV2: 'valid v2',
+    settingsLedgerInvalidV2: 'invalid v2',
+    settingsLedgerUnsupportedVersion: 'unsupported version',
+    settingsLedgerInvalidEnvelope: 'invalid envelope',
+    settingsLedgerV1Migrated: 'v1 migrated',
+    settingsLedgerLegacyUnrecognized: 'legacy unrecognised',
+    settingsLedgerReadFailed: 'read failed',
+    settingsLedgerStorageUnavailable: 'storage unavailable',
+    settingsLedgerNotLoaded: 'not loaded',
+    settingsLedgerRecordingActive: 'active',
+    settingsLedgerRecordingPaused: 'paused',
+    settingsLedgerWritesEnabled: 'enabled',
+    settingsLedgerWritesBlocked: 'blocked',
+    settingsLedgerWritesFailed: 'failed',
+    settingsLedgerWritesUnavailable: 'unavailable',
+    settingsLedgerUnknown: 'unknown',
     settingsHealthFailed: f => `Backend health check failed: ${f}`,
     settingsHealthReady: 'Backend health: ready',
     settingsHealthUnavailable: 'Backend health: usage database unavailable',
@@ -12246,6 +12485,7 @@ const I18N = {
     memQuotaUsed: (pct, manual) => `已用 ${pct}%${manual ? '（你上报的）' : ''}`,
     memQuotaCredits: n => `${n} 额度`,
     memQuotaAllowance: value => `${value} 额度`,
+    memCurrencyUnknown: '币种未知',
     memQuotaNoReading: '无读数',
     memQuotaSrcYou: '你上报的',
     memQuotaSrcProvider: '供应商',
@@ -12282,6 +12522,7 @@ const I18N = {
     memPlanErrAllowanceName: '给定义的每个额度窗口命名。',
     memPlanErrAllowanceDuration: '额度时长必须为正数分钟。',
     memPlanErrAllowanceAmount: '额度数量必须为 0 或更大。',
+    memPlanErrAllowanceCurrency: '请选择额度币种。',
     // 后端失败。
     memErrStorage: '会员数据无法读取，没有任何内容被更改。文件已保留；保存前请先修复或恢复。',
     memErrSeatWriteUncertain: '席位数据可能已保存，但无法确认写入是否完成。请先重新加载会员，再重试。',
@@ -12678,6 +12919,9 @@ const I18N = {
     unpricedNote: n => `有 ${n} 令牌没有可用单价，未计入总额（显示为 ≥）。`,
     unpricedCallsNote: n => `有 ${n} 次调用没有可用单价，未计入总额（显示为 ≥）。`,
     missingUsageCallsNote: n => `有 ${n} 次调用缺少用量数据，未计入 API 等值总额（显示为 ≥）。`,
+    ledgerReadErrorTitle: '桌面账本不可用；记录已暂停。',
+    ledgerReadErrorBody: 'SpendSense 无法安全读取已保存的桌面账本。存储数据未更改。请先从已知完好的备份恢复，然后再恢复记录。',
+    ledgerHistoryUnavailable: '记录暂停期间，桌面账本历史不可用。',
     // Ledger header, record stats, baseline reconciliation and grouping.
     pageTitleDesktop: 'SpendSense — 本机',
     allHermesTitle: 'SpendSense',
@@ -12965,6 +13209,26 @@ const I18N = {
     settingsDiagnosticsUnrecorded: '未记录',
     settingsDiagnosticsChecking: '正在检查后端…',
     settingsDiagnosticsNoBackend: '后端状态不可用',
+    settingsLedgerDiagnosticLine: (source, validation, recording, writes) => `桌面账本 · 来源 ${source} · 校验 ${validation} · 记录 ${recording} · 写入 ${writes}`,
+    settingsLedgerSourceNone: '无',
+    settingsLedgerSourceUnknown: '未知',
+    settingsLedgerFresh: '首次使用',
+    settingsLedgerValidV2: 'v2 有效',
+    settingsLedgerInvalidV2: 'v2 无效',
+    settingsLedgerUnsupportedVersion: '不支持的版本',
+    settingsLedgerInvalidEnvelope: '信封无效',
+    settingsLedgerV1Migrated: 'v1 已迁移',
+    settingsLedgerLegacyUnrecognized: '旧数据无法识别',
+    settingsLedgerReadFailed: '读取失败',
+    settingsLedgerStorageUnavailable: '存储不可用',
+    settingsLedgerNotLoaded: '尚未加载',
+    settingsLedgerRecordingActive: '活动',
+    settingsLedgerRecordingPaused: '已暂停',
+    settingsLedgerWritesEnabled: '已启用',
+    settingsLedgerWritesBlocked: '已阻止',
+    settingsLedgerWritesFailed: '失败',
+    settingsLedgerWritesUnavailable: '不可用',
+    settingsLedgerUnknown: '未知',
     settingsHealthFailed: f => `后端健康检查失败：${f}`,
     settingsHealthReady: '后端健康：就绪',
     settingsHealthUnavailable: '后端健康：用量数据库不可用',
@@ -13265,9 +13529,11 @@ export default {
     osApi = ctx.os || null
     $backendCompatibility.set([])
     rest = wrapBackendTransport(typeof ctx.rest === 'function' ? ctx.rest : null)
-    const { ledger, migrated } = readStoredLedger(ctx.storage)
-    $ledger.set(ledger)
-    if (migrated) saveLedger(ledger)
+    const loaded = readStoredLedger(ctx.storage)
+    $ledgerReadError.set(!!loaded.error)
+    $ledgerLoadDiagnostics.set(loaded.diagnostics)
+    $ledger.set(loaded.error ? emptyLedger() : loaded.ledger)
+    if (!loaded.error && loaded.migrated) saveLedger(loaded.ledger)
     $range.set(ctx.storage.get('range', 'today'))
     $view.set(ctx.storage.get('view', VIEW_ALL))
     $group.set(ctx.storage.get('group', 'route'))
@@ -13365,7 +13631,7 @@ export const __test = {
   membershipWrite, membershipDiagnostics,
   $membershipScope, $membershipSnapshot, $membershipNotice,
   $membershipBusy, $membershipNative, $membershipAttentionOnly, $membershipDraft, $scopeConnection, $scopeProfile,
-  fmtMoney, feeLabel, quotaRows, membershipReadingStatus, needsAttention, membershipSummary, feesLabel, accountPlanChoices,
+  fmtMoney, fmtMembershipMoney, membershipCurrencyCode, feeLabel, quotaRows, membershipReadingStatus, needsAttention, membershipSummary, feesLabel, accountPlanChoices,
   membershipProviderLabel, membershipIdentityLabel, membershipAccountShortcutLabel,
   excludedPlansNote, planOptionLabel,
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,
@@ -13436,15 +13702,18 @@ export const __test = {
   openLedger,
   legacyPricer,
   migrateV1,
+  normalizeV2,
   readStoredLedger,
+  ledgerDiagnosticText,
+  saveLedger,
   readUsage, cacheCoverage, cacheCoverageDetail, cacheCoverageLine,
   resolveRates,
   summarize,
-  Meter, MeterHeader, CostKpi, TokenComposition, CacheGauge, RatesPanel, MeterEmpty, InfoTip, infoTipPlacement,
+  Meter, MeterHeader, CostKpi, TokenComposition, CacheGauge, RatesPanel, MeterEmpty, InfoTip, infoTipPlacement, LedgerSafetyNotice,
   useStableLive, mergeStableLive, stableLive, resetStableLive, meterPresence, compositionShares,
   $ratesOpen, $infoOpen, METER_CSS, RING_R, RING_C,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
   fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, liveSavings, costOf,
   savingsState, savingsGapReason, derivedWrites, savedNote, savedCoveragePct, SAVED_REASON_KEYS,
-  $ledger
+  $ledger, $ledgerReadError, $ledgerLoadDiagnostics
 }

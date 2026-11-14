@@ -143,7 +143,7 @@ test('the weather header shows the verdict and cycle position', async () => {
 test('the details list keeps provider readings and rule figures apart', async () => {
   const { text } = await renderWeather({ entry: wxFixture(), error: false })
   assert.match(text(), /Details/)
-  assert.match(text(), /Monthly credit: \$100\.00 allowance · Provider reports 62% used/)
+  assert.match(text(), /Monthly credit: USD 100\.00 allowance · Provider reports 62% used/)
   assert.match(text(), /cap · shared: \$6\.00 of \$10\.00 used · 60% · \$0\.20\/day/)
   assert.match(text(), /At this pace, exhausted around 2026-11-20/)
   assert.ok(translated('wxProviderShare', 62), 'the provider share is interpolated')

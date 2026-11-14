@@ -140,7 +140,7 @@ try {
             jumpLabel: host.querySelector('.wm-account-nav-label')?.textContent || '',
             feesText,
             hasLongFee: feesText.includes('1234567.89'),
-            hasMixedCurrencies: feesText.includes('$') && feesText.includes('£'),
+            hasMixedCurrencies: feesText.includes('USD') && feesText.includes('GBP'),
             overflow: values.map(el => el.scrollWidth - el.clientWidth),
             paneOverflow: host.scrollWidth - host.clientWidth,
             rows: host.querySelectorAll('.wm-row-head').length,

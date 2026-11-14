@@ -52,13 +52,13 @@ const account = (over = {}) => ({
 
 test('the fee line always names its basis', () => {
   assert.equal(T.feeLabel({ basis: 'catalogue', effective: { amount: 20, currency: 'USD', period: 'month' } }),
-    'Catalogue: $20.00/mo')
+    'Catalogue: USD 20.00/mo')
   assert.equal(T.feeLabel({ basis: 'no_plan', effective: {} }), 'No current plan')
   assert.match(T.feeLabel({ basis: 'unpriced', effective: {} }), /no published price/)
   const declared = T.feeLabel({ basis: 'declared', effective: { amount: 17, currency: 'GBP', period: 'month' },
     published: { amount: 20, currency: 'USD' }, currency_comparable: true })
-  assert.match(declared, /Your price: £17\.00\/mo/)
-  assert.match(declared, /catalogue \$20\.00/)
+  assert.match(declared, /Your price: GBP 17\.00\/mo/)
+  assert.match(declared, /catalogue USD 20\.00/)
 })
 
 test('a currency-mismatched override does not imply a converted catalogue figure', () => {
@@ -99,7 +99,7 @@ test('quota rows keep provider, manual and credit readings distinct', () => {
   assert.equal(byId.session.stateLabel, 'manual')
   assert.deepEqual(byId['weekly-marked'].basis, ['provider_reported', 'manual'],
     'the compact account summary can still see the provider basis under a manual state')
-  assert.equal(byId['weekly-credits'].reading, '$20.00 allowance')
+  assert.equal(byId['weekly-credits'].reading, 'USD 20.00 allowance')
   assert.equal(byId.monthly.reading, 'No reading')
   assert.equal(byId.monthly.stateLabel, 'not recorded')
 })
@@ -198,8 +198,22 @@ test('the summary never adds a non-USD fee into a USD total', () => {
   assert.equal(s.monthlyUsd, 20)
   assert.deepEqual(s.byCurrency, { USD: 20, GBP: 17 })
   // Both currencies are shown, never a converted total.
-  assert.equal(T.feesLabel(s), '$20.00/mo + £17.00/mo')
+  assert.equal(T.feesLabel(s), 'USD 20.00/mo + GBP 17.00/mo')
   assert.equal(T.feesLabel(T.membershipSummary([])), '—')
+})
+
+test('membership prices name supported currencies and label unknown codes explicitly', () => {
+  assert.equal(T.fmtMembershipMoney(12.5, 'GBP'), 'GBP 12.50')
+  assert.equal(T.fmtMembershipMoney(12.5, null), 'Currency unknown 12.50')
+  assert.equal(T.fmtMembershipMoney(12.5, 'ZZZ'), 'Currency unknown 12.50')
+  assert.match(T.feeLabel({ basis: 'declared', effective: { amount: 12.5 } }), /Currency unknown 12\.50/)
+  assert.deepEqual(T.membershipSummary([
+    account({ fee: { effective: { amount: 12.5, period: 'month' } } })
+  ]).byCurrencyPeriod, { 'UNKNOWN/month': 12.5 })
+  assert.equal(T.feesLabel({ byCurrencyPeriod: { 'UNKNOWN/month': 12.5 } }), 'Currency unknown 12.50/mo')
+  assert.equal(T.feeDraft(account({ fee: { effective: { amount: 12.5 } } })).currency, '')
+  assert.equal(T.customPlanDraftFor({ id: 'owner' }).currency, '')
+  assert.match(T.feeDraftErrors({ amount: '1', currency: 'ZZZ', period: 'month', anchor_day: 1 }).join(' '), /Pick a currency/)
 })
 
 test('plan choices come from the backend and mark provisional prices', () => {
@@ -213,7 +227,7 @@ test('plan choices come from the backend and mark provisional prices', () => {
   ]
   const choices = T.accountPlanChoices({ plan_choices: plans })
   assert.equal(choices.length, 3)
-  assert.equal(T.planOptionLabel(choices[0]), 'ChatGPT Plus — $20.00/month')
+  assert.equal(T.planOptionLabel(choices[0]), 'ChatGPT Plus — USD 20.00/month')
   assert.match(T.planOptionLabel(choices[1]), /provisional/)
   assert.match(T.planOptionLabel(choices[2]), /no fee set \(unpriced\)/)
   // A payload without the field must default to [], never undefined.map.

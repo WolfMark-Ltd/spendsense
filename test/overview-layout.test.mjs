@@ -61,7 +61,7 @@ const name=new URLSearchParams(location.search).get('case');if(name){document.bo
       assert.match(layout.text, /lower bound/, `${layout.id} preserves the API-equivalent lower bound`)
       assert.match(layout.text, /Actual provider charges/, `${layout.id} labels actual charges separately`)
       assert.match(layout.text, /Most-used models/, `${layout.id} renders the call-count insight`)
-      assert.match(layout.text, /£20\.00\/mo/, `${layout.id} preserves GBP and its billing period`)
+      assert.match(layout.text, /GBP 20\.00\/mo/, `${layout.id} preserves GBP and its billing period`)
       assert.match(layout.fees, /no known fee/i, `${layout.id} explains the excluded unknown account fee`)
       assert.match(layout.fees, /Partial/, `${layout.id} marks the known-fee subtotal partial`)
     }

@@ -14,10 +14,10 @@ const CHROME = [
 ].find(existsSync)
 
 const LAYOUT_STRINGS = {
-  en: { charges: /Not recorded/, gbpFee: /£20\.00\/mo/, usdFee: /\$0\.00\/mo/,
+  en: { charges: /Not recorded/, gbpFee: /GBP 20\.00\/mo/, usdFee: /USD 0\.00\/mo/,
     partial: /fee unknown/, cachePartial: /Partial/, limit: /1 limit/,
     groups: /Fees vs usage by currency/ },
-  zh: { charges: /无法获取逐次调用/, gbpFee: /£20\.00\/月/, usdFee: /\$0\.00\/月/,
+  zh: { charges: /无法获取逐次调用/, gbpFee: /GBP 20\.00\/月/, usdFee: /USD 0\.00\/月/,
     partial: /项费用未知/, cachePartial: /部分/, limit: /1 项限额/,
     groups: /按货币对比费用与用量/ },
 }

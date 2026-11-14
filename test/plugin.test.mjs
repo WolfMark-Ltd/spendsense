@@ -297,7 +297,7 @@ test('applyUsage: existing v2 snapshots continue from stored totals without repl
   const oldSnapshot = { ...original.snapshots['legacy-snapshot'] }
   for (const field of ['counterPrompt', 'counterPromptSource', 'counterInput', 'counterOutput', 'counterCalls']) delete oldSnapshot[field]
   const stored = { ...original, snapshots: { 'legacy-snapshot': oldSnapshot } }
-  const { ledger, migrated } = T.readStoredLedger({ get: key => key === 'ledger.v2' ? stored : null }, NOW)
+  const { ledger, migrated } = T.readStoredLedger({ get: (key, fallback) => key === 'ledger.v2' ? stored : fallback }, NOW)
   assert.equal(migrated, false)
   const before = { ...ledger.sessions.conversation }
   const updated = T.applyUsage(ledger, { ...args, now: NOW + 1, usage: {
@@ -327,7 +327,7 @@ test('applyUsage: input-to-prompt counter switch includes stored cache counters'
           delete oldSnapshot[field]
         }
         const stored = { ...led, snapshots: { [sessionId]: oldSnapshot } }
-        led = T.readStoredLedger({ get: key => key === 'ledger.v2' ? stored : null }, NOW).ledger
+        led = T.readStoredLedger({ get: (key, fallback) => key === 'ledger.v2' ? stored : fallback }, NOW).ledger
       }
 
       led = T.applyUsage(led, { ...args, now: NOW + 1, usage: {
@@ -637,10 +637,182 @@ test('no stored id -> day ledger only, no session entry', () => {
   assert.deepEqual(led.sessions, {})
 })
 
-test('ledgers saved before this change load with an empty sessions map', () => {
-  const store = { get: k => (k === 'ledger.v2' ? { v: 2, days: {}, rates: {}, snapshots: {} } : null) }
+test('ledgers saved before sessions and legacyRates were introduced load with compatibility defaults', () => {
+  const store = { get: (k, fallback) => (k === 'ledger.v2'
+    ? { v: 2, days: {}, rates: {}, since: null, snapshots: {} }
+    : fallback) }
   const { ledger } = T.readStoredLedger(store)
   assert.deepEqual(ledger.sessions, {})
+  assert.deepEqual(ledger.legacyRates, {})
+})
+
+test('populated historical v2 data loads when only the later optional roots are absent', () => {
+  const historical = {
+    v: 2,
+    days: { '2025-03-01': { prior: {
+      cacheRead: 30, cacheWrite: 4, calls: 2, cost: 0.25, input: 100, legacy: false,
+      model: 'historical-model', output: 20, profile: 'default', provider: 'provider-x',
+      saved: 0, sources: { focused: 2 }, unpricedTokens: 0
+    } } },
+    rates: {}, since: '2025-03-01', snapshots: {
+      'runtime::historical-model': {
+        input: 100, output: 20, cacheRead: 30, cacheWrite: 4, calls: 2, at: NOW, costUsd: null
+      }
+    }
+  }
+  const loaded = T.readStoredLedger({ get: (key, fallback) => key === 'ledger.v2' ? historical : fallback }, NOW)
+  assert.equal(loaded.error, null)
+  assert.equal(loaded.diagnostics.validationOutcome, 'valid-v2')
+  assert.equal(loaded.ledger.days['2025-03-01'].prior.input, 100)
+  assert.deepEqual(loaded.ledger.sessions, {})
+  assert.deepEqual(loaded.ledger.legacyRates, {})
+})
+
+test('ledger v2 validation rejects malformed envelopes and stored numeric fields', () => {
+  const valid = T.applyUsage(T.emptyLedger(), {
+    now: NOW, sessionId: 'runtime', storedId: 'conversation', provider: 'provider-x',
+    usage: { model: 'model-x', input: 10, output: 2, calls: 1 }
+  })
+  assert.equal(T.normalizeV2(valid).ok, true, 'current ledger writes include fields introduced after the RC')
+  assert.equal(valid.snapshots.runtime.guardrail.pendingUsageRef, null)
+  const withPendingUsageRef = structuredClone(valid)
+  withPendingUsageRef.snapshots.runtime.guardrail.pendingUsageRef = {
+    day: T.dayKey(NOW), bucketKey: 'route', sessionId: 'conversation'
+  }
+  assert.equal(T.normalizeV2(withPendingUsageRef).ok, true,
+    'the current pending-usage reference is retained by validation')
+  withPendingUsageRef.snapshots.runtime.guardrail.pendingUsageRef.day = 'not-a-day'
+  assert.equal(T.normalizeV2(withPendingUsageRef).ok, false)
+  const badValues = [
+    null,
+    [],
+    { ...valid, v: 3 },
+    (() => { const value = structuredClone(valid); delete value.since; return value })(),
+    { ...valid, days: [] },
+    (() => {
+      const value = structuredClone(valid)
+      const day = Object.keys(value.days)[0]
+      const bucket = Object.keys(value.days[day])[0]
+      value.days[day][bucket].input = '10'
+      return value
+    })(),
+    { ...valid, rates: { route: { input: '1', output: 2, cache: 3 } } },
+    (() => {
+      const value = structuredClone(valid)
+      value.snapshots.runtime.counterInput = '10'
+      return value
+    })(),
+    (() => {
+      const value = structuredClone(valid)
+      value.snapshots.runtime.guardrail.usageValueCost = '0'
+      return value
+    })(),
+    { ...valid, sessions: [] },
+    (() => {
+      const value = structuredClone(valid)
+      delete value.sessions.conversation.lastAt
+      return value
+    })()
+  ]
+  for (const value of badValues) assert.equal(T.normalizeV2(value).ok, false)
+
+  const compatible = structuredClone(T.emptyLedger())
+  delete compatible.sessions
+  delete compatible.legacyRates
+  const normalized = T.normalizeV2(compatible)
+  assert.equal(normalized.ok, true)
+  assert.deepEqual(normalized.ledger.sessions, {})
+  assert.deepEqual(normalized.ledger.legacyRates, {})
+})
+
+test('invalid v2 data blocks v1 fallback and every Desktop ledger write', () => {
+  const invalidV2 = { ...T.emptyLedger(), days: null }
+  const priorV1 = { v: 1, days: {}, rates: {}, snapshots: {} }
+  const values = new Map([['ledger.v2', invalidV2], ['ledger.v1', priorV1]])
+  const writes = []
+  const handlers = new Map()
+  plugin.register({
+    storage: {
+      get: (key, fallback) => values.has(key) ? values.get(key) : fallback,
+      set: (key, value) => { writes.push([key, value]); values.set(key, value) },
+      remove: key => values.delete(key)
+    },
+    rest: async () => ({}), os: null,
+    i18n: { register() {}, t: key => key },
+    register() {}, onDispose() {}, onEvent: (name, handler) => { handlers.set(name, handler); return () => {} },
+    setInterval: () => () => {}
+  })
+
+  const heldLedger = T.$ledger.get()
+  assert.equal(T.$ledgerReadError.get(), true)
+  assert.equal(T.$ledgerLoadDiagnostics.get().recordingStatus, 'paused')
+  assert.equal(T.$ledgerLoadDiagnostics.get().writeStatus, 'blocked')
+  assert.equal(T.saveLedger(T.emptyLedger()), false)
+  assert.equal(T.enqueueUsage('runtime', { model: 'model-x', input: 1, calls: 1 }), null)
+  handlers.get('message.complete')({
+    session_id: 'runtime', payload: { usage: { model: 'model-x', input: 1, calls: 1 } }
+  })
+  assert.equal(T.$ledger.get(), heldLedger)
+  assert.deepEqual(values.get('ledger.v2'), invalidV2)
+  assert.deepEqual(values.get('ledger.v1'), priorV1)
+  assert.deepEqual(writes, [])
+  T.$ledgerReadError.set(false)
+})
+
+test('v1 migration writes the compatible v2 value and retains the original v1 data', () => {
+  const priorV1 = {
+    v: 1, days: { '2026-10-01': { model: { input: 20, output: 5, cacheRead: 0, cacheWrite: 0, calls: 1 } } },
+    rates: {}, snapshots: {}
+  }
+  const values = new Map([['ledger.v1', priorV1]])
+  const writes = []
+  plugin.register({
+    storage: {
+      get: (key, fallback) => values.has(key) ? values.get(key) : fallback,
+      set: (key, value) => { writes.push([key, value]); values.set(key, value) },
+      remove: key => values.delete(key)
+    },
+    rest: async () => ({}), os: null,
+    i18n: { register() {}, t: key => key },
+    register() {}, onDispose() {}, onEvent() {}, setInterval: () => () => {}
+  })
+  assert.equal(T.$ledgerReadError.get(), false)
+  assert.deepEqual(writes.map(([key]) => key), ['ledger.v2'])
+  assert.equal(T.normalizeV2(values.get('ledger.v2')).ok, true)
+  assert.deepEqual(values.get('ledger.v1'), priorV1)
+})
+
+test('ledger diagnostics report a failed persistence write without hiding the recording state', () => {
+  plugin.register({
+    storage: { get: (_key, fallback) => fallback, set: () => { throw new Error('write failed') }, remove() {} },
+    rest: async () => ({}), os: null,
+    i18n: { register() {}, t: key => key },
+    register() {}, onDispose() {}, onEvent() {}, setInterval: () => () => {}
+  })
+  assert.equal(T.saveLedger(T.emptyLedger()), false)
+  assert.deepEqual(T.$ledgerLoadDiagnostics.get(), {
+    sourceVersion: 'none', validationOutcome: 'fresh', recordingStatus: 'active', writeStatus: 'failed'
+  })
+})
+
+test('ledger diagnostics expose safe state without echoing stored values', () => {
+  const malformed = { v: 2, days: { privateValue: 'sensitive-value' } }
+  const loaded = T.readStoredLedger({
+    get: (key, fallback) => key === 'ledger.v2' ? malformed : fallback
+  }, NOW)
+  assert.deepEqual(loaded.diagnostics, {
+    sourceVersion: 2, validationOutcome: 'invalid-v2', recordingStatus: 'paused', writeStatus: 'blocked'
+  })
+  const translate = (key, ...args) => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const line = T.ledgerDiagnosticText(loaded.diagnostics, translate)
+  assert.match(line, /source v2 · validation invalid v2 · recording paused · writes blocked/)
+  assert.doesNotMatch(line, /sensitive-value/)
+  for (const key of Object.keys(T.I18N.en).filter(name => name.startsWith('settingsLedger'))) {
+    assert.ok(T.I18N.zh[key], `Chinese ledger diagnostic translation exists for ${key}`)
+  }
 })
 
 test('side pane docks as a tab beside Files (shares the right-sidebar toggle)', () => {
