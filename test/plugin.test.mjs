@@ -23,8 +23,14 @@ const host = { state: { focusedSessionId: { get: () => null, listen: () => () =>
 const useEffect = noop
 const useRef = initial => ({ current: initial })
 const queryClient = { fetchQuery: async q => q.queryFn(), getQueryData: () => null }
-const usePluginI18n = noop, useQuery = noop, useValue = noop
-const jsx = noop, jsxs = noop
+const usePluginI18n = () => (key, ...args) => {
+  const entry = I18N.en[key]
+  return typeof entry === 'function' ? entry(...args) : entry ?? key
+}
+const useQuery = () => ({})
+const useValue = store => store?.get?.()
+const jsx = (type, props, key) => ({ type, props: props || {}, key })
+const jsxs = jsx
 `
 const body = src
   .replace(/import \{[^}]*\} from '@hermes\/plugin-sdk'\n/, stub)
@@ -38,6 +44,18 @@ writeFileSync(file, body)
 const mod = await import(pathToFileURL(file).href)
 const { __test: T } = mod
 const plugin = mod.default
+const findElement = (node, matches) => {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findElement(child, matches)
+      if (found) return found
+    }
+    return null
+  }
+  if (!node || typeof node !== 'object') return null
+  if (matches(node)) return node
+  return findElement(node.props?.children, matches)
+}
 
 const NOW = new Date(2026, 9, 21, 12).getTime()
 const coverageLedger = bucket => {
@@ -646,6 +664,22 @@ test('ledgers saved before sessions and legacyRates were introduced load with co
   assert.deepEqual(ledger.legacyRates, {})
 })
 
+test('missing storage keys return the supplied Symbol fallback and keep a fresh ledger writable', () => {
+  const reads = []
+  const loaded = T.readStoredLedger({
+    get: (key, fallback) => {
+      reads.push({ key, fallback })
+      return fallback
+    }
+  }, NOW)
+  assert.deepEqual(reads.map(({ key }) => key), ['ledger.v2', 'ledger.v1'])
+  assert.equal(typeof reads[0].fallback, 'symbol')
+  assert.equal(reads[0].fallback, reads[1].fallback)
+  assert.deepEqual(loaded.diagnostics, {
+    sourceVersion: 'none', validationOutcome: 'fresh', recordingStatus: 'active', writeStatus: 'enabled'
+  })
+})
+
 test('populated historical v2 data loads when only the later optional roots are absent', () => {
   const historical = {
     v: 2,
@@ -666,6 +700,67 @@ test('populated historical v2 data loads when only the later optional roots are 
   assert.equal(loaded.ledger.days['2025-03-01'].prior.input, 100)
   assert.deepEqual(loaded.ledger.sessions, {})
   assert.deepEqual(loaded.ledger.legacyRates, {})
+})
+
+test('historical v2 optional counters are initialised before priced and unpriced accumulation', () => {
+  const day = T.dayKey(NOW)
+  const profile = 'work'
+  const provider = 'provider-x'
+  const pricedModel = 'historical-priced-model'
+  const unpricedModel = 'historical-unpriced-model'
+  const keyFor = model => JSON.stringify([profile, provider, model, 0])
+  const historicalBucket = model => ({
+    cacheRead: 0, cacheWrite: 0, calls: 1, cost: 0.25, input: 100, legacy: false,
+    model, output: 0, profile, provider, sources: { gateway: 100 }
+  })
+  const historical = {
+    v: 2,
+    days: { [day]: {
+      [keyFor(pricedModel)]: historicalBucket(pricedModel),
+      [keyFor(unpricedModel)]: historicalBucket(unpricedModel)
+    } },
+    rates: {}, since: day, snapshots: {},
+    sessions: {
+      'old-priced': { ...historicalBucket(pricedModel), firstAt: NOW - 100, lastAt: NOW - 100 },
+      'old-unpriced': { ...historicalBucket(unpricedModel), firstAt: NOW - 100, lastAt: NOW - 100 }
+    }
+  }
+  const loaded = T.readStoredLedger({
+    get: (key, fallback) => key === 'ledger.v2' ? historical : fallback
+  }, NOW)
+  assert.equal(loaded.error, null)
+
+  const pricedPayload = { model: pricedModel, provider, providers: [{
+    slug: provider, pricing: { [pricedModel]: {
+      input: '$2', output: '$4', cache: '$0.5', cache_write: '$0.5', tiers: []
+    } }
+  }] }
+  let ledger = T.applyUsage(loaded.ledger, {
+    now: NOW + 1, payload: pricedPayload, profile, provider,
+    sessionId: 'new-priced', storedId: 'old-priced',
+    usage: { model: pricedModel, input: 10, cache_read: 5, output: 1, calls: 1 }
+  })
+  ledger = T.applyUsage(ledger, {
+    now: NOW + 2, profile, provider, sessionId: 'new-unpriced', storedId: 'old-unpriced',
+    usage: { model: unpricedModel, input: 7, output: 1, calls: 1 }
+  })
+
+  const priced = ledger.days[day][keyFor(pricedModel)]
+  const unpriced = ledger.days[day][keyFor(unpricedModel)]
+  assert.equal(priced.pricedTokens, 16)
+  assert.equal(priced.unpricedTokens, 0)
+  assert.ok(priced.saved > 0)
+  assert.equal(unpriced.pricedTokens, 0)
+  assert.equal(unpriced.unpricedTokens, 8)
+  assert.equal(unpriced.unpricedCalls, 1)
+  assert.equal(unpriced.missingUsageCalls, 0)
+  for (const bucket of [priced, unpriced, ledger.sessions['old-priced'], ledger.sessions['old-unpriced']]) {
+    for (const field of ['pricedTokens', 'unpricedTokens', 'unpricedCalls', 'missingUsageCalls', 'saved']) {
+      assert.ok(Number.isFinite(bucket[field]), 'counter is initialised on historical bucket')
+    }
+    assert.equal(bucket.coverageUnknown, true, 'missing historical coverage stays explicitly unknown')
+  }
+  assert.equal(T.normalizeV2(ledger).ok, true)
 })
 
 test('ledger v2 validation rejects malformed envelopes and stored numeric fields', () => {
@@ -725,9 +820,29 @@ test('ledger v2 validation rejects malformed envelopes and stored numeric fields
   assert.deepEqual(normalized.ledger.legacyRates, {})
 })
 
+test('summary safely accumulates accepted buckets with inherited-property keys', () => {
+  const day = '2026-10-21'
+  const keys = ['toString', 'constructor', '__proto__']
+  const buckets = Object.fromEntries(keys.map((key, index) => [key, {
+    cacheRead: 0, cacheWrite: 0, calls: 1, cost: 0.25, input: 10, legacy: false,
+    model: 'hostile-key-' + index, output: 1, profile: 'default', provider: 'provider-x',
+    sources: { gateway: index + 1 }
+  }]))
+  const candidate = { ...T.emptyLedger(), days: { [day]: buckets }, since: day }
+  const normalized = T.normalizeV2(candidate)
+  assert.equal(normalized.ok, true)
+
+  const result = T.summarize(normalized.ledger, () => true, null)
+  assert.deepEqual(result.rows.map(row => row.model).sort(),
+    ['hostile-key-0', 'hostile-key-1', 'hostile-key-2'])
+  assert.deepEqual(result.rows.map(row => row.sources.gateway).sort((a, b) => a - b), [1, 2, 3])
+})
+
 test('invalid v2 data blocks v1 fallback and every Desktop ledger write', () => {
   const invalidV2 = { ...T.emptyLedger(), days: null }
   const priorV1 = { v: 1, days: {}, rates: {}, snapshots: {} }
+  const invalidV2Snapshot = structuredClone(invalidV2)
+  const priorV1Snapshot = structuredClone(priorV1)
   const values = new Map([['ledger.v2', invalidV2], ['ledger.v1', priorV1]])
   const writes = []
   const handlers = new Map()
@@ -753,10 +868,51 @@ test('invalid v2 data blocks v1 fallback and every Desktop ledger write', () => 
     session_id: 'runtime', payload: { usage: { model: 'model-x', input: 1, calls: 1 } }
   })
   assert.equal(T.$ledger.get(), heldLedger)
-  assert.deepEqual(values.get('ledger.v2'), invalidV2)
-  assert.deepEqual(values.get('ledger.v1'), priorV1)
+  assert.deepEqual(values.get('ledger.v2'), invalidV2Snapshot)
+  assert.deepEqual(values.get('ledger.v1'), priorV1Snapshot)
   assert.deepEqual(writes, [])
   T.$ledgerReadError.set(false)
+})
+
+test('malformed Desktop ledger keeps the view switch available for backend Settings', () => {
+  const loaded = T.readStoredLedger({
+    get: (key, fallback) => key === 'ledger.v2'
+      ? { ...T.emptyLedger(), days: null }
+      : fallback
+  }, NOW)
+  assert.equal(loaded.error, 'invalid-v2')
+
+  const previous = {
+    ledger: T.$ledger.get(),
+    readError: T.$ledgerReadError.get(),
+    view: T.$view.get(),
+    tab: T.$ledgerTab.get()
+  }
+  try {
+    T.$ledger.set(loaded.ledger)
+    T.$ledgerReadError.set(true)
+    T.$view.set('desktop')
+    T.$ledgerTab.set('settings')
+
+    const desktopPage = T.LedgerPage()
+    const productTree = desktopPage.type(desktopPage.props)
+    const toggle = findElement(productTree, element =>
+      typeof element.type === 'function' && element.type.name === 'ViewToggle')
+    assert.ok(toggle, 'the paused local view retains the All Hermes switch')
+    const control = toggle.type(toggle.props)
+    assert.ok(control.props.options.some(option => option.id === 'all'))
+    control.props.onChange('all')
+    assert.equal(T.$view.get(), 'all')
+
+    const settingsPage = T.LedgerPage()
+    assert.equal(settingsPage.type.name, 'SettingsPage',
+      'switching views while Settings is selected reaches backend settings')
+  } finally {
+    T.$ledger.set(previous.ledger)
+    T.$ledgerReadError.set(previous.readError)
+    T.$view.set(previous.view)
+    T.$ledgerTab.set(previous.tab)
+  }
 })
 
 test('v1 migration writes the compatible v2 value and retains the original v1 data', () => {
@@ -764,6 +920,7 @@ test('v1 migration writes the compatible v2 value and retains the original v1 da
     v: 1, days: { '2026-10-01': { model: { input: 20, output: 5, cacheRead: 0, cacheWrite: 0, calls: 1 } } },
     rates: {}, snapshots: {}
   }
+  const priorV1Snapshot = structuredClone(priorV1)
   const values = new Map([['ledger.v1', priorV1]])
   const writes = []
   plugin.register({
@@ -779,7 +936,7 @@ test('v1 migration writes the compatible v2 value and retains the original v1 da
   assert.equal(T.$ledgerReadError.get(), false)
   assert.deepEqual(writes.map(([key]) => key), ['ledger.v2'])
   assert.equal(T.normalizeV2(values.get('ledger.v2')).ok, true)
-  assert.deepEqual(values.get('ledger.v1'), priorV1)
+  assert.deepEqual(values.get('ledger.v1'), priorV1Snapshot)
 })
 
 test('ledger diagnostics report a failed persistence write without hiding the recording state', () => {

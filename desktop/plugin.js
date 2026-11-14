@@ -880,7 +880,15 @@ function changeCacheKnown(cur, init, delta) {
 
 /** Add one priced delta to a bucket (copy-on-write). */
 function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolved, source, usageEvidence = {} }) {
-  const b = prevBucket ? { ...prevBucket, sources: { ...prevBucket.sources } } : newBucket(init)
+  const b = prevBucket ? {
+    ...prevBucket,
+    pricedTokens: num(prevBucket.pricedTokens),
+    unpricedTokens: num(prevBucket.unpricedTokens),
+    unpricedCalls: num(prevBucket.unpricedCalls),
+    missingUsageCalls: num(prevBucket.missingUsageCalls),
+    saved: num(prevBucket.saved),
+    sources: { ...prevBucket.sources }
+  } : newBucket(init)
   if (prevBucket && coverageUnknown(prevBucket)) b.coverageUnknown = true
   Object.assign(b, usageValueDelta(prevBucket, delta, resolved, membershipScopeOf($scopeConnection.get(), init.profile || $scopeProfile.get()), usageEvidence))
   b.input += delta.input
@@ -1188,7 +1196,7 @@ function legacyPricer(payload, legacyRates) {
  * profile+provider+model, plus totals for the range.
  */
 function summarize(led, filter, priceLegacy) {
-  const rows = {}
+  const rows = Object.create(null)
   for (const [date, buckets] of Object.entries(led.days)) {
     if (!filter(date) || !isObj(buckets)) continue
     for (const [key, b] of Object.entries(buckets)) {
@@ -4041,18 +4049,19 @@ function EconomicsBlockers({ blockers = [], notes = [], t, onOpenFx }) {
   ] })
 }
 
-function econMoneyValue(amount, currency, complete = true) {
-  const money = fmtMembershipMoney(amount, currency)
+function econMoneyValue(amount, currency, complete = true, t = needsAttentionEn) {
+  const money = fmtMembershipMoney(amount, currency, t)
   if (!money || (!complete && finiteValue(amount) === 0)) return '—'
   return complete ? money : `≥${money}`
 }
 
 /** Window-allocated expenditure lines, one per currency — never summed here. */
-function econWindowLines(fees, groups = []) {
+function econWindowLines(fees, groups = [], t = needsAttentionEn) {
   const rows = Array.isArray(fees) ? fees : []
   if (!rows.length) return ['—']
   const completeness = new Map((groups || []).map(group => [group.currency, group.window_fee_complete !== false]))
-  return rows.map(({ amount, currency }) => econMoneyValue(amount, currency, completeness.get(currency) !== false))
+  return rows.map(({ amount, currency }) =>
+    econMoneyValue(amount, currency, completeness.get(currency) !== false, t))
 }
 
 /** Display span of the reporting window for "in the last N days" labels. */
@@ -4068,7 +4077,7 @@ function econFeeLines(t, fees, groups = []) {
   if (!rows.length) return ['—']
   const completeness = new Map((groups || []).map(group => [group.currency, group.fee_complete !== false]))
   return rows.map(({ amount, currency }) => {
-    const money = econMoneyValue(amount, currency, completeness.get(currency) !== false)
+    const money = econMoneyValue(amount, currency, completeness.get(currency) !== false, t)
     return money !== '—' ? t('econPerMonth', money) : '—'
   })
 }
@@ -5110,7 +5119,7 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
   const difference = finiteValue(headline.difference_usd)
   const feeLines = econFeeLines(t, headline.fees_monthly_by_currency, groups)
   const span = windowSpanLabel(t, data?.window_days)
-  const windowLines = econWindowLines(headline.fees_window_by_currency, groups)
+  const windowLines = econWindowLines(headline.fees_window_by_currency, groups, t)
   return jsxs('section', { className: 'wm-product-section', 'aria-label': t('econTitle'), children: [
     jsx('h2', { children: t('econTitle') }),
     jsx('p', { children: t('econIntro') }),
@@ -5146,7 +5155,7 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
         ? jsxs('div', { className: 'wm-econ-group', children: [
             jsx('strong', { children: group.currency }),
             jsx('span', { className: 'wm-econ-dim', children:
-              ` ${t('econPerMonth', econMoneyValue(group.monthly_fees, group.currency, group.fee_complete !== false))}` }),
+              ` ${t('econPerMonth', econMoneyValue(group.monthly_fees, group.currency, group.fee_complete !== false, t))}` }),
             jsx(EconomicsBlockers, { notes: econNotesText(group.notes, group.note_codes, t),
               blockers: group.blockers, t, onOpenFx }),
             !(group.notes || []).length && !(group.blockers || []).length
@@ -5156,8 +5165,8 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
             jsxs('div', { className: 'wm-econ-group-head', children: [
               jsx('strong', { children: group.currency }),
               jsx('span', { className: 'wm-econ-dim', children:
-                t('econGroupHead', econMoneyValue(group.monthly_fees, group.currency, group.fee_complete !== false),
-                  econMoneyValue(group.window_fees, group.currency, group.window_fee_complete !== false),
+                t('econGroupHead', econMoneyValue(group.monthly_fees, group.currency, group.fee_complete !== false, t),
+                  econMoneyValue(group.window_fees, group.currency, group.window_fee_complete !== false, t),
                   analyticMoney(group.usage_usd), econStatusLabel(t, group.status)) })
             ] }),
             group.difference_usd == null
@@ -10518,8 +10527,10 @@ function LedgerPage() {
   // The authoritative view is the default; the local ledger stays one click
   // away and remains the fallback when the backend is unreachable.
   if (ledgerReadError && view !== VIEW_ALL) {
-    return jsx(ProductShell, { children: jsx('main', { className: 'wm-shell', children:
-      jsx('p', { className: 'wm-subtle', role: 'status', children: t('ledgerHistoryUnavailable') }) }) })
+    return jsx(ProductShell, { children: jsxs('main', { className: 'wm-shell', children: [
+      jsx(ViewToggle, { t, view }, 'view'),
+      jsx('p', { className: 'wm-subtle', role: 'status', children: t('ledgerHistoryUnavailable') }, 'unavailable')
+    ] }) })
   }
   if (view === VIEW_ALL) {
     if (tab === 'costs' || tab === 'billing') return jsx(CostsPage, {})

@@ -99,6 +99,10 @@ test('econFeeLines keeps one line per currency', () => {
   ]), ['USD 20.00/mo', 'GBP 4.25/mo'])
 })
 
+test('economics fee lines localise unknown currency disclosures', () => {
+  assert.match(S.econFeeLines(zh, [{ amount: 12, currency: 'XYZ' }])[0], /币种未知 12\.00/)
+})
+
 test('fxWrite posts the whole document and surfaces the server sentence', async () => {
   const calls = []
   const transport = async (path, opts) => {
@@ -159,6 +163,10 @@ test('econWindowLines keeps one expenditure line per currency', () => {
   assert.deepEqual(S.econWindowLines([
     { amount: 19.37, currency: 'USD' }, { amount: 4.19, currency: 'GBP' }
   ]), ['USD 19.37', 'GBP 4.19'])
+})
+
+test('economics window lines use the current translator for unknown currencies', () => {
+  assert.match(S.econWindowLines([{ amount: 9, currency: 'XYZ' }], [], zh)[0], /币种未知 9\.00/)
 })
 
 test('windowSpanLabel describes the reporting window', () => {

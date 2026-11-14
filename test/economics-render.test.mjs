@@ -235,6 +235,31 @@ test('the economics section leads with the three headline figures', async () => 
     'the window value, span, count and status are interpolated')
 })
 
+test('unknown economics currencies stay localised in headline, window and group values', async () => {
+  const previousTranslator = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  try {
+    const data = econFixture()
+    data.headline.fees_monthly_by_currency = [{ currency: 'XYZ', amount: 20 }]
+    data.headline.fees_window_by_currency = [{ currency: 'XYZ', amount: 19.37 }]
+    data.groups = [{
+      currency: 'XYZ', monthly_fees: 20, window_fees: 19.37, fee_complete: true,
+      window_fee_complete: true, usage_usd: null, difference_usd: null,
+      status: 'unavailable', notes: [], blockers: []
+    }]
+    data.accounts = []
+    const { text } = await renderSection(data)
+    assert.match(text(), /币种未知 20\.00/)
+    assert.match(text(), /币种未知 19\.37/)
+    assert.doesNotMatch(text(), /Currency unknown/)
+  } finally {
+    i18nBackend.t = previousTranslator
+  }
+})
+
 test('the breakdown names the membership, renewal and coverage', async () => {
   const { container, text } = await renderSection(econFixture())
   assert.match(text(), /Test account/)
