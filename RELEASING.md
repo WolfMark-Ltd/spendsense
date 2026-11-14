@@ -14,6 +14,13 @@ production installation require separate authorisation.
    including pending reads, writes and usage events. Keep test data synthetic.
 4. Document compatibility and back up relevant plugin data before an authorised
    upgrade. Confirm a tested recovery path before replacing an installation.
+   Verify the actual installed Desktop bytes against the approved source and
+   the live backend's expected Desktop SHA-256. Identify the process serving
+   Desktop's API, restart its owner and check its running revision and contract.
+   A requested pin, matching version labels or a successful gateway restart alone
+   does not prove that both live components have updated. Confirm existing usage
+   history, saved settings and navigation using the
+   [troubleshooting acceptance checks](docs/troubleshooting.md#check-the-repair-before-calling-it-complete).
 5. For catalogue admission, follow the current Hermes submission documentation,
    including a full commit SHA, accurate disclosures and UI screenshots. Catalogue
    updates require a newly reviewed pin. Do not submit until authorised.
@@ -44,12 +51,11 @@ before reloading Desktop.
 
 `build.desktop_sha256` is computed from `desktop/plugin.js` **in the installed
 tree**, so it describes the half that commit shipped rather than a manifest that
-could drift from it. The Desktop app cannot hash its own bundle, so this is the
-only cross-host proof that the two halves came from one release:
-
-```bash
-sha256sum ~/.hermes/desktop-plugins/spend-sense/plugin.js   # must equal build.desktop_sha256
-```
+could drift from it. The Desktop app cannot hash its own bundle. Compare this
+value with the actual loaded file's SHA-256 and the approved source to verify
+the pair across hosts.
+Use the platform-specific commands and root-discovery guidance in
+[advanced verification](docs/troubleshooting.md#verify-the-actual-files-and-running-build).
 
 ### The contract rule
 
@@ -66,12 +72,16 @@ sha256sum ~/.hermes/desktop-plugins/spend-sense/plugin.js   # must equal build.d
 ### Install and roll back both halves or neither
 
 `hermes plugins install` places the backend half only. The Desktop half is
-reconciled into `desktop-plugins/` separately, and the reconciler keeps an
-existing copy whose recorded source mtime is not older than the package's — so a
-backend-only upgrade can leave a mismatched pair that still looks installed.
+reconciled into `desktop-plugins/` separately. Some Hermes builds retain an
+existing copy whose recorded source mtime is not older than the package's, even
+when the bytes differ. See [upstream PR #154773](https://github.com/NousResearch/hermes-agent/pull/154773).
+This is a supported explanation for a stale UI, not a conclusively traced cause
+without installation evidence. Check the actual Hermes build and installed bytes.
 
-- Install the backend, reconcile the Desktop half, restart the backend, then
-  reload Desktop. Afterwards check `build` in `/health` and the bundle digest.
+- Install the backend, reconcile the Desktop half, restart the process serving
+  Desktop's API, then reload Desktop. A separate API service is not restarted by
+  a gateway restart. Afterwards check `build` in `/health` and the installed
+  bundle digest; matching `0.6.0` labels do not establish compatibility.
 - A rollback restores the backend tree, the Desktop half and **only** the
   `spend-sense` entry of `.install-metadata.json`. `plugin-data` is replaced only
   when the older build cannot read it, and the outgoing copy is moved aside,

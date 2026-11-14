@@ -32,6 +32,8 @@ Spend Sense is a Hermes plugin that shows what your AI usage is actually costing
 
 First time installing? The [quick-start guide](docs/quickstart.md) walks through install, first figures, and recovery in one place. The reference details follow.
 
+Old UI after an update, or a release compatibility warning? See [Troubleshooting](docs/troubleshooting.md) before changing your installation.
+
 ### Requirements
 
 | Requirement | Detail |

@@ -116,6 +116,8 @@ A dash means unknown or unavailable, never zero. Zeros appear only where recordi
 | --- | --- | --- |
 | Unverified-source warning | Expected until catalogue admission. | Verify the repository URL matches exactly, then proceed. |
 | No sidebar entry after install | The UI half did not land. | Install from inside the Desktop app, especially if it runs on another machine than the backend. |
+| Correct pin but older UI | The requested revision does not prove which UI file is loaded. | Follow [stale UI troubleshooting](troubleshooting.md#installer-shows-the-right-pin-but-desktop-shows-an-older-ui); keep existing storage. |
+| “SpendSense halves are from different releases” | The UI and running backend do not meet the pairing contract. | Follow [compatibility troubleshooting](troubleshooting.md#spendsense-halves-are-from-different-releases), including identifying the API service to restart. |
 | "The SpendSense backend is not reachable" | The backend half is not active on this connection. | Connect to the profile you installed for and confirm the agent component is enabled there. |
 | "Backend usage could not be read" | The backend half is not active on this connection, or the read failed. | Check the profile first; if the profile is right, report it with the exact message. |
 | Discovery finds nothing | No credential slots in this profile's Hermes auth storage. | Add the provider account in Hermes, then run discovery again. |
