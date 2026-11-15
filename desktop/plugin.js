@@ -6672,7 +6672,9 @@ button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
  border-radius:999px;background:var(--ui-fill-secondary);font-weight:650;color:var(--ui-text-primary);
  font-size:10.5px;font-variant-numeric:tabular-nums}
 .wm-reading-health{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.wm-reading-health[data-reading-failed]{color:var(--ui-warning)}
+.wm-reading-part{white-space:nowrap}
+.wm-reading-health .wm-chip[data-state="failed"]{color:var(--ui-warning);
+ border-color:color-mix(in srgb,var(--ui-warning) 55%,transparent)}
 .wm-row-mark{display:inline-flex;margin-right:6px;color:var(--ui-text-tertiary);vertical-align:-2px}
 .wm-row-mark svg{width:13px;height:13px}
 .wm-card[data-arrangement="paid"]{box-shadow:inset 3px 0 0 var(--ui-accent)}
@@ -7525,15 +7527,23 @@ function membershipReadingHealth(accounts, native, t = needsAttentionEn) {
   return health
 }
 
-/** The one-line plain-English provider reading summary, or '' when empty. */
-function readingHealthText(health, t = needsAttentionEn) {
-  if (!health || !health.total) return ''
+/** The plain-English provider reading summary, as parts that wrap as units. */
+function readingHealthParts(health, t = needsAttentionEn) {
+  if (!health || !health.total) return []
   const parts = [t('memReadingHealthReported', health.reported)]
   if (health.noReading) parts.push(t('memReadingHealthNoReading', health.noReading))
   if (health.unattempted) parts.push(t('memReadingHealthUnattempted', health.unattempted))
   if (health.stale) parts.push(t('memReadingHealthStale', health.stale))
-  if (health.failed) parts.push(t('memReadingHealthFailed', health.failed))
-  return `${t('memReadingHealthLabel')}: ${parts.join(' · ')}`
+  // The failed count is rendered as its own chip: it is the one part the reader
+  // must act on, and colouring the whole sentence made ordinary text look like
+  // a warning in the light theme.
+  return parts
+}
+
+/** The same summary as one string, for text assertions. */
+function readingHealthText(health, t = needsAttentionEn) {
+  const parts = readingHealthParts(health, t)
+  return parts.length ? `${t('memReadingHealthLabel')}: ${parts.join(' · ')}` : ''
 }
 
 function feesLabel(summary, t = needsAttentionEn) {
@@ -8833,10 +8843,16 @@ function MembershipsPage() {
           ] })
         : null,
       accountsReady && list.length
-        ? jsxs('p', { className: cn('wm-note', 'wm-reading-health', health.failed && 'wm-warn-note'),
+        ? jsxs('p', { className: 'wm-note wm-reading-health',
             'data-reading-health': 'true', 'data-reading-failed': health.failed ? String(health.failed) : undefined,
             children: [
-              jsx('span', { children: readingHealthText(health, t) }),
+              jsx('span', { children: `${t('memReadingHealthLabel')}:` }),
+              ...readingHealthParts(health, t).map((part, index) =>
+                jsx('span', { className: 'wm-reading-part', children: `${index ? ' · ' : ' '}${part}` }, `part-${index}`)),
+              health.failed
+                ? jsx('span', { className: 'wm-chip', 'data-state': 'failed',
+                    children: t('memReadingHealthFailed', health.failed) })
+                : null,
               health.failed
                 ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'retry-readings',
                     disabled: !!busy, onClick: refreshReadings, children: t('memRetryReadings') })
@@ -14196,7 +14212,7 @@ export const __test = {
   $membershipBusy, $membershipNative, $membershipAttentionOnly, $membershipDraft, $scopeConnection, $scopeProfile,
   fmtMoney, fmtMembershipMoney, membershipCurrencyCode, feeLabel, quotaRows, membershipReadingStatus, needsAttention, membershipSummary, feesLabel, accountPlanChoices,
   allowanceReadState, allowanceReadNoteKey, readingAgeText, providerAgeSeconds, membershipReadFailures,
-  arrangementGroup, MEMBERSHIP_GROUP_META, membershipReadingHealth, readingHealthText, humaniseSlug,
+  arrangementGroup, MEMBERSHIP_GROUP_META, membershipReadingHealth, readingHealthText, readingHealthParts, humaniseSlug,
   membershipAccountName, membershipFriendlyProvider, COSTS_VALUE_ANCHORS, openCostsValue, wxErrorText, ATTENTION_LIST_LIMIT,
   membershipProviderLabel, membershipIdentityLabel, membershipAccountShortcutLabel,
   excludedPlansNote, planOptionLabel,
