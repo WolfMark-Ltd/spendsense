@@ -173,8 +173,9 @@ body{margin:0;background:${THEMES[theme].background};font:400 13px/1.5 system-ui
               `[${id}] WP13 fixture is ~268px (got ${result.wp13.fixtureWidth})`)
             assert.ok(result.wp13.overflowX <= 1,
               `[${id}] WP13 header fits at 268px without horizontal overflow (got ${result.wp13.overflowX})`)
-            assert.equal(result.wp13.model && result.wp13.model.text, WP13_LONG_MODEL,
-              `[${id}] WP13 long model renders in full`)
+            assert.equal(result.wp13.model && result.wp13.model.text,
+              'Claude Opus 4.6 Thinking 20250601 XLarge Extended Reasoning',
+              `[${id}] WP13 long model renders as a readable name`)
             assert.equal(result.wp13.model && result.wp13.model.title, WP13_LONG_MODEL,
               `[${id}] WP13 long model keeps a tooltip`)
             assert.equal(result.wp13.figure, '—', `[${id}] WP13 unknown cost renders an em dash`)
