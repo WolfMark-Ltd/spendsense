@@ -92,6 +92,7 @@ setTimeout(() => {
     const pane = node.querySelector('.wm-pane')
     const model = node.querySelector('.wm-model')
     const modelNameRow = node.querySelector('.wm-model-name-row')
+    const modelTip = node.querySelector('.wm-model-name-row .wm-info-btn')
     const providerBadge = node.querySelector('.wm-provider-badge')
     const savedRow = node.querySelector('.wm-gauge-stat[data-kind="saved"]')
     const savedLabel = savedRow?.querySelector('.wm-metric-label')
@@ -112,6 +113,10 @@ setTimeout(() => {
       model: model?.textContent || '',
       modelId: model?.title || '',
       modelOverflow: model ? Math.max(0, model.scrollWidth - model.clientWidth) : -1,
+      modelTipHitWidth: rect(modelTip).width,
+      modelTipHitHeight: rect(modelTip).height,
+      modelTipRingWidth: parseFloat(getComputedStyle(modelTip, '::after').width),
+      modelTipFontSize: parseFloat(getComputedStyle(modelTip).fontSize),
       provider: providerBadge?.textContent || '',
       providerOverflow: providerBadge ? Math.max(0, providerBadge.scrollWidth - providerBadge.clientWidth) : -1,
       providerSeparate: !!modelNameRow && modelNameRow.nextElementSibling === providerBadge,

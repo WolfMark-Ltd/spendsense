@@ -2797,6 +2797,8 @@ const METER_CSS = [
   '.wm-model-name-row{display:flex;align-items:flex-start;gap:5px;width:100%;min-width:0}',
   '.wm-model{flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.35;font-weight:560;color:var(--ui-text-primary)}',
   '.wm-model-name-row>.wm-info{flex-shrink:0}',
+  '.wm-model-name-row .wm-info-btn{font-size:8px}',
+  '.wm-model-name-row .wm-info-btn::after{width:14px;height:14px}',
   '.wm-provider-badge{flex-shrink:0;max-width:100%;overflow-wrap:anywhere;white-space:normal;font-size:10px;line-height:1.3;color:var(--ui-text-tertiary);background:var(--ui-fill-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:5px;padding:2px 7px}',
   '.wm-meter-sections{display:flex;flex-direction:column;gap:10px;min-width:0}',
   '.wm-card{border:1px solid var(--ui-stroke-secondary);border-radius:9px;padding:11px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}',
