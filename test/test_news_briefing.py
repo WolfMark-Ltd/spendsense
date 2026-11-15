@@ -42,6 +42,28 @@ class RateDeltaTests(unittest.TestCase):
         self.assertLess(deltas["rates"]["input"]["pct"], 0)
         self.assertGreater(deltas["rates"]["output"]["pct"], 0)
 
+    def test_tiny_move_is_still_a_direction(self):
+        # $2 -> $1 down, $100 -> $100.01 up: the rise rounds to 0.0%, but the
+        # event is mixed and must not be reported as a one-way cut.
+        deltas = nb.rate_deltas({"input": 2.0, "output": 100.0},
+                                {"input": 1.0, "output": 100.01})
+        self.assertEqual(deltas["direction"], "mixed")
+        self.assertEqual(deltas["rates"]["output"]["pct"], 0.0)
+        item = price_item("acme", "alpha", {"input": 2.0, "output": 100.0},
+                          {"input": 1.0, "output": 100.01})
+        self.assertEqual(nb.classify_event(item), "price_mixed")
+
+    def test_mixed_move_with_a_zero_baseline_reports_no_percentage(self):
+        item = price_item("acme", "alpha", {"input": 0.0, "output": 2.0},
+                          {"input": 1.0, "output": 1.0})
+        entry = nb._entry(item)
+        self.assertEqual(entry["event_type"], "price_mixed")
+        self.assertIsNone(entry["headline_params"]["raised_pct"],
+                          "an undefined percentage must not render as 0%")
+        self.assertIn("$0", entry["headline_params"]["raised_values"])
+        self.assertIn("$1", entry["headline_params"]["raised_values"])
+        self.assertNotIn("0%", entry["headline"])
+
     def test_zero_baseline_has_a_delta_but_no_percentage(self):
         deltas = nb.rate_deltas({"input": 0.0, "output": 1.0},
                                 {"input": 0.2, "output": 1.0})
