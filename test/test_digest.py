@@ -1042,6 +1042,32 @@ class DigestCoverageSummaryTests(DigestCase):
         # No value shows ≥ here (extra cash reads unknown), so no ≥ legend.
         self.assertNotIn("lower bounds", notes.lower())
 
+    def test_unknown_billing_arrangement_is_named_as_a_second_cause(self):
+        # Priced call matching a profile whose arrangement itself is
+        # unknown: a rule matched, so "no matching cost rule" alone would
+        # misstate the cause.
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([{"id": "mystery", "provider": "test",
+                              "kind": "unknown"}])
+        self.create_events([{"model": "m", "input_tokens": 1_000_000}],
+                           baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report()
+        summary = self.section(result, "report_coverage")
+        notes = " ".join(summary["notes"])
+        self.assertIn("1 call(s) have no matching cost rule or an unknown "
+                      "billing arrangement", notes)
+        self.assertNotIn("priced and classified", notes)
+        zh = D._report_coverage_section(
+            D.STRINGS["zh"], "最近 7 天", covers=True, calls=1,
+            totals={"unpriced_calls": 0, "unpriced_tokens": 0},
+            billing={"unclassified_calls": 0, "unclassified_tokens": 0,
+                     "by_kind": {"unknown": {"calls": 1, "tokens": 10}},
+                     "evidence": {"incremental_cash": {"usd": None,
+                                                      "basis": "unknown"}}},
+            recording_since=None)
+        self.assertIn("计费方式未知", " ".join(zh["notes"]))
+
     def test_unknown_billing_kind_with_positive_cash_marks_a_bound(self):
         section = D._report_coverage_section(
             D.STRINGS["en"], "Last 7 days", covers=True, calls=3,
