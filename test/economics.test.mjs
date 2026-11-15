@@ -308,6 +308,30 @@ test('collectCostsBlockers merges unknown-currency group and account blockers', 
   ])
 })
 
+test('costsUnknownFeeAccounts flags only confirmed subscriptions', () => {
+  const account = (arrangement, amount) => ({ id: arrangement, effective_arrangement: arrangement,
+    fee: { effective: { amount, currency: 'USD', period: 'month' } } })
+  assert.deepEqual(S.costsUnknownFeeAccounts([
+    account('subscription', null),
+    account('subscription', undefined),
+  ]).map(a => a.id), ['subscription', 'subscription'])
+  assert.deepEqual(S.costsUnknownFeeAccounts([
+    account('subscription', 0),
+    account('subscription', 20),
+    account('unconfirmed', null),
+    account('invalid', null),
+    account('mixed', null),
+    account('free_tier', null),
+    account('api_only', null),
+    account('prepaid', null),
+    account('included', null),
+    account('no_plan', null),
+  ]), [], 'zero is a known fee; other arrangements never raise set-your-fee')
+  assert.deepEqual(S.costsUnknownFeeAccounts(
+    [{ id: 'bare', effective_arrangement: 'subscription' }]).map(a => a.id), ['bare'])
+  assert.deepEqual(S.costsUnknownFeeAccounts(), [])
+})
+
 test('trendMonthComparable needs a converted fee total and a difference', () => {
   assert.equal(S.trendMonthComparable({ fees_usd: 20, difference_usd: -18 }), true)
   assert.equal(S.trendMonthComparable({ fees_usd: 20, difference_usd: null }), false)

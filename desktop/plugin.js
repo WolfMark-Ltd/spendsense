@@ -4819,6 +4819,16 @@ function costsUnknownFeeCount(accounts) {
     && (account.fee?.effective?.amount === null || account.fee?.effective?.amount === undefined)).length
 }
 
+/** Subscription accounts whose fee cannot be counted. Only a confirmed
+ * subscription can miss a subscription fee: other arrangements either have
+ * no fee by construction (invalid/mixed fees are cleared upstream) or need
+ * their arrangement confirmed first, so they must never raise a
+ * set-your-fee alert. */
+function costsUnknownFeeAccounts(list) {
+  return (list || []).filter(account => account.effective_arrangement === 'subscription'
+    && (account.fee?.effective?.amount === null || account.fee?.effective?.amount === undefined))
+}
+
 function costsFeeLines(summary, t) {
   return Object.entries(summary?.byCurrencyPeriod || {}).map(([key, amount]) => {
     const [currency, period = 'month'] = key.split('/')
@@ -5012,9 +5022,7 @@ function CostsPage() {
       status.age_seconds != null ? t('costsPricingAge', Math.round(status.age_seconds / 3600)) : t('costsPricingNoDate'),
       status.stale ? t('costsPricingStale') : '')
     : t('costsPricingTitle')
-  const unknownFeeAccounts = accountsReady ? list.filter(account =>
-    !['api_only', 'prepaid', 'included', 'no_plan'].includes(account.effective_arrangement)
-    && (account.fee?.effective?.amount === null || account.fee?.effective?.amount === undefined)) : []
+  const unknownFeeAccounts = accountsReady ? costsUnknownFeeAccounts(list) : []
   return jsx(ProductShell, { pageStyles: ECONOMICS_CSS, children:
     jsxs('main', { className: 'wm-shell', children: [
       jsx(ProductHeader, { title: t('costsTitle'),
@@ -14011,7 +14019,7 @@ export const __test = {
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   EconomicsGroupRow, CostsAttention, costsBlockerCategory, costsAttentionActionFor, collectCostsBlockers,
-  trendMonthComparable, trendWarrantsInline, costsPricingSourceLabel, scrollToCostsAttention,
+  costsUnknownFeeAccounts, trendMonthComparable, trendWarrantsInline, costsPricingSourceLabel, scrollToCostsAttention,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
   CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
