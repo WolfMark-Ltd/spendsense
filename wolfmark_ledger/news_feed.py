@@ -17,6 +17,10 @@ MODELS_DEV_URL = "https://models.dev"
 #: as a removal. One missing entry is a catalogue wobble, not a retirement.
 REMOVAL_CONFIRMATIONS = 2
 
+#: ``other_providers`` width, matching the published schema. The unbounded total
+#: is published separately so a popular model's count stays honest.
+MAX_OTHER_PROVIDERS = 16
+
 #: Bound on persisted history records so the sidecar stays small.
 MAX_HISTORY_RECORDS = 6000
 
@@ -70,10 +74,12 @@ def _other_providers(current: Mapping[str, dict[str, dict[str, Any]]],
     """Providers other than ``provider`` that list ``model`` in this observation.
 
     Evidence for "now also available" against a launch: a model id already
-    published elsewhere is an existing model newly listed here.
+    published elsewhere is an existing model newly listed here. The list is
+    capped at the published schema's width so the document always validates; the
+    true total travels separately as ``other_provider_count``.
     """
     return sorted(name for name, rows in current.items()
-                  if name != provider and model in rows)
+                  if name != provider and model in rows)[:MAX_OTHER_PROVIDERS]
 
 
 def _first_seen(history: Optional[Mapping[str, Any]], provider: str,
@@ -126,6 +132,8 @@ def _model_diff(previous: Mapping[str, dict[str, dict[str, Any]]],
         for model in sorted(set(after) - set(before)):
             entry = after[model]
             others = _other_providers(current, provider, model)
+            other_count = sum(1 for name, rows in current.items()
+                              if name != provider and model in rows)
             first_seen = _first_seen(history, provider, model, observed_at)
             event_type = "newly_available" if others else "new_to_catalogue"
             item = {
@@ -142,6 +150,7 @@ def _model_diff(previous: Mapping[str, dict[str, dict[str, Any]]],
                 "conditions": "Catalogue listing only; not confirmed available on any account.",
                 "conditions_code": "news_cond_listing_any_account",
                 "other_providers": others,
+                "other_provider_count": other_count,
                 "first_seen_at": first_seen,
             }
             signals = ([news_briefing.SIGNAL_PREVIEW]

@@ -71,6 +71,10 @@ is `price_mixed` even though its v1 category follows the input+output total.
   cannot prove it. Curated removal notes feed the same removals section as
   absence-confirmed records, and supersede an inferred record for the same
   provider and model instead of appearing beside it.
+- **Evidence lists are capped, counts are not.** `other_providers` publishes at
+  most 16 names (the schema's width) so a document always validates, while
+  `other_provider_count` carries the true total, so "already listed by 17 other
+  providers" stays true after a carried event is re-validated.
 - **Identity keeps its supported width.** A removal record stores provider and
   model ids at the widths the published schema allows (128 and 256 characters).
   Only timestamps are held to 64, so a long model id is never renamed in a

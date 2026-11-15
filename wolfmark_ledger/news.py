@@ -1034,6 +1034,9 @@ def validate_feed(raw: Any) -> tuple[Optional[dict[str, Any]], list[str]]:
         if isinstance(others, list):
             item["other_providers"] = [value[:128] for value in others[:16]
                                        if isinstance(value, str)]
+        other_count = entry.get("other_provider_count")
+        if isinstance(other_count, int) and not isinstance(other_count, bool) and other_count >= 0:
+            item["other_provider_count"] = other_count
         first_seen_at = _valid_text(entry.get("first_seen_at"), 64)
         if first_seen_at:
             item["first_seen_at"] = first_seen_at

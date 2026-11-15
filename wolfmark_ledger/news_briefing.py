@@ -446,8 +446,12 @@ def _headline(item: Mapping[str, Any], event_type: str,
                      f"({', '.join(up) or 'no rate'} raised, {', '.join(down) or 'no rate'} cut)"),
         }
     if event_type == "newly_available":
-        others = item.get("other_providers")
-        count = len(others) if isinstance(others, (list, tuple)) else 0
+        # The published list is capped at the schema's width, so the item also
+        # carries the true total; prefer it and fall back for older items.
+        count = item.get("other_provider_count")
+        if not isinstance(count, int) or isinstance(count, bool):
+            others = item.get("other_providers")
+            count = len(others) if isinstance(others, (list, tuple)) else 0
         return {
             "code": "news_head_newly_available",
             "params": {"provider": provider, "model": model, "others": count},

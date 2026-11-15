@@ -50,6 +50,10 @@
             "description": "Other providers listing the same model id in the same observation. Evidence that the model pre-existed this listing.",
             "items": {"type": "string", "maxLength": 128}
           },
+          "other_provider_count": {
+            "type": "integer", "minimum": 0,
+            "description": "True number of other providers listing this model. other_providers is capped at 16 for size, so this is the count a headline should use."
+          },
           "first_seen_at": {
             "type": "string", "maxLength": 64,
             "description": "Earliest observation of this model id. Present only when the publisher keeps catalogue history."

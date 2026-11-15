@@ -533,6 +533,45 @@ class HistoryAndEditorialTests(unittest.TestCase):
         self.assertEqual(item["event_type"], "newly_available")
         self.assertEqual(item["other_providers"], ["zeta"])
 
+    def test_many_providers_keep_the_list_in_schema_and_the_count_true(self):
+        from wolfmark_ledger import news
+
+        feed = feed_module()
+        carriers = [(f"carrier-{n:02d}", "shared-model", {"input": 1.0, "output": 1.0})
+                    for n in range(17)]
+        previous = models([("acme", "seed", {"input": 1.0, "output": 1.0}),
+                           ("newcomer", "own-model", {"input": 1.0, "output": 1.0})]
+                          + carriers)
+        current = models([("acme", "seed", {"input": 1.0, "output": 1.0}),
+                          ("newcomer", "own-model", {"input": 1.0, "output": 1.0}),
+                          ("newcomer", "shared-model", {"input": 1.2, "output": 1.2})]
+                         + carriers)
+        doc, problems = feed.build_feed(current, previous, {"announcements": []},
+                                        observed_at=self.OBSERVED)
+        self.assertEqual(problems, [])
+        item = next(i for i in doc["items"] if i["provider"] == "newcomer"
+                    and i["model"] == "shared-model")
+        self.assertEqual(len(item["other_providers"]), feed.MAX_OTHER_PROVIDERS,
+                         "the published list stays inside the schema's width")
+        self.assertEqual(item["other_provider_count"], 17,
+                         "the true total is carried separately")
+        section = next(s for s in doc["briefing"]["sections"]
+                       if s["id"] == "newly_available")
+        self.assertIn("17 other provider", section["entries"][0]["headline"])
+
+        validated, check_problems = news.validate_feed(doc)
+        self.assertEqual(check_problems, [])
+        kept = next(i for i in validated["items"] if i["provider"] == "newcomer"
+                    and i["model"] == "shared-model")
+        self.assertEqual(kept["other_provider_count"], 17,
+                         "a carried event keeps the count its headline used")
+        try:
+            import jsonschema
+        except ImportError:  # pragma: no cover - optional dev dependency
+            return
+        schema = json.loads((ROOT / "news-feed" / "schema.json").read_text())
+        jsonschema.validate(doc, schema)
+
     def test_history_records_first_seen_across_observations(self):
         feed = feed_module()
         first = models([("acme", "alpha", {"input": 1.0, "output": 1.0})])
