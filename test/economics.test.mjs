@@ -290,10 +290,29 @@ test('collectCostsBlockers dedupes repeats and groups by cause and currency', ()
   const out = S.collectCostsBlockers(groups, accounts)
   assert.deepEqual(out, [
     { code: 'dated_fx_rate_missing', currency: 'GBP', accountIds: ['a', 'b'] },
-    { code: 'mystery_future_code', currency: 'USD', accountIds: [] },
+    { code: 'mystery_future_code', currency: 'USD', accountIds: ['d'] },
     { code: 'subscription_fee_missing', currency: 'USD', accountIds: ['c'] },
   ])
   assert.deepEqual(S.collectCostsBlockers(), [])
+})
+
+test('collectCostsBlockers merges unknown-currency group and account blockers', () => {
+  // Backend shape: the group says "unknown", the account fee says null, and
+  // the account blocker carries no account_id of its own.
+  const groups = [{ currency: 'unknown',
+    blockers: [{ account_id: 'u:one', code: 'subscription_fee_missing' }] }]
+  const accounts = [{ account_id: 'u:one', fee: { currency: null },
+    blockers: [{ code: 'subscription_fee_missing' }] }]
+  assert.deepEqual(S.collectCostsBlockers(groups, accounts), [
+    { code: 'subscription_fee_missing', currency: null, accountIds: ['u:one'] },
+  ])
+})
+
+test('trendMonthComparable needs a converted fee total and a difference', () => {
+  assert.equal(S.trendMonthComparable({ fees_usd: 20, difference_usd: -18 }), true)
+  assert.equal(S.trendMonthComparable({ fees_usd: 20, difference_usd: null }), false)
+  assert.equal(S.trendMonthComparable({ difference_usd: -18 }), false)
+  assert.equal(S.trendMonthComparable(null), false)
 })
 
 test('trendWarrantsInline needs two comparable months in one currency', () => {

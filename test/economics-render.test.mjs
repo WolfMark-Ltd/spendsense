@@ -881,6 +881,20 @@ test('unknown membership fees raise one fix item unless a fee blocker exists', a
     'the backend fee blocker and the unknown-fee fallback never double-report')
 })
 
+test('unknown-currency fee blockers render once with their account', async () => {
+  const { container, text } = await renderAttention({
+    groups: [{ currency: 'unknown',
+      blockers: [{ account_id: 'u:one', code: 'subscription_fee_missing' }] }],
+    econAccounts: [{ account_id: 'u:one', label: 'Unknown currency account',
+      fee: { currency: null }, blockers: [{ code: 'subscription_fee_missing' }] }],
+  })
+  assert.equal(container.querySelectorAll('[data-attn-category="fix"]').length, 1,
+    'group and account passes dedupe to one row')
+  assert.equal(container.querySelector('.wm-cost-attn-count').textContent, '1')
+  assert.match(text(), /Unknown currency account/)
+  assert.doesNotMatch(text(), /u:one/)
+})
+
 test('an empty comparison shows the quiet attention state', async () => {
   const { text } = await renderAttention({})
   assert.match(text(), /Nothing needs attention/)
@@ -949,6 +963,28 @@ test('unknown blocker codes keep raw evidence in the log only', async () => {
   assert.match(log.textContent, /route-x/)
 })
 
+test('the blocker log keeps exact codes beside friendly explanations', async () => {
+  const data = econFixture()
+  data.groups = [{ currency: 'USD', monthly_fees: 20, window_fees: 19.37, fee_complete: true,
+    window_fee_complete: true, usage_usd: 2, difference_usd: null, converted: false,
+    fx: null, status: 'unavailable', notes: [], blockers: [
+      { account_id: 'test:default', code: 'missing_cache_read_rate' },
+      { account_id: 'test:default', code: 'missing_cache_write_rate' },
+    ] }]
+  data.accounts[0].blockers = [{ code: 'missing_cache_read_rate' }]
+  const { container } = await renderSection(data)
+  const log = container.querySelector('#wm-cost-blocker-log')
+  assert.match(log.textContent, /\(missing_cache_read_rate\)/)
+  assert.match(log.textContent, /\(missing_cache_write_rate\)/)
+  assert.deepEqual([...log.querySelectorAll('[data-blocker-code]')].map(li => li.dataset.blockerCode),
+    ['missing_cache_read_rate', 'missing_cache_write_rate', 'missing_cache_read_rate'])
+  const table = container.querySelector('.wm-econ-table')
+  assert.match(table.textContent, /cache price evidence/,
+    'the account row keeps its friendly explanation')
+  assert.doesNotMatch(table.textContent, /\(missing_cache_read_rate\)|\(missing_cache_write_rate\)/,
+    'the account table keeps plain explanations; codes live in the log')
+})
+
 test('a two-month comparable trend surfaces inline while one month stays closed', async () => {
   const inline = await renderSection(econFixture())
   assert.ok(inline.container.querySelector('.wm-econ-trend-inline'),
@@ -966,6 +1002,38 @@ test('a two-month comparable trend surfaces inline while one month stays closed'
   const disclosure = [...closed.container.querySelectorAll('.wm-econ-disclosure')]
     .find(details => details.querySelector('summary').textContent === 'Monthly trend')
   assert.ok(disclosure && !disclosure.open, 'the single month stays one click away')
+})
+
+test('the inline trend keeps non-comparable months and raw notes out of view', async () => {
+  const data = econFixture()
+  data.trend = { months: [
+    { month: '2026-08', fees_by_currency: [{ currency: 'USD', amount: 20 }], fees_usd: 20,
+      usage_usd: 4, difference_usd: -16, in_progress: false, partial: false,
+      recording_partial: false, difference_note: '' },
+    { month: '2026-09', fees_by_currency: [{ currency: 'USD', amount: 20 }], fees_usd: 20,
+      usage_usd: 2, difference_usd: -18, in_progress: false, partial: true,
+      recording_partial: false,
+      difference_note: "Only 50.0% of this month's usage is priced; the value is a lower bound." },
+    { month: '2026-10', fees_by_currency: [{ currency: 'USD', amount: 20 }], fees_usd: 20,
+      usage_usd: null, usage_calls: 0, unattributed_usage_calls: 1, difference_usd: null,
+      in_progress: false, partial: true, partial_pricing: false, partial_attribution: true,
+      recording_partial: false,
+      difference_note: 'Shared route ownership changed during this month; observed usage on affected routes was excluded from this comparison: route-anthropic.' },
+  ], excluded_before_recording: 0, note: '' }
+  const { container } = await renderSection(data)
+  const inline = container.querySelector('.wm-econ-trend-inline')
+  assert.ok(inline, 'two comparable months still surface the trend')
+  assert.match(inline.textContent, /2026-08/)
+  assert.match(inline.textContent, /2026-09/)
+  assert.match(inline.textContent, /partial pricing/, 'translated flags stay inline')
+  assert.doesNotMatch(inline.textContent, /2026-10/, 'the non-comparable month leaves the inline view')
+  assert.doesNotMatch(inline.textContent, /route-anthropic|lower bound/,
+    'raw slugs and untranslated notes stay out of the standard view')
+  const parked = container.querySelector('.wm-econ-trend-parked')
+  assert.ok(parked && !parked.open, 'parked months stay one click away')
+  assert.match(parked.textContent, /Months needing more evidence/)
+  assert.match(parked.textContent, /route-anthropic/)
+  assert.match(parked.textContent, /partial attribution/)
 })
 
 test('the economics section carries a stable subscription anchor', async () => {

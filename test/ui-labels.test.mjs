@@ -671,7 +671,7 @@ test('every economics string exists in English and Chinese', () => {
     'econNoComparison', 'econGroupWindowFees', 'econGroupUsage', 'econGroupDifference', 'econGroupSeeAttention',
     'econBlockGenericShort', 'econBlockerLogTitle', 'econBlockerLogIntro',
     'econAccountsTitle', 'econColAccount', 'econColMembership',
-    'econColMonthly', 'econColDifference', 'econColCoverage', 'econTrendTitle', 'econOthersTitle',
+    'econColMonthly', 'econColDifference', 'econColCoverage', 'econTrendTitle', 'econTrendMoreTitle', 'econOthersTitle',
     'econNoPricedUsageShort', 'econApiUsageMoney', 'econOutsideTitle', 'econUnknownRoutes',
     'econUnattributedLine', 'econAmbiguousLine', 'econFxTitle', 'econFxHint', 'econReading',
     'econStatusOk', 'econStatusPartial', 'econStatusUnavailable', 'econNoUsage', 'econNoPrice',

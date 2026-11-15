@@ -4084,24 +4084,42 @@ function costsAttentionActionFor(code) {
   return 'log'
 }
 
+/** Backend currency groups use "unknown" where account fees use null; both
+ * mean the same missing currency and must share one dedupe key. */
+function normCostsCurrency(value) {
+  return value === 'unknown' ? null : value || null
+}
+
 /** Deduplicated blocker groups across currency groups and accounts, keyed by
- * cause and currency so repeated instances render once with an account list. */
+ * cause and currency so repeated instances render once with an account list.
+ * Account-level blockers carry no account_id from the backend, so the
+ * enclosing row supplies it; without that the same cause repeats with an
+ * empty account list. */
 function collectCostsBlockers(groups = [], econAccounts = []) {
   const seen = new Set()
   const byKey = new Map()
-  const push = (blocker, currency) => {
+  const push = (blocker, currency, enclosingAccountId = null) => {
     const code = blocker?.code || 'unknown'
-    const accountId = blocker?.account_id || ''
-    const key = `${code}|${blocker?.currency || currency || ''}`
+    const accountId = blocker?.account_id || enclosingAccountId || ''
+    const key = `${code}|${normCostsCurrency(blocker?.currency) || normCostsCurrency(currency) || ''}`
     const dedupe = `${key}|${accountId}`
     if (seen.has(dedupe)) return
     seen.add(dedupe)
-    if (!byKey.has(key)) byKey.set(key, { code, currency: blocker?.currency || currency || null, accountIds: [] })
+    if (!byKey.has(key)) byKey.set(key,
+      { code, currency: normCostsCurrency(blocker?.currency) || normCostsCurrency(currency), accountIds: [] })
     if (accountId) byKey.get(key).accountIds.push(accountId)
   }
   for (const group of groups || []) for (const blocker of group?.blockers || []) push(blocker, group?.currency)
-  for (const row of econAccounts || []) for (const blocker of row?.blockers || []) push(blocker, row?.fee?.currency)
+  for (const row of econAccounts || []) for (const blocker of row?.blockers || []) {
+    push(blocker, row?.fee?.currency, row?.account_id)
+  }
   return [...byKey.values()].sort((a, b) => String(a.code).localeCompare(String(b.code)))
+}
+
+/** One trend month is comparable when the backend converted its fees and
+ * computed a difference; anything else is an honest text row, never bars. */
+function trendMonthComparable(entry) {
+  return finiteValue(entry?.fees_usd) != null && finiteValue(entry?.difference_usd) != null
 }
 
 /** An inline trend needs at least two comparable months sharing one fee
@@ -4109,8 +4127,7 @@ function collectCostsBlockers(groups = [], econAccounts = []) {
  * disclosure, never a single-period "trend". */
 function trendWarrantsInline(trend) {
   const months = trend?.months || []
-  const comparable = months.filter(entry =>
-    finiteValue(entry?.fees_usd) != null && finiteValue(entry?.difference_usd) != null)
+  const comparable = months.filter(trendMonthComparable)
   if (comparable.length < 2) return false
   const signatures = new Set(comparable.map(entry =>
     (entry?.fees_by_currency || []).map(part => part?.currency || '?').sort().join('+')))
@@ -4148,7 +4165,7 @@ function openEconomicsDestination(destination, onOpenFx) {
   if (destination) goLedgerTab(destination)
 }
 
-function EconomicsBlockers({ blockers = [], notes = [], t, onOpenFx }) {
+function EconomicsBlockers({ blockers = [], notes = [], t, onOpenFx, showCodes = false }) {
   const visibleNotes = Array.isArray(notes) ? notes : []
   const visibleBlockers = Array.isArray(blockers) ? blockers : []
   if (!visibleNotes.length && !visibleBlockers.length) return null
@@ -4156,12 +4173,16 @@ function EconomicsBlockers({ blockers = [], notes = [], t, onOpenFx }) {
     ...visibleNotes.map((note, index) => jsx('li', { children: note }, `note-${index}`)),
     ...visibleBlockers.map((blocker, index) => {
       const destination = econBlockerDestination(blocker)
-      return jsxs('li', { children: [
-        jsx('span', { children: `${blocker.account_id || ''}${blocker.account_id ? ': ' : ''}${econBlockerText(blocker, t)}` }),
+      const code = blocker?.code || 'unknown'
+      return jsxs('li', { 'data-blocker-code': code, children: [
+        jsxs('span', { children: [
+          `${blocker.account_id || ''}${blocker.account_id ? ': ' : ''}${econBlockerText(blocker, t)}`,
+          showCodes ? jsx('span', { className: 'wm-econ-dim', children: ` (${code})` }) : null
+        ].filter(Boolean) }),
         destination ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-action',
           onClick: () => openEconomicsDestination(destination, onOpenFx),
           children: econBlockerActionLabel(destination, t) }) : null
-      ].filter(Boolean) }, `${blocker.code || 'unknown'}-${index}`)
+      ].filter(Boolean) }, `${code}-${index}`)
     })
   ] })
 }
@@ -5103,8 +5124,10 @@ function EconomicsAccountRow({ row, t, onOpenFx }) {
   ] })
 }
 
-/** Monthly trend: paired bars where comparable, honest text rows elsewhere. */
-function EconomicsTrend({ trend, t }) {
+/** Monthly trend: paired bars where comparable, honest text rows elsewhere.
+ * hideNotes drops the backend's untranslated difference notes for inline
+ * use; the translated flags stay, and full notes live in disclosures. */
+function EconomicsTrend({ trend, t, hideNotes = false }) {
   const months = trend?.months || []
   if (!months.length) {
     return jsx('p', { className: 'wm-subtle', children: t('econTrendEmpty') })
@@ -5129,7 +5152,7 @@ function EconomicsTrend({ trend, t }) {
         jsx('span', { className: 'wm-econ-dim', children: [
           t('econTrendUsage', feesText, analyticMoney(entry.usage_usd)),
           flags ? ` · ${flags}` : '',
-          entry.difference_note ? ` · ${entry.difference_note}` : ''
+          !hideNotes && entry.difference_note ? ` · ${entry.difference_note}` : ''
         ].join('') }, 'detail')
       ] }, entry.month)
     }
@@ -5149,7 +5172,7 @@ function EconomicsTrend({ trend, t }) {
         jsxs('span', { className: cn('wm-econ-num', difference < 0 ? 'wm-econ-negative' : 'wm-econ-positive'),
           children: [analyticMoney(difference), flags ? jsx('span', { className: 'wm-econ-dim', children: ` · ${flags}` }) : null].filter(Boolean) }, 'diff')
       ] }, 'row'),
-      entry.partial && entry.difference_note
+      !hideNotes && entry.partial && entry.difference_note
         ? jsx('div', { className: 'wm-econ-dim wm-econ-trend-note', children: entry.difference_note }, 'note')
         : null
     ].filter(Boolean) }, entry.month)
@@ -5350,6 +5373,10 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
   const windowLines = econWindowLines(headline.fees_window_by_currency, groups, t)
   const logGroups = groups.filter(group => (group.blockers || []).length || (group.notes || []).length)
   const logAccounts = accounts.filter(row => (row.blockers || []).length)
+  const trendInline = trendWarrantsInline(data?.trend)
+  const trendMonths = data?.trend?.months || []
+  const inlineMonths = trendInline ? trendMonths.filter(trendMonthComparable) : []
+  const parkedMonths = trendInline ? trendMonths.filter(entry => !trendMonthComparable(entry)) : []
   return jsxs('section', { className: 'wm-product-section', id: 'wm-subscription-economics',
     'aria-label': t('econTitle'), children: [
     jsx('h2', { children: t('econTitle') }),
@@ -5398,15 +5425,19 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
               jsx(EconomicsAccountRow, { row, t, onOpenFx }, row.account_id)) })
           ] }) }) })
     ] }) : null,
-    (data?.trend?.months || []).length ? trendWarrantsInline(data.trend)
-      ? jsxs('div', { className: 'wm-econ-trend-inline', children: [
-          jsx('h3', { children: t('econTrendTitle') }),
-          jsx(EconomicsTrend, { trend: data.trend, t })
-        ] })
-      : jsxs('details', { className: 'wm-econ-disclosure', children: [
-          jsx('summary', { children: t('econTrendTitle') }),
-          jsx('div', { className: 'wm-econ-accounts', children: jsx(EconomicsTrend, { trend: data.trend, t }) })
-        ] }) : null,
+    inlineMonths.length ? jsxs('div', { className: 'wm-econ-trend-inline', children: [
+        jsx('h3', { children: t('econTrendTitle') }),
+        jsx(EconomicsTrend, { trend: { ...data.trend, months: inlineMonths }, t, hideNotes: true })
+      ] }) : null,
+    parkedMonths.length ? jsxs('details', { className: 'wm-econ-disclosure wm-econ-trend-parked', children: [
+        jsx('summary', { children: t('econTrendMoreTitle') }),
+        jsx('div', { className: 'wm-econ-accounts',
+          children: jsx(EconomicsTrend, { trend: { ...data.trend, months: parkedMonths }, t }) })
+      ] }) : null,
+    !trendInline && trendMonths.length ? jsxs('details', { className: 'wm-econ-disclosure', children: [
+        jsx('summary', { children: t('econTrendTitle') }),
+        jsx('div', { className: 'wm-econ-accounts', children: jsx(EconomicsTrend, { trend: data.trend, t }) })
+      ] }) : null,
     logGroups.length || logAccounts.length ? jsxs('details', {
       id: 'wm-cost-blocker-log', className: 'wm-econ-disclosure wm-econ-blocker-log', children: [
         jsx('summary', { children: t('econBlockerLogTitle') }),
@@ -5414,11 +5445,11 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
         ...logGroups.map(group => jsxs('div', { className: 'wm-econ-log-group', children: [
           jsx('h3', { children: group.currency }),
           jsx(EconomicsBlockers, { notes: econNotesText(group.notes, group.note_codes, t),
-            blockers: group.blockers, t, onOpenFx })
+            blockers: group.blockers, t, onOpenFx, showCodes: true })
         ] }, `group-${group.currency}`)),
         ...logAccounts.map(row => jsxs('div', { className: 'wm-econ-log-group', children: [
           jsx('h3', { children: `${row.label || row.family || row.account_id} · ${row.account_id}` }),
-          jsx(EconomicsBlockers, { blockers: row.blockers, t, onOpenFx })
+          jsx(EconomicsBlockers, { blockers: row.blockers, t, onOpenFx, showCodes: true })
         ] }, `account-${row.account_id}`))
       ] }) : null,
     others.length || data?.unattributed?.usage?.tokens || data?.ambiguous?.usage?.tokens
@@ -11079,6 +11110,7 @@ const I18N = {
     econColDifference: 'Est. value difference',
     econColCoverage: 'Pricing coverage',
     econTrendTitle: 'Monthly trend',
+    econTrendMoreTitle: 'Months needing more evidence',
     econOthersTitle: 'Not in the comparison',
     econNoPricedUsageShort: 'no priced usage',
     econApiUsageMoney: m => `${m} API-equivalent usage`,
@@ -12519,6 +12551,7 @@ const I18N = {
     econColDifference: '估算价值差',
     econColCoverage: '定价覆盖率',
     econTrendTitle: '月度趋势',
+    econTrendMoreTitle: '需要更多证据的月份',
     econOthersTitle: '未纳入比较',
     econNoPricedUsageShort: '无已定价用量',
     econApiUsageMoney: m => `${m} API 等值用量`,
@@ -13978,7 +14011,7 @@ export const __test = {
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   EconomicsGroupRow, CostsAttention, costsBlockerCategory, costsAttentionActionFor, collectCostsBlockers,
-  trendWarrantsInline, costsPricingSourceLabel, scrollToCostsAttention,
+  trendMonthComparable, trendWarrantsInline, costsPricingSourceLabel, scrollToCostsAttention,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
   CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
