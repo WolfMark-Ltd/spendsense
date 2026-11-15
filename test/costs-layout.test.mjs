@@ -16,10 +16,16 @@ const CHROME = [
 const LAYOUT_STRINGS = {
   en: { charges: /Not recorded/, gbpFee: /GBP 20\.00\/mo/, usdFee: /USD 0\.00\/mo/,
     partial: /fee unknown/, cachePartial: /Partial/, limit: /1 limit/,
-    groups: /Fees vs usage by currency/ },
+    groups: /Fees vs usage by currency/, attention: /What needs attention\?/, fix: /Fix now/,
+    seeAttention: /1 issue needs attention/, blocker: /Add a dated user-supplied/,
+    feeAction: /Set or confirm this account’s subscription fee/,
+    moneyFee: /GBP 20\.00 fees in window/, moneyUsage: /\$0\.00 usage/ },
   zh: { charges: /无法获取逐次调用/, gbpFee: /GBP 20\.00\/月/, usdFee: /USD 0\.00\/月/,
     partial: /项费用未知/, cachePartial: /部分/, limit: /1 项限额/,
-    groups: /按货币对比费用与用量/ },
+    groups: /按货币对比费用与用量/, attention: /哪些事项需要注意？/, fix: /立即处理/,
+    seeAttention: /1 个问题需要注意/, blocker: /添加注明日期的.*汇率/,
+    feeAction: /设置或确认此账户的订阅费用/,
+    moneyFee: /GBP 20\.00 窗口内费用/, moneyUsage: /\$0\.00 用量/ },
 }
 
 test('Costs keeps mixed financial evidence scannable at 380px and 1200px in both themes and languages', {
@@ -77,10 +83,24 @@ const name=new URLSearchParams(location.search).get('case');if(name){document.bo
         assert.match(layout.text, expected.groups, `${id} keeps the currency comparison visual`)
         assert.equal(layout.comparisons, 2, `${id} renders labelled fee and API-equivalent bars`)
         assert.equal(layout.closedDetails, true, `${id} keeps detailed evidence in closed disclosures`)
+        assert.match(layout.attention, expected.attention, `${id} summarises what needs attention`)
+        assert.match(layout.attention, expected.fix, `${id} classifies the dated-FX gap as fixable`)
+        assert.match(layout.attention, expected.feeAction, `${id} raises the unknown membership fee once`)
+        assert.equal(layout.attentionCount, '2', `${id} counts each material cause once`)
+        assert.deepEqual(layout.seeAttention.length, 1, `${id} links the unavailable group to attention`)
+        assert.match(layout.seeAttention[0], expected.seeAttention, `${id} counts the group issues`)
+        assert.match(layout.groupMoney, expected.moneyFee, `${id} keeps the supported fee figure`)
+        assert.match(layout.groupMoney, expected.moneyUsage, `${id} keeps the supported zero usage`)
+        assert.doesNotMatch(layout.groupRow, expected.blocker, `${id} moves blocker sentences out of the row`)
+        assert.equal(layout.logClosed, true, `${id} keeps the raw blocker log closed`)
+        assert.equal(layout.trendInline, false, `${id} leaves a single month out of the trend view`)
+        assert.equal(layout.anchor, true, `${id} anchors the subscription comparison`)
+        assert.match(layout.pricing, /Synthetic catalogue/, `${id} keeps the pricing source visible`)
       }
       assert.equal(result.interactions.closedBeforeAction, true, `${lang} FX disclosure starts closed`)
       assert.equal(result.interactions.fxOpensFromBlocker, true, `${lang}: the dated-FX blocker opens its settings disclosure`)
       assert.equal(result.interactions.fxActionReceivesFocus, true, `${lang}: the opened FX disclosure receives keyboard focus`)
+      assert.equal(result.interactions.seeAttentionFocusesHeading, true, `${lang}: the group link focuses the attention heading`)
       if (lang === 'en') {
         assert.notEqual(result.layouts[0].background, result.layouts[2].background, 'dark and light host fills differ')
         assert.notEqual(result.layouts[0].foreground, result.layouts[2].foreground, 'dark and light text colours differ')

@@ -238,3 +238,89 @@ test('attribution notes and arrangement explanations render from stable keys', (
   assert.ok(S.econExplanationText({ arrangement: 'unconfirmed', explanation: 'x' }, zh).includes('未确认'))
   assert.equal(S.econExplanationText({ arrangement: 'whatever', explanation: 'kept' }, en), 'kept')
 })
+
+// --- WP19: Costs attention classification --------------------------------------
+test('costsBlockerCategory separates fixable, historical and unavailable causes', () => {
+  for (const code of ['subscription_fee_missing', 'dated_fx_rate_missing',
+    'window_fee_history_missing', 'window_fee_allocation_unavailable',
+    'provider_unidentified', 'provider_not_recorded', 'model_unidentified',
+    'historical_ownership_billing_rule_incomplete', 'usage_price_incomplete',
+    'usage_unknown', 'usage_missing', 'missing_base_rate', 'price_evidence_missing',
+    'model_not_in_catalogue', 'provider_price_catalogue_missing', 'provider_not_in_catalogue']) {
+    assert.equal(S.costsBlockerCategory(code), 'fix', code)
+  }
+  assert.equal(S.costsBlockerCategory('no_usage_recorded'), 'history')
+  assert.equal(S.costsBlockerCategory('insufficient_comparison_history'), 'history')
+  for (const code of ['tier_rate_unavailable', 'cache_rate_unavailable', 'missing_cache_rate',
+    'missing_cache_read_rate', 'missing_cache_write_rate', 'call_failed', 'future_code', null, undefined]) {
+    assert.equal(S.costsBlockerCategory(code), 'unavailable', String(code))
+  }
+})
+
+test('costsAttentionActionFor offers only actions that can resolve the cause', () => {
+  assert.equal(S.costsAttentionActionFor('subscription_fee_missing'), 'memberships')
+  assert.equal(S.costsAttentionActionFor('dated_fx_rate_missing'), 'fx')
+  assert.equal(S.costsAttentionActionFor('model_unidentified'), 'usage')
+  // Catalogue gaps route to Usage (verify the recorded route) rather than
+  // Settings, which cannot add catalogue support.
+  assert.equal(S.costsAttentionActionFor('provider_price_catalogue_missing'), 'usage')
+  assert.equal(S.costsAttentionActionFor('fx_read_error'), 'retry')
+  // History accumulates on its own; catalogue-side rates and unknown codes
+  // open the diagnostic log instead of promising a fix.
+  assert.equal(S.costsAttentionActionFor('no_usage_recorded'), null)
+  assert.equal(S.costsAttentionActionFor('insufficient_comparison_history'), null)
+  assert.equal(S.costsAttentionActionFor('missing_cache_read_rate'), 'log')
+  assert.equal(S.costsAttentionActionFor('call_failed'), 'log')
+  assert.equal(S.costsAttentionActionFor('future_code'), 'log')
+})
+
+test('collectCostsBlockers dedupes repeats and groups by cause and currency', () => {
+  const groups = [
+    { currency: 'GBP', blockers: [
+      { account_id: 'a', code: 'dated_fx_rate_missing', currency: 'GBP' },
+      { account_id: 'b', code: 'dated_fx_rate_missing', currency: 'GBP' },
+      { account_id: 'a', code: 'dated_fx_rate_missing', currency: 'GBP' },
+    ] },
+    { currency: 'USD', blockers: [{ account_id: 'c', code: 'subscription_fee_missing' }] },
+  ]
+  const accounts = [
+    { account_id: 'c', fee: { currency: 'USD' }, blockers: [{ account_id: 'c', code: 'subscription_fee_missing' }] },
+    { account_id: 'd', fee: { currency: 'USD' }, blockers: [{ code: 'mystery_future_code' }] },
+  ]
+  const out = S.collectCostsBlockers(groups, accounts)
+  assert.deepEqual(out, [
+    { code: 'dated_fx_rate_missing', currency: 'GBP', accountIds: ['a', 'b'] },
+    { code: 'mystery_future_code', currency: 'USD', accountIds: [] },
+    { code: 'subscription_fee_missing', currency: 'USD', accountIds: ['c'] },
+  ])
+  assert.deepEqual(S.collectCostsBlockers(), [])
+})
+
+test('trendWarrantsInline needs two comparable months in one currency', () => {
+  const month = (over = {}) => ({ month: '2026-10',
+    fees_by_currency: [{ currency: 'USD', amount: 20 }], fees_usd: 20,
+    usage_usd: 2, difference_usd: -18, ...over })
+  assert.equal(S.trendWarrantsInline({ months: [] }), false)
+  assert.equal(S.trendWarrantsInline({ months: [month()] }), false,
+    'one comparable period is a breakdown, never a trend')
+  assert.equal(S.trendWarrantsInline({ months: [month(), month({ month: '2026-09' })] }), true)
+  assert.equal(S.trendWarrantsInline({ months: [month(), month({ month: '2026-09', difference_usd: null })] }), false,
+    'a single comparable month beside an honest text row stays collapsed')
+  assert.equal(S.trendWarrantsInline({ months: [month(),
+    month({ month: '2026-09', fees_by_currency: [{ currency: 'GBP', amount: 4 }] })] }), false,
+    'mixed fee currencies are not a consistent measurement basis')
+  assert.equal(S.trendWarrantsInline(null), false)
+})
+
+test('costsPricingSourceLabel translates known sources and keeps unknown ones', () => {
+  assert.equal(S.costsPricingSourceLabel('models.dev cache (models_dev_cache.json)', en),
+    'models.dev pricing catalogue (local cache)')
+  assert.equal(S.costsPricingSourceLabel('models.dev cache (models_dev_cache.json) + official check 2026-11-01', en),
+    'models.dev pricing catalogue (local cache) + official check 2026-11-01')
+  assert.equal(S.costsPricingSourceLabel('bundled models.dev snapshot', en), 'bundled pricing snapshot')
+  assert.equal(S.costsPricingSourceLabel('none', en), 'source unavailable')
+  assert.equal(S.costsPricingSourceLabel('FutureSource 2.0', en), 'FutureSource 2.0')
+  assert.equal(S.costsPricingSourceLabel('models.dev cache (models_dev_cache.json)', zh),
+    'models.dev 价格目录（本地缓存）')
+  assert.equal(S.costsPricingSourceLabel(null, en), null)
+})
