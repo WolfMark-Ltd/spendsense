@@ -466,5 +466,193 @@ class SampleFixtureTests(unittest.TestCase):
         self.assertEqual(check_problems, [])
 
 
+class HistoryAndEditorialTests(unittest.TestCase):
+    """Catalogue history: first-seen evidence, absence-confirmed removals."""
+
+    OBSERVED = "2026-11-03T00:00:00+00:00"
+    LATER = "2026-11-04T00:00:00+00:00"
+    LATEST = "2026-11-05T00:00:00+00:00"
+
+    def test_new_model_at_one_provider_is_a_catalogue_entry(self):
+        feed = feed_module()
+        previous = models([("acme", "seed", {"input": 1.0, "output": 1.0})])
+        current = models([("acme", "seed", {"input": 1.0, "output": 1.0}),
+                          ("acme", "gamma", {"input": 1.0, "output": 1.0})])
+        doc, _ = feed.build_feed(current, previous, {"announcements": []},
+                                 observed_at=self.OBSERVED)
+        item = next(i for i in doc["items"] if i["model"] == "gamma")
+        self.assertEqual(item["event_type"], "new_to_catalogue")
+        self.assertEqual(item["other_providers"], [])
+
+    def test_model_already_listed_elsewhere_is_newly_available(self):
+        feed = feed_module()
+        previous = models([("acme", "seed", {"input": 1.0, "output": 1.0})])
+        current = models([
+            ("acme", "seed", {"input": 1.0, "output": 1.0}),
+            ("zeta", "shared-model", {"input": 1.0, "output": 1.0}),
+            ("acme", "shared-model", {"input": 1.2, "output": 1.2}),
+        ])
+        doc, _ = feed.build_feed(current, previous, {"announcements": []},
+                                 observed_at=self.OBSERVED)
+        item = next(i for i in doc["items"] if i["provider"] == "acme"
+                    and i["model"] == "shared-model")
+        self.assertEqual(item["event_type"], "newly_available")
+        self.assertEqual(item["other_providers"], ["zeta"])
+
+    def test_history_records_first_seen_across_observations(self):
+        feed = feed_module()
+        first = models([("acme", "alpha", {"input": 1.0, "output": 1.0})])
+        state, removals = feed.update_history(None, first, observed_at=self.OBSERVED)
+        self.assertEqual(removals, [])
+        self.assertEqual(state["observations"], 1)
+        self.assertEqual(state["model_first_seen"]["alpha"], self.OBSERVED)
+
+        second = models([("acme", "alpha", {"input": 1.0, "output": 1.0}),
+                         ("acme", "alpha", {"input": 1.0, "output": 1.0})])
+        state2, _ = feed.update_history(state, second, observed_at=self.LATER)
+        self.assertEqual(state2["observations"], 2)
+        self.assertEqual(state2["model_first_seen"]["alpha"], self.OBSERVED,
+                         "a first sighting is not rewritten by a later run")
+
+    def test_one_missing_observation_is_not_a_removal(self):
+        feed = feed_module()
+        with_model = models([("acme", "alpha", {"input": 1.0, "output": 1.0}),
+                             ("acme", "beta", {"input": 1.0, "output": 1.0})])
+        state, _ = feed.update_history(None, with_model, observed_at=self.OBSERVED)
+
+        without = models([("acme", "alpha", {"input": 1.0, "output": 1.0})])
+        state, removals = feed.update_history(state, without, observed_at=self.LATER)
+        self.assertEqual(removals, [], "a single absence is a catalogue wobble")
+        self.assertEqual(state["missing"]["acme"]["beta"]["count"], 1)
+
+        state, removals = feed.update_history(state, without, observed_at=self.LATEST)
+        self.assertEqual(len(removals), 1)
+        self.assertEqual(removals[0]["model"], "beta")
+        self.assertEqual(removals[0]["removed_at"], self.LATEST)
+        self.assertEqual(removals[0]["missing_since"], self.LATER)
+        self.assertEqual(removals[0]["consecutive"], 2)
+
+        # The date stays put: a confirmed removal is not re-announced every run.
+        state, removals = feed.update_history(state, without, observed_at="2026-11-06T00:00:00+00:00")
+        self.assertEqual(removals[0]["removed_at"], self.LATEST)
+
+    def test_reappearance_clears_a_removal(self):
+        feed = feed_module()
+        both = models([("acme", "alpha", {"input": 1.0, "output": 1.0}),
+                       ("acme", "beta", {"input": 1.0, "output": 1.0})])
+        state, _ = feed.update_history(None, both, observed_at=self.OBSERVED)
+        only_alpha = models([("acme", "alpha", {"input": 1.0, "output": 1.0})])
+        for stamp in (self.LATER, self.LATEST):
+            state, removals = feed.update_history(state, only_alpha, observed_at=stamp)
+        self.assertEqual(len(removals), 1)
+        state, removals = feed.update_history(state, both, observed_at="2026-11-06T00:00:00+00:00")
+        self.assertEqual(removals, [], "a returning model retracts its removal")
+        self.assertNotIn("beta", state["missing"].get("acme", {}))
+
+    def test_a_vanished_provider_is_one_delisting_not_mass_removals(self):
+        feed = feed_module()
+        crowded = models([("acme", "alpha", {"input": 1.0, "output": 1.0}),
+                          ("gone", "one", {"input": 1.0, "output": 1.0}),
+                          ("gone", "two", {"input": 1.0, "output": 1.0})])
+        state, _ = feed.update_history(None, crowded, observed_at=self.OBSERVED)
+        fewer = models([("acme", "alpha", {"input": 1.0, "output": 1.0})])
+        state, removals = feed.update_history(state, fewer, observed_at=self.LATER)
+        self.assertEqual(removals, [])
+        state, removals = feed.update_history(state, fewer, observed_at=self.LATEST)
+        self.assertEqual([record["provider"] for record in removals], ["gone"])
+        self.assertEqual(removals[0]["model"], "")
+        self.assertEqual(state["removed"]["gone\u001f"]["model"], "")
+
+    def test_corrupt_history_degrades_instead_of_failing(self):
+        feed = feed_module()
+        current = models([("acme", "alpha", {"input": 1.0, "output": 1.0})])
+        state, removals = feed.update_history({"version": 99, "first_seen": "junk"},
+                                              current, observed_at=self.OBSERVED)
+        self.assertEqual(removals, [])
+        self.assertEqual(state["observations"], 1)
+
+    def test_briefing_is_published_and_validates_on_the_client(self):
+        from wolfmark_ledger import news
+
+        feed = feed_module()
+        previous = models([("acme", "alpha", {"input": 10.0, "output": 10.0})])
+        current = models([("acme", "alpha", {"input": 2.0, "output": 2.0})])
+        doc, problems = feed.build_feed(current, previous, {"announcements": []},
+                                        observed_at=self.OBSERVED)
+        self.assertEqual(problems, [])
+        self.assertIn("briefing", doc)
+        self.assertEqual(doc["briefing"]["all_updates"]["total"], 1)
+        validated, check_problems = news.validate_feed(doc)
+        self.assertEqual(check_problems, [])
+        self.assertEqual(validated["briefing"]["sections"][0]["entries"][0]["headline"],
+                         doc["briefing"]["sections"][0]["entries"][0]["headline"])
+
+    def test_removals_reach_the_briefing_only_through_history(self):
+        feed = feed_module()
+        both = models([("acme", "alpha", {"input": 1.0, "output": 1.0}),
+                       ("acme", "beta", {"input": 1.0, "output": 1.0})])
+        state, _ = feed.update_history(None, both, observed_at=self.OBSERVED)
+        only_alpha = models([("acme", "alpha", {"input": 1.0, "output": 1.0})])
+        for stamp in (self.LATER, self.LATEST):
+            state, _ = feed.update_history(state, only_alpha, observed_at=stamp)
+
+        without = feed.build_feed(only_alpha, both, {"announcements": []},
+                                  observed_at=self.LATEST)
+        reasons = {entry["id"] for entry in without[0]["briefing"]["unsupported"]}
+        self.assertIn("removals", reasons)
+
+        with_history = feed.build_feed(only_alpha, both, {"announcements": []},
+                                       observed_at=self.LATEST, history=state)
+        section = next(s for s in with_history[0]["briefing"]["sections"]
+                       if s["id"] == "removals")
+        self.assertEqual(section["total"], 1)
+        self.assertEqual(section["entries"][0]["model"], "beta")
+
+    def test_truncation_drops_provider_listings_before_model_events(self):
+        feed = feed_module()
+        previous = models([("acme", "seed", {"input": 1.0, "output": 1.0})])
+        rows = [("acme", "seed", {"input": 1.0, "output": 1.0})]
+        rows += [(f"prov-{n:03d}", "m", {"input": 1.0, "output": 1.0})
+                 for n in range(198)]
+        rows += [("acme", f"new-{n:03d}", {"input": 1.0, "output": 1.0})
+                 for n in range(10)]
+        doc, problems = feed.build_feed(models(rows), previous, {"announcements": []},
+                                        observed_at=self.OBSERVED)
+        self.assertEqual(problems, [])
+        self.assertLessEqual(len(doc["items"]), feed.FEED_MAX_ITEMS)
+        kept = [item for item in doc["items"] if item.get("provider") == "acme"
+                and item.get("model", "").startswith("new-")]
+        self.assertEqual(len(kept), 10, "specific model events survive the cap")
+
+    def test_briefing_is_trimmed_rather_than_overflowing_the_feed(self):
+        from unittest import mock
+
+        feed = feed_module()
+        previous = models([("acme", "seed", {"input": 1.0, "output": 1.0})])
+        current = models(
+            [("acme", "seed", {"input": 1.0, "output": 1.0})]
+            + [("acme", f"model-{n:03d}", {"input": 1.0, "output": 1.0})
+               for n in range(30)])
+        doc, _ = feed.build_feed(current, previous, {"announcements": []},
+                                 observed_at=self.OBSERVED)
+        items = doc["items"]
+        skeleton = {"version": 1, "items": items}
+        # The function measures the document it is handed, without a briefing.
+        base = len(json.dumps(skeleton, separators=(",", ":")))
+        full = feed.news_briefing.build_briefing(items, generated_at=self.OBSERVED)
+        full_bytes = len(json.dumps(full, separators=(",", ":")))
+
+        with mock.patch.object(feed, "FEED_SOFT_BYTES", base + full_bytes - 1):
+            trimmed = feed._fitted_briefing(skeleton, items, self.OBSERVED, [])
+        self.assertIsNotNone(trimmed)
+        self.assertLess(trimmed["thresholds"]["section_limit"],
+                        full["thresholds"]["section_limit"],
+                        "the ladder reduces section size before dropping anything")
+
+        with mock.patch.object(feed, "FEED_SOFT_BYTES", base):
+            self.assertIsNone(feed._fitted_briefing(skeleton, items, self.OBSERVED, []),
+                              "no room at all means no briefing, never a smaller archive")
+
+
 if __name__ == "__main__":
     unittest.main()

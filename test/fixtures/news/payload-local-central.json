@@ -5,6 +5,431 @@
     "source": "models.dev cache (models_dev_cache.json)"
   },
   "central": {
+    "briefing": {
+      "all_updates": {
+        "newest": "2027-01-01T02:03:52+00:00",
+        "oldest": "2027-01-01T02:03:52+00:00",
+        "total": 8
+      },
+      "counts": {
+        "events": 8,
+        "headlined": 5,
+        "new_plan": 0,
+        "new_to_catalogue": 4,
+        "newly_available": 0,
+        "plan_change": 0,
+        "price_increase": 2,
+        "price_mixed": 1,
+        "price_reduction": 0,
+        "provider_delisted": 0,
+        "provider_listed": 1,
+        "removed_from_provider": 0,
+        "unknown": 0
+      },
+      "generated_at": "2027-01-01T02:03:52+00:00",
+      "sections": [
+        {
+          "entries": [],
+          "id": "biggest_reductions",
+          "title_code": "news_section_biggest_reductions",
+          "total": 0
+        },
+        {
+          "entries": [
+            {
+              "confidence": "observed",
+              "effective_at": "",
+              "event_ids": [
+                "md-24899fccd5fb"
+              ],
+              "event_type": "price_increase",
+              "family_event_count": 1,
+              "family_label": "Claude Opus 4",
+              "headline": "anthropic raises claude-opus-4 cache_write by 20% ($1.25 \u2192 $1.5 per 1M tokens)",
+              "headline_code": "news_head_single_rate",
+              "headline_params": {
+                "after": "$1.5",
+                "also_moved": [],
+                "before": "$1.25",
+                "direction": "up",
+                "model": "claude-opus-4",
+                "pct": 20.0,
+                "provider": "anthropic",
+                "rate": "news_rate_cache_write"
+              },
+              "magnitude": {
+                "comparable_rates": 4,
+                "dominant_pct": 20.0,
+                "max_abs_delta": 0.25,
+                "max_abs_pct": 20.0,
+                "rate": "cache_write",
+                "zero_baseline": false
+              },
+              "model": "claude-opus-4",
+              "model_family": "claude-opus-4",
+              "observed_at": "2027-01-01T02:03:52+00:00",
+              "provenance": "",
+              "provider": "anthropic",
+              "providers": [
+                "anthropic"
+              ],
+              "rate_change": {},
+              "score": 12.942,
+              "source_url": "https://models.dev",
+              "variants": [
+                {
+                  "confidence": "",
+                  "effective_at": "",
+                  "event_ids": [
+                    "md-24899fccd5fb"
+                  ],
+                  "event_type": "price_increase",
+                  "family_label": "",
+                  "headline": "anthropic raises claude-opus-4 cache_write by 20% ($1.25 \u2192 $1.5 per 1M tokens)",
+                  "headline_code": "",
+                  "headline_params": {},
+                  "magnitude": {
+                    "max_abs_pct": 20.0,
+                    "rate": "cache_write"
+                  },
+                  "model": "claude-opus-4",
+                  "model_family": "",
+                  "observed_at": "2027-01-01T02:03:52+00:00",
+                  "provenance": "",
+                  "provider": "anthropic",
+                  "rate_change": {},
+                  "score": 12.942,
+                  "source_url": ""
+                }
+              ]
+            }
+          ],
+          "id": "biggest_increases",
+          "title_code": "news_section_biggest_increases",
+          "total": 1
+        },
+        {
+          "entries": [
+            {
+              "confidence": "observed",
+              "effective_at": "",
+              "event_ids": [
+                "md-cca3c3148481"
+              ],
+              "event_type": "price_mixed",
+              "family_event_count": 1,
+              "family_label": "Claude Sonnet 4",
+              "headline": "anthropic changes claude-sonnet-4 in both directions (cache_write raised, input, output cut)",
+              "headline_code": "news_head_mixed",
+              "headline_params": {
+                "cut": [
+                  "news_rate_input",
+                  "news_rate_output"
+                ],
+                "cut_pct": 33.3,
+                "model": "claude-sonnet-4",
+                "provider": "anthropic",
+                "raised": [
+                  "news_rate_cache_write"
+                ],
+                "raised_pct": 20.0
+              },
+              "magnitude": {
+                "comparable_rates": 4,
+                "dominant_pct": -33.3,
+                "max_abs_delta": 1.0,
+                "max_abs_pct": 33.3,
+                "rate": "input",
+                "zero_baseline": false
+              },
+              "model": "claude-sonnet-4",
+              "model_family": "claude-sonnet-4",
+              "observed_at": "2027-01-01T02:03:52+00:00",
+              "provenance": "",
+              "provider": "anthropic",
+              "providers": [
+                "anthropic"
+              ],
+              "rate_change": {},
+              "score": 15.419,
+              "source_url": "https://models.dev",
+              "variants": [
+                {
+                  "confidence": "",
+                  "effective_at": "",
+                  "event_ids": [
+                    "md-cca3c3148481"
+                  ],
+                  "event_type": "price_mixed",
+                  "family_label": "",
+                  "headline": "anthropic changes claude-sonnet-4 in both directions (cache_write raised, input, output cut)",
+                  "headline_code": "",
+                  "headline_params": {},
+                  "magnitude": {
+                    "max_abs_pct": 33.3,
+                    "rate": "input"
+                  },
+                  "model": "claude-sonnet-4",
+                  "model_family": "",
+                  "observed_at": "2027-01-01T02:03:52+00:00",
+                  "provenance": "",
+                  "provider": "anthropic",
+                  "rate_change": {},
+                  "score": 15.419,
+                  "source_url": ""
+                }
+              ]
+            }
+          ],
+          "id": "mixed_price_changes",
+          "title_code": "news_section_mixed_price_changes",
+          "total": 1
+        },
+        {
+          "entries": [
+            {
+              "confidence": "observed",
+              "effective_at": "",
+              "event_ids": [
+                "md-560364661e93",
+                "md-65e50764b396"
+              ],
+              "event_type": "new_to_catalogue",
+              "family_event_count": 2,
+              "family_label": "Claude Haiku 4 5",
+              "headline": "Claude Haiku 4 5: 2 changes across 2 providers",
+              "headline_code": "news_head_group",
+              "headline_params": {
+                "events": 2,
+                "family": "Claude Haiku 4 5",
+                "providers": 2
+              },
+              "magnitude": {
+                "comparable_rates": 0,
+                "rate": "",
+                "zero_baseline": false
+              },
+              "model": "claude-haiku-4-5",
+              "model_family": "claude-haiku-4-5",
+              "observed_at": "2027-01-01T02:03:52+00:00",
+              "provenance": "",
+              "provider": "anthropic",
+              "providers": [
+                "anthropic",
+                "openrouter"
+              ],
+              "rate_change": {},
+              "score": 2.2,
+              "source_url": "https://models.dev",
+              "variants": [
+                {
+                  "confidence": "",
+                  "effective_at": "",
+                  "event_ids": [
+                    "md-560364661e93"
+                  ],
+                  "event_type": "new_to_catalogue",
+                  "family_label": "",
+                  "headline": "anthropic starts listing claude-haiku-4-5 (first observed 2027-01-01)",
+                  "headline_code": "",
+                  "headline_params": {},
+                  "magnitude": {
+                    "rate": ""
+                  },
+                  "model": "claude-haiku-4-5",
+                  "model_family": "",
+                  "observed_at": "2027-01-01T02:03:52+00:00",
+                  "provenance": "",
+                  "provider": "anthropic",
+                  "rate_change": {},
+                  "score": 2.2,
+                  "source_url": ""
+                },
+                {
+                  "confidence": "",
+                  "effective_at": "",
+                  "event_ids": [
+                    "md-65e50764b396"
+                  ],
+                  "event_type": "new_to_catalogue",
+                  "family_label": "",
+                  "headline": "openrouter starts listing anthropic/claude-haiku-4-5 (first observed 2027-01-01)",
+                  "headline_code": "",
+                  "headline_params": {},
+                  "magnitude": {
+                    "rate": ""
+                  },
+                  "model": "anthropic/claude-haiku-4-5",
+                  "model_family": "",
+                  "observed_at": "2027-01-01T02:03:52+00:00",
+                  "provenance": "",
+                  "provider": "openrouter",
+                  "rate_change": {},
+                  "score": 2.2,
+                  "source_url": ""
+                }
+              ]
+            },
+            {
+              "confidence": "observed",
+              "effective_at": "",
+              "event_ids": [
+                "md-d8ddebe56810"
+              ],
+              "event_type": "new_to_catalogue",
+              "family_event_count": 1,
+              "family_label": "Claude Haiku 4 5 20251001",
+              "headline": "anthropic starts listing claude-haiku-4-5-20251001 (first observed 2027-01-01)",
+              "headline_code": "news_head_new_to_catalogue",
+              "headline_params": {
+                "confidence": "observed",
+                "first_seen": "2027-01-01T02:03:52+00:00",
+                "model": "claude-haiku-4-5-20251001",
+                "provider": "anthropic"
+              },
+              "magnitude": {
+                "comparable_rates": 0,
+                "rate": "",
+                "zero_baseline": false
+              },
+              "model": "claude-haiku-4-5-20251001",
+              "model_family": "claude-haiku-4-5-20251001",
+              "observed_at": "2027-01-01T02:03:52+00:00",
+              "provenance": "",
+              "provider": "anthropic",
+              "providers": [
+                "anthropic"
+              ],
+              "rate_change": {},
+              "score": 2.2,
+              "source_url": "https://models.dev",
+              "variants": [
+                {
+                  "confidence": "",
+                  "effective_at": "",
+                  "event_ids": [
+                    "md-d8ddebe56810"
+                  ],
+                  "event_type": "new_to_catalogue",
+                  "family_label": "",
+                  "headline": "anthropic starts listing claude-haiku-4-5-20251001 (first observed 2027-01-01)",
+                  "headline_code": "",
+                  "headline_params": {},
+                  "magnitude": {
+                    "rate": ""
+                  },
+                  "model": "claude-haiku-4-5-20251001",
+                  "model_family": "",
+                  "observed_at": "2027-01-01T02:03:52+00:00",
+                  "provenance": "",
+                  "provider": "anthropic",
+                  "rate_change": {},
+                  "score": 2.2,
+                  "source_url": ""
+                }
+              ]
+            },
+            {
+              "confidence": "observed",
+              "effective_at": "",
+              "event_ids": [
+                "md-c813aecc4517"
+              ],
+              "event_type": "new_to_catalogue",
+              "family_event_count": 1,
+              "family_label": "Text Plain",
+              "headline": "vercel starts listing text-plain (first observed 2027-01-01)",
+              "headline_code": "news_head_new_to_catalogue",
+              "headline_params": {
+                "confidence": "observed",
+                "first_seen": "2027-01-01T02:03:52+00:00",
+                "model": "text-plain",
+                "provider": "vercel"
+              },
+              "magnitude": {
+                "comparable_rates": 0,
+                "rate": "",
+                "zero_baseline": false
+              },
+              "model": "text-plain",
+              "model_family": "text-plain",
+              "observed_at": "2027-01-01T02:03:52+00:00",
+              "provenance": "",
+              "provider": "vercel",
+              "providers": [
+                "vercel"
+              ],
+              "rate_change": {},
+              "score": 2.2,
+              "source_url": "https://models.dev",
+              "variants": [
+                {
+                  "confidence": "",
+                  "effective_at": "",
+                  "event_ids": [
+                    "md-c813aecc4517"
+                  ],
+                  "event_type": "new_to_catalogue",
+                  "family_label": "",
+                  "headline": "vercel starts listing text-plain (first observed 2027-01-01)",
+                  "headline_code": "",
+                  "headline_params": {},
+                  "magnitude": {
+                    "rate": ""
+                  },
+                  "model": "text-plain",
+                  "model_family": "",
+                  "observed_at": "2027-01-01T02:03:52+00:00",
+                  "provenance": "",
+                  "provider": "vercel",
+                  "rate_change": {},
+                  "score": 2.2,
+                  "source_url": ""
+                }
+              ]
+            }
+          ],
+          "id": "new_models",
+          "title_code": "news_section_new_models",
+          "total": 3
+        },
+        {
+          "entries": [],
+          "id": "newly_available",
+          "title_code": "news_section_newly_available",
+          "total": 0
+        },
+        {
+          "entries": [],
+          "id": "removals",
+          "title_code": "news_section_removals",
+          "total": 0
+        },
+        {
+          "entries": [],
+          "id": "subscriptions",
+          "title_code": "news_section_subscriptions",
+          "total": 0
+        },
+        {
+          "entries": [],
+          "id": "preview_models",
+          "title_code": "news_section_preview_models",
+          "total": 0
+        }
+      ],
+      "unsupported": [
+        {
+          "id": "removals",
+          "reason_code": "news_unsupported_no_absence_history"
+        },
+        {
+          "id": "subscriptions",
+          "reason_code": "news_unsupported_no_plan_events"
+        }
+      ],
+      "version": 1
+    },
     "error": "",
     "fetched_at": "2027-01-01T02:03:52+00:00",
     "items": [
@@ -21,6 +446,8 @@
           "output": 5.0
         },
         "effective_at": "",
+        "event_type": "new_to_catalogue",
+        "first_seen_at": "2027-01-01T02:03:52+00:00",
         "for_you": true,
         "has_tiers": false,
         "id": "md-d8ddebe56810",
@@ -28,6 +455,7 @@
         "model": "claude-haiku-4-5-20251001",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "central",
+        "other_providers": [],
         "previous": null,
         "provenance": "models.dev",
         "provider": "anthropic",
@@ -42,6 +470,38 @@
       },
       {
         "category": "price_increase",
+        "change": {
+          "direction": "flat",
+          "dominant": "input",
+          "max_abs_delta": 0.0,
+          "max_abs_pct": 0.0,
+          "rates": {
+            "cache_read": {
+              "after": 0.11,
+              "before": 0.11,
+              "delta": 0.0,
+              "pct": 0.0
+            },
+            "cache_write": {
+              "after": 0.22,
+              "before": 0.22,
+              "delta": 0.0,
+              "pct": 0.0
+            },
+            "input": {
+              "after": 0.6,
+              "before": 0.6,
+              "delta": 0.0,
+              "pct": 0.0
+            },
+            "output": {
+              "after": 2.2,
+              "before": 2.2,
+              "delta": 0.0,
+              "pct": 0.0
+            }
+          }
+        },
         "conditions": "Tiered/context pricing changed; base rates compared.",
         "conditions_code": "news_cond_tiers_changed",
         "confidence": "observed",
@@ -53,6 +513,7 @@
           "output": 2.2
         },
         "effective_at": "",
+        "event_type": "price_increase",
         "for_you": false,
         "has_tiers": true,
         "id": "md-d799fdcc4a9c",
@@ -85,6 +546,7 @@
         "configured_provider": false,
         "current": null,
         "effective_at": "",
+        "event_type": "provider_listed",
         "for_you": false,
         "has_tiers": false,
         "id": "md-d1d5a12e68c9",
@@ -106,6 +568,38 @@
       },
       {
         "category": "price_reduction",
+        "change": {
+          "direction": "mixed",
+          "dominant": "input",
+          "max_abs_delta": 1.0,
+          "max_abs_pct": 33.3,
+          "rates": {
+            "cache_read": {
+              "after": 0.3,
+              "before": 0.3,
+              "delta": 0.0,
+              "pct": 0.0
+            },
+            "cache_write": {
+              "after": 4.5,
+              "before": 3.75,
+              "delta": 0.75,
+              "pct": 20.0
+            },
+            "input": {
+              "after": 2.0,
+              "before": 3.0,
+              "delta": -1.0,
+              "pct": -33.3
+            },
+            "output": {
+              "after": 14.0,
+              "before": 15.0,
+              "delta": -1.0,
+              "pct": -6.7
+            }
+          }
+        },
         "conditions": "",
         "conditions_code": "",
         "confidence": "observed",
@@ -117,6 +611,7 @@
           "output": 14.0
         },
         "effective_at": "",
+        "event_type": "price_mixed",
         "for_you": true,
         "has_tiers": false,
         "id": "md-cca3c3148481",
@@ -156,6 +651,8 @@
           "output": 0.8
         },
         "effective_at": "",
+        "event_type": "new_to_catalogue",
+        "first_seen_at": "2027-01-01T02:03:52+00:00",
         "for_you": false,
         "has_tiers": false,
         "id": "md-c813aecc4517",
@@ -163,6 +660,7 @@
         "model": "text-plain",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "central",
+        "other_providers": [],
         "previous": null,
         "provenance": "models.dev",
         "provider": "vercel",
@@ -188,6 +686,8 @@
           "output": 5.0
         },
         "effective_at": "",
+        "event_type": "new_to_catalogue",
+        "first_seen_at": "2027-01-01T02:03:52+00:00",
         "for_you": true,
         "has_tiers": false,
         "id": "md-65e50764b396",
@@ -195,6 +695,7 @@
         "model": "anthropic/claude-haiku-4-5",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "central",
+        "other_providers": [],
         "previous": null,
         "provenance": "models.dev",
         "provider": "openrouter",
@@ -222,6 +723,8 @@
           "output": 5.0
         },
         "effective_at": "",
+        "event_type": "new_to_catalogue",
+        "first_seen_at": "2027-01-01T02:03:52+00:00",
         "for_you": true,
         "has_tiers": false,
         "id": "md-560364661e93",
@@ -229,6 +732,7 @@
         "model": "claude-haiku-4-5",
         "observed_at": "2027-01-01T02:03:52+00:00",
         "origin": "central",
+        "other_providers": [],
         "previous": null,
         "provenance": "models.dev",
         "provider": "anthropic",
@@ -245,6 +749,38 @@
       },
       {
         "category": "price_increase",
+        "change": {
+          "direction": "up",
+          "dominant": "cache_write",
+          "max_abs_delta": 0.25,
+          "max_abs_pct": 20.0,
+          "rates": {
+            "cache_read": {
+              "after": 1.5,
+              "before": 1.5,
+              "delta": 0.0,
+              "pct": 0.0
+            },
+            "cache_write": {
+              "after": 1.5,
+              "before": 1.25,
+              "delta": 0.25,
+              "pct": 20.0
+            },
+            "input": {
+              "after": 15.0,
+              "before": 15.0,
+              "delta": 0.0,
+              "pct": 0.0
+            },
+            "output": {
+              "after": 75.0,
+              "before": 75.0,
+              "delta": 0.0,
+              "pct": 0.0
+            }
+          }
+        },
         "conditions": "",
         "conditions_code": "",
         "confidence": "observed",
@@ -256,6 +792,7 @@
           "output": 75.0
         },
         "effective_at": "",
+        "event_type": "price_increase",
         "for_you": true,
         "has_tiers": false,
         "id": "md-24899fccd5fb",

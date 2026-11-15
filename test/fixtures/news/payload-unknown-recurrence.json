@@ -5,11 +5,313 @@
     "source": "models.dev cache (models_dev_cache.json)"
   },
   "central": {
+    "briefing": {
+      "all_updates": {
+        "newest": "2027-01-01T05:03:52+00:00",
+        "oldest": "2027-01-01T05:03:52+00:00",
+        "total": 3
+      },
+      "counts": {
+        "events": 3,
+        "headlined": 3,
+        "new_plan": 0,
+        "new_to_catalogue": 1,
+        "newly_available": 0,
+        "plan_change": 0,
+        "price_increase": 1,
+        "price_mixed": 0,
+        "price_reduction": 1,
+        "provider_delisted": 0,
+        "provider_listed": 0,
+        "removed_from_provider": 0,
+        "unknown": 0
+      },
+      "generated_at": "2027-01-01T05:03:52+00:00",
+      "sections": [
+        {
+          "entries": [
+            {
+              "confidence": "observed",
+              "effective_at": "",
+              "event_ids": [
+                "md-967823a5b771"
+              ],
+              "event_type": "price_reduction",
+              "family_event_count": 1,
+              "family_label": "M2",
+              "headline": "acme cuts m2 input by 25% ($2 \u2192 $1.5 per 1M tokens)",
+              "headline_code": "news_head_single_rate",
+              "headline_params": {
+                "after": "$1.5",
+                "also_moved": [],
+                "before": "$2",
+                "direction": "down",
+                "model": "m2",
+                "pct": -25.0,
+                "provider": "acme",
+                "rate": "news_rate_input"
+              },
+              "magnitude": {
+                "comparable_rates": 2,
+                "dominant_pct": -25.0,
+                "max_abs_delta": 0.5,
+                "max_abs_pct": 25.0,
+                "rate": "input",
+                "zero_baseline": false
+              },
+              "model": "m2",
+              "model_family": "m2",
+              "observed_at": "2027-01-01T05:03:52+00:00",
+              "provenance": "",
+              "provider": "acme",
+              "providers": [
+                "acme"
+              ],
+              "rate_change": {},
+              "score": 12.774,
+              "source_url": "https://models.dev",
+              "variants": [
+                {
+                  "confidence": "",
+                  "effective_at": "",
+                  "event_ids": [
+                    "md-967823a5b771"
+                  ],
+                  "event_type": "price_reduction",
+                  "family_label": "",
+                  "headline": "acme cuts m2 input by 25% ($2 \u2192 $1.5 per 1M tokens)",
+                  "headline_code": "",
+                  "headline_params": {},
+                  "magnitude": {
+                    "max_abs_pct": 25.0,
+                    "rate": "input"
+                  },
+                  "model": "m2",
+                  "model_family": "",
+                  "observed_at": "2027-01-01T05:03:52+00:00",
+                  "provenance": "",
+                  "provider": "acme",
+                  "rate_change": {},
+                  "score": 12.774,
+                  "source_url": ""
+                }
+              ]
+            }
+          ],
+          "id": "biggest_reductions",
+          "title_code": "news_section_biggest_reductions",
+          "total": 1
+        },
+        {
+          "entries": [
+            {
+              "confidence": "observed",
+              "effective_at": "",
+              "event_ids": [
+                "md-c312c6eae578"
+              ],
+              "event_type": "price_increase",
+              "family_event_count": 1,
+              "family_label": "M1",
+              "headline": "acme raises m1 input by 200% ($1 \u2192 $3 per 1M tokens)",
+              "headline_code": "news_head_single_rate",
+              "headline_params": {
+                "after": "$3",
+                "also_moved": [
+                  "news_rate_output"
+                ],
+                "before": "$1",
+                "direction": "up",
+                "model": "m1",
+                "pct": 200.0,
+                "provider": "acme",
+                "rate": "news_rate_input"
+              },
+              "magnitude": {
+                "comparable_rates": 2,
+                "dominant_pct": 200.0,
+                "max_abs_delta": 2.0,
+                "max_abs_pct": 200.0,
+                "rate": "input",
+                "zero_baseline": false
+              },
+              "model": "m1",
+              "model_family": "m1",
+              "observed_at": "2027-01-01T05:03:52+00:00",
+              "provenance": "",
+              "provider": "acme",
+              "providers": [
+                "acme"
+              ],
+              "rate_change": {},
+              "score": 20.171,
+              "source_url": "https://models.dev",
+              "variants": [
+                {
+                  "confidence": "",
+                  "effective_at": "",
+                  "event_ids": [
+                    "md-c312c6eae578"
+                  ],
+                  "event_type": "price_increase",
+                  "family_label": "",
+                  "headline": "acme raises m1 input by 200% ($1 \u2192 $3 per 1M tokens)",
+                  "headline_code": "",
+                  "headline_params": {},
+                  "magnitude": {
+                    "max_abs_pct": 200.0,
+                    "rate": "input"
+                  },
+                  "model": "m1",
+                  "model_family": "",
+                  "observed_at": "2027-01-01T05:03:52+00:00",
+                  "provenance": "",
+                  "provider": "acme",
+                  "rate_change": {},
+                  "score": 20.171,
+                  "source_url": ""
+                }
+              ]
+            }
+          ],
+          "id": "biggest_increases",
+          "title_code": "news_section_biggest_increases",
+          "total": 1
+        },
+        {
+          "entries": [],
+          "id": "mixed_price_changes",
+          "title_code": "news_section_mixed_price_changes",
+          "total": 0
+        },
+        {
+          "entries": [
+            {
+              "confidence": "observed",
+              "effective_at": "",
+              "event_ids": [
+                "md-975889460d2b"
+              ],
+              "event_type": "new_to_catalogue",
+              "family_event_count": 1,
+              "family_label": "M4",
+              "headline": "acme starts listing m4 (first observed 2027-01-01)",
+              "headline_code": "news_head_new_to_catalogue",
+              "headline_params": {
+                "confidence": "observed",
+                "first_seen": "2027-01-01T05:03:52+00:00",
+                "model": "m4",
+                "provider": "acme"
+              },
+              "magnitude": {
+                "comparable_rates": 0,
+                "rate": "",
+                "zero_baseline": false
+              },
+              "model": "m4",
+              "model_family": "m4",
+              "observed_at": "2027-01-01T05:03:52+00:00",
+              "provenance": "",
+              "provider": "acme",
+              "providers": [
+                "acme"
+              ],
+              "rate_change": {},
+              "score": 2.2,
+              "source_url": "https://models.dev",
+              "variants": [
+                {
+                  "confidence": "",
+                  "effective_at": "",
+                  "event_ids": [
+                    "md-975889460d2b"
+                  ],
+                  "event_type": "new_to_catalogue",
+                  "family_label": "",
+                  "headline": "acme starts listing m4 (first observed 2027-01-01)",
+                  "headline_code": "",
+                  "headline_params": {},
+                  "magnitude": {
+                    "rate": ""
+                  },
+                  "model": "m4",
+                  "model_family": "",
+                  "observed_at": "2027-01-01T05:03:52+00:00",
+                  "provenance": "",
+                  "provider": "acme",
+                  "rate_change": {},
+                  "score": 2.2,
+                  "source_url": ""
+                }
+              ]
+            }
+          ],
+          "id": "new_models",
+          "title_code": "news_section_new_models",
+          "total": 1
+        },
+        {
+          "entries": [],
+          "id": "newly_available",
+          "title_code": "news_section_newly_available",
+          "total": 0
+        },
+        {
+          "entries": [],
+          "id": "removals",
+          "title_code": "news_section_removals",
+          "total": 0
+        },
+        {
+          "entries": [],
+          "id": "subscriptions",
+          "title_code": "news_section_subscriptions",
+          "total": 0
+        },
+        {
+          "entries": [],
+          "id": "preview_models",
+          "title_code": "news_section_preview_models",
+          "total": 0
+        }
+      ],
+      "unsupported": [
+        {
+          "id": "removals",
+          "reason_code": "news_unsupported_no_absence_history"
+        },
+        {
+          "id": "subscriptions",
+          "reason_code": "news_unsupported_no_plan_events"
+        }
+      ],
+      "version": 1
+    },
     "error": "",
     "fetched_at": "2027-01-01T05:03:52+00:00",
     "items": [
       {
         "category": "price_increase",
+        "change": {
+          "direction": "up",
+          "dominant": "input",
+          "max_abs_delta": 2.0,
+          "max_abs_pct": 200.0,
+          "rates": {
+            "input": {
+              "after": 3.0,
+              "before": 1.0,
+              "delta": 2.0,
+              "pct": 200.0
+            },
+            "output": {
+              "after": 4.0,
+              "before": 2.0,
+              "delta": 2.0,
+              "pct": 100.0
+            }
+          }
+        },
         "conditions": "",
         "conditions_code": "",
         "confidence": "observed",
@@ -21,6 +323,7 @@
           "output": 4.0
         },
         "effective_at": "",
+        "event_type": "price_increase",
         "for_you": false,
         "has_tiers": false,
         "id": "md-c312c6eae578",
@@ -58,6 +361,8 @@
           "output": 0.75
         },
         "effective_at": "",
+        "event_type": "new_to_catalogue",
+        "first_seen_at": "2027-01-01T05:03:52+00:00",
         "for_you": false,
         "has_tiers": false,
         "id": "md-975889460d2b",
@@ -65,6 +370,7 @@
         "model": "m4",
         "observed_at": "2027-01-01T05:03:52+00:00",
         "origin": "central",
+        "other_providers": [],
         "previous": null,
         "provenance": "models.dev",
         "provider": "acme",
@@ -79,6 +385,26 @@
       },
       {
         "category": "price_reduction",
+        "change": {
+          "direction": "down",
+          "dominant": "input",
+          "max_abs_delta": 0.5,
+          "max_abs_pct": 25.0,
+          "rates": {
+            "input": {
+              "after": 1.5,
+              "before": 2.0,
+              "delta": -0.5,
+              "pct": -25.0
+            },
+            "output": {
+              "after": 4.0,
+              "before": 4.0,
+              "delta": 0.0,
+              "pct": 0.0
+            }
+          }
+        },
         "conditions": "",
         "conditions_code": "",
         "confidence": "observed",
@@ -90,6 +416,7 @@
           "output": 4.0
         },
         "effective_at": "",
+        "event_type": "price_reduction",
         "for_you": false,
         "has_tiers": false,
         "id": "md-967823a5b771",

@@ -31,6 +31,7 @@ from urllib.request import Request, urlopen
 
 from . import discovery
 from . import membership as mem
+from . import news_briefing
 from . import store as usage_store
 from .filelock import locked as _locked
 from .pricing import PROVIDER_ALIASES, Catalogue
@@ -1004,7 +1005,7 @@ def validate_feed(raw: Any) -> tuple[Optional[dict[str, Any]], list[str]]:
             for key, value in list(raw_params.items())[:16]:
                 if value is None or isinstance(value, (str, int, float, bool)):
                     params[str(key)[:64]] = value[:256] if isinstance(value, str) else value
-        items.append({
+        item = {
             "id": item_id, "origin": "central", "category": category,
             "provider": provider, "model": _valid_text(entry.get("model"), 256),
             "summary": summary,
@@ -1019,12 +1020,54 @@ def validate_feed(raw: Any) -> tuple[Optional[dict[str, Any]], list[str]]:
             "provenance": _valid_text(entry.get("provenance"), 256) or "SpendSense central feed",
             "conditions": _valid_text(entry.get("conditions"), 500),
             "conditions_code": _valid_text(entry.get("conditions_code"), 64),
-        })
+        }
+        # Additive editorial fields. They are optional and must never make an
+        # otherwise valid event unreadable, so each is copied only when it has
+        # the expected shape and is silently ignored otherwise.
+        event_type = _valid_text(entry.get("event_type"), 32)
+        if event_type:
+            item["event_type"] = event_type
+        signals = entry.get("signals")
+        if isinstance(signals, list):
+            item["signals"] = [value[:32] for value in signals[:8] if isinstance(value, str)]
+        others = entry.get("other_providers")
+        if isinstance(others, list):
+            item["other_providers"] = [value[:128] for value in others[:16]
+                                       if isinstance(value, str)]
+        first_seen_at = _valid_text(entry.get("first_seen_at"), 64)
+        if first_seen_at:
+            item["first_seen_at"] = first_seen_at
+        change = entry.get("change")
+        if isinstance(change, dict):
+            rates = change.get("rates")
+            cleaned_rates = {
+                str(key)[:16]: {
+                    "before": sub.get("before"), "after": sub.get("after"),
+                    "delta": sub.get("delta"), "pct": sub.get("pct"),
+                }
+                for key, sub in (rates.items() if isinstance(rates, dict) else [])
+                if isinstance(sub, dict) and str(key) in ("input", "output",
+                                                          "cache_read", "cache_write")
+            }
+            item["change"] = {
+                "direction": _valid_text(change.get("direction"), 16),
+                "dominant": _valid_text(change.get("dominant"), 16),
+                "max_abs_pct": change.get("max_abs_pct")
+                if isinstance(change.get("max_abs_pct"), (int, float)) else None,
+                "max_abs_delta": change.get("max_abs_delta")
+                if isinstance(change.get("max_abs_delta"), (int, float)) else None,
+                "rates": cleaned_rates,
+            }
+        items.append(item)
     items.sort(key=lambda item: (item["observed_at"], item["provider"], item["model"]), reverse=True)
     if len(items) > FEED_MAX_ITEMS:
         del items[FEED_MAX_ITEMS:]
         errors.append(f"feed truncated to {FEED_MAX_ITEMS} items")
-    return {"version": 1, "generated_at": generated_at, "items": items}, errors
+    feed = {"version": 1, "generated_at": generated_at, "items": items}
+    briefing = news_briefing.sanitise_briefing(raw.get("briefing"))
+    if briefing is not None:
+        feed["briefing"] = briefing
+    return feed, errors
 
 
 def load_cache(path: Optional[Path | str] = None) -> dict[str, Any]:
@@ -1364,6 +1407,9 @@ def news_payload(*, data_dir: Optional[Path | str] = None,
         "central": {"state": cached["state"] if settings["live_updates"]
                     else ("disabled" if not cached["feed"] else "disabled_cached"),
                     "items": [item for item in combined if item.get("origin") == "central"],
+                    "briefing": (cached["feed"].get("briefing")
+                                 if settings["live_updates"]
+                                 and isinstance(cached["feed"], dict) else None),
                     "fetched_at": cached["fetched_at"], "error": cached["error"]},
         "for_you_count": sum(1 for item in combined if item.get("for_you")),
         "providers_configured": providers_configured,

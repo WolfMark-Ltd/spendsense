@@ -29,7 +29,36 @@
           "source_url": {"type": "string", "pattern": "^https?://", "maxLength": 500},
           "confidence": {"enum": ["observed", "verified", "curated"]},
           "provenance": {"type": "string", "maxLength": 256},
-          "conditions": {"type": "string", "maxLength": 500}
+          "conditions": {"type": "string", "maxLength": 500},
+          "event_type": {
+            "type": "string", "maxLength": 32,
+            "description": "Editorial lifecycle category. Optional and additive: category stays the v1 field. May refine category (a mixed price move is price_mixed while its category is whichever direction the input+output total took)."
+          },
+          "change": {
+            "type": "object",
+            "description": "Per-rate comparison of previous/current. Optional; recomputable from the rate blocks.",
+            "properties": {
+              "direction": {"enum": ["down", "up", "mixed", "flat", "unknown"]},
+              "dominant": {"type": "string", "maxLength": 16},
+              "max_abs_pct": {"type": ["number", "null"]},
+              "max_abs_delta": {"type": ["number", "null"]},
+              "rates": {"type": "object"}
+            }
+          },
+          "other_providers": {
+            "type": "array", "maxItems": 16,
+            "description": "Other providers listing the same model id in the same observation. Evidence that the model pre-existed this listing.",
+            "items": {"type": "string", "maxLength": 128}
+          },
+          "first_seen_at": {
+            "type": "string", "maxLength": 64,
+            "description": "Earliest observation of this model id. Present only when the publisher keeps catalogue history."
+          },
+          "signals": {
+            "type": "array", "maxItems": 8,
+            "description": "Additive annotations such as a provider-labelled preview model. Never an inferred identity.",
+            "items": {"type": "string", "maxLength": 32}
+          }
         },
         "allOf": [
           {
@@ -44,6 +73,33 @@
           }
         ]
       }
+    }
+  },
+  "briefing": {
+    "type": "object",
+    "description": "Optional editorial view, curated once for every client from the same verified events. Absent when the publisher had no room inside the feed's byte budget, or when it was not generated. Clients must render items without it.",
+    "required": ["version", "sections"],
+    "properties": {
+      "version": {"const": 1},
+      "generated_at": {"type": "string", "maxLength": 64},
+      "thresholds": {"type": "object"},
+      "sections": {
+        "type": "array",
+        "maxItems": 12,
+        "items": {
+          "type": "object",
+          "required": ["id", "entries"],
+          "properties": {
+            "id": {"type": "string", "maxLength": 64},
+            "title_code": {"type": "string", "maxLength": 64},
+            "total": {"type": "integer", "minimum": 0},
+            "entries": {"type": "array", "maxItems": 40, "items": {"type": "object"}}
+          }
+        }
+      },
+      "counts": {"type": "object"},
+      "unsupported": {"type": "array", "maxItems": 12},
+      "all_updates": {"type": "object"}
     }
   },
   "$defs": {
