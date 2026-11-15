@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import math
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Optional
 
 BRIEFING_VERSION = 1
@@ -57,6 +58,10 @@ EVENT_TYPES = (
     "plan_change",
     "unknown",
 )
+
+#: How long a confirmed removal keeps appearing in the briefing. History keeps
+#: the record; the headline surface only shows recent news.
+REMOVAL_WINDOW_DAYS = 90
 
 #: Signals that annotate an event without replacing its event type.
 SIGNAL_PREVIEW = "preview"
@@ -212,13 +217,12 @@ def rate_deltas(previous: Any, current: Any) -> dict[str, Any]:
             incomparable[key] = "news_ev_zero_baseline"
 
     def _signed(row: Mapping[str, Any]) -> float:
-        """Direction of one rate move: percentage when defined, else the delta.
+        """Direction of one rate move, from the published values themselves.
 
-        A zero baseline has no percentage; its direction is still unambiguous
-        from the delta, and it must not count as both up and down.
+        A zero baseline has no percentage but its delta still has a sign, and a
+        change too small to survive one-decimal rounding is still a change in
+        direction: only the *displayed* percentage is rounded.
         """
-        if row["pct"] is not None:
-            return float(row["pct"])
         return float(row["delta"])
 
     moved_down = [key for key, row in rates.items()
@@ -361,6 +365,15 @@ def _headline(item: Mapping[str, Any], event_type: str,
     if event_type in ("price_reduction", "price_increase") and dominant:
         row = rates[dominant]
         verb = "cuts" if event_type == "price_reduction" else "raises"
+        if all(entry_row["delta"] == 0 for entry_row in rates.values()):
+            # Base rates unchanged: the event is a tier/context-pricing change,
+            # which no percentage on a base rate could describe honestly.
+            return {
+                "code": "news_head_tiers_changed",
+                "params": {"provider": provider, "model": model},
+                "text": (f"{provider} changes {model} tier/context pricing "
+                         f"(base rates unchanged)"),
+            }
         if row["pct"] is None:
             return {
                 "code": "news_head_from_zero",
@@ -397,19 +410,35 @@ def _headline(item: Mapping[str, Any], event_type: str,
     if event_type == "price_mixed":
         def _up(key: str) -> bool:
             row = rates[key]
-            return (row["pct"] if row["pct"] is not None else row["delta"]) > 0
+            return row["delta"] > 0
 
         up = [key for key in RATE_KEYS if key in rates
               and rates[key]["before"] != rates[key]["after"] and _up(key)]
         down = [key for key in RATE_KEYS if key in rates
                 and rates[key]["before"] != rates[key]["after"] and not _up(key)]
+
+        def _largest_pct(keys: list[str]) -> Optional[float]:
+            values = [abs(rates[key]["pct"]) for key in keys
+                      if rates[key]["pct"] is not None]
+            return max(values) if values else None
+
+        def _values_text(keys: list[str]) -> str:
+            """Exact values for rates whose percentage is undefined."""
+            return "; ".join(f"{key} {_rate_text(rates[key]['before'])} → "
+                             f"{_rate_text(rates[key]['after'])}"
+                             for key in keys if rates[key]["pct"] is None)
+
+        # A rate with a zero baseline has no percentage, so its exact values are
+        # carried instead of a false 0%.
         return {
             "code": "news_head_mixed",
             "params": {"provider": provider, "model": model,
                        "raised": [RATE_CODE[key] for key in up],
                        "cut": [RATE_CODE[key] for key in down],
-                       "raised_pct": max((abs(rates[key]["pct"] or 0) for key in up), default=0),
-                       "cut_pct": max((abs(rates[key]["pct"] or 0) for key in down), default=0)},
+                       "raised_pct": _largest_pct(up),
+                       "cut_pct": _largest_pct(down),
+                       "raised_values": _values_text(up),
+                       "cut_values": _values_text(down)},
             "text": (f"{provider} changes {model} in both directions "
                      f"({', '.join(up) or 'no rate'} raised, {', '.join(down) or 'no rate'} cut)"),
         }
@@ -524,16 +553,18 @@ def _entry(item: Mapping[str, Any], *, providers: int = 1) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- grouping
 
-_VARIANT_FIELDS = ("event_type", "headline", "provider", "model",
-                   "observed_at", "event_ids", "score")
+_VARIANT_FIELDS = ("event_type", "headline_code", "headline_params", "headline",
+                   "provider", "model", "observed_at", "event_ids")
 
 
 def _variant(entry: Mapping[str, Any]) -> dict[str, Any]:
     """Compact per-provider row inside a family group.
 
-    The group row already carries the family label and its own headline, so a
-    variant keeps only what a provider row has to show — never a full copy of
-    the entry, which would double the published payload.
+    The group row already carries the family label and its own banner, so a
+    variant keeps what a provider row has to show — its message code and
+    parameters, identity and event link — never a full copy of the entry, which
+    would double the published payload. The code and parameters matter: a
+    grouped row must stay localisable.
     """
     row = {key: entry[key] for key in _VARIANT_FIELDS if key in entry}
     magnitude = entry.get("magnitude")
@@ -600,14 +631,43 @@ def _section(section_id: str, entries: list[dict[str, Any]],
     }
 
 
-def _removal_entries(removals: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _recent_removals(removals: Iterable[Mapping[str, Any]], generated_at: str,
+                     window_days: int) -> list[dict[str, Any]]:
+    """Removal events as briefing entries, newest first.
+
+    A confirmed record stays in history indefinitely; only recent ones belong in
+    a news section, so the window is applied here and the order is by date
+    rather than by score. An unparseable date is kept: dropping evidence because
+    of a format is worse than showing an undated record.
+    """
+    cutoff: Optional[datetime] = None
+    if generated_at:
+        try:
+            cutoff = datetime.fromisoformat(generated_at) - timedelta(days=max(0, window_days))
+        except ValueError:
+            cutoff = None
+    if cutoff is not None and cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
+
+    def _recent(stamp: str) -> bool:
+        if cutoff is None or not stamp:
+            return True
+        try:
+            moment = datetime.fromisoformat(stamp)
+        except ValueError:
+            return True
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return moment >= cutoff
+
     entries: list[dict[str, Any]] = []
     for record in removals:
         if not isinstance(record, Mapping):
             continue
         provider = str(record.get("provider") or "").strip()
         model = str(record.get("model") or "").strip()
-        if not provider:
+        removed_at = str(record.get("removed_at") or "")
+        if not provider or not _recent(removed_at):
             continue
         entries.append({
             "id": f"rm-{provider}-{model}".strip("-"),
@@ -617,13 +677,15 @@ def _removal_entries(removals: Iterable[Mapping[str, Any]]) -> list[dict[str, An
             "provider": provider,
             "model": model,
             "summary": "",
-            "observed_at": str(record.get("removed_at") or ""),
+            "observed_at": removed_at,
             "effective_at": "",
             "source_url": str(record.get("source_url") or ""),
             "confidence": str(record.get("confidence") or "observed"),
             "provenance": str(record.get("provenance") or ""),
             "confirmations": record.get("consecutive"),
         })
+    entries.sort(key=lambda row: (row["observed_at"], row["provider"], row["model"]),
+                 reverse=True)
     return entries
 
 
@@ -632,6 +694,8 @@ def _removal_entries(removals: Iterable[Mapping[str, Any]]) -> list[dict[str, An
 def build_briefing(items: Iterable[Mapping[str, Any]], *,
                    generated_at: str = "",
                    removals: Iterable[Mapping[str, Any]] = (),
+                   removal_tracking: bool = False,
+                   removal_window_days: int = REMOVAL_WINDOW_DAYS,
                    min_abs_pct: float = MIN_ABS_PCT,
                    min_abs_delta: float = MIN_ABS_DELTA,
                    section_limit: int = SECTION_LIMIT,
@@ -640,8 +704,9 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
 
     ``items`` is the complete event list (local + central or central only);
     ``removals`` are absence-confirmed records supplied by the publisher's
-    history. Without them no removal or retirement is claimed, and the
-    briefing says so in ``unsupported`` instead of guessing.
+    history. ``removal_tracking`` says whether the publisher can detect
+    removals at all: without it no removal is claimed and the briefing says so
+    in ``unsupported`` instead of guessing.
     """
     entries = [
         _entry(item, providers=1)
@@ -684,9 +749,14 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
     increases = _group(ranked("price_increase"))
     mixed = _group(ranked("price_mixed"))
 
-    removal_records = list(_removal_entries(removals))
+    removal_records = _recent_removals(removals, generated_at, removal_window_days)
     removal_entries = [_entry(record) for record in removal_records]
     removal_groups = _group(removal_entries)
+    # Removals are the one section where "newest" beats "biggest": a confirmed
+    # record never expires from history, so a fixed widening sort would let old
+    # removals push a fresh one out of the section forever.
+    removal_groups.sort(key=lambda row: (str(row.get("observed_at") or ""),
+                                         row["provider"], row["model"]), reverse=True)
 
     sections = [
         {"id": "biggest_reductions", "title_code": "news_section_biggest_reductions",
@@ -717,7 +787,9 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
     ]
 
     unsupported: list[dict[str, str]] = []
-    if not removal_records:
+    if not removal_tracking:
+        # Distinguish "we cannot detect removals" from "we can and confirmed
+        # none": only the first is a limitation worth telling the reader about.
         unsupported.append({
             "id": "removals",
             "reason_code": "news_unsupported_no_absence_history",
@@ -732,11 +804,14 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
                  default="")
     newest = max((entry["observed_at"] for entry in entries if entry["observed_at"]),
                  default="")
+    for record in removal_records:
+        counts[record["event_type"]] = counts.get(record["event_type"], 0) + 1
     return {
         "version": BRIEFING_VERSION,
         "generated_at": generated_at,
         "thresholds": {"min_abs_pct": min_abs_pct, "min_abs_delta": min_abs_delta,
-                       "section_limit": section_limit},
+                       "section_limit": section_limit,
+                       "removal_window_days": removal_window_days},
         "sections": sections,
         "counts": counts | {
             "events": len(entries),
@@ -753,7 +828,12 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
 
 _MAX_SECTIONS = 12
 _MAX_SECTION_ENTRIES = 40
+#: Variant rows rendered under one family banner. The banner's own
+#: ``family_event_count`` reports the true total.
 _MAX_VARIANTS = 12
+#: Event/provider links kept per entry. Larger than the variant cap: a link is
+#: cheap and a dropped one is a lost join back to All Updates.
+_MAX_LINKS = 64
 _MAX_TEXT = 500
 
 _ENTRY_TEXT = ("event_type", "headline_code", "headline", "provider", "model",
@@ -792,12 +872,15 @@ def _sanitise_entry(raw: Any, depth: int = 0) -> Optional[dict[str, Any]]:
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             entry[key] = value
     for key, limit in (("headline_params", 16), ("magnitude", 8), ("rate_change", 8)):
-        entry[key] = _scalar_map(raw.get(key), limit)
+        mapped = _scalar_map(raw.get(key), limit)
+        if mapped:
+            entry[key] = mapped
     for key in ("signals", "event_ids", "providers"):
         value = raw.get(key)
         if isinstance(value, list):
-            entry[key] = [item[:128] for item in value[:_MAX_VARIANTS]
-                          if isinstance(item, str)]
+            links = [item[:128] for item in value[:_MAX_LINKS] if isinstance(item, str)]
+            if links:
+                entry[key] = links
     variants = raw.get("variants")
     if isinstance(variants, list) and depth < 2:
         cleaned = [_sanitise_entry(item, depth + 1) for item in variants[:_MAX_VARIANTS]]

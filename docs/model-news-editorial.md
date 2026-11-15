@@ -53,7 +53,21 @@ is `price_mixed` even though its v1 category follows the input+output total.
   model returns. Without history the briefing lists `removals` under
   `unsupported` and claims nothing.
 - **A vanished provider is one delisting, not a thousand removals.** When a
-  provider disappears, its models are not reported individually.
+  provider disappears, its models are not reported individually, and any earlier
+  per-model removal for that provider is replaced by the single delisting rather
+  than shown beside it.
+- **A retry is not an observation.** `update_history` called twice with the same
+  `observed_at` re-derives the state without advancing any absence counter, so a
+  crashed-and-retried publisher run cannot confirm a removal from one real
+  missing observation.
+- **Old removals leave the news surface, not the history.** Confirmed records
+  stay in the sidecar indefinitely but only appear in the briefing for
+  `REMOVAL_WINDOW_DAYS` (90) after `removed_at`, ordered newest first, so an
+  accumulating archive cannot crowd out today's news.
+- **An operator note is the only place a hard claim lives.** A curated entry may
+  carry a validated `event_type` (`new_plan`, `new_to_catalogue`, …) with
+  `confidence: curated` or `verified`; that is how a launch, a removal or a plan
+  change is asserted when a catalogue diff cannot prove it.
 - **No percentage against zero.** A rate that moves from `$0` has a delta but no
   percentage; the headline says so instead of printing an infinite change.
 - **No blended percentage.** Each rate type is compared separately; the headline
@@ -140,7 +154,13 @@ operational and review burden is not.
    carry-forward on the next run. A UI that wants removals in All Updates needs
    either a v2 category or a category-independent renderer.
 4. **Truncation policy.** Generic provider listings are now dropped before any
-   event with a model identity when the 200-item cap binds.
+   event with a model identity when the 200-item cap binds — including listings
+   carried from an older feed that has no `event_type` yet.
+5. **Removal window.** 90 days, matching the feed's retention.
+6. **Size budget.** The document is held under 200 KiB, below the client's
+   256 KiB cap. The editorial layer is trimmed first, then dropped; if items
+   alone are too large, the derivable `change` block is shed before any event
+   is. Events are never removed to make room for text.
 
 ## Ops follow-up (not in this change)
 

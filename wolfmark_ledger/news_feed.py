@@ -206,28 +206,90 @@ def _empty_history() -> dict[str, Any]:
     }
 
 
-def _coerced_history(prior: Any) -> dict[str, Any]:
-    """Copy a stored history, discarding anything malformed.
+def _stamp_text(value: Any) -> str:
+    return value.strip()[:64] if isinstance(value, str) else ""
 
-    A corrupt or foreign sidecar must degrade to "no history" (no removal
-    claims) rather than fail the publishing run.
+
+def _count(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _coerced_history(prior: Any) -> dict[str, Any]:
+    """Copy a stored history, validating every nested record.
+
+    A corrupt, foreign or partially written sidecar must degrade to "no
+    history" (no removal claims) rather than fail the publishing run, and it
+    must never leave a half-shaped value that explodes on the next observation.
+    Each field is rebuilt from validated pieces; anything unrecognised is
+    dropped.
     """
     state = _empty_history()
     if not isinstance(prior, Mapping) or prior.get("version") != HISTORY_VERSION:
         return state
-    for key in ("first_seen", "model_first_seen", "missing", "removed",
-                "provider_absent"):
-        value = prior.get(key)
-        if isinstance(value, Mapping):
-            state[key] = {str(k): (dict(v) if isinstance(v, Mapping) else v)
-                          for k, v in value.items()}
-    for key in ("observations",):
-        value = prior.get(key)
-        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-            state[key] = value
-    last = prior.get("last_observed_at")
-    if isinstance(last, str):
-        state["last_observed_at"] = last[:64]
+
+    raw = prior.get("first_seen")
+    if isinstance(raw, Mapping):
+        for provider, rows in raw.items():
+            if not isinstance(rows, Mapping):
+                continue
+            cleaned = {str(model): _stamp_text(stamp) for model, stamp in rows.items()
+                       if _stamp_text(stamp)}
+            if cleaned:
+                state["first_seen"][str(provider)] = cleaned
+
+    raw = prior.get("model_first_seen")
+    if isinstance(raw, Mapping):
+        state["model_first_seen"] = {str(model): _stamp_text(stamp)
+                                     for model, stamp in raw.items()
+                                     if _stamp_text(stamp)}
+
+    raw = prior.get("missing")
+    if isinstance(raw, Mapping):
+        for provider, rows in raw.items():
+            if not isinstance(rows, Mapping):
+                continue
+            cleaned = {str(model): {"count": _count(entry.get("count")),
+                                    "since": _stamp_text(entry.get("since"))}
+                       for model, entry in rows.items()
+                       if isinstance(entry, Mapping) and _count(entry.get("count"))}
+            if cleaned:
+                state["missing"][str(provider)] = cleaned
+
+    raw = prior.get("removed")
+    if isinstance(raw, Mapping):
+        for key, record in raw.items():
+            if not isinstance(record, Mapping):
+                continue
+            provider = _stamp_text(record.get("provider"))
+            removed_at = _stamp_text(record.get("removed_at"))
+            if not provider or not removed_at:
+                continue
+            state["removed"][str(key)] = {
+                "provider": provider,
+                "model": _stamp_text(record.get("model")),
+                "removed_at": removed_at,
+                "missing_since": _stamp_text(record.get("missing_since")),
+                "consecutive": _count(record.get("consecutive")),
+                "last_present_at": _stamp_text(record.get("last_present_at")),
+                "source_url": _stamp_text(record.get("source_url"))[:500],
+                "provenance": _stamp_text(record.get("provenance"))[:256],
+                "confidence": _stamp_text(record.get("confidence"))[:32] or "observed",
+            }
+
+    raw = prior.get("provider_absent")
+    if isinstance(raw, Mapping):
+        for provider, entry in raw.items():
+            if not isinstance(entry, Mapping) or not _count(entry.get("count")):
+                continue
+            state["provider_absent"][str(provider)] = {
+                "count": _count(entry.get("count")),
+                "since": _stamp_text(entry.get("since")),
+            }
+
+    value = prior.get("observations")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        state["observations"] = value
+    state["last_observed_at"] = _stamp_text(prior.get("last_observed_at"))
     return state
 
 
@@ -242,6 +304,33 @@ def _prune(records: Mapping[str, Any], limit: int) -> dict[str, Any]:
 
     kept = sorted(records.items(), key=_stamp, reverse=True)[:limit]
     return dict(kept)
+
+
+def _prune_nested(by_provider: Mapping[str, Any], limit: int,
+                  stamp: str) -> dict[str, Any]:
+    """Bound a ``{provider: {model: record}}`` map by its oldest records.
+
+    ``record`` is either an ISO date (``first_seen``) or a mapping holding the
+    date under ``stamp`` (``missing``). Dropping the oldest first-seen evidence
+    only costs the "first observed …" phrasing for a very old model; it never
+    creates a removal, because absence is judged against ``first_seen`` itself.
+    """
+    total = sum(len(rows) for rows in by_provider.values()
+                if isinstance(rows, Mapping))
+    if total <= limit:
+        return dict(by_provider)
+    flat: list[tuple[str, str, Any]] = []
+    for provider, rows in by_provider.items():
+        if not isinstance(rows, Mapping):
+            continue
+        for model, record in rows.items():
+            value = record.get(stamp) if isinstance(record, Mapping) else record
+            flat.append((provider, str(model), (str(value or ""), record)))
+    flat.sort(key=lambda row: row[2][0], reverse=True)
+    out: dict[str, Any] = {}
+    for provider, model, (_stamp, record) in flat[:limit]:
+        out.setdefault(provider, {})[model] = record
+    return out
 
 
 def _record_key(provider: str, model: str = "") -> str:
@@ -262,12 +351,20 @@ def update_history(prior: Any, current: Any, *, observed_at: str,
     removals. Reappearance clears the record, so a catalogue wobble corrects
     itself on the next run.
 
+    A repeated call with the same ``observed_at`` is a publisher retry, not a
+    new observation: it re-derives the state without advancing any absence
+    counter, so one real missing observation can never become two and confirm a
+    removal on its own.
+
     Returns ``(state, removals)``; ``state`` is JSON-serialisable and belongs in
     a publisher-side sidecar, not in the public feed.
     """
     table = _table(current)
     state = _coerced_history(prior)
-    state["observations"] += 1
+    last = state.get("last_observed_at")
+    replay = isinstance(last, str) and last != "" and last == observed_at
+    step = 0 if replay else 1
+    state["observations"] += step
     state["last_observed_at"] = observed_at
     first_seen = state["first_seen"]
     model_first = state["model_first_seen"]
@@ -287,9 +384,15 @@ def update_history(prior: Any, current: Any, *, observed_at: str,
     for provider, rows in list(first_seen.items()):
         if provider not in table:
             entry = provider_absent.setdefault(provider, {"count": 0, "since": observed_at})
-            entry["count"] = int(entry.get("count") or 0) + 1
+            entry["count"] = int(entry.get("count") or 0) + step
             key = _record_key(provider)
             if entry["count"] >= cutoff and key not in removed:
+                # One delisting replaces any earlier per-model removals for this
+                # provider: keeping both would show the same disappearance twice.
+                prefix = f"{provider}\u001f"
+                for stale in [name for name in removed
+                              if name.startswith(prefix) and name != key]:
+                    removed.pop(stale, None)
                 removed[key] = {
                     "provider": provider, "model": "",
                     "removed_at": observed_at, "missing_since": entry.get("since", ""),
@@ -306,7 +409,7 @@ def update_history(prior: Any, current: Any, *, observed_at: str,
                 continue
             entry = missing.setdefault(provider, {}).setdefault(
                 model, {"count": 0, "since": observed_at})
-            entry["count"] = int(entry.get("count") or 0) + 1
+            entry["count"] = int(entry.get("count") or 0) + step
             key = _record_key(provider, model)
             if entry["count"] >= cutoff and key not in removed:
                 removed[key] = {
@@ -318,9 +421,9 @@ def update_history(prior: Any, current: Any, *, observed_at: str,
                     "confidence": "observed",
                 }
 
-    state["first_seen"] = _prune({provider: rows for provider, rows in first_seen.items()},
-                                 max_records)
+    state["first_seen"] = _prune_nested(first_seen, max_records, "first_seen")
     state["model_first_seen"] = _prune(dict(model_first), max_records)
+    state["missing"] = _prune_nested(missing, max_records, "since")
     state["removed"] = _prune(removed, max_records)
     return state, history_removals(state)
 
@@ -400,6 +503,11 @@ def _curated(entries: Any, observed_at: str) -> tuple[list[dict[str, Any]], list
         if confidence not in CONFIDENCES:
             problems.append(f"{where}: unknown confidence")
             continue
+        event_type = entry.get("event_type")
+        if event_type is not None:
+            if not isinstance(event_type, str) or event_type not in news_briefing.EVENT_TYPES:
+                problems.append(f"{where}: unknown event_type")
+                continue
         raw_id = entry.get("id")
         if raw_id is None:
             digest = hashlib.sha1("|".join([provider, str(entry.get("model") or ""),
@@ -429,6 +537,9 @@ def _curated(entries: Any, observed_at: str) -> tuple[list[dict[str, Any]], list
             "source_url": source_url[:500], "confidence": confidence,
             "provenance": str(entry.get("provenance") or "SpendSense curation").strip()[:256],
             "conditions": str(entry.get("conditions") or "").strip()[:500],
+            # An operator-curated note is the only place a launch, a removal or
+            # a new plan can be claimed with verified/curated confidence.
+            **({"event_type": event_type} if event_type else {}),
         })
     return items, problems
 
@@ -472,6 +583,43 @@ def _carried_items(prior_feed: Any, fresh_ids: set[str], observed_at: str,
             continue
         carried.append(item)
     return carried, []
+
+
+def _is_generic_listing(item: Mapping[str, Any]) -> bool:
+    """True for a "provider newly listed" line, however old it is.
+
+    Items carried from an older feed have no ``event_type``, so the shape is
+    checked too: a ``new_model`` with no model id names no model and is still
+    catalogue bookkeeping.
+    """
+    event_type = str(item.get("event_type") or "")
+    if event_type:
+        return event_type == "provider_listed"
+    return (str(item.get("category") or "") == "new_model"
+            and not str(item.get("model") or "").strip())
+
+
+def _document_bytes(items: list[dict[str, Any]]) -> int:
+    return len(json.dumps({"version": 1, "items": items}, separators=(",", ":")))
+
+
+def _bounded_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop derivable per-item metadata when the archive alone is too big.
+
+    ``change`` is recomputable from ``previous``/``current`` and is the first
+    thing a size squeeze costs; the enrichment fields follow. Events are never
+    dropped here — a feed that silently loses catalogue changes is worse than
+    one whose client can recompute a percentage.
+    """
+    if _document_bytes(items) <= FEED_SOFT_BYTES:
+        return items
+    thinner = [{key: value for key, value in item.items() if key != "change"}
+               for item in items]
+    if _document_bytes(thinner) <= FEED_SOFT_BYTES:
+        return thinner
+    return [{key: value for key, value in item.items()
+             if key not in ("change", "other_providers", "first_seen_at")}
+            for item in thinner]
 
 
 def build_feed(current: Any, previous: Any, curated_doc: Any, *,
@@ -545,10 +693,8 @@ def build_feed(current: Any, previous: Any, curated_doc: Any, *,
         # the feed: they name no model and describe catalogue bookkeeping. Drop
         # them before any event with a model identity, so the cap costs the
         # archive as little as possible.
-        generic = [item for item in model_items
-                   if str(item.get("event_type") or "") == "provider_listed"]
-        specific = [item for item in model_items
-                    if str(item.get("event_type") or "") != "provider_listed"]
+        generic = [item for item in model_items if _is_generic_listing(item)]
+        specific = [item for item in model_items if not _is_generic_listing(item)]
         kept_models = specific[:room]
         if len(kept_models) < room:
             kept_models.extend(generic[:room - len(kept_models)])
@@ -556,11 +702,13 @@ def build_feed(current: Any, previous: Any, curated_doc: Any, *,
     else:
         kept_models = model_items[:room]
     dropped = len(model_items) - len(kept_models)
-    items = sorted(kept_models + curated_items, key=_sort_key, reverse=True)
+    items = _bounded_items(sorted(kept_models + curated_items, key=_sort_key, reverse=True))
     doc: dict[str, Any] = {"version": 1, "generated_at": observed_at, "items": items}
     if dropped:
         doc["truncated"] = {"model_items_dropped": dropped}
-    doc["briefing"] = _fitted_briefing(doc, items, observed_at, history_removals(history))
+    doc["briefing"] = _fitted_briefing(doc, items, observed_at,
+                                       history_removals(history),
+                                       removal_tracking=history is not None)
     if doc["briefing"] is None:
         del doc["briefing"]
     return doc, problems
@@ -568,6 +716,7 @@ def build_feed(current: Any, previous: Any, curated_doc: Any, *,
 
 def _fitted_briefing(doc: Mapping[str, Any], items: list[dict[str, Any]],
                      observed_at: str, removals: list[dict[str, Any]],
+                     *, removal_tracking: bool = False,
                      ) -> Optional[dict[str, Any]]:
     """Briefing trimmed to the document's byte budget, or ``None``.
 
@@ -577,7 +726,8 @@ def _fitted_briefing(doc: Mapping[str, Any], items: list[dict[str, Any]],
     space = max(0, FEED_SOFT_BYTES - len(json.dumps(doc, separators=(",", ":"))))
     for limit in (news_briefing.SECTION_LIMIT, 4, 2):
         briefing = news_briefing.build_briefing(
-            items, generated_at=observed_at, removals=removals, section_limit=limit)
+            items, generated_at=observed_at, removals=removals,
+            removal_tracking=removal_tracking, section_limit=limit)
         if len(json.dumps(briefing, separators=(",", ":"))) <= space:
             return briefing
     return None

@@ -175,6 +175,15 @@ class BriefingTests(unittest.TestCase):
         self.assertIn("input", entry["headline"])
         self.assertIn("output", entry["headline"])
 
+    def test_tier_only_change_is_not_a_zero_percent_price_move(self):
+        item = price_item("acme", "alpha", {"input": 2.0, "output": 4.0},
+                          {"input": 2.0, "output": 4.0})
+        item["has_tiers"] = True
+        entry = nb._entry(item)
+        self.assertEqual(entry["headline_code"], "news_head_tiers_changed")
+        self.assertNotIn("%", entry["headline"])
+        self.assertEqual(nb.build_briefing([item])["counts"]["headlined"], 0)
+
     def test_family_banner_groups_variants_without_merging_identity(self):
         items = [
             price_item("p1", "vendor/kimi-k3", {"input": 3.0, "output": 15.0},
@@ -190,11 +199,69 @@ class BriefingTests(unittest.TestCase):
                          "exact model ids survive grouping")
         self.assertEqual(len(group["event_ids"]), 2)
 
+    def test_grouped_rows_stay_localisable(self):
+        items = [
+            price_item("p1", "kimi-k3", {"input": 3.0, "output": 15.0},
+                       {"input": 2.0, "output": 10.0}),
+            price_item("p2", "kimi-k3", {"input": 3.0, "output": 15.0},
+                       {"input": 2.4, "output": 12.0}),
+        ]
+        group = self.section(self.build(items), "biggest_reductions")["entries"][0]
+        self.assertEqual(group["headline_code"], "news_head_group")
+        for variant in group["variants"]:
+            self.assertIn("headline_code", variant,
+                          "a provider row must be translatable, not English-only")
+            self.assertIn("headline_params", variant)
+            self.assertIn(variant["headline_code"],
+                          {"news_head_single_rate", "news_head_all_rates"})
+
+    def test_a_large_family_keeps_every_event_link(self):
+        items = [price_item(f"p{n:02d}", "kimi-k3", {"input": 3.0, "output": 15.0},
+                            {"input": 2.0, "output": 10.0}) for n in range(13)]
+        group = self.section(self.build(items), "biggest_reductions")["entries"][0]
+        self.assertEqual(len(group["event_ids"]), 13,
+                         "links are cheap; the banner count and the links must agree")
+        self.assertEqual(group["family_event_count"], 13)
+        self.assertEqual(len(group["variants"]), nb._MAX_VARIANTS,
+                         "only the rendered rows are capped")
+
     def test_without_history_removals_are_reported_unsupported(self):
         briefing = self.build([])
         reasons = {entry["id"]: entry["reason_code"] for entry in briefing["unsupported"]}
         self.assertEqual(reasons["removals"], "news_unsupported_no_absence_history")
         self.assertEqual(reasons["subscriptions"], "news_unsupported_no_plan_events")
+
+    def test_old_removals_do_not_crowd_out_a_new_one(self):
+        old = [{"provider": f"p{n}", "model": f"m{n}",
+                "removed_at": "2026-01-01T00:00:00+00:00", "consecutive": 2}
+               for n in range(12)]
+        fresh = {"provider": "acme", "model": "beta",
+                 "removed_at": "2026-11-14T00:00:00+00:00", "consecutive": 2}
+        briefing = nb.build_briefing([], generated_at=OBSERVED,
+                                     removals=[*old, fresh], removal_tracking=True)
+        section = self.section(briefing, "removals")
+        self.assertEqual([entry["model"] for entry in section["entries"]], ["beta"],
+                         "a fresh removal is not pushed out by stale records")
+        self.assertEqual(section["total"], 1, "stale records leave the news window")
+
+    def test_working_removal_detection_is_not_reported_as_unavailable(self):
+        briefing = nb.build_briefing([], generated_at=OBSERVED,
+                                     removals=[], removal_tracking=True)
+        reasons = {entry["id"] for entry in briefing["unsupported"]}
+        self.assertNotIn("removals", reasons,
+                         "an empty section on working detection is not a limitation")
+        self.assertEqual(briefing["counts"]["removed_from_provider"], 0)
+
+    def test_removals_are_counted_with_their_headlines(self):
+        removals = [{"provider": "acme", "model": "alpha", "removed_at": OBSERVED,
+                     "consecutive": 2},
+                    {"provider": "gone", "model": "", "removed_at": OBSERVED,
+                     "consecutive": 2}]
+        briefing = nb.build_briefing([], generated_at=OBSERVED, removals=removals,
+                                     removal_tracking=True)
+        self.assertEqual(briefing["counts"]["removed_from_provider"], 1)
+        self.assertEqual(briefing["counts"]["provider_delisted"], 1)
+        self.assertEqual(self.section(briefing, "removals")["total"], 2)
 
     def test_confirmed_removal_becomes_a_headline(self):
         removals = [{"provider": "acme", "model": "alpha", "removed_at": OBSERVED,

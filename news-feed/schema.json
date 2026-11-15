@@ -36,7 +36,7 @@
           },
           "change": {
             "type": "object",
-            "description": "Per-rate comparison of previous/current. Optional; recomputable from the rate blocks.",
+            "description": "Per-rate comparison of previous/current. Optional; recomputable from the rate blocks, and dropped first when the document nears the client's size cap.",
             "properties": {
               "direction": {"enum": ["down", "up", "mixed", "flat", "unknown"]},
               "dominant": {"type": "string", "maxLength": 16},
@@ -73,33 +73,33 @@
           }
         ]
       }
-    }
-  },
-  "briefing": {
-    "type": "object",
-    "description": "Optional editorial view, curated once for every client from the same verified events. Absent when the publisher had no room inside the feed's byte budget, or when it was not generated. Clients must render items without it.",
-    "required": ["version", "sections"],
-    "properties": {
-      "version": {"const": 1},
-      "generated_at": {"type": "string", "maxLength": 64},
-      "thresholds": {"type": "object"},
-      "sections": {
-        "type": "array",
-        "maxItems": 12,
-        "items": {
-          "type": "object",
-          "required": ["id", "entries"],
-          "properties": {
-            "id": {"type": "string", "maxLength": 64},
-            "title_code": {"type": "string", "maxLength": 64},
-            "total": {"type": "integer", "minimum": 0},
-            "entries": {"type": "array", "maxItems": 40, "items": {"type": "object"}}
+    },
+    "briefing": {
+      "type": "object",
+      "description": "Optional editorial view, curated once for every client from the same verified events. Absent when the publisher had no room inside the feed's byte budget, or when it was not generated. Clients must render items without it.",
+      "required": ["version", "sections"],
+      "properties": {
+        "version": {"const": 1},
+        "generated_at": {"type": "string", "maxLength": 64},
+        "thresholds": {"type": "object"},
+        "sections": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "required": ["id", "entries"],
+            "properties": {
+              "id": {"type": "string", "maxLength": 64},
+              "title_code": {"type": "string", "maxLength": 64},
+              "total": {"type": "integer", "minimum": 0},
+              "entries": {"type": "array", "maxItems": 40, "items": {"type": "object"}}
+            }
           }
-        }
-      },
-      "counts": {"type": "object"},
-      "unsupported": {"type": "array", "maxItems": 12},
-      "all_updates": {"type": "object"}
+        },
+        "counts": {"type": "object"},
+        "unsupported": {"type": "array", "maxItems": 12},
+        "all_updates": {"type": "object"}
+      }
     }
   },
   "$defs": {

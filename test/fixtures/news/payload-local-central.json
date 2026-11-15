@@ -73,7 +73,6 @@
               "providers": [
                 "anthropic"
               ],
-              "rate_change": {},
               "score": 12.942,
               "source_url": "https://models.dev",
               "variants": [
@@ -86,8 +85,17 @@
                   "event_type": "price_increase",
                   "family_label": "",
                   "headline": "anthropic raises claude-opus-4 cache_write by 20% ($1.25 \u2192 $1.5 per 1M tokens)",
-                  "headline_code": "",
-                  "headline_params": {},
+                  "headline_code": "news_head_single_rate",
+                  "headline_params": {
+                    "after": "$1.5",
+                    "also_moved": [],
+                    "before": "$1.25",
+                    "direction": "up",
+                    "model": "claude-opus-4",
+                    "pct": 20.0,
+                    "provider": "anthropic",
+                    "rate": "news_rate_cache_write"
+                  },
                   "magnitude": {
                     "max_abs_pct": 20.0,
                     "rate": "cache_write"
@@ -97,8 +105,6 @@
                   "observed_at": "2027-01-01T02:03:52+00:00",
                   "provenance": "",
                   "provider": "anthropic",
-                  "rate_change": {},
-                  "score": 12.942,
                   "source_url": ""
                 }
               ]
@@ -127,12 +133,14 @@
                   "news_rate_output"
                 ],
                 "cut_pct": 33.3,
+                "cut_values": "",
                 "model": "claude-sonnet-4",
                 "provider": "anthropic",
                 "raised": [
                   "news_rate_cache_write"
                 ],
-                "raised_pct": 20.0
+                "raised_pct": 20.0,
+                "raised_values": ""
               },
               "magnitude": {
                 "comparable_rates": 4,
@@ -150,7 +158,6 @@
               "providers": [
                 "anthropic"
               ],
-              "rate_change": {},
               "score": 15.419,
               "source_url": "https://models.dev",
               "variants": [
@@ -163,8 +170,22 @@
                   "event_type": "price_mixed",
                   "family_label": "",
                   "headline": "anthropic changes claude-sonnet-4 in both directions (cache_write raised, input, output cut)",
-                  "headline_code": "",
-                  "headline_params": {},
+                  "headline_code": "news_head_mixed",
+                  "headline_params": {
+                    "cut": [
+                      "news_rate_input",
+                      "news_rate_output"
+                    ],
+                    "cut_pct": 33.3,
+                    "cut_values": "",
+                    "model": "claude-sonnet-4",
+                    "provider": "anthropic",
+                    "raised": [
+                      "news_rate_cache_write"
+                    ],
+                    "raised_pct": 20.0,
+                    "raised_values": ""
+                  },
                   "magnitude": {
                     "max_abs_pct": 33.3,
                     "rate": "input"
@@ -174,8 +195,6 @@
                   "observed_at": "2027-01-01T02:03:52+00:00",
                   "provenance": "",
                   "provider": "anthropic",
-                  "rate_change": {},
-                  "score": 15.419,
                   "source_url": ""
                 }
               ]
@@ -218,7 +237,6 @@
                 "anthropic",
                 "openrouter"
               ],
-              "rate_change": {},
               "score": 2.2,
               "source_url": "https://models.dev",
               "variants": [
@@ -231,8 +249,13 @@
                   "event_type": "new_to_catalogue",
                   "family_label": "",
                   "headline": "anthropic starts listing claude-haiku-4-5 (first observed 2027-01-01)",
-                  "headline_code": "",
-                  "headline_params": {},
+                  "headline_code": "news_head_new_to_catalogue",
+                  "headline_params": {
+                    "confidence": "observed",
+                    "first_seen": "2027-01-01T02:03:52+00:00",
+                    "model": "claude-haiku-4-5",
+                    "provider": "anthropic"
+                  },
                   "magnitude": {
                     "rate": ""
                   },
@@ -241,8 +264,6 @@
                   "observed_at": "2027-01-01T02:03:52+00:00",
                   "provenance": "",
                   "provider": "anthropic",
-                  "rate_change": {},
-                  "score": 2.2,
                   "source_url": ""
                 },
                 {
@@ -254,8 +275,13 @@
                   "event_type": "new_to_catalogue",
                   "family_label": "",
                   "headline": "openrouter starts listing anthropic/claude-haiku-4-5 (first observed 2027-01-01)",
-                  "headline_code": "",
-                  "headline_params": {},
+                  "headline_code": "news_head_new_to_catalogue",
+                  "headline_params": {
+                    "confidence": "observed",
+                    "first_seen": "2027-01-01T02:03:52+00:00",
+                    "model": "anthropic/claude-haiku-4-5",
+                    "provider": "openrouter"
+                  },
                   "magnitude": {
                     "rate": ""
                   },
@@ -264,8 +290,6 @@
                   "observed_at": "2027-01-01T02:03:52+00:00",
                   "provenance": "",
                   "provider": "openrouter",
-                  "rate_change": {},
-                  "score": 2.2,
                   "source_url": ""
                 }
               ]
@@ -300,7 +324,6 @@
               "providers": [
                 "anthropic"
               ],
-              "rate_change": {},
               "score": 2.2,
               "source_url": "https://models.dev",
               "variants": [
@@ -313,8 +336,13 @@
                   "event_type": "new_to_catalogue",
                   "family_label": "",
                   "headline": "anthropic starts listing claude-haiku-4-5-20251001 (first observed 2027-01-01)",
-                  "headline_code": "",
-                  "headline_params": {},
+                  "headline_code": "news_head_new_to_catalogue",
+                  "headline_params": {
+                    "confidence": "observed",
+                    "first_seen": "2027-01-01T02:03:52+00:00",
+                    "model": "claude-haiku-4-5-20251001",
+                    "provider": "anthropic"
+                  },
                   "magnitude": {
                     "rate": ""
                   },
@@ -323,8 +351,6 @@
                   "observed_at": "2027-01-01T02:03:52+00:00",
                   "provenance": "",
                   "provider": "anthropic",
-                  "rate_change": {},
-                  "score": 2.2,
                   "source_url": ""
                 }
               ]
@@ -359,7 +385,6 @@
               "providers": [
                 "vercel"
               ],
-              "rate_change": {},
               "score": 2.2,
               "source_url": "https://models.dev",
               "variants": [
@@ -372,8 +397,13 @@
                   "event_type": "new_to_catalogue",
                   "family_label": "",
                   "headline": "vercel starts listing text-plain (first observed 2027-01-01)",
-                  "headline_code": "",
-                  "headline_params": {},
+                  "headline_code": "news_head_new_to_catalogue",
+                  "headline_params": {
+                    "confidence": "observed",
+                    "first_seen": "2027-01-01T02:03:52+00:00",
+                    "model": "text-plain",
+                    "provider": "vercel"
+                  },
                   "magnitude": {
                     "rate": ""
                   },
@@ -382,8 +412,6 @@
                   "observed_at": "2027-01-01T02:03:52+00:00",
                   "provenance": "",
                   "provider": "vercel",
-                  "rate_change": {},
-                  "score": 2.2,
                   "source_url": ""
                 }
               ]
