@@ -628,8 +628,8 @@ test('the unpriced note has no stray brace', () => {
 test('the InfoTip indicator is compact while its hit area stays accessible', () => {
   // The interactive box keeps its full size for pointer and keyboard users.
   assert.match(T.METER_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)
-  // The visible ring is drawn smaller via a centred pseudo-element.
-  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*width:18px;height:18px/)
+  // The visible ring stays small inside the larger interactive box.
+  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*width:12px;height:12px/)
   assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*pointer-events:none/)
   // Hover and focus still recolour the ring; focus keeps its outline.
   assert.match(T.METER_CSS, /\.wm-info-btn:hover::after,\.wm-info-btn:focus-visible::after\{[^}]*border-color:var\(--wm-action\)/)

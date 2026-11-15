@@ -60,10 +60,13 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         assert.equal(layout.model, 'DeepSeek V4.1 Flash', `${id} shows a readable model name`)
         assert.equal(layout.modelId, 'deepseek/deepseek-v4.1-flash', `${id} retains the exact model ID`)
         assert.equal(layout.modelOverflow, 0, `${id} wraps the model within its row`)
-        assert.equal(layout.modelTipHitWidth, 24, `${id} keeps the accessible tooltip hit width`)
-        assert.equal(layout.modelTipHitHeight, 24, `${id} keeps the accessible tooltip hit height`)
-        assert.equal(layout.modelTipRingWidth, 14, `${id} uses a smaller model tooltip ring`)
-        assert.equal(layout.modelTipFontSize, 8, `${id} keeps the small information glyph`)
+        assert.ok(layout.tooltipMetrics.length >= 4, `${id} renders the expected sidebar tooltip controls`)
+        for (const [index, tip] of layout.tooltipMetrics.entries()) {
+          assert.equal(tip.hitWidth, 24, `${id}/tip${index} keeps the accessible hit width`)
+          assert.equal(tip.hitHeight, 24, `${id}/tip${index} keeps the accessible hit height`)
+          assert.equal(tip.ringWidth, 12, `${id}/tip${index} uses the smaller shared ring`)
+          assert.equal(tip.glyphFontSize, 8, `${id}/tip${index} keeps the small information glyph`)
+        }
         assert.equal(layout.provider, 'commandcode', `${id} keeps the provider separate`)
         assert.equal(layout.providerSeparate, true, `${id} puts the provider on its own line`)
         assert.ok(layout.ringWidth >= 52 && layout.ringWidth <= 72, `${id} scales the ring to ${layout.ringWidth}px`)

@@ -107,6 +107,7 @@ test('SHARED_CSS names the Phase A roles and enforces [hidden]', () => {
 test('shared tooltip styles are opaque and reach both pane and product surfaces', () => {
   assert.match(T.SHARED_CSS, /\.wm-info\{position:relative/)
   assert.match(T.SHARED_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)
+  assert.match(T.SHARED_CSS, /\.wm-info-btn::after\{[^}]*width:12px;height:12px/)
   assert.match(T.SHARED_CSS, /\.wm-info-pop\{[^}]*position:absolute[^}]*background:var\(--wm-surface-raised\)/)
   assert.match(T.METER_CSS, /wm-info-pop/, 'pane bundle carries the shared tooltip')
   assert.match(T.ANALYTICS_CSS, /wm-info-pop/, 'product bundle carries the shared tooltip')
