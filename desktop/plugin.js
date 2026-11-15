@@ -8735,8 +8735,11 @@ function MembershipsPage() {
       await invalidateWeatherFor(captured)
       // A refresh that could not read every account is not a clean sweep.
       const failures = membershipReadFailures(payload.accounts)
+      // A read that returned nothing is not a failure, but it is not a clean
+      // sweep either: say how many accounts came back empty.
       setMembershipNotice(captured, failures.failed ? 'warn' : 'good',
         failures.failed ? t('memReadingsPartial', failures.failed, failures.total)
+          : failures.missing ? t('memReadingsNoReading', failures.missing, failures.total)
           : t('memReadingsRefreshed'), operation)
     } catch (error) {
       setMembershipNotice(captured, 'warn', membershipErrorText(error, 'refresh', t), operation)
@@ -11461,6 +11464,7 @@ const I18N = {
     memReadFailedReason: 'The provider read failed.',
     memReadIdentity: 'Hermes answered for a different account, so the reading is not applied.',
     memReadingsPartial: (failed, total) => `Readings refreshed, but ${failed} of ${total} accounts could not be read.`,
+    memReadingsNoReading: (missing, total) => `Readings refreshed. ${missing} of ${total} accounts returned no reading from Hermes.`,
     memAttentionScope: (reasons, accounts) => `Plan setup and allowance marks: ${reasons} ${reasons === 1 ? 'reason' : 'reasons'} across ${accounts} ${accounts === 1 ? 'account' : 'accounts'}.`,
     memAttentionMore: (more, total) => `Showing ${total - more} of ${total}. Use the attention filter to narrow the list.`,
     memOpenCostsValue: 'Compare subscription value in Costs',
@@ -12938,6 +12942,7 @@ const I18N = {
     memReadFailedReason: '提供方读取失败。',
     memReadIdentity: 'Hermes 返回了其他账户的数据，因此不采用该读数。',
     memReadingsPartial: (failed, total) => `读数已刷新，但有 ${failed}/${total} 个账户无法读取。`,
+    memReadingsNoReading: (missing, total) => `读数已刷新。${missing}/${total} 个账户未从 Hermes 获得读数。`,
     memAttentionScope: (reasons, accounts) => `方案设置与额度标记：${accounts} 个账户共 ${reasons} 项`,
     memAttentionMore: (more, total) => `显示 ${total - more} 项，共 ${total} 项。可用“仅需关注”筛选列表。`,
     memOpenCostsValue: '在“成本”中比较订阅价值',

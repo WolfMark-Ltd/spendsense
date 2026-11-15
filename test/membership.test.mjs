@@ -537,6 +537,19 @@ test('a refresh counts the accounts it could not read', () => {
   assert.deepEqual(T.membershipReadFailures([]), { failed: 0, missing: 0, total: 0 })
 })
 
+test('a refresh notice keeps failures and empty reads apart', () => {
+  const failures = T.membershipReadFailures([
+    account({ id: 'ok', native_probe: { state: 'ok' } }),
+    account({ id: 'boom', native_probe: { state: 'error' } }),
+    account({ id: 'empty', native_probe: { state: 'unavailable' } }),
+  ])
+  // Both are reported, neither is called zero usage, and only the error is a
+  // failure: "unavailable" also covers a route with no credential at all.
+  assert.deepEqual(failures, { failed: 1, missing: 1, total: 3 })
+  assert.match(T.I18N.en.memReadingsPartial(failures.failed, failures.total), /1 of 3 accounts could not be read/)
+  assert.match(T.I18N.en.memReadingsNoReading(failures.missing, failures.total), /1 of 3 accounts returned no reading/)
+})
+
 test('a failed allowance-weather read is described by what failed', () => {
   assert.match(T.wxErrorText(new Error('request timeout after 15000ms')), /did not answer in time/)
   assert.match(T.wxErrorText(new Error('404 not found')), /does not serve allowance readings/)
