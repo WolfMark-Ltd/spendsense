@@ -181,7 +181,7 @@ test('savings ignore a stored value accumulated at other rates', () => {
 
 test('savings are labelled as theoretical, not cash', () => {
   assert.match(en.cacheTitle, /cache/i)
-  assert.equal(en.savedGauge, 'Net cache savings')
+  assert.equal(en.savedGauge, 'Theoretical net savings')
   // The wording must not imply a provider credit or recorded billing.
   assert.doesNotMatch(en.savedGauge, /refund|credit|billed|cash/i)
   // The compact gauge label leans on its tooltip for the methodology.
@@ -279,7 +279,7 @@ test('meter presence distinguishes live, recorded, updating and empty', () => {
 test('every sidebar string exists in English and Chinese', () => {
   const keys = ['meterLive', 'meterRecorded', 'meterUpdating', 'apiEquivalent', 'costSourceInfo',
     'totalTokens', 'promptMix', 'cacheFresh', 'cacheMethodInfo', 'exactLabel', 'estimatedLabel',
-    'infoLabel', 'coverageLabel', 'savingsInfo', 'savedGauge']
+    'infoLabel', 'coverageLabel', 'savingsInfo', 'savedGauge', 'modelIdInfoLabel', 'modelIdInfo']
   for (const key of keys) {
     assert.ok(en[key] && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] && zh[key] !== key, `zh has ${key}`)

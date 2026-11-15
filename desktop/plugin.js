@@ -2403,6 +2403,23 @@ function meterProviderLabel(provider, t) {
   return membershipProviderLabel(provider, t)
 }
 
+const MODEL_DISPLAY_WORDS = {
+  claude: 'Claude', codestral: 'Codestral', deepseek: 'DeepSeek', doubao: 'Doubao',
+  gemini: 'Gemini', glm: 'GLM', gpt: 'GPT', grok: 'Grok', kimi: 'Kimi',
+  llama: 'Llama', mistral: 'Mistral', minimax: 'MiniMax', qwen: 'Qwen',
+  xlarge: 'XLarge'
+}
+
+function modelDisplayName(model) {
+  const raw = String(model || '').trim()
+  if (!raw) return ''
+  const slug = raw.split('/').filter(Boolean).pop() || raw
+  const versioned = slug.replace(/(?<!\d)(\d)-(\d)(?!\d)/g, '$1.$2')
+  return versioned.split(/[-_\s]+/).filter(Boolean).map(word =>
+    MODEL_DISPLAY_WORDS[word.toLowerCase()] || `${word[0].toUpperCase()}${word.slice(1)}`
+  ).join(' ')
+}
+
 /** Section A: brand, live presence, model, provider, scope. Always mounted. */
 function MeterHeader({ presence, t, view }) {
   const stateLabel = presence === 'live' ? t('meterLive')
@@ -2419,7 +2436,12 @@ function MeterHeader({ presence, t, view }) {
         children: view.fromHistory ? t('scopeConversation') : t('scopeRun') }, 'scope')
     ] }, 'brand'),
     jsxs('div', { className: 'wm-meter-modelrow', children: [
-      jsx('span', { className: 'wm-model', title: view.model || '', children: view.model || '—' }, 'model'),
+      jsxs('div', { className: 'wm-model-name-row', children: [
+        jsx('span', { className: 'wm-model', title: view.model || '', children: modelDisplayName(view.model) || '—' }, 'model'),
+        view.model ? jsx(InfoTip, {
+          id: 'model-id', label: t('modelIdInfoLabel'), text: t('modelIdInfo', view.model), wide: true
+        }, 'model-id') : null
+      ].filter(Boolean) }, 'model-name'),
       jsx('span', {
         className: 'wm-provider-badge',
         title: view.provider ? t('providerTip', view.provider) : t('providerUnknownTip'),
@@ -2608,7 +2630,7 @@ function CacheGauge({ t, view }) {
           jsx('span', { className: 'wm-metric-value',
             children: view.cacheCoverage == null ? '—' : `${Math.round(view.cacheCoverage * 100)}%` }, 'v')
         ] }, 'coverage'),
-        jsxs('div', { className: 'wm-gauge-stat', children: [
+        jsxs('div', { className: 'wm-gauge-stat', 'data-kind': 'saved', children: [
           jsxs('span', { className: 'wm-metric-label', children: [
             jsx('span', { children: t('savedGauge') }, 't'),
             jsx(InfoTip, { id: 'savings-method', label: t('infoLabel'), text: t('savingsInfo'), wide: true, dir: 'up' }, 'info')
@@ -2771,9 +2793,11 @@ const METER_CSS = [
   '.wm-dot[data-state="live"]{background:var(--ui-success)}',
   '.wm-dot[data-state="updating"]{background:var(--ui-warning)}',
   '.wm-scope-chip{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--ui-text-quaternary);border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:2px 7px;white-space:nowrap}',
-  '.wm-meter-modelrow{display:flex;align-items:center;gap:8px;min-width:0}',
-  '.wm-model{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:560;color:var(--ui-text-primary)}',
-  '.wm-provider-badge{flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--ui-text-tertiary);background:var(--ui-fill-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:5px;padding:2px 7px}',
+  '.wm-meter-modelrow{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}',
+  '.wm-model-name-row{display:flex;align-items:flex-start;gap:5px;width:100%;min-width:0}',
+  '.wm-model{flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.35;font-weight:560;color:var(--ui-text-primary)}',
+  '.wm-model-name-row>.wm-info{flex-shrink:0}',
+  '.wm-provider-badge{flex-shrink:0;max-width:100%;overflow-wrap:anywhere;white-space:normal;font-size:10px;line-height:1.3;color:var(--ui-text-tertiary);background:var(--ui-fill-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:5px;padding:2px 7px}',
   '.wm-meter-sections{display:flex;flex-direction:column;gap:10px;min-width:0}',
   '.wm-card{border:1px solid var(--ui-stroke-secondary);border-radius:9px;padding:11px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}',
   '.wm-card-title{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ui-text-tertiary)}',
@@ -2797,15 +2821,17 @@ const METER_CSS = [
   '.wm-legend-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ui-text-secondary)}',
   '.wm-legend-value{flex-shrink:0;font-variant-numeric:tabular-nums;color:var(--ui-text-primary)}',
   '.wm-legend-separate{border-top:1px solid var(--ui-stroke-secondary);padding-top:7px}',
-  '.wm-gauge-row{display:flex;gap:12px;align-items:center;min-height:76px}',
-  '.wm-ring{width:76px;height:76px;flex-shrink:0}',
+  '.wm-gauge-row{--wm-gauge-ring:clamp(52px,18cqi,72px);display:grid;grid-template-columns:var(--wm-gauge-ring) minmax(0,1fr);gap:10px;align-items:center;min-height:var(--wm-gauge-ring)}',
+  '.wm-ring{width:var(--wm-gauge-ring);height:var(--wm-gauge-ring);flex-shrink:0}',
   '.wm-ring-track{fill:none;stroke:var(--ui-fill-tertiary);stroke-width:8}',
   '.wm-ring-value{fill:none;stroke:var(--ui-accent);stroke-width:8;stroke-linecap:round}',
   '.wm-ring-estimated{opacity:.45}',
   '.wm-ring-text{fill:var(--ui-text-primary);font-size:14px;font-weight:640;font-variant-numeric:tabular-nums}',
   '.wm-gauge-stats{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}',
-  '.wm-gauge-stat{display:flex;align-items:baseline;justify-content:space-between;gap:8px}',
-  '.wm-gauge-note{font-size:10px;line-height:1.45;color:var(--ui-text-tertiary)}',
+  '.wm-gauge-stat{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:8px;min-width:0}',
+  '.wm-gauge-stat .wm-metric-label{min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.3}',
+  '.wm-gauge-stat .wm-metric-value{min-width:0;white-space:nowrap;text-align:right}',
+  '.wm-gauge-note{font-size:10px;line-height:1.45;color:var(--ui-text-tertiary);overflow-wrap:anywhere}',
   '.wm-rates-head{display:flex;align-items:center;gap:6px}',
   '.wm-rates-toggle{flex:1;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:none;padding:0;font:inherit;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ui-text-tertiary);cursor:pointer;text-align:left}',
   '.wm-chevron{font-size:14px;line-height:1;transition:transform .15s ease}',
@@ -2820,7 +2846,7 @@ const METER_CSS = [
   '.wm-open-ledger{display:flex;align-items:center;justify-content:center;width:100%;padding:7px 10px;border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-secondary);color:var(--ui-text-secondary);font:inherit;font-size:12px;font-weight:600;cursor:pointer}',
   '.wm-open-ledger:hover{border-color:var(--ui-accent);color:var(--ui-accent)}',
   '.wm-open-ledger:active{background:var(--ui-fill-tertiary)}',
-  '@container(max-width:320px){.wm-pane .wm-card{padding-top:9px;padding-bottom:9px}.wm-pane .wm-rates-grid{grid-template-columns:minmax(0,1fr)}.wm-pane .wm-provider-badge{max-width:38%}.wm-pane .wm-model{font-size:12px}.wm-pane .wm-meter-brandrow{gap:6px}.wm-pane .wm-scope-chip{padding:2px 5px;letter-spacing:.02em}}',
+  '@container(max-width:320px){.wm-pane .wm-card{padding-top:9px;padding-bottom:9px}.wm-pane .wm-rates-grid{grid-template-columns:minmax(0,1fr)}.wm-pane .wm-model{font-size:12px}.wm-pane .wm-meter-brandrow{gap:6px}.wm-pane .wm-scope-chip{padding:2px 5px;letter-spacing:.02em}.wm-pane .wm-gauge-row{--wm-gauge-ring:52px;gap:8px;align-items:start}.wm-pane .wm-gauge-stats{gap:4px}.wm-pane .wm-gauge-stat{gap:6px}.wm-pane .wm-gauge-stat[data-kind="saved"]{grid-template-columns:minmax(0,1fr);gap:2px;align-items:start}.wm-pane .wm-gauge-stat[data-kind="saved"] .wm-metric-value{text-align:left}}',
   '.wm-pane :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}',
   '@media (prefers-reduced-motion:reduce){.wm-chevron{transition:none}}'
 ].join('');
@@ -10756,6 +10782,8 @@ const I18N = {
     noPrice: 'n/a',
     noPriceLong: 'No rate for this model in the provider catalog or the bundled models.dev table. Run scripts/gen-rates.py to refresh it.',
     openLedger: 'Open SpendSense',
+    modelIdInfoLabel: 'Exact model ID',
+    modelIdInfo: id => `Exact model ID: ${id}`,
     meterLive: 'Live',
     meterRecorded: 'Recorded',
     meterUpdating: 'Updating…',
@@ -11532,7 +11560,7 @@ const I18N = {
     rates: 'Rates ($/Mtok)',
     saved: 'Net savings',
     savedTotal: 'Theoretical net cache savings',
-    savedGauge: 'Net cache savings',
+    savedGauge: 'Theoretical net savings',
     savedPartialNote: n => `covers ${n}% of prompt tokens`,
     savedPartialShort: n => `covers ${n}%`,
     savedNotEstablished: 'not established',
@@ -12178,6 +12206,8 @@ const I18N = {
     noPrice: '无',
     noPriceLong: '供应商目录与内置 models.dev 价格表中都没有该模型。可运行 scripts/gen-rates.py 刷新价格表。',
     openLedger: '打开 SpendSense',
+    modelIdInfoLabel: '精确模型 ID',
+    modelIdInfo: id => `精确模型 ID：${id}`,
     meterLive: '实时',
     meterRecorded: '已记录',
     meterUpdating: '更新中…',
@@ -12887,7 +12917,7 @@ const I18N = {
     rates: '单价（$/百万令牌）',
     saved: '净节省',
     savedTotal: '理论缓存净节省',
-    savedGauge: '缓存净节省',
+    savedGauge: '理论净节省',
     savedPartialNote: n => `覆盖 ${n}% 的提示令牌`,
     savedPartialShort: n => `覆盖 ${n}%`,
     savedNotEstablished: '无法确定',
@@ -13718,5 +13748,6 @@ export const __test = {
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
   fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, liveSavings, costOf,
   savingsState, savingsGapReason, derivedWrites, savedNote, savedCoveragePct, SAVED_REASON_KEYS,
+  modelDisplayName,
   $ledger, $ledgerReadError, $ledgerLoadDiagnostics
 }
