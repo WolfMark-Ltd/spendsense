@@ -4037,6 +4037,122 @@ function econBlockerDestination(blocker) {
   return null
 }
 
+/** Blocker codes whose text names a user-side check that can genuinely
+ * resolve the issue, so the Costs attention summary may offer an action.
+ * Catalogue-side rate gaps and unknown codes are never 'fix': they render
+ * under 'unavailable' with the blocker log for diagnosis instead of a
+ * misleading fix link. */
+const COSTS_ATTENTION_FIX_CODES = new Set([
+  'subscription_fee_missing', 'dated_fx_rate_missing',
+  'window_fee_history_missing', 'window_fee_allocation_unavailable',
+  'provider_unidentified', 'provider_not_recorded', 'model_unidentified',
+  'historical_ownership_billing_rule_incomplete',
+  'usage_price_incomplete', 'usage_unknown', 'usage_missing',
+  'missing_base_rate', 'price_evidence_missing', 'model_not_in_catalogue',
+  'provider_price_catalogue_missing', 'provider_not_in_catalogue'
+])
+const COSTS_ATTENTION_HISTORY_CODES = new Set([
+  'no_usage_recorded', 'insufficient_comparison_history'
+])
+/** Blocker codes with an explicit user-facing sentence; anything else uses
+ * the code-free generic line in standard view and keeps the raw code in the
+ * per-account blocker log. */
+const COSTS_KNOWN_BLOCKER_CODES = new Set([
+  ...COSTS_ATTENTION_FIX_CODES, ...COSTS_ATTENTION_HISTORY_CODES,
+  'tier_rate_unavailable', 'cache_rate_unavailable', 'missing_cache_rate',
+  'missing_cache_read_rate', 'missing_cache_write_rate'
+])
+function costsBlockerCategory(code) {
+  if (COSTS_ATTENTION_FIX_CODES.has(code)) return 'fix'
+  if (COSTS_ATTENTION_HISTORY_CODES.has(code)) return 'history'
+  return 'unavailable'
+}
+
+/** The one attention action for a blocker code: a resolving destination,
+ * 'log' for diagnostic depth, 'retry' for the failed FX read, or null when
+ * no action helps and the row carries guidance text only. */
+function costsAttentionActionFor(code) {
+  if (code === 'dated_fx_rate_missing') return 'fx'
+  if (['subscription_fee_missing', 'window_fee_history_missing',
+    'window_fee_allocation_unavailable', 'historical_ownership_billing_rule_incomplete'].includes(code)) return 'memberships'
+  if (['provider_unidentified', 'provider_not_recorded', 'model_unidentified',
+    'usage_price_incomplete', 'usage_unknown', 'usage_missing',
+    'missing_base_rate', 'price_evidence_missing', 'model_not_in_catalogue',
+    'provider_price_catalogue_missing', 'provider_not_in_catalogue'].includes(code)) return 'usage'
+  if (code === 'fx_read_error') return 'retry'
+  if (code === 'no_usage_recorded' || code === 'insufficient_comparison_history') return null
+  return 'log'
+}
+
+/** Backend currency groups use "unknown" where account fees use null; both
+ * mean the same missing currency and must share one dedupe key. */
+function normCostsCurrency(value) {
+  return value === 'unknown' ? null : value || null
+}
+
+/** Deduplicated blocker groups across currency groups and accounts, keyed by
+ * cause and currency so repeated instances render once with an account list.
+ * Account-level blockers carry no account_id from the backend, so the
+ * enclosing row supplies it; without that the same cause repeats with an
+ * empty account list. */
+function collectCostsBlockers(groups = [], econAccounts = []) {
+  const seen = new Set()
+  const byKey = new Map()
+  const push = (blocker, currency, enclosingAccountId = null) => {
+    const code = blocker?.code || 'unknown'
+    const accountId = blocker?.account_id || enclosingAccountId || ''
+    const key = `${code}|${normCostsCurrency(blocker?.currency) || normCostsCurrency(currency) || ''}`
+    const dedupe = `${key}|${accountId}`
+    if (seen.has(dedupe)) return
+    seen.add(dedupe)
+    if (!byKey.has(key)) byKey.set(key,
+      { code, currency: normCostsCurrency(blocker?.currency) || normCostsCurrency(currency), accountIds: [] })
+    if (accountId) byKey.get(key).accountIds.push(accountId)
+  }
+  for (const group of groups || []) for (const blocker of group?.blockers || []) push(blocker, group?.currency)
+  for (const row of econAccounts || []) for (const blocker of row?.blockers || []) {
+    push(blocker, row?.fee?.currency, row?.account_id)
+  }
+  return [...byKey.values()].sort((a, b) => String(a.code).localeCompare(String(b.code)))
+}
+
+/** One trend month is comparable when the backend converted its fees and
+ * computed a difference; anything else is an honest text row, never bars. */
+function trendMonthComparable(entry) {
+  return finiteValue(entry?.fees_usd) != null && finiteValue(entry?.difference_usd) != null
+}
+
+/** An inline trend needs at least two comparable months sharing one fee
+ * currency signature; anything less stays an honest breakdown or a closed
+ * disclosure, never a single-period "trend". */
+function trendWarrantsInline(trend) {
+  const months = trend?.months || []
+  const comparable = months.filter(trendMonthComparable)
+  if (comparable.length < 2) return false
+  const signatures = new Set(comparable.map(entry =>
+    (entry?.fees_by_currency || []).map(part => part?.currency || '?').sort().join('+')))
+  return signatures.size === 1
+}
+
+/** Plain-English pricing source for the Costs header; unknown sources pass
+ * through unchanged and the exact string stays in evidence details. */
+function costsPricingSourceLabel(source, t) {
+  if (typeof source !== 'string' || !source) return source
+  if (source === 'bundled models.dev snapshot') return t('costsPricingSourceSnapshot')
+  if (source === 'none') return t('costsPricingNoSource')
+  return source.replace(/^models\.dev cache \([^)]*\)/, t('costsPricingSourceCatalogue'))
+}
+
+/** Jump from a currency row to the Costs attention summary. Pure UI: no
+ * reads, no writes, no provider requests. */
+function scrollToCostsAttention() {
+  if (typeof document === 'undefined') return
+  const section = document.getElementById('wm-costs-attention')
+  if (!section) return
+  try { section.scrollIntoView?.({ block: 'start' }) } catch {}
+  section.querySelector('[data-costs-attention-heading]')?.focus?.()
+}
+
 function econBlockerActionLabel(destination, t) {
   return destination === 'memberships' ? t('econActionMemberships')
     : destination === 'fx' ? t('econActionFx')
@@ -4049,7 +4165,7 @@ function openEconomicsDestination(destination, onOpenFx) {
   if (destination) goLedgerTab(destination)
 }
 
-function EconomicsBlockers({ blockers = [], notes = [], t, onOpenFx }) {
+function EconomicsBlockers({ blockers = [], notes = [], t, onOpenFx, showCodes = false }) {
   const visibleNotes = Array.isArray(notes) ? notes : []
   const visibleBlockers = Array.isArray(blockers) ? blockers : []
   if (!visibleNotes.length && !visibleBlockers.length) return null
@@ -4057,12 +4173,16 @@ function EconomicsBlockers({ blockers = [], notes = [], t, onOpenFx }) {
     ...visibleNotes.map((note, index) => jsx('li', { children: note }, `note-${index}`)),
     ...visibleBlockers.map((blocker, index) => {
       const destination = econBlockerDestination(blocker)
-      return jsxs('li', { children: [
-        jsx('span', { children: `${blocker.account_id || ''}${blocker.account_id ? ': ' : ''}${econBlockerText(blocker, t)}` }),
+      const code = blocker?.code || 'unknown'
+      return jsxs('li', { 'data-blocker-code': code, children: [
+        jsxs('span', { children: [
+          `${blocker.account_id || ''}${blocker.account_id ? ': ' : ''}${econBlockerText(blocker, t)}`,
+          showCodes ? jsx('span', { className: 'wm-econ-dim', children: ` (${code})` }) : null
+        ].filter(Boolean) }),
         destination ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-action',
           onClick: () => openEconomicsDestination(destination, onOpenFx),
           children: econBlockerActionLabel(destination, t) }) : null
-      ].filter(Boolean) }, `${blocker.code || 'unknown'}-${index}`)
+      ].filter(Boolean) }, `${code}-${index}`)
     })
   ] })
 }
@@ -4699,6 +4819,16 @@ function costsUnknownFeeCount(accounts) {
     && (account.fee?.effective?.amount === null || account.fee?.effective?.amount === undefined)).length
 }
 
+/** Subscription accounts whose fee cannot be counted. Only a confirmed
+ * subscription can miss a subscription fee: other arrangements either have
+ * no fee by construction (invalid/mixed fees are cleared upstream) or need
+ * their arrangement confirmed first, so they must never raise a
+ * set-your-fee alert. */
+function costsUnknownFeeAccounts(list) {
+  return (list || []).filter(account => account.effective_arrangement === 'subscription'
+    && (account.fee?.effective?.amount === null || account.fee?.effective?.amount === undefined))
+}
+
 function costsFeeLines(summary, t) {
   return Object.entries(summary?.byCurrencyPeriod || {}).map(([key, amount]) => {
     const [currency, period = 'month'] = key.split('/')
@@ -4888,10 +5018,11 @@ function CostsPage() {
   const ignored = Number(billing.legacy_membership_arrangements_ignored || 0)
   const status = pricing.data
   const sourceText = status
-    ? t('costsPricing', status.source || t('costsPricingNoSource'),
+    ? t('costsPricing', status.source ? costsPricingSourceLabel(status.source, t) : t('costsPricingNoSource'),
       status.age_seconds != null ? t('costsPricingAge', Math.round(status.age_seconds / 3600)) : t('costsPricingNoDate'),
       status.stale ? t('costsPricingStale') : '')
     : t('costsPricingTitle')
+  const unknownFeeAccounts = accountsReady ? costsUnknownFeeAccounts(list) : []
   return jsx(ProductShell, { pageStyles: ECONOMICS_CSS, children:
     jsxs('main', { className: 'wm-shell', children: [
       jsx(ProductHeader, { title: t('costsTitle'),
@@ -4907,7 +5038,11 @@ function CostsPage() {
       jsx(CostsEvidenceSummary, { billing, totals, fees, accounts: list, accountsReady,
         summaryLoading: summary.isPending, accountsLoading: accounts.isPending,
         summaryReady, accountsFailed: !!accounts.error, t }),
-      jsx(EconomicsPanel, { identity }),
+      jsx(EconomicsPanel, { identity,
+        unknownFees: accountsReady
+          ? { count: unknownFeeAccounts.length,
+              labels: unknownFeeAccounts.map(account => account.label || account.family || account.id) }
+          : null }),
       jsx(BudgetPanel, { forecasts: true }),
       ignored
         ? jsx('details', { className: 'wm-method wm-cost-extra', children: [
@@ -4997,8 +5132,10 @@ function EconomicsAccountRow({ row, t, onOpenFx }) {
   ] })
 }
 
-/** Monthly trend: paired bars where comparable, honest text rows elsewhere. */
-function EconomicsTrend({ trend, t }) {
+/** Monthly trend: paired bars where comparable, honest text rows elsewhere.
+ * hideNotes drops the backend's untranslated difference notes for inline
+ * use; the translated flags stay, and full notes live in disclosures. */
+function EconomicsTrend({ trend, t, hideNotes = false }) {
   const months = trend?.months || []
   if (!months.length) {
     return jsx('p', { className: 'wm-subtle', children: t('econTrendEmpty') })
@@ -5023,7 +5160,7 @@ function EconomicsTrend({ trend, t }) {
         jsx('span', { className: 'wm-econ-dim', children: [
           t('econTrendUsage', feesText, analyticMoney(entry.usage_usd)),
           flags ? ` · ${flags}` : '',
-          entry.difference_note ? ` · ${entry.difference_note}` : ''
+          !hideNotes && entry.difference_note ? ` · ${entry.difference_note}` : ''
         ].join('') }, 'detail')
       ] }, entry.month)
     }
@@ -5043,7 +5180,7 @@ function EconomicsTrend({ trend, t }) {
         jsxs('span', { className: cn('wm-econ-num', difference < 0 ? 'wm-econ-negative' : 'wm-econ-positive'),
           children: [analyticMoney(difference), flags ? jsx('span', { className: 'wm-econ-dim', children: ` · ${flags}` }) : null].filter(Boolean) }, 'diff')
       ] }, 'row'),
-      entry.partial && entry.difference_note
+      !hideNotes && entry.partial && entry.difference_note
         ? jsx('div', { className: 'wm-econ-dim wm-econ-trend-note', children: entry.difference_note }, 'note')
         : null
     ].filter(Boolean) }, entry.month)
@@ -5125,6 +5262,110 @@ function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave, t }) 
 }
 
 /**
+ * One grouped "What needs attention?" summary for Costs: every material
+ * blocker exactly once, classified as fixable, waiting on history, or
+ * unavailable. Raw account ids and machine codes stay in the per-account
+ * blocker log; rows use friendly labels and plain cause sentences.
+ */
+function CostsAttention({ groups, econAccounts, unknownFees, fxError, onRetryFx, onOpenFx, onOpenLog, t }) {
+  const collected = collectCostsBlockers(groups, econAccounts)
+  const labels = new Map((econAccounts || []).map(row => [row.account_id, row.label || row.family || row.account_id]))
+  const items = []
+  if (unknownFees?.count > 0 && !collected.some(entry => entry.code === 'subscription_fee_missing')) {
+    items.push({ code: 'subscription_fee_missing', currency: null, accountIds: [], accountLabels: unknownFees.labels || [] })
+  }
+  for (const entry of collected) items.push(entry)
+  if (fxError) items.push({ code: 'fx_read_error', currency: null, accountIds: [] })
+  const byCategory = { fix: [], history: [], unavailable: [] }
+  for (const item of items) {
+    const category = item.code === 'fx_read_error' ? 'fix' : costsBlockerCategory(item.code)
+    byCategory[category].push(item)
+  }
+  const categoryTitle = category => category === 'fix' ? t('costsAttentionFix')
+    : category === 'history' ? t('costsAttentionHistory') : t('costsAttentionUnavailable')
+  const rowText = item => {
+    if (item.code === 'fx_read_error') return fxError
+    if (!COSTS_KNOWN_BLOCKER_CODES.has(item.code)) return t('econBlockGenericShort')
+    return econBlockerText({ code: item.code, currency: item.currency }, t)
+  }
+  const rowAction = item => {
+    const kind = costsAttentionActionFor(item.code)
+    if (kind === 'fx') return { label: t('econActionFx'), run: () => onOpenFx?.() }
+    if (kind === 'memberships') return { label: t('econActionMemberships'), run: () => goLedgerTab('memberships') }
+    if (kind === 'usage') return { label: t('econActionUsage'), run: () => goLedgerTab('usage') }
+    if (kind === 'retry') return { label: t('fxRetry'), run: () => onRetryFx?.() }
+    if (kind === 'log') return { label: t('costsAttentionViewLog'), run: () => onOpenLog?.() }
+    return null
+  }
+  const row = (item, category) => {
+    const names = item.accountLabels?.length ? item.accountLabels
+      : (item.accountIds || []).map(id => labels.get(id) || id)
+    const action = rowAction(item)
+    return jsxs('li', { 'data-attn-category': category, children: [
+      jsx('span', { className: 'wm-cost-attn-dot', 'data-tone': category, 'aria-hidden': true }),
+      jsxs('div', { className: 'wm-cost-attn-main', children: [
+        jsx('div', { className: 'wm-cost-attn-text', children: rowText(item) }),
+        names.length ? jsxs('details', { className: 'wm-cost-attn-accounts', children: [
+          jsx('summary', { children: t('costsAttentionAccounts', names.length) }),
+          jsx('ul', { children: names.map((name, index) => jsx('li', { children: name }, `${name}-${index}`)) })
+        ] }) : null
+      ].filter(Boolean) }),
+      action ? jsx(ProductButton, { type: 'button', size: 'sm', className: 'wm-button wm-cost-attn-action',
+        onClick: action.run, children: action.label }) : null
+    ].filter(Boolean) }, `${item.code}|${item.currency || ''}`)
+  }
+  return jsxs('section', { className: 'wm-product-section wm-cost-attention', id: 'wm-costs-attention',
+    'aria-label': t('costsAttentionTitle'), 'data-cost-attention': true, children: [
+    jsxs('h2', { tabIndex: -1, 'data-costs-attention-heading': true, children: [
+      t('costsAttentionTitle'),
+      items.length ? jsx('span', { className: 'wm-cost-attn-count', children: String(items.length) }) : null
+    ].filter(Boolean) }),
+    jsx('p', { className: 'wm-cost-attn-hint', children: t('costsAttentionHint') }),
+    items.length ? ['fix', 'history', 'unavailable'].filter(category => byCategory[category].length).map(category =>
+      jsxs('div', { className: 'wm-cost-attn-cat', children: [
+        jsx('h3', { className: 'wm-cost-attn-cat-title', children: categoryTitle(category) }),
+        jsx('ul', { className: 'wm-cost-attn-rows', children: byCategory[category].map(item => row(item, category)) })
+      ] }, category))
+    : jsx('p', { className: 'wm-subtle', children: t('costsAttentionEmpty') })
+  ].filter(Boolean) })
+}
+
+/** One compact currency row: supported window/usage/difference figures with a
+ * status chip, bars where comparable, otherwise one honest why-not line.
+ * Monthly fees stay in the headline; blockers live in the attention summary
+ * and the per-account blocker log, never in this row. */
+function EconomicsGroupRow({ group, t }) {
+  const usage = finiteValue(group.usage_usd)
+  const difference = finiteValue(group.difference_usd)
+  const notes = econNotesText(group.notes, group.note_codes, t)
+  const blockers = group.blockers || []
+  const bare = usage == null && difference == null && group.status === 'unavailable'
+    && !notes.length && !blockers.length
+  return jsxs('div', { className: 'wm-econ-group', 'data-econ-group': group.currency, children: [
+    jsxs('div', { className: 'wm-econ-group-head', children: [
+      jsx('strong', { children: group.currency }),
+      jsx('span', { className: 'wm-econ-chip', 'data-status': group.status || 'unavailable',
+        children: econStatusLabel(t, group.status) })
+    ] }),
+    bare ? jsx('p', { className: 'wm-subtle', children: t('econNoComparison') })
+    : jsxs('div', { className: 'wm-econ-group-body', children: [
+        jsx('p', { className: 'wm-econ-group-money', children: [
+          t('econGroupWindowFees', econMoneyValue(group.window_fees, group.currency, group.window_fee_complete !== false, t)),
+          t('econGroupUsage', usage == null ? '—' : analyticMoney(usage)),
+          difference == null ? null : t('econGroupDifference', analyticMoney(difference))
+        ].filter(part => part !== null).join(' · ') }),
+        difference == null
+          ? (blockers.length || notes.length
+            ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-see-attention',
+                onClick: scrollToCostsAttention,
+                children: t('econGroupSeeAttention', blockers.length + notes.length) })
+            : jsx('p', { className: 'wm-subtle', children: t('econNoComparison') }))
+          : jsx(EconomicsBars, { group, t })
+      ].filter(Boolean) })
+  ].filter(Boolean) })
+}
+
+/**
  * Subscription economics, rendered from one report payload. Pure presentation:
  * the container owns the queries, so the harness can drive this with fixtures.
  */
@@ -5138,7 +5379,14 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
   const feeLines = econFeeLines(t, headline.fees_monthly_by_currency, groups)
   const span = windowSpanLabel(t, data?.window_days)
   const windowLines = econWindowLines(headline.fees_window_by_currency, groups, t)
-  return jsxs('section', { className: 'wm-product-section', 'aria-label': t('econTitle'), children: [
+  const logGroups = groups.filter(group => (group.blockers || []).length || (group.notes || []).length)
+  const logAccounts = accounts.filter(row => (row.blockers || []).length)
+  const trendInline = trendWarrantsInline(data?.trend)
+  const trendMonths = data?.trend?.months || []
+  const inlineMonths = trendInline ? trendMonths.filter(trendMonthComparable) : []
+  const parkedMonths = trendInline ? trendMonths.filter(entry => !trendMonthComparable(entry)) : []
+  return jsxs('section', { className: 'wm-product-section', id: 'wm-subscription-economics',
+    'aria-label': t('econTitle'), children: [
     jsx('h2', { children: t('econTitle') }),
     jsx('p', { children: t('econIntro') }),
     jsxs('div', { className: 'wm-product-summary', children: [
@@ -5169,37 +5417,7 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
       : null,
     groups.length ? jsxs('div', { className: 'wm-econ-groups', children: [
       jsx('h3', { children: t('econGroupsTitle') }),
-      ...groups.map(group => group.difference_usd == null && finiteValue(group.usage_usd) == null && group.status === 'unavailable'
-        ? jsxs('div', { className: 'wm-econ-group', children: [
-            jsx('strong', { children: group.currency }),
-            jsx('span', { className: 'wm-econ-dim', children:
-              ` ${t('econPerMonth', econMoneyValue(group.monthly_fees, group.currency, group.fee_complete !== false, t))}` }),
-            jsx(EconomicsBlockers, { notes: econNotesText(group.notes, group.note_codes, t),
-              blockers: group.blockers, t, onOpenFx }),
-            !(group.notes || []).length && !(group.blockers || []).length
-              ? jsx('p', { className: 'wm-subtle', children: t('econNoComparison') }) : null
-          ] }, group.currency)
-        : jsxs('div', { className: 'wm-econ-group', children: [
-            jsxs('div', { className: 'wm-econ-group-head', children: [
-              jsx('strong', { children: group.currency }),
-              jsx('span', { className: 'wm-econ-dim', children:
-                t('econGroupHead', econMoneyValue(group.monthly_fees, group.currency, group.fee_complete !== false, t),
-                  econMoneyValue(group.window_fees, group.currency, group.window_fee_complete !== false, t),
-                  analyticMoney(group.usage_usd), econStatusLabel(t, group.status)) })
-            ] }),
-            group.difference_usd == null
-              ? jsxs('div', { children: [
-                  jsx(EconomicsBlockers, { notes: econNotesText(group.notes, group.note_codes, t),
-                    blockers: group.blockers, t, onOpenFx }),
-                  !(group.notes || []).length && !(group.blockers || []).length
-                    ? jsx('p', { className: 'wm-subtle', children: t('econNoComparison') }) : null
-                ] })
-              : jsxs('div', { children: [
-                  jsx(EconomicsBars, { group, t }),
-                  jsx(EconomicsBlockers, { notes: econNotesText(group.notes, group.note_codes, t),
-                    blockers: group.blockers, t, onOpenFx })
-                ] })
-          ] }, group.currency))
+      ...groups.map(group => jsx(EconomicsGroupRow, { group, t }, group.currency))
     ] }) : null,
     accounts.length ? jsxs('details', { className: 'wm-econ-disclosure', children: [
       jsx('summary', { children: t('econAccountsTitle') }),
@@ -5215,10 +5433,33 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
               jsx(EconomicsAccountRow, { row, t, onOpenFx }, row.account_id)) })
           ] }) }) })
     ] }) : null,
-    (data?.trend?.months || []).length ? jsxs('details', { className: 'wm-econ-disclosure', children: [
-      jsx('summary', { children: t('econTrendTitle') }),
-      jsx('div', { className: 'wm-econ-accounts', children: jsx(EconomicsTrend, { trend: data.trend, t }) })
-    ] }) : null,
+    inlineMonths.length ? jsxs('div', { className: 'wm-econ-trend-inline', children: [
+        jsx('h3', { children: t('econTrendTitle') }),
+        jsx(EconomicsTrend, { trend: { ...data.trend, months: inlineMonths }, t, hideNotes: true })
+      ] }) : null,
+    parkedMonths.length ? jsxs('details', { className: 'wm-econ-disclosure wm-econ-trend-parked', children: [
+        jsx('summary', { children: t('econTrendMoreTitle') }),
+        jsx('div', { className: 'wm-econ-accounts',
+          children: jsx(EconomicsTrend, { trend: { ...data.trend, months: parkedMonths }, t }) })
+      ] }) : null,
+    !trendInline && trendMonths.length ? jsxs('details', { className: 'wm-econ-disclosure', children: [
+        jsx('summary', { children: t('econTrendTitle') }),
+        jsx('div', { className: 'wm-econ-accounts', children: jsx(EconomicsTrend, { trend: data.trend, t }) })
+      ] }) : null,
+    logGroups.length || logAccounts.length ? jsxs('details', {
+      id: 'wm-cost-blocker-log', className: 'wm-econ-disclosure wm-econ-blocker-log', children: [
+        jsx('summary', { children: t('econBlockerLogTitle') }),
+        jsx('p', { className: 'wm-subtle', children: t('econBlockerLogIntro') }),
+        ...logGroups.map(group => jsxs('div', { className: 'wm-econ-log-group', children: [
+          jsx('h3', { children: group.currency }),
+          jsx(EconomicsBlockers, { notes: econNotesText(group.notes, group.note_codes, t),
+            blockers: group.blockers, t, onOpenFx, showCodes: true })
+        ] }, `group-${group.currency}`)),
+        ...logAccounts.map(row => jsxs('div', { className: 'wm-econ-log-group', children: [
+          jsx('h3', { children: `${row.label || row.family || row.account_id} · ${row.account_id}` }),
+          jsx(EconomicsBlockers, { blockers: row.blockers, t, onOpenFx, showCodes: true })
+        ] }, `account-${row.account_id}`))
+      ] }) : null,
     others.length || data?.unattributed?.usage?.tokens || data?.ambiguous?.usage?.tokens
       ? jsxs('details', { className: 'wm-econ-disclosure', children: [
           jsx('summary', { children: t('econMoreEvidence') }),
@@ -5248,7 +5489,7 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
 }
 
 /** Subscription economics wired to the backend. */
-function EconomicsPanel({ identity }) {
+function EconomicsPanel({ identity, unknownFees = null }) {
   const t = usePluginI18n(ID)
   const economics = useQuery(economicsQuery(identity))
   const fx = useQuery(fxQuery(identity))
@@ -5257,6 +5498,15 @@ function EconomicsPanel({ identity }) {
   const openFx = () => {
     if (typeof document === 'undefined') return
     const disclosure = document.getElementById('wm-cost-fx-details')
+    if (!disclosure) return
+    disclosure.open = true
+    const summary = disclosure.querySelector('summary')
+    try { summary?.scrollIntoView?.({ block: 'nearest' }) } catch {}
+    summary?.focus?.()
+  }
+  const openLog = () => {
+    if (typeof document === 'undefined') return
+    const disclosure = document.getElementById('wm-cost-blocker-log')
     if (!disclosure) return
     disclosure.open = true
     const summary = disclosure.querySelector('summary')
@@ -5305,9 +5555,13 @@ function EconomicsPanel({ identity }) {
   const fxError = fx.error && membershipIdentityCurrent(identity)
     ? t('fxReadError')
     : ''
-  return jsx(EconomicsSection, { data: economics.data, identity,
-    fxRates: fxReady ? fx.data?.rates || [] : [], fxReady, fxError,
-    onRetryFx: () => fx.refetch?.(), onSaveFx: saveFx, onOpenFx: openFx })
+  return [
+    jsx(CostsAttention, { groups: economics.data?.groups || [], econAccounts: economics.data?.accounts || [],
+      unknownFees, fxError, onRetryFx: () => fx.refetch?.(), onOpenFx: openFx, onOpenLog: openLog, t }, 'attention'),
+    jsx(EconomicsSection, { data: economics.data, identity,
+      fxRates: fxReady ? fx.data?.rates || [] : [], fxReady, fxError,
+      onRetryFx: () => fx.refetch?.(), onSaveFx: saveFx, onOpenFx: openFx }, 'economics')
+  ]
 }
 
 const ECONOMICS_CSS = [
@@ -5379,7 +5633,35 @@ const ECONOMICS_CSS = [
   '.wm-product .wm-econ-fx-list li{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--ui-stroke-secondary);padding-top:6px}',
   '.wm-product .wm-econ-fx-form{display:grid;grid-template-columns:80px minmax(0,1fr) minmax(0,1fr) minmax(0,2fr) auto;gap:8px}',
   '.wm-product .wm-econ-fx-form input{min-height:34px;border:1px solid var(--ui-stroke-secondary);border-radius:6px;padding:7px 9px;background:var(--ui-fill-primary);color:var(--ui-text-primary);font:inherit;font-size:12px;min-width:0}',
-  '@container(max-width:620px){.wm-product .wm-econ-bar-row{grid-template-columns:minmax(0,1fr) auto}.wm-product .wm-econ-bar-label{grid-column:1/-1}.wm-product .wm-econ-fx-form{grid-template-columns:1fr 1fr}}'
+  '@container(max-width:620px){.wm-product .wm-econ-bar-row{grid-template-columns:minmax(0,1fr) auto}.wm-product .wm-econ-bar-label{grid-column:1/-1}.wm-product .wm-econ-fx-form{grid-template-columns:1fr 1fr}}',
+  '.wm-product .wm-cost-card-label{display:flex;align-items:center;gap:7px}',
+  '.wm-product .wm-cost-card-label::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--wm-cost-accent,var(--ui-text-quaternary));flex:none}',
+  '.wm-product .wm-cost-card-note{font-size:12px}',
+  '.wm-product #wm-costs-attention,.wm-product #wm-subscription-economics{scroll-margin-top:12px}',
+  '.wm-product .wm-cost-attn-count{font-size:11px;font-weight:600;color:#0a0b0f;background:var(--ui-warning);border-radius:99px;padding:0 7px;line-height:18px;margin-left:8px;vertical-align:2px}',
+  '.wm-product .wm-cost-attn-hint{margin:4px 0 0;color:var(--ui-text-tertiary);font-size:12px}',
+  '.wm-product .wm-cost-attn-cat{margin:12px 0 0}',
+  '.wm-product .wm-cost-attn-cat-title{margin:0;font-size:12.5px;font-weight:600}',
+  '.wm-product .wm-cost-attn-rows{list-style:none;margin:6px 0 0;padding:0;display:grid}',
+  '.wm-product .wm-cost-attn-rows li{display:flex;align-items:center;gap:10px;padding:9px 4px;border-top:1px solid var(--ui-stroke-secondary);min-width:0}',
+  '.wm-product .wm-cost-attn-rows li:first-child{border-top:0;padding-top:5px}',
+  '.wm-product .wm-cost-attn-dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--ui-text-quaternary)}',
+  '.wm-product .wm-cost-attn-dot[data-tone="fix"]{background:var(--ui-warning)}',
+  '.wm-product .wm-cost-attn-dot[data-tone="history"]{background:var(--ui-accent)}',
+  '.wm-product .wm-cost-attn-main{flex:1;min-width:0;display:grid;gap:3px}',
+  '.wm-product .wm-cost-attn-text{font-size:12.5px;color:var(--ui-text-primary);overflow-wrap:anywhere}',
+  '.wm-product .wm-cost-attn-accounts summary{cursor:pointer;color:var(--ui-text-tertiary);font-size:11.5px}',
+  '.wm-product .wm-cost-attn-accounts ul{margin:4px 0;padding-left:18px;color:var(--ui-text-secondary);font-size:12px;display:grid;gap:2px}',
+  '.wm-product .wm-econ-chip{font-size:11px;font-weight:600;border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:1px 8px;color:var(--ui-text-tertiary);white-space:nowrap}',
+  '.wm-product .wm-econ-chip[data-status="ok"]{color:var(--ui-success);border-color:color-mix(in srgb,var(--ui-success) 45%,var(--ui-stroke-secondary))}',
+  '.wm-product .wm-econ-chip[data-status="partial"]{color:var(--ui-warning);border-color:color-mix(in srgb,var(--ui-warning) 45%,var(--ui-stroke-secondary))}',
+  '.wm-product .wm-econ-group-body{display:grid;gap:7px}',
+  '.wm-product .wm-econ-group-money{margin:0;font-size:12.5px;color:var(--ui-text-secondary);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
+  '.wm-product .wm-econ-trend-inline{display:grid;gap:8px;margin-top:16px}',
+  '.wm-product .wm-econ-trend-inline h3{margin:0;font-size:13px;font-weight:600}',
+  '.wm-product .wm-econ-blocker-log h3{margin:10px 0 0;font-size:12.5px}',
+  '.wm-product .wm-econ-blocker-log h3:first-of-type{margin-top:6px}',
+  '@container(max-width:620px){.wm-product .wm-cost-attn-rows li{flex-wrap:wrap}.wm-product .wm-cost-attn-rows .wm-button{width:100%}}'
 ].join('');
 
 
@@ -10814,7 +11096,11 @@ const I18N = {
     econDiffHint: 'API value minus fees in the same window. Not cash saved.',
     econGroupsTitle: 'Fees vs usage by currency',
     econNoComparison: 'No comparison available.',
-    econGroupHead: (m, w, u, st) => `${m}/mo fees · ${w} in window · ${u} usage · ${st}`,
+    econGroupWindowFees: money => `${money} fees in window`,
+    econGroupUsage: money => `${money} usage`,
+    econGroupDifference: money => `${money} difference`,
+    econGroupSeeAttention: count => count === 1
+      ? '1 issue needs attention — see above' : `${count} issues need attention — see above`,
     econGroupWindowHistory: count => Number.isSafeInteger(count) && count >= 0
       ? `Known monthly fees are shown, but historical fee evidence is missing for ${count} account(s); their window amounts are unavailable.`
       : 'Known monthly fees are shown, but some accounts lack historical fee evidence; their window amounts are unavailable.',
@@ -10832,6 +11118,7 @@ const I18N = {
     econColDifference: 'Est. value difference',
     econColCoverage: 'Pricing coverage',
     econTrendTitle: 'Monthly trend',
+    econTrendMoreTitle: 'Months needing more evidence',
     econOthersTitle: 'Not in the comparison',
     econNoPricedUsageShort: 'no priced usage',
     econApiUsageMoney: m => `${m} API-equivalent usage`,
@@ -10865,6 +11152,9 @@ const I18N = {
     econBlockTierRate: 'A tier price is unavailable; check the provider’s price evidence.',
     econBlockCacheRate: 'A cache rate is unavailable; check the provider’s cache price evidence.',
     econBlockGeneric: reason => `This account has an unresolved comparison blocker (${reason}). Review its fee and usage evidence in Memberships, Costs and Usage.`,
+    econBlockGenericShort: 'An unrecognised comparison issue needs review; the exact code is in the blocker log.',
+    econBlockerLogTitle: 'Per-account blocker log',
+    econBlockerLogIntro: 'Every comparison blocker with its technical account and code, for diagnosis and support.',
     econBlockUnknown: 'unknown',
     econCoverageUnknown: 'Coverage unknown',
     econFullyPriced: 'Fully priced',
@@ -11616,6 +11906,8 @@ const I18N = {
     costsPricingNoDate: 'date unknown',
     costsPricingStale: ' · stale',
     costsPricingTitle: 'Pricing sources and privacy',
+    costsPricingSourceCatalogue: 'models.dev pricing catalogue (local cache)',
+    costsPricingSourceSnapshot: 'bundled pricing snapshot',
     costsTitle: 'Costs',
     costsSubtitle: 'Active profile · estimates, provider reports and plan limits stay separate.',
     costsOverviewTitle: 'Financial evidence',
@@ -11684,6 +11976,14 @@ const I18N = {
     costsEvidenceIntro: 'Provider-reported values and price estimates are different kinds of evidence; neither is a payment receipt.',
     costsEvidenceLoading: 'Reading usage evidence…',
     costsFooterNote: 'Desktop-recorded values keep the rates captured at the time. Backend API-equivalent estimates use the current available catalogue and can change; they are not historical charges.',
+    costsAttentionTitle: 'What needs attention?',
+    costsAttentionHint: 'Fixable problems first, then items waiting on history, then evidence that is unavailable.',
+    costsAttentionFix: 'Fix now',
+    costsAttentionHistory: 'Needs more history',
+    costsAttentionUnavailable: 'Not recorded / unavailable',
+    costsAttentionEmpty: 'Nothing needs attention. Every comparison is supported by the available evidence.',
+    costsAttentionAccounts: count => `${count} account${count === 1 ? '' : 's'}`,
+    costsAttentionViewLog: 'View blocker log',
     costsEntAllowance: money => ` · ${money} allowance`,
     costsEntAllowances: names => `plan allowances: ${names} (usage in Memberships)`,
     costsEntRestricted: list => `restricted models: ${list}`,
@@ -12238,7 +12538,10 @@ const I18N = {
     econDiffHint: '同一窗口内 API 价值减去费用。不是实际节省的现金。',
     econGroupsTitle: '按货币对比费用与用量',
     econNoComparison: '无可用的比较。',
-    econGroupHead: (m, w, u, st) => `${m}/月费用 · ${w}（窗口内）· 用量 ${u} · ${st}`,
+    econGroupWindowFees: money => `${money} 窗口内费用`,
+    econGroupUsage: money => `${money} 用量`,
+    econGroupDifference: money => `${money} 差值`,
+    econGroupSeeAttention: count => `${count} 个问题需要注意——见上文`,
     econGroupWindowHistory: count => Number.isSafeInteger(count) && count >= 0
       ? `已显示已知月费，但有 ${count} 个账户缺少历史费用证据；其窗口金额不可用。`
       : '已显示已知月费，但部分账户缺少历史费用证据；其窗口金额不可用。',
@@ -12256,6 +12559,7 @@ const I18N = {
     econColDifference: '估算价值差',
     econColCoverage: '定价覆盖率',
     econTrendTitle: '月度趋势',
+    econTrendMoreTitle: '需要更多证据的月份',
     econOthersTitle: '未纳入比较',
     econNoPricedUsageShort: '无已定价用量',
     econApiUsageMoney: m => `${m} API 等值用量`,
@@ -12289,6 +12593,9 @@ const I18N = {
     econBlockTierRate: '阶梯价格不可用；请检查供应商价格证据。',
     econBlockCacheRate: '缓存费率不可用；请检查供应商缓存价格证据。',
     econBlockGeneric: reason => `此账户有未解决的比较问题（${reason}）。请在“会员”、“费用”和“用量”中检查费用与用量证据。`,
+    econBlockGenericShort: '有一项无法识别的比较问题需要检查；确切代码见问题日志。',
+    econBlockerLogTitle: '各帐户问题日志',
+    econBlockerLogIntro: '所有比较问题及其技术帐户与代码，供诊断和支持使用。',
     econBlockUnknown: '未知',
     econCoverageUnknown: '覆盖率未知',
     econFullyPriced: '已全部定价',
@@ -13040,6 +13347,8 @@ const I18N = {
     costsPricingNoDate: '日期未知',
     costsPricingStale: ' · 已过期',
     costsPricingTitle: '价格来源与隐私',
+    costsPricingSourceCatalogue: 'models.dev 价格目录（本地缓存）',
+    costsPricingSourceSnapshot: '内置价格快照',
     costsTitle: '费用',
     costsSubtitle: '当前活动配置 · 估算、供应商上报值和方案限额分别显示。',
     costsOverviewTitle: '财务证据',
@@ -13108,6 +13417,14 @@ const I18N = {
     costsEvidenceIntro: '供应商上报值与价格估算属于不同种类的证据；两者都不是付款凭证。',
     costsEvidenceLoading: '正在读取用量证据…',
     costsFooterNote: '桌面记录值保留记录时的单价。后端 API 等值估算使用当前可用目录，可能变化；并非历史费用。',
+    costsAttentionTitle: '哪些事项需要注意？',
+    costsAttentionHint: '可修复的问题在前，其次是等待历史记录的事项，最后是不可用的证据。',
+    costsAttentionFix: '立即处理',
+    costsAttentionHistory: '需要更多历史记录',
+    costsAttentionUnavailable: '未记录/不可用',
+    costsAttentionEmpty: '没有需要注意的事项。现有证据支持所有比较。',
+    costsAttentionAccounts: count => `${count} 个帐户`,
+    costsAttentionViewLog: '查看问题日志',
     costsEntAllowance: money => ` · ${money} 额度`,
     costsEntAllowances: names => `方案额度：${names}（用量见“会员”）`,
     costsEntRestricted: list => `受限模型：${list}`,
@@ -13701,6 +14018,8 @@ export const __test = {
   econNoteText, econNotesText, econSingularNoteText, econExplanationText, ECON_NOTE_KEYS, ECON_EXPLANATION_KEYS,
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
+  EconomicsGroupRow, CostsAttention, costsBlockerCategory, costsAttentionActionFor, collectCostsBlockers,
+  costsUnknownFeeAccounts, trendMonthComparable, trendWarrantsInline, costsPricingSourceLabel, scrollToCostsAttention,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
   CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,

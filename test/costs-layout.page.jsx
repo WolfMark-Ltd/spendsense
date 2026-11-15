@@ -138,6 +138,16 @@ setTimeout(() => {
     output.layouts.push({
       id, width: pane.clientWidth, columns, overflow: overflow.filter(item => item.excess > 1),
       text: pane.querySelector('.wm-shell')?.textContent || pane.textContent,
+      attention: pane.querySelector('[data-cost-attention]')?.textContent,
+      attentionCount: pane.querySelector('.wm-cost-attn-count')?.textContent,
+      seeAttention: [...pane.querySelectorAll('.wm-econ-see-attention')].map(button => button.textContent),
+      groupRow: pane.querySelector('[data-econ-group="GBP"]')?.textContent,
+      groupMoney: pane.querySelector('[data-econ-group="GBP"] .wm-econ-group-money')?.textContent,
+      logClosed: (() => { const log = pane.querySelector('#wm-cost-blocker-log'); return !!log && !log.open })(),
+      trendInline: !!pane.querySelector('.wm-econ-trend-inline'),
+      anchor: !!pane.querySelector('#wm-subscription-economics'),
+      pricing: [...pane.querySelectorAll('button')].find(button => button.textContent.startsWith('Pricing'))?.textContent
+        || [...pane.querySelectorAll('button')].find(button => button.textContent.startsWith('价格'))?.textContent,
       api: pane.querySelector('[data-cost-kind="api"]')?.textContent,
       provider: pane.querySelector('[data-cost-kind="reported"]')?.textContent,
       charges: charges?.textContent,
@@ -160,6 +170,10 @@ setTimeout(() => {
     fxAction?.click()
     output.interactions.fxOpensFromBlocker = !!fxDetails?.open
     output.interactions.fxActionReceivesFocus = document.activeElement === fxDetails?.querySelector('summary')
+    const seeButton = first.querySelector('.wm-econ-see-attention')
+    seeButton?.click()
+    output.interactions.seeAttentionFocusesHeading =
+      document.activeElement === first.querySelector('[data-costs-attention-heading]')
   }
   document.getElementById('costs-layout-result').textContent = JSON.stringify(output)
 }, 1200)

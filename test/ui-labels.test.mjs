@@ -363,7 +363,10 @@ test('every ledger tab string exists in English and Chinese', () => {
 
 test('every costs string exists in English and Chinese', () => {
   const keys = ['costsPricing', 'costsPricingNoSource', 'costsPricingAge', 'costsPricingNoDate',
-    'costsPricingStale', 'costsPricingTitle', 'costsTitle', 'costsSubtitle', 'costsMembershipTitle',
+    'costsPricingStale', 'costsPricingTitle', 'costsPricingSourceCatalogue', 'costsPricingSourceSnapshot',
+    'costsAttentionTitle', 'costsAttentionHint', 'costsAttentionFix', 'costsAttentionHistory',
+    'costsAttentionUnavailable', 'costsAttentionEmpty', 'costsAttentionAccounts', 'costsAttentionViewLog',
+    'costsTitle', 'costsSubtitle', 'costsMembershipTitle',
     'costsMembershipIntro', 'costsSavedMemberships', 'costsMembershipCount', 'costsCombinedFees',
     'costsLoading', 'costsBasisCatalogue', 'costsBasisCustom', 'costsBasisDeclared', 'costsBasisUnpriced',
     'costsEmpty', 'costsLegacyIgnored', 'costsEvidenceTitle', 'costsEvidenceIntro', 'costsEvidenceLoading',
@@ -385,10 +388,13 @@ test('every costs string exists in English and Chinese', () => {
   assert.equal(en.costsLegacyIgnored(1),
     '1 old subscription arrangement(s) remain stored but are excluded. Choose each plan in Memberships to keep one authoritative record.')
   assert.equal(en.costsEntAllowances('Nightly $5.00'), 'plan allowances: Nightly $5.00 (usage in Memberships)')
+  assert.equal(en.costsAttentionAccounts(1), '1 account')
+  assert.equal(en.costsAttentionAccounts(3), '3 accounts')
   // The Chinese composites interpolate every argument.
   assert.match(zh.costsPricing('WolfMark 目录', '3 小时前', ' · 已过期'), /价格：/)
   assert.equal(zh.costsMembershipCount(2, 3), '2 / 3')
   assert.match(zh.costsEntEffective('2026-01-01', '持续有效'), /有效期/)
+  assert.equal(zh.costsAttentionAccounts(2), '2 个帐户')
 })
 
 test('billing evidence and entitlement summaries follow the chosen language', () => {
@@ -662,8 +668,10 @@ test('every English string has a Chinese translation', () => {
 test('every economics string exists in English and Chinese', () => {
   const keys = ['econTitle', 'econIntro', 'econMonthlySubs', 'econSubsSmall', 'econUsageLabel',
     'econNoPricedUsage', 'econTheoreticalPrice', 'econDiffLabel', 'econDiffHint', 'econGroupsTitle',
-    'econNoComparison', 'econGroupHead', 'econAccountsTitle', 'econColAccount', 'econColMembership',
-    'econColMonthly', 'econColDifference', 'econColCoverage', 'econTrendTitle', 'econOthersTitle',
+    'econNoComparison', 'econGroupWindowFees', 'econGroupUsage', 'econGroupDifference', 'econGroupSeeAttention',
+    'econBlockGenericShort', 'econBlockerLogTitle', 'econBlockerLogIntro',
+    'econAccountsTitle', 'econColAccount', 'econColMembership',
+    'econColMonthly', 'econColDifference', 'econColCoverage', 'econTrendTitle', 'econTrendMoreTitle', 'econOthersTitle',
     'econNoPricedUsageShort', 'econApiUsageMoney', 'econOutsideTitle', 'econUnknownRoutes',
     'econUnattributedLine', 'econAmbiguousLine', 'econFxTitle', 'econFxHint', 'econReading',
     'econStatusOk', 'econStatusPartial', 'econStatusUnavailable', 'econNoUsage', 'econNoPrice',
@@ -686,8 +694,11 @@ test('every economics string exists in English and Chinese', () => {
   // The English composites keep their exact pre-localisation wording.
   assert.equal(en.econSubsSmall('$38.77', 'in the last 30 days', 2, 'Complete'),
     '$38.77 in the last 30 days · 2 subscription(s) · Complete')
-  assert.equal(en.econGroupHead('$20.00', '$19.37', '$2.00', 'Complete'),
-    '$20.00/mo fees · $19.37 in window · $2.00 usage · Complete')
+  assert.equal(en.econGroupWindowFees('USD 19.37'), 'USD 19.37 fees in window')
+  assert.equal(en.econGroupUsage('$2.00'), '$2.00 usage')
+  assert.equal(en.econGroupDifference('−$17.37'), '−$17.37 difference')
+  assert.equal(en.econGroupSeeAttention(1), '1 issue needs attention — see above')
+  assert.equal(en.econGroupSeeAttention(3), '3 issues need attention — see above')
   assert.equal(en.econSpanDays(1), 'in the last 1 day')
   assert.equal(en.econSpanDays(30), 'in the last 30 days')
   assert.equal(en.econPeriodAbbr('month'), 'mo')
@@ -698,7 +709,10 @@ test('every economics string exists in English and Chinese', () => {
   assert.match(en.econDiffHint, /Not cash saved/)
   // The Chinese composites interpolate every argument.
   assert.match(zh.econSubsSmall('$38.77', '过去 30 天内', 2, '完成'), /2 个订阅/)
-  assert.match(zh.econGroupHead('$20.00', '$19.37', '$2.00', '完成'), /\/月费用/)
+  assert.match(zh.econGroupWindowFees('USD 19.37'), /窗口内费用/)
+  assert.match(zh.econGroupUsage('$2.00'), /用量/)
+  assert.match(zh.econGroupDifference('−$17.37'), /差值/)
+  assert.match(zh.econGroupSeeAttention(2), /见上文/)
   assert.equal(zh.econSpanDays(30), '过去 30 天内')
   assert.equal(zh.econPerMonth('$20.00'), '$20.00/月')
   assert.match(zh.econTrendAria('2026-10', '$20.00', '$2.00', '−$18.00'), /差值/)

@@ -199,6 +199,24 @@ const renderCostsSummary = async ({ billing = {}, totals = {}, accounts = [], su
   return { container, text: () => container.textContent }
 }
 
+const renderAttention = async ({ groups = [], econAccounts = [], unknownFees = null, fxError = '',
+  onRetryFx = null, onOpenFx = null, onOpenLog = null } = {}, language = 'en') => {
+  const t = (key, ...args) => {
+    const entry = T.I18N[language][key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => {
+    root.render(React.createElement(T.CostsAttention, {
+      groups, econAccounts, unknownFees, fxError, onRetryFx, onOpenFx, onOpenLog, t,
+    }))
+  })
+  return { container, text: () => container.textContent }
+}
+
 const flush = async (times = 6) => {
   await React.act(async () => {
     for (let i = 0; i < times; i += 1) {
@@ -759,6 +777,270 @@ test('membership edits invalidate the cached economics comparison', async () => 
   await T.invalidateEconomicsFor(identity)
   assert.equal(queryClient.getQueryState(keyFor(identity))?.isInvalidated, true)
   assert.equal(queryClient.getQueryState(keyFor(other))?.isInvalidated, false)
+})
+
+test('the attention summary groups blockers into fix, history and unavailable', async () => {
+  const econAccounts = [
+    { account_id: 'a:one', label: 'First account', family: 'a' },
+    { account_id: 'a:two', label: 'Second account', family: 'a' },
+    { account_id: 'route-x', label: 'Mystery account', family: 'x' },
+  ]
+  const groups = [{ currency: 'GBP', blockers: [
+    { account_id: 'a:one', code: 'subscription_fee_missing' },
+    { account_id: 'a:two', code: 'subscription_fee_missing' },
+    { account_id: 'a:one', code: 'no_usage_recorded' },
+    { account_id: 'a:one', code: 'missing_cache_read_rate' },
+    { account_id: 'route-x', code: 'mystery_future_code' },
+  ] }]
+  const { container, text } = await renderAttention({ groups, econAccounts })
+  assert.match(text(), /What needs attention\?/)
+  assert.equal(container.querySelector('.wm-cost-attn-count').textContent, '4')
+  const titles = [...container.querySelectorAll('.wm-cost-attn-cat-title')].map(el => el.textContent)
+  assert.deepEqual(titles, ['Fix now', 'Needs more history', 'Not recorded / unavailable'])
+  const fix = container.querySelector('[data-attn-category="fix"]')
+  assert.match(fix.textContent, /Set or confirm this account’s subscription fee/)
+  assert.match(fix.textContent, /2 accounts/)
+  assert.match(fix.textContent, /First account/)
+  assert.match(fix.textContent, /Second account/)
+  assert.doesNotMatch(fix.textContent, /a:one|a:two/,
+    'friendly labels replace raw account ids in standard view')
+  assert.equal(fix.querySelector('button').textContent, 'Review in Memberships')
+  const history = container.querySelector('[data-attn-category="history"]')
+  assert.match(history.textContent, /No calls were recorded/)
+  assert.equal(history.querySelector('button'), null, 'history items carry guidance, not actions')
+  const unavailable = [...container.querySelectorAll('[data-attn-category="unavailable"]')]
+  assert.equal(unavailable.length, 2)
+  assert.doesNotMatch(text(), /mystery_future_code|route-x/,
+    'raw codes and slugs stay out of the attention summary')
+  assert.match(text(), /exact code is in the blocker log/)
+  for (const row of unavailable) {
+    assert.equal(row.querySelector('button').textContent, 'View blocker log')
+  }
+  const unlabeled = await renderAttention({ groups: [{ currency: 'USD',
+    blockers: [{ account_id: 'raw:slug', code: 'subscription_fee_missing' }] }], econAccounts: [] })
+  assert.doesNotMatch(unlabeled.container.querySelector('.wm-cost-attn-text').textContent, /raw:slug/,
+    'default row text never shows a raw id')
+  assert.match(unlabeled.text(), /raw:slug/,
+    'an id without a friendly label falls back inside the deliberate expander only')
+})
+
+test('attention actions navigate, open FX and retry the failed read', async () => {
+  const calls = []
+  const { container } = await renderAttention({
+    groups: [{ currency: 'GBP', blockers: [
+      { account_id: 'a', code: 'subscription_fee_missing' },
+      { account_id: 'b', code: 'dated_fx_rate_missing', currency: 'GBP' },
+      { account_id: 'c', code: 'model_unidentified' },
+      { account_id: 'd', code: 'missing_cache_read_rate' },
+    ] }],
+    econAccounts: [],
+    fxError: 'Saved FX rates could not be read for this connection.',
+    onRetryFx: () => calls.push('retry'),
+    onOpenFx: () => calls.push('fx'),
+    onOpenLog: () => calls.push('log'),
+  })
+  const buttons = [...container.querySelectorAll('.wm-cost-attn-action')]
+  assert.deepEqual(buttons.map(button => button.textContent), [
+    'Add dated FX rate', 'Review in Usage', 'Review in Memberships', 'Retry', 'View blocker log',
+  ])
+  T.$ledgerTab.set('costs')
+  await React.act(async () => { buttons[2].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  assert.equal(T.$ledgerTab.get(), 'memberships')
+  await React.act(async () => { buttons[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await React.act(async () => { buttons[3].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  await React.act(async () => { buttons[4].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  assert.deepEqual(calls, ['fx', 'retry', 'log'])
+  await React.act(async () => { buttons[1].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  assert.equal(T.$ledgerTab.get(), 'usage')
+})
+
+test('scrolling to attention focuses its heading', async () => {
+  const section = document.createElement('section')
+  section.id = 'wm-costs-attention'
+  section.innerHTML = '<h2 tabindex="-1" data-costs-attention-heading>What needs attention?</h2>'
+  document.body.appendChild(section)
+  try {
+    T.scrollToCostsAttention()
+    assert.equal(document.activeElement, section.querySelector('h2'))
+  } finally {
+    section.remove()
+  }
+})
+
+test('unknown membership fees raise one fix item unless a fee blocker exists', async () => {
+  const alone = await renderAttention({ unknownFees: { count: 2, labels: ['Plan A', 'Plan B'] } })
+  assert.match(alone.text(), /Set or confirm this account’s subscription fee/)
+  assert.match(alone.text(), /2 accounts/)
+  assert.match(alone.text(), /Plan A/)
+  const covered = await renderAttention({
+    groups: [{ currency: 'USD', blockers: [{ account_id: 'a', code: 'subscription_fee_missing' }] }],
+    econAccounts: [{ account_id: 'a', label: 'Covered account' }],
+    unknownFees: { count: 1, labels: ['Covered account'] },
+  })
+  assert.equal(covered.container.querySelectorAll('[data-attn-category="fix"]').length, 1,
+    'the backend fee blocker and the unknown-fee fallback never double-report')
+})
+
+test('unknown-currency fee blockers render once with their account', async () => {
+  const { container, text } = await renderAttention({
+    groups: [{ currency: 'unknown',
+      blockers: [{ account_id: 'u:one', code: 'subscription_fee_missing' }] }],
+    econAccounts: [{ account_id: 'u:one', label: 'Unknown currency account',
+      fee: { currency: null }, blockers: [{ code: 'subscription_fee_missing' }] }],
+  })
+  assert.equal(container.querySelectorAll('[data-attn-category="fix"]').length, 1,
+    'group and account passes dedupe to one row')
+  assert.equal(container.querySelector('.wm-cost-attn-count').textContent, '1')
+  assert.match(text(), /Unknown currency account/)
+  assert.doesNotMatch(text(), /u:one/)
+})
+
+test('an empty comparison shows the quiet attention state', async () => {
+  const { text } = await renderAttention({})
+  assert.match(text(), /Nothing needs attention/)
+  const { text: zhText } = await renderAttention({}, 'zh')
+  assert.match(zhText(), /没有需要注意的事项/)
+})
+
+test('the attention summary translates its categories and actions', async () => {
+  const { container, text } = await renderAttention({
+    groups: [{ currency: 'GBP', blockers: [
+      { account_id: 'a', code: 'dated_fx_rate_missing', currency: 'GBP' },
+      { account_id: 'a', code: 'insufficient_comparison_history' },
+      { account_id: 'b', code: 'tier_rate_unavailable' },
+    ] }],
+    econAccounts: [{ account_id: 'a', label: '测试帐户' }],
+  }, 'zh')
+  assert.match(text(), /哪些事项需要注意？/)
+  const titles = [...container.querySelectorAll('.wm-cost-attn-cat-title')].map(el => el.textContent)
+  assert.deepEqual(titles, ['立即处理', '需要更多历史记录', '未记录/不可用'])
+  const buttons = [...container.querySelectorAll('.wm-cost-attn-action')].map(button => button.textContent)
+  assert.deepEqual(buttons, ['添加注明日期的汇率', '查看问题日志'])
+  assert.doesNotMatch(text(), /undefined/)
+})
+
+test('group rows stay compact with supported figures and link to attention', async () => {
+  const data = econFixture()
+  data.groups = [{ currency: 'GBP', monthly_fees: 20, window_fees: 20, fee_complete: true,
+    window_fee_complete: true, usage_usd: 0, difference_usd: null, converted: false,
+    fx: null, status: 'unavailable', notes: [], blockers: [
+      { account_id: 'gbp:default', code: 'dated_fx_rate_missing', currency: 'GBP' },
+    ] }]
+  data.accounts = []
+  const { container } = await renderSection(data)
+  const row = container.querySelector('[data-econ-group="GBP"]')
+  assert.ok(row, 'the currency row renders')
+  assert.match(row.querySelector('.wm-econ-group-money').textContent, /GBP 20\.00 fees in window/)
+  assert.match(row.querySelector('.wm-econ-group-money').textContent, /\$0\.00 usage/)
+  assert.equal(row.querySelector('.wm-econ-chip').textContent, 'Unavailable')
+  assert.doesNotMatch(row.textContent, /Add a dated user-supplied/,
+    'blocker sentences leave the default row for the attention summary')
+  const jump = row.querySelector('.wm-econ-see-attention')
+  assert.equal(jump.textContent, '1 issue needs attention — see above')
+  const log = container.querySelector('#wm-cost-blocker-log')
+  assert.ok(log, 'the full blocker log stays available behind a labelled disclosure')
+  assert.equal(log.open, false)
+  assert.match(log.textContent, /gbp:default/)
+  assert.match(log.textContent, /Add a dated user-supplied GBP to USD rate/)
+  const comparable = await renderSection(econFixture())
+  assert.match(comparable.container.querySelector('[data-econ-group="USD"] .wm-econ-group-money').textContent,
+    /−\$17\.37 difference/, 'a supported group difference stays visible with its label')
+})
+
+test('unknown blocker codes keep raw evidence in the log only', async () => {
+  const data = econFixture()
+  data.groups = [{ currency: 'USD', monthly_fees: 20, window_fees: 19.37, fee_complete: true,
+    window_fee_complete: true, usage_usd: 2, difference_usd: null, converted: false,
+    fx: null, status: 'unavailable', notes: [], blockers: [
+      { account_id: 'route-x', code: 'mystery_future_code' },
+    ] }]
+  data.accounts = []
+  const { container } = await renderSection(data)
+  const row = container.querySelector('[data-econ-group="USD"]')
+  assert.doesNotMatch(row.textContent, /mystery_future_code|route-x/)
+  const log = container.querySelector('#wm-cost-blocker-log')
+  assert.match(log.textContent, /mystery_future_code/)
+  assert.match(log.textContent, /route-x/)
+})
+
+test('the blocker log keeps exact codes beside friendly explanations', async () => {
+  const data = econFixture()
+  data.groups = [{ currency: 'USD', monthly_fees: 20, window_fees: 19.37, fee_complete: true,
+    window_fee_complete: true, usage_usd: 2, difference_usd: null, converted: false,
+    fx: null, status: 'unavailable', notes: [], blockers: [
+      { account_id: 'test:default', code: 'missing_cache_read_rate' },
+      { account_id: 'test:default', code: 'missing_cache_write_rate' },
+    ] }]
+  data.accounts[0].blockers = [{ code: 'missing_cache_read_rate' }]
+  const { container } = await renderSection(data)
+  const log = container.querySelector('#wm-cost-blocker-log')
+  assert.match(log.textContent, /\(missing_cache_read_rate\)/)
+  assert.match(log.textContent, /\(missing_cache_write_rate\)/)
+  assert.deepEqual([...log.querySelectorAll('[data-blocker-code]')].map(li => li.dataset.blockerCode),
+    ['missing_cache_read_rate', 'missing_cache_write_rate', 'missing_cache_read_rate'])
+  const table = container.querySelector('.wm-econ-table')
+  assert.match(table.textContent, /cache price evidence/,
+    'the account row keeps its friendly explanation')
+  assert.doesNotMatch(table.textContent, /\(missing_cache_read_rate\)|\(missing_cache_write_rate\)/,
+    'the account table keeps plain explanations; codes live in the log')
+})
+
+test('a two-month comparable trend surfaces inline while one month stays closed', async () => {
+  const inline = await renderSection(econFixture())
+  assert.ok(inline.container.querySelector('.wm-econ-trend-inline'),
+    'two comparable USD months render the trend without a click')
+  assert.equal(inline.container.querySelector('.wm-econ-trend-inline').textContent.includes('2026-09'), true)
+  const single = econFixture()
+  single.trend = { months: [{
+    month: '2026-10', fees_by_currency: [{ currency: 'USD', amount: 20 }], fees_usd: 20,
+    usage_usd: 2.0, difference_usd: -18.0, in_progress: false, partial: false,
+    recording_partial: false, difference_note: '',
+  }], excluded_before_recording: 0, note: '' }
+  const closed = await renderSection(single)
+  assert.equal(closed.container.querySelector('.wm-econ-trend-inline'), null,
+    'a single comparable period is not presented as a trend')
+  const disclosure = [...closed.container.querySelectorAll('.wm-econ-disclosure')]
+    .find(details => details.querySelector('summary').textContent === 'Monthly trend')
+  assert.ok(disclosure && !disclosure.open, 'the single month stays one click away')
+})
+
+test('the inline trend keeps non-comparable months and raw notes out of view', async () => {
+  const data = econFixture()
+  data.trend = { months: [
+    { month: '2026-08', fees_by_currency: [{ currency: 'USD', amount: 20 }], fees_usd: 20,
+      usage_usd: 4, difference_usd: -16, in_progress: false, partial: false,
+      recording_partial: false, difference_note: '' },
+    { month: '2026-09', fees_by_currency: [{ currency: 'USD', amount: 20 }], fees_usd: 20,
+      usage_usd: 2, difference_usd: -18, in_progress: false, partial: true,
+      recording_partial: false,
+      difference_note: "Only 50.0% of this month's usage is priced; the value is a lower bound." },
+    { month: '2026-10', fees_by_currency: [{ currency: 'USD', amount: 20 }], fees_usd: 20,
+      usage_usd: null, usage_calls: 0, unattributed_usage_calls: 1, difference_usd: null,
+      in_progress: false, partial: true, partial_pricing: false, partial_attribution: true,
+      recording_partial: false,
+      difference_note: 'Shared route ownership changed during this month; observed usage on affected routes was excluded from this comparison: route-anthropic.' },
+  ], excluded_before_recording: 0, note: '' }
+  const { container } = await renderSection(data)
+  const inline = container.querySelector('.wm-econ-trend-inline')
+  assert.ok(inline, 'two comparable months still surface the trend')
+  assert.match(inline.textContent, /2026-08/)
+  assert.match(inline.textContent, /2026-09/)
+  assert.match(inline.textContent, /partial pricing/, 'translated flags stay inline')
+  assert.doesNotMatch(inline.textContent, /2026-10/, 'the non-comparable month leaves the inline view')
+  assert.doesNotMatch(inline.textContent, /route-anthropic|lower bound/,
+    'raw slugs and untranslated notes stay out of the standard view')
+  const parked = container.querySelector('.wm-econ-trend-parked')
+  assert.ok(parked && !parked.open, 'parked months stay one click away')
+  assert.match(parked.textContent, /Months needing more evidence/)
+  assert.match(parked.textContent, /route-anthropic/)
+  assert.match(parked.textContent, /partial attribution/)
+})
+
+test('the economics section carries a stable subscription anchor', async () => {
+  const { container } = await renderSection(econFixture())
+  const section = container.querySelector('#wm-subscription-economics')
+  assert.ok(section, 'Memberships can deep-link the subscription comparison')
+  assert.equal(section.querySelector('h2').textContent, 'Subscription economics')
 })
 
 test('the panel blocks the fx editor when the rates read fails', async () => {
