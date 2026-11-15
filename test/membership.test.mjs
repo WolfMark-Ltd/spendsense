@@ -160,14 +160,28 @@ test('Memberships provider names are display-only labels with a safe fallback', 
   assert.equal(T.membershipProviderLabel('anthropic', en), 'Anthropic')
   assert.equal(T.membershipProviderLabel('google-gemini', en), 'Google Gemini')
   assert.equal(T.membershipProviderLabel('openai-codex', en), 'OpenAI Codex')
-  assert.equal(T.membershipProviderLabel('new-provider', en), 'new-provider')
+  // F28: a route slug is named in words, never echoed to the reader.
+  assert.equal(T.membershipProviderLabel('new-provider', en), 'new-provider',
+    'the shared provider label still echoes an unmapped id for other screens')
+  assert.equal(T.membershipFriendlyProvider('new-provider', en), 'New Provider',
+    'Memberships names the same id in words')
+  assert.equal(T.membershipFriendlyProvider('commandcode-anthropic', en), 'CommandCode · Anthropic route')
+  assert.equal(T.membershipFriendlyProvider('opencode-zen', en), 'OpenCode Zen')
+  assert.equal(T.membershipAccountName({ family: 'commandcode-anthropic', label: 'commandcode-anthropic' }, en),
+    'CommandCode · Anthropic route')
+  assert.equal(T.membershipAccountName({ family: 'anthropic', label: 'main' }, en), 'main',
+    'a name the reader chose is kept')
   assert.equal(T.membershipIdentityLabel({ family: 'anthropic', label: 'Work' }, en), 'Anthropic · Work')
   assert.equal(T.membershipIdentityLabel({ family: 'openai-codex', label: 'openai-codex' }, en), 'OpenAI Codex')
   assert.equal(T.membershipIdentityLabel({ family: 'google-gemini', label: '工作室' }, zh), 'Google Gemini 服务 · 工作室')
+  // A jump chip names the provider as well, so two "main" accounts stay
+  // distinguishable and no chip is a bare route slug.
   assert.equal(T.membershipAccountShortcutLabel({ family: 'openai-codex', label: 'Personal' }, en), 'Personal',
-    'account shortcuts keep a user-provided account label')
+    'a sentence keeps the short name')
+  assert.equal(T.membershipAccountShortcutLabel({ family: 'commandcode-anthropic', label: 'commandcode-anthropic' }, en),
+    'CommandCode · Anthropic route', 'a slug is never the short name')
   assert.equal(T.membershipAccountShortcutLabel({ family: 'google-gemini', label: 'google-gemini' }, en), 'Google Gemini',
-    'provider names replace only the raw provider slug')
+    'a raw provider slug is replaced by its name')
 })
 
 test('needs attention covers exhaustion, conflict, reconfirm, and missing plan or fee', () => {

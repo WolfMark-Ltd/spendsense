@@ -6607,7 +6607,7 @@ const MEMBERSHIP_CSS = `
 .wm-membership-summary>div{display:grid;align-content:center;gap:3px;min-width:0;padding:9px 12px;
  border-left:1px solid var(--ui-stroke-secondary)}
 .wm-membership-summary>div:first-child{border-left:0}
-.wm-membership-summary dt,.wm-row-fact dt{font-size:10.5px;font-weight:600;color:var(--ui-text-tertiary)}
+.wm-membership-summary dt,.wm-row-fact dt{font-size:11px;font-weight:600;color:var(--ui-text-tertiary)}
 .wm-membership-summary dd,.wm-row-fact dd{margin:0;min-width:0}
 .wm-membership-summary dd{font-size:14px;line-height:1.35;font-weight:600;color:var(--ui-text-primary);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .wm-memberships nav.wm-account-jump.wm-membership-account-nav{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:10px 14px;align-items:center}
@@ -6653,6 +6653,33 @@ button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
 @container(max-width:620px){.wm-membership-value .wm-button{width:100%}}
 @container(max-width:620px){.wm-memberships nav.wm-account-jump.wm-membership-account-nav{grid-template-columns:minmax(0,1fr);align-items:start}.wm-membership-shortcuts{grid-template-columns:minmax(0,1fr);gap:6px}}
 @container(max-width:340px){.wm-row-mid{grid-template-columns:minmax(0,1fr)}.wm-row-state,.wm-row-actions{grid-column:1;grid-row:auto}.wm-row-actions,.wm-row-actions .wm-button{width:100%}}
+/* F28/F30: scan by what an account is. A group heading names the arrangement
+   once, and a 3px inset mark on each row carries it without a second border. */
+.wm-membership-groups{gap:8px}
+.wm-membership-group-title{display:flex;align-items:center;gap:7px;margin:8px 0 2px;font-size:11.5px;font-weight:650;
+ letter-spacing:.04em;text-transform:uppercase;color:var(--ui-text-tertiary)}
+.wm-membership-group-icon{display:inline-flex;color:var(--ui-text-tertiary)}
+.wm-membership-group-icon svg{width:13px;height:13px}
+.wm-membership-group-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;
+ padding:0 5px;border-radius:999px;background:var(--ui-fill-secondary);color:var(--ui-text-secondary);
+ font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.wm-arrangement-chips{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+.wm-arrangement-chips{gap:4px 14px}
+.wm-arrangement-chips li{display:inline-flex;align-items:center;gap:6px;padding:1px 0;font-size:11.5px;
+ color:var(--ui-text-secondary);min-width:0}
+.wm-arrangement-chips li[data-arrangement="unknown_fee"]{color:var(--ui-warning)}
+.wm-arrangement-count{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 5px;
+ border-radius:999px;background:var(--ui-fill-secondary);font-weight:650;color:var(--ui-text-primary);
+ font-size:10.5px;font-variant-numeric:tabular-nums}
+.wm-reading-health{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.wm-reading-health[data-reading-failed]{color:var(--ui-warning)}
+.wm-row-mark{display:inline-flex;margin-right:6px;color:var(--ui-text-tertiary);vertical-align:-2px}
+.wm-row-mark svg{width:13px;height:13px}
+.wm-card[data-arrangement="paid"]{box-shadow:inset 3px 0 0 var(--ui-accent)}
+.wm-card[data-arrangement="included"]{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--ui-success,#3fb950) 70%,transparent)}
+.wm-card[data-arrangement="free"]{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--ui-success,#3fb950) 35%,var(--ui-stroke-secondary))}
+.wm-card[data-arrangement="prepaid"],.wm-card[data-arrangement="metered"]{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--ui-accent) 35%,var(--ui-stroke-secondary))}
+.wm-card[data-arrangement="review"]{box-shadow:inset 3px 0 0 var(--ui-warning)}
 `
 
 let membershipReadSerial = 0
@@ -7419,10 +7446,51 @@ function membershipTargetDom(nav) {
   }
 }
 
+/**
+ * How one account is arranged, as the page groups it. `paid` is a subscription
+ * with a chosen plan; a subscription with no plan is `no_plan`, and a test
+ * route whose ownership cannot be resolved is `review`, never a paid plan.
+ */
+const MEMBERSHIP_GROUP_META = [
+  ['paid', 'memGroupPaid', 'credit-card'],
+  ['free', 'memGroupFree', 'gift'],
+  ['included', 'memGroupIncluded', 'link'],
+  ['prepaid', 'memGroupPrepaid', 'wallet'],
+  ['metered', 'memGroupMetered', 'zap'],
+  ['no_plan', 'memGroupNoPlan', 'circle-slash'],
+  ['unconfirmed', 'memGroupUnconfirmed', 'question'],
+  ['review', 'memGroupReview', 'warning']
+]
+function arrangementGroup(account) {
+  const arrangement = account?.effective_arrangement ||
+    (account?.api_only ? 'api_only' : account?.billing_arrangement || 'unconfirmed')
+  if (arrangement === 'subscription') return account?.plan_id ? 'paid' : 'no_plan'
+  if (arrangement === 'free_tier') return 'free'
+  if (arrangement === 'included') return 'included'
+  if (arrangement === 'prepaid') return 'prepaid'
+  if (arrangement === 'api_only') return 'metered'
+  if (arrangement === 'no_plan') return 'no_plan'
+  if (arrangement === 'unconfirmed') return 'unconfirmed'
+  if (['invalid', 'mixed'].includes(arrangement)) return 'review'
+  return 'unconfirmed'
+}
+
 function membershipSummary(accounts) {
   const total = accounts.length
   const withPlan = accounts.filter(a => a.plan_id && !['api_only', 'prepaid', 'unconfirmed', 'no_plan', 'included', 'invalid', 'mixed'].includes(a.effective_arrangement)).length
   const exhausted = accounts.filter(a => a.quota?.account_exhausted).length
+  // One count per arrangement the reader can act on, plus the fees whose
+  // amount is genuinely unknown — never folded into a zero.
+  const groups = Object.fromEntries(MEMBERSHIP_GROUP_META.map(([key]) => [key, 0]))
+  let unknownFee = 0
+  for (const account of accounts) {
+    const key = arrangementGroup(account)
+    groups[key] = (groups[key] || 0) + 1
+    const amount = account?.fee?.effective?.amount
+    if (key === 'paid' && (amount === null || amount === undefined || !Number.isFinite(Number(amount)))) {
+      unknownFee += 1
+    }
+  }
   const byCurrency = {}
   const byCurrencyPeriod = {}
   for (const account of accounts) {
@@ -7434,8 +7502,38 @@ function membershipSummary(accounts) {
     const key = `${code}/${period}`
     byCurrencyPeriod[key] = (byCurrencyPeriod[key] || 0) + Number(effective.amount)
   }
-  return { total, withPlan, exhausted, byCurrency, byCurrencyPeriod,
+  return { total, withPlan, exhausted, groups, unknownFee, byCurrency, byCurrencyPeriod,
     monthlyUsd: byCurrencyPeriod['USD/month'] || 0 }
+}
+
+/**
+ * Provider-reading health across the page, in one sentence a reader can act on.
+ * A route Hermes cannot read and a read that failed are counted apart, and
+ * neither is folded into "Needs attention" (which is about plan setup).
+ */
+function membershipReadingHealth(accounts, native, t = needsAttentionEn) {
+  const health = { reported: 0, stale: 0, noReading: 0, unattempted: 0, failed: 0, total: 0 }
+  for (const account of Array.isArray(accounts) ? accounts : []) {
+    const state = allowanceReadState(account, { native: !!native, t }).state
+    health.total += 1
+    if (state === 'reported') health.reported += 1
+    else if (state === 'stale') health.stale += 1
+    else if (state === 'failed') health.failed += 1
+    else if (state === 'not_read') health.unattempted += 1
+    else health.noReading += 1
+  }
+  return health
+}
+
+/** The one-line plain-English provider reading summary, or '' when empty. */
+function readingHealthText(health, t = needsAttentionEn) {
+  if (!health || !health.total) return ''
+  const parts = [t('memReadingHealthReported', health.reported)]
+  if (health.noReading) parts.push(t('memReadingHealthNoReading', health.noReading))
+  if (health.unattempted) parts.push(t('memReadingHealthUnattempted', health.unattempted))
+  if (health.stale) parts.push(t('memReadingHealthStale', health.stale))
+  if (health.failed) parts.push(t('memReadingHealthFailed', health.failed))
+  return `${t('memReadingHealthLabel')}: ${parts.join(' · ')}`
 }
 
 function feesLabel(summary, t = needsAttentionEn) {
@@ -7680,18 +7778,68 @@ const MEMBERSHIP_PROVIDER_LABEL_KEYS = {
   'google-gemini': 'memProviderGoogleGemini',
   'openai-codex': 'memProviderOpenAICodex'
 }
+/**
+ * Route slugs a reader should never see in the normal view. A slug is an
+ * implementation name, so it is named in words; anything not listed is
+ * title-cased from its own words rather than shown raw.
+ */
+const MEMBERSHIP_ROUTE_NAMES = {
+  'commandcode': 'CommandCode',
+  'commandcode-anthropic': 'CommandCode · Anthropic route',
+  'commandcode-chat': 'CommandCode · chat route',
+  'commandcode-claude': 'CommandCode · Claude route',
+  'opencode-zen': 'OpenCode Zen',
+  'xai-oauth': 'xAI · OAuth',
+  'xai': 'xAI',
+  'nous': 'Nous Portal',
+  'deepseek': 'DeepSeek',
+  'copilot': 'GitHub Copilot',
+  'openai': 'OpenAI'
+}
+/** A technical identifier rather than a name a person chose. */
+function looksTechnical(value) {
+  const text = String(value || '').trim()
+  if (!text) return true
+  if (Object.hasOwn(MEMBERSHIP_ROUTE_NAMES, text)) return true
+  return /^[a-z0-9]+(?:[-_.][a-z0-9]+)+$/.test(text) && !/\s/.test(text)
+}
+function humaniseSlug(value) {
+  const slug = String(value || '').trim()
+  if (!slug) return ''
+  if (Object.hasOwn(MEMBERSHIP_ROUTE_NAMES, slug)) return MEMBERSHIP_ROUTE_NAMES[slug]
+  return slug.split(/[-_.]+/).filter(Boolean)
+    .map(part => part.length <= 3 && part === part.toLowerCase() && /^(cli|api|sdk|ai)$/.test(part)
+      ? part.toUpperCase()
+      : part[0].toUpperCase() + part.slice(1))
+    .join(' ')
+}
+/** The shared provider label. Unmapped ids print as-is: other screens (the
+ * Hermes sidebar badge) rely on that contract, so Memberships uses its own
+ * friendly form below rather than changing it for everyone. */
 function membershipProviderLabel(family, t = needsAttentionEn) {
   const key = MEMBERSHIP_PROVIDER_LABEL_KEYS[family]
   return key ? t(key) : family || ''
 }
-function membershipIdentityLabel(account, t = needsAttentionEn) {
-  const provider = membershipProviderLabel(account?.family, t)
-  return account?.label && account.label !== account.family
-    ? `${provider} · ${account.label}` : provider
+/** Memberships-only: a route slug is named in words, never echoed. */
+function membershipFriendlyProvider(family, t = needsAttentionEn) {
+  const key = MEMBERSHIP_PROVIDER_LABEL_KEYS[family]
+  return key ? t(key) : humaniseSlug(family)
 }
+/** The reader-facing account name; a route slug is named, never echoed. */
+function membershipAccountName(account, t = needsAttentionEn) {
+  const label = String(account?.label || '').trim()
+  const family = String(account?.family || '').trim()
+  if (label && label !== family && !looksTechnical(label)) return label
+  return membershipFriendlyProvider(label && label !== family ? label : family, t)
+}
+function membershipIdentityLabel(account, t = needsAttentionEn) {
+  const provider = membershipFriendlyProvider(account?.family, t)
+  const name = membershipAccountName(account, t)
+  return name && name !== provider ? `${provider} · ${name}` : provider
+}
+/** The short name used inside a sentence ("Membership fee · Work"). */
 function membershipAccountShortcutLabel(account, t = needsAttentionEn) {
-  return account?.label && account.label !== account.family
-    ? account.label : membershipProviderLabel(account?.family, t)
+  return membershipAccountName(account, t)
 }
 function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention, native, readAt }) {
   const t = usePluginI18n(ID)
@@ -7705,7 +7853,9 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
   const read = allowanceReadState(account, { native: !!native, t })
   const rows = quotaRows(account, now, t, { readState: read.state })
   const readingStatus = membershipReadingStatus(rows, t, { account, native: !!native })
-  const readNoteKey = allowanceReadNoteKey(read.state)
+  // The page explains the Hermes data limitation once. A card repeats only the
+  // states the reader must act on, never the normal limitation again.
+  const readNoteKey = ['failed', 'stale'].includes(read.state) ? allowanceReadNoteKey(read.state) : ''
   // A provider reading is only trustworthy with its age beside it, and the age
   // keeps counting after the answer arrives.
   const readAge = ['reported', 'stale', 'partial'].includes(readingStatus.state)
@@ -7906,10 +8056,16 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
     : arrangement === 'no_plan' ? t('memNoCurrentPlan')
     : planSaved ? (account.plan?.name || account.plan_id)
     : (apiOnly || arrangement === 'prepaid') ? t('econNoPlan') : t('attnNoPlan')
-  return jsxs('article', { className: 'wm-card', 'data-account': account.id, children: keyedElementChildren([
+  const groupKey = arrangementGroup(account)
+  const groupMark = (MEMBERSHIP_GROUP_META.find(([key]) => key === groupKey) || MEMBERSHIP_GROUP_META[0])[2]
+  return jsxs('article', { className: 'wm-card', 'data-account': account.id, 'data-arrangement': groupKey,
+    children: keyedElementChildren([
     jsxs('div', { className: 'wm-row-head', children: [
       jsxs('div', { className: 'wm-row-id', children: [
-        jsx('strong', { children: identityLabel }),
+        jsxs('strong', { children: [
+          jsx('span', { className: 'wm-row-mark', 'aria-hidden': 'true', children: jsx(Codicon, { name: groupMark }) }),
+          identityLabel
+        ] }),
         jsx('span', { children: `${arrangementLabel(arrangement, t)} · ${planName}` })
       ] }),
       jsxs('dl', { className: 'wm-row-mid', children: [
@@ -8174,26 +8330,33 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
  * this link works whether or not that page publishes one: the tab switch is
  * the contract, the scroll is an enhancement.
  */
-const COSTS_VALUE_ANCHORS = ['costs-subscription-value', 'costs-value']
+const COSTS_VALUE_ANCHORS = ['wm-subscription-economics', 'costs-subscription-value', 'costs-value']
 function openCostsValue() {
   goLedgerTab('costs')
   try {
-    setTimeout(() => {
-      if (typeof document === 'undefined') return
+    if (typeof document === 'undefined') return
+    // The destination mounts after the tab switch and fills in from its own
+    // query, so look again, bounded, instead of racing one timer.
+    const deadline = Date.now() + 2500
+    const land = () => {
       let anchor = null
       for (const id of COSTS_VALUE_ANCHORS) {
         anchor = document.getElementById(id)
         if (anchor) break
       }
       if (!anchor) anchor = document.querySelector('[data-wm-section="subscription-value"]')
-      if (!anchor) return
+      if (!anchor) {
+        if (Date.now() < deadline) setTimeout(land, 60)
+        return
+      }
       const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
       anchor.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
       if (!anchor.hasAttribute('tabindex')) anchor.setAttribute('tabindex', '-1')
       try { anchor.focus({ preventScroll: true }) } catch {
         try { anchor.focus() } catch {}
       }
-    }, 60)
+    }
+    setTimeout(land, 60)
   } catch {}
 }
 
@@ -8286,6 +8449,9 @@ function MembershipsPage() {
   const weatherError = weather.error && membershipIdentityCurrent(identity) ? weather.error : null
   const attention = needsAttention(list, weatherById, t)
   const attentionIds = new Set(attention.map(item => item.account.id))
+  // F83: provider-reading health is its own statement, so a failed read can
+  // never sit behind a summary that reads "Needs attention 0".
+  const health = membershipReadingHealth(list, native, t)
   const displayed = attentionOnly ? list.filter(account => attentionIds.has(account.id)) : list
   const jumpToAccount = account => {
     try {
@@ -8633,10 +8799,10 @@ function MembershipsPage() {
         : null,
       jsx('dl', { className: 'wm-membership-summary', 'aria-label': t('memSummaryLabel'),
         'aria-busy': !accountsReady && !accounts.error, children: [
-          jsxs('div', { children: [jsx('dt', { children: t('memAccounts') }),
+          jsxs('div', { children: [jsx('dt', { children: t('memAccountsReviewed') }),
             jsx('dd', { children: summaryValue(String(summary.total)) })] }),
-          jsxs('div', { children: [jsx('dt', { children: t('memPlansConfirmed') }),
-            jsx('dd', { children: summaryValue(t('memPlansOf', summary.withPlan, summary.total)) })] }),
+          jsxs('div', { children: [jsx('dt', { children: t('memPaidSubscriptions') }),
+            jsx('dd', { children: summaryValue(String(summary.groups.paid || 0)) })] }),
           jsxs('div', { children: [jsx('dt', { children: t('memNeedsAttention') }),
             jsx('dd', { children: summaryValue(String(attentionIds.size)) })] }),
           jsxs('div', { children: [jsx('dt', { children: t('memFeesLabel') }),
@@ -8644,14 +8810,40 @@ function MembershipsPage() {
         ] }),
       jsx('p', { className: 'wm-note wm-membership-fee-note',
         children: t('memFeesNoteShort') }),
-      jsxs('div', { className: 'wm-membership-value', children: [
+      jsx('div', { className: 'wm-membership-value', children:
         jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-wm-costs-link': 'true',
-          onClick: openCostsValue, children: t('memOpenCostsValue') }),
-        jsx('p', { className: 'wm-note', children: t('memOpenCostsValueNote') })
-      ] }),
+          onClick: openCostsValue, children: t('memOpenCostsValue') }) }),
+      accountsReady && list.length
+        ? jsx('ul', { className: 'wm-arrangement-chips', 'aria-label': t('memArrangementBreakdown'), children: [
+            ...MEMBERSHIP_GROUP_META.map(([key, labelKey]) => ({ key, labelKey, count: summary.groups[key] || 0 }))
+              .filter(group => group.count > 0)
+              .map(group => jsxs('li', { 'data-arrangement': group.key, children: [
+                jsx('span', { className: 'wm-arrangement-count', children: String(group.count) }),
+                jsx('span', { children: t(group.labelKey) })
+              ] }, group.key)),
+            ...(summary.unknownFee
+              ? [jsxs('li', { 'data-arrangement': 'unknown_fee', children: [
+                  jsx('span', { className: 'wm-arrangement-count', children: String(summary.unknownFee) }),
+                  jsx('span', { children: t('memUnknownFeeChip') })
+                ] }, 'unknown_fee')]
+              : [])
+          ] })
+        : null,
+      accountsReady && list.length
+        ? jsxs('p', { className: cn('wm-note', 'wm-reading-health', health.failed && 'wm-warn-note'),
+            'data-reading-health': 'true', 'data-reading-failed': health.failed ? String(health.failed) : undefined,
+            children: [
+              jsx('span', { children: readingHealthText(health, t) }),
+              health.failed
+                ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'retry-readings',
+                    disabled: !!busy, onClick: refreshReadings, children: t('memRetryReadings') })
+                : null
+            ] })
+        : null,
       jsxs('details', { className: 'wm-note wm-membership-explainer', children: [
         jsx('summary', { children: t('memFeesHelp') }),
-        jsx('p', { children: t('memFeesNote') })
+        jsx('p', { children: t('memFeesNote') }),
+        jsx('p', { children: t('memReadingsNote') })
       ] }),
       attention.length
         ? jsxs('section', { className: 'wm-attention', 'aria-label': t('memNeedsAttention'), children: [
@@ -8671,12 +8863,6 @@ function MembershipsPage() {
               : null
           ] })
         : null,
-      storeNotes.length
-        ? jsxs('section', { className: 'wm-attention', 'aria-label': t('memBackendNotes'), children: [
-            jsx('h3', { children: t('memBackendNotes') }),
-            jsxs('ul', { children: storeNotes.slice(0, 6).map((note, index) => jsx('li', { children: note }, index)) })
-          ] })
-        : null,
       accounts.error
         ? jsx('div', { className: 'wm-alert', role: 'alert', children: membershipErrorText(accounts.error, 'read', t) })
         : null,
@@ -8692,32 +8878,57 @@ function MembershipsPage() {
               jsxs('div', { className: 'wm-membership-account-chips', children: list.map(account => jsx('button', { type: 'button', className: 'wm-account-chip',
                 'data-attention': attentionIds.has(account.id) ? 'true' : undefined,
                 onClick: () => jumpToAccount(account),
-                children: membershipAccountShortcutLabel(account, t) + (attentionIds.has(account.id) ? t('memJumpCheck') : '') }, account.id)) })
+                children: membershipIdentityLabel(account, t) + (attentionIds.has(account.id) ? t('memJumpCheck') : '') }, account.id)) })
             ] })
           ] })
         : null,
-      jsxs('div', { className: 'wm-cards', children:
-        !accountsReady && !accounts.error
-          ? [jsx('p', { className: 'wm-empty', role: 'status', children: t('memReading') })]
-          : accountsReady && displayed.length
-            ? displayed.map(account => jsx(MembershipCard, {
+      !accountsReady && !accounts.error
+        ? jsx('p', { className: 'wm-empty', role: 'status', children: t('memReading') })
+        : accountsReady && displayed.length
+          ? jsx('div', { className: 'wm-cards wm-membership-groups', children:
+              // Grouped by arrangement so the page can be scanned by what each
+              // account actually is. The headings and cards share one parent,
+              // so a card keeps its identity (and focus) when an edit moves it
+              // to another group; order inside a group is the stable
+              // family/label/id order the rows have always had.
+              MEMBERSHIP_GROUP_META.flatMap(([key, labelKey, icon]) => {
+                const items = displayed.filter(account => arrangementGroup(account) === key)
+                if (!items.length) return []
+                return [
+                  jsxs('h3', { className: 'wm-membership-group-title', 'data-group-kind': key, children: [
+                    jsx('span', { className: 'wm-membership-group-icon', 'aria-hidden': 'true',
+                      children: jsx(Codicon, { name: icon }) }),
+                    jsx('span', { children: t(labelKey) }),
+                    jsx('span', { className: 'wm-membership-group-count', children: String(items.length) })
+                  ] }, `group-${key}`),
+                  ...items.map(account => jsx(MembershipCard, {
                 account,
                 accounts: list,
                 plans: accountPlanChoices(account),
                 busy, onAction, draft, saveFee, catalogue, notice,
                 weather: weatherById.get(account.id) || null, weatherError,
                 hasAttention: attentionIds.has(account.id), native, readAt: current?.at || null
-              }, account.id))
-            : [jsx('p', { className: 'wm-empty', children: accounts.error
-                ? t('memReadFailed')
-                : attentionOnly ? t('memAllClear')
-                : t('memEmptyHint') })] }),
-      membershipDiagnostics.length
+                }, account.id))
+                ]
+              }) })
+          : jsx('p', { className: 'wm-empty', children: accounts.error
+              ? t('memReadFailed')
+              : attentionOnly ? t('memAllClear')
+              : t('memEmptyHint') }),
+      membershipDiagnostics.length || storeNotes.length
         ? jsxs('details', { className: 'wm-note', 'data-wm-diagnostics': 'true', children: [
             jsx('summary', { children: t('memDiagnostics') }),
             jsx('p', { className: 'wm-note', children: t('memDiagnosticsNote') }),
-            jsx('ul', { children: membershipDiagnostics.map((entry, index) =>
-              jsx('li', { children: `${entry.at} ${entry.method} ${entry.path} → ${entry.status ?? entry.outcome} · ${entry.scope}` }, index)) })
+            ...(storeNotes.length
+              ? [jsxs('div', { 'data-wm-backend-notes': 'true', children: [
+                  jsx('p', { className: 'wm-note', children: t('memBackendNotesTitle') }),
+                  jsxs('ul', { children: storeNotes.map((note, index) => jsx('li', { children: note }, index)) })
+                ] })]
+              : []),
+            membershipDiagnostics.length
+              ? jsx('ul', { children: membershipDiagnostics.map((entry, index) =>
+                  jsx('li', { children: `${entry.at} ${entry.method} ${entry.path} → ${entry.status ?? entry.outcome} · ${entry.scope}` }, index)) })
+              : null
           ] })
         : null
     ] })
@@ -11164,6 +11375,27 @@ const I18N = {
     memSubtitle: 'Review provider accounts, billing arrangements and plan fees.',
     memDetails: 'Details',
     memSummaryLabel: 'Membership summary',
+    memAccountsReviewed: 'Accounts reviewed',
+    memPaidSubscriptions: 'Paid subscriptions',
+    memArrangementBreakdown: 'Accounts by arrangement',
+    memGroupPaid: 'Paid subscriptions',
+    memGroupFree: 'Free plans',
+    memGroupIncluded: 'Included with another plan',
+    memGroupPrepaid: 'Prepaid credits',
+    memGroupMetered: 'Metered API',
+    memGroupNoPlan: 'No current plan',
+    memGroupUnconfirmed: 'Not confirmed',
+    memGroupReview: 'Needs review',
+    memUnknownFeeChip: 'with an unknown fee',
+    memReadingHealthLabel: 'Provider readings',
+    memReadingHealthReported: n => `${n} reported`,
+    memReadingHealthNoReading: n => `${n} with no reading from Hermes`,
+    memReadingHealthUnattempted: n => `${n} awaiting refresh`,
+    memReadingHealthStale: n => `${n} stale`,
+    memReadingHealthFailed: n => `${n} failed`,
+    memRetryReadings: 'Retry provider readings',
+    memReadingsNote: 'Allowance readings come from Hermes, and only where Hermes reports them. “No reading from Hermes” is a normal data limitation, not zero usage and not an error; your own marks still apply.',
+    memBackendNotesTitle: 'Provider messages from the backend',
     memSummaryLoading: 'Loading…',
     memSummaryUnavailable: 'Unavailable',
     memEffectiveFee: 'Effective fee',
@@ -11229,7 +11461,7 @@ const I18N = {
     memReadFailedReason: 'The provider read failed.',
     memReadIdentity: 'Hermes answered for a different account, so the reading is not applied.',
     memReadingsPartial: (failed, total) => `Readings refreshed, but ${failed} of ${total} accounts could not be read.`,
-    memAttentionScope: (reasons, accounts) => `${reasons} ${reasons === 1 ? 'reason' : 'reasons'} across ${accounts} ${accounts === 1 ? 'account' : 'accounts'}.`,
+    memAttentionScope: (reasons, accounts) => `Plan setup and allowance marks: ${reasons} ${reasons === 1 ? 'reason' : 'reasons'} across ${accounts} ${accounts === 1 ? 'account' : 'accounts'}.`,
     memAttentionMore: (more, total) => `Showing ${total - more} of ${total}. Use the attention filter to narrow the list.`,
     memOpenCostsValue: 'Compare subscription value in Costs',
     memOpenCostsValueNote: 'Costs keeps saved fees and API-equivalent usage value apart. Neither is a bill.',
@@ -11253,7 +11485,7 @@ const I18N = {
     memProviderAnthropic: 'Anthropic',
     memProviderGoogleGemini: 'Google Gemini',
     memProviderOpenAICodex: 'OpenAI Codex',
-    memDiagnostics: 'Request diagnostics (this session, optional)',
+    memDiagnostics: 'Technical details (optional, this session)',
     memDiagnosticsNote: 'Method, relative path, status, identity and time only. No tokens, headers, bodies or account contents.',
     memSaved: 'Saved.',
     memSavedRereadFailed: error => `Saved, but the list could not be re-read. ${error}`,
@@ -12621,6 +12853,27 @@ const I18N = {
     memSubtitle: '查看服务商账户、账单安排与方案费用。',
     memDetails: '详情',
     memSummaryLabel: '会员摘要',
+    memAccountsReviewed: '已检查账户',
+    memPaidSubscriptions: '付费订阅',
+    memArrangementBreakdown: '按计费方式分类的账户',
+    memGroupPaid: '付费订阅',
+    memGroupFree: '免费方案',
+    memGroupIncluded: '计入其他订阅',
+    memGroupPrepaid: '预付额度',
+    memGroupMetered: '按量 API',
+    memGroupNoPlan: '当前无方案',
+    memGroupUnconfirmed: '未确认',
+    memGroupReview: '需要复核',
+    memUnknownFeeChip: '项费用未知',
+    memReadingHealthLabel: '提供方读数',
+    memReadingHealthReported: n => `已上报 ${n}`,
+    memReadingHealthNoReading: n => `Hermes 未提供 ${n}`,
+    memReadingHealthUnattempted: n => `待刷新 ${n}`,
+    memReadingHealthStale: n => `已过期 ${n}`,
+    memReadingHealthFailed: n => `失败 ${n}`,
+    memRetryReadings: '重试提供方读数',
+    memReadingsNote: '额度读数来自 Hermes，且仅在 Hermes 提供时显示。“Hermes 未提供读数”是正常的数据限制，并非零用量或错误；您自己的标记仍然有效。',
+    memBackendNotesTitle: '后端提供方消息',
     memSummaryLoading: '正在加载…',
     memSummaryUnavailable: '不可用',
     memEffectiveFee: '有效费用',
@@ -12685,7 +12938,7 @@ const I18N = {
     memReadFailedReason: '提供方读取失败。',
     memReadIdentity: 'Hermes 返回了其他账户的数据，因此不采用该读数。',
     memReadingsPartial: (failed, total) => `读数已刷新，但有 ${failed}/${total} 个账户无法读取。`,
-    memAttentionScope: (reasons, accounts) => `${accounts} 个账户共 ${reasons} 项`,
+    memAttentionScope: (reasons, accounts) => `方案设置与额度标记：${accounts} 个账户共 ${reasons} 项`,
     memAttentionMore: (more, total) => `显示 ${total - more} 项，共 ${total} 项。可用“仅需关注”筛选列表。`,
     memOpenCostsValue: '在“成本”中比较订阅价值',
     memOpenCostsValueNote: '“成本”将已保存的费用与 API 等值用量价值分开呈现，两者都不是账单。',
@@ -12709,7 +12962,7 @@ const I18N = {
     memProviderAnthropic: 'Anthropic 服务',
     memProviderGoogleGemini: 'Google Gemini 服务',
     memProviderOpenAICodex: 'OpenAI Codex 服务',
-    memDiagnostics: '请求诊断信息（本次会话，可选）',
+    memDiagnostics: '技术详情（可选，本次会话）',
     memDiagnosticsNote: '仅包含方法、相对路径、状态、身份与时间。不包含令牌、标头、请求体或账户内容。',
     memSaved: '已保存。',
     memSavedRereadFailed: error => `已保存，但列表无法重新读取。${error}`,
@@ -13937,7 +14190,9 @@ export const __test = {
   $membershipScope, $membershipSnapshot, $membershipNotice,
   $membershipBusy, $membershipNative, $membershipAttentionOnly, $membershipDraft, $scopeConnection, $scopeProfile,
   fmtMoney, fmtMembershipMoney, membershipCurrencyCode, feeLabel, quotaRows, membershipReadingStatus, needsAttention, membershipSummary, feesLabel, accountPlanChoices,
-  allowanceReadState, allowanceReadNoteKey, readingAgeText, providerAgeSeconds, membershipReadFailures, openCostsValue, wxErrorText, ATTENTION_LIST_LIMIT,
+  allowanceReadState, allowanceReadNoteKey, readingAgeText, providerAgeSeconds, membershipReadFailures,
+  arrangementGroup, MEMBERSHIP_GROUP_META, membershipReadingHealth, readingHealthText, humaniseSlug,
+  membershipAccountName, membershipFriendlyProvider, COSTS_VALUE_ANCHORS, openCostsValue, wxErrorText, ATTENTION_LIST_LIMIT,
   membershipProviderLabel, membershipIdentityLabel, membershipAccountShortcutLabel,
   excludedPlansNote, planOptionLabel,
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,

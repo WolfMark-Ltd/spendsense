@@ -41,9 +41,9 @@ const accounts = [
     rev: 'r1', route_entitlement_rev: 'route-r1', credential_present: true },
 
   // Hermes answers, and has no allowance reading for this route.
-  { id: 'memb:unsupported', family: 'google-gemini', label: 'studio',
+  { id: 'memb:unsupported', family: 'commandcode-anthropic', label: 'commandcode-anthropic',
     billing_arrangement: 'subscription', effective_arrangement: 'subscription',
-    plan_id: 'google-gemini.ai-pro', plan: { name: 'Google AI Pro' },
+    plan_id: 'commandcode.goat', plan: { name: 'GOAT' },
     fee: { basis: 'catalogue', effective: { amount: 19.99, currency: 'EUR', period: 'month' } },
     quota: { provider_state: 'absent', age_seconds: null, has_provider_reporting: false, windows: [
       { id: 'daily', label: 'Daily allowance', used_percent: null, state: 'no_data', scope: 'account',
@@ -140,7 +140,8 @@ try {
   plugin.register({
     rest: async path => {
       if (path.startsWith('/membership/accounts')) {
-        return { ok: true, accounts, store: { loaded: true, error: '' }, notes: [] }
+        return { ok: true, accounts, store: { loaded: true, error: '' },
+          notes: ['openai-codex: usage read failed (usage read failed: TimeoutExpired)'] }
       }
       if (path.startsWith('/membership/plans')) return { ok: true, plans: [], vocabulary: {} }
       if (path.startsWith('/allowance/weather')) return { ok: true, accounts: [] }
@@ -218,15 +219,48 @@ try {
             diagnosticsSummary: host.querySelector('[data-wm-diagnostics] > summary')?.textContent || '',
             diagnosticsNote: host.querySelector('[data-wm-diagnostics] p')?.textContent || '',
             attentionScope: host.querySelector('[data-attention-scope]')?.textContent || '',
+            summaryLabels: [...host.querySelectorAll('.wm-membership-summary dt')].map(el => el.textContent),
+            summaryValues: [...host.querySelectorAll('.wm-membership-summary dd')].map(el => el.textContent),
+            groups: (() => {
+              // Headings and cards share one parent, so group membership is
+              // read from document order.
+              const out = []
+              for (const node of host.querySelectorAll('.wm-membership-groups > *')) {
+                if (node.dataset.groupKind) {
+                  out.push({ kind: node.dataset.groupKind, title: node.textContent || '', accounts: [] })
+                } else if (node.dataset.account && out.length) {
+                  out[out.length - 1].accounts.push(node.dataset.account)
+                }
+              }
+              return out
+            })(),
+            arrangementChips: [...host.querySelectorAll('.wm-arrangement-chips li')].map(el => el.textContent),
+            arrangementOf: Object.fromEntries([...host.querySelectorAll('article[data-account]')]
+              .map(card => [card.dataset.account, card.dataset.arrangement])),
+            readingHealth: host.querySelector('[data-reading-health]')?.textContent || '',
+            readingFailed: host.querySelector('[data-reading-health]')?.dataset.readingFailed || '',
+            explainer: host.querySelector('details.wm-membership-explainer')?.textContent || '',
+            backendNotesInDetails: !!host.querySelector('[data-wm-diagnostics] [data-wm-backend-notes]'),
+            rawNotesInNormalView: [...host.querySelectorAll('.wm-attention, .wm-empty, .wm-membership-value')]
+              .some(el => /TimeoutExpired/.test(el.textContent || '')),
           }
         }
         // The link is the discoverable route into the Costs subscription-value
         // view: pressing it selects the Costs destination.
         if (!SHOT) {
+          // The destination is another change's page, so stand in for the
+          // anchor it publishes: the link must land on that section.
+          const anchor = document.createElement('section')
+          anchor.id = 'wm-subscription-economics'
+          document.body.appendChild(anchor)
           const narrow = document.getElementById('narrow-dark')
           T.$ledgerTab.set('memberships')
           narrow.querySelector('[data-wm-costs-link]').click()
           out.checks.costsTabAfterClick = T.$ledgerTab.get()
+          await step(400, () => {})
+          out.checks.costsAnchorFocused = document.activeElement === anchor
+          out.checks.costsAnchorTabIndex = anchor.getAttribute('tabindex')
+          anchor.remove()
         }
         done()
       } catch (error) { out.error = String(error && error.stack || error); done() }

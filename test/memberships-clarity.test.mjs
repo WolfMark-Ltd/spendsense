@@ -35,14 +35,21 @@ const COPY = {
     unreported: 'Unreported',
     noCredential: 'No credential',
     costs: /Compare subscription value in Costs/,
-    diagnosticsLabel: /diagnostic/i,
+    diagnosticsLabel: /Technical details/i,
     diagnostics: /optional/i,
     included: /Included in another account’s subscription/,
     prepaid: /Prepaid credits · no recurring membership fee/,
     metered: /Metered API · no recurring membership fee/,
     free: /Free access · no membership fee/,
-    noteUnsupported: /does not report an allowance for this route/,
-    noteNoReading: /no credential, no usage endpoint, or the read failed/,
+    explainer: /No reading from Hermes.*normal data limitation/is,
+    accountsReviewed: 'Accounts reviewed',
+    paidSubscriptions: 'Paid subscriptions',
+    unknownFee: 'with an unknown fee',
+    noHermesCount: /2 with no reading from Hermes/,
+    healthPrefix: /Provider readings:/,
+    healthFailed: /1 failed/,
+    backendDetails: /Technical details/,
+    attentionPrefix: /Plan setup and allowance marks/,
     noteFailed: /could not be fetched/,
     noteStored: /No provider reading has been requested/,
     noteAge: /Provider reading from 10 min ago/,
@@ -55,14 +62,21 @@ const COPY = {
     unreported: '未上报',
     noCredential: '无凭证',
     costs: /在“成本”中比较订阅价值/,
-    diagnosticsLabel: /诊断/,
+    diagnosticsLabel: /技术详情/,
     diagnostics: /可选/,
     included: /包含在另一账户的订阅中/,
     prepaid: /预付额度/,
     metered: /按量 API/,
     free: /免费访问/,
-    noteUnsupported: /不为此线路提供额度读数/,
-    noteNoReading: /无凭据、无用量端点或读取失败/,
+    explainer: /Hermes 未提供读数.*正常的数据限制/s,
+    accountsReviewed: '已检查账户',
+    paidSubscriptions: '付费订阅',
+    unknownFee: '项费用未知',
+    noHermesCount: /Hermes 未提供 2/,
+    healthPrefix: /提供方读数/,
+    healthFailed: /失败 1/,
+    backendDetails: /技术详情/,
+    attentionPrefix: /方案设置与额度标记/,
     noteFailed: /无法获取提供方读数/,
     noteStored: /尚未请求提供方读数/,
     noteAge: /提供方读数来自 10 分钟前/,
@@ -112,6 +126,10 @@ if (!chrome) {
         assert.equal(result.error, undefined, `${locale}: page script error: ${result.error}`)
         assert.equal(result.checks.costsTabAfterClick, 'costs',
           `${locale}: the Costs link selects the Costs destination`)
+        assert.equal(result.checks.costsAnchorFocused, true,
+          `${locale}: the Costs link lands on the subscription-economics section, not just the tab`)
+        assert.equal(result.checks.costsAnchorTabIndex, '-1',
+          `${locale}: the destination section is focusable for keyboard readers`)
 
         for (const [caseId, view] of Object.entries(result.cases)) {
           assert.ok(view.paneOverflow <= 1, `${locale} ${caseId}: no horizontal overflow (${view.paneOverflow}px)`)
@@ -137,17 +155,22 @@ if (!chrome) {
             `${locale} ${caseId}: the limitation is named in the reader's language`)
           assert.ok(unsupported.chipOverflow <= 1,
             `${locale} ${caseId}: the limitation chip fits its row (${unsupported.chipOverflow}px)`)
-          assert.deepEqual(unsupported.readingNotes.map(note => note.state), ['unsupported'],
-            `${locale} ${caseId}: the allowance group explains the limitation`)
-          assert.match(unsupported.readingNotes[0].text, copy.noteUnsupported)
+          assert.deepEqual(unsupported.readingNotes, [],
+            `${locale} ${caseId}: the normal limitation is explained once, on the page`)
+
+          // F85: one page-level explanation, in the reader's language.
+          assert.match(view.explainer, copy.explainer,
+            `${locale} ${caseId}: the page states the Hermes data limitation once`)
+          assert.match(view.readingHealth, copy.noHermesCount,
+            `${locale} ${caseId}: the provider summary counts the routes Hermes cannot read`)
 
           // Hermes answered without a reading: not permanent, not an error.
           const noHermes = row('memb:nohermes')
           assert.equal(noHermes.readingState, 'no_reading',
             `${locale} ${caseId}: a read that returned nothing is its own state`)
           assert.equal(noHermes.readingLabel, copy.noHermesReading)
-          assert.deepEqual(noHermes.readingNotes.map(note => note.state), ['no_reading'])
-          assert.match(noHermes.readingNotes[0].text, copy.noteNoReading)
+          assert.deepEqual(noHermes.readingNotes, [],
+            `${locale} ${caseId}: a returned-nothing read is not repeated per card`)
 
           // A failed read is an error, and is announced as one.
           const failed = row('memb:failed')
@@ -161,8 +184,8 @@ if (!chrome) {
           assert.equal(stored.readingState, 'unreported',
             `${locale} ${caseId}: a stored view stays Unreported`)
           assert.equal(stored.readingLabel, copy.unreported)
-          assert.deepEqual(stored.readingNotes.map(note => note.state), ['not_read'])
-          assert.match(stored.readingNotes[0].text, copy.noteStored)
+          assert.deepEqual(stored.readingNotes, [],
+            `${locale} ${caseId}: the stored view is not explained per card either`)
 
           // Arrangements, fees and the unconfigured account.
           assert.match(row('memb:included').fee, copy.included,
@@ -190,6 +213,55 @@ if (!chrome) {
             `${locale} ${caseId}: the Costs link is labelled`)
           assert.equal(view.costsFocusable, true,
             `${locale} ${caseId}: the Costs link is keyboard reachable`)
+
+          // F27: the summary states reviewed accounts and paid subscriptions,
+          // never "plans confirmed", and never a confirmed zero.
+          assert.ok(view.summaryLabels.includes(copy.accountsReviewed),
+            `${locale} ${caseId}: the summary counts reviewed accounts`)
+          assert.ok(view.summaryLabels.includes(copy.paidSubscriptions),
+            `${locale} ${caseId}: the summary counts paid subscriptions`)
+          assert.equal(view.summaryValues[0], '9',
+            `${locale} ${caseId}: every account is counted once as reviewed`)
+          assert.equal(view.summaryValues[1], '4',
+            `${locale} ${caseId}: only subscription accounts with a chosen plan are paid`)
+          assert.ok(view.arrangementChips.join(' ').includes(copy.unknownFee),
+            `${locale} ${caseId}: an unknown fee is counted, never shown as zero`)
+          assert.deepEqual(view.arrangementOf['memb:stored'], 'unconfirmed',
+            `${locale} ${caseId}: an unconfirmed account is not called "no current plan"`)
+
+          // F28/F30: grouping by what each account is, with no raw slug in view.
+          assert.deepEqual(view.groups.map(group => group.kind),
+            ['paid', 'free', 'included', 'prepaid', 'metered', 'unconfirmed'],
+            `${locale} ${caseId}: accounts are grouped by arrangement, in a stable order`)
+          assert.deepEqual(view.groups.map(group => group.accounts.length), [4, 1, 1, 1, 1, 1],
+            `${locale} ${caseId}: every account lands in exactly one group`)
+          for (const group of view.groups) {
+            assert.ok(group.title.trim().endsWith(String(group.accounts.length)),
+              `${locale} ${caseId}: the group heading states its own count (${group.title})`)
+          }
+          assert.doesNotMatch(view.paneText, /commandcode-anthropic|opencode-zen|xai-oauth/,
+            `${locale} ${caseId}: no technical route slug is shown in the normal view`)
+          assert.match(view.rows.find(entry => entry.account === 'memb:unsupported').head,
+            /CommandCode · Anthropic route/,
+            `${locale} ${caseId}: a route slug is replaced by a friendly name`)
+
+          // F83: provider reading health is stated separately from attention.
+          assert.match(view.readingHealth, copy.healthPrefix,
+            `${locale} ${caseId}: the page states provider reading health`)
+          assert.match(view.readingHealth, copy.healthFailed,
+            `${locale} ${caseId}: a failed read is counted in the reading summary`)
+          assert.equal(view.readingFailed, '1',
+            `${locale} ${caseId}: the failed count is machine-readable for a retry`)
+          assert.match(view.attentionScope, copy.attentionPrefix,
+            `${locale} ${caseId}: the attention count says what it measures`)
+
+          // F82: raw backend messages live only behind the technical details.
+          assert.equal(view.backendNotesInDetails, true,
+            `${locale} ${caseId}: backend messages are inside the technical details`)
+          assert.equal(view.rawNotesInNormalView, false,
+            `${locale} ${caseId}: no raw provider error is in the normal view`)
+          assert.match(view.diagnosticsSummary, copy.backendDetails,
+            `${locale} ${caseId}: the technical details are named plainly`)
 
           // Diagnostics stay optional and clearly labelled.
           assert.match(view.diagnosticsSummary, copy.diagnosticsLabel,
