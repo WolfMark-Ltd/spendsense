@@ -335,6 +335,108 @@ class BillingArrangementContract(TempStore):
             self.assertGreater(account["catalogue_plans"], 0)
 
 
+class NativeProbeContract(TempStore):
+    """Why an account has no reading is data the pane must not have to guess.
+
+    A stored read made no provider call; a native read that Hermes cannot serve
+    and one that failed are different answers, and neither is zero usage. The
+    card carries the probe state and public reason so the pane can say which,
+    and the probe never becomes a stored field when the card is posted back.
+    """
+
+    def _seed(self):
+        account = {**M.member_from_native(native_payload()), "family": "openai-codex",
+                   "id": "openai-codex:default"}
+        store.save_account(account, self.store)
+        return account
+
+    def _probe(self, state, reason=""):
+        return mock.patch.object(discovery, "probe_providers",
+                                 return_value={"openai-codex": {"state": state,
+                                                                "snapshot": native_payload() if state == "ok" else None,
+                                                                "reason": reason}})
+
+    def test_a_stored_read_makes_no_claim_about_the_provider(self):
+        self._seed()
+        card = api.accounts_payload(path=self.store, catalogue=self.catalogue)["accounts"][0]
+        self.assertIsNone(card["native_probe"],
+                          "no provider read was made, so there is no probe to report")
+        self.assertEqual(card["quota"]["provider_state"], "absent")
+
+    def test_a_successful_provider_read_is_reported_as_ok(self):
+        self._seed()
+        with self._probe("ok"):
+            card = api.accounts_payload(native=True, path=self.store, home=self.home,
+                                        catalogue=self.catalogue)["accounts"][0]
+        self.assertEqual(card["native_probe"]["state"], "ok")
+        # The fixture is dated, so the reading may already be stale; what
+        # matters is that it is a real provider reading, not an absence.
+        self.assertIn(card["quota"]["provider_state"], {"live", "stale"})
+        self.assertTrue(card["quota"]["windows"])
+
+    def test_a_route_hermes_cannot_read_is_unsupported_not_a_failure(self):
+        self._seed()
+        with self._probe("unsupported", "the hermes CLI is not on PATH"):
+            card = api.accounts_payload(native=True, path=self.store, home=self.home,
+                                        catalogue=self.catalogue)["accounts"][0]
+        self.assertEqual(card["native_probe"]["state"], "unsupported")
+        self.assertIn("PATH", card["native_probe"]["reason"])
+        # No snapshot, so the quota view stays absent rather than reading zero.
+        self.assertEqual(card["quota"]["provider_state"], "absent")
+        self.assertEqual(card["quota"]["windows"], [])
+
+    def test_a_failed_read_is_reported_as_an_error_with_its_reason(self):
+        self._seed()
+        with self._probe("error", "usage read failed: TimeoutExpired"):
+            card = api.accounts_payload(native=True, path=self.store, home=self.home,
+                                        catalogue=self.catalogue)["accounts"][0]
+        self.assertEqual(card["native_probe"]["state"], "error")
+        self.assertIn("TimeoutExpired", card["native_probe"]["reason"])
+
+    def test_discovery_carries_the_probe_to_the_cards_it_returns(self):
+        """Discover returns cards too: a failed read must not become silence."""
+        # No provider read means no probe outcome to report — and no `hermes`
+        # subprocess in the test process.
+        out = discovery.discover(self.catalogue, include_native=False, home=self.home)
+        self.assertEqual(out["probes"], {}, "a stored discovery claims no probe")
+        def probe(providers, *, home=None, budget_seconds=10.0):
+            return {p: {"state": "unsupported", "snapshot": None,
+                        "reason": "the hermes CLI is not on PATH"} for p in providers}
+
+        with mock.patch.object(discovery, "probe_providers", side_effect=probe):
+            payload = api.discover_payload(include_native=True, path=self.store, home=self.home,
+                                           catalogue=self.catalogue)
+        cards = {card["family"]: card for card in payload["accounts"]}
+        self.assertEqual(cards["openai-codex"]["native_probe"]["state"], "unsupported")
+        self.assertIn("PATH", cards["openai-codex"]["native_probe"]["reason"])
+
+    def test_a_caller_that_already_probed_can_pass_the_outcomes_in(self):
+        self._seed()
+        card = api.accounts_payload(native=True, path=self.store, home=self.home,
+                                    catalogue=self.catalogue,
+                                    native_snapshots={},
+                                    native_probes={"openai-codex": {"state": "error",
+                                                                    "reason": "usage read failed: TimeoutExpired"}}
+                                    )["accounts"][0]
+        self.assertEqual(card["native_probe"]["state"], "error")
+        self.assertIn("TimeoutExpired", card["native_probe"]["reason"])
+
+    def test_the_probe_is_never_persisted_when_a_card_is_posted_back(self):
+        account = self._seed()
+        with self._probe("error", "usage read failed: TimeoutExpired"):
+            card = api.accounts_payload(native=True, path=self.store, home=self.home,
+                                        catalogue=self.catalogue)["accounts"][0]
+        self.assertEqual(card["native_probe"]["state"], "error")
+        saved = api.save_payload(account["id"], {**card, "plan_id": "openai-codex.chatgpt-plus"},
+                                 path=self.store)
+        self.assertEqual(saved["account"]["plan_id"], "openai-codex.chatgpt-plus")
+        stored = json.loads(Path(self.store).read_text())
+        blob = json.dumps(stored)
+        self.assertNotIn("native_probe", blob,
+                         "a probe describes one request and must never be stored")
+        self.assertNotIn("TimeoutExpired", blob)
+
+
 class DiscoveryContract(TempStore):
     def test_aliases_collapse_and_connectors_are_not_providers(self):
         slots = discovery.credential_slots(self.home)

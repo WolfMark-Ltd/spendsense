@@ -375,7 +375,7 @@ test('diagnostics record the request shape and never a credential', async () => 
   for (const forbidden of ['token', 'authorization', 'cookie', 'secret', 'bearer']) {
     assert.ok(!serialised.includes(forbidden), `diagnostics leaked ${forbidden}`)
   }
-  assert.match(container.textContent, /Request diagnostics/, 'the pane offers the evidence')
+  assert.match(container.textContent, /Technical details \(optional/, 'the pane offers the evidence')
 })
 
 test('reverse completion order: A succeeding late still cannot replace B', async () => {
@@ -2109,7 +2109,8 @@ test('PR-C: attention summary counts accounts and separates its filter from acco
   const shortcuts = nav.querySelector('[role="group"][aria-label="Jump to an account"]')
   assert.match(shortcuts.querySelector('.wm-account-nav-label').textContent, /Jump to an account/)
   assert.deepEqual([...shortcuts.querySelectorAll('.wm-account-chip')].map(button => button.textContent),
-    ['Work · check', 'Personal'])
+    ['Anthropic · Work · check', 'OpenAI Codex · Personal'],
+    'a jump chip names the provider so two accounts never read alike')
 })
 
 test('PR-C: plan-less API-only and prepaid rows show No plan, not the confirm prompt', async () => {
@@ -2176,7 +2177,7 @@ test('PR-C: row order is stable by family, label, id across a reversed refetch',
     .filter(text => !/Needs attention|Showing/.test(text))
   const expected = ['b:2', 'd:5', 'a:4', 'a:3', 'c:1']
   assert.deepEqual(order(), expected, 'rows sort by family, then label, then id')
-  assert.deepEqual(navOrder(), ['Alfa', 'Alfa', 'Echo', 'Delta', 'Able'],
+  assert.deepEqual(navOrder(), ['Alpha · Alfa', 'Alpha · Alfa', 'Alpha · Echo', 'Beta · Delta', 'Zebra · Able'],
     'account navigation follows the same order')
   // The filtered list keeps the order too: a:3 (unpriced fee) and c:1 (no
   // plan) need attention.
@@ -2196,7 +2197,7 @@ test('PR-C: row order is stable by family, label, id across a reversed refetch',
   await flush(5)
   assert.equal(transportCtl.count(c => c.method === 'PUT'), 1, 'the fee saved')
   assert.deepEqual(order(), expected, 'rows do not move when the refetch reverses backend order')
-  assert.deepEqual(navOrder(), ['Alfa', 'Alfa', 'Echo', 'Delta', 'Able'],
+  assert.deepEqual(navOrder(), ['Alpha · Alfa', 'Alpha · Alfa', 'Alpha · Echo', 'Beta · Delta', 'Zebra · Able'],
     'navigation does not move when the refetch reverses backend order')
 })
 

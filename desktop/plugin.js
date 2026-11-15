@@ -6889,7 +6889,7 @@ const MEMBERSHIP_CSS = `
 .wm-membership-summary>div{display:grid;align-content:center;gap:3px;min-width:0;padding:9px 12px;
  border-left:1px solid var(--ui-stroke-secondary)}
 .wm-membership-summary>div:first-child{border-left:0}
-.wm-membership-summary dt,.wm-row-fact dt{font-size:10.5px;font-weight:600;color:var(--ui-text-tertiary)}
+.wm-membership-summary dt,.wm-row-fact dt{font-size:11px;font-weight:600;color:var(--ui-text-tertiary)}
 .wm-membership-summary dd,.wm-row-fact dd{margin:0;min-width:0}
 .wm-membership-summary dd{font-size:14px;line-height:1.35;font-weight:600;color:var(--ui-text-primary);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .wm-memberships nav.wm-account-jump.wm-membership-account-nav{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:10px 14px;align-items:center}
@@ -6925,8 +6925,45 @@ button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
 .wm-group:not([open]) > .wm-group-body{display:none}
 @container(max-width:760px){.wm-row-head{grid-template-columns:minmax(0,1fr)}.wm-row-mid{grid-template-columns:minmax(0,1.35fr) minmax(92px,.7fr) auto auto}}
 @container(max-width:620px){.wm-row-head{align-items:start}.wm-row-mid{grid-template-columns:minmax(0,1fr) minmax(92px,auto);gap:8px 12px}.wm-row-state{grid-column:1}.wm-row-actions{grid-column:2;grid-row:2;align-self:center}.wm-row-actions .wm-button{min-height:38px}.wm-memberships .wm-seg button{min-height:38px}.wm-memberships .wm-attention li{flex-wrap:wrap}.wm-memberships .wm-attention li .wm-button{width:100%}}
+/* A reading-state chip may carry a full sentence ("Not available from
+   Hermes"); at pane width it wraps instead of pushing the row out. */
+@container(max-width:620px){.wm-row-mid .wm-chip{white-space:normal;overflow-wrap:anywhere;text-align:left}}
+.wm-reading-note{margin:0 0 2px;font-size:11.5px;line-height:1.5;color:var(--ui-text-secondary)}
+.wm-reading-note[data-reading-note="failed"]{color:var(--ui-warning)}
+.wm-membership-value{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.wm-membership-value .wm-note{flex:1 1 260px;min-width:0}
+@container(max-width:620px){.wm-membership-value .wm-button{width:100%}}
 @container(max-width:620px){.wm-memberships nav.wm-account-jump.wm-membership-account-nav{grid-template-columns:minmax(0,1fr);align-items:start}.wm-membership-shortcuts{grid-template-columns:minmax(0,1fr);gap:6px}}
 @container(max-width:340px){.wm-row-mid{grid-template-columns:minmax(0,1fr)}.wm-row-state,.wm-row-actions{grid-column:1;grid-row:auto}.wm-row-actions,.wm-row-actions .wm-button{width:100%}}
+/* F28/F30: scan by what an account is. A group heading names the arrangement
+   once, and a 3px inset mark on each row carries it without a second border. */
+.wm-membership-groups{gap:8px}
+.wm-membership-group-title{display:flex;align-items:center;gap:7px;margin:8px 0 2px;font-size:11.5px;font-weight:650;
+ letter-spacing:.04em;text-transform:uppercase;color:var(--ui-text-tertiary)}
+.wm-membership-group-icon{display:inline-flex;color:var(--ui-text-tertiary)}
+.wm-membership-group-icon svg{width:13px;height:13px}
+.wm-membership-group-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;
+ padding:0 5px;border-radius:999px;background:var(--ui-fill-secondary);color:var(--ui-text-secondary);
+ font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.wm-arrangement-chips{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+.wm-arrangement-chips{gap:4px 14px}
+.wm-arrangement-chips li{display:inline-flex;align-items:center;gap:6px;padding:1px 0;font-size:11.5px;
+ color:var(--ui-text-secondary);min-width:0}
+.wm-arrangement-chips li[data-arrangement="unknown_fee"]{color:var(--ui-warning)}
+.wm-arrangement-count{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 5px;
+ border-radius:999px;background:var(--ui-fill-secondary);font-weight:650;color:var(--ui-text-primary);
+ font-size:10.5px;font-variant-numeric:tabular-nums}
+.wm-reading-health{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.wm-reading-part{white-space:nowrap}
+.wm-reading-health .wm-chip[data-state="failed"]{color:var(--ui-warning);
+ border-color:color-mix(in srgb,var(--ui-warning) 55%,transparent)}
+.wm-row-mark{display:inline-flex;margin-right:6px;color:var(--ui-text-tertiary);vertical-align:-2px}
+.wm-row-mark svg{width:13px;height:13px}
+.wm-card[data-arrangement="paid"]{box-shadow:inset 3px 0 0 var(--ui-accent)}
+.wm-card[data-arrangement="included"]{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--ui-success,#3fb950) 70%,transparent)}
+.wm-card[data-arrangement="free"]{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--ui-success,#3fb950) 35%,var(--ui-stroke-secondary))}
+.wm-card[data-arrangement="prepaid"],.wm-card[data-arrangement="metered"]{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--ui-accent) 35%,var(--ui-stroke-secondary))}
+.wm-card[data-arrangement="review"]{box-shadow:inset 3px 0 0 var(--ui-warning)}
 `
 
 let membershipReadSerial = 0
@@ -6954,7 +6991,9 @@ function membershipQuery(native = false, identity = membershipIdentityNow(),
         latestMembershipRead.set(identity, read)
         if (latestMembershipRead.size > 128) latestMembershipRead.delete(latestMembershipRead.keys().next().value)
       }
-      return { identity, generation, read, accounts, store: result.store || null,
+      // `at` is when this answer arrived: the reading's age only stays true
+      // while it is measured from the answer, not from when the server priced it.
+      return { identity, generation, read, at: Date.now(), accounts, store: result.store || null,
                notes: Array.isArray(result.notes) ? result.notes : [] }
     },
     retry: false, staleTime: 5_000
@@ -7154,9 +7193,20 @@ function feeLabel(fee, t = needsAttentionEn) {
 }
 
 /** A quota row rendered from the backend contract, never a guess. */
-function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
+function quotaRows(account, now = Date.now(), t = needsAttentionEn, context = {}) {
   const quota = account?.quota || {}
   const windows = Array.isArray(quota.windows) ? quota.windows : []
+  // A window nobody reads is not a window reading zero. Say why it has no
+  // reading, using the account-level state the caller already worked out.
+  const emptyReading = context.readState === 'failed'
+    ? { reading: t('memQuotaReadFailed'), state: t('memQuotaReadFailedShort') }
+    : context.readState === 'unsupported'
+      ? { reading: t('memQuotaNotAvailable'), state: t('memQuotaNotAvailableShort') }
+      : context.readState === 'no_reading'
+        ? { reading: t('memQuotaNoHermesReading'), state: t('memQuotaNoHermesReadingShort') }
+        : context.readState === 'unreported'
+          ? { reading: t('memQuotaNotReported'), state: t('memQuotaNotReportedShort') }
+          : { reading: t('memQuotaNoReading'), state: t('memQuotaUnrecorded') }
   return windows.map(window => {
     // Whole-account marks persist a language-neutral label; the translated
     // scope name applies at display time from the synthetic row's own scope,
@@ -7181,9 +7231,13 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
           ? t('memQuotaAllowance', fmtMembershipMoney(window.amount, window.currency, t))
           : t('memQuotaAllowance', window.amount)
     } else {
-      reading = t('memQuotaNoReading')
+      reading = state === 'no_data' ? emptyReading.reading : t('memQuotaNoReading')
     }
-    const source = fromManual ? t('memQuotaSrcYou') : bases.includes('provider_reported') ? t('memQuotaSrcProvider') : t('memQuotaSrcNone')
+    // A row whose absence the chip already names does not need a bare "No data"
+    // beside it; a source is only worth printing when there is one.
+    const source = fromManual ? t('memQuotaSrcYou')
+      : bases.includes('provider_reported') ? t('memQuotaSrcProvider')
+      : state === 'no_data' ? '' : t('memQuotaSrcNone')
     const reset = window.reset_at ? t('memQuotaResets', fmtReset(window.reset_at), fmtCountdown(window.reset_at, now, t)) : ''
     return {
       id: window.id, label: isAccountMark ? t('memScopeAccount') : (window.label || window.id),
@@ -7191,19 +7245,107 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
       reading, source, reset, state, basis: bases, providerState: quota.provider_state,
       conflict: !!window.conflict,
       manual: window.manual || null,
-      stateLabel: state === 'live' ? t('memQuotaLive') : state === 'stale' ? t('memQuotaStale') : state === 'manual' ? t('memQuotaManual') : t('memQuotaUnrecorded')
+      stateLabel: state === 'live' ? t('memQuotaLive') : state === 'stale' ? t('memQuotaStale')
+        : state === 'manual' ? t('memQuotaManual')
+        : state === 'no_data' ? emptyReading.state : t('memQuotaUnrecorded')
     }
   })
 }
 
-function membershipReadingStatus(rows, t = needsAttentionEn) {
+/**
+ * Why an account has, or has not, a provider allowance reading. Four honest
+ * cases that must never collapse into each other or into "zero used":
+ *
+ * - `reported`    Hermes answered with windows for this account.
+ * - `not_read`    nothing was asked yet in this session; the stored view only.
+ * - `unsupported` Hermes answered and has no allowance reading to give.
+ * - `failed`      the provider read itself failed (error, timeout, wrong account).
+ *
+ * `unreported` is the remainder: a successful read that carried no windows.
+ */
+function allowanceReadState(account, context = {}) {
+  const t = context.t || needsAttentionEn
+  const quota = account?.quota || {}
+  const probe = account?.native_probe || null
+  const provider = String(quota.provider_state || quota.state || account?.native_state || 'absent')
+  const windows = Array.isArray(quota.windows) ? quota.windows : []
+  const reported = windows.filter(window =>
+    Array.isArray(window?.basis) && window.basis.includes('provider_reported'))
+  if (reported.length) {
+    const stale = provider === 'stale' || reported.some(window => window.state === 'stale')
+    return { state: stale ? 'stale' : 'reported', provider }
+  }
+  const probeState = String(probe?.state || '')
+  if (probeState === 'error') return { state: 'failed', provider, probeState, reason: t('memReadFailedReason') }
+  // "unsupported" is a capability gap: Hermes has no way to read this route.
+  if (probeState === 'unsupported') return { state: 'unsupported', provider, probeState }
+  // "unavailable" is Hermes answering without a reading — no credential, no
+  // usage endpoint, a failed fetch or an exhausted probe budget. Naming it as
+  // permanently unavailable would be a claim the backend cannot support.
+  if (probeState === 'unavailable') return { state: 'no_reading', provider, probeState }
+  if (provider === 'identity_mismatch') {
+    return { state: 'failed', provider, probeState, reason: t('memReadIdentity') }
+  }
+  if (provider === 'unavailable') return { state: 'no_reading', provider, probeState }
+  if (provider === 'live' || provider === 'stale') return { state: 'unreported', provider, probeState }
+  // No probe metadata and no reading: say "not read" only when nothing was
+  // asked. A native read that produced no snapshot is reported as having none.
+  return context.native ? { state: 'unreported', provider, probeState }
+    : { state: 'not_read', provider, probeState }
+}
+
+/** The one-line explanation that belongs with a reading state, or ''. */
+function allowanceReadNoteKey(state) {
+  return state === 'failed' ? 'memReadingNoteFailed'
+    : state === 'unsupported' ? 'memReadingNoteNotAvailable'
+    : state === 'no_reading' ? 'memReadingNoteNoReading'
+    : state === 'not_read' ? 'memReadingNoteNotRead'
+    : state === 'unreported' ? 'memReadingNoteUnreported'
+    : state === 'stale' ? 'memReadingNoteStale'
+    : ''
+}
+
+/** How old the provider reading is, in the reader's own words. */
+/** Age at render time: the server's figure plus the time since the answer. */
+function providerAgeSeconds(quota, readAt, now = Date.now()) {
+  const base = quota?.age_seconds
+  if (base === null || base === undefined || !Number.isFinite(Number(base)) || Number(base) < 0) return null
+  const received = Number(readAt)
+  const elapsed = Number.isFinite(received) && received > 0 ? Math.max(0, (Number(now) - received) / 1000) : 0
+  return Number(base) + elapsed
+}
+
+function readingAgeText(quota, t = needsAttentionEn) {
+  const age = Number(quota?.age_seconds)
+  if (quota?.age_seconds === null || quota?.age_seconds === undefined || !Number.isFinite(age) || age < 0) return ''
+  const minutes = Math.max(0, Math.round(age / 60))
+  if (minutes < 1) return t('memReadAgeNow')
+  return minutes < 90 ? t('memReadAgeMins', minutes) : t('memReadAgeHours', Math.round(minutes / 60))
+}
+
+function membershipReadingStatus(rows, t = needsAttentionEn, context = null) {
   const items = Array.isArray(rows) ? rows : []
   const reported = items.filter(row => row.state === 'live' || row.state === 'stale' ||
     (Array.isArray(row.basis) && row.basis.includes('provider_reported')))
   if (!reported.length) {
-    return items.some(row => row.state === 'manual')
-      ? { state: 'manual', label: t('memAllowanceManual') }
-      : { state: 'unreported', label: t('memAllowanceUnreported') }
+    if (items.some(row => row.state === 'manual')) {
+      return { state: 'manual', label: t('memAllowanceManual') }
+    }
+    // Why there is no reading is part of the answer: a route Hermes cannot
+    // read, a read that failed, and a read nobody has asked for yet are three
+    // different situations, and none of them is zero usage.
+    const read = context?.account
+      ? allowanceReadState(context.account, { native: !!context.native, t })
+      : null
+    // Only a read Hermes could not do, or one that failed, changes the chip.
+    // "Nothing asked for yet" and "asked, nothing reported" keep the existing
+    // Unreported vocabulary; the group note says which it was.
+    if (read && ['unsupported', 'no_reading', 'failed'].includes(read.state)) {
+      const key = read.state === 'failed' ? 'memAllowanceFailed'
+        : read.state === 'unsupported' ? 'memAllowanceNotAvailable' : 'memAllowanceNoHermesReading'
+      return { state: read.state, reason: read.reason || '', label: t(key) }
+    }
+    return { state: 'unreported', label: t('memAllowanceUnreported') }
   }
   if (reported.some(row => row.state === 'stale' ||
       (row.providerState === 'stale' && Array.isArray(row.basis) && row.basis.includes('provider_reported')))) {
@@ -7330,6 +7472,19 @@ const WEATHER_CSS = `
 .wm-weather-notes{margin:0;padding-left:16px;display:grid;gap:3px;font-size:11.5px;color:var(--ui-text-secondary)}
 `
 
+/**
+ * A failed allowance-weather read, told by what actually failed. A timeout, a
+ * backend that does not serve the route and a lost session are three different
+ * answers; "unavailable" for all three teaches the reader nothing.
+ */
+function wxErrorText(error, t = needsAttentionEn) {
+  const { kind } = membershipErrorKind(error)
+  if (kind === 'timeout') return t('wxTimeout')
+  if (kind === 'missing' || kind === 'namespace') return t('wxNotProvided')
+  if (kind === 'auth') return t('wxAuth')
+  return t('wxUnavailable')
+}
+
 /** Compact allowance-weather indicator for one membership card. */
 function AllowanceWeather({ entry, error }) {
   const t = usePluginI18n(ID)
@@ -7338,7 +7493,8 @@ function AllowanceWeather({ entry, error }) {
   if (compatibilityWarning && !entry) return null
   if (!entry && !error) return null
   if (!entry) {
-    return jsx('p', { className: 'wm-note', role: 'status', children: t('wxUnavailable') })
+    return jsx('p', { className: 'wm-note wm-warn-note', role: 'status', 'data-weather-state': 'failed',
+      children: wxErrorText(error, t) })
   }
   // A failed refetch keeps the previous entry: show it, but never as current.
   const stale = !!error
@@ -7362,6 +7518,7 @@ function AllowanceWeather({ entry, error }) {
     : { 'data-weather-kind': 'rule', 'data-weather-profile': row.profile,
         'data-weather-pool': row.pool, tabIndex: -1 }
   return jsxs('section', { className: 'wm-weather', 'data-verdict': rollup,
+    'data-weather-state': stale ? 'stale' : 'ready',
     'aria-label': t('wxTitle'), children: [
       jsxs('div', { className: 'wm-weather-head', children: [
         jsx('span', { className: 'wm-weather-dot', 'aria-hidden': 'true' }),
@@ -7384,6 +7541,9 @@ function AllowanceWeather({ entry, error }) {
         children: notes.map((note, index) => jsx('li', { children: note }, index)) }) : null,
     ] })
 }
+
+/** How many attention reasons the page lists before it must say how many it hid. */
+const ATTENTION_LIST_LIMIT = 6
 
 /** Everything the owner should look at, most urgent first. */
 /** English fallback translator for callers outside a translated render. */
@@ -7570,10 +7730,51 @@ function membershipTargetDom(nav) {
   }
 }
 
+/**
+ * How one account is arranged, as the page groups it. `paid` is a subscription
+ * with a chosen plan; a subscription with no plan is `no_plan`, and a test
+ * route whose ownership cannot be resolved is `review`, never a paid plan.
+ */
+const MEMBERSHIP_GROUP_META = [
+  ['paid', 'memGroupPaid', 'credit-card'],
+  ['free', 'memGroupFree', 'gift'],
+  ['included', 'memGroupIncluded', 'link'],
+  ['prepaid', 'memGroupPrepaid', 'wallet'],
+  ['metered', 'memGroupMetered', 'zap'],
+  ['no_plan', 'memGroupNoPlan', 'circle-slash'],
+  ['unconfirmed', 'memGroupUnconfirmed', 'question'],
+  ['review', 'memGroupReview', 'warning']
+]
+function arrangementGroup(account) {
+  const arrangement = account?.effective_arrangement ||
+    (account?.api_only ? 'api_only' : account?.billing_arrangement || 'unconfirmed')
+  if (arrangement === 'subscription') return account?.plan_id ? 'paid' : 'no_plan'
+  if (arrangement === 'free_tier') return 'free'
+  if (arrangement === 'included') return 'included'
+  if (arrangement === 'prepaid') return 'prepaid'
+  if (arrangement === 'api_only') return 'metered'
+  if (arrangement === 'no_plan') return 'no_plan'
+  if (arrangement === 'unconfirmed') return 'unconfirmed'
+  if (['invalid', 'mixed'].includes(arrangement)) return 'review'
+  return 'unconfirmed'
+}
+
 function membershipSummary(accounts) {
   const total = accounts.length
   const withPlan = accounts.filter(a => a.plan_id && !['api_only', 'prepaid', 'unconfirmed', 'no_plan', 'included', 'invalid', 'mixed'].includes(a.effective_arrangement)).length
   const exhausted = accounts.filter(a => a.quota?.account_exhausted).length
+  // One count per arrangement the reader can act on, plus the fees whose
+  // amount is genuinely unknown — never folded into a zero.
+  const groups = Object.fromEntries(MEMBERSHIP_GROUP_META.map(([key]) => [key, 0]))
+  let unknownFee = 0
+  for (const account of accounts) {
+    const key = arrangementGroup(account)
+    groups[key] = (groups[key] || 0) + 1
+    const amount = account?.fee?.effective?.amount
+    if (key === 'paid' && (amount === null || amount === undefined || !Number.isFinite(Number(amount)))) {
+      unknownFee += 1
+    }
+  }
   const byCurrency = {}
   const byCurrencyPeriod = {}
   for (const account of accounts) {
@@ -7585,8 +7786,46 @@ function membershipSummary(accounts) {
     const key = `${code}/${period}`
     byCurrencyPeriod[key] = (byCurrencyPeriod[key] || 0) + Number(effective.amount)
   }
-  return { total, withPlan, exhausted, byCurrency, byCurrencyPeriod,
+  return { total, withPlan, exhausted, groups, unknownFee, byCurrency, byCurrencyPeriod,
     monthlyUsd: byCurrencyPeriod['USD/month'] || 0 }
+}
+
+/**
+ * Provider-reading health across the page, in one sentence a reader can act on.
+ * A route Hermes cannot read and a read that failed are counted apart, and
+ * neither is folded into "Needs attention" (which is about plan setup).
+ */
+function membershipReadingHealth(accounts, native, t = needsAttentionEn) {
+  const health = { reported: 0, stale: 0, noReading: 0, unattempted: 0, failed: 0, total: 0 }
+  for (const account of Array.isArray(accounts) ? accounts : []) {
+    const state = allowanceReadState(account, { native: !!native, t }).state
+    health.total += 1
+    if (state === 'reported') health.reported += 1
+    else if (state === 'stale') health.stale += 1
+    else if (state === 'failed') health.failed += 1
+    else if (state === 'not_read') health.unattempted += 1
+    else health.noReading += 1
+  }
+  return health
+}
+
+/** The plain-English provider reading summary, as parts that wrap as units. */
+function readingHealthParts(health, t = needsAttentionEn) {
+  if (!health || !health.total) return []
+  const parts = [t('memReadingHealthReported', health.reported)]
+  if (health.noReading) parts.push(t('memReadingHealthNoReading', health.noReading))
+  if (health.unattempted) parts.push(t('memReadingHealthUnattempted', health.unattempted))
+  if (health.stale) parts.push(t('memReadingHealthStale', health.stale))
+  // The failed count is rendered as its own chip: it is the one part the reader
+  // must act on, and colouring the whole sentence made ordinary text look like
+  // a warning in the light theme.
+  return parts
+}
+
+/** The same summary as one string, for text assertions. */
+function readingHealthText(health, t = needsAttentionEn) {
+  const parts = readingHealthParts(health, t)
+  return parts.length ? `${t('memReadingHealthLabel')}: ${parts.join(' · ')}` : ''
 }
 
 function feesLabel(summary, t = needsAttentionEn) {
@@ -7831,28 +8070,88 @@ const MEMBERSHIP_PROVIDER_LABEL_KEYS = {
   'google-gemini': 'memProviderGoogleGemini',
   'openai-codex': 'memProviderOpenAICodex'
 }
+/**
+ * Route slugs a reader should never see in the normal view. A slug is an
+ * implementation name, so it is named in words; anything not listed is
+ * title-cased from its own words rather than shown raw.
+ */
+const MEMBERSHIP_ROUTE_NAMES = {
+  'commandcode': 'CommandCode',
+  'commandcode-anthropic': 'CommandCode · Anthropic route',
+  'commandcode-chat': 'CommandCode · chat route',
+  'commandcode-claude': 'CommandCode · Claude route',
+  'opencode-zen': 'OpenCode Zen',
+  'xai-oauth': 'xAI · OAuth',
+  'xai': 'xAI',
+  'nous': 'Nous Portal',
+  'deepseek': 'DeepSeek',
+  'copilot': 'GitHub Copilot',
+  'openai': 'OpenAI'
+}
+/** A technical identifier rather than a name a person chose. */
+function looksTechnical(value) {
+  const text = String(value || '').trim()
+  if (!text) return true
+  if (Object.hasOwn(MEMBERSHIP_ROUTE_NAMES, text)) return true
+  return /^[a-z0-9]+(?:[-_.][a-z0-9]+)+$/.test(text) && !/\s/.test(text)
+}
+function humaniseSlug(value) {
+  const slug = String(value || '').trim()
+  if (!slug) return ''
+  if (Object.hasOwn(MEMBERSHIP_ROUTE_NAMES, slug)) return MEMBERSHIP_ROUTE_NAMES[slug]
+  return slug.split(/[-_.]+/).filter(Boolean)
+    .map(part => part.length <= 3 && part === part.toLowerCase() && /^(cli|api|sdk|ai)$/.test(part)
+      ? part.toUpperCase()
+      : part[0].toUpperCase() + part.slice(1))
+    .join(' ')
+}
+/** The shared provider label. Unmapped ids print as-is: other screens (the
+ * Hermes sidebar badge) rely on that contract, so Memberships uses its own
+ * friendly form below rather than changing it for everyone. */
 function membershipProviderLabel(family, t = needsAttentionEn) {
   const key = MEMBERSHIP_PROVIDER_LABEL_KEYS[family]
   return key ? t(key) : family || ''
 }
+/** Memberships-only: a route slug is named in words, never echoed. */
+function membershipFriendlyProvider(family, t = needsAttentionEn) {
+  const key = MEMBERSHIP_PROVIDER_LABEL_KEYS[family]
+  return key ? t(key) : humaniseSlug(family)
+}
+/** The reader-facing account name; a route slug is named, never echoed. */
+function membershipAccountName(account, t = needsAttentionEn) {
+  const label = String(account?.label || '').trim()
+  const family = String(account?.family || '').trim()
+  if (label && label !== family && !looksTechnical(label)) return label
+  return membershipFriendlyProvider(label && label !== family ? label : family, t)
+}
 function membershipIdentityLabel(account, t = needsAttentionEn) {
-  const provider = membershipProviderLabel(account?.family, t)
-  return account?.label && account.label !== account.family
-    ? `${provider} · ${account.label}` : provider
+  const provider = membershipFriendlyProvider(account?.family, t)
+  const name = membershipAccountName(account, t)
+  return name && name !== provider ? `${provider} · ${name}` : provider
 }
+/** The short name used inside a sentence ("Membership fee · Work"). */
 function membershipAccountShortcutLabel(account, t = needsAttentionEn) {
-  return account?.label && account.label !== account.family
-    ? account.label : membershipProviderLabel(account?.family, t)
+  return membershipAccountName(account, t)
 }
-function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention }) {
+function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention, native, readAt }) {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const now = useValue($membershipClock)
   const rawPlanDraft = useValue($customPlanDraft)
   const rawExhaustionDraft = useValue($exhaustionDraft)
   const rawEntitlementDraft = useValue($membershipEntitlementDraft)
-  const rows = quotaRows(account, now, t)
-  const readingStatus = membershipReadingStatus(rows, t)
+  // Why this account has or has not a provider reading travels with the rows,
+  // so the row chip, the window rows and the note all say the same thing.
+  const read = allowanceReadState(account, { native: !!native, t })
+  const rows = quotaRows(account, now, t, { readState: read.state })
+  const readingStatus = membershipReadingStatus(rows, t, { account, native: !!native })
+  // The page explains the Hermes data limitation once. A card repeats only the
+  // states the reader must act on, never the normal limitation again.
+  const readNoteKey = ['failed', 'stale'].includes(read.state) ? allowanceReadNoteKey(read.state) : ''
+  // A provider reading is only trustworthy with its age beside it, and the age
+  // keeps counting after the answer arrives.
+  const readAge = ['reported', 'stale', 'partial'].includes(readingStatus.state)
+    ? readingAgeText({ age_seconds: providerAgeSeconds(account?.quota, readAt, now) }, t) : ''
   const fee = account.fee || {}
   const proposal = proposalText(account, t)
   const reconfirmation = reconfirmationText(account, t)
@@ -8049,10 +8348,16 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
     : arrangement === 'no_plan' ? t('memNoCurrentPlan')
     : planSaved ? (account.plan?.name || account.plan_id)
     : (apiOnly || arrangement === 'prepaid') ? t('econNoPlan') : t('attnNoPlan')
-  return jsxs('article', { className: 'wm-card', 'data-account': account.id, children: keyedElementChildren([
+  const groupKey = arrangementGroup(account)
+  const groupMark = (MEMBERSHIP_GROUP_META.find(([key]) => key === groupKey) || MEMBERSHIP_GROUP_META[0])[2]
+  return jsxs('article', { className: 'wm-card', 'data-account': account.id, 'data-arrangement': groupKey,
+    children: keyedElementChildren([
     jsxs('div', { className: 'wm-row-head', children: [
       jsxs('div', { className: 'wm-row-id', children: [
-        jsx('strong', { children: identityLabel }),
+        jsxs('strong', { children: [
+          jsx('span', { className: 'wm-row-mark', 'aria-hidden': 'true', children: jsx(Codicon, { name: groupMark }) }),
+          identityLabel
+        ] }),
         jsx('span', { children: `${arrangementLabel(arrangement, t)} · ${planName}` })
       ] }),
       jsxs('dl', { className: 'wm-row-mid', children: [
@@ -8066,6 +8371,9 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
             children: readingStatus.label }) })
         ] }),
         jsxs('div', { className: 'wm-row-state', children: [
+          account.credential_present === false
+            ? jsx('span', { className: 'wm-chip', 'data-state': 'no_data', 'data-credential': 'missing',
+                children: t('memCredMissingChip') }) : null,
           hasAttention ? jsx('span', { className: 'wm-certainty', 'data-certainty': 'partial', children: t('memNeedsAttention') }) : null,
           busy === account.id ? jsx('span', { className: 'wm-note', role: 'status', children: t('memSaving') }) : null
         ] }),
@@ -8233,6 +8541,10 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
       onToggle: event => membershipGroupToggled(account.id, 'allowances', event.currentTarget.open), children: [
       jsx('summary', { children: t('memGroupAllow') }),
       jsxs('div', { className: 'wm-group-body', children: [
+    readNoteKey ? jsx('p', { className: 'wm-note wm-reading-note', 'data-reading-note': read.state,
+      children: t(readNoteKey) }) : null,
+    readAge ? jsx('p', { className: 'wm-note wm-reading-note', 'data-reading-age': 'true',
+      children: readAge }) : null,
     rows.length
       ? jsxs('ul', { className: 'wm-quota', children: rows.map(row => jsxs('li', { 'data-window': row.id, 'data-state': row.state, children: [
           jsxs('div', { className: 'wm-quota-head', children: [
@@ -8240,8 +8552,11 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
             jsx('span', { className: 'wm-chip', 'data-state': row.state, children: row.stateLabel })
           ] }),
           jsx('div', { className: 'wm-quota-reading', children: row.reading }),
-          jsx('div', { className: 'wm-note', children: [row.source, row.reset,
-            row.manual && !row.reset ? t('memQuotaNoReset') : ''].filter(Boolean).join(' · ') }),
+          [row.source, row.reset, row.manual && !row.reset ? t('memQuotaNoReset') : '']
+            .filter(Boolean).length
+            ? jsx('div', { className: 'wm-note', children: [row.source, row.reset,
+                row.manual && !row.reset ? t('memQuotaNoReset') : ''].filter(Boolean).join(' · ') })
+            : null,
           jsxs('div', { className: 'wm-quota-actions', children: [
             jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'mark-exhausted',
               disabled: !!busy,
@@ -8301,6 +8616,55 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
   ], `membership-card-${account.id}`) })
 }
 
+
+/**
+ * Jump to the Costs tab's subscription-value view. The anchor is optional so
+ * this link works whether or not that page publishes one: the tab switch is
+ * the contract, the scroll is an enhancement.
+ */
+const COSTS_VALUE_ANCHORS = ['wm-subscription-economics', 'costs-subscription-value', 'costs-value']
+function openCostsValue() {
+  goLedgerTab('costs')
+  try {
+    if (typeof document === 'undefined') return
+    // The destination mounts after the tab switch and fills in from its own
+    // query, so look again, bounded, instead of racing one timer.
+    const deadline = Date.now() + 2500
+    const land = () => {
+      let anchor = null
+      for (const id of COSTS_VALUE_ANCHORS) {
+        anchor = document.getElementById(id)
+        if (anchor) break
+      }
+      if (!anchor) anchor = document.querySelector('[data-wm-section="subscription-value"]')
+      if (!anchor) {
+        if (Date.now() < deadline) setTimeout(land, 60)
+        return
+      }
+      const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+      anchor.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+      if (!anchor.hasAttribute('tabindex')) anchor.setAttribute('tabindex', '-1')
+      try { anchor.focus({ preventScroll: true }) } catch {
+        try { anchor.focus() } catch {}
+      }
+    }
+    setTimeout(land, 60)
+  } catch {}
+}
+
+/** Accounts whose provider read failed, so a refresh cannot claim a clean sweep. */
+function membershipReadFailures(accounts) {
+  const list = Array.isArray(accounts) ? accounts : []
+  // A probe can succeed and still return another account's numbers; the card
+  // rejects that reading, so a refresh must not call the sweep clean.
+  const failed = list.filter(account => account?.native_probe?.state === 'error'
+    || account?.quota?.provider_state === 'identity_mismatch')
+  const missing = list.filter(account => {
+    const state = String(account?.native_probe?.state || '')
+    return state === 'unsupported' || state === 'unavailable'
+  })
+  return { failed: failed.length, missing: missing.length, total: list.length }
+}
 
 function MembershipsPage() {
   // The identity is reactive: switching gateway or profile, or a re-activation
@@ -8362,7 +8726,7 @@ function MembershipsPage() {
     // Stamped with the identity that produced it; never adopted from another.
     if (accounts.data.identity !== identity || !membershipIdentityCurrent(identity) ||
         accounts.data.read !== latestMembershipRead.get(identity)) return
-    $membershipSnapshot.set({ identity, accounts: accounts.data.accounts,
+    $membershipSnapshot.set({ identity, accounts: accounts.data.accounts, at: accounts.data.at,
                               store: accounts.data.store, notes: accounts.data.notes })
   }, [accounts.data, identity])
 
@@ -8377,6 +8741,9 @@ function MembershipsPage() {
   const weatherError = weather.error && membershipIdentityCurrent(identity) ? weather.error : null
   const attention = needsAttention(list, weatherById, t)
   const attentionIds = new Set(attention.map(item => item.account.id))
+  // F83: provider-reading health is its own statement, so a failed read can
+  // never sit behind a summary that reads "Needs attention 0".
+  const health = membershipReadingHealth(list, native, t)
   const displayed = attentionOnly ? list.filter(account => attentionIds.has(account.id)) : list
   const jumpToAccount = account => {
     try {
@@ -8466,7 +8833,7 @@ function MembershipsPage() {
         if (membershipOperationCurrent(captured, operation)) {
           if (payload.read === latestMembershipRead.get(captured)) {
             $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
-                                      store: payload.store, notes: payload.notes })
+                                      at: payload.at, store: payload.store, notes: payload.notes })
           }
           setMembershipNotice(captured, 'good', t('memSaved'), operation, key)
         }
@@ -8614,7 +8981,7 @@ function MembershipsPage() {
       const result = await membershipWrite('POST', '/membership/discover?native=true')
       if (!membershipOperationCurrent(captured, operation)) return
       if (Array.isArray(result?.accounts)) {
-        $membershipSnapshot.set({ identity: captured, accounts: result.accounts,
+        $membershipSnapshot.set({ identity: captured, accounts: result.accounts, at: Date.now(),
                                   store: result.store || null, notes: result.notes || [] })
       }
       const summary = t('memDiscovered', result.discovered ?? 0, result.added?.length ?? 0, result.updated?.length ?? 0)
@@ -8623,7 +8990,7 @@ function MembershipsPage() {
         const payload = await queryClient.fetchQuery({ ...membershipQuery(true, captured, generation, operation), staleTime: 0 })
         if (!membershipOperationCurrent(captured, operation) || payload.read !== latestMembershipRead.get(captured)) return
         $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
-                                  store: payload.store, notes: payload.notes })
+                                  at: payload.at, store: payload.store, notes: payload.notes })
         setMembershipNotice(captured, 'good', summary, operation)
       } catch (readError) {
         setMembershipNotice(captured, 'warn',
@@ -8656,9 +9023,16 @@ function MembershipsPage() {
       if (!membershipOperationCurrent(captured, operation) || payload.read !== latestMembershipRead.get(captured)) return
       $membershipNative.set(true)
       $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
-                                store: payload.store, notes: payload.notes })
+                                at: payload.at, store: payload.store, notes: payload.notes })
       await invalidateWeatherFor(captured)
-      setMembershipNotice(captured, 'good', t('memReadingsRefreshed'), operation)
+      // A refresh that could not read every account is not a clean sweep.
+      const failures = membershipReadFailures(payload.accounts)
+      // A read that returned nothing is not a failure, but it is not a clean
+      // sweep either: say how many accounts came back empty.
+      setMembershipNotice(captured, failures.failed ? 'warn' : 'good',
+        failures.failed ? t('memReadingsPartial', failures.failed, failures.total)
+          : failures.missing ? t('memReadingsNoReading', failures.missing, failures.total)
+          : t('memReadingsRefreshed'), operation)
     } catch (error) {
       setMembershipNotice(captured, 'warn', membershipErrorText(error, 'refresh', t), operation)
     } finally {
@@ -8720,10 +9094,10 @@ function MembershipsPage() {
         : null,
       jsx('dl', { className: 'wm-membership-summary', 'aria-label': t('memSummaryLabel'),
         'aria-busy': !accountsReady && !accounts.error, children: [
-          jsxs('div', { children: [jsx('dt', { children: t('memAccounts') }),
+          jsxs('div', { children: [jsx('dt', { children: t('memAccountsReviewed') }),
             jsx('dd', { children: summaryValue(String(summary.total)) })] }),
-          jsxs('div', { children: [jsx('dt', { children: t('memPlansConfirmed') }),
-            jsx('dd', { children: summaryValue(t('memPlansOf', summary.withPlan, summary.total)) })] }),
+          jsxs('div', { children: [jsx('dt', { children: t('memPaidSubscriptions') }),
+            jsx('dd', { children: summaryValue(String(summary.groups.paid || 0)) })] }),
           jsxs('div', { children: [jsx('dt', { children: t('memNeedsAttention') }),
             jsx('dd', { children: summaryValue(String(attentionIds.size)) })] }),
           jsxs('div', { children: [jsx('dt', { children: t('memFeesLabel') }),
@@ -8731,26 +9105,63 @@ function MembershipsPage() {
         ] }),
       jsx('p', { className: 'wm-note wm-membership-fee-note',
         children: t('memFeesNoteShort') }),
+      jsx('div', { className: 'wm-membership-value', children:
+        jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-wm-costs-link': 'true',
+          onClick: openCostsValue, children: t('memOpenCostsValue') }) }),
+      accountsReady && list.length
+        ? jsx('ul', { className: 'wm-arrangement-chips', 'aria-label': t('memArrangementBreakdown'), children: [
+            ...MEMBERSHIP_GROUP_META.map(([key, labelKey]) => ({ key, labelKey, count: summary.groups[key] || 0 }))
+              .filter(group => group.count > 0)
+              .map(group => jsxs('li', { 'data-arrangement': group.key, children: [
+                jsx('span', { className: 'wm-arrangement-count', children: String(group.count) }),
+                jsx('span', { children: t(group.labelKey) })
+              ] }, group.key)),
+            ...(summary.unknownFee
+              ? [jsxs('li', { 'data-arrangement': 'unknown_fee', children: [
+                  jsx('span', { className: 'wm-arrangement-count', children: String(summary.unknownFee) }),
+                  jsx('span', { children: t('memUnknownFeeChip') })
+                ] }, 'unknown_fee')]
+              : [])
+          ] })
+        : null,
+      accountsReady && list.length
+        ? jsxs('p', { className: 'wm-note wm-reading-health',
+            'data-reading-health': 'true', 'data-reading-failed': health.failed ? String(health.failed) : undefined,
+            children: [
+              jsx('span', { children: `${t('memReadingHealthLabel')}:` }),
+              ...readingHealthParts(health, t).map((part, index) =>
+                jsx('span', { className: 'wm-reading-part', children: `${index ? ' · ' : ' '}${part}` }, `part-${index}`)),
+              health.failed
+                ? jsx('span', { className: 'wm-chip', 'data-state': 'failed',
+                    children: t('memReadingHealthFailed', health.failed) })
+                : null,
+              health.failed
+                ? jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'retry-readings',
+                    disabled: !!busy, onClick: refreshReadings, children: t('memRetryReadings') })
+                : null
+            ] })
+        : null,
       jsxs('details', { className: 'wm-note wm-membership-explainer', children: [
         jsx('summary', { children: t('memFeesHelp') }),
-        jsx('p', { children: t('memFeesNote') })
+        jsx('p', { children: t('memFeesNote') }),
+        jsx('p', { children: t('memReadingsNote') })
       ] }),
       attention.length
         ? jsxs('section', { className: 'wm-attention', 'aria-label': t('memNeedsAttention'), children: [
             jsx('h3', { children: t('memNeedsAttention') }),
-            jsxs('ul', { children: attention.slice(0, 6).map((item, index) =>
+            jsx('p', { className: 'wm-note', 'data-attention-scope': 'true',
+              children: t('memAttentionScope', attention.length, attentionIds.size) }),
+            jsxs('ul', { children: attention.slice(0, ATTENTION_LIST_LIMIT).map((item, index) =>
               jsxs('li', { 'data-tone': item.tone, children: [
                 jsx('span', { children: `${membershipAccountShortcutLabel(item.account, t)}: ${item.text}` }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
                   onClick: () => queueMembershipTarget(item),
                   children: attentionActionLabel(item.issue, t) })
-              ] }, index)) })
-          ] })
-        : null,
-      storeNotes.length
-        ? jsxs('section', { className: 'wm-attention', 'aria-label': t('memBackendNotes'), children: [
-            jsx('h3', { children: t('memBackendNotes') }),
-            jsxs('ul', { children: storeNotes.slice(0, 6).map((note, index) => jsx('li', { children: note }, index)) })
+              ] }, index)) }),
+            attention.length > ATTENTION_LIST_LIMIT
+              ? jsx('p', { className: 'wm-note', 'data-attention-more': String(attention.length - ATTENTION_LIST_LIMIT),
+                  children: t('memAttentionMore', attention.length - ATTENTION_LIST_LIMIT, attention.length) })
+              : null
           ] })
         : null,
       accounts.error
@@ -8768,31 +9179,57 @@ function MembershipsPage() {
               jsxs('div', { className: 'wm-membership-account-chips', children: list.map(account => jsx('button', { type: 'button', className: 'wm-account-chip',
                 'data-attention': attentionIds.has(account.id) ? 'true' : undefined,
                 onClick: () => jumpToAccount(account),
-                children: membershipAccountShortcutLabel(account, t) + (attentionIds.has(account.id) ? t('memJumpCheck') : '') }, account.id)) })
+                children: membershipIdentityLabel(account, t) + (attentionIds.has(account.id) ? t('memJumpCheck') : '') }, account.id)) })
             ] })
           ] })
         : null,
-      jsxs('div', { className: 'wm-cards', children:
-        !accountsReady && !accounts.error
-          ? [jsx('p', { className: 'wm-empty', role: 'status', children: t('memReading') })]
-          : accountsReady && displayed.length
-            ? displayed.map(account => jsx(MembershipCard, {
+      !accountsReady && !accounts.error
+        ? jsx('p', { className: 'wm-empty', role: 'status', children: t('memReading') })
+        : accountsReady && displayed.length
+          ? jsx('div', { className: 'wm-cards wm-membership-groups', children:
+              // Grouped by arrangement so the page can be scanned by what each
+              // account actually is. The headings and cards share one parent,
+              // so a card keeps its identity (and focus) when an edit moves it
+              // to another group; order inside a group is the stable
+              // family/label/id order the rows have always had.
+              MEMBERSHIP_GROUP_META.flatMap(([key, labelKey, icon]) => {
+                const items = displayed.filter(account => arrangementGroup(account) === key)
+                if (!items.length) return []
+                return [
+                  jsxs('h3', { className: 'wm-membership-group-title', 'data-group-kind': key, children: [
+                    jsx('span', { className: 'wm-membership-group-icon', 'aria-hidden': 'true',
+                      children: jsx(Codicon, { name: icon }) }),
+                    jsx('span', { children: t(labelKey) }),
+                    jsx('span', { className: 'wm-membership-group-count', children: String(items.length) })
+                  ] }, `group-${key}`),
+                  ...items.map(account => jsx(MembershipCard, {
                 account,
                 accounts: list,
                 plans: accountPlanChoices(account),
                 busy, onAction, draft, saveFee, catalogue, notice,
                 weather: weatherById.get(account.id) || null, weatherError,
-                hasAttention: attentionIds.has(account.id)
-              }, account.id))
-            : [jsx('p', { className: 'wm-empty', children: accounts.error
-                ? t('memReadFailed')
-                : attentionOnly ? t('memAllClear')
-                : t('memEmptyHint') })] }),
-      membershipDiagnostics.length
-        ? jsxs('details', { className: 'wm-note', children: [
+                hasAttention: attentionIds.has(account.id), native, readAt: current?.at || null
+                }, account.id))
+                ]
+              }) })
+          : jsx('p', { className: 'wm-empty', children: accounts.error
+              ? t('memReadFailed')
+              : attentionOnly ? t('memAllClear')
+              : t('memEmptyHint') }),
+      membershipDiagnostics.length || storeNotes.length
+        ? jsxs('details', { className: 'wm-note', 'data-wm-diagnostics': 'true', children: [
             jsx('summary', { children: t('memDiagnostics') }),
-            jsx('ul', { children: membershipDiagnostics.map((entry, index) =>
-              jsx('li', { children: `${entry.at} ${entry.method} ${entry.path} → ${entry.status ?? entry.outcome} · ${entry.scope}` }, index)) })
+            jsx('p', { className: 'wm-note', children: t('memDiagnosticsNote') }),
+            ...(storeNotes.length
+              ? [jsxs('div', { 'data-wm-backend-notes': 'true', children: [
+                  jsx('p', { className: 'wm-note', children: t('memBackendNotesTitle') }),
+                  jsxs('ul', { children: storeNotes.map((note, index) => jsx('li', { children: note }, index)) })
+                ] })]
+              : []),
+            membershipDiagnostics.length
+              ? jsx('ul', { children: membershipDiagnostics.map((entry, index) =>
+                  jsx('li', { children: `${entry.at} ${entry.method} ${entry.path} → ${entry.status ?? entry.outcome} · ${entry.scope}` }, index)) })
+              : null
           ] })
         : null
     ] })
@@ -11247,6 +11684,27 @@ const I18N = {
     memSubtitle: 'Review provider accounts, billing arrangements and plan fees.',
     memDetails: 'Details',
     memSummaryLabel: 'Membership summary',
+    memAccountsReviewed: 'Accounts reviewed',
+    memPaidSubscriptions: 'Paid subscriptions',
+    memArrangementBreakdown: 'Accounts by arrangement',
+    memGroupPaid: 'Paid subscriptions',
+    memGroupFree: 'Free plans',
+    memGroupIncluded: 'Included with another plan',
+    memGroupPrepaid: 'Prepaid credits',
+    memGroupMetered: 'Metered API',
+    memGroupNoPlan: 'No current plan',
+    memGroupUnconfirmed: 'Not confirmed',
+    memGroupReview: 'Needs review',
+    memUnknownFeeChip: 'with an unknown fee',
+    memReadingHealthLabel: 'Provider readings',
+    memReadingHealthReported: n => `${n} reported`,
+    memReadingHealthNoReading: n => `${n} with no reading from Hermes`,
+    memReadingHealthUnattempted: n => `${n} awaiting refresh`,
+    memReadingHealthStale: n => `${n} stale`,
+    memReadingHealthFailed: n => `${n} failed`,
+    memRetryReadings: 'Retry provider readings',
+    memReadingsNote: 'Allowance readings come from Hermes, and only where Hermes reports them. “No reading from Hermes” is a normal data limitation, not zero usage and not an error; your own marks still apply.',
+    memBackendNotesTitle: 'Provider messages from the backend',
     memSummaryLoading: 'Loading…',
     memSummaryUnavailable: 'Unavailable',
     memEffectiveFee: 'Effective fee',
@@ -11256,6 +11714,10 @@ const I18N = {
     memAllowanceStale: 'Stale reading',
     memAllowanceManual: 'Manual mark',
     memAllowanceUnreported: 'Unreported',
+    // Why there is no reading. Four different situations, never one blank.
+    memAllowanceNotAvailable: 'Not available from Hermes',
+    memAllowanceFailed: 'Read failed',
+    memAllowanceNoHermesReading: 'No reading from Hermes',
     memGroupPlan: 'Plan & billing',
     memSeats: 'Seats',
     memSaveSeats: 'Save seats',
@@ -11296,6 +11758,23 @@ const I18N = {
     memFeesLabel: 'Membership fees',
     memFeesNotRecorded: 'No fee amount recorded',
     memFeesNoteShort: 'Saved fees keep their currency and period. Costs separates them from API-equivalent estimates and actual charge evidence.',
+    memReadingNoteNotRead: 'No provider reading has been requested since this page loaded. Refresh provider usage to ask Hermes.',
+    memReadingNoteNotAvailable: 'Hermes does not report an allowance for this route. That is a data limit, not zero usage; your own marks still apply.',
+    memReadingNoteFailed: 'The provider reading could not be fetched. Saved plans, fees and marks are unchanged.',
+    memReadingNoteNoReading: 'Hermes returned no allowance reading for this route: no credential, no usage endpoint, or the read failed. That is a data limitation, not zero usage; your own marks still apply. Try Refresh provider usage.',
+    memReadingNoteUnreported: 'Hermes read this account and reported no allowance windows.',
+    memReadingNoteStale: 'The provider reading is older than the freshness window, so it is not shown as current.',
+    memReadAgeNow: 'Provider reading from just now.',
+    memReadAgeMins: n => `Provider reading from ${n} min ago.`,
+    memReadAgeHours: n => `Provider reading from ${n} h ago.`,
+    memReadFailedReason: 'The provider read failed.',
+    memReadIdentity: 'Hermes answered for a different account, so the reading is not applied.',
+    memReadingsPartial: (failed, total) => `Readings refreshed, but ${failed} of ${total} accounts could not be read.`,
+    memReadingsNoReading: (missing, total) => `Readings refreshed. ${missing} of ${total} accounts returned no reading from Hermes.`,
+    memAttentionScope: (reasons, accounts) => `Plan setup and allowance marks: ${reasons} ${reasons === 1 ? 'reason' : 'reasons'} across ${accounts} ${accounts === 1 ? 'account' : 'accounts'}.`,
+    memAttentionMore: (more, total) => `Showing ${total - more} of ${total}. Use the attention filter to narrow the list.`,
+    memOpenCostsValue: 'Compare subscription value in Costs',
+    memOpenCostsValueNote: 'Costs keeps saved fees and API-equivalent usage value apart. Neither is a bill.',
     memFeesHelp: 'About fees and allowance readings',
     memFeesNote: 'Saved subscription fees stay separate by currency and period; unknown values remain marked on their account. Allowance percentages are limits, not fees. Costs keeps saved fees, API-equivalent estimates and actual charge evidence distinct.',
     memAccountId: id => `Account ID: ${id}`,
@@ -11316,7 +11795,8 @@ const I18N = {
     memProviderAnthropic: 'Anthropic',
     memProviderGoogleGemini: 'Google Gemini',
     memProviderOpenAICodex: 'OpenAI Codex',
-    memDiagnostics: 'Request diagnostics (this session)',
+    memDiagnostics: 'Technical details (optional, this session)',
+    memDiagnosticsNote: 'Method, relative path, status, identity and time only. No tokens, headers, bodies or account contents.',
     memSaved: 'Saved.',
     memSavedRereadFailed: error => `Saved, but the list could not be re-read. ${error}`,
     memDiscovered: (found, added, updated) => `Discovered ${found} account(s): ${added} new, ${updated} updated.`,
@@ -11394,6 +11874,14 @@ const I18N = {
     memQuotaStale: 'stale',
     memQuotaManual: 'manual',
     memQuotaUnrecorded: 'not recorded',
+    memQuotaNotAvailable: 'Not available from Hermes',
+    memQuotaNotAvailableShort: 'not available',
+    memQuotaNotReported: 'Not reported by the provider',
+    memQuotaNotReportedShort: 'not reported',
+    memQuotaReadFailed: 'Read failed',
+    memQuotaReadFailedShort: 'read failed',
+    memQuotaNoHermesReading: 'No reading from Hermes',
+    memQuotaNoHermesReadingShort: 'no reading',
     memCountdownIn: span => `in ${span}`,
     memCountdownAgo: span => `${span} ago`,
     // Plan proposal, reconfirmation and tier options.
@@ -11478,6 +11966,7 @@ const I18N = {
     memArrNoteUnconfirmed: 'No confirmed billing arrangement.',
     memCredConfigured: 'configured credential',
     memCredMissing: 'credential not found',
+    memCredMissingChip: 'No credential',
     memIdentityNative: 'Account identified by Hermes.',
     memIdentitySlot: 'Provider account slot; credential values are never shown.',
     // Exhaustion flow.
@@ -11546,6 +12035,9 @@ const I18N = {
     wxNoForecast: 'No forecast — see details',
     wxDetails: 'Details',
     wxUnavailable: 'Allowance weather is unavailable for this connection.',
+    wxTimeout: 'Provider usage did not answer in time. Try Refresh provider usage again.',
+    wxNotProvided: 'This backend does not serve allowance readings.',
+    wxAuth: 'Sign in to this connection to read allowance usage.',
     wxStale: 'Refresh failed — showing the last read.',
     // Local digest reports.
     reportsTitle: 'Reports',
@@ -12688,6 +13180,27 @@ const I18N = {
     memSubtitle: '查看服务商账户、账单安排与方案费用。',
     memDetails: '详情',
     memSummaryLabel: '会员摘要',
+    memAccountsReviewed: '已检查账户',
+    memPaidSubscriptions: '付费订阅',
+    memArrangementBreakdown: '按计费方式分类的账户',
+    memGroupPaid: '付费订阅',
+    memGroupFree: '免费方案',
+    memGroupIncluded: '计入其他订阅',
+    memGroupPrepaid: '预付额度',
+    memGroupMetered: '按量 API',
+    memGroupNoPlan: '当前无方案',
+    memGroupUnconfirmed: '未确认',
+    memGroupReview: '需要复核',
+    memUnknownFeeChip: '项费用未知',
+    memReadingHealthLabel: '提供方读数',
+    memReadingHealthReported: n => `已上报 ${n}`,
+    memReadingHealthNoReading: n => `Hermes 未提供 ${n}`,
+    memReadingHealthUnattempted: n => `待刷新 ${n}`,
+    memReadingHealthStale: n => `已过期 ${n}`,
+    memReadingHealthFailed: n => `失败 ${n}`,
+    memRetryReadings: '重试提供方读数',
+    memReadingsNote: '额度读数来自 Hermes，且仅在 Hermes 提供时显示。“Hermes 未提供读数”是正常的数据限制，并非零用量或错误；您自己的标记仍然有效。',
+    memBackendNotesTitle: '后端提供方消息',
     memSummaryLoading: '正在加载…',
     memSummaryUnavailable: '不可用',
     memEffectiveFee: '有效费用',
@@ -12697,6 +13210,9 @@ const I18N = {
     memAllowanceStale: '读数已过期',
     memAllowanceManual: '手动标记',
     memAllowanceUnreported: '未上报',
+    memAllowanceNotAvailable: 'Hermes 无法提供',
+    memAllowanceFailed: '读取失败',
+    memAllowanceNoHermesReading: 'Hermes 未提供读数',
     memGroupPlan: '方案与账单',
     memSeats: '席位数',
     memSaveSeats: '保存席位数',
@@ -12737,6 +13253,23 @@ const I18N = {
     memFeesLabel: '会员费用',
     memFeesNotRecorded: '未记录费用金额',
     memFeesNoteShort: '已保存费用保留币种和周期。“成本”会将其与 API 等效估值及实际账单凭据分开显示。',
+    memReadingNoteNotRead: '此页面加载后尚未请求提供方读数。请刷新提供方用量以向 Hermes 查询。',
+    memReadingNoteNotAvailable: 'Hermes 不为此线路提供额度读数。这是数据限制，并非零用量；您自己的标记仍然有效。',
+    memReadingNoteFailed: '无法获取提供方读数。已保存的方案、费用与标记均未改变。',
+    memReadingNoteNoReading: 'Hermes 未返回此线路的额度读数：无凭据、无用量端点或读取失败。这是数据限制，并非零用量；您自己的标记仍然有效。可尝试“刷新提供方用量”。',
+    memReadingNoteUnreported: 'Hermes 已读取此账户，但没有上报额度窗口。',
+    memReadingNoteStale: '提供方读数已超过新鲜度时限，因此不按当前读数显示。',
+    memReadAgeNow: '提供方读数来自刚刚。',
+    memReadAgeMins: n => `提供方读数来自 ${n} 分钟前。`,
+    memReadAgeHours: n => `提供方读数来自 ${n} 小时前。`,
+    memReadFailedReason: '提供方读取失败。',
+    memReadIdentity: 'Hermes 返回了其他账户的数据，因此不采用该读数。',
+    memReadingsPartial: (failed, total) => `读数已刷新，但有 ${failed}/${total} 个账户无法读取。`,
+    memReadingsNoReading: (missing, total) => `读数已刷新。${missing}/${total} 个账户未从 Hermes 获得读数。`,
+    memAttentionScope: (reasons, accounts) => `方案设置与额度标记：${accounts} 个账户共 ${reasons} 项`,
+    memAttentionMore: (more, total) => `显示 ${total - more} 项，共 ${total} 项。可用“仅需关注”筛选列表。`,
+    memOpenCostsValue: '在“成本”中比较订阅价值',
+    memOpenCostsValueNote: '“成本”将已保存的费用与 API 等值用量价值分开呈现，两者都不是账单。',
     memFeesHelp: '关于费用与额度读数',
     memFeesNote: '已保存订阅费用按币种与账单周期分列；未知金额会标记在对应账户上。额度百分比是限制，不是费用。“成本”会将已保存费用、API 等效用量估值与实际账单凭据分开显示。',
     memAccountId: id => `账户 ID：${id}`,
@@ -12757,7 +13290,8 @@ const I18N = {
     memProviderAnthropic: 'Anthropic 服务',
     memProviderGoogleGemini: 'Google Gemini 服务',
     memProviderOpenAICodex: 'OpenAI Codex 服务',
-    memDiagnostics: '请求诊断信息（本次会话）',
+    memDiagnostics: '技术详情（可选，本次会话）',
+    memDiagnosticsNote: '仅包含方法、相对路径、状态、身份与时间。不包含令牌、标头、请求体或账户内容。',
     memSaved: '已保存。',
     memSavedRereadFailed: error => `已保存，但列表无法重新读取。${error}`,
     memDiscovered: (found, added, updated) => `发现 ${found} 个账户：新增 ${added}，更新 ${updated}。`,
@@ -12835,6 +13369,14 @@ const I18N = {
     memQuotaStale: '过期',
     memQuotaManual: '手动',
     memQuotaUnrecorded: '未记录',
+    memQuotaNotAvailable: 'Hermes 无法提供',
+    memQuotaNotAvailableShort: '不可用',
+    memQuotaNotReported: '提供方未上报',
+    memQuotaNotReportedShort: '未上报',
+    memQuotaReadFailed: '读取失败',
+    memQuotaReadFailedShort: '读取失败',
+    memQuotaNoHermesReading: 'Hermes 未提供读数',
+    memQuotaNoHermesReadingShort: '无读数',
     memCountdownIn: span => `${span}后`,
     memCountdownAgo: span => `${span}前`,
     // 方案建议、重新确认与档位选项。
@@ -12919,6 +13461,7 @@ const I18N = {
     memArrNoteUnconfirmed: '未确认计费方式。',
     memCredConfigured: '凭证已配置',
     memCredMissing: '未找到凭证',
+    memCredMissingChip: '无凭证',
     memIdentityNative: '账户由 Hermes 识别。',
     memIdentitySlot: '供应商账户槽位；绝不显示凭证值。',
     // 耗尽上报流程。
@@ -12987,6 +13530,9 @@ const I18N = {
     wxNoForecast: '无预测——见详情',
     wxDetails: '详情',
     wxUnavailable: '此连接无法读取额度动态。',
+    wxTimeout: '提供方用量读取超时。请再次尝试“刷新提供方用量”。',
+    wxNotProvided: '此后端不提供额度读数。',
+    wxAuth: '请重新登录此连接以读取额度用量。',
     wxStale: '刷新失败——显示上次读取的数据。',
     // 本地摘要报告。
     reportsTitle: '报告',
@@ -13982,6 +14528,9 @@ export const __test = {
   $membershipScope, $membershipSnapshot, $membershipNotice,
   $membershipBusy, $membershipNative, $membershipAttentionOnly, $membershipDraft, $scopeConnection, $scopeProfile,
   fmtMoney, fmtMembershipMoney, membershipCurrencyCode, feeLabel, quotaRows, membershipReadingStatus, needsAttention, membershipSummary, feesLabel, accountPlanChoices,
+  allowanceReadState, allowanceReadNoteKey, readingAgeText, providerAgeSeconds, membershipReadFailures,
+  arrangementGroup, MEMBERSHIP_GROUP_META, membershipReadingHealth, readingHealthText, readingHealthParts, humaniseSlug,
+  membershipAccountName, membershipFriendlyProvider, COSTS_VALUE_ANCHORS, openCostsValue, wxErrorText, ATTENTION_LIST_LIMIT,
   membershipProviderLabel, membershipIdentityLabel, membershipAccountShortcutLabel,
   excludedPlansNote, planOptionLabel,
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,

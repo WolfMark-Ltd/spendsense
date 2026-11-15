@@ -160,14 +160,28 @@ test('Memberships provider names are display-only labels with a safe fallback', 
   assert.equal(T.membershipProviderLabel('anthropic', en), 'Anthropic')
   assert.equal(T.membershipProviderLabel('google-gemini', en), 'Google Gemini')
   assert.equal(T.membershipProviderLabel('openai-codex', en), 'OpenAI Codex')
-  assert.equal(T.membershipProviderLabel('new-provider', en), 'new-provider')
+  // F28: a route slug is named in words, never echoed to the reader.
+  assert.equal(T.membershipProviderLabel('new-provider', en), 'new-provider',
+    'the shared provider label still echoes an unmapped id for other screens')
+  assert.equal(T.membershipFriendlyProvider('new-provider', en), 'New Provider',
+    'Memberships names the same id in words')
+  assert.equal(T.membershipFriendlyProvider('commandcode-anthropic', en), 'CommandCode · Anthropic route')
+  assert.equal(T.membershipFriendlyProvider('opencode-zen', en), 'OpenCode Zen')
+  assert.equal(T.membershipAccountName({ family: 'commandcode-anthropic', label: 'commandcode-anthropic' }, en),
+    'CommandCode · Anthropic route')
+  assert.equal(T.membershipAccountName({ family: 'anthropic', label: 'main' }, en), 'main',
+    'a name the reader chose is kept')
   assert.equal(T.membershipIdentityLabel({ family: 'anthropic', label: 'Work' }, en), 'Anthropic · Work')
   assert.equal(T.membershipIdentityLabel({ family: 'openai-codex', label: 'openai-codex' }, en), 'OpenAI Codex')
   assert.equal(T.membershipIdentityLabel({ family: 'google-gemini', label: '工作室' }, zh), 'Google Gemini 服务 · 工作室')
+  // A jump chip names the provider as well, so two "main" accounts stay
+  // distinguishable and no chip is a bare route slug.
   assert.equal(T.membershipAccountShortcutLabel({ family: 'openai-codex', label: 'Personal' }, en), 'Personal',
-    'account shortcuts keep a user-provided account label')
+    'a sentence keeps the short name')
+  assert.equal(T.membershipAccountShortcutLabel({ family: 'commandcode-anthropic', label: 'commandcode-anthropic' }, en),
+    'CommandCode · Anthropic route', 'a slug is never the short name')
   assert.equal(T.membershipAccountShortcutLabel({ family: 'google-gemini', label: 'google-gemini' }, en), 'Google Gemini',
-    'provider names replace only the raw provider slug')
+    'a raw provider slug is replaced by its name')
 })
 
 test('needs attention covers exhaustion, conflict, reconfirm, and missing plan or fee', () => {
@@ -414,4 +428,137 @@ test('restoring the catalogue closes all overlapping fee overrides', () => {
 test('credit counts are not displayed as dollars', () => {
  const rows = T.quotaRows({quota:{windows:[{id:'weekly',limit:'credits',amount:10000,currency:null}]}})
  assert.equal(rows[0].reading, '10000 credits')
+})
+
+/* ---- WP20: a missing reading has a reason, and never a zero ----------- */
+
+test('a reading is classified by why it exists, not only by whether it does', () => {
+  const live = account({ quota: { provider_state: 'live', windows: [
+    { id: 'weekly', label: 'Weekly', used_percent: 12, state: 'live', basis: ['provider_reported'] }] } })
+  assert.equal(T.allowanceReadState(live, { native: true }).state, 'reported')
+
+  const stale = account({ quota: { provider_state: 'stale', windows: [
+    { id: 'weekly', label: 'Weekly', used_percent: 12, state: 'stale', basis: ['provider_reported'] }] } })
+  assert.equal(T.allowanceReadState(stale, { native: true }).state, 'stale')
+
+  // Nothing has been asked yet: the stored view only.
+  const stored = account({ quota: { provider_state: 'absent', windows: [] } })
+  assert.equal(T.allowanceReadState(stored, { native: false }).state, 'not_read')
+
+  // Hermes answered and has no reading to give — a data limitation.
+  const unsupported = account({ quota: { provider_state: 'absent', windows: [] },
+    native_probe: { state: 'unsupported', reason: 'the hermes CLI is not on PATH' } })
+  assert.equal(T.allowanceReadState(unsupported, { native: true }).state, 'unsupported')
+  // "unavailable" covers no credential, no endpoint, a failed fetch and an
+  // exhausted probe budget: it must not be presented as a permanent gap.
+  const absentProbe = account({ quota: { provider_state: 'absent', windows: [] },
+    native_probe: { state: 'unavailable', reason: 'no credential configured' } })
+  assert.equal(T.allowanceReadState(absentProbe, { native: true }).state, 'no_reading')
+
+  // The read itself failed: an error, not a limitation.
+  const failed = account({ quota: { provider_state: 'absent', windows: [] },
+    native_probe: { state: 'error', reason: 'usage read failed: TimeoutExpired' } })
+  assert.equal(T.allowanceReadState(failed, { native: true }).state, 'failed')
+
+  // Hermes answered for the wrong account: that reading is not applied.
+  const mismatch = account({ quota: { provider_state: 'identity_mismatch', windows: [] } })
+  assert.equal(T.allowanceReadState(mismatch, { native: true }).state, 'failed')
+
+  // A real read that carried no windows is reported as empty, not as a limit.
+  const empty = account({ quota: { provider_state: 'live', windows: [] } })
+  assert.equal(T.allowanceReadState(empty, { native: true }).state, 'unreported')
+})
+
+test('the row chip names the limitation, and never reads as zero usage', () => {
+  const chip = (over, native) => T.membershipReadingStatus([], undefined,
+    { account: account(over), native })
+  assert.equal(chip({ quota: { provider_state: 'absent', windows: [] } }, false).label, 'Unreported')
+  assert.equal(chip({ quota: { provider_state: 'absent', windows: [] },
+    native_probe: { state: 'unsupported' } }, true).label, 'Not available from Hermes')
+  assert.equal(chip({ quota: { provider_state: 'absent', windows: [] },
+    native_probe: { state: 'error' } }, true).label, 'Read failed')
+  assert.equal(chip({ quota: { provider_state: 'absent', windows: [] },
+    native_probe: { state: 'unsupported' } }, true).state, 'unsupported')
+  assert.equal(chip({ quota: { provider_state: 'absent', windows: [] },
+    native_probe: { state: 'unavailable', reason: 'no credential configured' } }, true).label,
+    'No reading from Hermes', 'a read that returned nothing is not called permanent')
+  assert.equal(chip({ quota: { provider_state: 'absent', windows: [] },
+    native_probe: { state: 'unavailable' } }, true).state, 'no_reading')
+  // Without context the previous contract is unchanged.
+  assert.deepEqual(T.membershipReadingStatus([]), { state: 'unreported', label: 'Unreported' })
+})
+
+test('a window nobody reads says why, instead of “No reading”', () => {
+  const base = { quota: { provider_state: 'absent', windows: [{ id: 'weekly', label: 'Weekly', state: 'no_data' }] } }
+  const unsupported = T.quotaRows(account(base), Date.now(), undefined, { readState: 'unsupported' })[0]
+  assert.equal(unsupported.reading, 'Not available from Hermes')
+  assert.equal(unsupported.stateLabel, 'not available')
+  const unreported = T.quotaRows(account(base), Date.now(), undefined, { readState: 'unreported' })[0]
+  assert.equal(unreported.reading, 'Not reported by the provider')
+  const failed = T.quotaRows(account(base), Date.now(), undefined, { readState: 'failed' })[0]
+  assert.equal(failed.reading, 'Read failed')
+  // Unchanged default for a caller that supplies no context.
+  assert.equal(T.quotaRows(account(base))[0].reading, 'No reading')
+  for (const row of [unsupported, unreported, failed]) {
+    assert.doesNotMatch(row.reading, /0%|\$0\.00/, 'absence is never rendered as zero')
+  }
+})
+
+test('a reading age keeps counting after the answer arrived', () => {
+  const arrived = 1_000_000
+  // Ten minutes old when the server answered, twenty minutes ago in real time.
+  assert.equal(T.providerAgeSeconds({ age_seconds: 600 }, arrived, arrived + 600_000), 1200)
+  assert.equal(T.providerAgeSeconds({ age_seconds: 0 }, arrived, arrived), 0)
+  assert.equal(T.providerAgeSeconds({ age_seconds: 600 }, null, arrived + 600_000), 600,
+    'an unknown arrival time leaves the server figure alone')
+  assert.equal(T.providerAgeSeconds({ age_seconds: null }, arrived, arrived), null)
+})
+
+test('a provider reading states its own age, and absence states nothing', () => {
+  assert.equal(T.readingAgeText({ age_seconds: 12 }), 'Provider reading from just now.')
+  assert.equal(T.readingAgeText({ age_seconds: 600 }), 'Provider reading from 10 min ago.')
+  assert.equal(T.readingAgeText({ age_seconds: 7200 }), 'Provider reading from 2 h ago.')
+  assert.equal(T.readingAgeText({ age_seconds: null }), '')
+  assert.equal(T.readingAgeText({}), '')
+})
+
+test('a refresh counts the accounts it could not read', () => {
+  const list = [
+    account({ id: 'a', native_probe: { state: 'ok' } }),
+    account({ id: 'b', native_probe: { state: 'error' } }),
+    account({ id: 'c', native_probe: { state: 'unsupported' } }),
+    account({ id: 'd' }),
+  ]
+  assert.deepEqual(T.membershipReadFailures(list), { failed: 1, missing: 1, total: 4 })
+  // A successful probe that answered for another account is still a bad read.
+  const mismatched = [account({ id: 'e', native_probe: { state: 'ok' },
+    quota: { provider_state: 'identity_mismatch', windows: [] } })]
+  assert.equal(T.membershipReadFailures(mismatched).failed, 1)
+  assert.deepEqual(T.membershipReadFailures([]), { failed: 0, missing: 0, total: 0 })
+})
+
+test('a refresh notice keeps failures and empty reads apart', () => {
+  const failures = T.membershipReadFailures([
+    account({ id: 'ok', native_probe: { state: 'ok' } }),
+    account({ id: 'boom', native_probe: { state: 'error' } }),
+    account({ id: 'empty', native_probe: { state: 'unavailable' } }),
+  ])
+  // Both are reported, neither is called zero usage, and only the error is a
+  // failure: "unavailable" also covers a route with no credential at all.
+  assert.deepEqual(failures, { failed: 1, missing: 1, total: 3 })
+  assert.match(T.I18N.en.memReadingsPartial(failures.failed, failures.total), /1 of 3 accounts could not be read/)
+  assert.match(T.I18N.en.memReadingsNoReading(failures.missing, failures.total), /1 of 3 accounts returned no reading/)
+})
+
+test('a failed allowance-weather read is described by what failed', () => {
+  assert.match(T.wxErrorText(new Error('request timeout after 15000ms')), /did not answer in time/)
+  assert.match(T.wxErrorText(new Error('404 not found')), /does not serve allowance readings/)
+  assert.match(T.wxErrorText(new Error('401 unauthorized')), /Sign in/)
+  assert.match(T.wxErrorText(new Error('boom')), /unavailable/)
+})
+
+test('the Costs link selects the subscription-value destination', () => {
+  T.$ledgerTab.set('memberships')
+  T.openCostsValue()
+  assert.equal(T.$ledgerTab.get(), 'costs')
 })
