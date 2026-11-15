@@ -1450,14 +1450,16 @@ test('Overview attention gives specific actions and summarises extra issues with
   await flush(4)
   const attention = container.querySelector('.wm-overview-attention')
   const buttons = [...attention.querySelectorAll('.wm-attention-rows button')].map(button => button.textContent)
-  assert.deepEqual(buttons, ['Confirm arrangement', 'Confirm arrangement', 'Review memberships', 'View unpriced usage'])
+  assert.deepEqual(buttons, ['Confirm arrangement', 'Confirm arrangement', 'Review memberships', 'Open Usage'])
   assert.match(attention.textContent, /2 more account issues/)
-  assert.doesNotMatch(attention.textContent, /Open Usage|Open Costs/,
-    'attention does not repeat generic navigation shortcuts beside issue actions')
-  assert.doesNotMatch(buttons.at(-1), /fix|add price|repair/i,
-    'the pricing evidence gap is not presented as something this action can repair')
+  assert.equal(attention.querySelectorAll('.wm-setting-action .wm-button').length, 0,
+    'issue rows do not repeat the blank-state navigation shortcuts')
+  assert.equal(buttons.filter(label => label === 'Open Usage').length, 1,
+    'the unpriced row uses one honest general Usage shortcut')
+  assert.equal(buttons.at(-1), 'Open Usage',
+    'general navigation wording does not promise an unpriced-only destination')
   await React.act(async () => buttons && [...attention.querySelectorAll('.wm-attention-rows button')].at(-1).click())
-  assert.equal(T.$ledgerTab.get(), 'usage', 'the unpriced usage action opens its relevant view')
+  assert.equal(T.$ledgerTab.get(), 'usage', 'the general usage action opens the Usage tab')
 })
 
 test('Overview ranks backend model call counts without displaying per-model cost', async () => {
@@ -1808,7 +1810,7 @@ test('Overview attention rows route to Memberships and Usage', async () => {
   assert.match(rows[1].textContent, /18,240 tokens/)
   assert.match(rows[1].textContent, /1 call\(s\)/)
   assert.doesNotMatch(rows[1].textContent, /true tokens/)
-  await clickByText(rows[1], 'View unpriced usage')
+  await clickByText(rows[1], 'Open Usage')
   assert.equal(T.$ledgerTab.get(), 'usage')
   T.$membershipTarget.set(null)
 })

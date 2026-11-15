@@ -4609,7 +4609,6 @@ const PRODUCT_CSS = [
   '.wm-product .wm-overview-icon{display:block;flex:0 0 auto;color:var(--ui-text-tertiary)}',
   '.wm-product .wm-scope-note{display:flex;align-items:center;gap:4px;margin:-7px 0 0;color:var(--ui-text-tertiary);font-size:11.5px;line-height:1.4}',
   '.wm-product .wm-scope-note>span{min-width:0;overflow-wrap:anywhere}',
-  '.wm-product .wm-overview-attention{scroll-margin-top:68px}',
   '.wm-product .wm-overview-attention h2,.wm-product .wm-overview-models h2{display:flex;align-items:center;gap:7px}',
   '.wm-product .wm-overview-model-name>.wm-info{align-self:center}',
   '.wm-product .wm-overview-model-name .wm-info-btn{font-size:12px}',
@@ -5541,11 +5540,17 @@ function OverviewPage() {
   const attentionItems = items.slice(0, unpriced ? 2 : 3)
   const remainingAttention = items.length - attentionItems.length
   const attentionCount = items.length + (unpriced ? 1 : 0)
-  const scrollToAttention = () => {
+  const scrollToAttention = event => {
     try {
+      const product = event?.currentTarget?.closest('.wm-product')
+      const target = product?.querySelector('.wm-overview-attention')
+        || document.getElementById('wm-needs-attention')
+      if (!target) return
+      const tabs = product?.querySelector('.wm-product-tabs') || document.querySelector('.wm-product-tabs')
+      const stickyHeight = tabs?.getBoundingClientRect().height || 0
+      target.style.scrollMarginTop = `${Math.ceil(stickyHeight + 8)}px`
       const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-      document.getElementById('wm-needs-attention')
-        ?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+      target.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
     } catch {}
   }
   return jsx(ProductShell, { children:
@@ -5666,7 +5671,7 @@ function OverviewPage() {
                   jsx('span', { children: t('ovUnpriced', unpricedTokens, unpricedCalls) })
                 ] }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
-                  onClick: () => goLedgerTab('usage'), children: t('ovViewUnpricedUsage') })
+                  onClick: () => goLedgerTab('usage'), children: t('ovOpenUsage') })
               ] }, 'unpriced') : null
             ].filter(Boolean) })
           : null,
@@ -11022,7 +11027,6 @@ const I18N = {
     ovScopeInfo: 'Desktop ledger: all profiles, calendar month to date, API-equivalent at saved rates. Backend estimate: active profile, rolling 30 days, current catalogue rates. These figures cover different activity and are not like-for-like totals.',
     ovModelIdInfoLabel: 'Exact model and provider IDs',
     ovModelIdInfo: (model, provider) => `Model ID: ${model} · Provider ID: ${provider}`,
-    ovViewUnpricedUsage: 'View unpriced usage',
     ovMoreAttention: n => `${n} more account ${n === 1 ? 'issue' : 'issues'}`,
     attnConflict: list => `Provider data disagrees with your manual mark on ${list}.`,
     attnExhausted: 'Account marked exhausted.',
@@ -11317,7 +11321,7 @@ const I18N = {
     ovManageMemberships: 'Manage memberships',
     ovMethodTitle: 'How these figures are calculated',
     ovMethodUsageTitle: 'Usage totals and periods',
-    ovMethodUsageBody: 'Desktop totals use the calendar month to date and aggregate all profiles in this ledger. Current v2 values use API-equivalent rates saved at capture; they are estimates, not payments, invoices or actual provider charges. The backend estimate covers the active profile’s rolling last 30 days and uses current catalogue rates for timestamped calls.',
+    ovMethodUsageBody: 'Desktop totals use the calendar month to date and aggregate all profiles in this ledger. For v2 usage, SpendSense uses gateway-reported usage cost when supplied; otherwise it uses API-equivalent rates saved at capture. Both are estimates, not payments, invoices or actual provider charges. The backend estimate covers timestamped calls for the active profile over the rolling last 30 days, using current catalogue rates.',
     ovMethodPricingTitle: 'Price and coverage evidence',
     ovMethodPricingBody: 'Migrated v1 buckets may use remembered model rates because v1 did not retain capture-time prices. Records written before call-level coverage counters cannot confirm every call included usage data; historical values are not backfilled. Partial amounts are lower bounds, and unpriced usage is reported separately.',
     ovMethodChargesTitle: 'Actual provider charges',
@@ -12466,7 +12470,6 @@ const I18N = {
     ovScopeInfo: '桌面账本：所有配置文件，本日历月至今，按保存费率计算 API 等值。后端估算：当前配置文件，滚动 30 天，按当前目录价格计算。两者覆盖的活动不同，不能视为同一口径的总额。',
     ovModelIdInfoLabel: '精确模型与服务商 ID',
     ovModelIdInfo: (model, provider) => `模型 ID：${model} · 服务商 ID：${provider}`,
-    ovViewUnpricedUsage: '查看未定价用量',
     ovMoreAttention: n => `另有 ${n} 项账户问题`,
     attnConflict: list => `服务商数据与您的手动标记不一致：${list}。`,
     attnExhausted: '账户已标记为用尽。',
@@ -12761,7 +12764,7 @@ const I18N = {
     ovManageMemberships: '管理会员',
     ovMethodTitle: '这些数据的计算方式',
     ovMethodUsageTitle: '用量总额与时间段',
-    ovMethodUsageBody: '桌面总额按本日历月至今计算，并汇总此账本中的所有配置文件。当前 v2 数据按记录时保存的费率计算 API 等值；这些是估算，并非付款、发票或实际服务商费用。后端估算只涵盖当前配置文件滚动 30 天内带时间戳的调用，并使用当前目录价格。',
+    ovMethodUsageBody: '桌面总额按本日历月至今计算，并汇总此账本中的所有配置文件。对于 v2 用量，如服务商网关提供用量成本，SpendSense 会使用该金额；否则使用记录时保存的 API 等值费率。两者都是估算，并非付款、发票或实际服务商费用。后端估算使用当前目录价格，仅涵盖当前配置文件滚动 30 天内带时间戳的调用。',
     ovMethodPricingTitle: '价格与覆盖证据',
     ovMethodPricingBody: '迁移的 v1 记录可能使用先前保存的模型费率，因为 v1 未保存记录时的价格。逐次调用覆盖计数器启用前写入的记录，无法确认每次调用都包含用量数据；不会回填历史数据。部分金额是下限，未定价用量会单独说明。',
     ovMethodChargesTitle: '实际服务商费用',
