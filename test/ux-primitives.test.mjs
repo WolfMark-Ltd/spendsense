@@ -107,8 +107,9 @@ test('SHARED_CSS names the Phase A roles and enforces [hidden]', () => {
 test('shared tooltip styles are opaque and reach both pane and product surfaces', () => {
   assert.match(T.SHARED_CSS, /\.wm-info\{position:relative/)
   assert.match(T.SHARED_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)
-  assert.match(T.SHARED_CSS, /\.wm-info-btn::after\{[^}]*width:12px;height:12px/)
-  assert.match(T.SHARED_CSS, /\.wm-info-pop\{[^}]*position:absolute[^}]*background:var\(--wm-surface-raised\)/)
+  assert.match(T.SHARED_CSS, /\.wm-info-btn::after\{[^}]*width:\.78em;height:\.78em/)
+  assert.match(T.SHARED_CSS, /\.wm-info-pop\{[^}]*background-color:Canvas[^}]*background-image:linear-gradient\(var\(--wm-surface-raised\)/)
+  assert.match(T.PRODUCT_CSS, /\.wm-product-tabs\{[^}]*position:sticky[^}]*background-color:Canvas[^}]*background-image:linear-gradient\(var\(--wm-surface\)/)
   assert.match(T.METER_CSS, /wm-info-pop/, 'pane bundle carries the shared tooltip')
   assert.match(T.ANALYTICS_CSS, /wm-info-pop/, 'product bundle carries the shared tooltip')
 })
@@ -276,10 +277,15 @@ test('LedgerPage: keyboard navigation restores focus to the newly mounted select
   assert.ok(firstBar, 'the ledger page mounts a tab bar')
   const overviewTab = [...container.querySelectorAll('[role="tab"]')]
     .find(el => el.getAttribute('aria-label') === 'Overview')
+  const periodInfo = container.querySelector('.wm-info-btn[aria-controls="wm-info-overview-periods"]')
+  assert.ok(periodInfo, 'the usage scope has an accessible explanation control')
+  await React.act(async () => periodInfo.focus()); await flush(2)
+  assert.equal(T.$infoOpen.get(), 'overview-periods', 'focusing the info control opens its tooltip')
   await React.act(async () => {
     overviewTab.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
   }); await flush(4)
   assert.equal(T.$ledgerTab.get(), 'usage')
+  assert.equal(T.$infoOpen.get(), null, 'tab navigation dismisses a tooltip from the old page')
   assert.notEqual(container.querySelector('.wm-product-tabs'), firstBar,
     'the page (and its tab bar) was actually replaced')
   assert.equal(document.activeElement?.getAttribute('aria-label'), 'Usage',
@@ -395,13 +401,15 @@ test('every Overview (ov*) string exists in both en and zh', () => {
   }
 })
 
-test('Overview summary and insight panels adapt to narrow panes', () => {
-  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/)
+test('Overview summary and insight panels adapt without tall empty KPI cards', () => {
+  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);align-items:start\}/)
+  assert.match(T.PRODUCT_CSS, /@container\(min-width:1020px\)\{\.wm-product \.wm-overview-grid\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)\}\}/)
+  assert.match(T.PRODUCT_CSS, /@container\(max-width:340px\)\{\.wm-product \.wm-overview-grid\{grid-template-columns:1fr\}\}/,
+    'only truly narrow panes stack the Overview cards')
+  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid \.wm-kpi\{min-height:0;align-items:flex-start/)
   assert.match(T.PRODUCT_CSS,
     /\.wm-product \.wm-product-summary\{display:grid;grid-template-columns:repeat\(auto-fit,minmax\(185px,1fr\)\)/,
     'the shared summary grid used by Costs and others is unchanged')
-  assert.match(T.PRODUCT_CSS, /@container\(max-width:620px\)\{[\s\S]*?\.wm-overview-grid\{grid-template-columns:1fr\}/,
-    'narrow panes stack the Overview cards in one column')
   assert.match(T.PRODUCT_CSS, /@container\(max-width:760px\)\{[^}]*\.wm-overview-panels\{grid-template-columns:1fr\}/,
     'narrow panes stack attention and model panels')
   assert.match(T.PRODUCT_CSS, /\.wm-kpi-figure\{[^}]*overflow-wrap:anywhere/,

@@ -304,7 +304,7 @@ test('the idle status-chip tooltip names SpendSense in both locales', () => {
   }
 })
 
-test('G03 usage labels retain coverage, API-equivalent and all-profile qualifiers in both locales', () => {
+test('Overview labels separate the all-profile ledger from the active-profile estimate in both locales', () => {
   for (const [language, dict] of [['en', en], ['zh', zh]]) {
     for (const key of ['allProfiles', 'coverageUnknownShort', 'coverageUnknownNote', 'ovCoverageUnknown']) {
       assert.ok(dict[key] && dict[key] !== key, `${language} has ${key}`)
@@ -312,19 +312,32 @@ test('G03 usage labels retain coverage, API-equivalent and all-profile qualifier
   }
   assert.match(en.coverageUnknownNote, /lack complete call-level coverage counters/i)
   assert.match(zh.coverageUnknownNote, /缺少完整的逐次调用覆盖计数器/)
-  assert.match(en.ovRecordedLabel, /API-equivalent.*all profiles/i)
-  assert.match(en.ovRecordedProv, /all profiles.*not .*actual provider charges/i)
-  assert.match(en.ovMethodBody, /all profiles in this ledger/i)
-  assert.match(en.ovMethodBody, /active profile/i)
-  assert.match(en.ovMethodBody, /no historical values are backfilled/i)
-  assert.match(en.ovMethodBody, /migrated v1 buckets.*remembered model rates.*did not retain capture-time prices/i)
+  assert.match(en.ovRecordedScope, /all profiles.*calendar month to date/i)
+  assert.match(en.ovRecordedProv, /Desktop ledger.*API-equivalent.*not charges/i)
+  assert.match(en.ovCertRecorded, /saved rate/i)
+  assert.match(en.ovBackendScope, /active profile.*rolling 30 days/i)
+  assert.match(en.ovScopeNote, /different profiles and periods.*do not add/i)
+  assert.match(en.ovMethodUsageBody, /all profiles in this ledger/i)
+  assert.match(en.ovMethodUsageBody, /gateway-reported usage cost when supplied; otherwise.*API-equivalent rates saved at capture/i)
+  assert.match(en.ovMethodUsageBody, /Both are estimates, not payments, invoices or actual provider charges/i)
+  assert.match(en.ovMethodUsageBody, /active profile.*rolling last 30 days/i)
+  assert.match(en.ovMethodPricingBody, /historical values are not backfilled/i)
+  assert.match(en.ovMethodPricingBody, /migrated v1 buckets.*remembered model rates.*did not retain capture-time prices/i)
+  assert.match(en.ovMethodChargesBody, /no per-call actual-charge evidence/i)
+  assert.match(en.ovMethodFeesBody, /No currency conversion or shared-entitlement relationship is inferred/i)
+  assert.match(en.ovScopeInfo, /cannot be added|not like-for-like/i)
   assert.match(en.todayStatusNote, /when available.*not actual provider charges/i)
   assert.match(en.todayStatusNote, /all profiles in this Desktop ledger/i)
-  assert.match(zh.ovRecordedLabel, /API 等值.*所有配置文件/)
-  assert.match(zh.ovRecordedProv, /所有配置文件.*不是.*实际服务商/)
-  assert.match(zh.ovMethodBody, /本桌面账本中的月度和今日总额.*所有配置文件/)
-  assert.match(zh.ovMethodBody, /不会回填历史记录/)
-  assert.match(zh.ovMethodBody, /迁移的 v1 记录.*先前保存的模型费率.*未保存记录时的价格/)
+  assert.match(zh.ovRecordedScope, /所有配置文件.*本日历月至今/)
+  assert.match(zh.ovRecordedProv, /并非服务商费用/)
+  assert.match(zh.ovCertRecorded, /保存费率/)
+  assert.match(zh.ovBackendScope, /当前配置文件.*滚动 30 天/)
+  assert.match(zh.ovScopeNote, /配置文件和时间段不同；请勿相加/)
+  assert.match(zh.ovMethodUsageBody, /桌面总额.*所有配置文件/)
+  assert.match(zh.ovMethodUsageBody, /网关提供用量成本.*否则使用记录时保存的 API 等值费率/)
+  assert.match(zh.ovMethodUsageBody, /两者都是估算，并非付款、发票或实际服务商费用/)
+  assert.match(zh.ovMethodPricingBody, /不会回填历史数据/)
+  assert.match(zh.ovMethodPricingBody, /迁移的 v1 记录.*先前保存的模型费率.*未保存记录时的价格/)
   assert.match(zh.todayStatusNote, /并非实际服务商费用/)
   assert.match(zh.todayStatusNote, /所有配置文件/)
 
@@ -635,7 +648,7 @@ test('the InfoTip indicator is compact while its hit area stays accessible', () 
   // The interactive box keeps its full size for pointer and keyboard users.
   assert.match(T.METER_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)
   // The visible ring stays small inside the larger interactive box.
-  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*width:12px;height:12px/)
+  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*width:\.78em;height:\.78em/)
   assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*pointer-events:none/)
   // Hover and focus still recolour the ring; focus keeps its outline.
   assert.match(T.METER_CSS, /\.wm-info-btn:hover::after,\.wm-info-btn:focus-visible::after\{[^}]*border-color:var\(--wm-action\)/)

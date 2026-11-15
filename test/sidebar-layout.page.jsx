@@ -143,7 +143,7 @@ setTimeout(async () => {
       hitWidth: rect(button).width,
       hitHeight: rect(button).height,
       ringWidth: parseFloat(getComputedStyle(button, '::after').width),
-      glyphFontSize: parseFloat(getComputedStyle(button).fontSize),
+      glyphFontSize: parseFloat(getComputedStyle(button.querySelector('.wm-info-glyph')).fontSize),
     }))
     const providerBadge = node.querySelector('.wm-provider-badge')
     const savedRow = node.querySelector('.wm-gauge-stat[data-kind="saved"]')

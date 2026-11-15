@@ -55,6 +55,7 @@ try {
       }
       const opaque = pop => {
         const bg = getComputedStyle(pop).backgroundColor
+        out.lastBackgroundImage = getComputedStyle(pop).backgroundImage
         out.lastBackground = bg
         const m = bg.match(/rgba?\(([^)]+)\)/)
         const parts = m ? m[1].split(',').map(s => s.trim()) : []
@@ -89,6 +90,7 @@ try {
           result.popRect = r
           result.text = pop.textContent.slice(0, 80)
           result.opaque = opaque(pop)
+          result.backgroundImage = getComputedStyle(pop).backgroundImage
           result.withinScope = within(r, scopeRect())
           // Client box: with classic (non-overlay) scrollbars the visible
           // content box is narrower than the border box, and scrollable
