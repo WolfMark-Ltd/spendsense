@@ -92,8 +92,15 @@ def _plan_for(account: Mapping[str, Any], catalogue: Mapping[str, Any]) -> Optio
 
 
 def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
-                 snapshot: Optional[Mapping[str, Any]] = None, *, at: Any = None) -> dict[str, Any]:
-    """One account, with its plan, effective fee and quota rows resolved."""
+                 snapshot: Optional[Mapping[str, Any]] = None, *, at: Any = None,
+                 probe: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
+    """One account, with its plan, effective fee and quota rows resolved.
+
+    ``probe`` is the outcome of this request's ``hermes usage`` read for the
+    account's family, when one was made. Only its state and public reason are
+    published: the pane must be able to tell "Hermes has no reading for this
+    route" from "the read failed" without guessing, and neither is zero usage.
+    """
     custom = mem.custom_plan_view(account)
     selected_id = str(account.get("plan_id") or "")
     plan = custom if custom and custom.get("id") == selected_id else _plan_for(account, catalogue)
@@ -147,6 +154,11 @@ def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
                            for p in excluded],
         "cycle": mem.cycle_bounds(account, plan, at=at),
         "native_state": native.get("state"),
+        # Additive: absent when this request made no provider read at all, so
+        # an older pane keeps working and a new one can name the reason.
+        "native_probe": ({"state": str(probe.get("state") or ""),
+                          "reason": str(probe.get("reason") or "")}
+                         if probe is not None else None),
     }
 
 
@@ -168,16 +180,19 @@ def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
         snapshots = {str(family): snapshot
                      for family, snapshot in dict(native_snapshots).items()}
     notes: list[str] = []
+    probes: dict[str, Any] = {}
     if native and native_snapshots is None:
         families = list(dict.fromkeys(str(account.get("family") or "")
                                       for account in data.get("accounts", []) if account.get("family")))
-        for family, probe in discovery.probe_providers(families, home=home).items():
+        probes = dict(discovery.probe_providers(families, home=home))
+        for family, probe in probes.items():
             snapshots[family] = probe.get("snapshot")
             if probe["state"] == "unavailable":
                 notes.append(f"{family}: Hermes reported no account usage.")
             elif probe["state"] == "error":
                 notes.append(f"{family}: usage read failed ({probe['reason']}).")
-    cards = [account_card(a, book, snapshots.get(str(a.get("family") or "")), at=at)
+    cards = [account_card(a, book, snapshots.get(str(a.get("family") or "")), at=at,
+                          probe=probes.get(str(a.get("family") or "")))
              for a in resolved.get("accounts", [])]
     return {
         "ok": True,
@@ -360,7 +375,10 @@ def discover_payload(*, include_native: bool = False, path: Optional[Path | str]
 #: persist a computed value — so these are stripped, and anything else unknown is
 #: still rejected.
 DERIVED_FIELDS = frozenset({
-    "plan", "fee", "quota", "cycle", "effective_arrangement", "plan_proposal", "plan_reconfirmation", "native_state", "rev",
+    "plan", "fee", "quota", "cycle", "effective_arrangement", "plan_proposal", "plan_reconfirmation", "native_state",
+    # The probe outcome of the read that produced this card is never a stored
+    # field: it describes this request, not the account.
+    "native_probe", "rev",
     # Route-eligibility lists are computed from the catalogue per request, so a
     # card posted back unchanged must not try to persist them.
     "plan_choices", "excluded_plans", "seat_revisions", "seat_rev",

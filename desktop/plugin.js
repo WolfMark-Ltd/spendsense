@@ -6643,6 +6643,14 @@ button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
 .wm-group:not([open]) > .wm-group-body{display:none}
 @container(max-width:760px){.wm-row-head{grid-template-columns:minmax(0,1fr)}.wm-row-mid{grid-template-columns:minmax(0,1.35fr) minmax(92px,.7fr) auto auto}}
 @container(max-width:620px){.wm-row-head{align-items:start}.wm-row-mid{grid-template-columns:minmax(0,1fr) minmax(92px,auto);gap:8px 12px}.wm-row-state{grid-column:1}.wm-row-actions{grid-column:2;grid-row:2;align-self:center}.wm-row-actions .wm-button{min-height:38px}.wm-memberships .wm-seg button{min-height:38px}.wm-memberships .wm-attention li{flex-wrap:wrap}.wm-memberships .wm-attention li .wm-button{width:100%}}
+/* A reading-state chip may carry a full sentence ("Not available from
+   Hermes"); at pane width it wraps instead of pushing the row out. */
+@container(max-width:620px){.wm-row-mid .wm-chip{white-space:normal;overflow-wrap:anywhere;text-align:left}}
+.wm-reading-note{margin:0 0 2px;font-size:11.5px;line-height:1.5;color:var(--ui-text-secondary)}
+.wm-reading-note[data-reading-note="failed"]{color:var(--ui-warning)}
+.wm-membership-value{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.wm-membership-value .wm-note{flex:1 1 260px;min-width:0}
+@container(max-width:620px){.wm-membership-value .wm-button{width:100%}}
 @container(max-width:620px){.wm-memberships nav.wm-account-jump.wm-membership-account-nav{grid-template-columns:minmax(0,1fr);align-items:start}.wm-membership-shortcuts{grid-template-columns:minmax(0,1fr);gap:6px}}
 @container(max-width:340px){.wm-row-mid{grid-template-columns:minmax(0,1fr)}.wm-row-state,.wm-row-actions{grid-column:1;grid-row:auto}.wm-row-actions,.wm-row-actions .wm-button{width:100%}}
 `
@@ -6872,9 +6880,18 @@ function feeLabel(fee, t = needsAttentionEn) {
 }
 
 /** A quota row rendered from the backend contract, never a guess. */
-function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
+function quotaRows(account, now = Date.now(), t = needsAttentionEn, context = {}) {
   const quota = account?.quota || {}
   const windows = Array.isArray(quota.windows) ? quota.windows : []
+  // A window nobody reads is not a window reading zero. Say why it has no
+  // reading, using the account-level state the caller already worked out.
+  const emptyReading = context.readState === 'failed'
+    ? { reading: t('memQuotaReadFailed'), state: t('memQuotaReadFailedShort') }
+    : context.readState === 'unsupported'
+      ? { reading: t('memQuotaNotAvailable'), state: t('memQuotaNotAvailableShort') }
+      : context.readState === 'unreported'
+        ? { reading: t('memQuotaNotReported'), state: t('memQuotaNotReportedShort') }
+        : { reading: t('memQuotaNoReading'), state: t('memQuotaUnrecorded') }
   return windows.map(window => {
     // Whole-account marks persist a language-neutral label; the translated
     // scope name applies at display time from the synthetic row's own scope,
@@ -6899,9 +6916,13 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
           ? t('memQuotaAllowance', fmtMembershipMoney(window.amount, window.currency, t))
           : t('memQuotaAllowance', window.amount)
     } else {
-      reading = t('memQuotaNoReading')
+      reading = state === 'no_data' ? emptyReading.reading : t('memQuotaNoReading')
     }
-    const source = fromManual ? t('memQuotaSrcYou') : bases.includes('provider_reported') ? t('memQuotaSrcProvider') : t('memQuotaSrcNone')
+    // A row whose absence the chip already names does not need a bare "No data"
+    // beside it; a source is only worth printing when there is one.
+    const source = fromManual ? t('memQuotaSrcYou')
+      : bases.includes('provider_reported') ? t('memQuotaSrcProvider')
+      : state === 'no_data' ? '' : t('memQuotaSrcNone')
     const reset = window.reset_at ? t('memQuotaResets', fmtReset(window.reset_at), fmtCountdown(window.reset_at, now, t)) : ''
     return {
       id: window.id, label: isAccountMark ? t('memScopeAccount') : (window.label || window.id),
@@ -6909,19 +6930,93 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn) {
       reading, source, reset, state, basis: bases, providerState: quota.provider_state,
       conflict: !!window.conflict,
       manual: window.manual || null,
-      stateLabel: state === 'live' ? t('memQuotaLive') : state === 'stale' ? t('memQuotaStale') : state === 'manual' ? t('memQuotaManual') : t('memQuotaUnrecorded')
+      stateLabel: state === 'live' ? t('memQuotaLive') : state === 'stale' ? t('memQuotaStale')
+        : state === 'manual' ? t('memQuotaManual')
+        : state === 'no_data' ? emptyReading.state : t('memQuotaUnrecorded')
     }
   })
 }
 
-function membershipReadingStatus(rows, t = needsAttentionEn) {
+/**
+ * Why an account has, or has not, a provider allowance reading. Four honest
+ * cases that must never collapse into each other or into "zero used":
+ *
+ * - `reported`    Hermes answered with windows for this account.
+ * - `not_read`    nothing was asked yet in this session; the stored view only.
+ * - `unsupported` Hermes answered and has no allowance reading to give.
+ * - `failed`      the provider read itself failed (error, timeout, wrong account).
+ *
+ * `unreported` is the remainder: a successful read that carried no windows.
+ */
+function allowanceReadState(account, context = {}) {
+  const t = context.t || needsAttentionEn
+  const quota = account?.quota || {}
+  const probe = account?.native_probe || null
+  const provider = String(quota.provider_state || quota.state || account?.native_state || 'absent')
+  const windows = Array.isArray(quota.windows) ? quota.windows : []
+  const reported = windows.filter(window =>
+    Array.isArray(window?.basis) && window.basis.includes('provider_reported'))
+  if (reported.length) {
+    const stale = provider === 'stale' || reported.some(window => window.state === 'stale')
+    return { state: stale ? 'stale' : 'reported', provider }
+  }
+  const probeState = String(probe?.state || '')
+  if (probeState === 'error') return { state: 'failed', provider, probeState, reason: t('memReadFailedReason') }
+  if (probeState === 'unsupported' || probeState === 'unavailable') {
+    return { state: 'unsupported', provider, probeState }
+  }
+  if (provider === 'identity_mismatch') {
+    return { state: 'failed', provider, probeState, reason: t('memReadIdentity') }
+  }
+  if (provider === 'unavailable') return { state: 'unsupported', provider, probeState }
+  if (provider === 'live' || provider === 'stale') return { state: 'unreported', provider, probeState }
+  // No probe metadata and no reading: say "not read" only when nothing was
+  // asked. A native read that produced no snapshot is reported as having none.
+  return context.native ? { state: 'unreported', provider, probeState }
+    : { state: 'not_read', provider, probeState }
+}
+
+/** The one-line explanation that belongs with a reading state, or ''. */
+function allowanceReadNoteKey(state) {
+  return state === 'failed' ? 'memReadingNoteFailed'
+    : state === 'unsupported' ? 'memReadingNoteNotAvailable'
+    : state === 'not_read' ? 'memReadingNoteNotRead'
+    : state === 'unreported' ? 'memReadingNoteUnreported'
+    : state === 'stale' ? 'memReadingNoteStale'
+    : ''
+}
+
+/** How old the provider reading is, in the reader's own words. */
+function readingAgeText(quota, t = needsAttentionEn) {
+  const age = Number(quota?.age_seconds)
+  if (quota?.age_seconds === null || quota?.age_seconds === undefined || !Number.isFinite(age) || age < 0) return ''
+  const minutes = Math.max(0, Math.round(age / 60))
+  if (minutes < 1) return t('memReadAgeNow')
+  return minutes < 90 ? t('memReadAgeMins', minutes) : t('memReadAgeHours', Math.round(minutes / 60))
+}
+
+function membershipReadingStatus(rows, t = needsAttentionEn, context = null) {
   const items = Array.isArray(rows) ? rows : []
   const reported = items.filter(row => row.state === 'live' || row.state === 'stale' ||
     (Array.isArray(row.basis) && row.basis.includes('provider_reported')))
   if (!reported.length) {
-    return items.some(row => row.state === 'manual')
-      ? { state: 'manual', label: t('memAllowanceManual') }
-      : { state: 'unreported', label: t('memAllowanceUnreported') }
+    if (items.some(row => row.state === 'manual')) {
+      return { state: 'manual', label: t('memAllowanceManual') }
+    }
+    // Why there is no reading is part of the answer: a route Hermes cannot
+    // read, a read that failed, and a read nobody has asked for yet are three
+    // different situations, and none of them is zero usage.
+    const read = context?.account
+      ? allowanceReadState(context.account, { native: !!context.native, t })
+      : null
+    // Only a read Hermes could not do, or one that failed, changes the chip.
+    // "Nothing asked for yet" and "asked, nothing reported" keep the existing
+    // Unreported vocabulary; the group note says which it was.
+    if (read && (read.state === 'unsupported' || read.state === 'failed')) {
+      return { state: read.state, reason: read.reason || '',
+        label: t(read.state === 'failed' ? 'memAllowanceFailed' : 'memAllowanceNotAvailable') }
+    }
+    return { state: 'unreported', label: t('memAllowanceUnreported') }
   }
   if (reported.some(row => row.state === 'stale' ||
       (row.providerState === 'stale' && Array.isArray(row.basis) && row.basis.includes('provider_reported')))) {
@@ -7048,6 +7143,19 @@ const WEATHER_CSS = `
 .wm-weather-notes{margin:0;padding-left:16px;display:grid;gap:3px;font-size:11.5px;color:var(--ui-text-secondary)}
 `
 
+/**
+ * A failed allowance-weather read, told by what actually failed. A timeout, a
+ * backend that does not serve the route and a lost session are three different
+ * answers; "unavailable" for all three teaches the reader nothing.
+ */
+function wxErrorText(error, t = needsAttentionEn) {
+  const { kind } = membershipErrorKind(error)
+  if (kind === 'timeout') return t('wxTimeout')
+  if (kind === 'missing' || kind === 'namespace') return t('wxNotProvided')
+  if (kind === 'auth') return t('wxAuth')
+  return t('wxUnavailable')
+}
+
 /** Compact allowance-weather indicator for one membership card. */
 function AllowanceWeather({ entry, error }) {
   const t = usePluginI18n(ID)
@@ -7056,7 +7164,8 @@ function AllowanceWeather({ entry, error }) {
   if (compatibilityWarning && !entry) return null
   if (!entry && !error) return null
   if (!entry) {
-    return jsx('p', { className: 'wm-note', role: 'status', children: t('wxUnavailable') })
+    return jsx('p', { className: 'wm-note wm-warn-note', role: 'status', 'data-weather-state': 'failed',
+      children: wxErrorText(error, t) })
   }
   // A failed refetch keeps the previous entry: show it, but never as current.
   const stale = !!error
@@ -7080,6 +7189,7 @@ function AllowanceWeather({ entry, error }) {
     : { 'data-weather-kind': 'rule', 'data-weather-profile': row.profile,
         'data-weather-pool': row.pool, tabIndex: -1 }
   return jsxs('section', { className: 'wm-weather', 'data-verdict': rollup,
+    'data-weather-state': stale ? 'stale' : 'ready',
     'aria-label': t('wxTitle'), children: [
       jsxs('div', { className: 'wm-weather-head', children: [
         jsx('span', { className: 'wm-weather-dot', 'aria-hidden': 'true' }),
@@ -7102,6 +7212,9 @@ function AllowanceWeather({ entry, error }) {
         children: notes.map((note, index) => jsx('li', { children: note }, index)) }) : null,
     ] })
 }
+
+/** How many attention reasons the page lists before it must say how many it hid. */
+const ATTENTION_LIST_LIMIT = 6
 
 /** Everything the owner should look at, most urgent first. */
 /** English fallback translator for callers outside a translated render. */
@@ -7562,15 +7675,22 @@ function membershipAccountShortcutLabel(account, t = needsAttentionEn) {
   return account?.label && account.label !== account.family
     ? account.label : membershipProviderLabel(account?.family, t)
 }
-function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention }) {
+function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention, native }) {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const now = useValue($membershipClock)
   const rawPlanDraft = useValue($customPlanDraft)
   const rawExhaustionDraft = useValue($exhaustionDraft)
   const rawEntitlementDraft = useValue($membershipEntitlementDraft)
-  const rows = quotaRows(account, now, t)
-  const readingStatus = membershipReadingStatus(rows, t)
+  // Why this account has or has not a provider reading travels with the rows,
+  // so the row chip, the window rows and the note all say the same thing.
+  const read = allowanceReadState(account, { native: !!native, t })
+  const rows = quotaRows(account, now, t, { readState: read.state })
+  const readingStatus = membershipReadingStatus(rows, t, { account, native: !!native })
+  const readNoteKey = allowanceReadNoteKey(read.state)
+  // A provider reading is only trustworthy with its age beside it.
+  const readAge = ['reported', 'stale', 'partial'].includes(readingStatus.state)
+    ? readingAgeText(account?.quota, t) : ''
   const fee = account.fee || {}
   const proposal = proposalText(account, t)
   const reconfirmation = reconfirmationText(account, t)
@@ -7784,6 +7904,9 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
             children: readingStatus.label }) })
         ] }),
         jsxs('div', { className: 'wm-row-state', children: [
+          account.credential_present === false
+            ? jsx('span', { className: 'wm-chip', 'data-state': 'no_data', 'data-credential': 'missing',
+                children: t('memCredMissingChip') }) : null,
           hasAttention ? jsx('span', { className: 'wm-certainty', 'data-certainty': 'partial', children: t('memNeedsAttention') }) : null,
           busy === account.id ? jsx('span', { className: 'wm-note', role: 'status', children: t('memSaving') }) : null
         ] }),
@@ -7951,6 +8074,10 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
       onToggle: event => membershipGroupToggled(account.id, 'allowances', event.currentTarget.open), children: [
       jsx('summary', { children: t('memGroupAllow') }),
       jsxs('div', { className: 'wm-group-body', children: [
+    readNoteKey ? jsx('p', { className: 'wm-note wm-reading-note', 'data-reading-note': read.state,
+      children: t(readNoteKey) }) : null,
+    readAge ? jsx('p', { className: 'wm-note wm-reading-note', 'data-reading-age': 'true',
+      children: readAge }) : null,
     rows.length
       ? jsxs('ul', { className: 'wm-quota', children: rows.map(row => jsxs('li', { 'data-window': row.id, 'data-state': row.state, children: [
           jsxs('div', { className: 'wm-quota-head', children: [
@@ -7958,8 +8085,11 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
             jsx('span', { className: 'wm-chip', 'data-state': row.state, children: row.stateLabel })
           ] }),
           jsx('div', { className: 'wm-quota-reading', children: row.reading }),
-          jsx('div', { className: 'wm-note', children: [row.source, row.reset,
-            row.manual && !row.reset ? t('memQuotaNoReset') : ''].filter(Boolean).join(' · ') }),
+          [row.source, row.reset, row.manual && !row.reset ? t('memQuotaNoReset') : '']
+            .filter(Boolean).length
+            ? jsx('div', { className: 'wm-note', children: [row.source, row.reset,
+                row.manual && !row.reset ? t('memQuotaNoReset') : ''].filter(Boolean).join(' · ') })
+            : null,
           jsxs('div', { className: 'wm-quota-actions', children: [
             jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-action': 'mark-exhausted',
               disabled: !!busy,
@@ -8019,6 +8149,45 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
   ], `membership-card-${account.id}`) })
 }
 
+
+/**
+ * Jump to the Costs tab's subscription-value view. The anchor is optional so
+ * this link works whether or not that page publishes one: the tab switch is
+ * the contract, the scroll is an enhancement.
+ */
+const COSTS_VALUE_ANCHORS = ['costs-subscription-value', 'costs-value']
+function openCostsValue() {
+  goLedgerTab('costs')
+  try {
+    setTimeout(() => {
+      if (typeof document === 'undefined') return
+      let anchor = null
+      for (const id of COSTS_VALUE_ANCHORS) {
+        anchor = document.getElementById(id)
+        if (anchor) break
+      }
+      if (!anchor) anchor = document.querySelector('[data-wm-section="subscription-value"]')
+      if (!anchor) return
+      const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+      anchor.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+      if (!anchor.hasAttribute('tabindex')) anchor.setAttribute('tabindex', '-1')
+      try { anchor.focus({ preventScroll: true }) } catch {
+        try { anchor.focus() } catch {}
+      }
+    }, 60)
+  } catch {}
+}
+
+/** Accounts whose provider read failed, so a refresh cannot claim a clean sweep. */
+function membershipReadFailures(accounts) {
+  const list = Array.isArray(accounts) ? accounts : []
+  const failed = list.filter(account => account?.native_probe?.state === 'error')
+  const missing = list.filter(account => {
+    const state = String(account?.native_probe?.state || '')
+    return state === 'unsupported' || state === 'unavailable'
+  })
+  return { failed: failed.length, missing: missing.length, total: list.length }
+}
 
 function MembershipsPage() {
   // The identity is reactive: switching gateway or profile, or a re-activation
@@ -8376,7 +8545,11 @@ function MembershipsPage() {
       $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
                                 store: payload.store, notes: payload.notes })
       await invalidateWeatherFor(captured)
-      setMembershipNotice(captured, 'good', t('memReadingsRefreshed'), operation)
+      // A refresh that could not read every account is not a clean sweep.
+      const failures = membershipReadFailures(payload.accounts)
+      setMembershipNotice(captured, failures.failed ? 'warn' : 'good',
+        failures.failed ? t('memReadingsPartial', failures.failed, failures.total)
+          : t('memReadingsRefreshed'), operation)
     } catch (error) {
       setMembershipNotice(captured, 'warn', membershipErrorText(error, 'refresh', t), operation)
     } finally {
@@ -8449,6 +8622,11 @@ function MembershipsPage() {
         ] }),
       jsx('p', { className: 'wm-note wm-membership-fee-note',
         children: t('memFeesNoteShort') }),
+      jsxs('div', { className: 'wm-membership-value', children: [
+        jsx(ProductButton, { type: 'button', className: 'wm-button', 'data-wm-costs-link': 'true',
+          onClick: openCostsValue, children: t('memOpenCostsValue') }),
+        jsx('p', { className: 'wm-note', children: t('memOpenCostsValueNote') })
+      ] }),
       jsxs('details', { className: 'wm-note wm-membership-explainer', children: [
         jsx('summary', { children: t('memFeesHelp') }),
         jsx('p', { children: t('memFeesNote') })
@@ -8456,13 +8634,19 @@ function MembershipsPage() {
       attention.length
         ? jsxs('section', { className: 'wm-attention', 'aria-label': t('memNeedsAttention'), children: [
             jsx('h3', { children: t('memNeedsAttention') }),
-            jsxs('ul', { children: attention.slice(0, 6).map((item, index) =>
+            jsx('p', { className: 'wm-note', 'data-attention-scope': 'true',
+              children: t('memAttentionScope', attention.length, attentionIds.size) }),
+            jsxs('ul', { children: attention.slice(0, ATTENTION_LIST_LIMIT).map((item, index) =>
               jsxs('li', { 'data-tone': item.tone, children: [
                 jsx('span', { children: `${membershipAccountShortcutLabel(item.account, t)}: ${item.text}` }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
                   onClick: () => queueMembershipTarget(item),
                   children: attentionActionLabel(item.issue, t) })
-              ] }, index)) })
+              ] }, index)) }),
+            attention.length > ATTENTION_LIST_LIMIT
+              ? jsx('p', { className: 'wm-note', 'data-attention-more': String(attention.length - ATTENTION_LIST_LIMIT),
+                  children: t('memAttentionMore', attention.length - ATTENTION_LIST_LIMIT, attention.length) })
+              : null
           ] })
         : null,
       storeNotes.length
@@ -8500,15 +8684,16 @@ function MembershipsPage() {
                 plans: accountPlanChoices(account),
                 busy, onAction, draft, saveFee, catalogue, notice,
                 weather: weatherById.get(account.id) || null, weatherError,
-                hasAttention: attentionIds.has(account.id)
+                hasAttention: attentionIds.has(account.id), native
               }, account.id))
             : [jsx('p', { className: 'wm-empty', children: accounts.error
                 ? t('memReadFailed')
                 : attentionOnly ? t('memAllClear')
                 : t('memEmptyHint') })] }),
       membershipDiagnostics.length
-        ? jsxs('details', { className: 'wm-note', children: [
+        ? jsxs('details', { className: 'wm-note', 'data-wm-diagnostics': 'true', children: [
             jsx('summary', { children: t('memDiagnostics') }),
+            jsx('p', { className: 'wm-note', children: t('memDiagnosticsNote') }),
             jsx('ul', { children: membershipDiagnostics.map((entry, index) =>
               jsx('li', { children: `${entry.at} ${entry.method} ${entry.path} → ${entry.status ?? entry.outcome} · ${entry.scope}` }, index)) })
           ] })
@@ -10966,6 +11151,9 @@ const I18N = {
     memAllowanceStale: 'Stale reading',
     memAllowanceManual: 'Manual mark',
     memAllowanceUnreported: 'Unreported',
+    // Why there is no reading. Four different situations, never one blank.
+    memAllowanceNotAvailable: 'Not available from Hermes',
+    memAllowanceFailed: 'Read failed',
     memGroupPlan: 'Plan & billing',
     memSeats: 'Seats',
     memSaveSeats: 'Save seats',
@@ -11006,6 +11194,21 @@ const I18N = {
     memFeesLabel: 'Membership fees',
     memFeesNotRecorded: 'No fee amount recorded',
     memFeesNoteShort: 'Saved fees keep their currency and period. Costs separates them from API-equivalent estimates and actual charge evidence.',
+    memReadingNoteNotRead: 'No provider reading has been requested since this page loaded. Refresh provider usage to ask Hermes.',
+    memReadingNoteNotAvailable: 'Hermes does not report an allowance for this route. That is a data limit, not zero usage; your own marks still apply.',
+    memReadingNoteFailed: 'The provider reading could not be fetched. Saved plans, fees and marks are unchanged.',
+    memReadingNoteUnreported: 'Hermes read this account and reported no allowance windows.',
+    memReadingNoteStale: 'The provider reading is older than the freshness window, so it is not shown as current.',
+    memReadAgeNow: 'Provider reading from just now.',
+    memReadAgeMins: n => `Provider reading from ${n} min ago.`,
+    memReadAgeHours: n => `Provider reading from ${n} h ago.`,
+    memReadFailedReason: 'The provider read failed.',
+    memReadIdentity: 'Hermes answered for a different account, so the reading is not applied.',
+    memReadingsPartial: (failed, total) => `Readings refreshed, but ${failed} of ${total} accounts could not be read.`,
+    memAttentionScope: (reasons, accounts) => `${reasons} ${reasons === 1 ? 'reason' : 'reasons'} across ${accounts} ${accounts === 1 ? 'account' : 'accounts'}.`,
+    memAttentionMore: (more, total) => `Showing ${total - more} of ${total}. Use the attention filter to narrow the list.`,
+    memOpenCostsValue: 'Compare subscription value in Costs',
+    memOpenCostsValueNote: 'Costs keeps saved fees and API-equivalent usage value apart. Neither is a bill.',
     memFeesHelp: 'About fees and allowance readings',
     memFeesNote: 'Saved subscription fees stay separate by currency and period; unknown values remain marked on their account. Allowance percentages are limits, not fees. Costs keeps saved fees, API-equivalent estimates and actual charge evidence distinct.',
     memAccountId: id => `Account ID: ${id}`,
@@ -11026,7 +11229,8 @@ const I18N = {
     memProviderAnthropic: 'Anthropic',
     memProviderGoogleGemini: 'Google Gemini',
     memProviderOpenAICodex: 'OpenAI Codex',
-    memDiagnostics: 'Request diagnostics (this session)',
+    memDiagnostics: 'Request diagnostics (this session, optional)',
+    memDiagnosticsNote: 'Method, relative path, status, identity and time only. No tokens, headers, bodies or account contents.',
     memSaved: 'Saved.',
     memSavedRereadFailed: error => `Saved, but the list could not be re-read. ${error}`,
     memDiscovered: (found, added, updated) => `Discovered ${found} account(s): ${added} new, ${updated} updated.`,
@@ -11104,6 +11308,12 @@ const I18N = {
     memQuotaStale: 'stale',
     memQuotaManual: 'manual',
     memQuotaUnrecorded: 'not recorded',
+    memQuotaNotAvailable: 'Not available from Hermes',
+    memQuotaNotAvailableShort: 'not available',
+    memQuotaNotReported: 'Not reported by the provider',
+    memQuotaNotReportedShort: 'not reported',
+    memQuotaReadFailed: 'Read failed',
+    memQuotaReadFailedShort: 'read failed',
     memCountdownIn: span => `in ${span}`,
     memCountdownAgo: span => `${span} ago`,
     // Plan proposal, reconfirmation and tier options.
@@ -11188,6 +11398,7 @@ const I18N = {
     memArrNoteUnconfirmed: 'No confirmed billing arrangement.',
     memCredConfigured: 'configured credential',
     memCredMissing: 'credential not found',
+    memCredMissingChip: 'No credential',
     memIdentityNative: 'Account identified by Hermes.',
     memIdentitySlot: 'Provider account slot; credential values are never shown.',
     // Exhaustion flow.
@@ -11256,6 +11467,9 @@ const I18N = {
     wxNoForecast: 'No forecast — see details',
     wxDetails: 'Details',
     wxUnavailable: 'Allowance weather is unavailable for this connection.',
+    wxTimeout: 'Provider usage did not answer in time. Try Refresh provider usage again.',
+    wxNotProvided: 'This backend does not serve allowance readings.',
+    wxAuth: 'Sign in to this connection to read allowance usage.',
     wxStale: 'Refresh failed — showing the last read.',
     // Local digest reports.
     reportsTitle: 'Reports',
@@ -12390,6 +12604,8 @@ const I18N = {
     memAllowanceStale: '读数已过期',
     memAllowanceManual: '手动标记',
     memAllowanceUnreported: '未上报',
+    memAllowanceNotAvailable: 'Hermes 无法提供',
+    memAllowanceFailed: '读取失败',
     memGroupPlan: '方案与账单',
     memSeats: '席位数',
     memSaveSeats: '保存席位数',
@@ -12430,6 +12646,21 @@ const I18N = {
     memFeesLabel: '会员费用',
     memFeesNotRecorded: '未记录费用金额',
     memFeesNoteShort: '已保存费用保留币种和周期。“成本”会将其与 API 等效估值及实际账单凭据分开显示。',
+    memReadingNoteNotRead: '此页面加载后尚未请求提供方读数。请刷新提供方用量以向 Hermes 查询。',
+    memReadingNoteNotAvailable: 'Hermes 不为此线路提供额度读数。这是数据限制，并非零用量；您自己的标记仍然有效。',
+    memReadingNoteFailed: '无法获取提供方读数。已保存的方案、费用与标记均未改变。',
+    memReadingNoteUnreported: 'Hermes 已读取此账户，但没有上报额度窗口。',
+    memReadingNoteStale: '提供方读数已超过新鲜度时限，因此不按当前读数显示。',
+    memReadAgeNow: '提供方读数来自刚刚。',
+    memReadAgeMins: n => `提供方读数来自 ${n} 分钟前。`,
+    memReadAgeHours: n => `提供方读数来自 ${n} 小时前。`,
+    memReadFailedReason: '提供方读取失败。',
+    memReadIdentity: 'Hermes 返回了其他账户的数据，因此不采用该读数。',
+    memReadingsPartial: (failed, total) => `读数已刷新，但有 ${failed}/${total} 个账户无法读取。`,
+    memAttentionScope: (reasons, accounts) => `${accounts} 个账户共 ${reasons} 项`,
+    memAttentionMore: (more, total) => `显示 ${total - more} 项，共 ${total} 项。可用“仅需关注”筛选列表。`,
+    memOpenCostsValue: '在“成本”中比较订阅价值',
+    memOpenCostsValueNote: '“成本”将已保存的费用与 API 等值用量价值分开呈现，两者都不是账单。',
     memFeesHelp: '关于费用与额度读数',
     memFeesNote: '已保存订阅费用按币种与账单周期分列；未知金额会标记在对应账户上。额度百分比是限制，不是费用。“成本”会将已保存费用、API 等效用量估值与实际账单凭据分开显示。',
     memAccountId: id => `账户 ID：${id}`,
@@ -12450,7 +12681,8 @@ const I18N = {
     memProviderAnthropic: 'Anthropic 服务',
     memProviderGoogleGemini: 'Google Gemini 服务',
     memProviderOpenAICodex: 'OpenAI Codex 服务',
-    memDiagnostics: '请求诊断信息（本次会话）',
+    memDiagnostics: '请求诊断信息（本次会话，可选）',
+    memDiagnosticsNote: '仅包含方法、相对路径、状态、身份与时间。不包含令牌、标头、请求体或账户内容。',
     memSaved: '已保存。',
     memSavedRereadFailed: error => `已保存，但列表无法重新读取。${error}`,
     memDiscovered: (found, added, updated) => `发现 ${found} 个账户：新增 ${added}，更新 ${updated}。`,
@@ -12528,6 +12760,12 @@ const I18N = {
     memQuotaStale: '过期',
     memQuotaManual: '手动',
     memQuotaUnrecorded: '未记录',
+    memQuotaNotAvailable: 'Hermes 无法提供',
+    memQuotaNotAvailableShort: '不可用',
+    memQuotaNotReported: '提供方未上报',
+    memQuotaNotReportedShort: '未上报',
+    memQuotaReadFailed: '读取失败',
+    memQuotaReadFailedShort: '读取失败',
     memCountdownIn: span => `${span}后`,
     memCountdownAgo: span => `${span}前`,
     // 方案建议、重新确认与档位选项。
@@ -12612,6 +12850,7 @@ const I18N = {
     memArrNoteUnconfirmed: '未确认计费方式。',
     memCredConfigured: '凭证已配置',
     memCredMissing: '未找到凭证',
+    memCredMissingChip: '无凭证',
     memIdentityNative: '账户由 Hermes 识别。',
     memIdentitySlot: '供应商账户槽位；绝不显示凭证值。',
     // 耗尽上报流程。
@@ -12680,6 +12919,9 @@ const I18N = {
     wxNoForecast: '无预测——见详情',
     wxDetails: '详情',
     wxUnavailable: '此连接无法读取额度动态。',
+    wxTimeout: '提供方用量读取超时。请再次尝试“刷新提供方用量”。',
+    wxNotProvided: '此后端不提供额度读数。',
+    wxAuth: '请重新登录此连接以读取额度用量。',
     wxStale: '刷新失败——显示上次读取的数据。',
     // 本地摘要报告。
     reportsTitle: '报告',
@@ -13665,6 +13907,7 @@ export const __test = {
   $membershipScope, $membershipSnapshot, $membershipNotice,
   $membershipBusy, $membershipNative, $membershipAttentionOnly, $membershipDraft, $scopeConnection, $scopeProfile,
   fmtMoney, fmtMembershipMoney, membershipCurrencyCode, feeLabel, quotaRows, membershipReadingStatus, needsAttention, membershipSummary, feesLabel, accountPlanChoices,
+  allowanceReadState, allowanceReadNoteKey, readingAgeText, membershipReadFailures, openCostsValue, wxErrorText, ATTENTION_LIST_LIMIT,
   membershipProviderLabel, membershipIdentityLabel, membershipAccountShortcutLabel,
   excludedPlansNote, planOptionLabel,
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,
