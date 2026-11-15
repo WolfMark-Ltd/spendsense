@@ -63,6 +63,9 @@ EVENT_TYPES = (
 #: the record; the headline surface only shows recent news.
 REMOVAL_WINDOW_DAYS = 90
 
+#: Event types that belong in the removals section, from either source.
+REMOVAL_EVENT_TYPES = ("removed_from_provider", "provider_delisted")
+
 #: Signals that annotate an event without replacing its event type.
 SIGNAL_PREVIEW = "preview"
 
@@ -631,14 +634,11 @@ def _section(section_id: str, entries: list[dict[str, Any]],
     }
 
 
-def _recent_removals(removals: Iterable[Mapping[str, Any]], generated_at: str,
-                     window_days: int) -> list[dict[str, Any]]:
-    """Removal events as briefing entries, newest first.
+def _within_window(stamp: str, generated_at: str, window_days: int) -> bool:
+    """True when ``stamp`` is inside the news window ending at ``generated_at``.
 
-    A confirmed record stays in history indefinitely; only recent ones belong in
-    a news section, so the window is applied here and the order is by date
-    rather than by score. An unparseable date is kept: dropping evidence because
-    of a format is worse than showing an undated record.
+    An unparseable or absent stamp is kept: dropping evidence because of a
+    format is worse than showing an undated record.
     """
     cutoff: Optional[datetime] = None
     if generated_at:
@@ -646,20 +646,29 @@ def _recent_removals(removals: Iterable[Mapping[str, Any]], generated_at: str,
             cutoff = datetime.fromisoformat(generated_at) - timedelta(days=max(0, window_days))
         except ValueError:
             cutoff = None
-    if cutoff is not None and cutoff.tzinfo is None:
+    if cutoff is None:
+        return True
+    if cutoff.tzinfo is None:
         cutoff = cutoff.replace(tzinfo=timezone.utc)
+    if not stamp:
+        return True
+    try:
+        moment = datetime.fromisoformat(stamp)
+    except ValueError:
+        return True
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment >= cutoff
 
-    def _recent(stamp: str) -> bool:
-        if cutoff is None or not stamp:
-            return True
-        try:
-            moment = datetime.fromisoformat(stamp)
-        except ValueError:
-            return True
-        if moment.tzinfo is None:
-            moment = moment.replace(tzinfo=timezone.utc)
-        return moment >= cutoff
 
+def _recent_removals(removals: Iterable[Mapping[str, Any]], generated_at: str,
+                     window_days: int) -> list[dict[str, Any]]:
+    """Confirmed removal records as item-shaped entries, newest first.
+
+    A confirmed record stays in history indefinitely; only recent ones belong in
+    a news section, so the window is applied here and the order is by date
+    rather than by score.
+    """
     entries: list[dict[str, Any]] = []
     for record in removals:
         if not isinstance(record, Mapping):
@@ -667,7 +676,7 @@ def _recent_removals(removals: Iterable[Mapping[str, Any]], generated_at: str,
         provider = str(record.get("provider") or "").strip()
         model = str(record.get("model") or "").strip()
         removed_at = str(record.get("removed_at") or "")
-        if not provider or not _recent(removed_at):
+        if not provider or not _within_window(removed_at, generated_at, window_days):
             continue
         entries.append({
             "id": f"rm-{provider}-{model}".strip("-"),
@@ -749,8 +758,23 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
     increases = _group(ranked("price_increase"))
     mixed = _group(ranked("price_mixed"))
 
-    removal_records = _recent_removals(removals, generated_at, removal_window_days)
-    removal_entries = [_entry(record) for record in removal_records]
+    # Removals come from two sources: absence records the publisher confirmed,
+    # and operator notes that assert a removal directly. A note supersedes an
+    # inferred record for the same identity rather than appearing beside it.
+    curated_removals = [entry for entry in entries
+                        if entry["event_type"] in REMOVAL_EVENT_TYPES
+                        and _within_window(entry["observed_at"], generated_at,
+                                           removal_window_days)]
+    removal_entries = list(curated_removals)
+    claimed = {(entry["provider"], entry["model"]) for entry in removal_entries}
+    for record in _recent_removals(removals, generated_at, removal_window_days):
+        entry = _entry(record)
+        identity = (entry["provider"], entry["model"])
+        if identity in claimed:
+            continue
+        claimed.add(identity)
+        removal_entries.append(entry)
+        counts[entry["event_type"]] = counts.get(entry["event_type"], 0) + 1
     removal_groups = _group(removal_entries)
     # Removals are the one section where "newest" beats "biggest": a confirmed
     # record never expires from history, so a fixed widening sort would let old
@@ -787,9 +811,10 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
     ]
 
     unsupported: list[dict[str, str]] = []
-    if not removal_tracking:
+    if not removal_tracking and not curated_removals:
         # Distinguish "we cannot detect removals" from "we can and confirmed
-        # none": only the first is a limitation worth telling the reader about.
+        # none", and from "an operator published one directly": only the first
+        # is a limitation worth telling the reader about.
         unsupported.append({
             "id": "removals",
             "reason_code": "news_unsupported_no_absence_history",
@@ -804,8 +829,6 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
                  default="")
     newest = max((entry["observed_at"] for entry in entries if entry["observed_at"]),
                  default="")
-    for record in removal_records:
-        counts[record["event_type"]] = counts.get(record["event_type"], 0) + 1
     return {
         "version": BRIEFING_VERSION,
         "generated_at": generated_at,

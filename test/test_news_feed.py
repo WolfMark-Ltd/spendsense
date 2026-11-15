@@ -614,6 +614,71 @@ class HistoryAndEditorialTests(unittest.TestCase):
         self.assertEqual(state["removed"], {},
                          "pruned history never fabricates a removal")
 
+    def test_long_model_ids_survive_a_history_round_trip(self):
+        feed = feed_module()
+        prefix = "vendor/model-" + "x" * 70
+        long_id = prefix + "-alpha"
+        sibling = prefix + "-beta"
+        both = models([("acme", long_id, {"input": 1.0, "output": 1.0}),
+                       ("acme", sibling, {"input": 1.0, "output": 1.0})])
+        state, _ = feed.update_history(None, both, observed_at=self.OBSERVED)
+        without = models([("acme", "unrelated", {"input": 1.0, "output": 1.0})])
+        for stamp in (self.LATER, self.LATEST):
+            state, removals = feed.update_history(state, without, observed_at=stamp)
+        self.assertEqual(sorted(record["model"] for record in removals),
+                         sorted([long_id, sibling]),
+                         "model identity is kept at its supported width, not a timestamp's")
+        for record in removals:
+            self.assertGreater(len(record["model"]), 64)
+        doc, _ = feed.build_feed(without, both, {"announcements": []},
+                                 observed_at=self.LATEST, history=state)
+        section = next(s for s in doc["briefing"]["sections"] if s["id"] == "removals")
+        headlined = {entry["model"] for entry in section["entries"]}
+        self.assertEqual(headlined, {long_id, sibling},
+                         "two ids sharing a 64-character prefix stay distinguishable")
+
+    def test_curated_removal_note_reaches_the_removals_section(self):
+        feed = feed_module()
+        snapshot = models([("acme", "alpha", {"input": 1.0, "output": 1.0})])
+        curated = {"announcements": [{
+            "id": "op-removal-one", "provider": "acme", "model": "alpha",
+            "event_type": "removed_from_provider", "confidence": "verified",
+            "summary": "Acme has withdrawn alpha.",
+            "source_url": "https://acme.example/changelog",
+        }]}
+        doc, problems = feed.build_feed(snapshot, snapshot, curated,
+                                        observed_at=self.OBSERVED)
+        self.assertEqual(problems, [])
+        section = next(s for s in doc["briefing"]["sections"] if s["id"] == "removals")
+        self.assertEqual(section["total"], 1,
+                         "an operator's removal note must produce a headline")
+        self.assertEqual(section["entries"][0]["model"], "alpha")
+        self.assertIn("no longer lists alpha", section["entries"][0]["headline"])
+        self.assertEqual(doc["briefing"]["counts"]["removed_from_provider"], 1)
+        self.assertNotIn("removals",
+                         {entry["id"] for entry in doc["briefing"]["unsupported"]},
+                         "a published removal is not a missing capability")
+
+    def test_curated_removal_supersedes_the_inferred_record(self):
+        feed = feed_module()
+        both = models([("acme", "alpha", {"input": 1.0, "output": 1.0}),
+                       ("acme", "beta", {"input": 1.0, "output": 1.0})])
+        state, _ = feed.update_history(None, both, observed_at=self.OBSERVED)
+        only_alpha = models([("acme", "alpha", {"input": 1.0, "output": 1.0})])
+        for stamp in (self.LATER, self.LATEST):
+            state, _ = feed.update_history(state, only_alpha, observed_at=stamp)
+        curated = {"announcements": [{
+            "id": "op-removal-two", "provider": "acme", "model": "beta",
+            "event_type": "removed_from_provider", "confidence": "verified",
+            "summary": "Acme has withdrawn beta.",
+            "source_url": "https://acme.example/changelog",
+        }]}
+        doc, _ = feed.build_feed(only_alpha, both, curated,
+                                 observed_at=self.LATEST, history=state)
+        section = next(s for s in doc["briefing"]["sections"] if s["id"] == "removals")
+        self.assertEqual(section["total"], 1, "the same removal is not reported twice")
+        self.assertEqual(section["entries"][0]["event_type"], "removed_from_provider")
+
     def test_retried_observation_never_confirms_a_removal(self):
         feed = feed_module()
         both = models([("acme", "alpha", {"input": 1.0, "output": 1.0}),

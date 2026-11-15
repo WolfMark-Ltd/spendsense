@@ -207,7 +207,22 @@ def _empty_history() -> dict[str, Any]:
 
 
 def _stamp_text(value: Any) -> str:
+    """An ISO timestamp, truncated to the feed's timestamp width."""
     return value.strip()[:64] if isinstance(value, str) else ""
+
+
+#: Supported widths for the identity fields a removal record carries. These
+#: follow the published schema, not the timestamp width: shortening a model id
+#: would rename the model in a headline and collide two ids that share a prefix.
+MAX_PROVIDER_CHARS = 128
+MAX_MODEL_CHARS = 256
+MAX_URL_CHARS = 500
+MAX_PROVENANCE_CHARS = 256
+MAX_CONFIDENCE_CHARS = 32
+
+
+def _identity(value: Any, limit: int) -> str:
+    return value.strip()[:limit] if isinstance(value, str) else ""
 
 
 def _count(value: Any) -> int:
@@ -260,20 +275,21 @@ def _coerced_history(prior: Any) -> dict[str, Any]:
         for key, record in raw.items():
             if not isinstance(record, Mapping):
                 continue
-            provider = _stamp_text(record.get("provider"))
+            provider = _identity(record.get("provider"), MAX_PROVIDER_CHARS)
             removed_at = _stamp_text(record.get("removed_at"))
             if not provider or not removed_at:
                 continue
             state["removed"][str(key)] = {
                 "provider": provider,
-                "model": _stamp_text(record.get("model")),
+                "model": _identity(record.get("model"), MAX_MODEL_CHARS),
                 "removed_at": removed_at,
                 "missing_since": _stamp_text(record.get("missing_since")),
                 "consecutive": _count(record.get("consecutive")),
                 "last_present_at": _stamp_text(record.get("last_present_at")),
-                "source_url": _stamp_text(record.get("source_url"))[:500],
-                "provenance": _stamp_text(record.get("provenance"))[:256],
-                "confidence": _stamp_text(record.get("confidence"))[:32] or "observed",
+                "source_url": _identity(record.get("source_url"), MAX_URL_CHARS),
+                "provenance": _identity(record.get("provenance"), MAX_PROVENANCE_CHARS),
+                "confidence": (_identity(record.get("confidence"), MAX_CONFIDENCE_CHARS)
+                               or "observed"),
             }
 
     raw = prior.get("provider_absent")

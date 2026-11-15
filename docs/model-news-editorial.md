@@ -65,9 +65,16 @@ is `price_mixed` even though its v1 category follows the input+output total.
   `REMOVAL_WINDOW_DAYS` (90) after `removed_at`, ordered newest first, so an
   accumulating archive cannot crowd out today's news.
 - **An operator note is the only place a hard claim lives.** A curated entry may
-  carry a validated `event_type` (`new_plan`, `new_to_catalogue`, …) with
-  `confidence: curated` or `verified`; that is how a launch, a removal or a plan
-  change is asserted when a catalogue diff cannot prove it.
+  carry a validated `event_type` (`new_plan`, `new_to_catalogue`,
+  `removed_from_provider`, …) with `confidence: curated` or `verified`; that is
+  how a launch, a removal or a plan change is asserted when a catalogue diff
+  cannot prove it. Curated removal notes feed the same removals section as
+  absence-confirmed records, and supersede an inferred record for the same
+  provider and model instead of appearing beside it.
+- **Identity keeps its supported width.** A removal record stores provider and
+  model ids at the widths the published schema allows (128 and 256 characters).
+  Only timestamps are held to 64, so a long model id is never renamed in a
+  headline and two ids sharing a prefix never collapse into one.
 - **No percentage against zero.** A rate that moves from `$0` has a delta but no
   percentage; the headline says so instead of printing an infinite change.
 - **No blended percentage.** Each rate type is compared separately; the headline
