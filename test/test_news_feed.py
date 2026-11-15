@@ -626,8 +626,15 @@ class HistoryAndEditorialTests(unittest.TestCase):
         for stamp in (self.LATER, self.LATEST):
             state, removals = feed.update_history(state, without, observed_at=stamp)
         self.assertEqual(sorted(record["model"] for record in removals),
+                         sorted([long_id, sibling]))
+        # A record that survives another publication is re-read from the
+        # sidecar: that round trip is where a timestamp-sized cap would shorten
+        # the id and merge two siblings.
+        state, removals = feed.update_history(
+            state, without, observed_at="2026-11-06T00:00:00+00:00")
+        self.assertEqual(sorted(record["model"] for record in removals),
                          sorted([long_id, sibling]),
-                         "model identity is kept at its supported width, not a timestamp's")
+                         "model identity survives the sidecar round trip")
         for record in removals:
             self.assertGreater(len(record["model"]), 64)
         doc, _ = feed.build_feed(without, both, {"announcements": []},
@@ -677,7 +684,11 @@ class HistoryAndEditorialTests(unittest.TestCase):
                                  observed_at=self.LATEST, history=state)
         section = next(s for s in doc["briefing"]["sections"] if s["id"] == "removals")
         self.assertEqual(section["total"], 1, "the same removal is not reported twice")
-        self.assertEqual(section["entries"][0]["event_type"], "removed_from_provider")
+        entry = section["entries"][0]
+        self.assertEqual(entry["event_type"], "removed_from_provider")
+        self.assertEqual(entry["confidence"], "verified",
+                         "the operator's note wins over the inferred record")
+        self.assertEqual(entry["source_url"], "https://acme.example/changelog")
 
     def test_retried_observation_never_confirms_a_removal(self):
         feed = feed_module()
