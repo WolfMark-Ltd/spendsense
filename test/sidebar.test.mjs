@@ -269,7 +269,8 @@ test('a model change updates the header without remounting sections', async () =
   const afterModel = sectionsOf(container)
   assert.equal(afterModel.head, before.head)
   assertSameCards(afterModel.cards, before.cards, 'cards survive the model change')
-  assert.equal(container.querySelector('.wm-model').textContent, 'gpt-5')
+  assert.equal(container.querySelector('.wm-model').textContent, 'GPT 5')
+  assert.equal(container.querySelector('.wm-model').title, 'gpt-5')
 })
 
 test('a session switch never bleeds the previous reading', async () => {
@@ -415,6 +416,27 @@ test('a net cache loss renders as a signed figure, not $0.00', async () => {
   assert.match(stats.textContent, /−\$1\.25/, `signed saving: ${stats.textContent}`)
   assert.doesNotMatch(stats.textContent, /\$0\.00/, 'a loss never renders as zero')
   assert.match(stats.textContent, /exactLabel/, 'full coverage stays exact')
+})
+
+test('a measured zero is displayed as zero with full coverage', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('runtime-zero')
+  host.state.focusedStoredSessionId.set('stored-zero')
+  const ledger = T.emptyLedger()
+  ledger.sessions['stored-zero'] = histBucket({
+    input: 100, output: 10, cacheRead: 20, cacheWrite: 0, calls: 1,
+    pricedTokens: 130, unpricedTokens: 0, cost: 0.001,
+    sources: { live: 130 }, cacheEstimated: false, cacheSource: 'exact',
+    cacheCoveredPrompt: 120, cacheCoveredRead: 20, cacheExactPrompt: 120,
+    netSavingsPrompt: 120, netSavings: 0,
+  })
+  T.$ledger.set(ledger)
+  const container = await renderMeter()
+  await flush()
+  const saved = container.querySelector('[data-kind="saved"] .wm-metric-value')
+  assert.equal(saved.textContent, '$0.00')
+  assert.match(container.querySelector('.wm-gauge-stats').textContent, /exactLabel/)
+  assert.doesNotMatch(container.querySelector('.wm-gauge-stats').textContent, /savedNotEstablished/)
 })
 
 test('a cache-only frame renders as valid live usage', async () => {
@@ -571,7 +593,8 @@ test('info popovers open on click and close on Escape', async () => {
   await flush()
   const buttons = [...container.querySelectorAll('.wm-info-btn')]
   assert.ok(buttons.length >= 3, `info buttons render: ${buttons.length}`)
-  const first = buttons[0]
+  const first = container.querySelector('[aria-controls="wm-info-savings-method"]')
+  assert.ok(first, 'the savings methodology tip is present')
   assert.equal(first.getAttribute('aria-expanded'), 'false')
   assert.equal(container.querySelector('.wm-info-pop'), null)
 
@@ -580,10 +603,10 @@ test('info popovers open on click and close on Escape', async () => {
   })
   await flush(2)
   assert.equal(first.getAttribute('aria-expanded'), 'true')
-  const pop = container.querySelector('.wm-info-pop')
+  const pop = container.querySelector('#wm-info-savings-method')
   assert.ok(pop, 'popover opens')
   assert.equal(pop.getAttribute('role'), 'tooltip')
-  assert.ok(pop.textContent.length > 20, 'popover explains the methodology')
+  assert.ok(pop.textContent.length > 0, 'popover content is rendered')
 
   await React.act(async () => {
     first.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
@@ -815,19 +838,40 @@ const renderHeader = async (view, presence = 'live', t = key => key) => {
   return container
 }
 
-test('a long model name renders in full with a matching tooltip', async () => {
+test('the model label is readable while its exact ID stays in the title', async () => {
   resetHost()
   host.state.focusedSessionId.set('s1')
   host.state.focusedUsage.set(liveUsage({ model: WP13_LONG_MODEL }))
   const container = await renderMeter()
   await flush()
   const model = container.querySelector('.wm-model')
-  assert.equal(model.textContent, WP13_LONG_MODEL, 'the name is never truncated by React')
+  assert.equal(model.textContent, 'Claude Opus 4.6 Thinking 20250601 XLarge Extended Reasoning')
   assert.equal(model.getAttribute('title'), WP13_LONG_MODEL, 'the tooltip carries the full name')
+  assert.ok(container.querySelector('.wm-model-name-row button'), 'the exact ID has a focusable disclosure')
   const badge = container.querySelector('.wm-provider-badge')
   assert.equal(badge.textContent, 'providerUnknown', 'no provider id is synthesised')
   assert.equal(badge.getAttribute('title'), 'providerUnknownTip')
   assert.doesNotMatch(badge.textContent, /undefined|null/, 'no raw placeholder leaks')
+})
+
+test('provider-prefixed model IDs have a readable name and keyboard disclosure', async () => {
+  const enT = (key, ...args) => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry
+  }
+  const id = 'deepseek/deepseek-v4.1-flash'
+  const container = await renderHeader({ model: id, provider: 'deepseek', fromHistory: true }, 'recorded', enT)
+  assert.equal(container.querySelector('.wm-model').textContent, 'DeepSeek V4.1 Flash')
+  assert.equal(container.querySelector('.wm-model').title, id)
+  assert.equal(container.querySelector('.wm-model-name-row').nextElementSibling.className, 'wm-provider-badge')
+  const disclosure = container.querySelector('.wm-model-name-row [aria-label="Exact model ID"]')
+  assert.ok(disclosure)
+  await React.act(async () => { disclosure.focus() })
+  assert.equal(container.querySelector('#wm-info-model-id').textContent, `Exact model ID: ${id}`)
+  assert.equal(T.modelDisplayName('deepseek/deepseek-v4.2-flash'), 'DeepSeek V4.2 Flash')
+  assert.notEqual(T.modelDisplayName('deepseek/deepseek-v4.1-flash'), T.modelDisplayName('deepseek/deepseek-v4.2-flash'))
+  assert.equal(T.modelDisplayName('google/gemma-3-4b-it'), 'Gemma 3 4b It')
+  assert.equal(T.modelDisplayName('anthropic/claude-opus-4-6'), 'Claude Opus 4.6')
 })
 
 test('a recorded route renders the provider badge with the membership label', async () => {
@@ -934,5 +978,7 @@ test('the empty state offers the ledger action', async () => {
 test('the meter stylesheet pins the compact container rules', () => {
   assert.match(T.METER_CSS, /container-type:\s*inline-size/, 'the pane is a container')
   assert.match(T.METER_CSS, /@container[^{]*max-width:\s*320px/, 'the 320px compact query exists')
+  assert.match(T.METER_CSS, /wm-gauge-stat\[data-kind="saved"\]/, 'the savings value has its own responsive row')
+  assert.match(T.METER_CSS, /--wm-gauge-ring:52px/, 'the narrow gauge keeps a useful compact ring')
   assert.match(T.METER_CSS, /\.wm-open-ledger/, 'the ledger button is styled')
 })

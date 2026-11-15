@@ -181,7 +181,7 @@ test('savings ignore a stored value accumulated at other rates', () => {
 
 test('savings are labelled as theoretical, not cash', () => {
   assert.match(en.cacheTitle, /cache/i)
-  assert.equal(en.savedGauge, 'Net cache savings')
+  assert.equal(en.savedGauge, 'Theoretical net savings')
   // The wording must not imply a provider credit or recorded billing.
   assert.doesNotMatch(en.savedGauge, /refund|credit|billed|cash/i)
   // The compact gauge label leans on its tooltip for the methodology.
@@ -279,7 +279,7 @@ test('meter presence distinguishes live, recorded, updating and empty', () => {
 test('every sidebar string exists in English and Chinese', () => {
   const keys = ['meterLive', 'meterRecorded', 'meterUpdating', 'apiEquivalent', 'costSourceInfo',
     'totalTokens', 'promptMix', 'cacheFresh', 'cacheMethodInfo', 'exactLabel', 'estimatedLabel',
-    'infoLabel', 'coverageLabel', 'savingsInfo', 'savedGauge']
+    'infoLabel', 'coverageLabel', 'savingsInfo', 'savedGauge', 'modelIdInfoLabel', 'modelIdInfo']
   for (const key of keys) {
     assert.ok(en[key] && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] && zh[key] !== key, `zh has ${key}`)
@@ -628,8 +628,8 @@ test('the unpriced note has no stray brace', () => {
 test('the InfoTip indicator is compact while its hit area stays accessible', () => {
   // The interactive box keeps its full size for pointer and keyboard users.
   assert.match(T.METER_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)
-  // The visible ring is drawn smaller via a centred pseudo-element.
-  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*width:18px;height:18px/)
+  // The visible ring stays small inside the larger interactive box.
+  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*width:12px;height:12px/)
   assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*pointer-events:none/)
   // Hover and focus still recolour the ring; focus keeps its outline.
   assert.match(T.METER_CSS, /\.wm-info-btn:hover::after,\.wm-info-btn:focus-visible::after\{[^}]*border-color:var\(--wm-action\)/)
