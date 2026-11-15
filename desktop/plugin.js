@@ -2381,7 +2381,7 @@ function InfoTip({ dir = 'down', id, label, text, wide = false }) {
             event.currentTarget.focus()
           }
         },
-        children: 'i'
+        children: jsx('span', { className: 'wm-info-glyph', 'aria-hidden': true, children: 'i' })
       }),
       isOpen
         ? jsx('span', { id: `wm-info-${id}`, role: 'tooltip', ref: popRef, style: popStyle,
@@ -2765,13 +2765,14 @@ const SHARED_CSS = [
   '.wm-async-status{font-size:11.5px;line-height:1.4}',
   '.wm-async-status[data-status="success"]{color:var(--wm-positive)}',
   '.wm-async-status[data-status="error"]{color:var(--wm-error)}',
-  '.wm-info{position:relative;display:inline-flex;flex-shrink:0;vertical-align:middle}',
-  '.wm-info-btn{position:relative;width:24px;height:24px;min-width:24px;min-height:24px;border-radius:50%;border:1px solid transparent;background:none;color:var(--wm-text-quiet);font-size:8px;line-height:1;font-style:italic;font-family:Georgia,serif;padding:0;cursor:pointer;display:inline-grid;place-items:center}',
-  '.wm-info-btn::after{content:"";position:absolute;left:50%;top:50%;width:12px;height:12px;transform:translate(-50%,-50%);border-radius:50%;border:1px solid var(--wm-text-quiet);pointer-events:none}',
+  '.wm-info{position:relative;display:inline-flex;align-items:center;flex-shrink:0;vertical-align:middle}',
+  '.wm-info-btn{position:relative;width:24px;height:24px;min-width:24px;min-height:24px;border-radius:50%;border:1px solid transparent;background:none;color:var(--wm-text-quiet);font-size:inherit;line-height:1;font-style:normal;font-family:inherit;font-weight:400;padding:0;cursor:pointer;display:inline-grid;place-items:center;vertical-align:middle}',
+  '.wm-info-glyph{position:relative;z-index:1;font:italic 600 .62em/1 Georgia,serif}',
+  '.wm-info-btn::after{content:"";position:absolute;left:50%;top:50%;width:.78em;height:.78em;transform:translate(-50%,-50%);border-radius:50%;border:1px solid var(--wm-text-quiet);pointer-events:none}',
   '.wm-info-btn:hover,.wm-info-btn:focus-visible{color:var(--wm-action)}',
   '.wm-info-btn:hover::after,.wm-info-btn:focus-visible::after{border-color:var(--wm-action)}',
   '.wm-info-btn:focus-visible{outline:2px solid var(--wm-action);outline-offset:2px}',
-  '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:auto;z-index:40;width:max-content;max-width:min(260px,calc(100vw - 32px));max-width:min(260px,calc(100cqi - 32px));background:var(--wm-surface-raised);border:1px solid var(--wm-border);border-radius:var(--wm-radius-nested);padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;white-space:normal;overflow-wrap:anywhere;color:var(--wm-text-secondary);box-shadow:0 8px 24px color-mix(in srgb,var(--wm-border) 55%,transparent)}',
+  '.wm-info-pop{position:absolute;top:calc(100% + 6px);left:0;right:auto;z-index:40;width:max-content;max-width:min(260px,calc(100vw - 32px));max-width:min(260px,calc(100cqi - 32px));background-color:Canvas;background-image:linear-gradient(var(--wm-surface-raised),var(--wm-surface-raised));background-clip:padding-box;border:1px solid var(--wm-border);border-radius:var(--wm-radius-nested);padding:8px 10px;font-size:11px;line-height:1.5;font-style:normal;font-weight:400;letter-spacing:normal;text-transform:none;white-space:normal;overflow-wrap:anywhere;color:var(--wm-text-secondary);box-shadow:0 8px 24px color-mix(in srgb,var(--wm-border) 55%,transparent)}',
   '.wm-info-pop.wm-info-up{top:auto;bottom:calc(100% + 6px)}',
   '.wm-info-pop-wide{left:auto;right:0;width:max-content;max-width:min(260px,calc(100cqi - 32px))}',
   '.wm-info-pop.wm-info-flip-x{left:auto;right:0}',
@@ -4145,7 +4146,10 @@ function LedgerTabs() {
     if (typeof window === 'undefined' || typeof location === 'undefined') return undefined
     const sync = () => {
       const id = String(location.hash || '').replace('#', '')
-      if (LEDGER_TABS.some(([known]) => known === id) && $ledgerTab.get() !== id) $ledgerTab.set(id)
+      if (LEDGER_TABS.some(([known]) => known === id) && $ledgerTab.get() !== id) {
+        $infoOpen.set(null)
+        $ledgerTab.set(id)
+      }
     }
     window.addEventListener('hashchange', sync)
     return () => window.removeEventListener('hashchange', sync)
@@ -4188,6 +4192,7 @@ function LedgerTabs() {
 }
 
 function goLedgerTab(next) {
+  if ($ledgerTab.get() !== next) $infoOpen.set(null)
   $ledgerTab.set(next)
   try { if (typeof location !== 'undefined') history.replaceState(null, '', '#' + next) } catch {}
 }
@@ -4566,7 +4571,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}',
   '.wm-product .wm-product-heading h1{margin:0;font-size:var(--wm-font-display,24px);line-height:1.2;font-weight:620;letter-spacing:-.35px}',
   '.wm-product .wm-product-heading p{margin:5px 0 0;color:var(--ui-text-tertiary);font-size:var(--wm-font-body,13px);line-height:1.45}',
-  '.wm-product .wm-product-tabs{display:flex;align-items:stretch;flex-wrap:wrap;gap:2px;min-height:54px;padding:0 18px;border-bottom:1px solid var(--wm-border);position:sticky;top:0;z-index:30;background:var(--wm-surface);overflow:visible}',
+  '.wm-product .wm-product-tabs{display:flex;align-items:stretch;flex-wrap:wrap;gap:2px;min-height:54px;padding:0 18px;border-bottom:1px solid var(--wm-border);position:sticky;top:0;z-index:30;background-color:Canvas;background-image:linear-gradient(var(--wm-surface),var(--wm-surface));background-clip:padding-box;box-shadow:0 2px 0 var(--wm-border);overflow:visible}',
   '.wm-product .wm-product-brand{display:flex;align-items:center;gap:9px;flex-shrink:0;align-self:stretch;margin:0 10px 0 0;padding:0 15px 0 2px;border-right:1px solid var(--wm-border)}',
   '.wm-product .wm-product-brand-mark{display:inline-flex;align-items:center;flex-shrink:0}',
   '.wm-product .wm-product-brand-copy{display:grid;line-height:1.2;white-space:nowrap}',
@@ -4585,7 +4590,8 @@ const PRODUCT_CSS = [
   '.wm-product .wm-account-chip[data-attention="true"]{border-color:var(--ui-warning);color:var(--ui-text-primary)}',
   '.wm-product .wm-overview-attention{margin:6px 0 4px;padding-left:18px;display:grid;gap:5px;font-size:13px;line-height:1.5;color:var(--ui-text-secondary)}',
   '.wm-product .wm-product-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:10px}',
-  '.wm-product .wm-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}',
+  '.wm-product .wm-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}',
+  '@container(min-width:1020px){.wm-product .wm-overview-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}',
   '.wm-product .wm-overview-panels{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(260px,1fr);gap:12px;align-items:start}',
   '.wm-product .wm-overview-panels>.wm-product-section{min-width:0}',
   '.wm-product .wm-product-card,.wm-product .wm-product-section,.wm-product .wm-product-stat{border:1px solid var(--wm-border);border-radius:var(--wm-radius-card);background:var(--wm-surface);min-width:0}',
@@ -4594,7 +4600,21 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-stat strong{display:block;margin-top:5px;font-size:19px;line-height:1.3;font-weight:580;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
   '.wm-product .wm-kpi{display:flex;flex-direction:column;gap:6px;min-height:118px}',
   '.wm-product .wm-kpi-eyebrow{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--ui-text-tertiary)}',
+  '.wm-product .wm-kpi-eyebrow span{min-width:0;overflow-wrap:anywhere}',
+  '.wm-product .wm-kpi-scope{margin:0;color:var(--ui-text-tertiary);font-size:10.5px;line-height:1.35}',
+  '.wm-product .wm-kpi-prov{margin:0}',
+  '.wm-product .wm-overview-grid .wm-kpi{min-height:0;align-items:flex-start;padding:12px 14px}',
+  '.wm-product .wm-overview-grid .wm-kpi-foot{margin-top:0;gap:4px}',
+  '.wm-product .wm-overview-grid .wm-kpi-foot .wm-certainty{padding-left:6px;padding-right:6px}',
+  '.wm-product .wm-overview-icon{display:block;flex:0 0 auto;color:var(--ui-text-tertiary)}',
+  '.wm-product .wm-scope-note{display:flex;align-items:center;gap:4px;margin:-7px 0 0;color:var(--ui-text-tertiary);font-size:11.5px;line-height:1.4}',
+  '.wm-product .wm-scope-note>span{min-width:0;overflow-wrap:anywhere}',
+  '.wm-product .wm-overview-attention{scroll-margin-top:68px}',
+  '.wm-product .wm-overview-attention h2,.wm-product .wm-overview-models h2{display:flex;align-items:center;gap:7px}',
+  '.wm-product .wm-overview-model-name>.wm-info{align-self:center}',
+  '.wm-product .wm-overview-model-name .wm-info-btn{font-size:12px}',
   '.wm-product .wm-kpi-figure{font-size:var(--wm-font-kpi,20px);line-height:1.25;font-weight:620;letter-spacing:-.3px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
+  '.wm-product .wm-overview-grid .wm-kpi-figure{font-size:clamp(18px,2.2cqi,26px)}',
   '.wm-product .wm-kpi-prov{font-size:11.5px;line-height:1.45;color:var(--ui-text-tertiary)}',
   '.wm-product .wm-kpi-foot{margin-top:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
   '.wm-product .wm-attn-strip{display:none}',
@@ -4621,7 +4641,11 @@ const PRODUCT_CSS = [
   '.wm-product .wm-method summary::before{content:"›";display:inline-block;margin-right:8px;font-size:17px;line-height:1;font-weight:700;color:var(--ui-text-primary);transition:transform .15s ease}',
   '.wm-product .wm-method[open] > summary::before{transform:rotate(90deg)}',
   '.wm-product .wm-method summary:hover{color:var(--ui-text-primary)}',
-  '.wm-product .wm-method p{font-size:12.5px;line-height:1.6;color:var(--ui-text-secondary);max-width:78ch}',
+  '.wm-product .wm-method-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px;padding:8px 0 3px}',
+  '.wm-product .wm-method-grid section{min-width:0}',
+  '.wm-product .wm-method-grid h3{margin:0 0 4px;font-size:12px;font-weight:620;color:var(--ui-text-primary)}',
+  '.wm-product .wm-method p{font-size:12px;line-height:1.5;color:var(--ui-text-secondary);max-width:78ch}',
+  '.wm-product .wm-method-grid p{margin:0}',
   '.wm-product .wm-product-section{padding:17px}',
   '.wm-product .wm-product-section h2{margin:0 0 4px;font-size:16px;font-weight:590}',
   '.wm-product .wm-product-section > p{margin:4px 0 12px;color:var(--ui-text-tertiary);font-size:12px;line-height:1.5}',
@@ -4653,7 +4677,8 @@ const PRODUCT_CSS = [
   '@container(max-width:760px){.wm-product .wm-product-tabs{padding:6px 14px;gap:2px}.wm-product .wm-product-brand{flex:0 0 100%;min-height:39px;align-self:auto;margin:0;padding:0 0 8px;border-right:0;border-bottom:1px solid var(--wm-border)}}',
   '@media(prefers-reduced-motion:reduce){.wm-product .wm-product-tab,.wm-product .wm-button,.wm-product .wm-account-chip{transition:none!important}.wm-product .wm-button:active:not(:disabled){transform:none}}',
   '@container(max-width:760px){.wm-product .wm-overview-panels{grid-template-columns:1fr}}',
-  '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-overview-grid{grid-template-columns:1fr}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}}',
+  '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;flex-wrap:wrap;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}.wm-product .wm-method-grid{grid-template-columns:1fr}}',
+  '@container(max-width:340px){.wm-product .wm-overview-grid{grid-template-columns:1fr}}',
   // The pairing notice is shown by the shell on every tab, so its type rules
   // live with the shell rather than in a page stylesheet.
   '.wm-product .wm-backend-compatibility strong{display:block;font-weight:600;font-size:12px}',
@@ -5458,6 +5483,19 @@ function certaintyChip(certainty, text, key) {
       : certainty === 'declared' ? 'declared' : 'neutral'
   return jsx(StatusChip, { className: 'wm-certainty', 'data-certainty': certainty, tone, children: text }, key)
 }
+function OverviewIcon({ name }) {
+  const paths = {
+    recorded: 'M3 3v14h14 M6 13l3-3 3 2 5-6',
+    charges: 'M5 2.75h10v14l-5-2.7-5 2.7z M7.5 7h5 M7.5 10h5',
+    estimate: 'M3 15l4-4 3 2 6-8 M12 5h4v4',
+    fees: 'M4 6.5h12a1.5 1.5 0 0 1 1.5 1.5v7.5H4a2 2 0 0 1-2-2V5.5a2 2 0 0 1 2-2h11v3 M13 10h3',
+    attention: 'M10 2.5l8 14H2z M10 7v4 M10 13.5v.5',
+    models: 'M3 15h3V8H3z M8.5 15h3V4h-3z M14 15h3V6h-3z'
+  }
+  return jsx('svg', { className: 'wm-overview-icon', width: 16, height: 16, viewBox: '0 0 20 20',
+    fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round',
+    'aria-hidden': true, children: jsx('path', { d: paths[name] || paths.recorded }) })
+}
 function OverviewPage() {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
@@ -5500,6 +5538,9 @@ function OverviewPage() {
     .filter(basis => bases.has(basis))
     .map(basis => certaintyChip(basis === 'declared' ? 'declared' : basis,
       basis === 'declared' ? t('ovCertDeclared') : basis === 'catalogue' ? t('ovCertCatalogue') : t('ovCertCustom'), basis))
+  const attentionItems = items.slice(0, unpriced ? 2 : 3)
+  const remainingAttention = items.length - attentionItems.length
+  const attentionCount = items.length + (unpriced ? 1 : 0)
   const scrollToAttention = () => {
     try {
       const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -5515,12 +5556,22 @@ function OverviewPage() {
         jsx(ProductButton, { type: 'button', disabled: analytics.isFetching,
           onClick: () => analytics.refetch?.(), children: t('econRetry') })
       ] }) : null,
+      attentionCount
+        ? jsxs('div', { className: 'wm-attn-strip', role: 'region', 'aria-label': t('ovAttention'), children: [
+            jsx('span', { className: 'wm-attn-dot', 'aria-hidden': true }),
+            jsx('span', { children: t('ovStrip', attentionCount) }),
+            jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: scrollToAttention, children: t('ovStripReview') })
+          ] })
+        : null,
       jsxs('section', { className: 'wm-product-summary wm-overview-grid', 'aria-label': t('ovFigures'), children: [
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'recorded-usage', children: [
-          jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovRecordedLabel') }),
+          jsxs('div', { className: 'wm-kpi-eyebrow', children: [
+            jsx(OverviewIcon, { name: 'recorded' }), jsx('span', { children: t('ovRecordedLabel') })
+          ] }),
+          jsx('p', { className: 'wm-kpi-scope', children: t('ovRecordedScope') }),
           jsx('div', { className: 'wm-kpi-figure', children: ledgerPaused ? t('ledgerHistoryUnavailable') : !local.known ? t('ovUnknown')
           : local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls || local.coverageUnknown
-            ? [jsx('small', { children: '≥' }, 'gte'), fmtUsd(local.cost), jsx('small', { children: ' ' + t('ovLowerBound') }, 'lb')]
+            ? `${t('ovAtLeast')} ${fmtUsd(local.cost)}`
             : fmtUsd(local.cost) }),
           jsx('p', { className: 'wm-kpi-prov', children: t('ovRecordedProv') }),
           local.coverageUnknown ? jsx('p', { className: 'wm-kpi-prov', children: t('ovCoverageUnknown') }) : null,
@@ -5531,16 +5582,21 @@ function OverviewPage() {
           ].filter(Boolean) })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'actual-charges', 'aria-label': t('ovChargesLabel'), children: [
-          jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovChargesLabel') }),
+          jsxs('div', { className: 'wm-kpi-eyebrow', children: [
+            jsx(OverviewIcon, { name: 'charges' }), jsx('span', { children: t('ovChargesLabel') })
+          ] }),
           jsx('div', { className: 'wm-kpi-figure', children: t('ovNotRecorded') }),
           jsx('p', { className: 'wm-kpi-prov', children: t('ovChargesEndpointProv') }),
           jsx('div', { className: 'wm-kpi-foot', children:
             certaintyChip('unknown', t('ovCertChargesUnknown'), 'charge-unknown') })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'api-equivalent-estimate', children: [
-          jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovEstimatedLabel') }),
+          jsxs('div', { className: 'wm-kpi-eyebrow', children: [
+            jsx(OverviewIcon, { name: 'estimate' }), jsx('span', { children: t('ovEstimatedLabel') })
+          ] }),
+          jsx('p', { className: 'wm-kpi-scope', children: t('ovBackendScope') }),
           jsx('div', { className: 'wm-kpi-figure', children: result.list_usd == null ? t('ovUnknown')
-            : unpriced ? [fmtUsd(result.list_usd), jsx('small', { children: ' ' + t('ovLowerBound') }, 'lb')] : fmtUsd(result.list_usd) }),
+            : unpriced ? `${t('ovAtLeast')} ${fmtUsd(result.list_usd)}` : fmtUsd(result.list_usd) }),
           jsx('p', { className: 'wm-kpi-prov', children: analytics.isLoading && !analytics.data ? t('ovBackendLoading')
             : analytics.error && !analytics.data ? t('ovBackendError')
             : !analytics.data ? t('ovBackendNone')
@@ -5552,7 +5608,10 @@ function OverviewPage() {
           ].filter(Boolean) })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'saved-fees', children: [
-          jsx('div', { className: 'wm-kpi-eyebrow', children: t('ovFeesLabel') }),
+          jsxs('div', { className: 'wm-kpi-eyebrow', children: [
+            jsx(OverviewIcon, { name: 'fees' }), jsx('span', { children: t('ovFeesLabel') })
+          ] }),
+          jsx('p', { className: 'wm-kpi-scope', children: t('ovFeesScope') }),
           jsx('div', { className: 'wm-kpi-figure', children: !accountsReady ? t('ovUnknown')
             : feeEntries ? feesLabel(fees, t)
             : unknownFeeCount ? t('ovUnknown') : t('ovNoFees') }),
@@ -5567,23 +5626,23 @@ function OverviewPage() {
           ].filter(Boolean) })
         ] })
       ] }),
-      items.length || unpriced
-        ? jsxs('div', { className: 'wm-attn-strip', role: 'region', 'aria-label': t('ovAttention'), children: [
-            jsx('span', { className: 'wm-attn-dot', 'aria-hidden': true }),
-            jsx('span', { children: t('ovStrip', items.length + (unpriced ? 1 : 0)) }),
-            jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: scrollToAttention, children: t('ovStripReview') })
-          ] })
-        : null,
+      jsxs('p', { className: 'wm-scope-note', children: [
+        jsx('span', { children: t('ovScopeNote') }),
+        jsx(InfoTip, { id: 'overview-periods', label: t('ovScopeInfoLabel'), text: t('ovScopeInfo'), wide: true })
+      ] }),
       jsxs('div', { className: 'wm-overview-panels', children: [
       jsxs(ProductCard, { as: 'section', className: 'wm-product-section wm-overview-attention', id: 'wm-needs-attention', 'aria-label': items.length || unpriced ? t('ovAttention') : t('ovContinue'), children: [
-        jsx('h2', { children: items.length || unpriced ? t('ovAttention') : t('ovContinue') }),
+        jsxs('h2', { children: [
+          jsx(OverviewIcon, { name: items.length || unpriced ? 'attention' : 'models' }),
+          jsx('span', { children: items.length || unpriced ? t('ovAttention') : t('ovContinue') })
+        ] }),
         items.length || unpriced
           ? jsx('p', { children: t('ovAttentionHint') })
           : jsx('p', { children: t('ovNothingToDo') }),
         weatherStale ? jsx('p', { className: 'wm-subtle', role: 'status', children: t('ovWeatherStale') }) : null,
         items.length || unpriced
           ? jsxs('ul', { className: 'wm-attention-rows', children: [
-              ...items.slice(0, 3).map((item, index) => jsxs('li', { children: [
+              ...attentionItems.map((item, index) => jsxs('li', { children: [
                 jsx('span', { className: 'wm-attn-dot', 'data-tone': item.tone === 'warn' ? 'warn' : 'info', 'aria-hidden': true }),
                 jsxs('div', { className: 'wm-attn-main', children: [
                   jsx('strong', { children: item.account.label || item.account.family }),
@@ -5593,6 +5652,13 @@ function OverviewPage() {
                   onClick: () => { queueMembershipTarget(item); goLedgerTab('memberships') },
                   children: attentionActionLabel(item.issue, t) })
               ] }, index)),
+              remainingAttention ? jsxs('li', { children: [
+                jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
+                jsx('div', { className: 'wm-attn-main', children:
+                  jsx('span', { children: t('ovMoreAttention', remainingAttention) }) }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button',
+                  onClick: () => goLedgerTab('memberships'), children: t('ovReviewMemberships') })
+              ] }, 'more-attention') : null,
               unpriced ? jsxs('li', { children: [
                 jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
                 jsxs('div', { className: 'wm-attn-main', children: [
@@ -5600,19 +5666,18 @@ function OverviewPage() {
                   jsx('span', { children: t('ovUnpriced', unpricedTokens, unpricedCalls) })
                 ] }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
-                  onClick: () => goLedgerTab('usage'), children: t('ovOpenUsage') })
+                  onClick: () => goLedgerTab('usage'), children: t('ovViewUnpricedUsage') })
               ] }, 'unpriced') : null
             ].filter(Boolean) })
           : null,
         jsx('div', { className: 'wm-setting-action', children: [
-          items.length ? jsx(ProductButton, { type: 'button', className: 'wm-button wm-accent', onClick: () => goLedgerTab('memberships'), children: t('ovReviewMemberships') }) : null,
-          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => goLedgerTab('usage'), children: t('ovOpenUsage') }),
-          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => goLedgerTab('costs'), children: t('ovOpenCosts') }),
-          items.length ? null : jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => goLedgerTab('memberships'), children: t('ovManageMemberships') })
+          !items.length && !unpriced ? jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => goLedgerTab('usage'), children: t('ovOpenUsage') }) : null,
+          !items.length && !unpriced ? jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => goLedgerTab('costs'), children: t('ovOpenCosts') }) : null,
+          !items.length && !unpriced ? jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => goLedgerTab('memberships'), children: t('ovManageMemberships') }) : null
         ].filter(Boolean) })
       ] }),
       jsxs(ProductCard, { as: 'section', className: 'wm-product-section wm-overview-models', 'aria-label': t('ovModelsTitle'), children: [
-        jsx('h2', { children: t('ovModelsTitle') }),
+        jsxs('h2', { children: [jsx(OverviewIcon, { name: 'models' }), jsx('span', { children: t('ovModelsTitle') })] }),
         jsx('p', { children: t('ovModelsSubtitle') }),
         !analytics.data && analytics.isLoading
           ? jsx('p', { role: 'status', children: t('ovModelsLoading') })
@@ -5622,11 +5687,16 @@ function OverviewPage() {
               ? jsx('ol', { className: 'wm-overview-model-list', children: topModels.map((row, index) => {
                   const model = typeof row.model === 'string' && row.model.trim() ? row.model : t('unknown')
                   const provider = typeof row.provider === 'string' && row.provider.trim() ? row.provider : t('unknown')
+                  const friendlyModel = model === t('unknown') ? model : modelDisplayName(model)
+                  const friendlyProvider = provider === t('unknown') ? provider : meterProviderLabel(provider, t)
                   const ratio = Math.max(0, Math.min(100, Math.round((row.calls / topModelMax) * 100)))
                   return jsxs('li', { className: 'wm-overview-model-row', children: [
                     jsxs('div', { className: 'wm-overview-model-head', children: [
                       jsxs('span', { className: 'wm-overview-model-name', children: [
-                        jsx('strong', { children: model }), jsx('small', { children: provider })
+                        jsx('strong', { children: friendlyModel }),
+                        jsx(InfoTip, { id: `overview-model-${index}`, label: t('ovModelIdInfoLabel'),
+                          text: t('ovModelIdInfo', model, provider), wide: true }),
+                        jsx('small', { children: friendlyProvider })
                       ] }),
                       jsx('strong', { className: 'wm-overview-model-count', children: t('ovModelCalls', row.calls) })
                     ] }),
@@ -5643,7 +5713,13 @@ function OverviewPage() {
       jsx(BudgetPanel, {}),
       jsxs('details', { className: 'wm-method', children: [
         jsx('summary', { children: t('ovMethodTitle') }),
-        jsx('div', { children: jsx('p', { children: t('ovMethodBody') }) })
+        jsxs('div', { className: 'wm-method-grid', children: ['usage', 'pricing', 'charges', 'fees', 'models'].map(section => {
+          const key = section[0].toUpperCase() + section.slice(1)
+          return jsxs('section', { children: [
+            jsx('h3', { children: t(`ovMethod${key}Title`) }),
+            jsx('p', { children: t(`ovMethod${key}Body`) })
+          ] }, section)
+        }) })
       ] })
     ] })
   })
@@ -10905,12 +10981,14 @@ const I18N = {
     ovTitle: 'Overview',
     ovSubtitle: 'See captured usage value, backend estimates, saved account fees and what needs attention.',
     ovFigures: 'Key figures',
-    ovRecordedLabel: 'Recorded usage · API-equivalent, all profiles, this month',
-    ovRecordedProv: 'Desktop ledger · all profiles · API-equivalent at capture rates; not payment, invoice or actual provider charges.',
-    ovCoverageUnknown: 'Call-level coverage was not recorded on older ledger entries, so completeness cannot be confirmed.',
-    ovCertRecorded: 'Priced at capture',
+    ovRecordedLabel: 'Recorded usage',
+    ovRecordedScope: 'All profiles · calendar month to date',
+    ovRecordedProv: 'Desktop ledger · saved-rate API-equivalent; not charges.',
+    ovCoverageUnknown: 'Coverage unknown for older entries.',
+    ovCertRecorded: 'Captured rate',
     ovUnknown: 'Unknown',
-    ovEstimatedLabel: 'API-equivalent estimate · backend, 30 days',
+    ovEstimatedLabel: 'API-equivalent estimate',
+    ovBackendScope: 'Active profile · rolling 30 days',
     ovCertEstimated: 'Estimated',
     ovCertPartial: 'Partial',
     ovLowerBound: 'lower bound',
@@ -10919,17 +10997,18 @@ const I18N = {
     ovBackendReadFailure: 'Backend usage could not be read or processed. Retry to refresh the estimate.',
     ovBackendNone: 'Backend usage data is not available for this connection.',
     ovBackendEmpty: 'No backend calls recorded in the last 30 days.',
-    ovBackendProv: 'Current catalogue rates; not provider charges.',
+    ovBackendProv: 'Backend analytics · current catalogue rates; estimate, not provider charges.',
     ovBackendUnpricedCalls: reason => `API-equivalent estimate; not provider charges. ${reason}`,
-    ovChargesLabel: 'Actual provider charges · 30 days',
+    ovChargesLabel: 'Actual provider charges',
     ovNotRecorded: 'Not recorded',
-    ovChargesEndpointProv: 'The 30-day analytics endpoint does not include per-call actual-charge evidence.',
-    ovCertChargesUnknown: 'Per-call evidence unavailable',
-    ovFeesLabel: 'Saved account fees · by currency and billing period',
-    ovFeesSummaryProv: 'Saved fee entries only; no currency conversion or account relationship is inferred.',
-    ovPlansConfirmed: (w, t) => `${w} of ${t} accounts have a confirmed plan`,
+    ovChargesEndpointProv: 'Per-call actual-charge evidence is not in analytics.',
+    ovCertChargesUnknown: 'No per-call evidence',
+    ovFeesLabel: 'Saved account fees',
+    ovFeesScope: 'Saved entries · original currencies and billing periods',
+    ovFeesSummaryProv: 'Saved fees only · no conversion or shared ownership inferred.',
+    ovPlansConfirmed: (w, t) => `${w} of ${t} plans confirmed`,
     ovNoFees: 'No saved recurring fees',
-    ovFeesMissing: n => `${n} account(s) have no known fee; the subtotal excludes them.`,
+    ovFeesMissing: n => `${n} ${n === 1 ? 'account fee is' : 'account fees are'} unknown; excluded.`,
     ovModelsTitle: 'Most-used models · 30 days',
     ovModelsSubtitle: 'Recorded backend calls only; this ranking does not compare spend.',
     ovModelsLoading: 'Reading model usage…',
@@ -10937,6 +11016,14 @@ const I18N = {
     ovModelsEmpty: 'No model calls recorded in the last 30 days.',
     ovModelsBreakdownUnavailable: 'A model breakdown was not provided for this period.',
     ovModelCalls: n => `${n.toLocaleString('en-GB')} ${n === 1 ? 'call' : 'calls'}`,
+    ovAtLeast: 'At least',
+    ovScopeNote: 'Usage figures cover different profiles and periods; do not add them together.',
+    ovScopeInfoLabel: 'About the usage periods',
+    ovScopeInfo: 'Desktop ledger: all profiles, calendar month to date, API-equivalent at saved rates. Backend estimate: active profile, rolling 30 days, current catalogue rates. These figures cover different activity and are not like-for-like totals.',
+    ovModelIdInfoLabel: 'Exact model and provider IDs',
+    ovModelIdInfo: (model, provider) => `Model ID: ${model} · Provider ID: ${provider}`,
+    ovViewUnpricedUsage: 'View unpriced usage',
+    ovMoreAttention: n => `${n} more account ${n === 1 ? 'issue' : 'issues'}`,
     attnConflict: list => `Provider data disagrees with your manual mark on ${list}.`,
     attnExhausted: 'Account marked exhausted.',
     attnReconfirm: label => `${label}: no reliable reset time — please confirm or clear.`,
@@ -11229,7 +11316,16 @@ const I18N = {
     ovReviewMemberships: 'Review memberships',
     ovManageMemberships: 'Manage memberships',
     ovMethodTitle: 'How these figures are calculated',
-    ovMethodBody: 'Desktop month and today totals aggregate all profiles in this ledger, not just the active profile. Current v2 Desktop values are API-equivalent at capture rates, not payments, invoices or actual provider charges. Migrated v1 buckets may instead use remembered model rates because v1 did not retain capture-time prices. The separate backend API-equivalent estimate is limited to the active profile and uses current catalogue rates for timestamped calls in the last 30 days. Older records written before call-level coverage counters existed cannot prove every call included usage data; no historical values are backfilled. Partial amounts remain lower bounds and unpriced usage is reported separately. Actual provider charges are not recorded in this view because the 30-day analytics endpoint does not include per-call actual-charge evidence; billing classifications do not supply that evidence. Saved account fees retain their currency and billing period, and unknown fees are excluded with their count. No currency conversion or shared-entitlement relationship is inferred. Model rankings count recorded calls only. A subscription-value comparison is not summarised here while account relationships and financial coverage remain unverified.',
+    ovMethodUsageTitle: 'Usage totals and periods',
+    ovMethodUsageBody: 'Desktop totals use the calendar month to date and aggregate all profiles in this ledger. Current v2 values use API-equivalent rates saved at capture; they are estimates, not payments, invoices or actual provider charges. The backend estimate covers the active profile’s rolling last 30 days and uses current catalogue rates for timestamped calls.',
+    ovMethodPricingTitle: 'Price and coverage evidence',
+    ovMethodPricingBody: 'Migrated v1 buckets may use remembered model rates because v1 did not retain capture-time prices. Records written before call-level coverage counters cannot confirm every call included usage data; historical values are not backfilled. Partial amounts are lower bounds, and unpriced usage is reported separately.',
+    ovMethodChargesTitle: 'Actual provider charges',
+    ovMethodChargesBody: 'Actual provider charges are not recorded in this view. The analytics endpoint has no per-call actual-charge evidence, and billing classifications cannot replace it.',
+    ovMethodFeesTitle: 'Saved fees and account relationships',
+    ovMethodFeesBody: 'Saved account fees retain their currency and billing period. Unknown fees are excluded and counted. No currency conversion or shared-entitlement relationship is inferred. Subscription-value comparisons stay out of Overview until account relationships and financial coverage are verified.',
+    ovMethodModelsTitle: 'Model rankings',
+    ovMethodModelsBody: 'Model rankings count recorded backend calls only; they do not compare spend.',
     // Allowance weather.
     wxTitle: 'Allowance weather',
     wxAhead: 'Ahead of pace',
@@ -12329,12 +12425,14 @@ const I18N = {
     ovTitle: '总览',
     ovSubtitle: '查看已记录用量价值、后端估算、已保存账户费用和待处理事项。',
     ovFigures: '关键数据',
-    ovRecordedLabel: '已记录用量 · API 等值，所有配置文件，本月',
-    ovRecordedProv: '桌面账本 · 所有配置文件 · 按捕获时价格计算的 API 等值；不是付款、发票或实际服务商费用。',
-    ovCoverageUnknown: '旧账本条目未记录逐次调用的覆盖计数器，因此无法确认其完整性。',
-    ovCertRecorded: '按捕获时价格计价',
+    ovRecordedLabel: '已记录用量',
+    ovRecordedScope: '所有配置文件 · 本日历月至今',
+    ovRecordedProv: '桌面账本 · 按保存费率计算 API 等值；并非费用。',
+    ovCoverageUnknown: '旧条目的覆盖情况未知。',
+    ovCertRecorded: '捕获时费率',
     ovUnknown: '未知',
-    ovEstimatedLabel: 'API 等值估算 · 后端，30 天',
+    ovEstimatedLabel: 'API 等值估算',
+    ovBackendScope: '当前配置文件 · 滚动 30 天',
     ovCertEstimated: '估算',
     ovCertPartial: '部分',
     ovLowerBound: '下限',
@@ -12343,17 +12441,18 @@ const I18N = {
     ovBackendReadFailure: '无法读取或处理后端用量。请重试以刷新估算。',
     ovBackendNone: '此连接没有可用的后端用量数据。',
     ovBackendEmpty: '过去 30 天没有后端调用记录。',
-    ovBackendProv: '按当前价格目录估算；不是服务商费用。',
+    ovBackendProv: '后端分析 · 当前目录价格；属于估算，并非服务商费用。',
     ovBackendUnpricedCalls: reason => `API 等值估算；不是服务商费用。${reason}`,
-    ovChargesLabel: '实际服务商费用 · 30 天',
+    ovChargesLabel: '实际服务商费用',
     ovNotRecorded: '未记录',
-    ovChargesEndpointProv: '30 天分析接口不包含逐次调用的实际费用证据。',
+    ovChargesEndpointProv: '分析数据没有逐次调用的实际费用证据。',
     ovCertChargesUnknown: '没有逐次费用证据',
-    ovFeesLabel: '已保存账户费用 · 按币种和账单周期',
-    ovFeesSummaryProv: '仅显示已保存费用；不换算币种，也不推断账户关系。',
-    ovPlansConfirmed: (w, t) => `${t} 个账户中有 ${w} 个已确认方案`,
+    ovFeesLabel: '已保存账户费用',
+    ovFeesScope: '已保存条目 · 保留原币种和账单周期',
+    ovFeesSummaryProv: '仅显示已保存费用 · 不换算币种或推断共享归属。',
+    ovPlansConfirmed: (w, t) => `${t} 个账户中 ${w} 个方案已确认`,
     ovNoFees: '没有已保存的周期性费用',
-    ovFeesMissing: n => `有 ${n} 个账户没有已知费用；小计不含这些账户。`,
+    ovFeesMissing: n => `${n} 个账户费用未知；未计入。`,
     ovModelsTitle: '使用最多的模型 · 30 天',
     ovModelsSubtitle: '仅统计已记录的后端调用；此排名不比较费用。',
     ovModelsLoading: '正在读取模型用量…',
@@ -12361,6 +12460,14 @@ const I18N = {
     ovModelsEmpty: '过去 30 天没有模型调用记录。',
     ovModelsBreakdownUnavailable: '此期间没有提供模型明细。',
     ovModelCalls: n => `${n.toLocaleString('zh-CN')} 次调用`,
+    ovAtLeast: '至少',
+    ovScopeNote: '两项用量数据覆盖的配置文件和时间段不同；请勿相加。',
+    ovScopeInfoLabel: '关于用量时间段',
+    ovScopeInfo: '桌面账本：所有配置文件，本日历月至今，按保存费率计算 API 等值。后端估算：当前配置文件，滚动 30 天，按当前目录价格计算。两者覆盖的活动不同，不能视为同一口径的总额。',
+    ovModelIdInfoLabel: '精确模型与服务商 ID',
+    ovModelIdInfo: (model, provider) => `模型 ID：${model} · 服务商 ID：${provider}`,
+    ovViewUnpricedUsage: '查看未定价用量',
+    ovMoreAttention: n => `另有 ${n} 项账户问题`,
     attnConflict: list => `服务商数据与您的手动标记不一致：${list}。`,
     attnExhausted: '账户已标记为用尽。',
     attnReconfirm: label => `${label}：没有可靠的重置时间——请确认或清除。`,
@@ -12653,7 +12760,16 @@ const I18N = {
     ovReviewMemberships: '检查会员',
     ovManageMemberships: '管理会员',
     ovMethodTitle: '这些数据的计算方式',
-    ovMethodBody: '本桌面账本中的月度和今日总额汇总所有配置文件，而不只限于当前配置文件。当前 v2 桌面数据按记录时价格计算为 API 等值，并非付款、发票或实际服务商费用。迁移的 v1 记录可能改用先前保存的模型费率计算，因为 v1 未保存记录时的价格。单独的后端 API 等值估算仅限当前配置文件，并使用过去 30 天带时间戳调用的当前目录价格。逐次调用覆盖计数器出现前写入的旧记录，无法证明每次调用都包含用量数据；不会回填历史记录。部分金额仍是下限，未定价用量会单独说明。此视图不记录实际服务商费用，因为 30 天分析接口不包含逐次调用的实际费用证据；账单分类不能代替此类证据。已保存账户费用保留原币种和账单周期，未知费用会连同数量说明。不进行币种换算，也不推断共享权益关系。模型排名仅按已记录调用数计算。账户关系和财务覆盖情况尚未核实，因此此处不汇总订阅价值比较。',
+    ovMethodUsageTitle: '用量总额与时间段',
+    ovMethodUsageBody: '桌面总额按本日历月至今计算，并汇总此账本中的所有配置文件。当前 v2 数据按记录时保存的费率计算 API 等值；这些是估算，并非付款、发票或实际服务商费用。后端估算只涵盖当前配置文件滚动 30 天内带时间戳的调用，并使用当前目录价格。',
+    ovMethodPricingTitle: '价格与覆盖证据',
+    ovMethodPricingBody: '迁移的 v1 记录可能使用先前保存的模型费率，因为 v1 未保存记录时的价格。逐次调用覆盖计数器启用前写入的记录，无法确认每次调用都包含用量数据；不会回填历史数据。部分金额是下限，未定价用量会单独说明。',
+    ovMethodChargesTitle: '实际服务商费用',
+    ovMethodChargesBody: '此视图不记录实际服务商费用。分析接口没有逐次调用的实际费用证据，账单分类也不能替代此证据。',
+    ovMethodFeesTitle: '已保存费用与账户关系',
+    ovMethodFeesBody: '已保存账户费用保留其币种和账单周期。未知费用会排除并计数。不进行币种换算，也不推断共享权益关系。在账户关系和财务覆盖情况得到核实前，总览不汇总订阅价值比较。',
+    ovMethodModelsTitle: '模型排名',
+    ovMethodModelsBody: '模型排名仅统计已记录的后端调用，不比较支出。',
     // 额度动态。
     wxTitle: '额度动态',
     wxAhead: '消耗偏快',

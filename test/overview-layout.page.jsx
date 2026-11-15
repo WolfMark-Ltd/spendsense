@@ -2,7 +2,8 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import plugin, { __test as T } from '../desktop/plugin.js'
 
-globalThis.__overviewI18n = Object.fromEntries(Object.entries(T.I18N.en).map(([key, value]) => [
+const locale = globalThis.__overviewLocale || 'en'
+globalThis.__overviewI18n = Object.fromEntries(Object.entries(T.I18N[locale] || T.I18N.en).map(([key, value]) => [
   key, typeof value === 'function' ? (...args) => value(...args) : value,
 ]))
 
@@ -36,8 +37,8 @@ plugin.register({
         billing_mix: { actual: 1, estimated: 1, included: 0, unknown: 2 },
         calls: 24, unpriced_tokens: 1500 },
       by_model: [
-        { provider: 'synthetic-provider', model: 'synthetic-long-model-name-for-wrapping', calls: 15 },
-        { provider: 'synthetic-provider', model: 'synthetic-small-model', calls: 9 },
+        { provider: 'openai-codex', model: 'openai/gpt-5.1-codex-super-long-model-name-for-wrapping', calls: 15 },
+        { provider: 'anthropic', model: 'anthropic/claude-opus-4-6', calls: 9 },
       ],
     }
     if (path === '/membership/accounts') return { ok: true, accounts, store: { loaded: true, error: '' }, notes: [] }
@@ -74,10 +75,10 @@ T.$ledger.set({
 })
 
 const selected = new URLSearchParams(location.search).get('case')
-const cases = selected ? [selected] : ['narrow-dark', 'wide-dark', 'narrow-light', 'wide-light']
+const cases = selected ? [selected] : [268, 380, 1200].flatMap(width => ['dark', 'light'].map(theme => `w${width}-${theme}`))
 const root = document.getElementById('overview-layout-cases')
 for (const id of cases) {
-  const width = id.startsWith('narrow') ? 380 : 1200
+  const width = Number(id.match(/^w(\d+)-/)?.[1] || 380)
   const theme = id.endsWith('dark') ? 'dark' : 'light'
   let container = document.getElementById(id)
   if (!container) {
@@ -87,6 +88,7 @@ for (const id of cases) {
     root.appendChild(container)
   }
   container.classList.add(theme)
+  container.style.colorScheme = theme
   container.style.width = `${width}px`
   createRoot(container).render(React.createElement(T.OverviewPage))
 }
@@ -103,17 +105,45 @@ setTimeout(() => {
     }
     const columns = element => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length
     const overflow = [...pane.querySelectorAll('.wm-kpi, .wm-product-section')]
-      .map(element => ({ name: element.className, excess: element.scrollWidth - element.clientWidth }))
+      .map(element => ({ name: element.dataset.kpi || element.className,
+        excess: element.scrollWidth - element.clientWidth, scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth, text: element.textContent }))
     output.layouts.push({
       id, width: pane.clientWidth,
+      paneOverflow: pane.scrollWidth - pane.clientWidth,
+      paneLeft: Math.round(pane.getBoundingClientRect().left),
+      documentOverflow: selected ? document.documentElement.scrollWidth - document.documentElement.clientWidth : null,
       summaryColumns: columns(summary), panelColumns: columns(panels),
       cards: summary.querySelectorAll('.wm-kpi').length,
+      locale,
       charges: pane.querySelector('[data-kpi="actual-charges"]').textContent,
+      recorded: pane.querySelector('[data-kpi="recorded-usage"]').textContent,
+      estimate: pane.querySelector('[data-kpi="api-equivalent-estimate"]').textContent,
       fees: pane.querySelector('[data-kpi="saved-fees"]').textContent,
+      methodsCollapsed: !pane.querySelector('details.wm-method').open,
+      methodSections: pane.querySelectorAll('.wm-method-grid h3').length,
+      modelLabels: [...pane.querySelectorAll('.wm-overview-model-name strong')].map(el => el.textContent),
+      modelDetails: [...pane.querySelectorAll('.wm-overview-model-name .wm-info-btn')].map(el => el.getAttribute('aria-label')),
+      kpiHeights: [...summary.querySelectorAll('.wm-kpi')].map(el => Math.round(el.getBoundingClientRect().height)),
+      kpiDetails: [...summary.querySelectorAll('.wm-kpi')].map(card => ({
+        name: card.dataset.kpi, width: card.clientWidth, height: card.clientHeight,
+        children: [...card.children].map(child => ({ className: child.className,
+          height: Math.round(child.getBoundingClientRect().height), width: Math.round(child.getBoundingClientRect().width),
+          scrollWidth: child.scrollWidth, text: child.textContent.slice(0, 100) }))
+      })),
       overflow: overflow.filter(item => item.excess > 1),
       text: pane.querySelector('.wm-shell')?.textContent || pane.textContent,
       background: getComputedStyle(pane).backgroundColor,
       foreground: getComputedStyle(pane).color,
+      sticky: (() => {
+        const tabs = pane.querySelector('.wm-product-tabs')
+        const before = tabs?.getBoundingClientRect().top
+        pane.scrollTop = 300
+        const after = tabs?.getBoundingClientRect().top
+        const style = tabs ? getComputedStyle(tabs) : null
+        return { position: style?.position, zIndex: style?.zIndex, backgroundImage: style?.backgroundImage,
+          topDelta: Math.round((after ?? 0) - (before ?? 0)), top: Math.round((after ?? 0) - pane.getBoundingClientRect().top) }
+      })(),
     })
   }
   document.getElementById('overview-layout-result').textContent = JSON.stringify(output)

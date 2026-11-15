@@ -83,7 +83,7 @@ if (!chrome) {
             const html = join(work, `page-${paneWidth}-${productWidth}-${theme}-${locale}.html`)
             writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><style>
 :root{${THEMES[theme].tokens}}
-body{margin:0;background:${THEMES[theme].background};font:400 13px/1.5 system-ui,sans-serif}
+body{margin:0;background:${THEMES[theme].background};color-scheme:${theme};font:400 13px/1.5 system-ui,sans-serif}
 #app{display:grid;gap:12px;padding:10px;justify-items:start}
 #pane-wrap{width:${paneWidth}px}
 #product-case{width:${productWidth}px;height:440px}
@@ -123,6 +123,7 @@ body{margin:0;background:${THEMES[theme].background};font:400 13px/1.5 system-ui
               assert.equal(tip.focusedButton, true, `${tag} trigger takes keyboard focus`)
               assert.equal(tip.tooltipOpened, true, `focus opens ${tag}`)
               assert.equal(tip.opaque, true, `${tag} background is opaque`)
+              assert.match(tip.backgroundImage, /linear-gradient/, `${tag} has a theme surface layer over Canvas`)
               assert.equal(tip.withinScope, true,
                 `${tag} stays inside the ${surface} (pop ${JSON.stringify(tip.popRect)})`)
               assert.equal(tip.withinClientScope, true,
@@ -205,7 +206,7 @@ body{margin:0;background:${THEMES[theme].background};font:400 13px/1.5 system-ui
               const html = join(work, `shot-${theme}-${locale}-${shot}.html`)
               writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><style>
 :root{${THEMES[theme].tokens}}
-body{margin:0;background:${THEMES[theme].background};font:400 13px/1.5 system-ui,sans-serif}
+body{margin:0;background:${THEMES[theme].background};color-scheme:${theme};font:400 13px/1.5 system-ui,sans-serif}
 #app{display:grid;gap:12px;padding:10px;justify-items:start}
 #pane-wrap{width:${paneW}px}
 #product-case{width:${productW}px;height:440px}
