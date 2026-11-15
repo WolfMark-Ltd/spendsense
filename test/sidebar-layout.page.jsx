@@ -90,16 +90,45 @@ const inside = (outer, inner) => inner.left >= outer.left - 1 && inner.top >= ou
 
 setTimeout(async () => {
   const modelIdButton = rootNode.querySelector('.wm-model-name-row .wm-info-btn[aria-controls="wm-info-model-id"]')
-  if (modelIdButton && tooltipInteraction === 'hover') {
-    modelIdButton.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }))
-  } else if (modelIdButton && tooltipInteraction === 'focus') {
-    modelIdButton.focus()
+  const modelIdDisclosures = {}
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+  const recordModelIdDisclosure = mode => {
+    const popover = document.getElementById('wm-info-model-id')
+    modelIdDisclosures[mode] = {
+      found: !!modelIdButton,
+      expanded: modelIdButton?.getAttribute('aria-expanded') === 'true',
+      text: popover?.textContent || '',
+      trigger: modelIdButton ? rect(modelIdButton) : null,
+      popover: popover ? rect(popover) : null,
+      offsetParent: popover?.offsetParent?.className || '',
+    }
   }
-  if (tooltipInteraction) await new Promise(resolve => setTimeout(resolve, 120))
+  if (modelIdButton && ['hover', 'focus', 'both'].includes(tooltipInteraction)) {
+    if (tooltipInteraction === 'hover' || tooltipInteraction === 'both') {
+      modelIdButton.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }))
+      await wait(120)
+      recordModelIdDisclosure('hover')
+    }
+    if (tooltipInteraction === 'both') {
+      modelIdButton.dispatchEvent(new MouseEvent('mouseout', {
+        bubbles: true, cancelable: true, relatedTarget: document.body, view: window,
+      }))
+      await wait(60)
+    }
+    if (tooltipInteraction === 'focus' || tooltipInteraction === 'both') {
+      modelIdButton.focus()
+      await wait(120)
+      recordModelIdDisclosure('focus')
+    }
+    if (tooltipInteraction === 'both') {
+      modelIdButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await wait(60)
+    }
+  }
   const layouts = [...rootNode.querySelectorAll('.case')].map(node => {
     const pane = node.querySelector('.wm-pane')
     const scrollTopBefore = pane?.scrollTop || 0
-    if (pane && !tooltipInteraction) pane.scrollTop = pane.scrollHeight
+    if (pane && !['hover', 'focus'].includes(tooltipInteraction)) pane.scrollTop = pane.scrollHeight
     const scrollTopAfter = pane?.scrollTop || 0
     const paneRect = pane ? rect(pane) : null
     const openSpendSenseButton = node.querySelector('.wm-open-ledger')
@@ -155,19 +184,9 @@ setTimeout(async () => {
       openSpendSense: node.querySelector('.wm-open-ledger')?.textContent || '',
     }
   })
-  const modelIdPopover = tooltipInteraction && modelIdButton ? document.getElementById('wm-info-model-id') : null
-  const modelIdButtonRect = modelIdButton ? rect(modelIdButton) : null
-  const modelIdPopoverRect = modelIdPopover ? rect(modelIdPopover) : null
   document.getElementById('sidebar-layout-result').textContent = JSON.stringify({
     errors: window.__sidebarErrors || [], locale, state, tooltipInteraction,
-    modelIdDisclosure: tooltipInteraction ? {
-      found: !!modelIdButton,
-      expanded: modelIdButton?.getAttribute('aria-expanded') === 'true',
-      text: modelIdPopover?.textContent || '',
-      trigger: modelIdButtonRect,
-      popover: modelIdPopoverRect,
-      offsetParent: modelIdPopover?.offsetParent?.className || '',
-    } : null,
+    modelIdDisclosures,
     layouts,
   })
 }, 350)

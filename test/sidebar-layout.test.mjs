@@ -41,10 +41,11 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
 </style></head><body><div id="sidebar-layout-cases"></div><div id="sidebar-layout-result"></div>
 <script>${readFileSync(bundle, 'utf8')}</script></body></html>`)
     const url = pathToFileURL(html).href
-    const run = locale => {
+    const run = (locale, tooltipInteraction = '') => {
+      const query = `all=1&locale=${locale}&state=partial${tooltipInteraction ? `&tooltipInteraction=${tooltipInteraction}` : ''}`
       const dom = execFileSync(CHROME, [
         '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-${locale}`)}`,
-        '--virtual-time-budget=5000', '--dump-dom', `${url}?all=1&locale=${locale}&state=partial`,
+        '--virtual-time-budget=5000', '--dump-dom', `${url}?${query}`,
       ], { maxBuffer: 32 * 1024 * 1024, timeout: 120000 }).toString()
       const match = dom.match(/<div id="sidebar-layout-result"[^>]*>(.*?)<\/div>/s)
       assert.ok(match?.[1], `Chromium records sidebar layout results (${locale})`)
@@ -52,7 +53,7 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
     }
 
     for (const locale of ['en', 'zh-CN']) {
-      const result = run(locale)
+      const result = run(locale, locale === 'en' ? 'both' : '')
       assert.deepEqual(result.errors, [], `no browser errors (${locale})`)
       assert.equal(result.layouts.length, 12, `six widths/heights in both themes (${locale})`)
       for (const layout of result.layouts) {
@@ -94,28 +95,19 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         assert.ok(ringWidths[0] < ringWidths[1] && ringWidths[1] < ringWidths[2],
           `${locale}/${theme}/${height} scales the ring with sidebar width: ${ringWidths.join(' → ')}`)
       }
+      if (locale === 'en') for (const interaction of ['hover', 'focus']) {
+        const disclosure = result.modelIdDisclosures[interaction]
+        assert.equal(disclosure.found, true, `${interaction} finds the exact-ID trigger`)
+        assert.equal(disclosure.expanded, true, `${interaction} opens the disclosure`)
+        assert.equal(disclosure.offsetParent, 'wm-model-name-row', `${interaction} anchors to the model row`)
+        assert.match(disclosure.text, /deepseek\/deepseek-v4\.1-flash/, `${interaction} shows the exact model ID`)
+        assert.ok(Math.abs(disclosure.popover.right - disclosure.trigger.right) <= 2,
+          `${interaction} aligns the disclosure beside its trigger`)
+        const gap = disclosure.popover.top - disclosure.trigger.bottom
+        assert.ok(gap >= 4 && gap <= 12, `${interaction} opens directly below the trigger (${gap}px gap)`)
+      }
       const scroll = result.layouts.map(layout => `${layout.width}x${layout.height}:${layout.scrollDelta}px`).join(', ')
       console.log(`Sidebar vertical scroll depth (${locale}): ${scroll}`)
-    }
-
-    for (const interaction of ['hover', 'focus']) {
-      const dom = execFileSync(CHROME, [
-        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-tip-${interaction}`)}`,
-        '--window-size=268,650', '--virtual-time-budget=5000', '--dump-dom',
-        `${url}?case=268-650-dark&width=268&height=650&theme=dark&locale=en&state=partial&tooltipInteraction=${interaction}`,
-      ], { maxBuffer: 32 * 1024 * 1024, timeout: 120000 }).toString()
-      const match = dom.match(/<div id="sidebar-layout-result"[^>]*>(.*?)<\/div>/s)
-      assert.ok(match?.[1], `Chromium records the model-ID tooltip after ${interaction}`)
-      const result = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
-      const disclosure = result.modelIdDisclosure
-      assert.equal(disclosure.found, true, `${interaction} finds the exact-ID trigger`)
-      assert.equal(disclosure.expanded, true, `${interaction} opens the disclosure`)
-      assert.equal(disclosure.offsetParent, 'wm-model-name-row', `${interaction} anchors to the model row`)
-      assert.match(disclosure.text, /deepseek\/deepseek-v4\.1-flash/, `${interaction} shows the exact model ID`)
-      assert.ok(Math.abs(disclosure.popover.right - disclosure.trigger.right) <= 2,
-        `${interaction} aligns the disclosure beside its trigger`)
-      const gap = disclosure.popover.top - disclosure.trigger.bottom
-      assert.ok(gap >= 4 && gap <= 12, `${interaction} opens directly below the trigger (${gap}px gap)`)
     }
 
     const screenshotDir = process.env.SIDEBAR_LAYOUT_SHOT_DIR
