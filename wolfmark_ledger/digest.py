@@ -69,6 +69,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "summary_money_estimated": "API-equivalent value, metered (allowance) spending and extra cash are valuations under catalogue rates and your cost rules — not invoices, and not cash charged.",
         "summary_money_confirmed": "Only provider-reported charges rest on confirmed per-call records; subscription fees are saved declarations, not confirmed payments.",
         "summary_complete": "Recording covers the full window and every recorded call is priced and classified.",
+        "summary_unknown_kind": "{calls} call(s) have no matching cost rule, so the extra-cash figure is incomplete; see {section} below.",
+        "summary_fee_bound": "Subscription fee subtotals marked ≥ exclude unknown amounts; see {section} for the missing accounts.",
         "label_calls": "Calls",
         "label_input": "Input tokens",
         "label_output": "Output tokens",
@@ -111,8 +113,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_no_calls": "No calls recorded in this window.",
         "note_unknown": "Recording coverage for this window is incomplete, so usage cannot be stated.",
         "note_api_theoretical": "API-equivalent value is a theoretical public price, not an invoice.",
-        "note_lower_bound": "Values marked ≥ are lower bounds: some usage is unpriced.",
-        "note_lower_bound_calls": "Values marked ≥ are lower bounds: some calls lack complete usage or price evidence.",
         "note_unpriced_calls": "{calls} call(s) lack complete usage or price evidence; an unpriced token count of zero does not make their value zero.",
         "note_billing_rule_missing": "{calls} call(s) have no matching billing rule; review the rules in Costs.",
         "note_billing_evidence_missing": "A billing rule matched {calls} call(s), but API price or provider charge evidence is missing; check the price catalogue and recorded charges.",
@@ -140,7 +140,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_allowance_unusable_limit": "The allowance limit is unavailable or unusable for {count} account(s), so no allowance verdict can be made; review allowance settings in Costs.",
         "note_allowance_no_configured": "No configured allowance window or saved reading is available for {count} account(s).",
         "note_allowance_other_unknown": "The available evidence cannot support an allowance verdict for {count} account(s); review the saved reading and cycle details in Memberships.",
-        "note_allowance_all_unknown": "No usable allowance evidence is available for any of the {count} account(s), so every status below is Unknown.",
+        "note_allowance_all_unknown": "No usable allowance evidence is available for any of the {count} account(s), so every status in this table is Unknown.",
         "note_no_memberships": "No memberships on file.",
         "note_no_models": "No models recorded in this window.",
         "note_no_providers": "No providers recorded in this window.",
@@ -183,6 +183,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "summary_money_estimated": "API 等值、计量（额度）支出和额外现金均为按目录价格和费用规则计算的估值——不是账单，也不是实际扣款。",
         "summary_money_confirmed": "只有服务商报告的费用基于已确认的逐次记录；订阅费用为已保存的声明，并非已确认付款。",
         "summary_complete": "记录覆盖整个周期，且所有已记录调用均已定价和分类。",
+        "summary_unknown_kind": "有 {calls} 次调用没有匹配的费用规则，因此额外现金数据不完整；详见下文“{section}”。",
+        "summary_fee_bound": "标有 ≥ 的订阅费用小计不含未知金额；缺失账号详见“{section}”。",
         "label_calls": "调用",
         "label_input": "输入 token",
         "label_output": "输出 token",
@@ -225,8 +227,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_no_calls": "此周期内没有记录到调用。",
         "note_unknown": "本周期记录覆盖不完整，无法给出用量。",
         "note_api_theoretical": "API 等值是理论公开价格，不是账单。",
-        "note_lower_bound": "标有 ≥ 的数值为下限：部分用量未定价。",
-        "note_lower_bound_calls": "标有 ≥ 的数值为下限：部分调用缺少完整用量或价格证据。",
         "note_unpriced_calls": "{calls} 次调用缺少完整用量或价格证据；未定价 token 为零不代表其价值为零。",
         "note_billing_rule_missing": "有 {calls} 次调用没有匹配的计费规则；请检查“费用”中的规则。",
         "note_billing_evidence_missing": "有 {calls} 次调用匹配了计费规则，但缺少 API 价格或服务商费用记录证据；请检查价格目录和已记录费用。",
@@ -254,7 +254,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_allowance_unusable_limit": "有 {count} 个账号的额度上限不可用或无效，因此无法判断额度状态；请在“费用”中检查额度设置。",
         "note_allowance_no_configured": "有 {count} 个账号没有已配置的额度窗口或已保存的读数。",
         "note_allowance_other_unknown": "现有证据不足以判断 {count} 个账号的额度状态；请在“会员”中查看已保存的读数和周期详情。",
-        "note_allowance_all_unknown": "以下 {count} 个账号均无可用的额度证据，因此状态均为未知。",
+        "note_allowance_all_unknown": "表中 {count} 个账号均无可用的额度证据，因此状态均为未知。",
         "note_no_memberships": "没有已确认的会员。",
         "note_no_models": "本周期内没有记录到模型。",
         "note_no_providers": "本周期内没有记录到服务商。",
@@ -364,16 +364,13 @@ def _usage_section(S: Mapping[str, str], window_label: str, totals: Mapping[str,
         lines.append({"label": S["label_api_value"], "value": S["unknown"]})
     elif unpriced or unpriced_calls or not covers:
         lines.append({"label": S["label_api_value"], "value": f"≥{value}"})
-        if unpriced:
-            notes.append(S["note_lower_bound"])
     else:
         lines.append({"label": S["label_api_value"], "value": value})
     if calls == 0:
         notes.append(S["note_no_calls"])
-    # Partial coverage and incomplete call evidence are stated once in the
-    # coverage summary; only the value's own theoretical nature stays here.
-    if unpriced:
-        notes.append(S["note_api_theoretical"])
+    # Window-wide caveats (partial coverage, incomplete evidence, lower
+    # bounds, theoretical pricing) are stated once in the coverage summary
+    # and the value section; usage keeps no duplicate explanation.
     return {"id": "usage", "heading": S["heading_usage"], "window": window_label,
             "kind": "lines", "lines": lines, "notes": notes}
 
@@ -384,23 +381,21 @@ def _ranked_table(S: Mapping[str, str], sid: str, heading: str, window_label: st
     ranked = sorted(rows, key=lambda r: (r.get("list_usd") is None,
                                          -(r.get("list_usd") or 0.0)))[:limit]
     table: list[list[str]] = []
-    lower_bound = False
     for row in ranked:
         value = _money(row.get("list_usd"))
         if value is None:
             shown = S["unknown"]
         elif row.get("unpriced_tokens") or row.get("unpriced_calls") or not covers:
             shown = f"≥{value}"
-            lower_bound = lower_bound or bool(row.get("unpriced_tokens"))
         else:
             shown = value
         table.append([str(row.get("name", "")), str(row.get("calls") or 0),
                       _tokens(row.get("tokens")) or S["unknown"], shown])
-    notes = [S["note_lower_bound"]] if lower_bound else []
-    # Incomplete call evidence and partial coverage are stated once in the
-    # coverage summary. An empty table keeps its own empty note when the
-    # window genuinely holds nothing; when the window is unobserved the
+    # Lower bounds, incomplete evidence and partial coverage are stated once
+    # in the coverage summary. An empty table keeps its own empty note when
+    # the window genuinely holds nothing; when the window is unobserved the
     # summary explains the missing figures instead.
+    notes: list[str] = []
     if not table and (calls or covers):
         notes.append(empty_note)
     return {"id": sid, "heading": heading, "window": window_label, "kind": "table",
@@ -427,8 +422,6 @@ def _value_section(S: Mapping[str, str], window_label: str, totals: Mapping[str,
         shown: str = S["unknown"]
     elif unpriced or unpriced_calls or not covers:
         shown = f"≥{value}"
-        if unpriced:
-            notes.append(S["note_lower_bound"])
     else:
         shown = value
     coverage = pricing.get("coverage")
@@ -530,8 +523,8 @@ def _spending_section(S: Mapping[str, str], window_label: str,
     if lines[2]["value"] == S["unknown"] and not partial:
         notes.append(S["note_credits_unknown"])
     if unvalued:
-        if unclassified_tokens:
-            notes.append(S["note_lower_bound"])
+        # The coverage summary explains the ≥ marker once; the billing
+        # classification reasons below stay with the figures they qualify.
         if unclassified_calls:
             explained_calls = 0
             for field, note_key in (
@@ -553,32 +546,17 @@ def _spending_section(S: Mapping[str, str], window_label: str,
             "kind": "lines", "lines": lines, "notes": notes}
 
 
-def _attributed_pricing_gaps(accounts: Any) -> tuple[int, int]:
-    """Measured unpriced volume versus incomplete calls in attributed scope.
-
-    Returns (unpriced_tokens, unpriced_calls) so the fees section can say
-    which one forces its lower bound instead of blaming unpriced usage
-    when only call evidence is incomplete.
-    """
-    tokens = 0
-    calls = 0
+def _attributed_pricing_partial(accounts: Any) -> bool:
     for row in accounts or []:
         usage = (row or {}).get("usage") or {}
-        tokens += usage.get("unpriced_tokens") or 0
-        calls += usage.get("unpriced_calls") or 0
-    return tokens, calls
-
-
-def _attributed_pricing_partial(accounts: Any) -> bool:
-    tokens, calls = _attributed_pricing_gaps(accounts)
-    return tokens > 0 or calls > 0
+        if (usage.get("unpriced_tokens") or 0) > 0 or (usage.get("unpriced_calls") or 0) > 0:
+            return True
+    return False
 
 
 def _fees_section(S: Mapping[str, str], window_label: str,
                   headline: Mapping[str, Any], covers: bool, calls: int,
-                  pricing_partial: bool, groups: Any = (),
-                  pricing_unpriced_tokens: int | None = None,
-                  pricing_unpriced_calls: int | None = None) -> dict[str, Any]:
+                  pricing_partial: bool, groups: Any = ()) -> dict[str, Any]:
     lines: list[dict[str, str]] = []
     group_rows = [g for g in (groups or []) if isinstance(g, dict)]
     group_by_currency = {str(g.get("currency") or "unknown"): g for g in group_rows}
@@ -637,34 +615,29 @@ def _fees_section(S: Mapping[str, str], window_label: str,
                 if difference_text is not None else None
     lines.append({"label": S["label_usage_value"], "value": usage_shown or S["unknown"]})
     lines.append({"label": S["label_difference"], "value": difference_shown or S["unknown"]})
-    bound = (usage_shown is not None and usage_shown.startswith("≥")) \
-        or (difference_shown is not None and difference_shown.startswith("≥"))
     notes = [S["note_fees_prorata"], S["note_known_monthly_fees"]]
     if unknown_fee_accounts:
         notes.append(S["note_unknown_fee_accounts"].format(count=unknown_fee_accounts))
     if missing_window_accounts:
         notes.append(S["note_historical_fee_missing"].format(count=missing_window_accounts))
-    if calls == 0:
-        if covers:
-            notes.append(S["note_no_calls_spending"])
-        # Else the coverage summary states that usage cannot be stated.
-    elif bound and pricing_partial:
-        # A lower bound from incomplete calls alone must not read as
-        # measured unpriced volume; a bound from a recording gap alone is
-        # explained once in the coverage summary.
-        if pricing_unpriced_tokens:
-            notes.append(S["note_lower_bound"])
-        elif pricing_unpriced_calls:
-            notes.append(S["note_lower_bound_calls"])
-        elif pricing_unpriced_tokens is None and pricing_unpriced_calls is None:
-            notes.append(S["note_lower_bound"])
+    if calls == 0 and covers:
+        notes.append(S["note_no_calls_spending"])
+    # Lower-bound markers are explained once in the coverage summary; the
+    # fee-account notes above stay with the subtotals they qualify.
     status = headline.get("status")
     if status == "partial":
         notes.append(S["note_partial_comparison"])
     elif status != "ok":
         notes.append(S["note_unavailable_comparison"])
+    # Fee lines lead the section (two per currency, or the USD pair when no
+    # currency group exists); whether any shows a bound tells the coverage
+    # summary to include the fee-specific ≥ note.
+    fee_line_count = 2 * len(currencies) if currencies else 2
+    fee_lower_bound = any(line["value"].startswith("≥")
+                          for line in lines[:fee_line_count])
     return {"id": "fees", "heading": S["heading_fees"], "window": window_label,
-            "kind": "lines", "lines": lines, "notes": notes}
+            "kind": "lines", "lines": lines, "notes": notes,
+            "fee_lower_bound": fee_lower_bound}
 
 
 def _allowances_section(S: Mapping[str, str], window_label: str,
@@ -782,7 +755,8 @@ def _report_coverage_section(S: Mapping[str, str], window_label: str, *,
                            covers: bool, calls: int,
                            totals: Mapping[str, Any],
                            billing: Mapping[str, Any],
-                           recording_since: Any) -> dict[str, Any]:
+                           recording_since: Any,
+                           fee_lower_bound: bool = False) -> dict[str, Any]:
     """The opening coverage summary: every window-wide caveat, stated once.
 
     Later sections keep only the limitations specific to their own figures;
@@ -794,6 +768,13 @@ def _report_coverage_section(S: Mapping[str, str], window_label: str, *,
     unpriced_calls = totals.get("unpriced_calls") or 0
     unclassified_tokens = billing.get("unclassified_tokens") or 0
     unclassified_calls = billing.get("unclassified_calls") or 0
+    # Priced rows without a matching cost rule land in the unknown billing
+    # kind without raising the unclassified counters, so completeness also
+    # requires checking that bucket and the incremental-cash evidence basis.
+    unknown_kind_calls = ((billing.get("by_kind") or {}).get("unknown") or {}).get("calls") or 0
+    incremental = (billing.get("evidence") or {}).get("incremental_cash") or {}
+    incremental_bound = (incremental.get("basis") == "unknown"
+                         and (incremental.get("usd") or 0) != 0)
     unobserved = calls == 0 and not covers
     if unobserved:
         coverage_value = S["coverage_unobserved"]
@@ -817,14 +798,19 @@ def _report_coverage_section(S: Mapping[str, str], window_label: str, *,
     else:
         if unpriced_calls:
             notes.append(S["note_unpriced_calls"].format(calls=unpriced_calls))
-        gaps = (not covers or unpriced_tokens or unpriced_calls
-                or unclassified_tokens or unclassified_calls)
-        if gaps:
+        if unknown_kind_calls:
+            notes.append(S["summary_unknown_kind"].format(
+                calls=unknown_kind_calls, section=S["heading_spending"]))
+        usage_gaps = (not covers or unpriced_tokens or unpriced_calls
+                      or unclassified_tokens or unclassified_calls)
+        if usage_gaps or incremental_bound:
             notes.append(S["summary_lower_bound"])
-        elif calls > 0:
+        elif calls > 0 and not unknown_kind_calls:
             notes.append(S["summary_complete"])
         # else: a genuinely empty covered window needs no data-quality note;
         # each section already says no calls were recorded.
+    if fee_lower_bound:
+        notes.append(S["summary_fee_bound"].format(section=S["heading_fees"]))
     notes.extend((S["summary_money_estimated"], S["summary_money_confirmed"]))
     return {"id": "report_coverage", "heading": S["heading_report_coverage"],
             "window": window_label, "kind": "lines", "lines": lines,
@@ -946,11 +932,17 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
         covers = (isinstance(baseline, (int, float)) and since_ts is not None
                   and baseline <= since_ts)
 
+    # The fees section is built first so the coverage summary knows whether
+    # any fee subtotal shows a lower bound; display order is unchanged.
+    fees_section = _fees_section(
+        S, period_label, econ.get("headline") or {}, covers, calls,
+        _attributed_pricing_partial(econ.get("accounts")), econ.get("groups"))
     sections: list[dict[str, Any]] = []
     sections.append(_report_coverage_section(
         S, period_label, covers=covers, calls=calls, totals=totals,
         billing=report.get("billing") or {},
-        recording_since=(econ.get("coverage") or {}).get("recording_since")))
+        recording_since=(econ.get("coverage") or {}).get("recording_since"),
+        fee_lower_bound=fees_section.get("fee_lower_bound", False)))
     sections.append(_usage_section(S, period_label, totals, covers, calls))
     sections.append(_ranked_table(
         S, "models", S["heading_models"], period_label,
@@ -969,11 +961,7 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
     sections.append(_value_section(S, period_label, totals, report.get("pricing_coverage") or {},
                                    covers, calls))
     sections.append(_spending_section(S, period_label, report.get("billing") or {}, covers, calls))
-    pricing_tokens, pricing_calls = _attributed_pricing_gaps(econ.get("accounts"))
-    sections.append(_fees_section(
-        S, period_label, econ.get("headline") or {}, covers, calls,
-        _attributed_pricing_partial(econ.get("accounts")), econ.get("groups"),
-        pricing_unpriced_tokens=pricing_tokens, pricing_unpriced_calls=pricing_calls))
+    sections.append(fees_section)
     sections.append(_allowances_section(S, cycle_label, list(wx.get("accounts", []))))
     changes = _changes_section(S, period_label, days, report.get("previous") or {}, totals)
     if changes is not None:

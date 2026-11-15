@@ -505,8 +505,10 @@ class DigestReviewFixesTests(DigestCase):
         # One call has no price at all: extra cash is unknown, never $0.00.
         self.assertEqual(by_label["Extra cash (incremental) spending"], "—")
         self.assertEqual(by_label["Unclassified calls"], "1")
-        notes = " ".join(spending["notes"])
-        self.assertIn("lower bound", notes.lower())
+        # The ≥ marker stays on the metered line, but its explanation lives
+        # once in the coverage summary; spending keeps the billing reasons.
+        summary = self.section(result, "report_coverage")
+        self.assertIn("lower bounds", " ".join(summary["notes"]).lower())
 
     def test_unclassified_calls_do_not_claim_that_pricing_is_missing(self):
         billing = {
@@ -844,10 +846,11 @@ class DigestFeesCoverageTests(DigestCase):
         self.assertTrue(
             by_label["Estimated value comparison (API-equivalent minus fees)"].startswith("≥"),
             by_label)
-        self.assertTrue(any("lower bound" in note.lower() for note in fees["notes"]),
-                        fees["notes"])
-        self.assertFalse(any("Recording started inside" in note for note in fees["notes"]),
-                         fees["notes"])
+        # The ≥ markers stay on the comparison lines, but their explanation
+        # lives once in the coverage summary.
+        summary = self.section(result, "report_coverage")
+        self.assertTrue(any("lower bounds" in note.lower() for note in summary["notes"]),
+                        summary["notes"])
 
     def test_fees_lower_bound_when_partly_observed(self):
         self.write_store([account("test:default", "test", plan_id="test.plus")])
@@ -1002,37 +1005,113 @@ class DigestCoverageSummaryTests(DigestCase):
     def test_string_parity_between_languages(self):
         self.assertEqual(set(D.STRINGS["en"]), set(D.STRINGS["zh"]))
 
-    def test_attributed_pricing_gaps_splits_tokens_and_calls(self):
-        tokens, calls = D._attributed_pricing_gaps([
-            {"usage": {"unpriced_tokens": 10, "unpriced_calls": 1}},
-            {"usage": {"unpriced_tokens": 0, "unpriced_calls": 2}},
-            {},
-        ])
-        self.assertEqual((tokens, calls), (10, 3))
-        self.assertTrue(D._attributed_pricing_partial(
-            [{"usage": {"unpriced_tokens": 0, "unpriced_calls": 1}}]))
-        self.assertFalse(D._attributed_pricing_partial(
-            [{"usage": {"unpriced_tokens": 0, "unpriced_calls": 0}}]))
+    def test_mixed_usage_explains_lower_bounds_once(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([{"id": "cap", "provider": "test", "kind": "api",
+                              "allowance_usd": 10.0, "billing_cycle": {"day": 1}}])
+        self.create_events([
+            {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 1 * DAY},
+            {"model": "zzz", "input_tokens": 500_000, "ts": NOW - 2 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(1_500_000)
+        result = self.report()
+        markdown = result["markdown"]
+        # The ≥ markers stay on the affected values, but the generic
+        # explanation appears exactly once, in the coverage summary.
+        self.assertIn("≥", markdown)
+        self.assertEqual(markdown.count("lower bounds"), 1)
+        self.assertNotIn("some usage is unpriced", markdown)
+        for sid in ("usage", "models", "providers", "value", "spending", "fees"):
+            notes = " ".join(self.section(result, sid)["notes"]).lower()
+            self.assertNotIn("lower bound", notes, sid)
 
-    def test_fees_bound_names_incomplete_calls_when_no_unpriced_tokens(self):
-        section = D._fees_section(
-            D.STRINGS["en"], "Last 7 days",
-            {"fees_monthly_by_currency": [], "fees_window_by_currency": [],
-             "usage_usd": 2.0, "difference_usd": 1.0, "status": "partial"},
-            True, 5, True, (),
-            pricing_unpriced_tokens=0, pricing_unpriced_calls=3)
+    def test_unknown_billing_kind_withholds_the_complete_claim(self):
+        # Priced call, full recording coverage, but no matching cost rule:
+        # the call lands in the unknown billing kind without raising the
+        # unclassified counters.
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([{"model": "m", "input_tokens": 1_000_000}],
+                           baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report()
+        summary = self.section(result, "report_coverage")
+        notes = " ".join(summary["notes"])
+        self.assertIn("1 call(s) have no matching cost rule", notes)
+        self.assertNotIn("priced and classified", notes)
+        # No value shows ≥ here (extra cash reads unknown), so no ≥ legend.
+        self.assertNotIn("lower bounds", notes.lower())
+
+    def test_unknown_billing_kind_with_positive_cash_marks_a_bound(self):
+        section = D._report_coverage_section(
+            D.STRINGS["en"], "Last 7 days", covers=True, calls=3,
+            totals={"unpriced_calls": 0, "unpriced_tokens": 0},
+            billing={"unclassified_calls": 0, "unclassified_tokens": 0,
+                     "by_kind": {"unknown": {"calls": 2, "tokens": 10}},
+                     "evidence": {"incremental_cash": {"usd": 1.5,
+                                                      "basis": "unknown"}}},
+            recording_since=None)
         notes = " ".join(section["notes"])
-        self.assertIn("some calls lack complete usage or price evidence", notes)
-        self.assertNotIn("some usage is unpriced", notes)
+        self.assertIn("2 call(s) have no matching cost rule", notes)
+        self.assertIn("lower bounds", notes)
+        self.assertNotIn("priced and classified", notes)
 
-    def test_fees_bound_names_unpriced_volume_when_tokens_unpriced(self):
-        section = D._fees_section(
-            D.STRINGS["en"], "Last 7 days",
-            {"fees_monthly_by_currency": [], "fees_window_by_currency": [],
-             "usage_usd": 2.0, "difference_usd": 1.0, "status": "partial"},
-            True, 5, True, (),
-            pricing_unpriced_tokens=10, pricing_unpriced_calls=1)
-        self.assertIn("some usage is unpriced", " ".join(section["notes"]))
+    def test_fees_section_reports_whether_subtotals_show_a_bound(self):
+        headline = {
+            "fees_monthly_by_currency": [{"currency": "USD", "amount": 20.0}],
+            "fees_window_by_currency": [{"currency": "USD", "amount": 4.65}],
+            "usage_usd": None, "difference_usd": None, "status": "unavailable",
+        }
+        groups = [{"currency": "USD", "fee_complete": False,
+                   "window_fee_complete": True,
+                   "unknown_fee_accounts": ["other"]}]
+        section = D._fees_section(D.STRINGS["en"], "Last 7 days", headline,
+                                 True, 1, False, groups)
+        by_label = {line["label"]: line["value"] for line in section["lines"]}
+        self.assertTrue(by_label["Known monthly fees (USD)"].startswith("≥"))
+        self.assertTrue(section["fee_lower_bound"])
+        complete = D._fees_section(
+            D.STRINGS["en"], "Last 7 days", headline, True, 1, False,
+            [{"currency": "USD", "fee_complete": True,
+              "window_fee_complete": True}])
+        self.assertFalse(complete["fee_lower_bound"])
+
+    def test_fee_bound_gets_a_legend_despite_clean_usage(self):
+        section = D._report_coverage_section(
+            D.STRINGS["en"], "Last 7 days", covers=True, calls=3,
+            totals={"unpriced_calls": 0, "unpriced_tokens": 0},
+            billing={"unclassified_calls": 0, "unclassified_tokens": 0},
+            recording_since=None, fee_lower_bound=True)
+        notes = " ".join(section["notes"])
+        self.assertIn("exclude unknown amounts", notes)
+        self.assertNotIn("lower bounds", notes.lower())
+        # The completeness claim is about recorded calls, which are clean.
+        self.assertIn("priced and classified", notes)
+
+    def test_clean_usage_with_unknown_fee_reports_both_states(self):
+        plans = plans_doc(
+            {"id": "test.plus", "provider_family": "test", "name": "Test Plus",
+             "price": {"amount": 20.0, "currency": "USD", "period": "month"}},
+            {"id": "test.mystery", "provider_family": "test", "name": "Mystery",
+             "price": {"amount": None, "currency": "USD", "period": "month"}},
+        )
+        self.write_store([
+            account("test:known", "test", plan_id="test.plus"),
+            account("test:mystery", "test", plan_id="test.mystery"),
+        ])
+        self.write_profiles([{"id": "cap", "provider": "test", "kind": "api",
+                              "allowance_usd": 10.0, "billing_cycle": {"day": 1}}])
+        self.create_events([{"model": "m", "input_tokens": 1_000_000}],
+                           baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report(plans=plans)
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertTrue(by_label["Known monthly fees (USD)"].startswith("≥"))
+        summary = self.section(result, "report_coverage")
+        notes = " ".join(summary["notes"])
+        self.assertIn("exclude unknown amounts", notes)
+        self.assertIn("priced and classified", notes)
 
     def test_allowance_all_unknown_gets_a_single_lead_note(self):
         accounts = [
@@ -1047,6 +1126,10 @@ class DigestCoverageSummaryTests(DigestCase):
         notes = " ".join(section["notes"])
         self.assertIn("No usable allowance evidence is available for any of the 2 account(s)",
                       notes)
+        # Notes render after the table in both Markdown and the preview, so
+        # the explanation must not call the rows "below".
+        self.assertIn("in this table", notes)
+        self.assertNotIn("below", notes)
         mixed = list(accounts) + [{"account_id": "c", "label": "C", "cycle": {},
                                    "rollup": {"state": "on_track"}, "windows": []}]
         mixed_notes = " ".join(D._allowances_section(
