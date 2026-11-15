@@ -2414,7 +2414,7 @@ function modelDisplayName(model) {
   const raw = String(model || '').trim()
   if (!raw) return ''
   const slug = raw.split('/').filter(Boolean).pop() || raw
-  const versioned = slug.replace(/(?<!\d)(\d)-(\d)(?!\d)/g, '$1.$2')
+  const versioned = slug.replace(/(?<!\d)(\d+)-(\d+)(?![\db])/gi, '$1.$2')
   return versioned.split(/[-_\s]+/).filter(Boolean).map(word =>
     MODEL_DISPLAY_WORDS[word.toLowerCase()] || `${word[0].toUpperCase()}${word.slice(1)}`
   ).join(' ')
@@ -2794,7 +2794,7 @@ const METER_CSS = [
   '.wm-dot[data-state="updating"]{background:var(--ui-warning)}',
   '.wm-scope-chip{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--ui-text-quaternary);border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:2px 7px;white-space:nowrap}',
   '.wm-meter-modelrow{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}',
-  '.wm-model-name-row{display:flex;align-items:flex-start;gap:5px;width:100%;min-width:0}',
+  '.wm-model-name-row{position:relative;display:flex;align-items:flex-start;gap:5px;width:100%;min-width:0}',
   '.wm-model{flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.35;font-weight:560;color:var(--ui-text-primary)}',
   '.wm-model-name-row>.wm-info{flex-shrink:0}',
   '.wm-provider-badge{flex-shrink:0;max-width:100%;overflow-wrap:anywhere;white-space:normal;font-size:10px;line-height:1.3;color:var(--ui-text-tertiary);background:var(--ui-fill-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:5px;padding:2px 7px}',

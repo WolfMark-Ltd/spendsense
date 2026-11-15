@@ -4,6 +4,7 @@ import plugin, { __test as T } from '../desktop/plugin.js'
 import { host, queryClient, QueryClientProvider, i18nBackend } from '@hermes/plugin-sdk'
 
 const params = new URLSearchParams(location.search)
+const tooltipInteraction = params.get('tooltipInteraction')
 const locale = params.get('locale') === 'zh-CN' ? 'zh' : 'en'
 const exactModelId = 'deepseek/deepseek-v4.1-flash'
 const provider = 'commandcode'
@@ -87,9 +88,26 @@ const overlaps = (a, b) => a.left < b.right - 1 && b.left < a.right - 1 && a.top
 const inside = (outer, inner) => inner.left >= outer.left - 1 && inner.top >= outer.top - 1
   && inner.right <= outer.right + 1 && inner.bottom <= outer.bottom + 1
 
-setTimeout(() => {
+setTimeout(async () => {
+  const modelIdButton = rootNode.querySelector('.wm-model-name-row .wm-info-btn[aria-controls="wm-info-model-id"]')
+  if (modelIdButton && tooltipInteraction === 'hover') {
+    modelIdButton.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }))
+  } else if (modelIdButton && tooltipInteraction === 'focus') {
+    modelIdButton.focus()
+  }
+  if (tooltipInteraction) await new Promise(resolve => setTimeout(resolve, 120))
   const layouts = [...rootNode.querySelectorAll('.case')].map(node => {
     const pane = node.querySelector('.wm-pane')
+    const scrollTopBefore = pane?.scrollTop || 0
+    if (pane && !tooltipInteraction) pane.scrollTop = pane.scrollHeight
+    const scrollTopAfter = pane?.scrollTop || 0
+    const paneRect = pane ? rect(pane) : null
+    const openSpendSenseButton = node.querySelector('.wm-open-ledger')
+    const openSpendSenseRect = openSpendSenseButton ? rect(openSpendSenseButton) : null
+    const paneClientRect = pane && paneRect ? {
+      left: paneRect.left, top: paneRect.top,
+      right: paneRect.left + pane.clientWidth, bottom: paneRect.top + pane.clientHeight,
+    } : null
     const model = node.querySelector('.wm-model')
     const modelNameRow = node.querySelector('.wm-model-name-row')
     const tooltipMetrics = [...node.querySelectorAll('.wm-info-btn')].map(button => ({
@@ -114,6 +132,9 @@ setTimeout(() => {
       height: pane?.clientHeight || 0,
       scrollHeight: pane?.scrollHeight || 0,
       scrollDelta: Math.max(0, (pane?.scrollHeight || 0) - (pane?.clientHeight || 0)),
+      scrollTopBefore,
+      scrollTopAfter,
+      openSpendSenseVisible: !!openSpendSenseRect && !!paneClientRect && inside(paneClientRect, openSpendSenseRect),
       horizontalOverflow: Math.max(0, (pane?.scrollWidth || 0) - (pane?.clientWidth || 0)),
       model: model?.textContent || '',
       modelId: model?.title || '',
@@ -134,8 +155,20 @@ setTimeout(() => {
       openSpendSense: node.querySelector('.wm-open-ledger')?.textContent || '',
     }
   })
+  const modelIdPopover = tooltipInteraction && modelIdButton ? document.getElementById('wm-info-model-id') : null
+  const modelIdButtonRect = modelIdButton ? rect(modelIdButton) : null
+  const modelIdPopoverRect = modelIdPopover ? rect(modelIdPopover) : null
   document.getElementById('sidebar-layout-result').textContent = JSON.stringify({
-    errors: window.__sidebarErrors || [], locale, state, layouts,
+    errors: window.__sidebarErrors || [], locale, state, tooltipInteraction,
+    modelIdDisclosure: tooltipInteraction ? {
+      found: !!modelIdButton,
+      expanded: modelIdButton?.getAttribute('aria-expanded') === 'true',
+      text: modelIdPopover?.textContent || '',
+      trigger: modelIdButtonRect,
+      popover: modelIdPopoverRect,
+      offsetParent: modelIdPopover?.offsetParent?.className || '',
+    } : null,
+    layouts,
   })
 }, 350)
 

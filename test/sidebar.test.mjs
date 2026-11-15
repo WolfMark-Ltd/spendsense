@@ -870,6 +870,8 @@ test('provider-prefixed model IDs have a readable name and keyboard disclosure',
   assert.equal(container.querySelector('#wm-info-model-id').textContent, `Exact model ID: ${id}`)
   assert.equal(T.modelDisplayName('deepseek/deepseek-v4.2-flash'), 'DeepSeek V4.2 Flash')
   assert.notEqual(T.modelDisplayName('deepseek/deepseek-v4.1-flash'), T.modelDisplayName('deepseek/deepseek-v4.2-flash'))
+  assert.equal(T.modelDisplayName('google/gemma-3-4b-it'), 'Gemma 3 4b It')
+  assert.equal(T.modelDisplayName('anthropic/claude-opus-4-6'), 'Claude Opus 4.6')
 })
 
 test('a recorded route renders the provider badge with the membership label', async () => {

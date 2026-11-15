@@ -83,6 +83,10 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         assert.equal(layout.horizontalOverflow, 0, `${id} has no horizontal pane overflow`)
         assert.equal(layout.openSpendSense, locale === 'en' ? 'Open SpendSense' : '打开 SpendSense',
           `${id} retains the existing navigation action`)
+        if (layout.height === 650 && layout.scrollDelta > 0) {
+          assert.ok(layout.scrollTopAfter > layout.scrollTopBefore, `${id} can scroll the overflowing pane`)
+          assert.equal(layout.openSpendSenseVisible, true, `${id} reveals Open SpendSense at the bottom`)
+        }
       }
       for (const theme of ['dark', 'light']) for (const height of [650, 800]) {
         const ringWidths = [268, 350, 500].map(width => result.layouts.find(layout =>
@@ -92,6 +96,26 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
       }
       const scroll = result.layouts.map(layout => `${layout.width}x${layout.height}:${layout.scrollDelta}px`).join(', ')
       console.log(`Sidebar vertical scroll depth (${locale}): ${scroll}`)
+    }
+
+    for (const interaction of ['hover', 'focus']) {
+      const dom = execFileSync(CHROME, [
+        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-tip-${interaction}`)}`,
+        '--window-size=268,650', '--virtual-time-budget=5000', '--dump-dom',
+        `${url}?case=268-650-dark&width=268&height=650&theme=dark&locale=en&state=partial&tooltipInteraction=${interaction}`,
+      ], { maxBuffer: 32 * 1024 * 1024, timeout: 120000 }).toString()
+      const match = dom.match(/<div id="sidebar-layout-result"[^>]*>(.*?)<\/div>/s)
+      assert.ok(match?.[1], `Chromium records the model-ID tooltip after ${interaction}`)
+      const result = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
+      const disclosure = result.modelIdDisclosure
+      assert.equal(disclosure.found, true, `${interaction} finds the exact-ID trigger`)
+      assert.equal(disclosure.expanded, true, `${interaction} opens the disclosure`)
+      assert.equal(disclosure.offsetParent, 'wm-model-name-row', `${interaction} anchors to the model row`)
+      assert.match(disclosure.text, /deepseek\/deepseek-v4\.1-flash/, `${interaction} shows the exact model ID`)
+      assert.ok(Math.abs(disclosure.popover.right - disclosure.trigger.right) <= 2,
+        `${interaction} aligns the disclosure beside its trigger`)
+      const gap = disclosure.popover.top - disclosure.trigger.bottom
+      assert.ok(gap >= 4 && gap <= 12, `${interaction} opens directly below the trigger (${gap}px gap)`)
     }
 
     const screenshotDir = process.env.SIDEBAR_LAYOUT_SHOT_DIR
@@ -109,6 +133,13 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         ], { timeout: 120000, stdio: 'ignore' })
         assert.ok(existsSync(screenshot) && statSync(screenshot).size > 0, `writes ${name}`)
       }
+      const disclosureShot = join(screenshotDir, 'sidebar-model-id-hover-268x650-dark.png')
+      execFileSync(CHROME, [
+        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, 'shot-model-id-hover')}`,
+        '--virtual-time-budget=5000', '--window-size=268,650', `--screenshot=${disclosureShot}`,
+        `${url}?case=268-650-dark&width=268&height=650&theme=dark&locale=en&state=partial&tooltipInteraction=hover`,
+      ], { timeout: 120000, stdio: 'ignore' })
+      assert.ok(existsSync(disclosureShot) && statSync(disclosureShot).size > 0, 'writes the model-ID disclosure screenshot')
     }
   } finally { rmSync(work, { recursive: true, force: true }) }
 })
