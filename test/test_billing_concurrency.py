@@ -1,5 +1,6 @@
 import json, os, sys, tempfile, threading, unittest
 from pathlib import Path
+from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from wolfmark_ledger import billing
 
@@ -98,9 +99,21 @@ class CorrectionRegressions(unittest.TestCase):
                  "_input": 0, "_output": 0, "_cache_read": 0, "_cache_write": 0, "last_seen": inside},
                 {"provider": "commandcode", "model": "m", "list_usd": 1.0, "_tokens": 5, "call_id": "b",
                  "_input": 0, "_output": 0, "_cache_read": 0, "_cache_write": 0, "last_seen": before}]
-        report = billing.classify(rows, profiles)
-        self.assertEqual(report["excluded_out_of_cycle"], 1)
-        self.assertAlmostEqual(report["metered_usd"], 1.0)
+        cycle_bounds = billing.cycle_bounds
+        references = [
+            (dt.datetime(2026, 11, 14, 23, 59, 59, tzinfo=dt.timezone.utc).timestamp(), 1, 1.0),
+            (dt.datetime(2026, 11, 15, 0, 0, 0, tzinfo=dt.timezone.utc).timestamp(), 2, 0.0),
+        ]
+        for reference_at, excluded, metered in references:
+            with self.subTest(reference_at=reference_at):
+                def fixed_cycle_bounds(profile, at):
+                    self.assertIsNone(at, "classify asks for the active cycle")
+                    return cycle_bounds(profile, reference_at)
+
+                with patch.object(billing, "cycle_bounds", side_effect=fixed_cycle_bounds):
+                    report = billing.classify(rows, profiles)
+                self.assertEqual(report["excluded_out_of_cycle"], excluded)
+                self.assertAlmostEqual(report["metered_usd"], metered)
 
 
 class CycleBoundaryRegressions(unittest.TestCase):
