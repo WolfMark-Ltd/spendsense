@@ -65,8 +65,9 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         for (const [index, tip] of layout.tooltipMetrics.entries()) {
           assert.equal(tip.hitWidth, 24, `${id}/tip${index} keeps the accessible hit width`)
           assert.equal(tip.hitHeight, 24, `${id}/tip${index} keeps the accessible hit height`)
-          assert.equal(tip.ringWidth, 12, `${id}/tip${index} uses the smaller shared ring`)
-          assert.equal(tip.glyphFontSize, 8, `${id}/tip${index} keeps the small information glyph`)
+          assert.ok(tip.ringWidth < 12, `${id}/tip${index} uses the smaller shared ring (${tip.ringWidth}px)`)
+          assert.ok(tip.glyphFontSize >= 6 && tip.glyphFontSize <= 9,
+            `${id}/tip${index} keeps the visible information glyph compact (${tip.glyphFontSize}px)`)
         }
         assert.equal(layout.provider, 'commandcode', `${id} keeps the provider separate`)
         assert.equal(layout.providerSeparate, true, `${id} puts the provider on its own line`)

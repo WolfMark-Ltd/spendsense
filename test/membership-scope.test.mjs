@@ -1345,7 +1345,7 @@ test('Overview keeps the subtotal visible and explains unknown legacy coverage',
   assert.match(recorded, /\$0\.42/, 'the measured subtotal remains visible')
   assert.match(recorded, /At least \$0\.42/, 'unknown legacy coverage qualifies the subtotal as a lower bound')
   assert.match(recorded, /Partial/)
-  assert.match(recorded, /Coverage unknown for older entries/i)
+  assert.match(recorded, /Older coverage unknown/i)
   await React.act(async () => T.$ledger.set(T.emptyLedger()))
 })
 
@@ -1608,7 +1608,7 @@ test('Overview distinguishes unknown subscription fees from having no recurring 
   await flush(4)
   const fees = container.querySelector('[data-kpi="saved-fees"]').textContent
   assert.match(fees, /Unknown/, 'an unknown subscription fee is Unknown, not a dash')
-  assert.match(fees, /1 account fee is unknown/, 'the subtotal discloses the missing fee')
+  assert.match(fees, /1 fee unknown; excluded/, 'the subtotal discloses the missing fee')
 
   // Genuinely fee-free accounts are a different state, not Unknown.
   queryClient.clear()
@@ -1626,7 +1626,7 @@ test('Overview distinguishes unknown subscription fees from having no recurring 
   await flush(4)
   const fees2 = container2.querySelector('[data-kpi="saved-fees"]').textContent
   assert.match(fees2, /No saved recurring fees/)
-  assert.doesNotMatch(fees2, /account fee is unknown/)
+  assert.doesNotMatch(fees2, /fee unknown; excluded/)
   const chips2 = [...container2.querySelector('[data-kpi="saved-fees"]')
     .querySelectorAll('.wm-certainty')].map(el => el.textContent)
   assert.ok(!chips2.includes('Unknown'), `a fee-free state carries no Unknown chip (${chips2})`)
@@ -1660,7 +1660,7 @@ test('Overview shows a known fee subtotal as Partial when some fees are unknown'
   const card = container.querySelector('[data-kpi="saved-fees"]')
   assert.match(card.textContent, /USD 20\.00\/mo/, 'the known subtotal keeps its amount, currency and period')
   assert.match(card.textContent, /Partial/, 'an unknown subscription marks the subtotal Partial')
-  assert.match(card.textContent, /1 account fee is unknown/, 'the missing fee is disclosed')
+  assert.match(card.textContent, /1 fee unknown; excluded/, 'the missing fee is disclosed')
 })
 
 test('Overview never treats an unconfirmed or plan-less account as a zero fee', async () => {
@@ -1685,7 +1685,7 @@ test('Overview never treats an unconfirmed or plan-less account as a zero fee', 
   const fees = container.querySelector('[data-kpi="saved-fees"]').textContent
   assert.match(fees, /Unknown/, 'unconfirmed and plan-less accounts are Unknown, not zero')
   assert.doesNotMatch(fees, /No recurring fees/)
-  assert.match(fees, /2 account fees are unknown/)
+  assert.match(fees, /2 fees unknown; excluded/)
 })
 
 test('Overview attention includes stored allowance weather without provider reads', async () => {

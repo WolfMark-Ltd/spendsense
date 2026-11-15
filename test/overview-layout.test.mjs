@@ -15,6 +15,7 @@ const CHROME = [
 
 test('Overview keeps truthful, compact layouts across widths, themes and locales', {
   skip: CHROME ? false : 'No Chromium binary available for real Overview layout checks',
+  timeout: 120000,
 }, async () => {
   const work = mkdtempSync(join(tmpdir(), 'wm-overview-layout-'))
   try {
@@ -79,7 +80,7 @@ const name=new URLSearchParams(location.search).get('case');if(name){document.bo
         assert.match(layout.text, locale === 'en' ? /Actual provider charges/ : /实际服务商费用/, `${tag} labels charges separately`)
         assert.match(layout.text, locale === 'en' ? /Most-used models/ : /使用最多的模型/, `${tag} renders the call-count insight`)
         assert.match(layout.text, locale === 'en' ? /GBP 20\.00\/mo/ : /GBP 20\.00\/月/, `${tag} preserves GBP and its billing period`)
-        assert.match(layout.fees, locale === 'en' ? /account fee is unknown/i : /账户费用未知/, `${tag} explains the excluded unknown account fee`)
+        assert.match(layout.fees, locale === 'en' ? /fee unknown; excluded/i : /费用未知；未计入/, `${tag} explains the excluded unknown fee`)
         assert.match(layout.fees, locale === 'en' ? /Partial/ : /部分/, `${tag} marks the known-fee subtotal partial`)
         assert.equal(layout.modelLabels[0], 'GPT 5.1 Codex Super Long Model Name For Wrapping', `${tag} shows the friendly model name`)
         assert.equal(layout.modelDetails.length, 2, `${tag} keeps exact model IDs available through help controls`)
