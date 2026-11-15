@@ -237,8 +237,15 @@ def discover(catalogue: Mapping[str, Any] | None, *, include_native: bool = True
     catalogued = {str(p.get("provider_family")) for p in (catalogue or {}).get("plans") or []}
     matched = {mem.PLAN_FAMILY_ALIASES.get(family, family) for family in slots}
     absent = sorted(catalogued - matched)
+    # The probe outcome per family, without the snapshot (already in
+    # ``snapshots``): a caller composing account cards needs to say *why* a
+    # route has no reading, and re-probing to find out would double the read.
+    probe_states = {family: {"state": str(probe.get("state") or ""),
+                             "reason": str(probe.get("reason") or "")}
+                    for family, probe in probes.items()} if include_native else {}
     return {
         "accounts": accounts,
+        "probes": probe_states,
         "slots": {f: {"slots": v["slots"], "route_slugs": v["route_slugs"]} for f, v in slots.items()},
         "catalogued_without_credential": absent,
         "notes": notes,

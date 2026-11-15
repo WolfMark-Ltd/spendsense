@@ -166,7 +166,8 @@ def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
                      catalogue: Optional[Mapping[str, Any]] = None,
                      home: Optional[Path | str] = None, at: Any = None,
                      data_dir: Optional[Path | str] = None,
-                     native_snapshots: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
+                     native_snapshots: Optional[Mapping[str, Any]] = None,
+                     native_probes: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     """Stored accounts with quota. ``native`` uses Hermes' own readings."""
     book, _source = active_catalogue(catalogue or None, data_dir=data_dir)
     data = store.load_with_seats(path)
@@ -180,7 +181,9 @@ def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
         snapshots = {str(family): snapshot
                      for family, snapshot in dict(native_snapshots).items()}
     notes: list[str] = []
-    probes: dict[str, Any] = {}
+    # A caller that already probed (discovery) passes the outcomes in: the card
+    # must still be able to say why a route has no reading.
+    probes: dict[str, Any] = dict(native_probes or {}) if native else {}
     if native and native_snapshots is None:
         families = list(dict.fromkeys(str(account.get("family") or "")
                                       for account in data.get("accounts", []) if account.get("family")))
@@ -358,7 +361,8 @@ def discover_payload(*, include_native: bool = False, path: Optional[Path | str]
     merged = store.upsert_discovered(found["accounts"], path)
     shared_snapshots = (found or {}).get("snapshots") if include_native else None
     payload = accounts_payload(native=include_native, path=path, catalogue=book, home=home,
-                               native_snapshots=shared_snapshots)
+                               native_snapshots=shared_snapshots,
+                               native_probes=(found or {}).get("probes") if include_native else None)
     payload.update({
         "discovered": len(found["accounts"]),
         "added": merged.get("added", []),

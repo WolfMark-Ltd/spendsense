@@ -393,6 +393,34 @@ class NativeProbeContract(TempStore):
         self.assertEqual(card["native_probe"]["state"], "error")
         self.assertIn("TimeoutExpired", card["native_probe"]["reason"])
 
+    def test_discovery_carries_the_probe_to_the_cards_it_returns(self):
+        """Discover returns cards too: a failed read must not become silence."""
+        # No provider read means no probe outcome to report — and no `hermes`
+        # subprocess in the test process.
+        out = discovery.discover(self.catalogue, include_native=False, home=self.home)
+        self.assertEqual(out["probes"], {}, "a stored discovery claims no probe")
+        def probe(providers, *, home=None, budget_seconds=10.0):
+            return {p: {"state": "unsupported", "snapshot": None,
+                        "reason": "the hermes CLI is not on PATH"} for p in providers}
+
+        with mock.patch.object(discovery, "probe_providers", side_effect=probe):
+            payload = api.discover_payload(include_native=True, path=self.store, home=self.home,
+                                           catalogue=self.catalogue)
+        cards = {card["family"]: card for card in payload["accounts"]}
+        self.assertEqual(cards["openai-codex"]["native_probe"]["state"], "unsupported")
+        self.assertIn("PATH", cards["openai-codex"]["native_probe"]["reason"])
+
+    def test_a_caller_that_already_probed_can_pass_the_outcomes_in(self):
+        self._seed()
+        card = api.accounts_payload(native=True, path=self.store, home=self.home,
+                                    catalogue=self.catalogue,
+                                    native_snapshots={},
+                                    native_probes={"openai-codex": {"state": "error",
+                                                                    "reason": "usage read failed: TimeoutExpired"}}
+                                    )["accounts"][0]
+        self.assertEqual(card["native_probe"]["state"], "error")
+        self.assertIn("TimeoutExpired", card["native_probe"]["reason"])
+
     def test_the_probe_is_never_persisted_when_a_card_is_posted_back(self):
         account = self._seed()
         with self._probe("error", "usage read failed: TimeoutExpired"):

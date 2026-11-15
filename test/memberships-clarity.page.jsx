@@ -66,6 +66,20 @@ const accounts = [
     manual_exhaustions: [], fee_overrides: [], plan_choices: [], excluded_plans: [],
     rev: 'r1', route_entitlement_rev: 'route-r1', credential_present: true },
 
+  // Hermes answered, but returned no reading: it cannot say which of
+  // "no credential", "no endpoint" or "the fetch failed" applies.
+  { id: 'memb:nohermes', family: 'xai', label: 'grok',
+    billing_arrangement: 'subscription', effective_arrangement: 'subscription',
+    plan_id: 'xai.supergrok', plan: { name: 'SuperGrok' },
+    fee: { basis: 'unpriced', effective: { amount: null } },
+    quota: { provider_state: 'absent', age_seconds: null, has_provider_reporting: false, windows: [
+      { id: 'messages', label: 'Messages', used_percent: null, state: 'no_data',
+        scope: 'account', basis: ['none'] },
+    ] },
+    native_probe: { state: 'unavailable', reason: 'no credential configured, no usage endpoint, or the fetch failed' },
+    manual_exhaustions: [], fee_overrides: [], plan_choices: [], excluded_plans: [],
+    rev: 'r1', route_entitlement_rev: 'route-r1', credential_present: true },
+
   // Nothing has been asked yet: the stored view only.
   { id: 'memb:stored', family: 'openai-codex', label: 'personal',
     billing_arrangement: 'unconfirmed', effective_arrangement: 'unconfirmed',
@@ -152,7 +166,7 @@ try {
         // reading notes in all four cases.
         {
           const host = document.getElementById(ids[0])
-          for (const id of ['memb:reported', 'memb:unsupported', 'memb:failed', 'memb:stored']) {
+          for (const id of ['memb:reported', 'memb:unsupported', 'memb:nohermes', 'memb:failed', 'memb:stored']) {
             const card = host.querySelector(`[data-account="${id}"]`)
             // Structure, not copy: the disclosure is the row's aria-expanded
             // control, so this works in every locale.
@@ -165,7 +179,7 @@ try {
         // the reading notes the states produce. Tests keep them closed.
         if (SHOT) {
           for (const id of ids) {
-            for (const account of ['memb:reported', 'memb:unsupported', 'memb:failed', 'memb:stored']) {
+            for (const account of ['memb:reported', 'memb:unsupported', 'memb:nohermes', 'memb:failed', 'memb:stored']) {
               const group = document.getElementById(id)
                 ?.querySelector(`[data-account="${account}"] details[data-group="allowances"]`)
               if (group) group.open = true

@@ -30,6 +30,7 @@ const COPY = {
   en: {
     reported: 'Reported',
     unsupported: 'Not available from Hermes',
+    noHermesReading: 'No reading from Hermes',
     failed: 'Read failed',
     unreported: 'Unreported',
     noCredential: 'No credential',
@@ -41,6 +42,7 @@ const COPY = {
     metered: /Metered API · no recurring membership fee/,
     free: /Free access · no membership fee/,
     noteUnsupported: /does not report an allowance for this route/,
+    noteNoReading: /no credential, no usage endpoint, or the read failed/,
     noteFailed: /could not be fetched/,
     noteStored: /No provider reading has been requested/,
     noteAge: /Provider reading from 10 min ago/,
@@ -48,6 +50,7 @@ const COPY = {
   zh: {
     reported: '已上报',
     unsupported: 'Hermes 无法提供',
+    noHermesReading: 'Hermes 未提供读数',
     failed: '读取失败',
     unreported: '未上报',
     noCredential: '无凭证',
@@ -59,6 +62,7 @@ const COPY = {
     metered: /按量 API/,
     free: /免费访问/,
     noteUnsupported: /不为此线路提供额度读数/,
+    noteNoReading: /无凭据、无用量端点或读取失败/,
     noteFailed: /无法获取提供方读数/,
     noteStored: /尚未请求提供方读数/,
     noteAge: /提供方读数来自 10 分钟前/,
@@ -136,6 +140,14 @@ if (!chrome) {
           assert.deepEqual(unsupported.readingNotes.map(note => note.state), ['unsupported'],
             `${locale} ${caseId}: the allowance group explains the limitation`)
           assert.match(unsupported.readingNotes[0].text, copy.noteUnsupported)
+
+          // Hermes answered without a reading: not permanent, not an error.
+          const noHermes = row('memb:nohermes')
+          assert.equal(noHermes.readingState, 'no_reading',
+            `${locale} ${caseId}: a read that returned nothing is its own state`)
+          assert.equal(noHermes.readingLabel, copy.noHermesReading)
+          assert.deepEqual(noHermes.readingNotes.map(note => note.state), ['no_reading'])
+          assert.match(noHermes.readingNotes[0].text, copy.noteNoReading)
 
           // A failed read is an error, and is announced as one.
           const failed = row('memb:failed')

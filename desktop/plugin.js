@@ -6680,7 +6680,9 @@ function membershipQuery(native = false, identity = membershipIdentityNow(),
         latestMembershipRead.set(identity, read)
         if (latestMembershipRead.size > 128) latestMembershipRead.delete(latestMembershipRead.keys().next().value)
       }
-      return { identity, generation, read, accounts, store: result.store || null,
+      // `at` is when this answer arrived: the reading's age only stays true
+      // while it is measured from the answer, not from when the server priced it.
+      return { identity, generation, read, at: Date.now(), accounts, store: result.store || null,
                notes: Array.isArray(result.notes) ? result.notes : [] }
     },
     retry: false, staleTime: 5_000
@@ -6889,9 +6891,11 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn, context = {}
     ? { reading: t('memQuotaReadFailed'), state: t('memQuotaReadFailedShort') }
     : context.readState === 'unsupported'
       ? { reading: t('memQuotaNotAvailable'), state: t('memQuotaNotAvailableShort') }
-      : context.readState === 'unreported'
-        ? { reading: t('memQuotaNotReported'), state: t('memQuotaNotReportedShort') }
-        : { reading: t('memQuotaNoReading'), state: t('memQuotaUnrecorded') }
+      : context.readState === 'no_reading'
+        ? { reading: t('memQuotaNoHermesReading'), state: t('memQuotaNoHermesReadingShort') }
+        : context.readState === 'unreported'
+          ? { reading: t('memQuotaNotReported'), state: t('memQuotaNotReportedShort') }
+          : { reading: t('memQuotaNoReading'), state: t('memQuotaUnrecorded') }
   return windows.map(window => {
     // Whole-account marks persist a language-neutral label; the translated
     // scope name applies at display time from the synthetic row's own scope,
@@ -6962,13 +6966,16 @@ function allowanceReadState(account, context = {}) {
   }
   const probeState = String(probe?.state || '')
   if (probeState === 'error') return { state: 'failed', provider, probeState, reason: t('memReadFailedReason') }
-  if (probeState === 'unsupported' || probeState === 'unavailable') {
-    return { state: 'unsupported', provider, probeState }
-  }
+  // "unsupported" is a capability gap: Hermes has no way to read this route.
+  if (probeState === 'unsupported') return { state: 'unsupported', provider, probeState }
+  // "unavailable" is Hermes answering without a reading — no credential, no
+  // usage endpoint, a failed fetch or an exhausted probe budget. Naming it as
+  // permanently unavailable would be a claim the backend cannot support.
+  if (probeState === 'unavailable') return { state: 'no_reading', provider, probeState }
   if (provider === 'identity_mismatch') {
     return { state: 'failed', provider, probeState, reason: t('memReadIdentity') }
   }
-  if (provider === 'unavailable') return { state: 'unsupported', provider, probeState }
+  if (provider === 'unavailable') return { state: 'no_reading', provider, probeState }
   if (provider === 'live' || provider === 'stale') return { state: 'unreported', provider, probeState }
   // No probe metadata and no reading: say "not read" only when nothing was
   // asked. A native read that produced no snapshot is reported as having none.
@@ -6980,6 +6987,7 @@ function allowanceReadState(account, context = {}) {
 function allowanceReadNoteKey(state) {
   return state === 'failed' ? 'memReadingNoteFailed'
     : state === 'unsupported' ? 'memReadingNoteNotAvailable'
+    : state === 'no_reading' ? 'memReadingNoteNoReading'
     : state === 'not_read' ? 'memReadingNoteNotRead'
     : state === 'unreported' ? 'memReadingNoteUnreported'
     : state === 'stale' ? 'memReadingNoteStale'
@@ -6987,6 +6995,15 @@ function allowanceReadNoteKey(state) {
 }
 
 /** How old the provider reading is, in the reader's own words. */
+/** Age at render time: the server's figure plus the time since the answer. */
+function providerAgeSeconds(quota, readAt, now = Date.now()) {
+  const base = quota?.age_seconds
+  if (base === null || base === undefined || !Number.isFinite(Number(base)) || Number(base) < 0) return null
+  const received = Number(readAt)
+  const elapsed = Number.isFinite(received) && received > 0 ? Math.max(0, (Number(now) - received) / 1000) : 0
+  return Number(base) + elapsed
+}
+
 function readingAgeText(quota, t = needsAttentionEn) {
   const age = Number(quota?.age_seconds)
   if (quota?.age_seconds === null || quota?.age_seconds === undefined || !Number.isFinite(age) || age < 0) return ''
@@ -7012,9 +7029,10 @@ function membershipReadingStatus(rows, t = needsAttentionEn, context = null) {
     // Only a read Hermes could not do, or one that failed, changes the chip.
     // "Nothing asked for yet" and "asked, nothing reported" keep the existing
     // Unreported vocabulary; the group note says which it was.
-    if (read && (read.state === 'unsupported' || read.state === 'failed')) {
-      return { state: read.state, reason: read.reason || '',
-        label: t(read.state === 'failed' ? 'memAllowanceFailed' : 'memAllowanceNotAvailable') }
+    if (read && ['unsupported', 'no_reading', 'failed'].includes(read.state)) {
+      const key = read.state === 'failed' ? 'memAllowanceFailed'
+        : read.state === 'unsupported' ? 'memAllowanceNotAvailable' : 'memAllowanceNoHermesReading'
+      return { state: read.state, reason: read.reason || '', label: t(key) }
     }
     return { state: 'unreported', label: t('memAllowanceUnreported') }
   }
@@ -7675,7 +7693,7 @@ function membershipAccountShortcutLabel(account, t = needsAttentionEn) {
   return account?.label && account.label !== account.family
     ? account.label : membershipProviderLabel(account?.family, t)
 }
-function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention, native }) {
+function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveFee, catalogue, notice, weather, weatherError, hasAttention, native, readAt }) {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const now = useValue($membershipClock)
@@ -7688,9 +7706,10 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
   const rows = quotaRows(account, now, t, { readState: read.state })
   const readingStatus = membershipReadingStatus(rows, t, { account, native: !!native })
   const readNoteKey = allowanceReadNoteKey(read.state)
-  // A provider reading is only trustworthy with its age beside it.
+  // A provider reading is only trustworthy with its age beside it, and the age
+  // keeps counting after the answer arrives.
   const readAge = ['reported', 'stale', 'partial'].includes(readingStatus.state)
-    ? readingAgeText(account?.quota, t) : ''
+    ? readingAgeText({ age_seconds: providerAgeSeconds(account?.quota, readAt, now) }, t) : ''
   const fee = account.fee || {}
   const proposal = proposalText(account, t)
   const reconfirmation = reconfirmationText(account, t)
@@ -8181,7 +8200,10 @@ function openCostsValue() {
 /** Accounts whose provider read failed, so a refresh cannot claim a clean sweep. */
 function membershipReadFailures(accounts) {
   const list = Array.isArray(accounts) ? accounts : []
-  const failed = list.filter(account => account?.native_probe?.state === 'error')
+  // A probe can succeed and still return another account's numbers; the card
+  // rejects that reading, so a refresh must not call the sweep clean.
+  const failed = list.filter(account => account?.native_probe?.state === 'error'
+    || account?.quota?.provider_state === 'identity_mismatch')
   const missing = list.filter(account => {
     const state = String(account?.native_probe?.state || '')
     return state === 'unsupported' || state === 'unavailable'
@@ -8249,7 +8271,7 @@ function MembershipsPage() {
     // Stamped with the identity that produced it; never adopted from another.
     if (accounts.data.identity !== identity || !membershipIdentityCurrent(identity) ||
         accounts.data.read !== latestMembershipRead.get(identity)) return
-    $membershipSnapshot.set({ identity, accounts: accounts.data.accounts,
+    $membershipSnapshot.set({ identity, accounts: accounts.data.accounts, at: accounts.data.at,
                               store: accounts.data.store, notes: accounts.data.notes })
   }, [accounts.data, identity])
 
@@ -8353,7 +8375,7 @@ function MembershipsPage() {
         if (membershipOperationCurrent(captured, operation)) {
           if (payload.read === latestMembershipRead.get(captured)) {
             $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
-                                      store: payload.store, notes: payload.notes })
+                                      at: payload.at, store: payload.store, notes: payload.notes })
           }
           setMembershipNotice(captured, 'good', t('memSaved'), operation, key)
         }
@@ -8501,7 +8523,7 @@ function MembershipsPage() {
       const result = await membershipWrite('POST', '/membership/discover?native=true')
       if (!membershipOperationCurrent(captured, operation)) return
       if (Array.isArray(result?.accounts)) {
-        $membershipSnapshot.set({ identity: captured, accounts: result.accounts,
+        $membershipSnapshot.set({ identity: captured, accounts: result.accounts, at: Date.now(),
                                   store: result.store || null, notes: result.notes || [] })
       }
       const summary = t('memDiscovered', result.discovered ?? 0, result.added?.length ?? 0, result.updated?.length ?? 0)
@@ -8510,7 +8532,7 @@ function MembershipsPage() {
         const payload = await queryClient.fetchQuery({ ...membershipQuery(true, captured, generation, operation), staleTime: 0 })
         if (!membershipOperationCurrent(captured, operation) || payload.read !== latestMembershipRead.get(captured)) return
         $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
-                                  store: payload.store, notes: payload.notes })
+                                  at: payload.at, store: payload.store, notes: payload.notes })
         setMembershipNotice(captured, 'good', summary, operation)
       } catch (readError) {
         setMembershipNotice(captured, 'warn',
@@ -8543,7 +8565,7 @@ function MembershipsPage() {
       if (!membershipOperationCurrent(captured, operation) || payload.read !== latestMembershipRead.get(captured)) return
       $membershipNative.set(true)
       $membershipSnapshot.set({ identity: captured, accounts: payload.accounts,
-                                store: payload.store, notes: payload.notes })
+                                at: payload.at, store: payload.store, notes: payload.notes })
       await invalidateWeatherFor(captured)
       // A refresh that could not read every account is not a clean sweep.
       const failures = membershipReadFailures(payload.accounts)
@@ -8684,7 +8706,7 @@ function MembershipsPage() {
                 plans: accountPlanChoices(account),
                 busy, onAction, draft, saveFee, catalogue, notice,
                 weather: weatherById.get(account.id) || null, weatherError,
-                hasAttention: attentionIds.has(account.id), native
+                hasAttention: attentionIds.has(account.id), native, readAt: current?.at || null
               }, account.id))
             : [jsx('p', { className: 'wm-empty', children: accounts.error
                 ? t('memReadFailed')
@@ -11154,6 +11176,7 @@ const I18N = {
     // Why there is no reading. Four different situations, never one blank.
     memAllowanceNotAvailable: 'Not available from Hermes',
     memAllowanceFailed: 'Read failed',
+    memAllowanceNoHermesReading: 'No reading from Hermes',
     memGroupPlan: 'Plan & billing',
     memSeats: 'Seats',
     memSaveSeats: 'Save seats',
@@ -11197,6 +11220,7 @@ const I18N = {
     memReadingNoteNotRead: 'No provider reading has been requested since this page loaded. Refresh provider usage to ask Hermes.',
     memReadingNoteNotAvailable: 'Hermes does not report an allowance for this route. That is a data limit, not zero usage; your own marks still apply.',
     memReadingNoteFailed: 'The provider reading could not be fetched. Saved plans, fees and marks are unchanged.',
+    memReadingNoteNoReading: 'Hermes returned no allowance reading for this route: no credential, no usage endpoint, or the read failed. That is a data limitation, not zero usage; your own marks still apply. Try Refresh provider usage.',
     memReadingNoteUnreported: 'Hermes read this account and reported no allowance windows.',
     memReadingNoteStale: 'The provider reading is older than the freshness window, so it is not shown as current.',
     memReadAgeNow: 'Provider reading from just now.',
@@ -11314,6 +11338,8 @@ const I18N = {
     memQuotaNotReportedShort: 'not reported',
     memQuotaReadFailed: 'Read failed',
     memQuotaReadFailedShort: 'read failed',
+    memQuotaNoHermesReading: 'No reading from Hermes',
+    memQuotaNoHermesReadingShort: 'no reading',
     memCountdownIn: span => `in ${span}`,
     memCountdownAgo: span => `${span} ago`,
     // Plan proposal, reconfirmation and tier options.
@@ -12606,6 +12632,7 @@ const I18N = {
     memAllowanceUnreported: '未上报',
     memAllowanceNotAvailable: 'Hermes 无法提供',
     memAllowanceFailed: '读取失败',
+    memAllowanceNoHermesReading: 'Hermes 未提供读数',
     memGroupPlan: '方案与账单',
     memSeats: '席位数',
     memSaveSeats: '保存席位数',
@@ -12649,6 +12676,7 @@ const I18N = {
     memReadingNoteNotRead: '此页面加载后尚未请求提供方读数。请刷新提供方用量以向 Hermes 查询。',
     memReadingNoteNotAvailable: 'Hermes 不为此线路提供额度读数。这是数据限制，并非零用量；您自己的标记仍然有效。',
     memReadingNoteFailed: '无法获取提供方读数。已保存的方案、费用与标记均未改变。',
+    memReadingNoteNoReading: 'Hermes 未返回此线路的额度读数：无凭据、无用量端点或读取失败。这是数据限制，并非零用量；您自己的标记仍然有效。可尝试“刷新提供方用量”。',
     memReadingNoteUnreported: 'Hermes 已读取此账户，但没有上报额度窗口。',
     memReadingNoteStale: '提供方读数已超过新鲜度时限，因此不按当前读数显示。',
     memReadAgeNow: '提供方读数来自刚刚。',
@@ -12766,6 +12794,8 @@ const I18N = {
     memQuotaNotReportedShort: '未上报',
     memQuotaReadFailed: '读取失败',
     memQuotaReadFailedShort: '读取失败',
+    memQuotaNoHermesReading: 'Hermes 未提供读数',
+    memQuotaNoHermesReadingShort: '无读数',
     memCountdownIn: span => `${span}后`,
     memCountdownAgo: span => `${span}前`,
     // 方案建议、重新确认与档位选项。
@@ -13907,7 +13937,7 @@ export const __test = {
   $membershipScope, $membershipSnapshot, $membershipNotice,
   $membershipBusy, $membershipNative, $membershipAttentionOnly, $membershipDraft, $scopeConnection, $scopeProfile,
   fmtMoney, fmtMembershipMoney, membershipCurrencyCode, feeLabel, quotaRows, membershipReadingStatus, needsAttention, membershipSummary, feesLabel, accountPlanChoices,
-  allowanceReadState, allowanceReadNoteKey, readingAgeText, membershipReadFailures, openCostsValue, wxErrorText, ATTENTION_LIST_LIMIT,
+  allowanceReadState, allowanceReadNoteKey, readingAgeText, providerAgeSeconds, membershipReadFailures, openCostsValue, wxErrorText, ATTENTION_LIST_LIMIT,
   membershipProviderLabel, membershipIdentityLabel, membershipAccountShortcutLabel,
   excludedPlansNote, planOptionLabel,
   proposalText, feeDraft, feeDraftErrors, ACCOUNT_SCOPE, accountHolderMarked, overrideFromDraft, feeReasons, feeCurrencies,

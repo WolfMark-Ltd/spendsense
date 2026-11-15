@@ -435,9 +435,11 @@ test('a reading is classified by why it exists, not only by whether it does', ()
   const unsupported = account({ quota: { provider_state: 'absent', windows: [] },
     native_probe: { state: 'unsupported', reason: 'the hermes CLI is not on PATH' } })
   assert.equal(T.allowanceReadState(unsupported, { native: true }).state, 'unsupported')
+  // "unavailable" covers no credential, no endpoint, a failed fetch and an
+  // exhausted probe budget: it must not be presented as a permanent gap.
   const absentProbe = account({ quota: { provider_state: 'absent', windows: [] },
     native_probe: { state: 'unavailable', reason: 'no credential configured' } })
-  assert.equal(T.allowanceReadState(absentProbe, { native: true }).state, 'unsupported')
+  assert.equal(T.allowanceReadState(absentProbe, { native: true }).state, 'no_reading')
 
   // The read itself failed: an error, not a limitation.
   const failed = account({ quota: { provider_state: 'absent', windows: [] },
@@ -463,6 +465,11 @@ test('the row chip names the limitation, and never reads as zero usage', () => {
     native_probe: { state: 'error' } }, true).label, 'Read failed')
   assert.equal(chip({ quota: { provider_state: 'absent', windows: [] },
     native_probe: { state: 'unsupported' } }, true).state, 'unsupported')
+  assert.equal(chip({ quota: { provider_state: 'absent', windows: [] },
+    native_probe: { state: 'unavailable', reason: 'no credential configured' } }, true).label,
+    'No reading from Hermes', 'a read that returned nothing is not called permanent')
+  assert.equal(chip({ quota: { provider_state: 'absent', windows: [] },
+    native_probe: { state: 'unavailable' } }, true).state, 'no_reading')
   // Without context the previous contract is unchanged.
   assert.deepEqual(T.membershipReadingStatus([]), { state: 'unreported', label: 'Unreported' })
 })
@@ -483,6 +490,16 @@ test('a window nobody reads says why, instead of “No reading”', () => {
   }
 })
 
+test('a reading age keeps counting after the answer arrived', () => {
+  const arrived = 1_000_000
+  // Ten minutes old when the server answered, twenty minutes ago in real time.
+  assert.equal(T.providerAgeSeconds({ age_seconds: 600 }, arrived, arrived + 600_000), 1200)
+  assert.equal(T.providerAgeSeconds({ age_seconds: 0 }, arrived, arrived), 0)
+  assert.equal(T.providerAgeSeconds({ age_seconds: 600 }, null, arrived + 600_000), 600,
+    'an unknown arrival time leaves the server figure alone')
+  assert.equal(T.providerAgeSeconds({ age_seconds: null }, arrived, arrived), null)
+})
+
 test('a provider reading states its own age, and absence states nothing', () => {
   assert.equal(T.readingAgeText({ age_seconds: 12 }), 'Provider reading from just now.')
   assert.equal(T.readingAgeText({ age_seconds: 600 }), 'Provider reading from 10 min ago.')
@@ -499,6 +516,10 @@ test('a refresh counts the accounts it could not read', () => {
     account({ id: 'd' }),
   ]
   assert.deepEqual(T.membershipReadFailures(list), { failed: 1, missing: 1, total: 4 })
+  // A successful probe that answered for another account is still a bad read.
+  const mismatched = [account({ id: 'e', native_probe: { state: 'ok' },
+    quota: { provider_state: 'identity_mismatch', windows: [] } })]
+  assert.equal(T.membershipReadFailures(mismatched).failed, 1)
   assert.deepEqual(T.membershipReadFailures([]), { failed: 0, missing: 0, total: 0 })
 })
 
