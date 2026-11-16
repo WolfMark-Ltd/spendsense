@@ -1096,7 +1096,16 @@ test('a comparable headline tells whether membership is worthwhile without claim
   partial.headline.usage_usd = 23
   partial.headline.difference_usd = 3.63
   const partialVerdict = (await renderSection(partial)).container.querySelector('[data-econ-verdict]')
-  assert.match(partialVerdict.textContent, /^Partial evidence: /)
+  assert.equal(partialVerdict.dataset.econVerdict, 'partial')
+  assert.match(partialVerdict.textContent, /USD 19\.37 in known fees vs \$23\.00 of attributed usage/)
+  assert.doesNotMatch(partialVerdict.textContent, /favours|exceed/,
+    'a lower-bound comparison states components, never direction')
+  const even = econFixture()
+  even.headline.usage_usd = 19.37
+  even.headline.difference_usd = 0
+  const evenVerdict = (await renderSection(even)).container.querySelector('[data-econ-verdict="even"]')
+  assert.ok(evenVerdict, 'equal usage and fees read as break-even, not favourable')
+  assert.match(evenVerdict.textContent, /matches fees/)
 })
 
 test('a comparable headline tells the worth-it story in Simplified Chinese', async () => {
@@ -1187,17 +1196,31 @@ test('the partial verdict points at what blocks the full comparison', async () =
     'the verdict link focuses the attention summary it points at')
 })
 
-test('incomplete groups name their known-fee scope', async () => {
+test('incomplete groups name their window-fee scope', async () => {
   const data = econFixture()
   data.groups = [{ currency: 'USD', monthly_fees: 20, window_fees: 19.37, fee_complete: false,
-    fee_accounts: 1, unknown_fee_accounts: ['fee:one', 'fee:two'], window_fee_complete: false,
-    window_fee_accounts: 1, usage_usd: 5, difference_usd: null, converted: false,
+    fee_accounts: 2, unknown_fee_accounts: ['fee:one', 'fee:two'], window_fee_complete: false,
+    window_fee_accounts: 1, unallocated_window_accounts: ['fee:three'],
+    usage_usd: 5, difference_usd: null, converted: false,
     fx: null, status: 'unavailable', notes: [], note_codes: [], blockers: [] }]
   data.accounts = []
   const { container } = await renderSection(data)
   const scope = container.querySelector('[data-econ-group="USD"] .wm-econ-group-scope')
-  assert.ok(scope, 'the partial group scopes its known fees')
-  assert.equal(scope.textContent, 'Known fees from 1 of 3 subscriptions · 2 fees unknown')
+  assert.ok(scope, 'the partial group scopes its window fees')
+  assert.equal(scope.textContent,
+    'Known window fees from 1 of 4 subscriptions · 2 fees unknown, 1 lacks fee history')
+  const windowOnly = econFixture()
+  windowOnly.groups = [{ currency: 'USD', monthly_fees: 40, window_fees: 19.37, fee_complete: true,
+    fee_accounts: 2, unknown_fee_accounts: [], window_fee_complete: false,
+    window_fee_accounts: 1, unallocated_window_accounts: ['fee:three'],
+    usage_usd: 5, difference_usd: null, converted: false,
+    fx: null, status: 'unavailable', notes: [], note_codes: [], blockers: [] }]
+  windowOnly.accounts = []
+  const historyScope = (await renderSection(windowOnly)).container
+    .querySelector('[data-econ-group="USD"] .wm-econ-group-scope')
+  assert.equal(historyScope?.textContent,
+    'Known window fees from 1 of 2 subscriptions · 1 lacks fee history',
+    'window-only gaps scope the displayed figure too')
   const complete = await renderSection(econFixture())
   assert.equal(complete.container.querySelector('[data-econ-group="USD"] .wm-econ-group-scope'), null,
     'a complete group needs no scope line')

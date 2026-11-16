@@ -4223,26 +4223,34 @@ function econFeeLines(t, fees, groups = []) {
   })
 }
 
-/** Known-fee scope for one currency group: counts only when the backend
- * reports the group incomplete, so complete groups stay quiet. */
+/** Window-fee scope for one currency group: counts only when the backend
+ * reports monthly fees or window allocation incomplete, so complete
+ * groups stay quiet. Known counts the subscriptions behind the displayed
+ * window figure; the missing ones split into never-entered fees and
+ * monthly-known fees whose window history is missing. */
 function econGroupFeeScope(group) {
-  if (!group || group.fee_complete !== false) return null
-  const known = Number.isSafeInteger(group.fee_accounts) && group.fee_accounts >= 0
-    ? group.fee_accounts : 0
+  if (!group || (group.fee_complete !== false && group.window_fee_complete !== false)) return null
+  const known = Number.isSafeInteger(group.window_fee_accounts) && group.window_fee_accounts >= 0
+    ? group.window_fee_accounts : 0
   const unknown = Array.isArray(group.unknown_fee_accounts) ? group.unknown_fee_accounts.length : 0
-  return { known, total: known + unknown, unknown }
+  const unallocated = Array.isArray(group.unallocated_window_accounts)
+    ? group.unallocated_window_accounts.length : 0
+  return { known, total: known + unknown + unallocated, unknown, unallocated }
 }
 
 /** One plain-English verdict for the headline comparison: a worth-it story
- * when the backend compared every subscription, the known components when
- * it could not, and nothing when nothing is known. Currencies are never
- * summed; hypothetical value is never called cash savings. */
+ * only when the backend fully compared every subscription, the known
+ * components otherwise, and nothing when nothing is known. A partial
+ * headline compares against a priced-usage lower bound, so unpriced calls
+ * could reverse it — direction is never stated there. Currencies are
+ * never summed; hypothetical value is never called cash savings. */
 function econVerdict(headline, windowLines, t) {
   if (!headline) return null
   const difference = finiteValue(headline.difference_usd)
   const usage = finiteValue(headline.usage_usd)
   const knownFees = (Array.isArray(windowLines) ? windowLines : []).filter(line => line !== '—')
-  if (difference == null) {
+  const comparable = difference != null && headline.status === 'ok'
+  if (!comparable) {
     if (knownFees.length && usage != null)
       return { tone: 'partial',
         text: t('econVerdictPartialBoth', knownFees.join(' · '), analyticMoney(usage)) }
@@ -4254,11 +4262,10 @@ function econVerdict(headline, windowLines, t) {
   const rows = Array.isArray(headline.fees_window_by_currency) ? headline.fees_window_by_currency : []
   if (usage === 0 && rows.every(row => finiteValue(row?.amount) === 0)) return null
   const fees = knownFees.join(' · ')
-  const story = difference >= 0
-    ? t('econWorthAhead', analyticMoney(usage), fees)
-    : t('econWorthBehind', analyticMoney(usage), fees, analyticMoney(-difference))
-  return { tone: difference >= 0 ? 'ahead' : 'behind',
-    text: headline.status === 'partial' ? `${t('econVerdictPartialPrefix')} ${story}` : story }
+  if (difference === 0) return { tone: 'even', text: t('econWorthEven', analyticMoney(usage), fees) }
+  return difference > 0
+    ? { tone: 'ahead', text: t('econWorthAhead', analyticMoney(usage), fees) }
+    : { tone: 'behind', text: t('econWorthBehind', analyticMoney(usage), fees, analyticMoney(-difference)) }
 }
 
 const LEDGER_TABS = [['overview', 'Overview'], ['usage', 'Usage'], ['costs', 'Costs'],
@@ -5422,9 +5429,9 @@ function EconomicsGroupRow({ group, t }) {
           t('econGroupUsage', usage == null ? '—' : analyticMoney(usage)),
           difference == null ? null : t('econGroupDifference', analyticMoney(difference))
         ].filter(part => part !== null).join(' · ') }),
-        scope && scope.unknown > 0
+        scope && scope.total > 0 && scope.unknown + scope.unallocated > 0
           ? jsx('p', { className: 'wm-econ-dim wm-econ-group-scope',
-              children: t('econGroupFeeScope', scope.known, scope.total, scope.unknown) })
+              children: t('econGroupFeeScope', scope.known, scope.total, scope.unknown, scope.unallocated) })
           : null,
         difference == null
           ? (blockers.length || notes.length
@@ -11694,8 +11701,13 @@ const I18N = {
     econGroupDifference: money => `${money} difference`,
     econGroupSeeAttention: count => count === 1
       ? '1 issue needs attention — see above' : `${count} issues need attention — see above`,
-    econGroupFeeScope: (known, total, unknown) =>
-      `Known fees from ${known} of ${total} subscriptions · ${unknown} fee${unknown === 1 ? '' : 's'} unknown`,
+    econGroupFeeScope: (known, total, unknown, unallocated) => {
+      const missing = []
+      if (unknown > 0) missing.push(`${unknown} fee${unknown === 1 ? '' : 's'} unknown`)
+      if (unallocated > 0) missing.push(`${unallocated} lack${unallocated === 1 ? 's' : ''} fee history`)
+      const scope = `Known window fees from ${known} of ${total} subscriptions`
+      return missing.length ? `${scope} · ${missing.join(', ')}` : scope
+    },
     econVerdictPartialBoth: (fees, usage) =>
       `Partial evidence: ${fees} in known fees vs ${usage} of attributed usage — the full comparison is unavailable.`,
     econVerdictPartialFees: fees =>
@@ -11703,7 +11715,8 @@ const I18N = {
     econVerdictPartialUsage: usage =>
       `Partial evidence: ${usage} of attributed usage — the full comparison is unavailable.`,
     econVerdictSeeAttention: 'See what blocks it',
-    econVerdictPartialPrefix: 'Partial evidence:',
+    econWorthEven: (usage, fees) =>
+      `${usage} of API-equivalent usage attributed to memberships, against ${fees} in fees — usage value matches fees this window. Estimated value, not cash saved.`,
     econWorthAhead: (usage, fees) =>
       `${usage} of API-equivalent usage attributed to memberships, against ${fees} in fees — the comparison favours membership this window. Estimated value, not cash saved.`,
     econWorthBehind: (usage, fees, gap) =>
@@ -13226,8 +13239,13 @@ const I18N = {
     econGroupUsage: money => `${money} 用量`,
     econGroupDifference: money => `${money} 差值`,
     econGroupSeeAttention: count => `${count} 个问题需要注意——见上文`,
-    econGroupFeeScope: (known, total, unknown) =>
-      `${total} 个订阅中有 ${known} 个费用已知 · ${unknown} 项费用未知`,
+    econGroupFeeScope: (known, total, unknown, unallocated) => {
+      const missing = []
+      if (unknown > 0) missing.push(`${unknown} 项费用未知`)
+      if (unallocated > 0) missing.push(`${unallocated} 项缺费用历史`)
+      const scope = `${total} 个订阅中窗口内费用已知 ${known} 个`
+      return missing.length ? `${scope} · ${missing.join('，')}` : scope
+    },
     econVerdictPartialBoth: (fees, usage) =>
       `部分证据：已知费用 ${fees}，归属用量 ${usage}——完整比较不可用。`,
     econVerdictPartialFees: fees =>
@@ -13235,7 +13253,8 @@ const I18N = {
     econVerdictPartialUsage: usage =>
       `部分证据：归属用量 ${usage}——完整比较不可用。`,
     econVerdictSeeAttention: '查看受阻原因',
-    econVerdictPartialPrefix: '部分证据：',
+    econWorthEven: (usage, fees) =>
+      `归属会员的 API 等值用量为 ${usage}，费用为 ${fees}——本窗口用量价值与费用持平。仅为估算价值，不是实际节省的现金。`,
     econWorthAhead: (usage, fees) =>
       `归属会员的 API 等值用量为 ${usage}，费用为 ${fees}——本窗口比较结果对会员有利。仅为估算价值，不是实际节省的现金。`,
     econWorthBehind: (usage, fees, gap) =>

@@ -355,15 +355,20 @@ test('trendWarrantsInline needs two comparable months in one currency', () => {
   assert.equal(S.trendWarrantsInline(null), false)
 })
 
-test('econGroupFeeScope counts known fees only for incomplete groups', () => {
-  assert.equal(S.econGroupFeeScope({ currency: 'USD', fee_complete: true }), null)
+test('econGroupFeeScope counts window coverage for incomplete groups', () => {
+  assert.equal(S.econGroupFeeScope({ currency: 'USD', fee_complete: true, window_fee_complete: true }), null)
   assert.equal(S.econGroupFeeScope({ currency: 'USD' }), null,
     'a group without completeness evidence claims no partial scope')
   assert.equal(S.econGroupFeeScope(null), null)
-  assert.deepEqual(S.econGroupFeeScope({ currency: 'USD', fee_complete: false,
-    fee_accounts: 1, unknown_fee_accounts: ['a', 'b'] }), { known: 1, total: 3, unknown: 2 })
+  assert.deepEqual(S.econGroupFeeScope({ currency: 'USD', fee_complete: false, window_fee_complete: false,
+    window_fee_accounts: 1, unknown_fee_accounts: ['a', 'b'], unallocated_window_accounts: ['c'] }),
+    { known: 1, total: 4, unknown: 2, unallocated: 1 })
+  assert.deepEqual(S.econGroupFeeScope({ currency: 'USD', fee_complete: true, window_fee_complete: false,
+    window_fee_accounts: 2, unknown_fee_accounts: [], unallocated_window_accounts: ['c'] }),
+    { known: 2, total: 3, unknown: 0, unallocated: 1 },
+    'window-only gaps scope the displayed window figure too')
   assert.deepEqual(S.econGroupFeeScope({ currency: 'USD', fee_complete: false }),
-    { known: 0, total: 0, unknown: 0 })
+    { known: 0, total: 0, unknown: 0, unallocated: 0 })
 })
 
 test('econVerdict explains the membership comparison without claiming cash savings', () => {
@@ -383,7 +388,15 @@ test('econVerdict explains the membership comparison without claiming cash savin
   assert.match(behind.text, /exceed .* by \$15\.00/,
     'the gap is the absolute difference, never a negative restatement')
   const partial = S.econVerdict({ ...headline(), status: 'partial', difference_usd: 3, usage_usd: 23 }, lines, en)
-  assert.match(partial.text, /^Partial evidence: /)
+  assert.equal(partial.tone, 'partial',
+    'a partial headline compares against a lower bound, so direction stays unstated')
+  assert.match(partial.text, /USD 20\.00/)
+  assert.match(partial.text, /\$23\.00/)
+  assert.doesNotMatch(partial.text, /favours|exceed/)
+  const even = S.econVerdict({ ...headline(), difference_usd: 0, usage_usd: 20 }, lines, en)
+  assert.equal(even.tone, 'even')
+  assert.match(even.text, /matches fees/)
+  assert.doesNotMatch(even.text, /favours/)
   const both = S.econVerdict({ ...headline(), status: 'unavailable', difference_usd: null }, lines, en)
   assert.equal(both.tone, 'partial')
   assert.match(both.text, /USD 20\.00/)

@@ -684,7 +684,7 @@ test('every economics string exists in English and Chinese', () => {
     'econNoPricedUsage', 'econTheoreticalPrice', 'econDiffLabel', 'econDiffHint', 'econGroupsTitle',
     'econNoComparison', 'econGroupWindowFees', 'econGroupUsage', 'econGroupDifference', 'econGroupSeeAttention',
     'econGroupFeeScope', 'econVerdictPartialBoth', 'econVerdictPartialFees', 'econVerdictPartialUsage',
-    'econVerdictSeeAttention', 'econVerdictPartialPrefix', 'econWorthAhead', 'econWorthBehind',
+    'econVerdictSeeAttention', 'econWorthAhead', 'econWorthBehind', 'econWorthEven',
     'econBlockGenericShort', 'econBlockerLogTitle', 'econBlockerLogIntro',
     'econAccountsTitle', 'econColAccount', 'econColMembership',
     'econColMonthly', 'econColDifference', 'econColCoverage', 'econTrendTitle', 'econTrendMoreTitle', 'econOthersTitle',
@@ -715,8 +715,10 @@ test('every economics string exists in English and Chinese', () => {
   assert.equal(en.econGroupDifference('−$17.37'), '−$17.37 difference')
   assert.equal(en.econGroupSeeAttention(1), '1 issue needs attention — see above')
   assert.equal(en.econGroupSeeAttention(3), '3 issues need attention — see above')
-  assert.equal(en.econGroupFeeScope(1, 3, 2), 'Known fees from 1 of 3 subscriptions · 2 fees unknown')
-  assert.equal(en.econGroupFeeScope(2, 3, 1), 'Known fees from 2 of 3 subscriptions · 1 fee unknown')
+  assert.equal(en.econGroupFeeScope(1, 4, 2, 1),
+    'Known window fees from 1 of 4 subscriptions · 2 fees unknown, 1 lacks fee history')
+  assert.equal(en.econGroupFeeScope(2, 3, 1, 0), 'Known window fees from 2 of 3 subscriptions · 1 fee unknown')
+  assert.equal(en.econGroupFeeScope(2, 3, 0, 1), 'Known window fees from 2 of 3 subscriptions · 1 lacks fee history')
   assert.equal(en.econVerdictPartialBoth('USD 19.37', '$5.00'),
     'Partial evidence: USD 19.37 in known fees vs $5.00 of attributed usage — the full comparison is unavailable.')
   assert.equal(en.econVerdictPartialFees('GBP 20.00'),
@@ -727,6 +729,8 @@ test('every economics string exists in English and Chinese', () => {
     '$23.00 of API-equivalent usage attributed to memberships, against USD 19.37 in fees — the comparison favours membership this window. Estimated value, not cash saved.')
   assert.equal(en.econWorthBehind('$2.00', 'USD 19.37', '$17.37'),
     '$2.00 of API-equivalent usage attributed to memberships, against USD 19.37 in fees — fees exceed usage value by $17.37 this window. Estimated value, not cash saved.')
+  assert.equal(en.econWorthEven('$20.00', 'USD 20.00'),
+    '$20.00 of API-equivalent usage attributed to memberships, against USD 20.00 in fees — usage value matches fees this window. Estimated value, not cash saved.')
   assert.equal(en.econSpanDays(1), 'in the last 1 day')
   assert.equal(en.econSpanDays(30), 'in the last 30 days')
   assert.equal(en.econPeriodAbbr('month'), 'mo')
@@ -741,12 +745,14 @@ test('every economics string exists in English and Chinese', () => {
   assert.match(zh.econGroupUsage('$2.00'), /用量/)
   assert.match(zh.econGroupDifference('−$17.37'), /差值/)
   assert.match(zh.econGroupSeeAttention(2), /见上文/)
-  assert.equal(zh.econGroupFeeScope(2, 3, 1), '3 个订阅中有 2 个费用已知 · 1 项费用未知')
+  assert.equal(zh.econGroupFeeScope(2, 3, 1, 0), '3 个订阅中窗口内费用已知 2 个 · 1 项费用未知')
+  assert.equal(zh.econGroupFeeScope(1, 4, 2, 1), '4 个订阅中窗口内费用已知 1 个 · 2 项费用未知，1 项缺费用历史')
   assert.match(zh.econVerdictPartialBoth('USD 19.37', '$5.00'), /完整比较不可用/)
   assert.match(zh.econVerdictPartialFees('GBP 20.00'), /已知费用 GBP 20\.00/)
   assert.match(zh.econVerdictPartialUsage('$5.00'), /归属用量 \$5\.00/)
   assert.match(zh.econWorthAhead('$23.00', 'USD 19.37'), /对会员有利/)
   assert.match(zh.econWorthBehind('$2.00', 'USD 19.37', '$17.37'), /费用超出用量价值 \$17\.37/)
+  assert.match(zh.econWorthEven('$20.00', 'USD 20.00'), /用量价值与费用持平/)
   assert.equal(zh.econSpanDays(30), '过去 30 天内')
   assert.equal(zh.econPerMonth('$20.00'), '$20.00/月')
   assert.match(zh.econTrendAria('2026-10', '$20.00', '$2.00', '−$18.00'), /差值/)
