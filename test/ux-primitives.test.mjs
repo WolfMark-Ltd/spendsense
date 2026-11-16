@@ -107,7 +107,7 @@ test('SHARED_CSS names the Phase A roles and enforces [hidden]', () => {
 test('shared tooltip styles are opaque and reach both pane and product surfaces', () => {
   assert.match(T.SHARED_CSS, /\.wm-info\{position:relative/)
   assert.match(T.SHARED_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)
-  assert.match(T.SHARED_CSS, /\.wm-info-btn::after\{[^}]*width:\.78em;height:\.78em/)
+  assert.match(T.SHARED_CSS, /\.wm-info-btn::after\{[^}]*width:max\(9px,\.58em\);height:max\(9px,\.58em\)/)
   assert.match(T.SHARED_CSS, /\.wm-info-pop\{[^}]*background-color:Canvas[^}]*background-image:linear-gradient\(var\(--wm-surface-raised\)/)
   assert.match(T.PRODUCT_CSS, /\.wm-product-tabs\{[^}]*position:sticky[^}]*background-color:Canvas[^}]*background-image:linear-gradient\(var\(--wm-surface\)/)
   assert.match(T.METER_CSS, /wm-info-pop/, 'pane bundle carries the shared tooltip')
@@ -264,6 +264,19 @@ test('InfoTip: focus opens an accessible tooltip, Escape closes it', async () =>
   T.$infoOpen.set(null)
 })
 
+test('InfoTip: unmounting its owner clears stale open state', async () => {
+  T.$infoOpen.set(null)
+  const container = await renderEl(React.createElement(T.InfoTip, {
+    id: 'ux-unmount', label: 'About this figure', text: 'Priced when recorded.',
+  }))
+  const btn = container.querySelector('.wm-info-btn')
+  await React.act(async () => btn.focus()); await flush()
+  assert.equal(T.$infoOpen.get(), 'ux-unmount')
+  const root = roots.pop()
+  await React.act(async () => root.unmount())
+  assert.equal(T.$infoOpen.get(), null, 'unmount cleanup clears this tooltip without leaving page-level state behind')
+})
+
 test('LedgerPage: keyboard navigation restores focus to the newly mounted selected tab', async () => {
   // Regression: LedgerPage replaces the whole page (tab bar included) on a
   // tab change. Focusing the outgoing tab lost focus to <body>, so a second
@@ -349,6 +362,64 @@ test('LedgerPage: a no-op Home/End press does not leak focus restoration into mo
     'mouse navigation after a no-op End must not receive restored focus')
 })
 
+test('Overview pricing action opens unfiltered 30-day Usage coverage and focuses its evidence', async () => {
+  await resetDom()
+  queryClient.clear()
+  const previousRest = T.getRest()
+  const requests = []
+  const response = {
+    ok: true,
+    totals: { list_usd: 1.25, billed_usd: null, billed_complete: false, calls: 3, tokens: 100,
+      input_tokens: 70, output_tokens: 30, cache_read_tokens: 0, cache_write_tokens: 0,
+      unpriced_tokens: 20, unpriced_calls: 1, priced_tokens: 80, cache_hit_rate: null,
+      billing_mix: { estimated: 3 }, economics: {} },
+    pricing_coverage: { coverage: .8 }, by_model: [], by_route: [], by_scope: [], trend: { buckets: [], granularity: 'day' },
+    window: { since: '2026-10-18', until: '2026-11-16', since_local: '2026-10-18', until_local: '2026-11-16', timezone: 'UTC' },
+    recording: { since: '2026-10-18', last: '2026-11-16' }, previous: { comparable: false, reason: 'no_previous_calls' },
+    attribution: {}, options: { models: [], providers: [], surfaces: [], tasks: [], operations: [] },
+  }
+  T.setRest(async path => {
+    requests.push(path)
+    if (path.startsWith('/analytics?days=30')) return response
+    return previousRest(path)
+  })
+  try {
+    const scope = T.analyticsScope('default', 'connected', 'gateway-a')
+    T.$analytics.set({ [scope]: {
+      ...T.analyticsInitialState(), days: 7,
+      filters: { model: 'old-model', provider: 'old-provider', surface: 'old-surface', task: 'old-task', parent: 'old-parent', scope: 'direct' },
+    } })
+    T.$ledgerTab.set('overview')
+    const container = await renderEl(React.createElement(T.LedgerPage))
+    await flush(8)
+    const action = [...container.querySelectorAll('.wm-attention-rows button')]
+      .find(button => button.textContent.trim() === enT('ovPricingAction'))
+    assert.ok(action, 'Overview presents the specific pricing coverage action')
+    assert.equal(action.type, 'button', 'the action uses native keyboard-operable button semantics')
+    assert.equal(action.tabIndex, 0)
+    await React.act(async () => action.focus())
+    assert.equal(document.activeElement, action, 'the action can receive keyboard focus')
+    await React.act(async () => action.click())
+    await flush(8)
+
+    assert.equal(T.$ledgerTab.get(), 'usage', 'activation opens Usage')
+    assert.ok(requests.includes('/analytics?days=30'), 'the issue is queried for the last 30 days')
+    const state = T.$analytics.get()[scope]
+    assert.equal(state.days, 30)
+    assert.deepEqual(state.filters, { model: '', provider: '', surface: '', task: '', parent: '', scope: '' },
+      'existing filters cannot hide the pricing issue')
+    const target = container.querySelector('#wm-usage-pricing-coverage')
+    assert.ok(target, 'Usage exposes the specific coverage evidence')
+    assert.equal(target.getAttribute('aria-label'), enT('usagePricingCoverageLabel'))
+    assert.equal(target.tabIndex, -1)
+    assert.equal(document.activeElement, target, 'focus moves to the pricing evidence for keyboard users')
+    assert.equal(T.$analyticsFocus.get(), null, 'the one-shot focus request is consumed')
+  } finally {
+    T.restoreRest(previousRest)
+    queryClient.clear()
+  }
+})
+
 test('every attention (attn*) string exists in both en and zh, and zh renders', () => {
   const enKeys = Object.keys(T.I18N.en).filter(k => k.startsWith('attn'))
   assert.ok(enKeys.length > 5, 'the attention copy set is non-trivial')
@@ -401,12 +472,14 @@ test('every Overview (ov*) string exists in both en and zh', () => {
   }
 })
 
-test('Overview summary and insight panels adapt without tall empty KPI cards', () => {
-  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);align-items:start\}/)
-  assert.match(T.PRODUCT_CSS, /@container\(min-width:1020px\)\{\.wm-product \.wm-overview-grid\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)\}\}/)
+test('Overview keeps four equal financial cards and adapts panels to compact panes', () => {
+  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);grid-auto-rows:1fr;align-items:stretch\}/)
+  assert.doesNotMatch(T.PRODUCT_CSS, /@container\(min-width:1020px\).*wm-overview-grid/)
   assert.match(T.PRODUCT_CSS, /@container\(max-width:340px\)\{\.wm-product \.wm-overview-grid\{grid-template-columns:1fr\}\}/,
     'only truly narrow panes stack the Overview cards')
-  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid \.wm-kpi\{min-height:0;align-items:flex-start/)
+  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid \.wm-kpi\{display:grid;align-content:start;gap:7px;min-height:156px/)
+  assert.match(T.PRODUCT_CSS, /border-left:3px solid var\(--wm-kpi-accent,var\(--ui-accent\)\)/,
+    'Overview financial cards follow the accepted Costs accent rail treatment')
   assert.match(T.PRODUCT_CSS,
     /\.wm-product \.wm-product-summary\{display:grid;grid-template-columns:repeat\(auto-fit,minmax\(185px,1fr\)\)/,
     'the shared summary grid used by Costs and others is unchanged')
