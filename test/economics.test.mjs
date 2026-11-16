@@ -355,6 +355,81 @@ test('trendWarrantsInline needs two comparable months in one currency', () => {
   assert.equal(S.trendWarrantsInline(null), false)
 })
 
+test('econGroupFeeScope counts known fees only for incomplete groups', () => {
+  assert.equal(S.econGroupFeeScope({ currency: 'USD', fee_complete: true }), null)
+  assert.equal(S.econGroupFeeScope({ currency: 'USD' }), null,
+    'a group without completeness evidence claims no partial scope')
+  assert.equal(S.econGroupFeeScope(null), null)
+  assert.deepEqual(S.econGroupFeeScope({ currency: 'USD', fee_complete: false,
+    fee_accounts: 1, unknown_fee_accounts: ['a', 'b'] }), { known: 1, total: 3, unknown: 2 })
+  assert.deepEqual(S.econGroupFeeScope({ currency: 'USD', fee_complete: false }),
+    { known: 0, total: 0, unknown: 0 })
+})
+
+test('econVerdict explains the membership comparison without claiming cash savings', () => {
+  const headline = (over = {}) => ({ status: 'ok', usage_usd: 5, difference_usd: -15,
+    fees_window_by_currency: [{ currency: 'USD', amount: 20 }], ...over })
+  const lines = ['USD 20.00']
+  const ahead = S.econVerdict({ ...headline(), difference_usd: 3, usage_usd: 23 }, lines, en)
+  assert.equal(ahead.tone, 'ahead')
+  assert.match(ahead.text, /\$23\.00/)
+  assert.match(ahead.text, /USD 20\.00/)
+  assert.match(ahead.text, /attributed to memberships/)
+  assert.match(ahead.text, /not cash saved/)
+  assert.doesNotMatch(ahead.text, /saved \$|you saved/i,
+    'hypothetical avoided cost is never labelled real cash savings')
+  const behind = S.econVerdict(headline(), lines, en)
+  assert.equal(behind.tone, 'behind')
+  assert.match(behind.text, /exceed .* by \$15\.00/,
+    'the gap is the absolute difference, never a negative restatement')
+  const partial = S.econVerdict({ ...headline(), status: 'partial', difference_usd: 3, usage_usd: 23 }, lines, en)
+  assert.match(partial.text, /^Partial evidence: /)
+  const both = S.econVerdict({ ...headline(), status: 'unavailable', difference_usd: null }, lines, en)
+  assert.equal(both.tone, 'partial')
+  assert.match(both.text, /USD 20\.00/)
+  assert.match(both.text, /\$5\.00/)
+  assert.match(both.text, /unavailable/)
+  const feesOnly = S.econVerdict({ ...headline(), status: 'unavailable',
+    difference_usd: null, usage_usd: null }, lines, en)
+  assert.match(feesOnly.text, /USD 20\.00/)
+  assert.doesNotMatch(feesOnly.text, /usage/)
+  const usageOnly = S.econVerdict({ ...headline(), status: 'unavailable', difference_usd: null }, ['—'], en)
+  assert.equal(usageOnly.text, en('econVerdictPartialUsage', '$5.00'),
+    'an unknown fee component is omitted, never printed as a dash')
+  assert.equal(S.econVerdict({ status: 'unavailable', usage_usd: null, difference_usd: null,
+    fees_window_by_currency: [] }, ['—'], en), null)
+  assert.equal(S.econVerdict(null, [], en), null)
+  assert.equal(S.econVerdict({ ...headline(), usage_usd: 0, difference_usd: 0,
+    fees_window_by_currency: [{ currency: 'USD', amount: 0 }] }, ['USD 0.00'], en), null,
+    'no spend and no usage carry no worth-it story')
+  assert.equal(S.econVerdict({ ...headline(), usage_usd: null, difference_usd: 5 }, lines, en), null,
+    'a difference without attributed usage is inconsistent and stays unnarrated')
+  const mixed = S.econVerdict({ ...headline(), difference_usd: null, status: 'unavailable' },
+    ['USD 20.00', 'GBP 4.25'], en)
+  assert.match(mixed.text, /USD 20\.00 · GBP 4\.25/,
+    'mixed currencies stay separate, never summed')
+  const zhAhead = S.econVerdict({ ...headline(), difference_usd: 3, usage_usd: 23 }, lines, zh)
+  assert.equal(zhAhead.tone, 'ahead')
+  assert.match(zhAhead.text, /不是实际节省的现金/)
+  const zhBoth = S.econVerdict({ ...headline(), status: 'unavailable', difference_usd: null }, lines, zh)
+  assert.match(zhBoth.text, /完整比较不可用/)
+})
+
+test('the Costs stylesheet gives every disclosure a state-changing chevron', () => {
+  for (const selector of ['.wm-econ-disclosure>summary::before',
+    '.wm-econ-disclosure[open]>summary::before',
+    '.wm-cost-attn-accounts summary::before',
+    '.wm-cost-attn-accounts[open]>summary::before',
+    '.wm-cost-extra summary::before',
+    '.wm-cost-extra[open]>summary::before']) {
+    assert.ok(S.ECONOMICS_CSS.includes(selector), `Costs styles ${selector}`)
+  }
+  assert.ok(S.ECONOMICS_CSS.includes('summary:focus-visible'),
+    'disclosure headings show keyboard focus')
+  assert.ok(S.ECONOMICS_CSS.includes('prefers-reduced-motion'),
+    'the chevron respects reduced motion')
+})
+
 test('costsPricingSourceLabel translates known sources and keeps unknown ones', () => {
   assert.equal(S.costsPricingSourceLabel('models.dev cache (models_dev_cache.json)', en),
     'models.dev pricing catalogue (local cache)')

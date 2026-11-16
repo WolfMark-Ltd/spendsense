@@ -140,6 +140,9 @@ setTimeout(() => {
       text: pane.querySelector('.wm-shell')?.textContent || pane.textContent,
       attention: pane.querySelector('[data-cost-attention]')?.textContent,
       attentionCount: pane.querySelector('.wm-cost-attn-count')?.textContent,
+      catHints: [...pane.querySelectorAll('.wm-cost-attn-cat-hint')].map(el => el.textContent),
+      verdict: pane.querySelector('[data-econ-verdict]')?.dataset.econVerdict,
+      verdictText: pane.querySelector('[data-econ-verdict]')?.textContent,
       seeAttention: [...pane.querySelectorAll('.wm-econ-see-attention')].map(button => button.textContent),
       groupRow: pane.querySelector('[data-econ-group="GBP"]')?.textContent,
       groupMoney: pane.querySelector('[data-econ-group="GBP"] .wm-econ-group-money')?.textContent,
@@ -165,14 +168,31 @@ setTimeout(() => {
   if (!selected) {
     const first = document.getElementById(cases[0])
     const fxDetails = first.querySelector('#wm-cost-fx-details')
+    const fxSummary = fxDetails?.querySelector('summary')
+    const marker = el => {
+      if (!el) return null
+      const style = getComputedStyle(el, '::before')
+      return { content: style.content, transform: style.transform }
+    }
+    output.interactions.chevronClosed = marker(fxSummary)
     const fxAction = [...first.querySelectorAll('button')].find(button => button.textContent === globalThis.__overviewI18n.econActionFx)
     output.interactions.closedBeforeAction = !!fxDetails && !fxDetails.open
     fxAction?.click()
     output.interactions.fxOpensFromBlocker = !!fxDetails?.open
-    output.interactions.fxActionReceivesFocus = document.activeElement === fxDetails?.querySelector('summary')
+    output.interactions.chevronOpen = marker(fxSummary)
+    output.interactions.fxActionReceivesFocus = document.activeElement === fxSummary
+    fxSummary?.click()
+    output.interactions.summaryClickCloses = !!fxDetails && !fxDetails.open
+    fxSummary?.click()
+    output.interactions.summaryClickReopens = !!fxDetails?.open
+    output.interactions.nestedChevron = marker(first.querySelector('.wm-cost-attn-accounts summary'))
     const seeButton = first.querySelector('.wm-econ-see-attention')
     seeButton?.click()
     output.interactions.seeAttentionFocusesHeading =
+      document.activeElement === first.querySelector('[data-costs-attention-heading]')
+    const verdictLink = first.querySelector('.wm-econ-verdict-link')
+    verdictLink?.click()
+    output.interactions.verdictLinkFocusesHeading =
       document.activeElement === first.querySelector('[data-costs-attention-heading]')
   }
   document.getElementById('costs-layout-result').textContent = JSON.stringify(output)

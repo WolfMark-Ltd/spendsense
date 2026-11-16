@@ -19,13 +19,16 @@ const LAYOUT_STRINGS = {
     groups: /Fees vs usage by currency/, attention: /What needs attention\?/, fix: /Fix now/,
     seeAttention: /1 issue needs attention/, blocker: /Add a dated user-supplied/,
     feeAction: /Set or confirm this account’s subscription fee/,
-    moneyFee: /GBP 20\.00 fees in window/, moneyUsage: /\$0\.00 usage/ },
+    moneyFee: /GBP 20\.00 fees in window/, moneyUsage: /\$0\.00 usage/,
+    verdict: /Partial evidence: .* in known fees vs .* of attributed usage/,
+    fixHint: /use the action on each row/ },
   zh: { charges: /无法获取逐次调用/, gbpFee: /GBP 20\.00\/月/, usdFee: /USD 0\.00\/月/,
     partial: /项费用未知/, cachePartial: /部分/, limit: /1 项限额/,
     groups: /按货币对比费用与用量/, attention: /哪些事项需要注意？/, fix: /立即处理/,
     seeAttention: /1 个问题需要注意/, blocker: /添加注明日期的.*汇率/,
     feeAction: /设置或确认此账户的订阅费用/,
-    moneyFee: /GBP 20\.00 窗口内费用/, moneyUsage: /\$0\.00 用量/ },
+    moneyFee: /GBP 20\.00 窗口内费用/, moneyUsage: /\$0\.00 用量/,
+    verdict: /部分证据/, fixHint: /按每行的操作处理/ },
 }
 
 test('Costs keeps mixed financial evidence scannable at 380px and 1200px in both themes and languages', {
@@ -87,6 +90,10 @@ const name=new URLSearchParams(location.search).get('case');if(name){document.bo
         assert.match(layout.attention, expected.fix, `${id} classifies the dated-FX gap as fixable`)
         assert.match(layout.attention, expected.feeAction, `${id} raises the unknown membership fee once`)
         assert.equal(layout.attentionCount, '2', `${id} counts each material cause once`)
+        assert.equal(layout.catHints.length, 1, `${id} explains the single fixable category`)
+        assert.match(layout.catHints[0], expected.fixHint, `${id} points each row at its fix action`)
+        assert.equal(layout.verdict, 'partial', `${id} narrates the partial comparison`)
+        assert.match(layout.verdictText, expected.verdict, `${id} scopes known fees and usage`)
         assert.deepEqual(layout.seeAttention.length, 1, `${id} links the unavailable group to attention`)
         assert.match(layout.seeAttention[0], expected.seeAttention, `${id} counts the group issues`)
         assert.match(layout.groupMoney, expected.moneyFee, `${id} keeps the supported fee figure`)
@@ -101,6 +108,15 @@ const name=new URLSearchParams(location.search).get('case');if(name){document.bo
       assert.equal(result.interactions.fxOpensFromBlocker, true, `${lang}: the dated-FX blocker opens its settings disclosure`)
       assert.equal(result.interactions.fxActionReceivesFocus, true, `${lang}: the opened FX disclosure receives keyboard focus`)
       assert.equal(result.interactions.seeAttentionFocusesHeading, true, `${lang}: the group link focuses the attention heading`)
+      assert.ok(result.interactions.chevronClosed, `${lang}: the closed disclosure marker is measurable`)
+      assert.notEqual(result.interactions.chevronClosed.content, 'none', `${lang}: a closed disclosure shows a chevron`)
+      assert.notEqual(result.interactions.chevronClosed.transform, result.interactions.chevronOpen.transform,
+        `${lang}: the chevron changes state when the disclosure opens`)
+      assert.ok(result.interactions.nestedChevron, `${lang}: the nested account list marker is measurable`)
+      assert.notEqual(result.interactions.nestedChevron.content, 'none', `${lang}: nested account lists show a chevron`)
+      assert.equal(result.interactions.summaryClickCloses, true, `${lang}: clicking the heading closes the disclosure`)
+      assert.equal(result.interactions.summaryClickReopens, true, `${lang}: clicking the heading reopens it`)
+      assert.equal(result.interactions.verdictLinkFocusesHeading, true, `${lang}: the partial verdict links to the attention heading`)
       if (lang === 'en') {
         assert.notEqual(result.layouts[0].background, result.layouts[2].background, 'dark and light host fills differ')
         assert.notEqual(result.layouts[0].foreground, result.layouts[2].foreground, 'dark and light text colours differ')
