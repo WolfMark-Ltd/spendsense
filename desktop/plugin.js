@@ -9616,6 +9616,7 @@ const REPORTS_CSS = `
 .wm-digest-allowances-detail summary::before{content:"›";display:inline-block;font-size:17px;line-height:1;font-weight:700;color:var(--ui-text-primary);transition:transform .15s ease}
 .wm-digest-allowances-detail[open] > summary::before{transform:rotate(90deg)}
 .wm-digest-allowances-detail summary:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}
+.wm-digest-allowances-detail{min-width:0}
 .wm-digest-allowances-detail .wm-digest-table-wrap{margin-top:8px}
 @media (prefers-reduced-motion:reduce){.wm-digest-allowances-detail summary::before{transition:none}}
 .wm-digest-error{display:grid;gap:8px;justify-items:start;padding:12px 0}
