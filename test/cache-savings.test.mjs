@@ -210,46 +210,74 @@ test('a published write discount is applied, never flattened to input', () => {
 })
 
 test('cache savings reconcile independently for partial, negative, zero and unknown states', () => {
-  const rates = { input: 2, output: 4, cache: .5, write: 3,
-    inputKnown: true, outputKnown: true, cacheKnown: true }
+  const rates = { input: 2, output: 4, cache: .5, write: 3 }
   const expectedByIndependentPrices = ({ input, read, write, output }, card = rates) => {
     const prompt = input + read + write
     const uncachedCost = (prompt * card.input + output * card.output) / 1e6
     const cachedCost = (input * card.input + read * card.cache + write * card.write + output * card.output) / 1e6
     return uncachedCost - cachedCost
   }
+  const foldScenario = (name, card, frames) => {
+    const model = `test/cache-savings-${name}`
+    const provider = 'test-cache-provider'
+    const scenarioPayload = card ? { model, provider, providers: [{ slug: provider, pricing: {
+      [model]: { input: String(card.input), output: String(card.output), cache: String(card.cache),
+        cache_write: card.write == null ? undefined : String(card.write), tiers: [] }
+    } }] } : null
+    let led = T.emptyLedger()
+    frames.forEach((usage, index) => {
+      led = T.applyUsage(led, { now: NOW + index, payload: scenarioPayload, provider,
+        sessionId: `${name}-runtime-${index}`, storedId: `${name}-conversation`,
+        usage: { model, ...usage } })
+    })
+    return led.sessions[`${name}-conversation`]
+  }
 
   const partialTokens = { input: 100, read: 200, write: 0, output: 40 }
   const partialExpected = expectedByIndependentPrices(partialTokens)
-  const partial = T.savingsState({
-    input: 1100, output: 40, cacheRead: 200, cacheWrite: 0,
-    netSavingsPrompt: partialTokens.read, netSavings: partialExpected,
-  }, rates)
+  const partialBucket = foldScenario('partial', rates, [
+    { input: 1000, prompt: 1100, output: 0, calls: 1 },
+    { input: 300, prompt: 300, output: 40, calls: 1, cache_read: 200, cache_write: 0 },
+  ])
+  const partial = T.savingsState(partialBucket, rates)
   assert.ok(Math.abs(partialExpected - .0003) < 1e-12, 'the independent card-price calculation includes only the measured read discount')
+  assert.ok(Math.abs(partialBucket.netSavings - partialExpected) < 1e-12, 'the ledger fold matches the independent calculation')
+  assert.equal(partialBucket.netSavingsPrompt, 300, 'only the known split contributes to priced savings')
   assert.ok(Math.abs(partial.value - partialExpected) < 1e-12, 'the measured subtotal matches the independent calculation')
-  assert.equal(partial.coverage, 200 / 1300, 'coverage uses known savings prompt tokens over the full prompt')
+  assert.equal(partial.coverage, 300 / 1400, 'coverage uses priced-savings prompt tokens over the full prompt')
   assert.equal(partial.partial, true, 'uncovered prompt tokens remain visibly partial')
 
   const negativeTokens = { input: 100, read: 200, write: 1000, output: 10 }
   const negativeExpected = expectedByIndependentPrices(negativeTokens)
-  const negative = T.cacheSavings(negativeTokens.read, rates, negativeTokens.write)
+  const negativeBucket = foldScenario('negative', rates, [{
+    input: 1300, prompt: 1300, output: 10, calls: 1,
+    cache_read: negativeTokens.read, cache_write: negativeTokens.write,
+  }])
+  const negative = T.savingsState(negativeBucket, rates)
   assert.ok(Math.abs(negativeExpected + .0007) < 1e-12, 'the write premium outweighs the read discount')
-  assert.ok(Math.abs(negative - negativeExpected) < 1e-12, 'the implementation retains that independently derived loss')
-  assert.ok(Math.abs(T.savingsState({ input: 100, output: 10, cacheRead: 200, cacheWrite: 1000,
-    netSavingsPrompt: 1300, netSavings: negative }, rates).value - negativeExpected) < 1e-12)
+  assert.ok(Math.abs(negativeBucket.netSavings - negativeExpected) < 1e-12,
+    'the ledger fold retains the independently derived cache-write loss')
+  assert.ok(Math.abs(negative.value - negativeExpected) < 1e-12)
+  assert.equal(negative.partial, false)
 
   const zeroRates = { ...rates, cache: rates.input, write: rates.input }
   const zeroExpected = expectedByIndependentPrices({ input: 100, read: 200, write: 0, output: 10 }, zeroRates)
-  const measuredZero = T.savingsState({ input: 100, output: 10, cacheRead: 200, cacheWrite: 0,
-    netSavingsPrompt: 200, netSavings: zeroExpected }, zeroRates)
+  const zeroBucket = foldScenario('zero', zeroRates, [{
+    input: 300, prompt: 300, output: 10, calls: 1, cache_read: 200, cache_write: 0,
+  }])
+  const measuredZero = T.savingsState(zeroBucket, zeroRates)
   assert.equal(zeroExpected, 0, 'equal cache and input prices produce a measured zero')
+  assert.equal(zeroBucket.netSavings, zeroExpected, 'the ledger fold records the independently calculated zero')
+  assert.equal(measuredZero.coverage, 1)
   assert.equal(measuredZero.value, 0, 'known zero remains a figure rather than becoming unavailable')
 
-  const unknown = T.savingsState({ input: 1000, output: 10, cacheRead: 0, cacheWrite: 0,
-    netSavingsPrompt: 0, netSavings: null }, rates)
+  const unknownBucket = foldScenario('unknown', null, [{
+    input: 150, prompt: 150, output: 10, calls: 1, cache_read: 50, cache_write: 0,
+  }])
+  const unknown = T.savingsState(unknownBucket, null)
   assert.equal(unknown.value, null, 'an unknown subtotal is not presented as $0')
   assert.equal(unknown.coverage, 0, 'unknown pricing has no covered prompt tokens')
-  assert.equal(unknown.reason, 'no_cache', 'the missing evidence remains named')
+  assert.equal(unknown.reason, 'no_rate', 'the missing price remains named')
 })
 
 test('a net cache loss keeps its sign in the state every surface reads', () => {
