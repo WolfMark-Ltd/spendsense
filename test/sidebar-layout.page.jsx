@@ -5,7 +5,10 @@ import { host, queryClient, QueryClientProvider, i18nBackend } from '@hermes/plu
 
 const params = new URLSearchParams(location.search)
 const tooltipInteraction = params.get('tooltipInteraction')
+const coverageInteraction = params.get('coverageInteraction')
+const preservePosition = params.get('preservePosition') === 'true'
 const locale = params.get('locale') === 'zh-CN' ? 'zh' : 'en'
+const scope = params.get('scope') || 'conversation'
 const exactModelId = 'deepseek/deepseek-v4.1-flash'
 const provider = 'commandcode'
 const prompt = 600000
@@ -31,13 +34,13 @@ plugin.register({
 })
 
 const ledger = T.emptyLedger()
-ledger.sessions.layout = {
+if (scope === 'conversation') ledger.sessions.layout = {
   input: 100000, output: 10000, cacheRead: 500000, cacheWrite: 0, calls: 26,
   pricedTokens: 610000, unpricedTokens: 0, unpricedCalls: 0, missingUsageCalls: 0,
   cost: 1.23, sources: { bundled: 610000 }, model: exactModelId, provider,
-  foreignSlug: null, cacheEstimated: false, cacheSource: 'exact',
-  cacheCoveredPrompt: covered, cacheCoveredRead: Math.round(500000 * coverage),
-  cacheExactPrompt: covered, cacheEstimatedPrompt: 0,
+  foreignSlug: null, cacheEstimated: false,
+  cacheCoveredPrompt: prompt, cacheCoveredRead: 500000,
+  cacheExactPrompt: prompt, cacheEstimatedPrompt: 0,
   netSavingsPrompt: covered, netSavings: saved, firstAt: Date.now() - 3600_000,
 }
 T.$ledger.set(ledger)
@@ -47,8 +50,11 @@ T.$ratesOpen.set(false)
 T.$infoOpen.set(null)
 T.resetStableLive()
 host.state.focusedSessionId.set('layout')
-host.state.focusedStoredSessionId.set('layout')
-host.state.focusedUsage.set(null)
+host.state.focusedStoredSessionId.set(scope === 'conversation' ? 'layout' : null)
+host.state.focusedUsage.set(scope === 'conversation' ? null : {
+  model: exactModelId, input: 100000, prompt, output: 10000,
+  cache_read: 500000, cache_write: 0, calls: 1,
+})
 host.state.model.set(exactModelId)
 
 const configs = params.has('all')
@@ -125,10 +131,36 @@ setTimeout(async () => {
       await wait(60)
     }
   }
+  const coverageButton = rootNode.querySelector('.wm-info-btn[aria-controls="wm-info-cache-coverage"]')
+  const coverageDisclosure = {}
+  if (coverageButton && ['hover', 'focus', 'click'].includes(coverageInteraction)) {
+    if (coverageInteraction === 'hover') {
+      coverageButton.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }))
+    } else if (coverageInteraction === 'focus') {
+      coverageButton.focus()
+    } else {
+      coverageButton.click()
+    }
+    await wait(120)
+    const popover = document.getElementById('wm-info-cache-coverage')
+    coverageDisclosure.found = !!coverageButton
+    coverageDisclosure.expanded = coverageButton.getAttribute('aria-expanded') === 'true'
+    coverageDisclosure.label = coverageButton.getAttribute('aria-label') || ''
+    coverageDisclosure.tabIndex = coverageButton.tabIndex
+    coverageDisclosure.describedBy = coverageButton.getAttribute('aria-describedby') || ''
+    coverageDisclosure.text = popover?.textContent || ''
+    coverageDisclosure.trigger = rect(coverageButton)
+    coverageDisclosure.popover = popover ? rect(popover) : null
+    coverageDisclosure.offsetParent = popover?.offsetParent?.className || ''
+    if (coverageInteraction === 'focus' || coverageInteraction === 'click') {
+      coverageButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await wait(60)
+    }
+  }
   const layouts = [...rootNode.querySelectorAll('.case')].map(node => {
     const pane = node.querySelector('.wm-pane')
     const scrollTopBefore = pane?.scrollTop || 0
-    if (pane && !['hover', 'focus'].includes(tooltipInteraction)) pane.scrollTop = pane.scrollHeight
+    if (pane && !preservePosition) pane.scrollTop = pane.scrollHeight
     const scrollTopAfter = pane?.scrollTop || 0
     const paneRect = pane ? rect(pane) : null
     const openSpendSenseButton = node.querySelector('.wm-open-ledger')
@@ -146,6 +178,8 @@ setTimeout(async () => {
       glyphFontSize: parseFloat(getComputedStyle(button.querySelector('.wm-info-glyph')).fontSize),
     }))
     const providerBadge = node.querySelector('.wm-provider-badge')
+    const productTitle = node.querySelector('.wm-meter-brandrow .wm-meter-name')
+    const statusRow = node.querySelector('.wm-meter-statusrow')
     const savedRow = node.querySelector('.wm-gauge-stat[data-kind="saved"]')
     const savedLabel = savedRow?.querySelector('.wm-metric-label')
     const savedValue = savedRow?.querySelector('.wm-metric-value')
@@ -168,6 +202,9 @@ setTimeout(async () => {
       model: model?.textContent || '',
       modelId: model?.title || '',
       modelOverflow: model ? Math.max(0, model.scrollWidth - model.clientWidth) : -1,
+      productTitle: productTitle?.textContent || '',
+      productTitleOverflow: productTitle ? Math.max(0, productTitle.scrollWidth - productTitle.clientWidth) : -1,
+      productTitleOwnRow: !!productTitle && !!statusRow && productTitle.parentElement.nextElementSibling === statusRow,
       tooltipMetrics,
       provider: providerBadge?.textContent || '',
       providerOverflow: providerBadge ? Math.max(0, providerBadge.scrollWidth - providerBadge.clientWidth) : -1,
@@ -185,8 +222,8 @@ setTimeout(async () => {
     }
   })
   document.getElementById('sidebar-layout-result').textContent = JSON.stringify({
-    errors: window.__sidebarErrors || [], locale, state, tooltipInteraction,
-    modelIdDisclosures,
+    errors: window.__sidebarErrors || [], locale, state, scope, tooltipInteraction, coverageInteraction,
+    modelIdDisclosures, coverageDisclosure,
     layouts,
   })
 }, 350)

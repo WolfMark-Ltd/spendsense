@@ -441,6 +441,38 @@ test('summarize treats recorded zero call-coverage counters as complete', () => 
   assert.equal(summary.totals.coverageUnknown, false)
 })
 
+test('summarize keeps null cost unknown and still reprices legacy buckets', () => {
+  const missingCost = T.summarize(coverageLedger({ cost: null }), () => true, null)
+  assert.equal(missingCost.rows[0].cost, null)
+  assert.equal(missingCost.totals.known, false)
+
+  const mixedLedger = coverageLedger({ cost: null })
+  const [key] = Object.keys(mixedLedger.days[T.dayKey(NOW)])
+  mixedLedger.days['2026-10-22'] = {
+    [key]: { ...mixedLedger.days[T.dayKey(NOW)][key], cost: 0.25 }
+  }
+  const mixed = T.summarize(mixedLedger, () => true, null)
+  assert.equal(mixed.rows[0].cost, 0.25, 'a null bucket does not erase a known subtotal')
+  assert.equal(mixed.totals.known, true)
+
+  const legacyLedger = coverageLedger({
+    cost: null, legacy: true, input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0,
+    calls: 1, pricedTokens: 1_000_000, unpricedTokens: 0
+  })
+  const legacy = T.summarize(legacyLedger, () => true,
+    T.legacyPricer(null, { 'model-x': { input: 2, output: 4, cache: 0.5 } }))
+  assert.equal(legacy.rows[0].cost, 2, 'a null settled cost must not suppress remembered legacy pricing')
+  assert.equal(legacy.rows[0].legacy, true)
+})
+
+test('summarize preserves numeric zero and negative settled costs', () => {
+  for (const cost of [0, -0.25]) {
+    const summary = T.summarize(coverageLedger({ cost }), () => true, null)
+    assert.equal(summary.rows[0].cost, cost)
+    assert.equal(summary.totals.known, true)
+  }
+})
+
 test('coverage uncertainty survives a new write into a partially covered old bucket', () => {
   const legacy = coverageLedger({ missingUsageCalls: 0 })
   const updated = T.applyUsage(legacy, {

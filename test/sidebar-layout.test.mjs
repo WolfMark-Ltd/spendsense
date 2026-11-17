@@ -41,10 +41,10 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
 </style></head><body><div id="sidebar-layout-cases"></div><div id="sidebar-layout-result"></div>
 <script>${readFileSync(bundle, 'utf8')}</script></body></html>`)
     const url = pathToFileURL(html).href
-    const run = (locale, tooltipInteraction = '') => {
-      const query = `all=1&locale=${locale}&state=partial${tooltipInteraction ? `&tooltipInteraction=${tooltipInteraction}` : ''}`
+    const run = (locale, tooltipInteraction = '', coverageInteraction = '', scope = 'conversation') => {
+      const query = `all=1&locale=${locale}&state=partial&scope=${scope}${tooltipInteraction ? `&tooltipInteraction=${tooltipInteraction}` : ''}${coverageInteraction ? `&coverageInteraction=${coverageInteraction}` : ''}`
       const dom = execFileSync(CHROME, [
-        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-${locale}`)}`,
+        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-${locale}-${scope}`)}`,
         '--virtual-time-budget=5000', '--dump-dom', `${url}?${query}`,
       ], { maxBuffer: 32 * 1024 * 1024, timeout: 120000 }).toString()
       const match = dom.match(/<div id="sidebar-layout-result"[^>]*>(.*?)<\/div>/s)
@@ -53,14 +53,34 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
     }
 
     for (const locale of ['en', 'zh-CN']) {
-      const result = run(locale, locale === 'en' ? 'both' : '')
+      const result = run(locale, locale === 'en' ? 'both' : '', 'focus')
       assert.deepEqual(result.errors, [], `no browser errors (${locale})`)
       assert.equal(result.layouts.length, 12, `six widths/heights in both themes (${locale})`)
+      assert.equal(result.coverageDisclosure.found, true, `${locale} finds the Coverage help button`)
+      assert.equal(result.coverageDisclosure.expanded, true, `${locale} opens Coverage help on keyboard focus`)
+      assert.equal(result.coverageDisclosure.describedBy, 'wm-info-cache-coverage', `${locale} connects the button and help text`)
+      assert.equal(result.coverageDisclosure.label, locale === 'en' ? 'Coverage details' : '覆盖率说明',
+        `${locale} gives the help button a specific accessible name`)
+      assert.equal(result.coverageDisclosure.tabIndex, 0, `${locale} keeps Coverage help in the keyboard tab order`)
+      if (locale === 'en') {
+        assert.match(result.coverageDisclosure.text, /all prompt tokens for the recorded conversation/)
+        assert.match(result.coverageDisclosure.text, /cumulative since/)
+        assert.match(result.coverageDisclosure.text, /cache reads ÷ split-known prompt tokens/)
+        assert.match(result.coverageDisclosure.text, /priced-savings coverage/)
+      } else {
+        assert.match(result.coverageDisclosure.text, /当前对话中具有精确或估算缓存拆分的提示词令牌 ÷ 全部提示词令牌/)
+        assert.match(result.coverageDisclosure.text, /对话覆盖率从 .* 起累计/)
+        assert.match(result.coverageDisclosure.text, /圆环表示缓存命中率/)
+        assert.match(result.coverageDisclosure.text, /可定价净节省覆盖率/)
+      }
       for (const layout of result.layouts) {
         const id = `${locale}/${layout.id}`
         assert.equal(layout.model, 'DeepSeek V4.1 Flash', `${id} shows a readable model name`)
         assert.equal(layout.modelId, 'deepseek/deepseek-v4.1-flash', `${id} retains the exact model ID`)
         assert.equal(layout.modelOverflow, 0, `${id} wraps the model within its row`)
+        assert.equal(layout.productTitle, 'SpendSense', `${id} keeps the full product name`)
+        assert.equal(layout.productTitleOverflow, 0, `${id} does not clip the product name`)
+        assert.equal(layout.productTitleOwnRow, true, `${id} gives the full product title its own header row`)
         assert.ok(layout.tooltipMetrics.length >= 4, `${id} renders the expected sidebar tooltip controls`)
         for (const [index, tip] of layout.tooltipMetrics.entries()) {
           assert.equal(tip.hitWidth, 24, `${id}/tip${index} keeps the accessible hit width`)
@@ -71,7 +91,7 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         }
         assert.equal(layout.provider, 'commandcode', `${id} keeps the provider separate`)
         assert.equal(layout.providerSeparate, true, `${id} puts the provider on its own line`)
-        assert.ok(layout.ringWidth >= 52 && layout.ringWidth <= 72, `${id} scales the ring to ${layout.ringWidth}px`)
+        assert.ok(layout.ringWidth >= 68 && layout.ringWidth <= 88, `${id} scales the larger ring to ${layout.ringWidth}px`)
         assert.match(layout.savedLabel, locale === 'en' ? /Theoretical net savings/ : /理论净节省/,
           `${id} labels the theoretical estimate`)
         assert.ok(layout.savedValue.includes('≈'), `${id} marks a partial subtotal`)
@@ -85,6 +105,12 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         assert.equal(layout.horizontalOverflow, 0, `${id} has no horizontal pane overflow`)
         assert.equal(layout.openSpendSense, locale === 'en' ? 'Open SpendSense' : '打开 SpendSense',
           `${id} retains the existing navigation action`)
+        if (layout.height === 650) {
+          assert.ok(layout.scrollDelta <= 65,
+            `${id} keeps 650px-host scrolling close to the measured 59–60px baseline (${layout.scrollDelta}px)`)
+        } else {
+          assert.equal(layout.scrollDelta, 0, `${id} fits the 800px host without scrolling`)
+        }
         if (layout.height === 650 && layout.scrollDelta > 0) {
           assert.ok(layout.scrollTopAfter > layout.scrollTopBefore, `${id} can scroll the overflowing pane`)
           assert.equal(layout.openSpendSenseVisible, true, `${id} reveals Open SpendSense at the bottom`)
@@ -107,6 +133,11 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         const gap = disclosure.popover.top - disclosure.trigger.bottom
         assert.ok(gap >= 4 && gap <= 12, `${interaction} opens directly below the trigger (${gap}px gap)`)
       }
+      const runScope = run(locale, '', 'focus', 'run')
+      assert.deepEqual(runScope.errors, [], `no current-run browser errors (${locale})`)
+      assert.equal(runScope.coverageDisclosure.expanded, true, `${locale} opens current-run help with keyboard focus`)
+      if (locale === 'en') assert.match(runScope.coverageDisclosure.text, /all prompt tokens for the current run/)
+      else assert.match(runScope.coverageDisclosure.text, /本轮中具有精确或估算缓存拆分的提示词令牌 ÷ 全部提示词令牌/)
       const scroll = result.layouts.map(layout => `${layout.width}x${layout.height}:${layout.scrollDelta}px`).join(', ')
       console.log(`Sidebar vertical scroll depth (${locale}): ${scroll}`)
     }
@@ -122,7 +153,7 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
           '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${profile}`,
           '--virtual-time-budget=5000', `--window-size=${width},${height}`,
           `--screenshot=${screenshot}`,
-          `${url}?case=${width}-${height}-${theme}&width=${width}&height=${height}&theme=${theme}&locale=en&state=partial`,
+          `${url}?case=${width}-${height}-${theme}&width=${width}&height=${height}&theme=${theme}&locale=en&state=partial&preservePosition=true`,
         ], { timeout: 120000, stdio: 'ignore' })
         assert.ok(existsSync(screenshot) && statSync(screenshot).size > 0, `writes ${name}`)
       }
@@ -130,9 +161,16 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
       execFileSync(CHROME, [
         '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, 'shot-model-id-hover')}`,
         '--virtual-time-budget=5000', '--window-size=268,650', `--screenshot=${disclosureShot}`,
-        `${url}?case=268-650-dark&width=268&height=650&theme=dark&locale=en&state=partial&tooltipInteraction=hover`,
+        `${url}?case=268-650-dark&width=268&height=650&theme=dark&locale=en&state=partial&tooltipInteraction=hover&preservePosition=true`,
       ], { timeout: 120000, stdio: 'ignore' })
       assert.ok(existsSync(disclosureShot) && statSync(disclosureShot).size > 0, 'writes the model-ID disclosure screenshot')
+      const coverageShot = join(screenshotDir, 'sidebar-coverage-help-268x650-dark.png')
+      execFileSync(CHROME, [
+        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, 'shot-coverage-help')}`,
+        '--virtual-time-budget=5000', '--window-size=268,650', `--screenshot=${coverageShot}`,
+        `${url}?case=268-650-dark&width=268&height=650&theme=dark&locale=en&state=partial&coverageInteraction=hover&preservePosition=true`,
+      ], { timeout: 120000, stdio: 'ignore' })
+      assert.ok(existsSync(coverageShot) && statSync(coverageShot).size > 0, 'writes the Coverage help screenshot')
     }
   } finally { rmSync(work, { recursive: true, force: true }) }
 })

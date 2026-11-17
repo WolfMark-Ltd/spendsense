@@ -172,6 +172,8 @@ test('live usage renders all five sections with labelled values', async () => {
   assert.equal(cards.length, 4, 'cost, composition, gauge and rates cards render')
   const figure = container.querySelector('.wm-kpi-figure')
   assert.ok(figure && figure.textContent !== '—', `cost figure renders: ${figure?.textContent}`)
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun',
+    'the run is the fallback before a conversation record exists')
   assert.match(container.textContent, /apiEquivalent/)
   assert.match(container.textContent, /promptMix/)
   const legendValues = [...container.querySelectorAll('.wm-legend-value')].map(el => el.textContent)
@@ -217,16 +219,17 @@ test('a transient gap keeps every section mounted and marks the reading stale', 
   assert.match(container.textContent, /meterLive/)
 })
 
-test('a gap with recorded history retains the live snapshot, marked stale', async () => {
+test('a recorded conversation stays selected when the current run has larger totals', async () => {
   resetHost()
   host.state.focusedSessionId.set('s1')
   host.state.focusedStoredSessionId.set('stored-1')
-  // Recorded history behind the live counters, so the live run leads.
+  const firstAt = Date.UTC(2026, 10, 17, 18, 6)
   const ledger = T.emptyLedger()
   ledger.sessions['stored-1'] = histBucket({
-    input: 200, output: 100, cacheRead: 0, cacheWrite: 0, calls: 1,
-    pricedTokens: 300, unpricedTokens: 0, cost: 0.001,
-    sources: { bundled: 300 }, netSavingsPrompt: 200, netSavings: 0.0001,
+    input: 200, output: 100, cacheRead: 50, cacheWrite: 0, calls: 1,
+    pricedTokens: 350, unpricedTokens: 0, cost: 0.001,
+    sources: { bundled: 350 }, netSavingsPrompt: 250, netSavings: 0.0001,
+    firstAt,
   })
   T.$ledger.set(ledger)
   host.state.focusedUsage.set(liveUsage())
@@ -234,27 +237,45 @@ test('a gap with recorded history retains the live snapshot, marked stale', asyn
   await flush()
   const before = sectionsOf(container)
   const figureBefore = container.querySelector('.wm-kpi-figure').textContent
-  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun')
+  assert.equal(figureBefore, '$0.0010')
+  assert.deepEqual([...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
+    .map(el => el.textContent), ['350', '1'])
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeConversation')
+  assert.ok(container.querySelector('.wm-kpi-since'), 'conversation period remains visible')
+  const savedBefore = container.querySelector('[data-kind="saved"] .wm-metric-value').textContent
+  assert.equal(savedBefore, '$0.0001')
 
-  // The stream drops: the recorded fallback must not clobber the live reading.
+  host.state.focusedUsage.set(liveUsage({ input: 2400, calls: 3 }))
+  await flush()
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeConversation')
+  assert.equal(container.querySelector('.wm-kpi-figure').textContent, figureBefore)
+  assert.deepEqual([...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
+    .map(el => el.textContent), ['350', '1'])
+  assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, savedBefore)
+  assert.ok(container.querySelector('.wm-kpi-since'), 'conversation period remains visible on later calls')
+
   host.state.focusedUsage.set(null)
   await flush()
   const during = sectionsOf(container)
   assert.equal(during.head, before.head, 'header node is retained')
   assertSameCards(during.cards, before.cards, 'all four cards keep their DOM nodes')
   assert.equal(container.querySelector('.wm-kpi-figure').textContent, figureBefore,
-    'the live figure is retained, not swapped for behind history')
+    'the conversation figure remains stable during a stream gap')
   assert.match(container.textContent, /meterUpdating/, 'the retained reading is stale')
   assert.ok(container.querySelector('.wm-meter-sections.wm-stale'), 'stale readings are dimmed')
-  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun',
-    'session identity survives the gap')
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeConversation')
+  assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, savedBefore)
+  assert.ok(container.querySelector('.wm-kpi-since'), 'conversation period survives the gap')
 
-  // The stream returns: back to live, same nodes.
   host.state.focusedUsage.set(liveUsage({ input: 2400, calls: 3 }))
   await flush()
   assertSameCards(sectionsOf(container).cards, before.cards, 'cards survive the round trip')
   assert.doesNotMatch(container.textContent, /meterUpdating/)
   assert.match(container.textContent, /meterLive/)
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeConversation')
+  assert.equal(container.querySelector('.wm-kpi-figure').textContent, figureBefore)
+  assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, savedBefore)
+  assert.ok(container.querySelector('.wm-kpi-since'), 'conversation period survives the round trip')
 })
 
 test('a model change updates the header without remounting sections', async () => {
@@ -757,6 +778,32 @@ test('the cache popover carries the coverage breakdown', async () => {
   assert.match(pop.textContent, /cacheCoverageLine/, 'the exact/estimated breakdown moved here')
 })
 
+test('Coverage has its own keyboard-operable explanation', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('runtime-coverage')
+  host.state.focusedStoredSessionId.set('stored-coverage')
+  const ledger = T.emptyLedger()
+  ledger.sessions['stored-coverage'] = histBucket({
+    input: 100, cacheRead: 200, cacheWrite: 0, calls: 1,
+    cacheCoveredPrompt: 300, cacheCoveredRead: 200, cacheExactPrompt: 300,
+    netSavingsPrompt: 200,
+  })
+  T.$ledger.set(ledger)
+  const container = await renderMeter()
+  await flush()
+  const button = container.querySelector('[aria-controls="wm-info-cache-coverage"]')
+  assert.ok(button, 'the Coverage value has its own help button')
+  assert.equal(button.tagName, 'BUTTON', 'the help trigger is a native keyboard control')
+  assert.equal(button.getAttribute('aria-label'), 'coverageHelpLabel')
+  await React.act(async () => { button.focus() })
+  await flush(2)
+  assert.equal(button.getAttribute('aria-expanded'), 'true')
+  assert.equal(button.getAttribute('aria-describedby'), 'wm-info-cache-coverage')
+  const pop = container.querySelector('#wm-info-cache-coverage')
+  assert.equal(pop?.getAttribute('role'), 'tooltip')
+  assert.match(pop?.textContent || '', /cacheCoverageHelp/)
+})
+
 test('the savings label keeps its methodology tooltip', async () => {
   resetHost()
   host.state.focusedSessionId.set('runtime-9')
@@ -979,6 +1026,6 @@ test('the meter stylesheet pins the compact container rules', () => {
   assert.match(T.METER_CSS, /container-type:\s*inline-size/, 'the pane is a container')
   assert.match(T.METER_CSS, /@container[^{]*max-width:\s*320px/, 'the 320px compact query exists')
   assert.match(T.METER_CSS, /wm-gauge-stat\[data-kind="saved"\]/, 'the savings value has its own responsive row')
-  assert.match(T.METER_CSS, /--wm-gauge-ring:52px/, 'the narrow gauge keeps a useful compact ring')
+  assert.match(T.METER_CSS, /--wm-gauge-ring:68px/, 'the narrow gauge keeps the larger legible ring')
   assert.match(T.METER_CSS, /\.wm-open-ledger/, 'the ledger button is styled')
 })

@@ -155,14 +155,10 @@ test('a real restart still adopts the new run whole', () => {
   assert.ok(restarted.sessions[CONVERSATION].input > led.sessions[CONVERSATION].input)
 })
 
-test('scope: a conversation total at least as large as the live run is labelled conversation', () => {
-  // The screenshot showed the cost chip reading "this run" beside a note that
-  // said "conversation total since …": both labels must follow the bucket.
-  assert.equal(T.liveScope({ input: 20, output: 5 }, null), 'conversation')
-  assert.equal(T.liveScope({ input: 20, output: 5 }, { input: 20, output: 5 }), 'conversation')
-  assert.equal(T.liveScope({ input: 20, output: 5 }, { input: 21, output: 5 }), 'run')
-  assert.equal(T.liveScope(null, { input: 21, output: 5 }), 'run')
-  assert.equal(T.liveScope({}, { input: 21, output: 5 }), 'run')
+test('scope: any stored conversation record stays selected; run is only the fallback', () => {
+  assert.equal(T.liveScope({ input: 20, output: 5 }), 'conversation')
+  assert.equal(T.liveScope({}), 'conversation')
+  assert.equal(T.liveScope(null), 'run')
 })
 
 test('model switch inside one runtime: counters keep counting, both models priced', () => {

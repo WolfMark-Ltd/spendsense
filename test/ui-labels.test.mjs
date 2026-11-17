@@ -76,6 +76,26 @@ test('cache coverage lines follow the chosen language', () => {
   }
 })
 
+test('Coverage help explains its denominator, scope and distinct percentages in both locales', () => {
+  const period = '2026-11-17 18:30'
+  const enRun = en.cacheCoverageHelp(en.coverageScopeRun, null)
+  const enConversation = en.cacheCoverageHelp(en.coverageScopeConversation, period)
+  assert.match(enRun, /all prompt tokens for the current run/)
+  assert.match(enConversation, /all prompt tokens for the recorded conversation/)
+  assert.match(enConversation, /cumulative since 2026-11-17 18:30/)
+  assert.match(enConversation, /cache reads ÷ split-known prompt tokens/)
+  assert.match(enConversation, /priced-savings coverage/)
+
+  const zhRun = zh.cacheCoverageHelp(zh.coverageScopeRun, null)
+  const zhConversation = zh.cacheCoverageHelp(zh.coverageScopeConversation, period)
+  assert.match(zhRun, /本轮中具有精确或估算缓存拆分的提示词令牌 ÷ 全部提示词令牌/)
+  assert.match(zhConversation, /对话覆盖率从 2026-11-17 18:30 起累计/)
+  assert.match(zhConversation, /缓存读取令牌 ÷ 拆分已知的提示词令牌/)
+  assert.match(zhConversation, /可定价净节省覆盖率/)
+  assert.equal(en.coverageHelpLabel, 'Coverage details')
+  assert.equal(zh.coverageHelpLabel, '覆盖率说明')
+})
+
 test('every pricing-source fallback has a human label, never the raw key', () => {
   for (const origin of Object.keys(T.SOURCE_FALLBACKS)) {
     const label = T.sourceLabel(rawT, origin, null, false)
@@ -279,13 +299,16 @@ test('meter presence distinguishes live, recorded, updating and empty', () => {
 test('every sidebar string exists in English and Chinese', () => {
   const keys = ['meterLive', 'meterRecorded', 'meterUpdating', 'apiEquivalent', 'costSourceInfo',
     'totalTokens', 'promptMix', 'cacheFresh', 'cacheMethodInfo', 'exactLabel', 'estimatedLabel',
-    'infoLabel', 'coverageLabel', 'savingsInfo', 'savedGauge', 'modelIdInfoLabel', 'modelIdInfo']
+    'infoLabel', 'coverageLabel', 'coverageHelpLabel', 'coverageScopeRun', 'coverageScopeConversation',
+    'savingsInfo', 'savedGauge', 'modelIdInfoLabel', 'modelIdInfo']
   for (const key of keys) {
     assert.ok(en[key] && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] && zh[key] !== key, `zh has ${key}`)
   }
   assert.equal(typeof en.sinceDate, 'function')
   assert.equal(typeof zh.sinceDate, 'function')
+  assert.equal(typeof en.cacheCoverageHelp, 'function')
+  assert.equal(typeof zh.cacheCoverageHelp, 'function')
   assert.equal(typeof en.partialShort, 'function')
   assert.equal(typeof zh.partialShort, 'function')
   assert.match(en.sinceDate('2026-10-31'), /2026-10-31/)
@@ -513,7 +536,7 @@ test('every settings string exists in English and Chinese', () => {
     'Central catalogue: stale The cached live catalogue is shown.')
   assert.equal(en.settingsCatalogueTotals(58, 50, 5, 3),
     '58 plans · 50 verified prices · 5 provisional · 3 without a published fee')
-  assert.equal(en.settingsAboutVersion('0.6.7'), 'SpendSense 0.6.7')
+  assert.equal(en.settingsAboutVersion('0.6.9'), 'SpendSense 0.6.9')
   // Proper names survive in both languages; the legal credit is identical.
   assert.match(en.settingsPrivacyP2, /models\.dev/)
   assert.match(zh.settingsPrivacyP2, /models\.dev/)
@@ -523,7 +546,7 @@ test('every settings string exists in English and Chinese', () => {
   // The Chinese composites interpolate every argument.
   assert.match(zh.settingsCatalogueVersion('实时', '2026-11-04.3', ' · 生成于X'), /实时会员目录/)
   assert.match(zh.settingsCatalogueTotals(58, 50, 5, 3), /58 个方案/)
-  assert.equal(zh.settingsAboutVersion('0.6.7'), 'SpendSense 0.6.7')
+  assert.equal(zh.settingsAboutVersion('0.6.9'), 'SpendSense 0.6.9')
   // WP12: the subtitle scans operational-first, and the licence disclosure
   // names the exact distribution terms from NOTICE (GPL-3.0, no "or later").
   assert.match(en.settingsSubtitle, /Budgets, pricing, updates/)
