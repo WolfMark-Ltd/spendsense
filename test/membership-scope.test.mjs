@@ -1348,6 +1348,32 @@ test('Overview labels the cross-profile API-equivalent month total', async () =>
   await React.act(async () => T.$ledger.set(T.emptyLedger()))
 })
 
+test('settled Desktop month does not price null cost as zero and preserves numeric zero and negatives', () => {
+  const now = new Date()
+  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const bucket = cost => ({ cost, pricedTokens: 1200, unpricedTokens: 0, unpricedCalls: 0, missingUsageCalls: 0 })
+  const ledgerFor = cost => ({ days: { [`${month}-01`]: { bucket: bucket(cost) } } })
+
+  const missing = T.settledDesktopMonth(ledgerFor(null), now)
+  assert.equal(missing.known, false, 'priced-token metadata cannot make a null cost a known zero')
+  assert.equal(missing.cost, 0, 'unknown month totals retain the empty subtotal value')
+  assert.equal(missing.pricedTokens, 0, 'tokens without a usable cost are not counted in the priced subtotal')
+
+  const zero = T.settledDesktopMonth(ledgerFor(0), now)
+  assert.equal(zero.known, true)
+  assert.equal(zero.cost, 0)
+
+  const negative = T.settledDesktopMonth(ledgerFor(-0.25), now)
+  assert.equal(negative.known, true)
+  assert.equal(negative.cost, -0.25)
+
+  const legacy = T.settledDesktopMonth({ days: { [`${month}-01`]: {
+    bucket: { ...bucket(0.42), legacy: true }
+  } } }, now)
+  assert.equal(legacy.known, false, 'legacy buckets stay excluded from the settled Desktop month')
+  assert.equal(legacy.pricedTokens, 0)
+})
+
 test('Overview keeps the subtotal visible and explains unknown legacy coverage', async () => {
   queryClient.clear(); transportCtl.reset()
   $testConnectionId.set('gateway-a'); $testProfile.set('default')

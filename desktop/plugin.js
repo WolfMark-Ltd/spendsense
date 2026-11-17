@@ -1193,13 +1193,15 @@ function summarize(led, filter, priceLegacy) {
     if (!filter(date) || !isObj(buckets)) continue
     for (const [key, b] of Object.entries(buckets)) {
       if (!isObj(b)) continue
-      const r = rows[key] || (rows[key] = { ...newBucket(b), cost: b.legacy ? null : 0 })
+      const r = rows[key] || (rows[key] = { ...newBucket(b), cost: null })
       if (coverageUnknown(b)) r.coverageUnknown = true
       for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'calls', 'pricedTokens', 'unpricedTokens', 'unpricedCalls', 'missingUsageCalls', 'saved', 'cacheCoveredPrompt', 'cacheCoveredRead', 'cacheExactPrompt', 'cacheEstimatedPrompt', 'netSavingsPrompt']) {
         r[f] = num(r[f]) + num(b[f])
       }
       if (Number.isFinite(b.netSavings)) r.netSavings += b.netSavings
-      if (!b.legacy) r.cost += num(b.cost)
+      if (!b.legacy && typeof b.cost === 'number' && Number.isFinite(b.cost)) {
+        r.cost = (r.cost ?? 0) + b.cost
+      }
       if (b.cacheEstimated) r.cacheEstimated = true
       if (b.foreignSlug) r.foreignSlug = b.foreignSlug
       for (const [s, n] of Object.entries(isObj(b.sources) ? b.sources : {})) r.sources[s] = num(r.sources[s]) + num(n)
@@ -5844,7 +5846,7 @@ function settledDesktopMonth(ledger, now = new Date()) {
       unpriced += Number(bucket?.unpricedTokens) || 0
       unpricedCalls += Number(bucket?.unpricedCalls) || 0
       missingUsageCalls += Number(bucket?.missingUsageCalls) || 0
-      if (bucket?.legacy || !Number(bucket?.pricedTokens)) continue
+      if (bucket?.legacy || !Number(bucket?.pricedTokens) || bucket?.cost == null) continue
       const value = Number(bucket?.cost)
       if (!Number.isFinite(value)) continue
       cost += value
