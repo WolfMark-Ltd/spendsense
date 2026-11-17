@@ -751,7 +751,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["Estimated API value covered by memberships"], "—")
+        self.assertEqual(by_label["Estimated API value attributed to memberships"], "—")
         self.assertEqual(
             by_label["Estimated value comparison (API-equivalent minus fees)"], "—")
         # The declared fee is known independently of usage coverage.
@@ -769,7 +769,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["Estimated API value covered by memberships"], "$0.00")
+        self.assertEqual(by_label["Estimated API value attributed to memberships"], "$0.00")
         for value in by_label.values():
             self.assertNotIn("≥", value, value)
         self.assertTrue(any("No calls were recorded" in note for note in fees["notes"]))
@@ -829,7 +829,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         text = " ".join(f"{line['label']} {line['value']}" for line in fees["lines"])
-        self.assertIn("Estimated API value covered by memberships $5.00", text)
+        self.assertIn("Estimated API value attributed to memberships $5.00", text)
         self.assertNotIn("≥", text)
 
     def test_fees_lower_bound_when_attributed_scope_partly_priced(self):
@@ -842,7 +842,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["Estimated API value covered by memberships"], "≥$5.00")
+        self.assertEqual(by_label["Estimated API value attributed to memberships"], "≥$5.00")
         self.assertTrue(
             by_label["Estimated value comparison (API-equivalent minus fees)"].startswith("≥"),
             by_label)
@@ -861,7 +861,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["Estimated API value covered by memberships"], "≥$2.00")
+        self.assertEqual(by_label["Estimated API value attributed to memberships"], "≥$2.00")
         # The bound comes from the recording gap, not missing prices: the
         # coverage summary states it, so the fees section stays silent.
         self.assertFalse(any("lower bound" in note.lower() for note in fees["notes"]),
@@ -889,7 +889,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["Estimated API value covered by memberships"], "≥$6.00")
+        self.assertEqual(by_label["Estimated API value attributed to memberships"], "≥$6.00")
 
     def test_fees_unknown_is_localised(self):
         self.write_store([account("test:default", "test", plan_id="test.plus")])
@@ -899,7 +899,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report(lang="zh")
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["会员覆盖用量的估计 API 价值"], "—")
+        self.assertEqual(by_label["归因至会员的估计 API 价值"], "—")
         summary = self.section(result, "report_coverage")
         self.assertTrue(any("无法给出用量" in note for note in summary["notes"]),
                         summary["notes"])
@@ -1189,7 +1189,7 @@ class Wp21ReportsClarityTests(DigestCase):
         ], baseline_at=NOW - 40 * DAY)
         self.create_state(2_000_000)
 
-    # -- F47: metered total vs membership-covered value ----------------------
+    # -- F47: metered total vs membership-attributed value ----------------------
 
     def test_metered_total_names_all_cost_rules(self):
         self.priced_fixture()
@@ -1202,7 +1202,7 @@ class Wp21ReportsClarityTests(DigestCase):
 
     def test_metered_total_spans_non_membership_kinds(self):
         # api, prepaid and custom cost rules all feed metered_usd, so the
-        # total must never be presented as membership-covered usage.
+        # total must never be presented as membership-attributed usage.
         self.write_store([account("test:default", "test", plan_id="test.plus")])
         self.write_profiles([
             {"id": "payg", "provider": "test", "model": "m", "kind": "api"},
@@ -1231,7 +1231,7 @@ class Wp21ReportsClarityTests(DigestCase):
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
         # Same transmitted figure as before, under the owner-approved label.
-        self.assertEqual(by_label["Estimated API value covered by memberships"],
+        self.assertEqual(by_label["Estimated API value attributed to memberships"],
                          "$5.00")
         notes = " ".join(fees["notes"])
         self.assertIn("What this usage would cost at API rates", notes)
@@ -1242,7 +1242,7 @@ class Wp21ReportsClarityTests(DigestCase):
         self.assertNotIn("Attributed usage value", result["markdown"])
 
     def test_membership_value_withheld_without_a_subscription(self):
-        # Pay-as-you-go usage still meters, but nothing is membership-covered.
+        # Pay-as-you-go usage still meters, but nothing is membership-attributed.
         store_account = account("test:default", "test", plan_id=None)
         store_account["api_only"] = True
         self.write_store([store_account])
@@ -1253,7 +1253,7 @@ class Wp21ReportsClarityTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["Estimated API value covered by memberships"],
+        self.assertEqual(by_label["Estimated API value attributed to memberships"],
                          "—")
         spending = self.section(result, "spending")
         metered = {line["label"]: line["value"]
@@ -1266,7 +1266,7 @@ class Wp21ReportsClarityTests(DigestCase):
         result = self.report(lang="zh")
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["会员覆盖用量的估计 API 价值"], "$5.00")
+        self.assertEqual(by_label["归因至会员的估计 API 价值"], "$5.00")
         spending = self.section(result, "spending")
         metered = {line["label"]: line["value"]
                    for line in spending["lines"]}
@@ -1495,6 +1495,226 @@ class Wp21ReportsClarityTests(DigestCase):
     # -- F87: compact history states -----------------------------------------
 
     def test_insufficient_history_note_is_compact(self):
+        section = D._changes_section(
+            D.STRINGS["en"], "Last 7 days", 7,
+            {"comparable": False, "reason": "insufficient_history"}, {})
+        self.assertEqual(section["kind"], "notes")
+        self.assertEqual(len(section["notes"]), 1)
+        self.assertTrue(section["notes"][0].startswith(
+            "Not enough earlier history to compare yet"))
+        zh = D._changes_section(
+            D.STRINGS["zh"], "最近 7 天", 7,
+            {"comparable": False, "reason": "insufficient_history"}, {})
+        self.assertTrue(zh["notes"][0].startswith("更早的历史记录不足"))
+
+
+class Wp21FxAndConfidenceTests(DigestCase):
+    """WP21 follow-up: FX conversion provenance (F106) and no-observed-use
+    comparison qualifications (F107). Figures stay transmitted; the report
+    states the conversion basis and refuses conclusive losses."""
+
+    def write_fx(self, rates):
+        path = self.dir / "fx-rates.json"
+        path.write_text(json.dumps({"version": 1, "rates": rates}))
+        return path
+
+    def gbp_plans(self):
+        return plans_doc(
+            {"id": "test.plus", "provider_family": "test", "name": "Test Plus",
+             "price": {"amount": 20.0, "currency": "USD", "period": "month"}},
+            {"id": "other.plus", "provider_family": "other", "name": "Other Plus",
+             "price": {"amount": 40.0, "currency": "GBP", "period": "month"}},
+        )
+
+    def two_provider_book(self):
+        return Catalogue({"test": {"m": Rate(2, 4, .5, 3)},
+                          "other": {"m": Rate(2, 4, .5, 3)}},
+                         "fixture", "test", "", "1")
+
+    # -- F106: FX conversion provenance -------------------------------------
+
+    def test_mixed_currency_discloses_the_fx_basis(self):
+        fx = self.write_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                             "as_of": "2026-10-29", "source": "ECB"}])
+        self.write_store([
+            account("test:default", "test", plan_id="test.plus",
+                    route_slugs=["test"]),
+            account("other:default", "other", plan_id="other.plus",
+                    route_slugs=["other"]),
+        ])
+        self.write_profiles([])
+        self.create_events([
+            {"provider": "test", "model": "m", "input_tokens": 1_000_000,
+             "ts": NOW - 1 * DAY},
+            {"provider": "other", "model": "m", "input_tokens": 1_000_000,
+             "ts": NOW - 2 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(2_000_000)
+        result = self.report(plans=self.gbp_plans(), catalogue=self.two_provider_book(),
+                             fx_file=fx)
+        fees = self.section(result, "fees")
+        notes = " ".join(fees["notes"])
+        self.assertIn("Fees in GBP were converted at 1.25 USD per GBP, "
+                      "dated 2026-10-29 (ECB).", notes)
+        self.assertNotIn("USD were converted", notes)
+        self.assertNotIn("predates this reporting window", notes)
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertNotEqual(
+            by_label["Estimated value comparison (API-equivalent minus fees)"],
+            "—")
+        self.assertIn("dated 2026-10-29 (ECB)", result["markdown"])
+
+    def test_stale_rate_warns_instead_of_silently_converting(self):
+        fx = self.write_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                             "as_of": "2026-09-01", "source": "ECB"}])
+        self.write_store([account("other:default", "other",
+                                  plan_id="other.plus",
+                                  route_slugs=["other"])])
+        self.write_profiles([])
+        self.create_events([
+            {"provider": "other", "model": "m", "input_tokens": 1_000_000,
+             "ts": NOW - 1 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report(plans=self.gbp_plans(), catalogue=self.two_provider_book(),
+                             fx_file=fx)
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("dated 2026-09-01 (ECB)", notes)
+        self.assertIn("The GBP rate above predates this reporting window; "
+                      "updating it would change the comparison.", notes)
+
+    def test_missing_rate_withholds_the_comparison(self):
+        self.write_store([account("other:default", "other",
+                                  plan_id="other.plus",
+                                  route_slugs=["other"])])
+        self.write_profiles([])
+        self.create_events([
+            {"provider": "other", "model": "m", "input_tokens": 1_000_000,
+             "ts": NOW - 1 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report(plans=self.gbp_plans(), catalogue=self.two_provider_book())
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(
+            by_label["Estimated value comparison (API-equivalent minus fees)"],
+            "—")
+        self.assertNotIn("were converted",
+                         " ".join(fees["notes"]))
+
+    def test_fx_disclosure_in_chinese(self):
+        fx = self.write_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                             "as_of": "2026-09-01", "source": "ECB"}])
+        self.write_store([account("other:default", "other",
+                                  plan_id="other.plus",
+                                  route_slugs=["other"])])
+        self.write_profiles([])
+        self.create_events([
+            {"provider": "other", "model": "m", "input_tokens": 1_000_000,
+             "ts": NOW - 1 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report(plans=self.gbp_plans(), catalogue=self.two_provider_book(),
+                             fx_file=fx, lang="zh")
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("GBP 费用按每 GBP 1.25 美元折算，日期为 2026-09-01"
+                      "（来源：ECB）。", notes)
+        self.assertIn("GBP 汇率早于本报告周期；更新汇率会改变对比结果。",
+                      notes)
+
+    def test_unparsable_rate_date_discloses_without_warning(self):
+        headline = {
+            "fees_monthly_by_currency": [{"currency": "GBP", "amount": 40.0}],
+            "fees_window_by_currency": [{"currency": "GBP", "amount": 9.33}],
+            "usage_usd": 2.0, "difference_usd": -9.0, "status": "ok",
+        }
+        groups = [{"currency": "GBP", "fee_complete": True,
+                   "window_fee_complete": True, "converted": True,
+                   "fx": {"currency": "GBP", "usd_per_unit": 1.25,
+                          "as_of": "not-a-date", "source": "ECB"}}]
+        section = D._fees_section(D.STRINGS["en"], "Last 7 days", headline,
+                                 True, 1, False, groups)
+        notes = " ".join(section["notes"])
+        self.assertIn("dated not-a-date (ECB)", notes)
+        self.assertNotIn("predates this reporting window", notes)
+
+    # -- F107: no-observed-use qualifications -------------------------------
+
+    def test_complete_zero_use_scopes_the_estimate(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 40 * DAY)
+        self.create_state(0)
+        result = self.report()
+        fees = self.section(result, "fees")
+        notes = " ".join(fees["notes"])
+        self.assertIn("Account test:default: no usage was recorded in the "
+                      "fully observed window", notes)
+        self.assertIn("not a confirmed loss", notes)
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(by_label["Known monthly fees (USD)"], "$20.00/mo")
+        self.assertTrue(
+            by_label["Estimated value comparison (API-equivalent minus fees)"]
+            .startswith("-$"))
+        self.assertIn("fully observed window", result["markdown"])
+
+    def test_partial_zero_use_stays_conditional(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 2 * DAY)
+        self.create_state(0)
+        result = self.report()
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("Account test:default: no usage was observed, but "
+                      "recording does not cover the full window", notes)
+        self.assertIn("may be unrecorded rather than unused", notes)
+        self.assertIn("treat the comparison as conditional", notes)
+
+    def test_zero_use_note_names_only_the_unused_account(self):
+        self.write_store([
+            account("test:used", "test", plan_id="test.plus",
+                    route_slugs=["test"]),
+            account("other:idle", "other", plan_id="other.plus",
+                    route_slugs=["other"]),
+        ])
+        self.write_profiles([])
+        self.create_events([
+            {"provider": "test", "model": "m", "input_tokens": 1_000_000,
+             "ts": NOW - 1 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report(plans=self.gbp_plans(), catalogue=self.two_provider_book())
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("Account other:idle: no usage was recorded", notes)
+        self.assertNotIn("Account test:used: no usage", notes)
+
+    def test_unknown_fee_zero_use_carries_no_charge_note(self):
+        plans = plans_doc(
+            {"id": "test.mystery", "provider_family": "test",
+             "name": "Mystery",
+             "price": {"amount": None, "currency": "USD",
+                       "period": "month"}},
+        )
+        self.write_store([account("test:mystery", "test",
+                                  plan_id="test.mystery")])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 40 * DAY)
+        self.create_state(0)
+        result = self.report(plans=plans)
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertNotIn("Account test:mystery: no usage", notes)
+        self.assertIn("fee(s) are unknown", notes)
+
+    def test_zero_use_notes_in_chinese(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 40 * DAY)
+        self.create_state(0)
+        result = self.report(lang="zh")
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("test:default", notes)
+        self.assertIn("完整覆盖的周期内没有记录到用量", notes)
+        self.assertIn("并非已确认的损失", notes)
         section = D._changes_section(
             D.STRINGS["en"], "Last 7 days", 7,
             {"comparable": False, "reason": "insufficient_history"}, {})

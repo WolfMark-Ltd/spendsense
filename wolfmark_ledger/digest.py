@@ -29,7 +29,7 @@ Model rules (each has a regression test):
    the limitations specific to their own figures.
 8. Cost-rule billing kinds can never attribute membership (the included /
    credits / free profile kinds are legacy-ignored), so metered_usd is
-   reported as an all-cost-rules total. The membership-covered figure comes
+   reported as an all-cost-rules total. The membership-attributed figure comes
    from subscription entitlement attribution in the fees section.
 """
 
@@ -92,7 +92,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "provider_charge_coverage": "({confirmed} of {calls} recorded calls confirmed)",
         "label_fees_monthly": "Known monthly fees ({currency})",
         "label_fees_window": "Fees in window ({currency})",
-        "label_usage_value": "Estimated API value covered by memberships",
+        "label_usage_value": "Estimated API value attributed to memberships",
         "label_difference": "Estimated value comparison (API-equivalent minus fees)",
         "note_membership_basis": "What this usage would cost at API rates — not a bill, and not cash saved. Usage is attributed to subscriptions by route; any overage beyond included allowances is not split out.",
         "label_recording_since": "Recording since",
@@ -127,6 +127,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_historical_fee_missing": "{count} current subscription fee(s) cannot be allocated to this window because historical fee evidence is missing; no effective date is inferred.",
         "note_no_calls_spending": "No calls were recorded in this window.",
         "note_fees_prorata": "Fees are allocated pro-rata to the reporting window.",
+        "note_fx_converted": "Fees in {currency} were converted at {rate} USD per {currency}, dated {date} ({source}).",
+        "note_fx_stale": "The {currency} rate above predates this reporting window; updating it would change the comparison.",
+        "note_fee_zero_use_complete": "Account {label}: no usage was recorded in the fully observed window, so its declared fee counts against $0 observed value{contrib}. The negative difference is an estimate for this window, not a confirmed loss.",
+        "note_fee_zero_use_partial": "Account {label}: no usage was observed, but recording does not cover the full window, so usage may be unrecorded rather than unused. Its declared fee is included in the fee total{contrib}; treat the comparison as conditional.",
+        "note_fee_zero_use_contrib": ", contributing {amount} to the comparison",
         "note_partial_comparison": "Some inputs are partial, so treat the comparison as approximate.",
         "note_unavailable_comparison": "Comparison unavailable: fees, coverage or rates are missing.",
         "note_unattributed": "Usage on routes no account claims stays unattributed.",
@@ -214,7 +219,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "provider_charge_coverage": "（{calls} 次已记录调用中有 {confirmed} 次已确认）",
         "label_fees_monthly": "已知月度费用（{currency}）",
         "label_fees_window": "周期内费用（{currency}）",
-        "label_usage_value": "会员覆盖用量的估计 API 价值",
+        "label_usage_value": "归因至会员的估计 API 价值",
         "label_difference": "估计价值对比（API 等值减费用）",
         "note_membership_basis": "这是该用量按 API 价格计算的价值——不是账单，也不是实际省下的现金。用量按路由归因至订阅；超出包含额度的部分未单独拆分。",
         "label_recording_since": "记录开始",
@@ -249,6 +254,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_historical_fee_missing": "有 {count} 个当前订阅费用因历史费用证据缺失而无法分配至本周期；未推断生效日期。",
         "note_no_calls_spending": "此周期内没有记录到调用。",
         "note_fees_prorata": "费用按比例分摊到报告周期。",
+        "note_fx_converted": "{currency} 费用按每 {currency} {rate} 美元折算，日期为 {date}（来源：{source}）。",
+        "note_fx_stale": "{currency} 汇率早于本报告周期；更新汇率会改变对比结果。",
+        "note_fee_zero_use_complete": "{label} 账号：在完整覆盖的周期内没有记录到用量，因此其已申报费用按 0 观察用量计入{contrib}。负差额仅为本周期估计值，并非已确认的损失。",
+        "note_fee_zero_use_partial": "{label} 账号：没有观察到用量，但记录未覆盖整个周期，因此用量可能只是未被记录而非未使用。其已申报费用已计入费用小计{contrib}，对比结果仅为附条件估计。",
+        "note_fee_zero_use_contrib": "，在对比中占 {amount}",
         "note_partial_comparison": "部分输入数据不完整，请将对比视为近似值。",
         "note_unavailable_comparison": "无法对比：缺少费用、覆盖率或汇率数据。",
         "note_unattributed": "无人认领路由上的用量保持未归因。",
@@ -356,6 +366,18 @@ def _utc_date(value: Any) -> str:
         return datetime.fromtimestamp(float(value), timezone.utc).strftime("%Y-%m-%d")
     text = str(value or "")
     return text[:10] if len(text) >= 10 else text
+
+
+def _iso_date(value: Any) -> Optional[str]:
+    """A YYYY-MM-DD calendar date, or None when the value is not one.
+
+    Compares as plain text so timezone-naive rate dates never skew the
+    rate-age check by hours around a day boundary.
+    """
+    text = _utc_date(value)
+    if len(text) == 10 and text[4] == "-" and text[7] == "-":
+        return text
+    return None
 
 
 def _usage_section(S: Mapping[str, str], window_label: str, totals: Mapping[str, Any],
@@ -470,11 +492,11 @@ def _spending_section(S: Mapping[str, str], window_label: str,
     # The generic cost-rule basis lives in the coverage legend; this section
     # keeps only the limitations specific to its own figures.
     #
-    # metered_usd is deliberately NOT labelled membership-covered: by_kind
+    # metered_usd is deliberately NOT labelled membership-attributed: by_kind
     # spans api, custom, prepaid and unknown cost rules, while the
     # subscription_included / subscription_credits / free profile kinds are
     # legacy-ignored by billing.classify, so cost rules can never attribute
-    # membership. The verified membership-covered figure comes from
+    # membership. The verified membership-attributed figure comes from
     # subscription entitlement attribution and lives in the fees section.
     notes: list[str] = []
     evidence = billing.get("evidence") or {}
@@ -587,7 +609,9 @@ def _attributed_pricing_partial(accounts: Any) -> bool:
 
 def _fees_section(S: Mapping[str, str], window_label: str,
                   headline: Mapping[str, Any], covers: bool, calls: int,
-                  pricing_partial: bool, groups: Any = ()) -> dict[str, Any]:
+                  pricing_partial: bool, groups: Any = (),
+                  accounts: Any = (),
+                  window_since: Any = None) -> dict[str, Any]:
     lines: list[dict[str, str]] = []
     group_rows = [g for g in (groups or []) if isinstance(g, dict)]
     group_by_currency = {str(g.get("currency") or "unknown"): g for g in group_rows}
@@ -653,6 +677,41 @@ def _fees_section(S: Mapping[str, str], window_label: str,
         notes.append(S["note_unknown_fee_accounts"].format(count=unknown_fee_accounts))
     if missing_window_accounts:
         notes.append(S["note_historical_fee_missing"].format(count=missing_window_accounts))
+    window_date = _iso_date(window_since)
+    for currency in currencies:
+        rate = (group_by_currency.get(currency) or {}).get("fx")
+        if not (group_by_currency.get(currency) or {}).get("converted"):
+            continue
+        if not isinstance(rate, dict):
+            continue
+        per_unit = rate.get("usd_per_unit")
+        as_of = rate.get("as_of")
+        source = rate.get("source")
+        if (isinstance(per_unit, bool) or not isinstance(per_unit, (int, float))
+                or not as_of or not source):
+            continue
+        rate_date = _iso_date(as_of)
+        notes.append(S["note_fx_converted"].format(
+            currency=currency, rate=per_unit,
+            date=rate_date or _utc_date(as_of), source=source))
+        if rate_date and window_date and rate_date < window_date:
+            notes.append(S["note_fx_stale"].format(currency=currency))
+    for row in accounts or []:
+        if not isinstance(row, dict):
+            continue
+        usage = row.get("usage")
+        if not isinstance(usage, dict) or (usage.get("calls") or 0) != 0:
+            continue
+        if (row.get("monthly_equivalent") or {}).get("amount") is None:
+            continue
+        label = row.get("label") or row.get("account_id") or "?"
+        difference = row.get("difference_usd")
+        amount = _money(difference) if difference is not None else None
+        contrib = (S["note_fee_zero_use_contrib"].format(amount=amount)
+                   if amount else "")
+        key = ("note_fee_zero_use_complete" if covers
+               else "note_fee_zero_use_partial")
+        notes.append(S[key].format(label=label, contrib=contrib))
     if calls == 0 and covers:
         notes.append(S["note_no_calls_spending"])
     # Lower-bound markers are explained once in the coverage summary; the
@@ -957,7 +1016,8 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
                  event_db_path=None, state_db_path=None, membership_path=None,
                  plans: Mapping[str, Any] | None = None,
                  profiles_path=None, data_dir=None, catalogue: Catalogue | None = None,
-                 native_snapshots: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                 native_snapshots: Mapping[str, Any] | None = None,
+                 fx_file=None) -> dict[str, Any]:
     """Assemble the local digest for a trailing window.
 
     Read-only across the call store, membership store and catalogues.
@@ -982,7 +1042,8 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
     econ = economics.build_economics_report(
         days=days, trend_months=0, now=moment, event_db_path=event_db_path,
         state_db_path=state_db_path, membership_path=membership_path,
-        plans=plans, profiles_path=profiles_path, catalogue=book)
+        plans=plans, profiles_path=profiles_path, catalogue=book,
+        fx_file=fx_file)
     wx = weather.build_weather_report(
         now=moment, event_db_path=event_db_path, state_db_path=state_db_path,
         membership_path=membership_path, plans=plans, profiles_path=profiles_path,
@@ -1002,6 +1063,7 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
     totals = report.get("totals") or {}
     calls = totals.get("calls") or 0
     covers = bool((econ.get("coverage") or {}).get("recording_covers_window"))
+    window_since = _window_epoch(window.get("since"))
     if not covers:
         conn = ustore.connect_reader(event_db_path)
         try:
@@ -1010,15 +1072,15 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
             if conn is not None:
                 conn.close()
         baseline = recording.get("baseline_at")
-        since_ts = _window_epoch(window.get("since"))
-        covers = (isinstance(baseline, (int, float)) and since_ts is not None
-                  and baseline <= since_ts)
+        covers = (isinstance(baseline, (int, float)) and window_since is not None
+                  and baseline <= window_since)
 
     # The fees section is built first so the coverage summary knows whether
     # any fee subtotal shows a lower bound; display order is unchanged.
     fees_section = _fees_section(
         S, period_label, econ.get("headline") or {}, covers, calls,
-        _attributed_pricing_partial(econ.get("accounts")), econ.get("groups"))
+        _attributed_pricing_partial(econ.get("accounts")), econ.get("groups"),
+        accounts=econ.get("accounts"), window_since=window_since)
     sections: list[dict[str, Any]] = []
     sections.append(_report_coverage_section(
         S, period_label, covers=covers, calls=calls, totals=totals,
