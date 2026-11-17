@@ -27,6 +27,10 @@ Model rules (each has a regression test):
 7. Window coverage, incomplete-evidence counts and the meaning of ≥ are
    stated once in the opening coverage summary; later sections keep only
    the limitations specific to their own figures.
+8. Cost-rule billing kinds can never attribute membership (the included /
+   credits / free profile kinds are legacy-ignored), so metered_usd is
+   reported as an all-cost-rules total. The membership-attributed figure comes
+   from subscription entitlement attribution in the fees section.
 """
 
 from __future__ import annotations
@@ -66,7 +70,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "coverage_partial": "Partial — recording started inside this window",
         "coverage_unobserved": "Unobserved — usage cannot be stated",
         "summary_lower_bound": "Values marked ≥ are lower bounds because of the gaps above; missing usage is disclosed, not estimated.",
-        "summary_money_estimated": "API-equivalent value, metered (allowance) spending and extra cash are valuations under catalogue rates and your cost rules — not invoices, and not cash charged.",
+        "summary_money_estimated": "API-equivalent value, metered usage value and extra cash are valuations under catalogue rates and your cost rules — not invoices, and not cash charged.",
         "summary_money_confirmed": "Only provider-reported charges rest on confirmed per-call records; subscription fees are saved declarations, not confirmed payments.",
         "summary_complete": "Recording covers the full window and every recorded call is priced and classified.",
         "summary_unknown_kind": "{calls} call(s) have no matching cost rule or an unknown billing arrangement, so the extra-cash figure is incomplete; see {section} below.",
@@ -79,7 +83,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "label_api_value": "API-equivalent value",
         "label_pricing_coverage": "Priced tokens",
         "label_unpriced": "Unpriced tokens",
-        "label_metered": "Metered (allowance) spending",
+        "label_metered": "Metered usage value (all cost rules)",
         "label_incremental": "Extra cash (incremental) spending",
         "label_credits": "Credits consumed",
         "label_unvalued": "Unclassified calls",
@@ -88,8 +92,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "provider_charge_coverage": "({confirmed} of {calls} recorded calls confirmed)",
         "label_fees_monthly": "Known monthly fees ({currency})",
         "label_fees_window": "Fees in window ({currency})",
-        "label_usage_value": "Attributed usage value",
+        "label_usage_value": "Estimated API value attributed to memberships",
         "label_difference": "Estimated value comparison (API-equivalent minus fees)",
+        "note_membership_basis": "What this usage would cost at API rates — not a bill, and not cash saved. Usage is attributed to subscriptions by route; any overage beyond included allowances is not split out.",
         "label_recording_since": "Recording since",
         "label_recording_last": "Last recorded call",
         "label_attributed": "Attributed tokens",
@@ -112,19 +117,23 @@ STRINGS: dict[str, dict[str, str]] = {
         "verdict_unknown": "Unknown",
         "note_no_calls": "No calls recorded in this window.",
         "note_unknown": "Recording coverage for this window is incomplete, so usage cannot be stated.",
-        "note_api_theoretical": "API-equivalent value is a theoretical public price, not an invoice.",
         "note_unpriced_calls": "{calls} call(s) lack complete usage or price evidence; an unpriced token count of zero does not make their value zero.",
-        "note_billing_rule_missing": "{calls} call(s) have no matching billing rule; review the rules in Costs.",
+        "note_billing_rule_missing": "{calls} call(s) have no matching billing rule; review the rules in Settings → Advanced billing rules.",
         "note_billing_evidence_missing": "A billing rule matched {calls} call(s), but API price or provider charge evidence is missing; check the price catalogue and recorded charges.",
         "note_billing_rules_unreadable": "Billing rules could not be read, so a match could not be checked for {calls} call(s); repair the rules file and retry.",
-        "note_billing_reason_unknown": "{calls} call(s) are unclassified; the record does not say whether no rule matched or price/charge evidence was missing. Review both in Costs.",
+        "note_billing_reason_unknown": "{calls} call(s) are unclassified; the record does not say whether no rule matched or price/charge evidence was missing. Review both in Settings → Advanced billing rules.",
         "note_actual_not_recorded": "Actual provider charges are incomplete: some calls lack confirmed per-call records or complete recording coverage.",
-        "note_known_monthly_fees": "Known monthly fees are saved subscription declarations, not confirmed payments.",
         "note_unknown_fee_accounts": "{count} subscription fee(s) are unknown; the known subtotal excludes them.",
         "note_historical_fee_missing": "{count} current subscription fee(s) cannot be allocated to this window because historical fee evidence is missing; no effective date is inferred.",
         "note_no_calls_spending": "No calls were recorded in this window.",
-        "note_metered_basis": "Metered and cash figures follow your cost rules.",
         "note_fees_prorata": "Fees are allocated pro-rata to the reporting window.",
+        "note_fx_converted": "Fees in {currency} were converted at {rate} USD per {currency}, dated {date} ({source}).",
+        "note_fx_stale": "The {currency} rate above predates this reporting window; updating it would change the comparison.",
+        "note_fee_zero_use_complete": "Account {label}: no usage was attributed to this account in the fully observed window, so its declared fee counts against $0 observed value{contrib}. Treat any negative difference as an estimate for this window, not a confirmed loss.",
+        "note_fee_zero_use_partial": "Account {label}: no usage was attributed to this account, but recording does not cover the full window, so usage may be unrecorded rather than unused. Its declared fee is included in the fee total{contrib}; treat the comparison as conditional.",
+        "note_fee_zero_use_contrib": ", contributing {amount} to the comparison",
+        "note_fee_window_missing_complete": "Account {label}: no usage was attributed to this account in the fully observed window. Its {monthly} fee is known but cannot be allocated to this window because historical fee evidence is missing, so it enters neither the window fee total nor the comparison.",
+        "note_fee_window_missing_partial": "Account {label}: no usage was attributed to this account, but recording does not cover the full window, so usage may be unrecorded rather than unused. Its {monthly} fee is known but cannot be allocated to this window because historical fee evidence is missing, so it enters neither the window fee total nor the comparison.",
         "note_partial_comparison": "Some inputs are partial, so treat the comparison as approximate.",
         "note_unavailable_comparison": "Comparison unavailable: fees, coverage or rates are missing.",
         "note_unattributed": "Usage on routes no account claims stays unattributed.",
@@ -132,15 +141,25 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_allowance_current": "Allowance status is current, not windowed: it reflects saved manual marks and configured cost-rule values for the present cycle, when available.",
         "note_allowance_cycle_dates": "Cycle dates are calculated from a saved membership or plan billing-cycle anchor; if none is set, the report estimates a calendar month from the 1st. These are not provider-confirmed reset times.",
         "note_allowance_provider_scope": "Reports do not include provider usage readings or query providers. Allowance status can reflect saved manual marks and locally recorded usage under configured cost rules; local usage is not provider consumption. Check Memberships for provider readings and reset times.",
-        "note_allowance_no_reading": "No provider reading or manual mark is available for {count} account(s), so the allowance status is unknown.",
+        "note_allowance_no_reading": "No provider reading or manual mark is available for {count} account(s), so the allowance status is unknown. A manual mark can be saved in Memberships.",
         "note_allowance_no_cycle": "A provider usage share is saved for {count} account(s), but no usable cycle position is available, so no pacing verdict is made.",
         "note_allowance_no_cycle_position": "No usable cycle position is available for {count} account(s), so no pacing verdict is made.",
-        "note_allowance_conflict": "Provider and manual allowance readings conflict for {count} account(s); neither is used for a verdict.",
+        "note_allowance_conflict": "Provider and manual allowance readings conflict for {count} account(s); neither is used for a verdict. Resolve it in Memberships by updating or clearing the manual mark.",
         "note_allowance_prepaid_unknown": "The prepaid balance is unknown for {count} account(s) because wallet top-ups are not tracked.",
-        "note_allowance_unusable_limit": "The allowance limit is unavailable or unusable for {count} account(s), so no allowance verdict can be made; review allowance settings in Costs.",
-        "note_allowance_no_configured": "No configured allowance window or saved reading is available for {count} account(s).",
+        "note_allowance_unusable_limit": "The allowance limit is unavailable or unusable for {count} account(s), so no allowance verdict can be made; update the allowance in Settings → Advanced billing rules.",
+        "note_allowance_no_configured": "No configured allowance window or saved reading is available for {count} account(s). Configure an allowance in Settings → Advanced billing rules.",
         "note_allowance_other_unknown": "The available evidence cannot support an allowance verdict for {count} account(s); review the saved reading and cycle details in Memberships.",
         "note_allowance_all_unknown": "No usable allowance evidence is available for any of the {count} account(s), so every status in this table is Unknown.",
+        "why_allowance_no_reading": "No provider reading or manual mark",
+        "why_allowance_no_cycle": "Provider share saved, but no cycle position",
+        "why_allowance_no_cycle_position": "No usable cycle position",
+        "why_allowance_conflict": "Provider reading conflicts with manual mark",
+        "why_allowance_prepaid": "Prepaid top-ups are not tracked",
+        "why_allowance_unusable_limit": "Allowance limit unavailable or unusable",
+        "why_allowance_no_configured": "No configured allowance window or saved reading",
+        "why_allowance_other": "Evidence cannot support a verdict",
+        "fix_in_memberships": "fix in Memberships",
+        "fix_in_settings": "fix in Settings → Advanced billing rules",
         "note_no_memberships": "No memberships on file.",
         "note_no_models": "No models recorded in this window.",
         "note_no_providers": "No providers recorded in this window.",
@@ -150,7 +169,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_credits_unknown": "Credit consumption needs a matching credit rule to be stated.",
         "note_partial_pricing": "Value comparison needs full pricing in both windows.",
         "note_previous_no_calls": "No calls were recorded in the previous window, so percentage changes are unavailable.",
-        "note_previous_insufficient": "Not enough recorded history covers the previous window, so changes are unavailable.",
+        "note_previous_insufficient": "Not enough earlier history to compare yet. Recording must cover the previous window before changes can be compared.",
         "note_previous_unavailable": "The previous-window comparison is unavailable.",
         "note_recon_gap": "Recording missed about {tokens} since it began; figures may understate usage.",
         "method_local": "This report is generated locally from your recorded calls and membership store. Nothing leaves your profile unless you export it.",
@@ -180,7 +199,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "coverage_partial": "不完整——记录开始于本周期内",
         "coverage_unobserved": "未覆盖——无法给出用量",
         "summary_lower_bound": "标有 ≥ 的数值为下限（源于上述缺口）；缺失用量如实说明，不做估算。",
-        "summary_money_estimated": "API 等值、计量（额度）支出和额外现金均为按目录价格和费用规则计算的估值——不是账单，也不是实际扣款。",
+        "summary_money_estimated": "API 等值、计量用量价值和额外现金均为按目录价格和费用规则计算的估值——不是账单，也不是实际扣款。",
         "summary_money_confirmed": "只有服务商报告的费用基于已确认的逐次记录；订阅费用为已保存的声明，并非已确认付款。",
         "summary_complete": "记录覆盖整个周期，且所有已记录调用均已定价和分类。",
         "summary_unknown_kind": "有 {calls} 次调用没有匹配的费用规则或计费方式未知，因此额外现金数据不完整；详见下文“{section}”。",
@@ -193,7 +212,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "label_api_value": "API 等值",
         "label_pricing_coverage": "已定价 token",
         "label_unpriced": "未定价 token",
-        "label_metered": "计量（额度）支出",
+        "label_metered": "计量用量价值（全部费用规则）",
         "label_incremental": "额外现金（增量）支出",
         "label_credits": "消耗点数",
         "label_unvalued": "未分类调用",
@@ -202,8 +221,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "provider_charge_coverage": "（{calls} 次已记录调用中有 {confirmed} 次已确认）",
         "label_fees_monthly": "已知月度费用（{currency}）",
         "label_fees_window": "周期内费用（{currency}）",
-        "label_usage_value": "归因用量价值",
+        "label_usage_value": "归因至会员的估计 API 价值",
         "label_difference": "估计价值对比（API 等值减费用）",
+        "note_membership_basis": "这是该用量按 API 价格计算的价值——不是账单，也不是实际省下的现金。用量按路由归因至订阅；超出包含额度的部分未单独拆分。",
         "label_recording_since": "记录开始",
         "label_recording_last": "最近记录",
         "label_attributed": "已归因 token",
@@ -226,19 +246,23 @@ STRINGS: dict[str, dict[str, str]] = {
         "verdict_unknown": "未知",
         "note_no_calls": "此周期内没有记录到调用。",
         "note_unknown": "本周期记录覆盖不完整，无法给出用量。",
-        "note_api_theoretical": "API 等值是理论公开价格，不是账单。",
         "note_unpriced_calls": "{calls} 次调用缺少完整用量或价格证据；未定价 token 为零不代表其价值为零。",
-        "note_billing_rule_missing": "有 {calls} 次调用没有匹配的计费规则；请检查“费用”中的规则。",
+        "note_billing_rule_missing": "有 {calls} 次调用没有匹配的计费规则；请在“设置 → 高级计费规则”中检查规则。",
         "note_billing_evidence_missing": "有 {calls} 次调用匹配了计费规则，但缺少 API 价格或服务商费用记录证据；请检查价格目录和已记录费用。",
         "note_billing_rules_unreadable": "无法读取计费规则，因此无法检查 {calls} 次调用是否匹配；请修复规则文件后重试。",
-        "note_billing_reason_unknown": "有 {calls} 次调用未分类；现有记录无法说明是没有匹配规则，还是缺少价格/费用记录证据。请在“费用”中检查两者。",
+        "note_billing_reason_unknown": "有 {calls} 次调用未分类；现有记录无法说明是没有匹配规则，还是缺少价格/费用记录证据。请在“设置 → 高级计费规则”中检查两者。",
         "note_actual_not_recorded": "实际服务商费用不完整：部分调用缺少逐次确认记录，或记录未覆盖整个周期。",
-        "note_known_monthly_fees": "已知月度费用来自已保存的订阅声明，并非已确认付款。",
         "note_unknown_fee_accounts": "有 {count} 个订阅的费用未知；已知小计不包含这些费用。",
         "note_historical_fee_missing": "有 {count} 个当前订阅费用因历史费用证据缺失而无法分配至本周期；未推断生效日期。",
         "note_no_calls_spending": "此周期内没有记录到调用。",
-        "note_metered_basis": "计量与现金数据遵循您的费用规则。",
         "note_fees_prorata": "费用按比例分摊到报告周期。",
+        "note_fx_converted": "{currency} 费用按每 {currency} {rate} 美元折算，日期为 {date}（来源：{source}）。",
+        "note_fx_stale": "{currency} 汇率早于本报告周期；更新汇率会改变对比结果。",
+        "note_fee_zero_use_complete": "{label} 账号：在完整覆盖的周期内没有用量归因至本账号，因此其已申报费用按 0 观察用量计入{contrib}。任何负差额仅为本周期估计值，并非已确认的损失。",
+        "note_fee_zero_use_partial": "{label} 账号：没有用量归因至本账号，但记录未覆盖整个周期，因此用量可能只是未被记录而非未使用。其已申报费用已计入费用小计{contrib}，对比结果仅为附条件估计。",
+        "note_fee_zero_use_contrib": "，在对比中占 {amount}",
+        "note_fee_window_missing_complete": "{label} 账号：在完整覆盖的周期内没有用量归因至本账号。其 {monthly} 费用已知，但因历史费用证据缺失而无法分配至本周期，因此既不计入周期费用小计，也不进入对比。",
+        "note_fee_window_missing_partial": "{label} 账号：没有用量归因至本账号，但记录未覆盖整个周期，因此用量可能只是未被记录而非未使用。其 {monthly} 费用已知，但因历史费用证据缺失而无法分配至本周期，因此既不计入周期费用小计，也不进入对比。",
         "note_partial_comparison": "部分输入数据不完整，请将对比视为近似值。",
         "note_unavailable_comparison": "无法对比：缺少费用、覆盖率或汇率数据。",
         "note_unattributed": "无人认领路由上的用量保持未归因。",
@@ -246,15 +270,25 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_allowance_current": "额度状态为当前状态而非历史区间数据：有数据时，状态依据已保存的手动标记和当前周期内配置费用规则的计算值。",
         "note_allowance_cycle_dates": "周期日期按已保存的账号或套餐账期日历计算；未设置账期日时，报告按每月 1 日估算。这些日期并非服务商确认的重置时间。",
         "note_allowance_provider_scope": "报告摘要不包含服务商用量读数，也不会查询服务商。额度状态可能依据已保存的手动标记和配置费用规则中的本地记录用量；本地用量不等同于服务商用量。请在“会员”中查看服务商读数和重置时间。",
-        "note_allowance_no_reading": "有 {count} 个账号没有服务商读数或手动标记，因此额度状态未知。",
+        "note_allowance_no_reading": "有 {count} 个账号没有服务商读数或手动标记，因此额度状态未知。可以在“会员”中保存手动标记。",
         "note_allowance_no_cycle": "有 {count} 个账号保存了服务商用量比例，但没有可用的周期位置，因此无法判断消耗进度。",
         "note_allowance_no_cycle_position": "有 {count} 个账号没有可用的周期位置，因此无法判断消耗进度。",
-        "note_allowance_conflict": "有 {count} 个账号的服务商读数与手动标记冲突，因此不会依据其中任何一项给出判断。",
+        "note_allowance_conflict": "有 {count} 个账号的服务商读数与手动标记冲突，因此不会依据其中任何一项给出判断。请在“会员”中更新或清除手动标记以解决冲突。",
         "note_allowance_prepaid_unknown": "有 {count} 个账号的预付余额未知，因为系统没有记录充值情况。",
-        "note_allowance_unusable_limit": "有 {count} 个账号的额度上限不可用或无效，因此无法判断额度状态；请在“费用”中检查额度设置。",
-        "note_allowance_no_configured": "有 {count} 个账号没有已配置的额度窗口或已保存的读数。",
+        "note_allowance_unusable_limit": "有 {count} 个账号的额度上限不可用或无效，因此无法判断额度状态；请在“设置 → 高级计费规则”中更新额度。",
+        "note_allowance_no_configured": "有 {count} 个账号没有已配置的额度窗口或已保存的读数。请在“设置 → 高级计费规则”中配置额度。",
         "note_allowance_other_unknown": "现有证据不足以判断 {count} 个账号的额度状态；请在“会员”中查看已保存的读数和周期详情。",
         "note_allowance_all_unknown": "表中 {count} 个账号均无可用的额度证据，因此状态均为未知。",
+        "why_allowance_no_reading": "没有服务商读数或手动标记",
+        "why_allowance_no_cycle": "已保存服务商用量比例，但没有周期位置",
+        "why_allowance_no_cycle_position": "没有可用的周期位置",
+        "why_allowance_conflict": "服务商读数与手动标记冲突",
+        "why_allowance_prepaid": "未记录预付充值，余额未知",
+        "why_allowance_unusable_limit": "额度上限不可用或无效",
+        "why_allowance_no_configured": "没有已配置的额度窗口或已保存的读数",
+        "why_allowance_other": "现有证据不足以判断",
+        "fix_in_memberships": "在“会员”中处理",
+        "fix_in_settings": "在“设置 → 高级计费规则”中处理",
         "note_no_memberships": "没有已确认的会员。",
         "note_no_models": "本周期内没有记录到模型。",
         "note_no_providers": "本周期内没有记录到服务商。",
@@ -264,7 +298,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_credits_unknown": "需要匹配的点数规则才能给出点数消耗。",
         "note_partial_pricing": "价值对比需要两个周期都完整定价。",
         "note_previous_no_calls": "前一周期没有记录到调用，因此无法计算变化百分比。",
-        "note_previous_insufficient": "已记录历史不足以覆盖前一周期，因此无法计算变化。",
+        "note_previous_insufficient": "更早的历史记录不足，暂时无法对比。需要记录覆盖整个前一周期才能对比变化。",
         "note_previous_unavailable": "前一周期对比不可用。",
         "note_recon_gap": "自记录开始以来约漏记 {tokens}，数据可能低估实际用量。",
         "method_local": "本报告根据您记录的调用和会员数据在本地生成。除非您主动导出，否则不会离开您的设备。",
@@ -338,6 +372,18 @@ def _utc_date(value: Any) -> str:
     return text[:10] if len(text) >= 10 else text
 
 
+def _iso_date(value: Any) -> Optional[str]:
+    """A YYYY-MM-DD calendar date, or None when the value is not one.
+
+    Compares as plain text so timezone-naive rate dates never skew the
+    rate-age check by hours around a day boundary.
+    """
+    text = _utc_date(value)
+    if len(text) == 10 and text[4] == "-" and text[7] == "-":
+        return text
+    return None
+
+
 def _usage_section(S: Mapping[str, str], window_label: str, totals: Mapping[str, Any],
                    covers: bool, calls: int) -> dict[str, Any]:
     lines: list[dict[str, str]] = []
@@ -404,7 +450,9 @@ def _ranked_table(S: Mapping[str, str], sid: str, heading: str, window_label: st
 
 def _value_section(S: Mapping[str, str], window_label: str, totals: Mapping[str, Any],
                    pricing: Mapping[str, Any], covers: bool, calls: int) -> dict[str, Any]:
-    notes = [S["note_api_theoretical"]]
+    # The theoretical-price basis lives in the coverage legend and the
+    # methodology; this section keeps only its figures.
+    notes: list[str] = []
     if calls == 0 and not covers:
         lines = [
             {"label": S["label_api_value"], "value": S["unknown"]},
@@ -437,15 +485,24 @@ def _value_section(S: Mapping[str, str], window_label: str, totals: Mapping[str,
         {"label": S["label_unpriced"], "value": _tokens(unpriced) or S["unknown"]},
         {"label": S["label_unpriced_calls"], "value": str(unpriced_calls)},
     ]
-    # Incomplete call evidence and partial coverage are stated once in the
-    # coverage summary; the theoretical-price note above stays with the value.
+    # Incomplete call evidence, partial coverage and the theoretical-price
+    # basis are stated once in the coverage summary and the methodology.
     return {"id": "value", "heading": S["heading_value"], "window": window_label,
             "kind": "lines", "lines": lines, "notes": notes}
 
 
 def _spending_section(S: Mapping[str, str], window_label: str,
                       billing: Mapping[str, Any], covers: bool, calls: int) -> dict[str, Any]:
-    notes = [S["note_metered_basis"]]
+    # The generic cost-rule basis lives in the coverage legend; this section
+    # keeps only the limitations specific to its own figures.
+    #
+    # metered_usd is deliberately NOT labelled membership-attributed: by_kind
+    # spans api, custom, prepaid and unknown cost rules, while the
+    # subscription_included / subscription_credits / free profile kinds are
+    # legacy-ignored by billing.classify, so cost rules can never attribute
+    # membership. The verified membership-attributed figure comes from
+    # subscription entitlement attribution and lives in the fees section.
+    notes: list[str] = []
     evidence = billing.get("evidence") or {}
     provider_reported = evidence.get("provider_reported") or {}
     confirmed_calls = provider_reported.get("calls") or 0
@@ -556,7 +613,9 @@ def _attributed_pricing_partial(accounts: Any) -> bool:
 
 def _fees_section(S: Mapping[str, str], window_label: str,
                   headline: Mapping[str, Any], covers: bool, calls: int,
-                  pricing_partial: bool, groups: Any = ()) -> dict[str, Any]:
+                  pricing_partial: bool, groups: Any = (),
+                  accounts: Any = (),
+                  window_since: Any = None) -> dict[str, Any]:
     lines: list[dict[str, str]] = []
     group_rows = [g for g in (groups or []) if isinstance(g, dict)]
     group_by_currency = {str(g.get("currency") or "unknown"): g for g in group_rows}
@@ -615,11 +674,62 @@ def _fees_section(S: Mapping[str, str], window_label: str,
                 if difference_text is not None else None
     lines.append({"label": S["label_usage_value"], "value": usage_shown or S["unknown"]})
     lines.append({"label": S["label_difference"], "value": difference_shown or S["unknown"]})
-    notes = [S["note_fees_prorata"], S["note_known_monthly_fees"]]
+    # The saved-declaration basis lives in the coverage legend; the
+    # membership-value line keeps its own plain-English basis note.
+    notes = [S["note_fees_prorata"], S["note_membership_basis"]]
     if unknown_fee_accounts:
         notes.append(S["note_unknown_fee_accounts"].format(count=unknown_fee_accounts))
     if missing_window_accounts:
         notes.append(S["note_historical_fee_missing"].format(count=missing_window_accounts))
+    window_date = _iso_date(window_since)
+    for currency in currencies:
+        rate = (group_by_currency.get(currency) or {}).get("fx")
+        if not (group_by_currency.get(currency) or {}).get("converted"):
+            continue
+        if not isinstance(rate, dict):
+            continue
+        per_unit = rate.get("usd_per_unit")
+        as_of = rate.get("as_of")
+        source = rate.get("source")
+        if (isinstance(per_unit, bool) or not isinstance(per_unit, (int, float))
+                or not as_of or not source):
+            continue
+        rate_date = _iso_date(as_of)
+        notes.append(S["note_fx_converted"].format(
+            currency=currency, rate=per_unit,
+            date=rate_date or _utc_date(as_of), source=source))
+        if rate_date and window_date and rate_date < window_date:
+            notes.append(S["note_fx_stale"].format(currency=currency))
+    for row in accounts or []:
+        if not isinstance(row, dict):
+            continue
+        usage = row.get("usage")
+        if not isinstance(usage, dict) or (usage.get("calls") or 0) != 0:
+            continue
+        fee = row.get("monthly_equivalent") or {}
+        if fee.get("amount") is None:
+            continue
+        label = row.get("label") or row.get("account_id") or "?"
+        window_amount = (row.get("window_expenditure") or {}).get("amount")
+        if window_amount is None:
+            # A known current fee proves nothing about the window: a
+            # mid-window revision with unknown earlier history leaves the
+            # window fee unallocatable, so claim no counted-against share.
+            monthly_text = _money(fee.get("amount"), fee.get("currency"))
+            if monthly_text is None:
+                continue
+            key = ("note_fee_window_missing_complete" if covers
+                   else "note_fee_window_missing_partial")
+            notes.append(S[key].format(
+                label=label, monthly=f"{monthly_text}/mo"))
+            continue
+        difference = row.get("difference_usd")
+        amount = _money(difference) if difference is not None else None
+        contrib = (S["note_fee_zero_use_contrib"].format(amount=amount)
+                   if amount else "")
+        key = ("note_fee_zero_use_complete" if covers
+               else "note_fee_zero_use_partial")
+        notes.append(S[key].format(label=label, contrib=contrib))
     if calls == 0 and covers:
         notes.append(S["note_no_calls_spending"])
     # Lower-bound markers are explained once in the coverage summary; the
@@ -640,23 +750,44 @@ def _fees_section(S: Mapping[str, str], window_label: str,
             "fee_lower_bound": fee_lower_bound}
 
 
+#: Per-account allowance diagnostics: the grouped-note reason each unknown
+#: row is counted under, the short per-row explanation, and where the app can
+#: fix it. "memberships" opens the account's Allowances group (manual marks
+#: and readings); "settings" opens Advanced billing rules (cost-rule
+#: allowances); None is an honest provider limitation with no valid action.
+_ALLOWANCE_ACTIONS = {
+    "note_allowance_conflict": ("why_allowance_conflict", "memberships"),
+    "note_allowance_no_cycle": ("why_allowance_no_cycle", None),
+    "note_allowance_no_cycle_position": ("why_allowance_no_cycle_position", None),
+    "note_allowance_no_reading": ("why_allowance_no_reading", "memberships"),
+    "note_allowance_prepaid_unknown": ("why_allowance_prepaid", None),
+    "note_allowance_no_configured": ("why_allowance_no_configured", "settings"),
+    "note_allowance_unusable_limit": ("why_allowance_unusable_limit", "settings"),
+    "note_allowance_other_unknown": ("why_allowance_other", "memberships"),
+}
+
+
 def _allowances_section(S: Mapping[str, str], window_label: str,
                         accounts: list[Mapping[str, Any]]) -> dict[str, Any]:
     verdict_key = {"ahead": "verdict_ahead", "on_track": "verdict_on_track",
                    "behind": "verdict_behind", "exhausted": "verdict_exhausted"}
     rows: list[list[str]] = []
+    row_meta: list[dict[str, Any]] = []
     unknown_reasons: dict[str, int] = {}
     any_known = False
     for entry in accounts:
         cycle = entry.get("cycle") or {}
         days = cycle.get("days_remaining_display")
         state = (entry.get("rollup") or {}).get("state")
-        rows.append([str(entry.get("label") or entry.get("account_id") or ""),
+        account_id = entry.get("account_id")
+        rows.append([str(entry.get("label") or account_id or ""),
                      _utc_date(cycle.get("end")) or S["unknown"],
                      str(days) if isinstance(days, int) else S["unknown"],
                      S.get(verdict_key.get(state, ""), S["verdict_unknown"])])
         if state != "unknown":
             any_known = True
+            row_meta.append({"account_id": account_id, "why": None,
+                             "link": None, "export_status": None})
             continue
         windows = [row for row in (entry.get("windows") or []) if isinstance(row, dict)]
         unknown_windows = [row for row in windows if row.get("verdict") == "unknown"]
@@ -681,15 +812,27 @@ def _allowances_section(S: Mapping[str, str], window_label: str,
         else:
             reason = "note_allowance_other_unknown"
         unknown_reasons[reason] = unknown_reasons.get(reason, 0) + 1
+        why_key, link = _ALLOWANCE_ACTIONS[reason]
+        # The Markdown export cannot carry the preview's per-row actions, so
+        # each Unknown row keeps a plain-text reason and fix target; the
+        # preview keeps reading the short shared rows.
+        export_status = f"{S['verdict_unknown']} — {S[why_key]}"
+        if link == "memberships":
+            export_status += f" ({S['fix_in_memberships']})"
+        elif link == "settings":
+            export_status += f" ({S['fix_in_settings']})"
+        row_meta.append({"account_id": account_id, "why": S[why_key],
+                         "link": link, "export_status": export_status})
     notes = [S["note_allowance_current"]]
+    all_unknown = bool(rows) and not any_known
     if not rows:
         notes.append(S["note_no_memberships"])
     else:
         notes.extend((S["note_allowance_cycle_dates"],
                       S["note_allowance_provider_scope"]))
-        if not any_known:
-            # Every row below reads Unknown for lack of evidence: say so
-            # once up front instead of letting identical rows confuse.
+        if all_unknown:
+            # Every row reads Unknown for lack of evidence: say so once up
+            # front instead of letting identical rows confuse.
             notes.append(S["note_allowance_all_unknown"].format(count=len(rows)))
         for key in ("note_allowance_no_reading", "note_allowance_no_cycle",
                     "note_allowance_no_cycle_position",
@@ -702,7 +845,8 @@ def _allowances_section(S: Mapping[str, str], window_label: str,
             "kind": "table",
             "columns": [S["col_account"], S["col_cycle_ends"], S["col_days_left"],
                         S["col_status"]],
-            "rows": rows, "notes": notes}
+            "rows": rows, "row_meta": row_meta, "notes": notes,
+            "notes_first": all_unknown}
 
 
 def _changes_section(S: Mapping[str, str], window_label: str, days: int,
@@ -853,21 +997,36 @@ def _render_markdown(title: str, period_label: str, generated_label: str,
         if section.get("window") and section["window"] != period_label:
             parts.append(f"*{_escape(section['window'])}*")
             parts.append("")
+
+        def emit_notes() -> None:
+            for note in section.get("notes", []):
+                parts.append(f"> {_escape(note)}")
+            if section.get("notes"):
+                parts.append("")
+
+        if section.get("notes_first"):
+            # An all-Unknown allowance table reads as broken data unless the
+            # explanation comes first; the preview mirrors this order.
+            emit_notes()
         if section["kind"] == "table":
             columns = section.get("columns", [])
             parts.append("| " + " | ".join(_escape(c) for c in columns) + " |")
             parts.append("|" + "|".join("---" for _ in columns) + "|")
-            for row in section.get("rows", []):
-                parts.append("| " + " | ".join(_escape(c) for c in row) + " |")
+            metas = section.get("row_meta") or []
+            for index, row in enumerate(section.get("rows", [])):
+                cells = list(row)
+                export = (metas[index] if index < len(metas) else {}).get(
+                    "export_status")
+                if export is not None and cells:
+                    cells[-1] = export
+                parts.append("| " + " | ".join(_escape(c) for c in cells) + " |")
             parts.append("")
         for line in section.get("lines", []):
             parts.append(f"- **{_escape(line['label'])}:** {_escape(line['value'])}")
         if section.get("lines"):
             parts.append("")
-        for note in section.get("notes", []):
-            parts.append(f"> {_escape(note)}")
-        if section.get("notes"):
-            parts.append("")
+        if not section.get("notes_first"):
+            emit_notes()
     return "\n".join(parts).rstrip() + "\n"
 
 
@@ -875,7 +1034,8 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
                  event_db_path=None, state_db_path=None, membership_path=None,
                  plans: Mapping[str, Any] | None = None,
                  profiles_path=None, data_dir=None, catalogue: Catalogue | None = None,
-                 native_snapshots: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                 native_snapshots: Mapping[str, Any] | None = None,
+                 fx_file=None) -> dict[str, Any]:
     """Assemble the local digest for a trailing window.
 
     Read-only across the call store, membership store and catalogues.
@@ -900,7 +1060,8 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
     econ = economics.build_economics_report(
         days=days, trend_months=0, now=moment, event_db_path=event_db_path,
         state_db_path=state_db_path, membership_path=membership_path,
-        plans=plans, profiles_path=profiles_path, catalogue=book)
+        plans=plans, profiles_path=profiles_path, catalogue=book,
+        fx_file=fx_file)
     wx = weather.build_weather_report(
         now=moment, event_db_path=event_db_path, state_db_path=state_db_path,
         membership_path=membership_path, plans=plans, profiles_path=profiles_path,
@@ -920,6 +1081,7 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
     totals = report.get("totals") or {}
     calls = totals.get("calls") or 0
     covers = bool((econ.get("coverage") or {}).get("recording_covers_window"))
+    window_since = _window_epoch(window.get("since"))
     if not covers:
         conn = ustore.connect_reader(event_db_path)
         try:
@@ -928,15 +1090,15 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
             if conn is not None:
                 conn.close()
         baseline = recording.get("baseline_at")
-        since_ts = _window_epoch(window.get("since"))
-        covers = (isinstance(baseline, (int, float)) and since_ts is not None
-                  and baseline <= since_ts)
+        covers = (isinstance(baseline, (int, float)) and window_since is not None
+                  and baseline <= window_since)
 
     # The fees section is built first so the coverage summary knows whether
     # any fee subtotal shows a lower bound; display order is unchanged.
     fees_section = _fees_section(
         S, period_label, econ.get("headline") or {}, covers, calls,
-        _attributed_pricing_partial(econ.get("accounts")), econ.get("groups"))
+        _attributed_pricing_partial(econ.get("accounts")), econ.get("groups"),
+        accounts=econ.get("accounts"), window_since=window_since)
     sections: list[dict[str, Any]] = []
     sections.append(_report_coverage_section(
         S, period_label, covers=covers, calls=calls, totals=totals,
