@@ -1071,3 +1071,201 @@ test('the panel blocks the fx editor when the rates read fails', async () => {
   const save = [...container.querySelectorAll('button')].find(b => b.textContent === 'Save rates')
   assert.ok(save && save.disabled, 'save is blocked while the read has failed')
 })
+
+test('a comparable headline tells whether membership is worthwhile without claiming cash savings', async () => {
+  const behind = await renderSection(econFixture())
+  const verdict = behind.container.querySelector('[data-econ-verdict]')
+  assert.ok(verdict, 'the worth-it story renders beneath the headline figures')
+  assert.equal(verdict.dataset.econVerdict, 'behind')
+  assert.match(verdict.textContent, /\$2\.00 of API-equivalent usage attributed to memberships/)
+  assert.match(verdict.textContent, /against USD 19\.37 in fees/)
+  assert.match(verdict.textContent, /fees exceed usage value by \$17\.37/)
+  assert.match(verdict.textContent, /Estimated value, not cash saved/)
+  assert.doesNotMatch(verdict.textContent, /saved \$|you saved/i)
+  assert.doesNotMatch(verdict.textContent, /mystery/,
+    'unattributed routes stay out of the membership-covered story')
+  const data = econFixture()
+  data.headline.usage_usd = 23
+  data.headline.difference_usd = 3.63
+  const ahead = await renderSection(data)
+  const aheadVerdict = ahead.container.querySelector('[data-econ-verdict="ahead"]')
+  assert.ok(aheadVerdict)
+  assert.match(aheadVerdict.textContent, /the comparison favours membership/)
+  const partial = econFixture()
+  partial.headline.status = 'partial'
+  partial.headline.usage_usd = 23
+  partial.headline.difference_usd = 3.63
+  const partialVerdict = (await renderSection(partial)).container.querySelector('[data-econ-verdict]')
+  assert.equal(partialVerdict.dataset.econVerdict, 'partial')
+  assert.match(partialVerdict.textContent, /USD 19\.37 in known fees vs \$23\.00 of attributed usage/)
+  assert.doesNotMatch(partialVerdict.textContent, /favours|exceed/,
+    'a lower-bound comparison states components, never direction')
+  const even = econFixture()
+  even.headline.usage_usd = 19.37
+  even.headline.difference_usd = 0
+  const evenVerdict = (await renderSection(even)).container.querySelector('[data-econ-verdict="even"]')
+  assert.ok(evenVerdict, 'equal usage and fees read as break-even, not favourable')
+  assert.match(evenVerdict.textContent, /matches fees/)
+})
+
+test('a comparable headline tells the worth-it story in Simplified Chinese', async () => {
+  const previousTranslator = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  try {
+    const { container } = await renderSection(econFixture())
+    const verdict = container.querySelector('[data-econ-verdict="behind"]')
+    assert.ok(verdict)
+    assert.match(verdict.textContent, /费用超出用量价值 \$17\.37/)
+    assert.match(verdict.textContent, /不是实际节省的现金/)
+  } finally {
+    i18nBackend.t = previousTranslator
+  }
+})
+
+test('an unavailable comparison still shows its known fee and usage components', async () => {
+  const data = econFixture()
+  data.headline = { status: 'unavailable', fees_monthly_by_currency: [{ currency: 'USD', amount: 20 }],
+    fees_window_by_currency: [{ currency: 'USD', amount: 19.37 }], usage_usd: 5,
+    difference_usd: null, notes: ['1 subscription(s) have no fee.'],
+    note_codes: [{ code: 'econ_head_unpriced', params: { count: 1 } }] }
+  data.groups = [{ currency: 'USD', monthly_fees: 20, window_fees: 19.37, fee_complete: false,
+    fee_accounts: 1, unknown_fee_accounts: ['fee:missing'], window_fee_complete: false,
+    window_fee_accounts: 1, usage_usd: 5, difference_usd: null, converted: false,
+    fx: null, status: 'unavailable', notes: [], note_codes: [],
+    blockers: [{ account_id: 'fee:missing', code: 'subscription_fee_missing' }] }]
+  data.accounts = []
+  const { container } = await renderSection(data)
+  const verdict = container.querySelector('[data-econ-verdict="partial"]')
+  assert.ok(verdict, 'known components render even though the full comparison is unavailable')
+  assert.match(verdict.textContent, /Partial evidence: ≥USD 19\.37 in known fees vs \$5\.00 of attributed usage/,
+    'the incomplete window allocation keeps its lower-bound marker in the partial story')
+  assert.match(verdict.textContent, /full comparison is unavailable/)
+  assert.equal(verdict.querySelector('.wm-econ-verdict-link').textContent, 'See what blocks it')
+  assert.match(container.querySelector('.wm-product-stat strong').textContent, /USD/,
+    'the headline fee figure survives beside the partial story')
+  const feesOnly = econFixture()
+  feesOnly.headline = { status: 'unavailable', fees_monthly_by_currency: [{ currency: 'GBP', amount: 20 }],
+    fees_window_by_currency: [{ currency: 'GBP', amount: 20 }], usage_usd: null,
+    difference_usd: null, notes: [], note_codes: [] }
+  feesOnly.groups = []
+  feesOnly.accounts = []
+  const feesVerdict = (await renderSection(feesOnly)).container.querySelector('[data-econ-verdict="partial"]')
+  assert.match(feesVerdict.textContent, /GBP 20\.00 in known fees/)
+  assert.doesNotMatch(feesVerdict.textContent, /usage/)
+  const usageOnly = econFixture()
+  usageOnly.headline = { status: 'unavailable', fees_monthly_by_currency: [], fees_window_by_currency: [],
+    usage_usd: 5, difference_usd: null, notes: [], note_codes: [] }
+  usageOnly.groups = []
+  usageOnly.accounts = []
+  const usageVerdict = (await renderSection(usageOnly)).container.querySelector('[data-econ-verdict="partial"]')
+  assert.ok(usageVerdict.textContent.startsWith(T.I18N.en.econVerdictPartialUsage('$5.00')),
+    'an unknown fee component is omitted, never printed as a dash')
+  const bare = econFixture()
+  bare.headline = { status: 'unavailable', fees_monthly_by_currency: [], usage_usd: null,
+    difference_usd: null, notes: ['No subscription has a known fee.'] }
+  bare.groups = []
+  bare.accounts = []
+  assert.equal((await renderSection(bare)).container.querySelector('[data-econ-verdict]'), null,
+    'with no known component there is no partial story, only the honest Unavailable')
+  const zeroes = econFixture()
+  zeroes.headline = { status: 'ok', fees_monthly_by_currency: [{ currency: 'USD', amount: 0 }],
+    fees_window_by_currency: [{ currency: 'USD', amount: 0 }], usage_usd: 0,
+    difference_usd: 0, notes: [], note_codes: [] }
+  assert.equal((await renderSection(zeroes)).container.querySelector('[data-econ-verdict]'), null,
+    'no spend and no usage carry no worth-it story')
+})
+
+test('the partial verdict points at what blocks the full comparison', async () => {
+  const attention = await renderAttention({
+    groups: [{ currency: 'USD', blockers: [{ account_id: 'a', code: 'subscription_fee_missing' }] }],
+    econAccounts: [{ account_id: 'a', label: 'Missing fee account' }],
+  })
+  const data = econFixture()
+  data.headline = { status: 'unavailable', fees_monthly_by_currency: [{ currency: 'USD', amount: 20 }],
+    fees_window_by_currency: [{ currency: 'USD', amount: 19.37 }], usage_usd: 5,
+    difference_usd: null, notes: [], note_codes: [] }
+  const { container } = await renderSection(data)
+  const link = container.querySelector('.wm-econ-verdict-link')
+  assert.ok(link)
+  await React.act(async () => { link.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
+  assert.equal(document.activeElement,
+    attention.container.querySelector('[data-costs-attention-heading]'),
+    'the verdict link focuses the attention summary it points at')
+})
+
+test('incomplete groups name their window-fee scope', async () => {
+  const data = econFixture()
+  data.groups = [{ currency: 'USD', monthly_fees: 20, window_fees: 19.37, fee_complete: false,
+    fee_accounts: 2, unknown_fee_accounts: ['fee:one', 'fee:two'], window_fee_complete: false,
+    window_fee_accounts: 1, unallocated_window_accounts: ['fee:three'],
+    usage_usd: 5, difference_usd: null, converted: false,
+    fx: null, status: 'unavailable', notes: [], note_codes: [], blockers: [] }]
+  data.accounts = []
+  const { container } = await renderSection(data)
+  const scope = container.querySelector('[data-econ-group="USD"] .wm-econ-group-scope')
+  assert.ok(scope, 'the partial group scopes its window fees')
+  assert.equal(scope.textContent,
+    'Known window fees from 1 of 4 subscriptions · 2 fees unknown, 1 lacks fee history')
+  const windowOnly = econFixture()
+  windowOnly.groups = [{ currency: 'USD', monthly_fees: 40, window_fees: 19.37, fee_complete: true,
+    fee_accounts: 2, unknown_fee_accounts: [], window_fee_complete: false,
+    window_fee_accounts: 1, unallocated_window_accounts: ['fee:three'],
+    usage_usd: 5, difference_usd: null, converted: false,
+    fx: null, status: 'unavailable', notes: [], note_codes: [], blockers: [] }]
+  windowOnly.accounts = []
+  const historyScope = (await renderSection(windowOnly)).container
+    .querySelector('[data-econ-group="USD"] .wm-econ-group-scope')
+  assert.equal(historyScope?.textContent,
+    'Known window fees from 1 of 2 subscriptions · 1 lacks fee history',
+    'window-only gaps scope the displayed figure too')
+  const complete = await renderSection(econFixture())
+  assert.equal(complete.container.querySelector('[data-econ-group="USD"] .wm-econ-group-scope'), null,
+    'a complete group needs no scope line')
+})
+
+test('attention categories explain whether an action helps', async () => {
+  const { container } = await renderAttention({
+    groups: [{ currency: 'GBP', blockers: [
+      { account_id: 'a', code: 'subscription_fee_missing' },
+      { account_id: 'a', code: 'no_usage_recorded' },
+      { account_id: 'b', code: 'tier_rate_unavailable' },
+    ] }],
+    econAccounts: [],
+  })
+  const hints = [...container.querySelectorAll('.wm-cost-attn-cat-hint')].map(el => el.textContent)
+  assert.deepEqual(hints, [
+    'These have a fix — use the action on each row.',
+    'These resolve as recording history accumulates — nothing to fix.',
+    'This evidence is not reported — the blocker log holds the detail.',
+  ])
+  const { container: zhContainer } = await renderAttention({
+    groups: [{ currency: 'GBP', blockers: [
+      { account_id: 'a', code: 'subscription_fee_missing' },
+      { account_id: 'a', code: 'no_usage_recorded' },
+      { account_id: 'b', code: 'tier_rate_unavailable' },
+    ] }],
+    econAccounts: [],
+  }, 'zh')
+  const zhHints = [...zhContainer.querySelectorAll('.wm-cost-attn-cat-hint')].map(el => el.textContent)
+  assert.deepEqual(zhHints, [
+    '这些问题可以修复——请按每行的操作处理。',
+    '这些问题会随着记录历史的积累而解决——无需修复。',
+    '此类证据未被报告——详情见问题日志。',
+  ])
+})
+
+test('unknown blocker codes stay out of the account table', async () => {
+  const data = econFixture()
+  data.accounts[0].blockers = [{ code: 'mystery_future_code' }]
+  const { container } = await renderSection(data)
+  const table = container.querySelector('.wm-econ-table')
+  assert.match(table.textContent, /exact code is in the blocker log/,
+    'the account row falls back to the code-free sentence')
+  assert.doesNotMatch(table.textContent, /mystery_future_code/)
+  const log = container.querySelector('#wm-cost-blocker-log')
+  assert.match(log.textContent, /\(mystery_future_code\)/,
+    'the exact code stays available in the closed technical log')
+})
