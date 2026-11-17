@@ -1715,6 +1715,79 @@ class Wp21FxAndConfidenceTests(DigestCase):
         self.assertIn("test:default", notes)
         self.assertIn("完整覆盖的周期内没有记录到用量", notes)
         self.assertIn("并非已确认的损失", notes)
+
+    # -- Unallocatable window fees -----------------------------------------
+
+    def revised_fee_plans(self):
+        return plans_doc(
+            {"id": "test.rev", "provider_family": "test", "name": "Rev",
+             "price": {"amount": None, "currency": "USD",
+                       "period": "month"}},
+        )
+
+    def revised_fee_account(self):
+        return account(
+            "test:rev", "test", plan_id="test.rev",
+            fee_overrides=[{
+                "id": "current", "amount": 30.0, "currency": "USD",
+                "period": "month",
+                "effective_from": datetime.fromtimestamp(
+                    NOW - 3 * DAY).strftime("%Y-%m-%dT%H:%M:%SZ")}])
+
+    def test_unallocated_window_fee_explains_missing_history(self):
+        self.write_store([self.revised_fee_account()])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 40 * DAY)
+        self.create_state(0)
+        result = self.report(plans=self.revised_fee_plans())
+        fees = self.section(result, "fees")
+        notes = " ".join(fees["notes"])
+        self.assertIn("Account test:rev: no usage was recorded in the "
+                      "fully observed window", notes)
+        self.assertIn("Its $30.00/mo fee is known but cannot be allocated "
+                      "to this window because historical fee evidence is "
+                      "missing", notes)
+        self.assertIn("it enters neither the window fee total nor the "
+                      "comparison", notes)
+        self.assertNotIn("counts against $0 observed value", notes)
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(by_label["Known monthly fees (USD)"], "$30.00/mo")
+        self.assertEqual(by_label["Fees in window (USD)"], "—")
+        self.assertIn("cannot be allocated to this window", result["markdown"])
+
+    def test_unallocated_window_fee_stays_conditional_when_partial(self):
+        self.write_store([self.revised_fee_account()])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 2 * DAY)
+        self.create_state(0)
+        result = self.report(plans=self.revised_fee_plans())
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("may be unrecorded rather than unused", notes)
+        self.assertIn("Its $30.00/mo fee is known but cannot be allocated "
+                      "to this window", notes)
+        self.assertNotIn("counts against $0 observed value", notes)
+
+    def test_unallocated_window_fee_in_chinese(self):
+        self.write_store([self.revised_fee_account()])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 40 * DAY)
+        self.create_state(0)
+        result = self.report(plans=self.revised_fee_plans(), lang="zh")
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("其 $30.00/mo 费用已知，但因历史费用证据缺失而无法分配"
+                      "至本周期", notes)
+        self.assertIn("既不计入周期费用小计，也不进入对比", notes)
+
+    def test_allocated_window_fee_keeps_the_counted_against_note(self):
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([], baseline_at=NOW - 40 * DAY)
+        self.create_state(0)
+        result = self.report()
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("counts against $0 observed value", notes)
+        self.assertIn("contributing -$", notes)
+        self.assertNotIn("cannot be allocated to this window", notes)
         section = D._changes_section(
             D.STRINGS["en"], "Last 7 days", 7,
             {"comparable": False, "reason": "insufficient_history"}, {})

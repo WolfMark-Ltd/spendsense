@@ -132,6 +132,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_fee_zero_use_complete": "Account {label}: no usage was recorded in the fully observed window, so its declared fee counts against $0 observed value{contrib}. Treat any negative difference as an estimate for this window, not a confirmed loss.",
         "note_fee_zero_use_partial": "Account {label}: no usage was observed, but recording does not cover the full window, so usage may be unrecorded rather than unused. Its declared fee is included in the fee total{contrib}; treat the comparison as conditional.",
         "note_fee_zero_use_contrib": ", contributing {amount} to the comparison",
+        "note_fee_window_missing_complete": "Account {label}: no usage was recorded in the fully observed window. Its {monthly} fee is known but cannot be allocated to this window because historical fee evidence is missing, so it enters neither the window fee total nor the comparison.",
+        "note_fee_window_missing_partial": "Account {label}: no usage was observed, but recording does not cover the full window, so usage may be unrecorded rather than unused. Its {monthly} fee is known but cannot be allocated to this window because historical fee evidence is missing, so it enters neither the window fee total nor the comparison.",
         "note_partial_comparison": "Some inputs are partial, so treat the comparison as approximate.",
         "note_unavailable_comparison": "Comparison unavailable: fees, coverage or rates are missing.",
         "note_unattributed": "Usage on routes no account claims stays unattributed.",
@@ -259,6 +261,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_fee_zero_use_complete": "{label} 账号：在完整覆盖的周期内没有记录到用量，因此其已申报费用按 0 观察用量计入{contrib}。任何负差额仅为本周期估计值，并非已确认的损失。",
         "note_fee_zero_use_partial": "{label} 账号：没有观察到用量，但记录未覆盖整个周期，因此用量可能只是未被记录而非未使用。其已申报费用已计入费用小计{contrib}，对比结果仅为附条件估计。",
         "note_fee_zero_use_contrib": "，在对比中占 {amount}",
+        "note_fee_window_missing_complete": "{label} 账号：在完整覆盖的周期内没有记录到用量。其 {monthly} 费用已知，但因历史费用证据缺失而无法分配至本周期，因此既不计入周期费用小计，也不进入对比。",
+        "note_fee_window_missing_partial": "{label} 账号：没有观察到用量，但记录未覆盖整个周期，因此用量可能只是未被记录而非未使用。其 {monthly} 费用已知，但因历史费用证据缺失而无法分配至本周期，因此既不计入周期费用小计，也不进入对比。",
         "note_partial_comparison": "部分输入数据不完整，请将对比视为近似值。",
         "note_unavailable_comparison": "无法对比：缺少费用、覆盖率或汇率数据。",
         "note_unattributed": "无人认领路由上的用量保持未归因。",
@@ -702,9 +706,23 @@ def _fees_section(S: Mapping[str, str], window_label: str,
         usage = row.get("usage")
         if not isinstance(usage, dict) or (usage.get("calls") or 0) != 0:
             continue
-        if (row.get("monthly_equivalent") or {}).get("amount") is None:
+        fee = row.get("monthly_equivalent") or {}
+        if fee.get("amount") is None:
             continue
         label = row.get("label") or row.get("account_id") or "?"
+        window_amount = (row.get("window_expenditure") or {}).get("amount")
+        if window_amount is None:
+            # A known current fee proves nothing about the window: a
+            # mid-window revision with unknown earlier history leaves the
+            # window fee unallocatable, so claim no counted-against share.
+            monthly_text = _money(fee.get("amount"), fee.get("currency"))
+            if monthly_text is None:
+                continue
+            key = ("note_fee_window_missing_complete" if covers
+                   else "note_fee_window_missing_partial")
+            notes.append(S[key].format(
+                label=label, monthly=f"{monthly_text}/mo"))
+            continue
         difference = row.get("difference_usd")
         amount = _money(difference) if difference is not None else None
         contrib = (S["note_fee_zero_use_contrib"].format(amount=amount)
