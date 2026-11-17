@@ -1648,7 +1648,7 @@ class Wp21FxAndConfidenceTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         notes = " ".join(fees["notes"])
-        self.assertIn("Account test:default: no usage was recorded in the "
+        self.assertIn("Account test:default: no usage was attributed to this account in the "
                       "fully observed window", notes)
         self.assertIn("not a confirmed loss", notes)
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
@@ -1665,7 +1665,7 @@ class Wp21FxAndConfidenceTests(DigestCase):
         self.create_state(0)
         result = self.report()
         notes = " ".join(self.section(result, "fees")["notes"])
-        self.assertIn("Account test:default: no usage was observed, but "
+        self.assertIn("Account test:default: no usage was attributed to this account, but "
                       "recording does not cover the full window", notes)
         self.assertIn("may be unrecorded rather than unused", notes)
         self.assertIn("treat the comparison as conditional", notes)
@@ -1685,8 +1685,32 @@ class Wp21FxAndConfidenceTests(DigestCase):
         self.create_state(1_000_000)
         result = self.report(plans=self.gbp_plans(), catalogue=self.two_provider_book())
         notes = " ".join(self.section(result, "fees")["notes"])
-        self.assertIn("Account other:idle: no usage was recorded", notes)
+        self.assertIn("Account other:idle: no usage was attributed", notes)
         self.assertNotIn("Account test:used: no usage", notes)
+
+    def test_ambiguous_route_zero_use_names_attribution(self):
+        # Both accounts claim the same route, so its recorded usage is
+        # attributed to nobody: each account observes zero calls.
+        self.write_store([
+            account("test:a", "test", plan_id="test.plus",
+                    route_slugs=["test"]),
+            account("test:b", "test", plan_id="test.plus",
+                    route_slugs=["test"]),
+        ])
+        self.write_profiles([])
+        self.create_events([
+            {"provider": "test", "model": "m", "input_tokens": 1_000_000,
+             "ts": NOW - 1 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report()
+        fees_notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("Account test:a: no usage was attributed to this "
+                      "account", fees_notes)
+        self.assertIn("Account test:b: no usage was attributed to this "
+                      "account", fees_notes)
+        coverage_notes = " ".join(self.section(result, "coverage")["notes"])
+        self.assertIn("claimed by more than one account", coverage_notes)
 
     def test_unknown_fee_zero_use_carries_no_charge_note(self):
         plans = plans_doc(
@@ -1713,7 +1737,7 @@ class Wp21FxAndConfidenceTests(DigestCase):
         result = self.report(lang="zh")
         notes = " ".join(self.section(result, "fees")["notes"])
         self.assertIn("test:default", notes)
-        self.assertIn("完整覆盖的周期内没有记录到用量", notes)
+        self.assertIn("完整覆盖的周期内没有用量归因至本账号", notes)
         self.assertIn("并非已确认的损失", notes)
 
     # -- Unallocatable window fees -----------------------------------------
@@ -1742,7 +1766,7 @@ class Wp21FxAndConfidenceTests(DigestCase):
         result = self.report(plans=self.revised_fee_plans())
         fees = self.section(result, "fees")
         notes = " ".join(fees["notes"])
-        self.assertIn("Account test:rev: no usage was recorded in the "
+        self.assertIn("Account test:rev: no usage was attributed to this account in the "
                       "fully observed window", notes)
         self.assertIn("Its $30.00/mo fee is known but cannot be allocated "
                       "to this window because historical fee evidence is "
