@@ -793,9 +793,11 @@ test('analytics pricing keeps token coverage separate from calls lacking evidenc
    unpriced_tokens:10,unpriced_calls:1,list_usd:0.9},t)
   assert.match(mixed,/90\.0%/)
   assert.match(mixed,/1/)
-  const overview = T.I18N[language].ovUnpriced(0,1)
-  assert.match(overview,language==='en'?/1 call\(s\)/:/1 次调用/)
-  assert.doesNotMatch(overview,language==='en'?/0 tokens/:/0 个 token/)
+  const overview = T.I18N[language].ovUnpriced
+  assert.equal(typeof overview, 'string', 'Overview uses one concise pricing-coverage summary')
+  assert.match(overview, language === 'en' ? /backend usage in the last 30 days/ : /过去 30 天.*后端用量/)
+  assert.match(overview, language === 'en' ? /pricing evidence is incomplete/i : /缺少完整定价证据/)
+  assert.doesNotMatch(overview, language === 'en' ? /0 tokens|1 call\(s\)/ : /0 个 token|1 次调用/)
  }
 })
 

@@ -1343,9 +1343,14 @@ test('Overview keeps the subtotal visible and explains unknown legacy coverage',
   await flush(4)
   const recorded = container.querySelector('[data-kpi="recorded-usage"]').textContent
   assert.match(recorded, /\$0\.42/, 'the measured subtotal remains visible')
-  assert.match(recorded, /At least \$0\.42/, 'unknown legacy coverage qualifies the subtotal as a lower bound')
-  assert.match(recorded, /Partial/)
-  assert.match(recorded, /Older coverage unknown/i)
+  assert.doesNotMatch(recorded, /At least/i, 'the amount stays prominent without a qualifier prefix')
+  assert.match(recorded, /Partial/, 'unknown legacy coverage is flagged in the card footer')
+  const scopeNote = container.querySelector('.wm-scope-note').textContent
+  assert.match(scopeNote, /incomplete activity is excluded from priced subtotals/i)
+  const method = container.querySelector('details.wm-method')
+  assert.ok(method)
+  assert.equal(method.open, false, 'the calculation explanation remains collapsed by default')
+  assert.match(method.textContent, /records written before call-level coverage counters cannot confirm every call included usage data/i)
   await React.act(async () => T.$ledger.set(T.emptyLedger()))
 })
 
@@ -1423,7 +1428,8 @@ test('Overview keeps provider charges not recorded because analytics has no per-
   await flush(4)
   const chargeCard = container.querySelector('[data-kpi="actual-charges"]')
   assert.match(chargeCard.textContent, /Not recorded/)
-  assert.match(chargeCard.textContent, /Per-call actual-charge evidence is not in analytics/i)
+  assert.doesNotMatch(chargeCard.textContent, /Per-call actual-charge evidence is not in analytics/i,
+    'the card no longer repeats its explanatory caveat')
   assert.match(chargeCard.textContent, /No per-call evidence/)
   assert.doesNotMatch(chargeCard.textContent, /\$0\.50|1 of 2 records|evidence covers/i,
     'aggregate totals and billing classifications do not imply per-call charge evidence')
@@ -1450,14 +1456,16 @@ test('Overview attention gives specific actions and summarises extra issues with
   await flush(4)
   const attention = container.querySelector('.wm-overview-attention')
   const buttons = [...attention.querySelectorAll('.wm-attention-rows button')].map(button => button.textContent)
-  assert.deepEqual(buttons, ['Confirm arrangement', 'Confirm arrangement', 'Review memberships', 'Open Usage'])
+  assert.deepEqual(buttons, [
+    'Confirm arrangement', 'Confirm arrangement', 'Review memberships', 'View 30-day pricing coverage'
+  ])
   assert.match(attention.textContent, /2 more account issues/)
   assert.equal(attention.querySelectorAll('.wm-setting-action .wm-button').length, 0,
     'issue rows do not repeat the blank-state navigation shortcuts')
-  assert.equal(buttons.filter(label => label === 'Open Usage').length, 1,
-    'the unpriced row uses one honest general Usage shortcut')
-  assert.equal(buttons.at(-1), 'Open Usage',
-    'general navigation wording does not promise an unpriced-only destination')
+  assert.equal(buttons.filter(label => label === 'View 30-day pricing coverage').length, 1,
+    'the pricing issue has one specific evidence action')
+  assert.equal(buttons.at(-1), 'View 30-day pricing coverage',
+    'the action names the pricing destination')
   await React.act(async () => buttons && [...attention.querySelectorAll('.wm-attention-rows button')].at(-1).click())
   assert.equal(T.$ledgerTab.get(), 'usage', 'the general usage action opens the Usage tab')
 })
@@ -1499,8 +1507,8 @@ test('Overview ranks backend model call counts without displaying per-model cost
   assert.doesNotMatch(models.textContent, /\$|10|900/, 'the ranking uses calls, not price values')
   assert.equal(transportCtl.count(call => call.path === '/analytics?days=30'), 1,
     'the panel reuses Overview analytics rather than adding a request')
-  await clickByText(models, 'Open Usage')
-  assert.equal(T.$ledgerTab.get(), 'usage')
+  assert.equal([...models.querySelectorAll('button')].some(button => button.textContent.trim() === 'Open Usage'), false,
+    'Most-used models does not repeat the Usage navigation action')
 })
 
 test('Overview marks a partly priced Desktop month as a lower bound', async () => {
@@ -1524,7 +1532,7 @@ test('Overview marks a partly priced Desktop month as a lower bound', async () =
   await flush(4)
   const recorded = container.querySelector('[data-kpi="recorded-usage"]').textContent
   assert.match(recorded, /\$0\.42/, 'the priced subtotal is shown')
-  assert.match(recorded, /At least \$0\.42/, 'a partly priced month is a lower bound')
+  assert.doesNotMatch(recorded, /At least/i, 'the figure stays prominent without a qualifier prefix')
   assert.match(recorded, /Partial/, 'a partly priced month carries Partial')
   await React.act(async () => T.$ledger.set(T.emptyLedger()))
 })
@@ -1558,7 +1566,7 @@ test('Overview keeps a known subtotal partial when a call has missing usage data
   await flush(4)
   const recorded = container.querySelector('[data-kpi="recorded-usage"]').textContent
   assert.match(recorded, /\$0\.42/, 'the priced subtotal is shown')
-  assert.match(recorded, /At least \$0\.42/, 'a subtotal with missing usage is a lower bound')
+  assert.doesNotMatch(recorded, /At least/i, 'the figure stays prominent without a qualifier prefix')
   assert.match(recorded, /Partial/, 'the subtotal is explicitly partial')
   await React.act(async () => T.$ledger.set(T.emptyLedger()))
 })
@@ -1610,7 +1618,9 @@ test('Overview distinguishes unknown subscription fees from having no recurring 
   await flush(4)
   const fees = container.querySelector('[data-kpi="saved-fees"]').textContent
   assert.match(fees, /Unknown/, 'an unknown subscription fee is Unknown, not a dash')
-  assert.match(fees, /1 fee unknown; excluded/, 'the subtotal discloses the missing fee')
+  assert.match(container.querySelector('[data-kpi="saved-fees"] .wm-kpi-foot').textContent, /Unknown/,
+    'the fee status remains explicitly unknown')
+  assert.doesNotMatch(fees, /fee unknown; excluded/i, 'the card avoids a repeated exclusion sentence')
 
   // Genuinely fee-free accounts are a different state, not Unknown.
   queryClient.clear()
@@ -1662,7 +1672,7 @@ test('Overview shows a known fee subtotal as Partial when some fees are unknown'
   const card = container.querySelector('[data-kpi="saved-fees"]')
   assert.match(card.textContent, /USD 20\.00\/mo/, 'the known subtotal keeps its amount, currency and period')
   assert.match(card.textContent, /Partial/, 'an unknown subscription marks the subtotal Partial')
-  assert.match(card.textContent, /1 fee unknown; excluded/, 'the missing fee is disclosed')
+  assert.doesNotMatch(card.textContent, /fee unknown; excluded/i, 'the partial chip replaces a repeated exclusion sentence')
 })
 
 test('Overview never treats an unconfirmed or plan-less account as a zero fee', async () => {
@@ -1687,7 +1697,9 @@ test('Overview never treats an unconfirmed or plan-less account as a zero fee', 
   const fees = container.querySelector('[data-kpi="saved-fees"]').textContent
   assert.match(fees, /Unknown/, 'unconfirmed and plan-less accounts are Unknown, not zero')
   assert.doesNotMatch(fees, /No recurring fees/)
-  assert.match(fees, /2 fees unknown; excluded/)
+  assert.match(container.querySelector('[data-kpi="saved-fees"] .wm-kpi-foot').textContent, /Unknown/,
+    'an unconfirmed or plan-less account stays explicitly unknown')
+  assert.doesNotMatch(fees, /fees unknown; excluded/i, 'the card avoids a repeated exclusion sentence')
 })
 
 test('Overview attention includes stored allowance weather without provider reads', async () => {
@@ -1788,7 +1800,9 @@ test('Overview attention rows route to Memberships and Usage', async () => {
 
   const summary = container.querySelector('.wm-product-summary')
   assert.match(summary.textContent, /Unknown/, 'no priced Desktop cost renders Unknown, not a zero')
-  assert.match(summary.textContent, /At least \$47\.90/, 'unpriced tokens make the total a lower bound')
+  const estimate = summary.querySelector('[data-kpi="api-equivalent-estimate"]')
+  assert.match(estimate.querySelector('.wm-kpi-figure').textContent, /\$47\.90/,
+    'the estimate remains prominent without a qualifier prefix')
   const chips = [...summary.querySelectorAll('.wm-certainty')].map(el => el.textContent)
   assert.ok(chips.includes('Partial'), `partial certainty is labelled (${chips})`)
   assert.ok(chips.includes('Declared'), `the declared fee keeps its own chip (${chips})`)
@@ -1807,11 +1821,11 @@ test('Overview attention rows route to Memberships and Usage', async () => {
   assert.equal(queued.focus, 'arrangement')
   T.$ledgerTab.set('overview'); await flush(3)
   assert.match(rows[1].textContent, /Usage pricing/)
-  assert.match(rows[1].textContent, /18,240 tokens/)
-  assert.match(rows[1].textContent, /1 call\(s\)/)
-  assert.doesNotMatch(rows[1].textContent, /true tokens/)
-  await clickByText(rows[1], 'Open Usage')
-  assert.equal(T.$ledgerTab.get(), 'usage')
+  assert.match(rows[1].textContent, /Pricing evidence is incomplete for some backend usage/i)
+  assert.doesNotMatch(rows[1].textContent, /18,240 tokens|1 call\(s\)/,
+    'the row avoids repeating counts and directs investigation to the 30-day evidence')
+  await clickByText(rows[1], 'View 30-day pricing coverage')
+  assert.equal(T.$ledgerTab.get(), 'usage', 'the pricing action opens the Usage evidence view')
   T.$membershipTarget.set(null)
 })
 
