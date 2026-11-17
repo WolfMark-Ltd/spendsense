@@ -31,7 +31,7 @@ assets have separate terms in BRANDING.md.
 
 ## Release identity and the pairing contract
 
-The current release declares `0.6.1` in `plugin.yaml`, `PLUGIN_VERSION`,
+The current release declares `0.6.7` in `plugin.yaml`, `PLUGIN_VERSION`,
 `dashboard/manifest.json` and `plugin_api.VERSION`. Matching version labels alone
 do not establish installed file identity or runtime compatibility: earlier builds
 shared `0.6.0`. Verify these three facts as well:

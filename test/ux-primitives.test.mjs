@@ -79,6 +79,18 @@ const renderEl = async element => {
 const flush = async (times = 3) => {
   await React.act(async () => { for (let i = 0; i < times; i += 1) await new Promise(r => setTimeout(r, 0)) })
 }
+const pricingReport = ({unpricedTokens=20,unpricedCalls=1}={}) => ({
+  ok: true,
+  totals: { list_usd: 1.25, billed_usd: null, billed_complete: false, calls: 3, tokens: 100,
+    input_tokens: 70, output_tokens: 30, cache_read_tokens: 0, cache_write_tokens: 0,
+    unpriced_tokens: unpricedTokens, unpriced_calls: unpricedCalls, priced_tokens: 100-unpricedTokens,
+    cache_hit_rate: null, billing_mix: { estimated: 3 }, economics: {} },
+  pricing_coverage: { coverage: unpricedTokens ? .8 : 1 }, by_model: [], by_route: [], by_scope: [],
+  trend: { buckets: [], granularity: 'day' },
+  window: { since: '2026-10-18', until: '2026-11-16', since_local: '2026-10-18', until_local: '2026-11-16', timezone: 'UTC' },
+  recording: { since: '2026-10-18', last: '2026-11-16' }, previous: { comparable: false, reason: 'no_previous_calls' },
+  attribution: {}, options: { models: [], providers: [], surfaces: [], tasks: [], operations: [] },
+})
 // LedgerPage tests must own the whole document: earlier roots stay mounted
 // until `after`, and the focus-restoration effect queries the document, so a
 // leftover tab bar from another test would receive (or mask) the focus.
@@ -107,7 +119,7 @@ test('SHARED_CSS names the Phase A roles and enforces [hidden]', () => {
 test('shared tooltip styles are opaque and reach both pane and product surfaces', () => {
   assert.match(T.SHARED_CSS, /\.wm-info\{position:relative/)
   assert.match(T.SHARED_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)
-  assert.match(T.SHARED_CSS, /\.wm-info-btn::after\{[^}]*width:\.78em;height:\.78em/)
+  assert.match(T.SHARED_CSS, /\.wm-info-btn::after\{[^}]*width:max\(9px,\.58em\);height:max\(9px,\.58em\)/)
   assert.match(T.SHARED_CSS, /\.wm-info-pop\{[^}]*background-color:Canvas[^}]*background-image:linear-gradient\(var\(--wm-surface-raised\)/)
   assert.match(T.PRODUCT_CSS, /\.wm-product-tabs\{[^}]*position:sticky[^}]*background-color:Canvas[^}]*background-image:linear-gradient\(var\(--wm-surface\)/)
   assert.match(T.METER_CSS, /wm-info-pop/, 'pane bundle carries the shared tooltip')
@@ -264,6 +276,19 @@ test('InfoTip: focus opens an accessible tooltip, Escape closes it', async () =>
   T.$infoOpen.set(null)
 })
 
+test('InfoTip: unmounting its owner clears stale open state', async () => {
+  T.$infoOpen.set(null)
+  const container = await renderEl(React.createElement(T.InfoTip, {
+    id: 'ux-unmount', label: 'About this figure', text: 'Priced when recorded.',
+  }))
+  const btn = container.querySelector('.wm-info-btn')
+  await React.act(async () => btn.focus()); await flush()
+  assert.equal(T.$infoOpen.get(), 'ux-unmount')
+  const root = roots.pop()
+  await React.act(async () => root.unmount())
+  assert.equal(T.$infoOpen.get(), null, 'unmount cleanup clears this tooltip without leaving page-level state behind')
+})
+
 test('LedgerPage: keyboard navigation restores focus to the newly mounted selected tab', async () => {
   // Regression: LedgerPage replaces the whole page (tab bar included) on a
   // tab change. Focusing the outgoing tab lost focus to <body>, so a second
@@ -349,6 +374,160 @@ test('LedgerPage: a no-op Home/End press does not leak focus restoration into mo
     'mouse navigation after a no-op End must not receive restored focus')
 })
 
+test('Overview pricing action opens unfiltered 30-day Usage coverage and focuses its evidence', async () => {
+  await resetDom()
+  queryClient.clear()
+  const previousRest = T.getRest()
+  const requests = []
+  const response = pricingReport()
+  T.setRest(async path => {
+    requests.push(path)
+    if (path.startsWith('/analytics?days=')) return response
+    return previousRest(path)
+  })
+  try {
+    const scope = T.analyticsScope('default', 'connected', 'gateway-a')
+    T.$analytics.set({ [scope]: {
+      ...T.analyticsInitialState(), days: 7,
+      filters: { model: 'old-model', provider: 'old-provider', surface: 'old-surface', task: 'old-task', parent: 'old-parent', scope: 'direct' },
+    } })
+    T.$ledgerTab.set('overview')
+    const container = await renderEl(React.createElement(T.LedgerPage))
+    await flush(8)
+    const action = [...container.querySelectorAll('.wm-attention-rows button')]
+      .find(button => button.textContent.trim() === enT('ovPricingAction'))
+    assert.ok(action, 'Overview presents the specific pricing coverage action')
+    assert.equal(action.type, 'button', 'the action uses native keyboard-operable button semantics')
+    assert.equal(action.tabIndex, 0)
+    await React.act(async () => action.focus())
+    assert.equal(document.activeElement, action, 'the action can receive keyboard focus')
+    await React.act(async () => action.click())
+    await flush(8)
+
+    assert.equal(T.$ledgerTab.get(), 'usage', 'activation opens Usage')
+    assert.ok(requests.includes('/analytics?days=30'), 'the issue is queried for the last 30 days')
+    const state = T.$analytics.get()[scope]
+    assert.equal(state.days, 30)
+    assert.deepEqual(state.filters, { model: '', provider: '', surface: '', task: '', parent: '', scope: '' },
+      'existing filters cannot hide the pricing issue')
+    const target = container.querySelector('#wm-usage-pricing-coverage')
+    assert.ok(target, 'Usage exposes the specific coverage evidence')
+    assert.equal(target.getAttribute('aria-label'), enT('usagePricingCoverageLabel', 30))
+    assert.equal(target.tabIndex, -1)
+    assert.equal(document.activeElement, target, 'focus moves to the pricing evidence for keyboard users')
+    assert.equal(T.$analyticsFocus.get(), null, 'the one-shot focus request is consumed')
+
+    const zhT = (key, ...args) => {
+      const entry = T.I18N.zh[key]
+      return typeof entry === 'function' ? entry(...args) : entry ?? key
+    }
+    const period = container.querySelector(`select[aria-label="${enT('usageFilterPeriodTip')}"]`)
+    assert.ok(period, 'Usage exposes the reporting period control')
+    i18nBackend.t = zhT
+    await React.act(async () => {
+      period.value = '90'
+      period.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+    })
+    await flush(8)
+    assert.equal(container.querySelector('#wm-usage-pricing-coverage').getAttribute('aria-label'),
+      zhT('usagePricingCoverageLabel', 90), 'the accessible name follows the selected period and locale')
+  } finally {
+    i18nBackend.t = enT
+    T.restoreRest(previousRest)
+    queryClient.clear()
+  }
+})
+
+test('cached Usage data does not consume the pending pricing focus before refresh completes', async () => {
+  await resetDom()
+  queryClient.clear()
+  const previousRest = T.getRest()
+  let analyticsFetches = 0
+  let resolveFresh
+  let freshResolved = false
+  const freshReport = new Promise(resolve => { resolveFresh = value => { freshResolved = true; resolve(value) } })
+  const scope = T.analyticsScope('default', 'connected', 'gateway-a')
+  const clearedFilters = T.analyticsInitialState().filters
+  queryClient.setQueryData(T.analyticsQuery(30, clearedFilters, scope).queryKey,
+    pricingReport({ unpricedTokens: 0, unpricedCalls: 0 }), { updatedAt: 0 })
+  T.setRest(async path => {
+    if (path.startsWith('/analytics?days=30')) {
+      analyticsFetches += 1
+      return analyticsFetches === 1 ? pricingReport() : freshReport
+    }
+    return previousRest(path)
+  })
+  try {
+    T.$analytics.set({ [scope]: {
+      ...T.analyticsInitialState(), days: 7,
+      filters: { model: 'old-model', provider: 'old-provider', surface: '', task: '', parent: '', scope: '' },
+    } })
+    T.$analyticsFocus.set(null)
+    T.$ledgerTab.set('overview')
+    dom.window.history.replaceState(null, '', '#overview')
+    const container = await renderEl(React.createElement(T.LedgerPage))
+    await flush(8)
+    const action = [...container.querySelectorAll('.wm-attention-rows button')]
+      .find(button => button.textContent.trim() === enT('ovPricingAction'))
+    assert.ok(action, 'Overview presents the pricing coverage action')
+    await React.act(async () => action.click())
+    await flush(8)
+
+    assert.ok(analyticsFetches >= 2, 'the stale cached query starts its refresh after Overview loads')
+    assert.equal(T.$analyticsFocus.get()?.target, 'pricing-coverage',
+      'the one-shot focus remains pending while the cached report is being refreshed')
+    const staleSummary = container.querySelector('#wm-usage-pricing-summary')
+    assert.ok(staleSummary, 'the cached report is rendered while its refresh is pending')
+    assert.notEqual(document.activeElement, staleSummary,
+      'the stale summary does not steal focus from the incoming pricing evidence')
+
+    await React.act(async () => resolveFresh(pricingReport()))
+    await flush(8)
+    const evidence = container.querySelector('#wm-usage-pricing-coverage')
+    assert.ok(evidence, 'the fresh report contains pricing evidence')
+    assert.equal(document.activeElement, evidence, 'focus moves after the fresh report arrives')
+    assert.equal(T.$analyticsFocus.get(), null, 'the focus request is consumed after the fresh report')
+  } finally {
+    if (!freshResolved) await React.act(async () => resolveFresh(pricingReport()))
+    T.restoreRest(previousRest)
+    queryClient.clear()
+  }
+})
+
+test('hash navigation away from Usage clears pending pricing focus', async () => {
+  await resetDom()
+  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location')
+  Object.defineProperty(globalThis, 'location', { value: dom.window.location, configurable: true, writable: true })
+  try {
+    await React.act(async () => {
+      T.$analyticsFocus.set({ scope: 'test-scope', target: 'pricing-coverage' })
+      T.$ledgerTab.set('usage')
+      dom.window.history.replaceState(null, '', '#usage')
+    })
+    await renderEl(React.createElement(T.LedgerTabs))
+    await flush(2)
+
+    await React.act(async () => {
+      dom.window.history.replaceState(null, '', '#settings')
+      dom.window.dispatchEvent(new dom.window.HashChangeEvent('hashchange'))
+    })
+    await flush(2)
+    assert.equal(T.$ledgerTab.get(), 'settings', 'hash navigation changes the selected tab')
+    assert.equal(T.$analyticsFocus.get(), null, 'leaving Usage clears the abandoned focus request')
+
+    await React.act(async () => {
+      dom.window.history.replaceState(null, '', '#usage')
+      dom.window.dispatchEvent(new dom.window.HashChangeEvent('hashchange'))
+    })
+    await flush(2)
+    assert.equal(T.$ledgerTab.get(), 'usage')
+    assert.equal(T.$analyticsFocus.get(), null, 'a later Usage visit does not reuse the stale request')
+  } finally {
+    if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation)
+    else delete globalThis.location
+  }
+})
+
 test('every attention (attn*) string exists in both en and zh, and zh renders', () => {
   const enKeys = Object.keys(T.I18N.en).filter(k => k.startsWith('attn'))
   assert.ok(enKeys.length > 5, 'the attention copy set is non-trivial')
@@ -401,12 +580,14 @@ test('every Overview (ov*) string exists in both en and zh', () => {
   }
 })
 
-test('Overview summary and insight panels adapt without tall empty KPI cards', () => {
-  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);align-items:start\}/)
-  assert.match(T.PRODUCT_CSS, /@container\(min-width:1020px\)\{\.wm-product \.wm-overview-grid\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)\}\}/)
+test('Overview keeps four equal financial cards and adapts panels to compact panes', () => {
+  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);grid-auto-rows:1fr;align-items:stretch\}/)
+  assert.doesNotMatch(T.PRODUCT_CSS, /@container\(min-width:1020px\).*wm-overview-grid/)
   assert.match(T.PRODUCT_CSS, /@container\(max-width:340px\)\{\.wm-product \.wm-overview-grid\{grid-template-columns:1fr\}\}/,
     'only truly narrow panes stack the Overview cards')
-  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid \.wm-kpi\{min-height:0;align-items:flex-start/)
+  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid \.wm-kpi\{display:grid;align-content:start;gap:7px;min-height:156px/)
+  assert.match(T.PRODUCT_CSS, /border-left:3px solid var\(--wm-kpi-accent,var\(--ui-accent\)\)/,
+    'Overview financial cards follow the accepted Costs accent rail treatment')
   assert.match(T.PRODUCT_CSS,
     /\.wm-product \.wm-product-summary\{display:grid;grid-template-columns:repeat\(auto-fit,minmax\(185px,1fr\)\)/,
     'the shared summary grid used by Costs and others is unchanged')

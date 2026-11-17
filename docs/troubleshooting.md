@@ -35,7 +35,7 @@ does not itself migrate or rewrite data.
 
 - Confirm the intended connection and profile first.
 - Check the live backend identity in Settings diagnostics, when available.
-  Matching `0.6.1` version labels do not establish build compatibility.
+  Matching release-version labels do not establish build compatibility.
 - “Backend reports 1” may be the UI's fallback when `build.contract` is absent
   or invalid. It does not necessarily mean the backend explicitly returned 1.
 - Install both components from the same approved revision, then restart the

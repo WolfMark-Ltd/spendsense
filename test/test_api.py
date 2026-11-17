@@ -438,6 +438,7 @@ class VersionConsistencyTests(unittest.TestCase):
 
     def test_manifest_plugin_yaml_and_health_agree(self):
         import json
+        import re
         from pathlib import Path as _Path
 
         root = _Path(__file__).resolve().parent.parent
@@ -447,9 +448,15 @@ class VersionConsistencyTests(unittest.TestCase):
                 yaml_version = line.split(":", 1)[1].strip().strip('"')
                 break
         manifest = json.loads((root / "dashboard" / "manifest.json").read_text(encoding="utf-8"))
+        desktop_source = (root / "desktop" / "plugin.js").read_text(encoding="utf-8")
+        desktop_version = re.search(r"^const PLUGIN_VERSION = '([^']+)'", desktop_source, re.M)
         self.assertIsNotNone(yaml_version)
+        self.assertIsNotNone(desktop_version, "Desktop release version declaration is missing")
+        self.assertEqual(yaml_version, "0.6.7", "plugin.yaml does not identify this release")
         self.assertEqual(manifest["version"], yaml_version, "manifest.json drifted from plugin.yaml")
         self.assertEqual(plugin_api.VERSION, yaml_version, "the API reports a different version")
+        self.assertEqual(desktop_version.group(1), yaml_version,
+                         "PLUGIN_VERSION drifted from the backend release")
 
 
 @unittest.skipUnless(FastAPI is not None and TestClient is not None,
