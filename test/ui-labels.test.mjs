@@ -901,7 +901,7 @@ test('every digest string exists in English and Chinese', () => {
   const keys = ['reportsTitle', 'rpSummary', 'rpPeriod', 'rpActions', 'rpDays7', 'rpDays30',
     'rpGenerate', 'rpGenerating', 'rpCopy', 'rpCopied', 'rpSave', 'rpDownloadRequested',
     'rpSaveFallback', 'rpFailed', 'rpDownloadFailed', 'rpError', 'rpRetry',
-    'rpEmpty', 'rpStale']
+    'rpEmpty', 'rpStale', 'rpAllowanceDetails', 'rpOpenMemberships', 'rpOpenBillingRules']
   for (const key of keys) {
     assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)

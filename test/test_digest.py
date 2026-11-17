@@ -265,7 +265,7 @@ class DigestContentTests(DigestCase):
         self.assertEqual(changes["kind"], "notes")
         self.assertEqual(changes["lines"], [])
         self.assertEqual(len(changes["notes"]), 1)
-        self.assertTrue(any("Not enough recorded history" in note for note in changes["notes"]))
+        self.assertTrue(any("Not enough earlier history to compare yet" in note for note in changes["notes"]))
 
     def test_genuine_zero_when_recording_covers_an_empty_window(self):
         self.write_store([account("test:default", "test", plan_id="test.plus")])
@@ -448,7 +448,7 @@ class DigestReviewFixesTests(DigestCase):
         result = self.report()
         spending = self.section(result, "spending")
         by_label = {line["label"]: line["value"] for line in spending["lines"]}
-        self.assertEqual(by_label["Metered (allowance) spending"], "$0.00")
+        self.assertEqual(by_label["Metered usage value (all cost rules)"], "$0.00")
         self.assertEqual(by_label["Extra cash (incremental) spending"], "$0.00")
         self.assertEqual(by_label["Credits consumed"], "$0.00")
         self.assertEqual(by_label["Provider-reported charges"], "—")
@@ -501,7 +501,7 @@ class DigestReviewFixesTests(DigestCase):
         result = self.report()
         spending = self.section(result, "spending")
         by_label = {line["label"]: line["value"] for line in spending["lines"]}
-        self.assertEqual(by_label["Metered (allowance) spending"], "≥$2.00")
+        self.assertEqual(by_label["Metered usage value (all cost rules)"], "≥$2.00")
         # One call has no price at all: extra cash is unknown, never $0.00.
         self.assertEqual(by_label["Extra cash (incremental) spending"], "—")
         self.assertEqual(by_label["Unclassified calls"], "1")
@@ -529,7 +529,7 @@ class DigestReviewFixesTests(DigestCase):
         self.assertIn("10 call(s) are unclassified", notes)
         self.assertEqual(
             next(line["value"] for line in section["lines"]
-                 if line["label"] == "Metered (allowance) spending"), "≥$2.00")
+                 if line["label"] == "Metered usage value (all cost rules)"), "≥$2.00")
         self.assertEqual(
             next(line["value"] for line in section["lines"]
                  if line["label"] == "Provider-reported charges"), "—")
@@ -585,7 +585,7 @@ class DigestReviewFixesTests(DigestCase):
         section = D._spending_section(D.STRINGS["en"], "Last 7 days", billing, True, 1)
         by_label = {line["label"]: line["value"] for line in section["lines"]}
         self.assertEqual(by_label["Provider-reported charges"], "$3.25")
-        self.assertEqual(by_label["Metered (allowance) spending"], "$2.00")
+        self.assertEqual(by_label["Metered usage value (all cost rules)"], "$2.00")
         self.assertEqual(by_label["Extra cash (incremental) spending"], "$2.00")
         self.assertEqual(by_label["Credits consumed"], "$1.00")
 
@@ -697,7 +697,7 @@ class DigestReviewFixesTests(DigestCase):
         self.assertEqual(by_label["Extra cash (incremental) spending"], "—")
         self.assertTrue(any("matching cost rule" in note for note in spending["notes"]))
         # Metered value is unaffected: the catalogue priced the call.
-        self.assertEqual(by_label["Metered (allowance) spending"], "$2.00")
+        self.assertEqual(by_label["Metered usage value (all cost rules)"], "$2.00")
 
     def test_unknown_cash_basis_marks_a_positive_subtotal_a_lower_bound(self):
         billing = {"metered_usd": 5.0, "excluded_out_of_cycle": 0,
@@ -751,7 +751,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["Attributed usage value"], "—")
+        self.assertEqual(by_label["Estimated API value covered by memberships"], "—")
         self.assertEqual(
             by_label["Estimated value comparison (API-equivalent minus fees)"], "—")
         # The declared fee is known independently of usage coverage.
@@ -769,7 +769,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["Attributed usage value"], "$0.00")
+        self.assertEqual(by_label["Estimated API value covered by memberships"], "$0.00")
         for value in by_label.values():
             self.assertNotIn("≥", value, value)
         self.assertTrue(any("No calls were recorded" in note for note in fees["notes"]))
@@ -829,7 +829,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         text = " ".join(f"{line['label']} {line['value']}" for line in fees["lines"])
-        self.assertIn("Attributed usage value $5.00", text)
+        self.assertIn("Estimated API value covered by memberships $5.00", text)
         self.assertNotIn("≥", text)
 
     def test_fees_lower_bound_when_attributed_scope_partly_priced(self):
@@ -842,7 +842,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["Attributed usage value"], "≥$5.00")
+        self.assertEqual(by_label["Estimated API value covered by memberships"], "≥$5.00")
         self.assertTrue(
             by_label["Estimated value comparison (API-equivalent minus fees)"].startswith("≥"),
             by_label)
@@ -861,7 +861,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["Attributed usage value"], "≥$2.00")
+        self.assertEqual(by_label["Estimated API value covered by memberships"], "≥$2.00")
         # The bound comes from the recording gap, not missing prices: the
         # coverage summary states it, so the fees section stays silent.
         self.assertFalse(any("lower bound" in note.lower() for note in fees["notes"]),
@@ -889,7 +889,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report()
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["Attributed usage value"], "≥$6.00")
+        self.assertEqual(by_label["Estimated API value covered by memberships"], "≥$6.00")
 
     def test_fees_unknown_is_localised(self):
         self.write_store([account("test:default", "test", plan_id="test.plus")])
@@ -899,7 +899,7 @@ class DigestFeesCoverageTests(DigestCase):
         result = self.report(lang="zh")
         fees = self.section(result, "fees")
         by_label = {line["label"]: line["value"] for line in fees["lines"]}
-        self.assertEqual(by_label["归因用量价值"], "—")
+        self.assertEqual(by_label["会员覆盖用量的估计 API 价值"], "—")
         summary = self.section(result, "report_coverage")
         self.assertTrue(any("无法给出用量" in note for note in summary["notes"]),
                         summary["notes"])
@@ -1152,8 +1152,8 @@ class DigestCoverageSummaryTests(DigestCase):
         notes = " ".join(section["notes"])
         self.assertIn("No usable allowance evidence is available for any of the 2 account(s)",
                       notes)
-        # Notes render after the table in both Markdown and the preview, so
-        # the explanation must not call the rows "below".
+        # Notes lead the table in both Markdown and the preview when every
+        # row is Unknown, so the explanation stays position-neutral.
         self.assertIn("in this table", notes)
         self.assertNotIn("below", notes)
         mixed = list(accounts) + [{"account_id": "c", "label": "C", "cycle": {},
@@ -1170,6 +1170,287 @@ class DigestCoverageSummaryTests(DigestCase):
         labels = [line["label"] for line in coverage["lines"]]
         self.assertNotIn("Recording since", labels)
         self.assertIn("Attributed tokens", labels)
+
+
+class Wp21ReportsClarityTests(DigestCase):
+    """WP21 Wave C: honest financial labels, caveats stated once, actionable
+    allowances and compact history states. Figures are transmitted unchanged;
+    only the words around them move."""
+
+    def priced_fixture(self):
+        """Two priced calls ($4.00) under a pay-as-you-go cost rule, with no
+        billing-cycle scope so the calls stay inside spending whatever the
+        wall clock says."""
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([{"id": "payg", "provider": "test", "kind": "api"}])
+        self.create_events([
+            {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 1 * DAY},
+            {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 3 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(2_000_000)
+
+    # -- F47: metered total vs membership-covered value ----------------------
+
+    def test_metered_total_names_all_cost_rules(self):
+        self.priced_fixture()
+        result = self.report()
+        spending = self.section(result, "spending")
+        by_label = {line["label"]: line["value"] for line in spending["lines"]}
+        self.assertEqual(by_label["Metered usage value (all cost rules)"],
+                         "$4.00")
+        self.assertNotIn("Metered (allowance) spending", result["markdown"])
+
+    def test_metered_total_spans_non_membership_kinds(self):
+        # api, prepaid and custom cost rules all feed metered_usd, so the
+        # total must never be presented as membership-covered usage.
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([
+            {"id": "payg", "provider": "test", "model": "m", "kind": "api"},
+            {"id": "wallet", "provider": "test", "model": "n",
+             "kind": "prepaid"},
+            {"id": "deal", "provider": "test", "model": "weird|model",
+             "kind": "custom",
+             "rate_override": {"input": 2.0, "output": 4.0}},
+        ])
+        self.create_events([
+            {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 1 * DAY},
+            {"model": "n", "input_tokens": 1_000_000, "ts": NOW - 2 * DAY},
+            {"model": "weird|model", "input_tokens": 1_000_000,
+             "ts": NOW - 3 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(3_000_000)
+        result = self.report()
+        spending = self.section(result, "spending")
+        by_label = {line["label"]: line["value"] for line in spending["lines"]}
+        self.assertEqual(by_label["Metered usage value (all cost rules)"],
+                         "$6.00")
+
+    def test_membership_value_comes_from_subscription_attribution(self):
+        self.standard_fixture()
+        result = self.report()
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        # Same transmitted figure as before, under the owner-approved label.
+        self.assertEqual(by_label["Estimated API value covered by memberships"],
+                         "$5.00")
+        notes = " ".join(fees["notes"])
+        self.assertIn("What this usage would cost at API rates", notes)
+        self.assertIn("not a bill, and not cash saved", notes)
+        self.assertNotIn("Attributed usage value", result["markdown"])
+
+    def test_membership_value_withheld_without_a_subscription(self):
+        # Pay-as-you-go usage still meters, but nothing is membership-covered.
+        store_account = account("test:default", "test", plan_id=None)
+        store_account["api_only"] = True
+        self.write_store([store_account])
+        self.write_profiles([{"id": "payg", "provider": "test", "kind": "api"}])
+        self.create_events([{"model": "m", "input_tokens": 1_000_000}],
+                           baseline_at=NOW - 40 * DAY)
+        self.create_state(1_000_000)
+        result = self.report()
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(by_label["Estimated API value covered by memberships"],
+                         "—")
+        spending = self.section(result, "spending")
+        metered = {line["label"]: line["value"]
+                   for line in spending["lines"]}
+        self.assertEqual(metered["Metered usage value (all cost rules)"],
+                         "$2.00")
+
+    def test_membership_labels_in_chinese(self):
+        self.standard_fixture()
+        result = self.report(lang="zh")
+        fees = self.section(result, "fees")
+        by_label = {line["label"]: line["value"] for line in fees["lines"]}
+        self.assertEqual(by_label["会员覆盖用量的估计 API 价值"], "$5.00")
+        spending = self.section(result, "spending")
+        metered = {line["label"]: line["value"]
+                   for line in spending["lines"]}
+        self.assertIn("计量用量价值（全部费用规则）", metered)
+
+    def test_legend_names_the_revised_metered_label(self):
+        self.priced_fixture()
+        result = self.report()
+        summary = self.section(result, "report_coverage")
+        notes = " ".join(summary["notes"])
+        self.assertIn("metered usage value", notes)
+        self.assertNotIn("allowance) spending", result["markdown"])
+
+    # -- F43: each caveat is stated once -------------------------------------
+
+    def test_value_section_keeps_no_theory_note(self):
+        self.priced_fixture()
+        result = self.report()
+        self.assertEqual(result["markdown"].count("theoretical public price"),
+                         0)
+        self.assertEqual(result["markdown"].count("not invoices"), 1)
+
+    def test_fees_section_keeps_no_declaration_note(self):
+        self.priced_fixture()
+        result = self.report()
+        fees = self.section(result, "fees")
+        self.assertNotIn("not confirmed payments", " ".join(fees["notes"]))
+        self.assertEqual(result["markdown"].count("not confirmed payments"), 1)
+
+    def test_spending_section_keeps_no_generic_basis_note(self):
+        self.priced_fixture()
+        result = self.report()
+        self.assertEqual(result["markdown"].count(
+            "figures follow your cost rules"), 0)
+
+    def test_methodology_remains_the_complete_reference(self):
+        self.priced_fixture()
+        result = self.report()
+        method = self.section(result, "methodology")
+        notes = " ".join(method["notes"])
+        self.assertIn("generated locally", notes)
+        self.assertIn("trailing window", notes)
+        self.assertIn("not what you paid", notes)
+        self.assertIn("never zero", notes)
+
+    # -- F46: actionable allowances ------------------------------------------
+
+    def allowance_entry(self, aid, **kw):
+        entry = {"account_id": aid, "label": aid, "cycle": {},
+                 "rollup": {"state": "unknown"}, "windows": [], "rules": []}
+        entry.update(kw)
+        return entry
+
+    def test_allowance_rows_carry_account_actions(self):
+        accounts = [
+            self.allowance_entry(
+                "reading", windows=[{"verdict": "unknown",
+                                      "verdict_basis": "none"}]),
+            self.allowance_entry(
+                "cycle", windows=[{"verdict": "unknown",
+                                    "verdict_basis": "provider_only"}]),
+            self.allowance_entry(
+                "position", windows=[{"verdict": "unknown",
+                                       "verdict_basis": "observed",
+                                       "cycle_basis": "none"}]),
+            self.allowance_entry(
+                "conflict", windows=[{"verdict": "unknown",
+                                       "verdict_basis": "conflicted"}]),
+            self.allowance_entry(
+                "prepaid", rules=[{"verdict": "unknown", "pool": "prepaid_spend",
+                                    "verdict_basis": "none"}]),
+            self.allowance_entry("bare"),
+            self.allowance_entry(
+                "limit", rules=[{"verdict": "unknown", "pool": "allowance_usd",
+                                  "verdict_basis": "none"}]),
+            self.allowance_entry(
+                "other", rules=[{"verdict": "unknown", "pool": "allowance_usd",
+                                  "verdict_basis": "mystery"}]),
+            {"account_id": "known", "label": "known", "cycle": {},
+             "rollup": {"state": "on_track"}, "windows": [], "rules": []},
+        ]
+        section = D._allowances_section(D.STRINGS["en"], "cycle", accounts)
+        meta = {row["account_id"]: row for row in section["row_meta"]}
+        self.assertEqual(
+            [meta[aid]["link"] for aid in
+             ("reading", "cycle", "position", "conflict", "prepaid", "bare",
+              "limit", "other", "known")],
+            ["memberships", None, None, "memberships", None, "settings",
+             "settings", "memberships", None])
+        for aid in ("reading", "cycle", "position", "conflict", "prepaid",
+                    "bare", "limit", "other"):
+            self.assertTrue(meta[aid]["why"], aid)
+        self.assertIsNone(meta["known"]["why"])
+        # Markdown rows stay plain portable text; actions ride alongside.
+        self.assertEqual(len(section["rows"]), len(section["row_meta"]))
+
+    def test_all_unknown_allowances_lead_with_the_explanation(self):
+        accounts = [
+            self.allowance_entry(
+                "a", windows=[{"verdict": "unknown",
+                                "verdict_basis": "none"}]),
+            self.allowance_entry(
+                "b", windows=[{"verdict": "unknown",
+                                "verdict_basis": "none"}]),
+        ]
+        section = D._allowances_section(D.STRINGS["en"], "cycle", accounts)
+        self.assertTrue(section["notes_first"])
+        markdown = D._render_markdown("t", "period", "generated", [section])
+        self.assertLess(markdown.index("every status in this table"),
+                        markdown.index("| Account |"))
+        mixed = list(accounts) + [{"account_id": "c", "label": "c", "cycle": {},
+                                   "rollup": {"state": "on_track"},
+                                   "windows": []}]
+        self.assertFalse(D._allowances_section(
+            D.STRINGS["en"], "cycle", mixed).get("notes_first", False))
+
+    def test_unusable_limit_points_at_settings_rules(self):
+        section = D._allowances_section(
+            D.STRINGS["en"], "cycle",
+            [self.allowance_entry(
+                "limit", rules=[{"verdict": "unknown", "pool": "allowance_usd",
+                                  "verdict_basis": "none"}])])
+        notes = " ".join(section["notes"])
+        self.assertIn("Settings", notes)
+        self.assertNotIn("in Costs", notes)
+
+    def test_no_reading_suggests_a_membership_mark(self):
+        section = D._allowances_section(
+            D.STRINGS["en"], "cycle",
+            [self.allowance_entry(
+                "reading", windows=[{"verdict": "unknown",
+                                      "verdict_basis": "none"}])])
+        notes = " ".join(section["notes"])
+        self.assertIn("manual mark can be saved in Memberships", notes)
+
+    def test_conflict_suggests_membership_resolution(self):
+        section = D._allowances_section(
+            D.STRINGS["en"], "cycle",
+            [self.allowance_entry(
+                "conflict", windows=[{"verdict": "unknown",
+                                       "verdict_basis": "conflicted"}])])
+        notes = " ".join(section["notes"])
+        self.assertIn("Resolve it in Memberships", notes)
+
+    def test_provider_limitations_carry_no_fix(self):
+        section = D._allowances_section(
+            D.STRINGS["en"], "cycle",
+            [self.allowance_entry(
+                "cycle", windows=[{"verdict": "unknown",
+                                    "verdict_basis": "provider_only"}]),
+             self.allowance_entry(
+                "prepaid", rules=[{"verdict": "unknown",
+                                    "pool": "prepaid_spend",
+                                    "verdict_basis": "none"}])])
+        self.assertEqual([row["link"] for row in section["row_meta"]],
+                         [None, None])
+        notes = " ".join(section["notes"])
+        self.assertNotIn("can be saved", notes)
+        self.assertNotIn("Resolve it", notes)
+        self.assertNotIn("Settings", notes)
+
+    def test_allowance_guidance_in_chinese(self):
+        section = D._allowances_section(
+            D.STRINGS["zh"], "cycle",
+            [self.allowance_entry(
+                "reading", windows=[{"verdict": "unknown",
+                                      "verdict_basis": "none"}])])
+        meta = section["row_meta"][0]
+        self.assertEqual(meta["link"], "memberships")
+        self.assertIn("手动标记", meta["why"])
+        notes = " ".join(section["notes"])
+        self.assertIn("会员", notes)
+
+    # -- F87: compact history states -----------------------------------------
+
+    def test_insufficient_history_note_is_compact(self):
+        section = D._changes_section(
+            D.STRINGS["en"], "Last 7 days", 7,
+            {"comparable": False, "reason": "insufficient_history"}, {})
+        self.assertEqual(section["kind"], "notes")
+        self.assertEqual(len(section["notes"]), 1)
+        self.assertTrue(section["notes"][0].startswith(
+            "Not enough earlier history to compare yet"))
+        zh = D._changes_section(
+            D.STRINGS["zh"], "最近 7 天", 7,
+            {"comparable": False, "reason": "insufficient_history"}, {})
+        self.assertTrue(zh["notes"][0].startswith("更早的历史记录不足"))
 
 
 if __name__ == "__main__":

@@ -215,9 +215,13 @@ test('the preview renders sections, tables and methodology disclosure', async ()
   const modelsRegion = container.querySelector('[data-section="models"] [role="region"]')
   assert.equal(modelsRegion?.tabIndex, 0, 'wide table is reachable for keyboard scrolling')
   assert.equal(modelsRegion?.querySelectorAll('th[scope="col"]').length, 4)
-  // Hostile model names render as text, never elements.
+  // Hostile model names render as friendly text, never elements, with the
+  // exact slug kept in the title for provenance.
   assert.equal(container.querySelector('img'), null)
-  assert.match(text, /<img src=x onerror=alert\(1\)>/)
+  const hostileCell = [...container.querySelectorAll('[data-section="models"] tbody td')]
+    .find(cell => cell.getAttribute('title') === '<img src=x onerror=alert(1)>')
+  assert.ok(hostileCell, 'exact model slug stays retrievable')
+  assert.equal(hostileCell.textContent, T.modelDisplayName('<img src=x onerror=alert(1)>'))
 })
 
 test('the reports page fetches and previews the digest', async () => {
@@ -227,7 +231,7 @@ test('the reports page fetches and previews the digest', async () => {
   assert.match(text(), /Copy Markdown/)
   assert.match(text(), /Download Markdown/)
   assert.match(text(), /Usage/)
-  assert.equal(text().match(/Last 30 days/g)?.length, 1,
+  assert.equal(container.querySelector('.wm-digest')?.textContent.match(/Last 30 days/g)?.length, 1,
     'the reporting period is shown once in the preview')
   assert.match(text(), /\$5\.00/)
   assert.equal(digestCalls().length, 1)
@@ -318,9 +322,10 @@ test('7 and 30 day previews keep English and Chinese period and summary copy', a
       await clickByText(container, locale === 'zh' ? '生成报告' : 'Generate report')
       await flush(4)
       const expectedPeriod = locale === 'zh' ? `过去 ${days} 天` : `Last ${days} days`
+      const previewText = container.querySelector('.wm-digest')?.textContent || ''
       assert.match(text(), new RegExp(expectedHeading))
       assert.match(text(), new RegExp(expectedPeriod))
-      assert.equal(text().match(new RegExp(expectedPeriod, 'g'))?.length, 1,
+      assert.equal(previewText.match(new RegExp(expectedPeriod, 'g'))?.length, 1,
         `${locale}/${days} shows the reporting period once in the preview`)
       assert.equal(container.querySelectorAll('.wm-digest-period').length, 1)
       assert.ok(container.querySelector('.wm-digest-summary'))
@@ -538,4 +543,147 @@ test('the reports stylesheet keeps controls visible', () => {
   assert.match(T.REPORTS_CSS, /position:sticky/)
   assert.match(T.REPORTS_CSS, /\.wm-digest-lines/)
   assert.match(T.REPORTS_CSS, /\.wm-digest-method/)
+})
+
+test('the period switch shows one persistent selected state', async () => {
+  const { container } = await bootReports()
+  const buttons = [...container.querySelectorAll('.wm-reports-period button')]
+  assert.equal(buttons.length, 2)
+  assert.deepEqual(buttons.map(button => button.textContent), ['Last 7 days', 'Last 30 days'])
+  assert.equal(buttons[0].getAttribute('aria-pressed'), 'false')
+  assert.equal(buttons[1].getAttribute('aria-pressed'), 'true')
+  for (const button of buttons) {
+    button.focus()
+    assert.equal(document.activeElement, button, 'period option is keyboard focusable')
+  }
+  await React.act(async () => {
+    buttons[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  })
+  await flush(4)
+  assert.equal(T.$digestDays.get(), 7)
+  const after = [...container.querySelectorAll('.wm-reports-period button')]
+  assert.equal(after[0].getAttribute('aria-pressed'), 'true')
+  assert.equal(after[1].getAttribute('aria-pressed'), 'false')
+})
+
+test('the period selected state survives in the stylesheet', () => {
+  assert.match(T.REPORTS_CSS, /\.wm-reports-segbtn\[aria-pressed="true"\]/)
+})
+
+test('model and provider tables show friendly names with exact slugs', async () => {
+  const report = digestFixture()
+  report.sections.find(section => section.id === 'models').rows =
+    [['deepseek/deepseek-v4-1-flash', '5', '1.00M', '$3.00']]
+  report.sections.push({ id: 'providers', heading: 'Providers', window: report.period.label,
+    kind: 'table', columns: ['Provider', 'Calls', 'Tokens', 'API-equiv'],
+    rows: [['openai-codex', '5', '1.00M', '$3.00'], ['mystery-route', '1', '1.0k', '$0.01']],
+    notes: [] })
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => {
+    root.render(React.createElement(T.DigestPreview, { report }))
+  })
+  const modelCell = container.querySelector('[data-section="models"] tbody td')
+  assert.equal(modelCell?.textContent, T.modelDisplayName('deepseek/deepseek-v4-1-flash'))
+  assert.equal(modelCell?.getAttribute('title'), 'deepseek/deepseek-v4-1-flash')
+  const providerCells = [...container.querySelectorAll('[data-section="providers"] tbody tr td:first-child')]
+  assert.equal(providerCells.length, 2)
+  assert.equal(providerCells[0].textContent, 'OpenAI Codex')
+  assert.equal(providerCells[0].getAttribute('title'), 'openai-codex')
+  assert.equal(providerCells[1].textContent, 'mystery-route')
+  assert.equal(providerCells[1].getAttribute('title'), 'mystery-route')
+})
+
+const allowancesFixture = () => {
+  const report = digestFixture()
+  const allowances = report.sections.find(section => section.id === 'allowances')
+  allowances.notes_first = true
+  allowances.rows = [['A', '2026-12-01', '20', 'Unknown'], ['B', '2026-12-01', '20', 'Unknown']]
+  allowances.row_meta = [
+    { account_id: 'a', why: 'No provider reading or manual mark', link: 'memberships' },
+    { account_id: 'b', why: 'Prepaid top-ups are not tracked', link: null },
+  ]
+  return report
+}
+
+test('all-unknown allowances lead with guidance and link fixable accounts', async () => {
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => {
+    root.render(React.createElement(T.DigestPreview, { report: allowancesFixture() }))
+  })
+  try {
+    const section = container.querySelector('[data-section="allowances"]')
+    const notes = section.querySelector('.wm-digest-notes')
+    const details = section.querySelector('details')
+    assert.ok(notes, 'guidance notes render')
+    assert.ok(details, 'identical rows collapse behind a disclosure')
+    assert.ok(notes.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'guidance leads the table')
+    assert.match(details.querySelector('summary')?.textContent || '', /Account details \(2\)/)
+    assert.equal(details.querySelectorAll('tbody tr').length, 2)
+    assert.match(section.textContent, /No provider reading or manual mark/)
+    assert.match(section.textContent, /Prepaid top-ups are not tracked/)
+    const links = [...section.querySelectorAll('button')]
+      .filter(button => button.textContent === 'Open in Memberships')
+    assert.equal(links.length, 1, 'only the fixable row links out')
+    await React.act(async () => {
+      links[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    })
+    assert.equal(T.$ledgerTab.get(), 'memberships')
+    assert.equal(T.$membershipTarget.get()?.accountId, 'a')
+  } finally {
+    T.$membershipTarget.set(null)
+    T.$ledgerTab.set('overview')
+  }
+})
+
+test('rule allowance gaps link to billing rules in Settings', async () => {
+  const report = digestFixture()
+  const allowances = report.sections.find(section => section.id === 'allowances')
+  allowances.rows = [['C', '2026-12-01', '20', 'Unknown']]
+  allowances.row_meta = [{ account_id: 'c', why: 'Allowance limit unavailable or unusable',
+    link: 'settings' }]
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => {
+    root.render(React.createElement(T.DigestPreview, { report }))
+  })
+  const button = [...container.querySelectorAll('[data-section="allowances"] button')]
+    .find(node => node.textContent === 'Open billing rules in Settings')
+  assert.ok(button, 'rule gaps link to Settings billing rules')
+  await React.act(async () => {
+    button.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  })
+  assert.equal(T.$ledgerTab.get(), 'settings')
+  T.$ledgerTab.set('overview')
+})
+
+test('known allowances keep the table-first layout without actions', async () => {
+  const report = digestFixture()
+  const allowances = report.sections.find(section => section.id === 'allowances')
+  allowances.notes_first = false
+  allowances.rows = [['A', '2026-12-01', '20', 'On track']]
+  allowances.row_meta = [{ account_id: 'a', why: null, link: null }]
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => {
+    root.render(React.createElement(T.DigestPreview, { report }))
+  })
+  const section = container.querySelector('[data-section="allowances"]')
+  assert.equal(section.querySelector('details'), null)
+  assert.equal(section.querySelectorAll('button').length, 0)
+  const table = section.querySelector('table')
+  const notes = section.querySelector('.wm-digest-notes')
+  assert.ok(table && notes)
+  assert.ok(table.compareDocumentPosition(notes) & Node.DOCUMENT_POSITION_FOLLOWING,
+    'known rows keep the table before the notes')
 })
