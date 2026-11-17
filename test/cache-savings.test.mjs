@@ -209,6 +209,49 @@ test('a published write discount is applied, never flattened to input', () => {
   assert.equal(T.cacheSavings(200, rates, 1000, true), (200 * 1.5 + 1000 * 1) / 1e6)
 })
 
+test('cache savings reconcile independently for partial, negative, zero and unknown states', () => {
+  const rates = { input: 2, output: 4, cache: .5, write: 3,
+    inputKnown: true, outputKnown: true, cacheKnown: true }
+  const expectedByIndependentPrices = ({ input, read, write, output }, card = rates) => {
+    const prompt = input + read + write
+    const uncachedCost = (prompt * card.input + output * card.output) / 1e6
+    const cachedCost = (input * card.input + read * card.cache + write * card.write + output * card.output) / 1e6
+    return uncachedCost - cachedCost
+  }
+
+  const partialTokens = { input: 100, read: 200, write: 0, output: 40 }
+  const partialExpected = expectedByIndependentPrices(partialTokens)
+  const partial = T.savingsState({
+    input: 1100, output: 40, cacheRead: 200, cacheWrite: 0,
+    netSavingsPrompt: partialTokens.read, netSavings: partialExpected,
+  }, rates)
+  assert.ok(Math.abs(partialExpected - .0003) < 1e-12, 'the independent card-price calculation includes only the measured read discount')
+  assert.ok(Math.abs(partial.value - partialExpected) < 1e-12, 'the measured subtotal matches the independent calculation')
+  assert.equal(partial.coverage, 200 / 1300, 'coverage uses known savings prompt tokens over the full prompt')
+  assert.equal(partial.partial, true, 'uncovered prompt tokens remain visibly partial')
+
+  const negativeTokens = { input: 100, read: 200, write: 1000, output: 10 }
+  const negativeExpected = expectedByIndependentPrices(negativeTokens)
+  const negative = T.cacheSavings(negativeTokens.read, rates, negativeTokens.write)
+  assert.ok(Math.abs(negativeExpected + .0007) < 1e-12, 'the write premium outweighs the read discount')
+  assert.ok(Math.abs(negative - negativeExpected) < 1e-12, 'the implementation retains that independently derived loss')
+  assert.ok(Math.abs(T.savingsState({ input: 100, output: 10, cacheRead: 200, cacheWrite: 1000,
+    netSavingsPrompt: 1300, netSavings: negative }, rates).value - negativeExpected) < 1e-12)
+
+  const zeroRates = { ...rates, cache: rates.input, write: rates.input }
+  const zeroExpected = expectedByIndependentPrices({ input: 100, read: 200, write: 0, output: 10 }, zeroRates)
+  const measuredZero = T.savingsState({ input: 100, output: 10, cacheRead: 200, cacheWrite: 0,
+    netSavingsPrompt: 200, netSavings: zeroExpected }, zeroRates)
+  assert.equal(zeroExpected, 0, 'equal cache and input prices produce a measured zero')
+  assert.equal(measuredZero.value, 0, 'known zero remains a figure rather than becoming unavailable')
+
+  const unknown = T.savingsState({ input: 1000, output: 10, cacheRead: 0, cacheWrite: 0,
+    netSavingsPrompt: 0, netSavings: null }, rates)
+  assert.equal(unknown.value, null, 'an unknown subtotal is not presented as $0')
+  assert.equal(unknown.coverage, 0, 'unknown pricing has no covered prompt tokens')
+  assert.equal(unknown.reason, 'no_cache', 'the missing evidence remains named')
+})
+
 test('a net cache loss keeps its sign in the state every surface reads', () => {
   // Greptile P1: `num` clamps at zero for token counts, so a negative net
   // saving must not pass through it. A write premium larger than the read

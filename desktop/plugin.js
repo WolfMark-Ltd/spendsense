@@ -1884,15 +1884,8 @@ function closeLedger() {
 const $none = atom(null)
 
 /** The focused session's live numbers, priced with ITS provider's catalog. */
-/**
- * Which bucket the pane presents for a conversation: the durable conversation
- * total once it exists and is at least as large as the live run, otherwise the
- * live run's own counters. The chip label and the note must both follow this.
- */
-function liveScope(hist, bucket) {
-  const histTokens = hist ? tokensOf(hist) : 0
-  if (histTokens && (!bucket || histTokens >= tokensOf(bucket))) return 'conversation'
-  return 'run'
+function liveScope(hist) {
+  return hist ? 'conversation' : 'run'
 }
 
 function useLive() {
@@ -1932,11 +1925,8 @@ function useLive() {
   const backendCost =
     usage && typeof usage.cost_usd === 'number' && usage.cost_usd > 0 ? usage.cost_usd : null
 
-  // The conversation's recorded total (all runs, survives restarts). It is
-  // written on every usage tick, so while a run is live it already includes
-  // it; prefer it whenever it exists and isn't behind the live counters.
   const hist = storedId && led.sessions ? led.sessions[storedId] : null
-  if (liveScope(hist, bucket) === 'conversation') {
+  if (liveScope(hist) === 'conversation') {
     const kinds = Object.keys(hist.sources || {}).filter(k => num(hist.sources[k]))
     const histSource = !hist.pricedTokens ? 'none' : kinds.length === 1 ? kinds[0] : 'mixed'
     const histModel = hist.model || model
@@ -2432,14 +2422,16 @@ function MeterHeader({ presence, t, view }) {
   return jsxs('header', { className: 'wm-meter-head', children: [
     jsxs('div', { className: 'wm-meter-brandrow', children: [
       jsx('span', { className: 'wm-meter-mark', children: jsx(BrandMark, { size: 18, id: 'pane' }) }, 'mark'),
-      jsx('span', { className: 'wm-meter-name', children: 'SpendSense' }, 'name'),
+      jsx('span', { className: 'wm-meter-name', children: 'SpendSense' }, 'name')
+    ] }, 'brand'),
+    jsxs('div', { className: 'wm-meter-statusrow', children: [
       jsxs('span', { className: 'wm-meter-presence', children: [
         jsx('span', { className: 'wm-dot', 'data-state': presence, 'aria-hidden': true }, 'dot'),
         jsx('span', { children: stateLabel }, 'label')
       ] }, 'presence'),
       jsx('span', { className: 'wm-scope-chip',
         children: view.fromHistory ? t('scopeConversation') : t('scopeRun') }, 'scope')
-    ] }, 'brand'),
+    ] }, 'status'),
     jsxs('div', { className: 'wm-meter-modelrow', children: [
       jsxs('div', { className: 'wm-model-name-row', children: [
         jsx('span', { className: 'wm-model', title: view.model || '', children: modelDisplayName(view.model) || '—' }, 'model'),
@@ -2486,7 +2478,7 @@ function CostKpi({ t, view }) {
     ] }, 'metrics'),
     view.sinceAt
       ? jsx('div', { className: 'wm-kpi-since', children: t('sinceDate', fmtDate(view.sinceAt)) }, 'since')
-      : jsx('div', { className: 'wm-kpi-since wm-kpi-since-empty', children: '—' }, 'since'),
+      : null,
     view.partial
       ? jsxs('div', { className: 'wm-partial-chip', children: [
           jsx('span', { children: `▲ ${[
@@ -2549,11 +2541,11 @@ function TokenComposition({ t, view }) {
         jsx('span', { className: 'wm-legend-label', children: t('output') }, 'label'),
         jsx('span', { className: 'wm-legend-value', children: fmtTokens(num(b.output)) }, 'value')
       ] }, 'o'),
-      jsxs('div', { className: 'wm-legend-item', children: [
+      hasContext ? jsxs('div', { className: 'wm-legend-item', children: [
         jsx('span', { className: 'wm-legend-label', children: t('context') }, 'label'),
         jsx('span', { className: 'wm-legend-value', children: contextValue }, 'value')
-      ] }, 'ctx')
-    ] }, 'separate')
+      ] }, 'ctx') : null
+    ].filter(Boolean) }, 'separate')
   ] })
 }
 
@@ -2631,7 +2623,15 @@ function CacheGauge({ t, view }) {
       }, 'ring'),
       jsxs('div', { className: 'wm-gauge-stats', children: [
         jsxs('div', { className: 'wm-gauge-stat', children: [
-          jsx('span', { className: 'wm-metric-label', children: t('coverageLabel') }, 'l'),
+          jsxs('span', { className: 'wm-metric-label', children: [
+            jsx('span', { children: t('coverageLabel') }, 't'),
+            jsx(InfoTip, {
+              id: 'cache-coverage', label: t('coverageHelpLabel'),
+              text: t('cacheCoverageHelp',
+                view.fromHistory ? t('coverageScopeConversation') : t('coverageScopeRun'),
+                view.fromHistory && view.sinceAt ? fmtDate(view.sinceAt) : null)
+            }, 'info')
+          ] }, 'l'),
           jsx('span', { className: 'wm-metric-value',
             children: view.cacheCoverage == null ? '—' : `${Math.round(view.cacheCoverage * 100)}%` }, 'v')
         ] }, 'coverage'),
@@ -2786,15 +2786,16 @@ const SHARED_CSS = [
 
 const METER_CSS = [
   SHARED_CSS,
-  '.wm-pane{display:flex;height:100%;flex-direction:column;gap:10px;overflow:auto;padding:12px;min-width:0;container-type:inline-size}',
+  '.wm-pane{display:flex;height:100%;flex-direction:column;gap:8px;overflow:auto;padding:12px;min-width:0;container-type:inline-size}',
   '.wm-pane .wm-info{position:static}',
   '.wm-pane .wm-info-pop{max-width:min(260px,calc(100% - 24px))}',
   '.wm-pane .wm-info-pop-wide{max-width:min(260px,100%)}',
-  '.wm-meter-head{display:flex;flex-direction:column;gap:7px;padding-bottom:10px;border-bottom:1px solid var(--ui-stroke-secondary)}',
+  '.wm-meter-head{display:flex;flex-direction:column;gap:5px;padding-bottom:8px;border-bottom:1px solid var(--ui-stroke-secondary)}',
   '.wm-meter-brandrow{display:flex;align-items:center;gap:8px;min-width:0}',
+  '.wm-meter-statusrow{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}',
   '.wm-meter-mark{display:grid;place-items:center;width:22px;height:22px;flex-shrink:0}',
-  '.wm-meter-name{font-size:12px;font-weight:620;letter-spacing:-.15px;color:var(--ui-text-primary);white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}',
-  '.wm-meter-presence{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:10px;color:var(--ui-text-tertiary);white-space:nowrap}',
+  '.wm-meter-name{font-size:12px;font-weight:620;letter-spacing:-.15px;color:var(--ui-text-primary);white-space:normal;min-width:0;overflow-wrap:anywhere}',
+  '.wm-meter-presence{display:inline-flex;align-items:center;gap:5px;font-size:10px;color:var(--ui-text-tertiary);white-space:nowrap}',
   '.wm-dot{width:7px;height:7px;border-radius:50%;background:var(--ui-text-quaternary);flex-shrink:0}',
   '.wm-dot[data-state="live"]{background:var(--ui-success)}',
   '.wm-dot[data-state="updating"]{background:var(--ui-warning)}',
@@ -2804,8 +2805,8 @@ const METER_CSS = [
   '.wm-model{flex:1;min-width:0;overflow-wrap:anywhere;font-size:13px;line-height:1.35;font-weight:560;color:var(--ui-text-primary)}',
   '.wm-model-name-row>.wm-info{flex-shrink:0}',
   '.wm-provider-badge{flex-shrink:0;max-width:100%;overflow-wrap:anywhere;white-space:normal;font-size:10px;line-height:1.3;color:var(--ui-text-tertiary);background:var(--ui-fill-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:5px;padding:2px 7px}',
-  '.wm-meter-sections{display:flex;flex-direction:column;gap:10px;min-width:0}',
-  '.wm-card{border:1px solid var(--ui-stroke-secondary);border-radius:9px;padding:11px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}',
+  '.wm-meter-sections{display:flex;flex-direction:column;gap:8px;min-width:0}',
+  '.wm-card{border:1px solid var(--ui-stroke-secondary);border-radius:9px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;min-width:0}',
   '.wm-card-title{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ui-text-tertiary)}',
   '.wm-kpi-figure{font-size:27px;line-height:1.15;font-weight:640;letter-spacing:-.4px;font-variant-numeric:tabular-nums;color:var(--ui-accent);min-height:32px;overflow-wrap:anywhere}',
   '.wm-kpi-figure.wm-warn{color:var(--ui-warning)}',
@@ -2815,25 +2816,24 @@ const METER_CSS = [
   '.wm-metric-label{font-size:10px;color:var(--ui-text-tertiary);white-space:nowrap}',
   '.wm-metric-value{font-size:13px;font-weight:560;font-variant-numeric:tabular-nums;color:var(--ui-text-primary);overflow-wrap:anywhere}',
   '.wm-kpi-since{font-size:10px;color:var(--ui-text-tertiary);min-height:14px}',
-  '.wm-kpi-since-empty{visibility:hidden}',
-  '.wm-mix-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--ui-fill-tertiary);min-width:0}',
+  '.wm-mix-bar{display:flex;height:8px;border-radius:5px;overflow:hidden;background:var(--ui-fill-tertiary);min-width:0}',
   '.wm-mix-fill{height:100%;min-width:0}',
   '.wm-mix-fill[data-part="fresh"],.wm-swatch[data-part="fresh"]{background:var(--ui-accent)}',
   '.wm-mix-fill[data-part="read"],.wm-swatch[data-part="read"]{background:var(--ui-success)}',
   '.wm-mix-fill[data-part="write"],.wm-swatch[data-part="write"]{background:var(--ui-warning)}',
-  '.wm-legend{display:flex;flex-direction:column;gap:4px}',
+  '.wm-legend{display:flex;flex-direction:column;gap:3px}',
   '.wm-legend-item{display:flex;align-items:baseline;gap:7px;font-size:12px;min-width:0}',
   '.wm-swatch{width:8px;height:8px;border-radius:2px;flex-shrink:0;align-self:center}',
   '.wm-legend-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ui-text-secondary)}',
   '.wm-legend-value{flex-shrink:0;font-variant-numeric:tabular-nums;color:var(--ui-text-primary)}',
-  '.wm-legend-separate{border-top:1px solid var(--ui-stroke-secondary);padding-top:7px}',
-  '.wm-gauge-row{--wm-gauge-ring:clamp(52px,18cqi,72px);display:grid;grid-template-columns:var(--wm-gauge-ring) minmax(0,1fr);gap:10px;align-items:center;min-height:var(--wm-gauge-ring)}',
+  '.wm-legend-separate{border-top:1px solid var(--ui-stroke-secondary);padding-top:6px}',
+  '.wm-gauge-row{--wm-gauge-ring:clamp(68px,22cqi,88px);display:grid;grid-template-columns:var(--wm-gauge-ring) minmax(0,1fr);gap:8px;align-items:center;min-height:var(--wm-gauge-ring)}',
   '.wm-ring{width:var(--wm-gauge-ring);height:var(--wm-gauge-ring);flex-shrink:0}',
   '.wm-ring-track{fill:none;stroke:var(--ui-fill-tertiary);stroke-width:8}',
   '.wm-ring-value{fill:none;stroke:var(--ui-accent);stroke-width:8;stroke-linecap:round}',
   '.wm-ring-estimated{opacity:.45}',
-  '.wm-ring-text{fill:var(--ui-text-primary);font-size:14px;font-weight:640;font-variant-numeric:tabular-nums}',
-  '.wm-gauge-stats{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}',
+  '.wm-ring-text{fill:var(--ui-text-primary);font-size:16px;font-weight:640;font-variant-numeric:tabular-nums}',
+  '.wm-gauge-stats{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}',
   '.wm-gauge-stat{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:8px;min-width:0}',
   '.wm-gauge-stat .wm-metric-label{min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.3}',
   '.wm-gauge-stat .wm-metric-value{min-width:0;white-space:nowrap;text-align:right}',
@@ -2848,11 +2848,11 @@ const METER_CSS = [
   '.wm-gauge-stat .wm-info{margin-left:5px;vertical-align:1px}',
   '.wm-partial-chip{position:relative;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ui-warning)}',
   '.wm-stale .wm-kpi-figure,.wm-stale .wm-metric-value,.wm-stale .wm-legend-value,.wm-stale .wm-ring-text{opacity:.62}',
-  '.wm-meter-empty{display:flex;flex-direction:column;gap:10px}',
+  '.wm-meter-empty{display:flex;flex-direction:column;gap:8px}',
   '.wm-open-ledger{display:flex;align-items:center;justify-content:center;width:100%;padding:7px 10px;border:1px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-secondary);color:var(--ui-text-secondary);font:inherit;font-size:12px;font-weight:600;cursor:pointer}',
   '.wm-open-ledger:hover{border-color:var(--ui-accent);color:var(--ui-accent)}',
   '.wm-open-ledger:active{background:var(--ui-fill-tertiary)}',
-  '@container(max-width:320px){.wm-pane .wm-card{padding-top:9px;padding-bottom:9px}.wm-pane .wm-rates-grid{grid-template-columns:minmax(0,1fr)}.wm-pane .wm-model{font-size:12px}.wm-pane .wm-meter-brandrow{gap:6px}.wm-pane .wm-scope-chip{padding:2px 5px;letter-spacing:.02em}.wm-pane .wm-gauge-row{--wm-gauge-ring:52px;gap:8px;align-items:start}.wm-pane .wm-gauge-stats{gap:4px}.wm-pane .wm-gauge-stat{gap:6px}.wm-pane .wm-gauge-stat[data-kind="saved"]{grid-template-columns:minmax(0,1fr);gap:2px;align-items:start}.wm-pane .wm-gauge-stat[data-kind="saved"] .wm-metric-value{text-align:left}}',
+  '@container(max-width:320px){.wm-pane .wm-card{padding-top:8px;padding-bottom:8px}.wm-pane .wm-rates-grid{grid-template-columns:minmax(0,1fr)}.wm-pane .wm-model{font-size:12px}.wm-pane .wm-meter-brandrow{gap:6px}.wm-pane .wm-scope-chip{padding:2px 5px;letter-spacing:.02em}.wm-pane .wm-gauge-row{--wm-gauge-ring:68px;gap:8px;align-items:start}.wm-pane .wm-gauge-stats{gap:3px}.wm-pane .wm-gauge-stat{gap:6px}.wm-pane .wm-gauge-stat[data-kind="saved"]{grid-template-columns:minmax(0,1fr);gap:2px;align-items:start}.wm-pane .wm-gauge-stat[data-kind="saved"] .wm-metric-value{text-align:left}}',
   '.wm-pane :focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}',
   '@media (prefers-reduced-motion:reduce){.wm-chevron{transition:none}}'
 ].join('');
@@ -11889,6 +11889,10 @@ const I18N = {
     econBlockerLogIntro: 'Every comparison blocker with its technical account and code, for diagnosis and support.',
     econBlockUnknown: 'unknown',
     econCoverageUnknown: 'Coverage unknown',
+    coverageHelpLabel: 'Coverage details',
+    coverageScopeRun: 'the current run',
+    coverageScopeConversation: 'the recorded conversation',
+    cacheCoverageHelp: (scope, since) => `Coverage is prompt tokens with an exact or estimated cache split ÷ all prompt tokens for ${scope}.${since ? ` Conversation coverage is cumulative since ${since}.` : ''} The ring is cache hit rate: cache reads ÷ split-known prompt tokens. The savings note uses priced-savings coverage, which can differ.`,
     econFullyPriced: 'Fully priced',
     econNearlyAllPriced: 'Nearly all priced',
     econPricedPct: pct => `${pct}% priced`,
@@ -13431,6 +13435,10 @@ const I18N = {
     econNearlyAllPriced: '几乎全部定价',
     econPricedPct: pct => `${pct}% 已定价`,
     econSpanWindow: '在报告窗口内',
+    coverageHelpLabel: '覆盖率说明',
+    coverageScopeRun: '本轮',
+    coverageScopeConversation: '当前对话',
+    cacheCoverageHelp: (scope, since) => `覆盖率 = ${scope}中具有精确或估算缓存拆分的提示词令牌 ÷ 全部提示词令牌。${since ? `对话覆盖率从 ${since} 起累计。` : ''}圆环表示缓存命中率：缓存读取令牌 ÷ 拆分已知的提示词令牌。节省说明使用的是可定价净节省覆盖率，因此两者可能不同。`,
     econSpanDays: n => `过去 ${n} 天内`,
     econPerMonth: money => `${money}/月`,
     econApiUsage: 'API 等值用量',
