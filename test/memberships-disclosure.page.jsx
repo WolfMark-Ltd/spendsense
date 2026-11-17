@@ -18,6 +18,7 @@ const t = (key, ...args) => {
 globalThis.__membershipTranslator = t
 const done = () => {
   out.hostCalls = calls.length
+  out.css = T.MEMBERSHIP_CSS
   document.getElementById('memberships-disclosure-result').textContent = JSON.stringify(out)
 }
 
@@ -68,6 +69,16 @@ try {
     createRoot(document.getElementById(id)).render(React.createElement(T.MembershipsPage, {}))
   }
   const step = (ms, fn) => new Promise(r => setTimeout(() => r(fn()), ms))
+  // Bounded wait for the accounts to render before anything is clicked.
+  const waitFor = async (find, ms = 10000) => {
+    const deadline = Date.now() + ms
+    for (;;) {
+      const found = find()
+      if (found) return found
+      if (Date.now() >= deadline) return found
+      await step(25, () => {})
+    }
+  }
   const chevron = summary => getComputedStyle(summary, '::before').transform
   // A control counts as keyboard-reachable only when .focus() actually lands.
   const focusable = el => {
@@ -80,6 +91,7 @@ try {
   setTimeout(() => {
     (async () => {
       try {
+        await waitFor(() => document.getElementById(ids[0])?.querySelector('[data-account="memb:sub"]'))
         // Expand the subscription card once: $membershipExpanded is shared,
         // so one toggle covers all four roots.
         {
@@ -109,9 +121,21 @@ try {
             control: !!probe[name](),
             focusable: focusable(probe[name]()),
           })
+          // The readings group opens with the row; plan and advanced do not.
+          const initial = { plan: snap('plan'), allowances: snap('allowances'), advanced: snap('advanced') }
+          // Normalise to closed first so the closed-state assertions below test
+          // the disclosure rather than the default.
+          for (const name of ['plan', 'allowances', 'advanced']) {
+            if (group(name).open) summary(name).click()
+          }
+          // One frame, not a state wait: the pseudo-element transform is
+          // recomputed with the next style pass, and a stale reading here would
+          // be recorded as a closed group showing an open chevron.
+          await step(60, () => {})
           const closed = { plan: snap('plan'), allowances: snap('allowances'), advanced: snap('advanced') }
           // Native toggles: no React state, no waiting between clicks.
           for (const name of ['plan', 'allowances', 'advanced']) summary(name).click()
+          await step(60, () => {})
           const open = { plan: snap('plan'), allowances: snap('allowances'), advanced: snap('advanced') }
           // Nested allowance-weather disclosure, measured while its parent
           // allowances group is open so only its own state affects layout.
@@ -125,8 +149,9 @@ try {
           if (weather && !weather.open) weather.querySelector(':scope > summary').click()
           const weatherOpen = weatherSnap()
           for (const name of ['plan', 'allowances', 'advanced']) summary(name).click()
+          await step(60, () => {})
           const reclosed = { plan: snap('plan'), allowances: snap('allowances'), advanced: snap('advanced') }
-          out.cases[id] = { closed, open, reclosed, weatherClosed, weatherOpen,
+          out.cases[id] = { initial, closed, open, reclosed, weatherClosed, weatherOpen,
             paneOverflow: host.scrollWidth - host.clientWidth }
         }
         // Fee-draft round trip in narrow-dark: opening the form opens its

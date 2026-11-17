@@ -165,10 +165,10 @@ test('Memberships provider names are display-only labels with a safe fallback', 
     'the shared provider label still echoes an unmapped id for other screens')
   assert.equal(T.membershipFriendlyProvider('new-provider', en), 'New Provider',
     'Memberships names the same id in words')
-  assert.equal(T.membershipFriendlyProvider('commandcode-anthropic', en), 'CommandCode · Anthropic route')
+  assert.equal(T.membershipFriendlyProvider('commandcode-anthropic', en), 'CommandCode (Anthropic route)')
   assert.equal(T.membershipFriendlyProvider('opencode-zen', en), 'OpenCode Zen')
   assert.equal(T.membershipAccountName({ family: 'commandcode-anthropic', label: 'commandcode-anthropic' }, en),
-    'CommandCode · Anthropic route')
+    'CommandCode (Anthropic route)')
   assert.equal(T.membershipAccountName({ family: 'anthropic', label: 'main' }, en), 'main',
     'a name the reader chose is kept')
   assert.equal(T.membershipIdentityLabel({ family: 'anthropic', label: 'Work' }, en), 'Anthropic · Work')
@@ -179,7 +179,7 @@ test('Memberships provider names are display-only labels with a safe fallback', 
   assert.equal(T.membershipAccountShortcutLabel({ family: 'openai-codex', label: 'Personal' }, en), 'Personal',
     'a sentence keeps the short name')
   assert.equal(T.membershipAccountShortcutLabel({ family: 'commandcode-anthropic', label: 'commandcode-anthropic' }, en),
-    'CommandCode · Anthropic route', 'a slug is never the short name')
+    'CommandCode (Anthropic route)', 'a slug is never the short name')
   assert.equal(T.membershipAccountShortcutLabel({ family: 'google-gemini', label: 'google-gemini' }, en), 'Google Gemini',
     'a raw provider slug is replaced by its name')
 })
@@ -561,4 +561,105 @@ test('the Costs link selects the subscription-value destination', () => {
   T.$ledgerTab.set('memberships')
   T.openCostsValue()
   assert.equal(T.$ledgerTab.get(), 'costs')
+})
+
+// WP27: the four headline cards say what each figure actually measures.
+test('the headline cards separate reviewed accounts from paid subscriptions', () => {
+  const en = (key, ...args) => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const list = [
+    account({ id: 'paid', plan_id: 'anthropic.claude-max', effective_arrangement: 'subscription',
+      fee: { basis: 'catalogue', effective: { amount: 100, currency: 'USD', period: 'month' } } }),
+    account({ id: 'unpriced', plan_id: 'xai.supergrok', effective_arrangement: 'subscription',
+      fee: { basis: 'unpriced', effective: { amount: null } } }),
+    account({ id: 'free', plan_id: 'google-gemini.free', effective_arrangement: 'free_tier',
+      fee: { basis: 'free_tier', effective: { amount: 0, currency: 'USD', period: 'month' } } }),
+    account({ id: 'shared', effective_arrangement: 'included',
+      fee: { basis: 'included', effective: { amount: null } } }),
+    account({ id: 'prepaid', effective_arrangement: 'prepaid',
+      fee: { basis: 'prepaid', effective: { amount: null } } }),
+    account({ id: 'api', effective_arrangement: 'api_only',
+      fee: { basis: 'api_only', effective: { amount: null } } }),
+    account({ id: 'none', effective_arrangement: 'no_plan',
+      fee: { basis: 'no_plan', effective: { amount: null } } }),
+    account({ id: 'unknown', effective_arrangement: 'unconfirmed',
+      fee: { basis: 'unconfirmed', effective: { amount: null } } }),
+  ]
+  const summary = T.membershipSummary(list)
+  const cards = Object.fromEntries(T.membershipSummaryCards(summary, 2, true, null, en)
+    .map(card => [card.kind, card]))
+  assert.deepEqual(Object.keys(cards), ['reviewed', 'paid', 'attention', 'fees'])
+  assert.equal(cards.reviewed.value, '8', 'every account is reviewed once')
+  assert.equal(cards.paid.value, '2', 'free, included, prepaid, metered and no-plan are not paid')
+  assert.equal(cards.reviewed.status, 'All arrangements')
+  assert.match(cards.reviewed.note, /not subscribed/,
+    'reviewed never reads as a subscription')
+  assert.equal(cards.paid.status, '1 fee unknown',
+    'a chosen plan with no amount is named, not counted as a zero fee')
+  assert.equal(cards.paid.tone, 'attention')
+  assert.equal(cards.attention.value, '2')
+  assert.equal(cards.attention.status, 'Needs action')
+  assert.equal(cards.attention.tone, 'attention')
+  assert.deepEqual(cards.fees.value, ['USD 100.00/mo'],
+    'the confirmed free tier adds a real zero; the unpriced plan adds no line')
+  assert.equal(cards.fees.status, 'Declared')
+  assert.equal(cards.fees.tone, 'declared')
+  assert.match(cards.fees.note, /Not a bill/)
+})
+
+test('the headline cards never sum currencies and never invent a zero', () => {
+  const en = (key, ...args) => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const summary = T.membershipSummary([
+    account({ id: 'usd', effective_arrangement: 'subscription', plan_id: 'p.usd',
+      fee: { basis: 'declared', effective: { amount: 30, currency: 'USD', period: 'month' } } }),
+    account({ id: 'gbp', effective_arrangement: 'subscription', plan_id: 'p.gbp',
+      fee: { basis: 'declared', effective: { amount: 160, currency: 'GBP', period: 'month' } } }),
+    account({ id: 'yearly', effective_arrangement: 'subscription', plan_id: 'p.year',
+      fee: { basis: 'declared', effective: { amount: 120, currency: 'USD', period: 'year' } } }),
+  ])
+  const fees = T.membershipSummaryCards(summary, 0, true, null, en).find(card => card.kind === 'fees')
+  assert.deepEqual(fees.value, ['USD 30.00/mo', 'GBP 160.00/mo', 'USD 120.00/yr'],
+    'one line per currency and period, never a combined total')
+  assert.equal(fees.status, 'Declared')
+  // No recorded fee is "None recorded", distinct from an unknown amount.
+  const empty = T.membershipSummaryCards(T.membershipSummary([]), 0, true, null, en)
+    .find(card => card.kind === 'fees')
+  assert.equal(empty.value, 'No fee amount recorded')
+  assert.equal(empty.status, 'None recorded')
+  assert.equal(empty.tone, 'neutral')
+})
+
+test('the headline cards state a pending or unreadable read without a duplicate chip', () => {
+  const en = (key, ...args) => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  const summary = T.membershipSummary([account({ id: 'a', effective_arrangement: 'no_plan' })])
+  const loading = T.membershipSummaryCards(summary, 0, false, null, en)
+  assert.equal(loading[0].value, 'Loading…')
+  assert.equal(loading[0].status, '', 'a loading card does not repeat the word in a chip')
+  const failed = T.membershipSummaryCards(summary, 0, false, new Error('boom'), en)
+  assert.equal(failed[0].value, 'Unavailable')
+  assert.equal(failed[0].status, '')
+  for (const card of [...loading, ...failed]) {
+    assert.equal(card.tone, 'neutral', 'an unread figure claims no accent')
+    assert.equal(card.note, '', 'an unread figure states no basis it cannot know')
+  }
+})
+
+test('the four headline readings exist in both locales', () => {
+  const keys = ['memSummaryReviewedStatus', 'memSummaryReviewedNote', 'memSummaryPaidStatus',
+    'memSummaryPaidUnknown', 'memSummaryPaidNote', 'memSummaryAttentionOpen',
+    'memSummaryAttentionClear', 'memSummaryAttentionNote', 'memSummaryFeesDeclared',
+    'memSummaryFeesUnknown', 'memSummaryFeesNone', 'memSummaryFeesNote']
+  for (const key of keys) {
+    assert.ok(T.I18N.en[key], `${key} exists in English`)
+    assert.ok(T.I18N.zh[key], `${key} exists in Chinese`)
+    assert.notEqual(String(T.I18N.zh[key]), String(T.I18N.en[key]), `${key} is translated`)
+  }
 })

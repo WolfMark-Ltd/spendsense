@@ -44,7 +44,17 @@ const COPY = {
     explainer: /No reading from Hermes.*normal data limitation/is,
     accountsReviewed: 'Accounts reviewed',
     paidSubscriptions: 'Paid subscriptions',
-    unknownFee: 'with an unknown fee',
+    needsAttention: 'Needs attention',
+    membershipFees: 'Membership fees',
+    reviewedStatus: 'All arrangements',
+    reviewedNote: /not subscribed/,
+    paidUnknown: '1 fee unknown',
+    attentionOpen: 'Needs action',
+    attentionClear: 'None',
+    feesDeclared: 'Declared',
+    feesNote: /Not a bill/,
+    feeLines: ['USD 110.00/mo', 'EUR 19.99/mo'],
+    arrangement: 'Accounts by arrangement',
     noHermesCount: /2 with no reading from Hermes/,
     healthPrefix: /Provider readings:/,
     healthFailed: /1 failed/,
@@ -71,7 +81,17 @@ const COPY = {
     explainer: /Hermes 未提供读数.*正常的数据限制/s,
     accountsReviewed: '已检查账户',
     paidSubscriptions: '付费订阅',
-    unknownFee: '项费用未知',
+    needsAttention: '需要注意',
+    membershipFees: '会员费用',
+    reviewedStatus: '全部计费方式',
+    reviewedNote: /不代表已订阅/,
+    paidUnknown: '1 项费用未知',
+    attentionOpen: '需处理',
+    attentionClear: '无',
+    feesDeclared: '已声明',
+    feesNote: /不是账单/,
+    feeLines: ['USD 110.00/月', 'EUR 19.99/月'],
+    arrangement: '按计费方式分类的账户',
     noHermesCount: /Hermes 未提供 2/,
     healthPrefix: /提供方读数/,
     healthFailed: /失败 1/,
@@ -214,18 +234,61 @@ if (!chrome) {
           assert.equal(view.costsFocusable, true,
             `${locale} ${caseId}: the Costs link is keyboard reachable`)
 
-          // F27: the summary states reviewed accounts and paid subscriptions,
-          // never "plans confirmed", and never a confirmed zero.
-          assert.ok(view.summaryLabels.includes(copy.accountsReviewed),
-            `${locale} ${caseId}: the summary counts reviewed accounts`)
-          assert.ok(view.summaryLabels.includes(copy.paidSubscriptions),
-            `${locale} ${caseId}: the summary counts paid subscriptions`)
-          assert.equal(view.summaryValues[0], '9',
+          // F27/WP27: the summary states reviewed accounts and paid
+          // subscriptions, never "plans confirmed", and never a confirmed zero.
+          assert.deepEqual(view.summaryLabels, [copy.accountsReviewed, copy.paidSubscriptions,
+            copy.needsAttention, copy.membershipFees],
+            `${locale} ${caseId}: the four headline readings are named in order`)
+          assert.deepEqual(view.summaryCards.map(card => card.kind),
+            ['reviewed', 'paid', 'attention', 'fees'],
+            `${locale} ${caseId}: each reading keeps its own card`)
+          const card = kind => view.summaryCards.find(entry => entry.kind === kind)
+          assert.equal(card('reviewed').value, '9',
             `${locale} ${caseId}: every account is counted once as reviewed`)
-          assert.equal(view.summaryValues[1], '4',
+          assert.equal(card('paid').value, '4',
             `${locale} ${caseId}: only subscription accounts with a chosen plan are paid`)
-          assert.ok(view.arrangementChips.join(' ').includes(copy.unknownFee),
-            `${locale} ${caseId}: an unknown fee is counted, never shown as zero`)
+          assert.equal(card('reviewed').status, copy.reviewedStatus,
+            `${locale} ${caseId}: a reviewed account is not called a subscription`)
+          assert.match(card('reviewed').note, copy.reviewedNote,
+            `${locale} ${caseId}: the reviewed card says what it does not mean`)
+          assert.equal(card('paid').status, copy.paidUnknown,
+            `${locale} ${caseId}: a paid account with no fee amount is named as unknown`)
+          assert.equal(card('paid').tone, 'attention',
+            `${locale} ${caseId}: an unknown fee changes the paid card's accent`)
+          assert.deepEqual(card('fees').lines, copy.feeLines,
+            `${locale} ${caseId}: fees list one line per currency, never summed together`)
+          assert.equal(card('fees').status, copy.feesDeclared,
+            `${locale} ${caseId}: a recorded fee is Declared`)
+          assert.match(card('fees').note, copy.feesNote,
+            `${locale} ${caseId}: the fee card says it is not a bill`)
+          assert.equal(card('attention').status,
+            card('attention').value === '0' ? copy.attentionClear : copy.attentionOpen,
+            `${locale} ${caseId}: the attention status agrees with its own count`)
+          // WP27: the figures dominate, each card carries the accepted Costs
+          // rail, and the strip reconciles to the reviewed count.
+          for (const entry of view.summaryCards) {
+            // A multi-line fee reading steps down one size in the pane so a
+            // currency never splits from its amount.
+            const minFigure = caseId.startsWith('wide') ? 20 : 17
+            assert.ok(entry.valueSize >= minFigure,
+              `${locale} ${caseId}: ${entry.kind} figure is prominent (${entry.valueSize}px)`)
+            assert.ok(entry.valueWeight >= 600,
+              `${locale} ${caseId}: ${entry.kind} figure is weighty (${entry.valueWeight})`)
+            assert.equal(entry.railWidth, '3px',
+              `${locale} ${caseId}: ${entry.kind} carries the 3px accent rail`)
+            assert.ok(entry.overflow <= 1,
+              `${locale} ${caseId}: ${entry.kind} card does not overflow (${entry.overflow}px)`)
+          }
+          assert.notEqual(card('reviewed').railColour, card('paid').railColour,
+            `${locale} ${caseId}: a scope count and a declared subscription differ in accent`)
+          assert.equal(card('fees').tone, 'declared',
+            `${locale} ${caseId}: a recorded fee carries the declared accent`)
+          assert.equal(view.summaryColumns, caseId.startsWith('wide') ? 4 : 2,
+            `${locale} ${caseId}: the four cards form one row wide and a 2×2 grid in the pane`)
+          assert.equal(view.arrangementSum, 9,
+            `${locale} ${caseId}: the arrangement counts reconcile to the reviewed total`)
+          assert.ok(view.arrangementLabels.join(' ').includes(copy.arrangement),
+            `${locale} ${caseId}: the arrangement breakdown is labelled in words`)
           assert.deepEqual(view.arrangementOf['memb:stored'], 'unconfirmed',
             `${locale} ${caseId}: an unconfirmed account is not called "no current plan"`)
 
@@ -242,7 +305,7 @@ if (!chrome) {
           assert.doesNotMatch(view.paneText, /commandcode-anthropic|opencode-zen|xai-oauth/,
             `${locale} ${caseId}: no technical route slug is shown in the normal view`)
           assert.match(view.rows.find(entry => entry.account === 'memb:unsupported').head,
-            /CommandCode · Anthropic route/,
+            /CommandCode \(Anthropic route\)/,
             `${locale} ${caseId}: a route slug is replaced by a friendly name`)
 
           // F83: provider reading health is stated separately from attention.
