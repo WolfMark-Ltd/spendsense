@@ -33,17 +33,19 @@ const report = {
     { id: 'value', heading: locale === 'zh' ? '用量价值（API 等值）' : 'Usage value (API-equivalent)',
       window: period, kind: 'lines',
       lines: [{ label: locale === 'zh' ? 'API 等值' : 'API-equivalent value', value: '≥$143.61' }],
-      notes: [locale === 'zh' ? 'API 等值是理论公开价格，不是账单。' : 'API-equivalent value is a theoretical public price, not an invoice.'] },
+      notes: [] },
     { id: 'spending', heading: locale === 'zh' ? '计量与现金支出' : 'Metered and cash spending',
       window: locale === 'zh' ? '当前计费周期' : 'Current billing cycles', kind: 'lines', lines: [
-        { label: locale === 'zh' ? '计量（额度）支出' : 'Metered (allowance) spending', value: '—' },
+        { label: locale === 'zh' ? '计量用量价值（全部费用规则）' : 'Metered usage value (all cost rules)', value: '—' },
       ], notes: [locale === 'zh' ? '部分调用缺少计费分类证据。' : 'Some calls lack billing classification evidence.'] },
     { id: 'allowances', heading: locale === 'zh' ? '当前额度状态' : 'Current allowance status',
       window: locale === 'zh' ? '当前额度周期（截至 2026-11-11）' : 'Current allowance cycle, as of 2026-11-11',
-      kind: 'table',
+      kind: 'table', notes_first: true,
       columns: locale === 'zh' ? ['账号', '计算的周期结束日期', '计算的剩余天数', '状态']
         : ['Account', 'Calculated cycle end', 'Calculated days left', 'Status'],
       rows: [['Synthetic account', '2026-12-01', '20', locale === 'zh' ? '未知' : 'Unknown']],
+      row_meta: [{ account_id: 'synthetic', link: 'memberships',
+        why: locale === 'zh' ? '没有服务商读数或手动标记' : 'No provider reading or manual mark' }],
       notes: [locale === 'zh'
         ? '没有服务商读数或手动标记；本地用量不能替代服务商用量。'
         : 'No provider reading or manual mark is available; local usage is not provider consumption.'] },
@@ -83,6 +85,10 @@ async function measure() {
     .find(button => button.textContent.includes(translate('rpGenerate')))
   generate?.click()
   await tick(180)
+  // The all-unknown allowance table hides behind a disclosure: open it so
+  // the table, per-row guidance and account links below are measured open.
+  host.querySelector('.wm-digest-allowances-detail')?.setAttribute('open', '')
+  await tick(60)
   const shell = host.querySelector('.wm-shell.wm-reports')
   const toolbar = host.querySelector('.wm-reports-bar')
   const actions = [...host.querySelectorAll('.wm-reports-actions button')]

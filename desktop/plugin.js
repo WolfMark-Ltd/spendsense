@@ -9557,6 +9557,11 @@ const REPORTS_CSS = `
   padding:8px 0;background:var(--ui-fill-primary);border-bottom:1px solid var(--ui-stroke-secondary)}
 .wm-reports-bar h2{font-size:13px;font-weight:600;margin:0 auto 0 0}
 .wm-reports-period{display:flex;min-width:0}
+.wm-reports-seg{display:inline-flex;gap:3px;border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:3px;background:var(--ui-fill-secondary);max-width:100%}
+.wm-reports-segbtn{border:0;background:transparent;border-radius:99px;padding:5px 12px;font:inherit;font-size:12.5px;color:var(--ui-text-secondary);cursor:pointer;min-height:32px;white-space:nowrap}
+.wm-reports-segbtn:hover{background:var(--ui-fill-tertiary);color:var(--ui-text-primary)}
+.wm-reports-segbtn[aria-pressed="true"]{background:var(--ui-fill-tertiary);color:var(--ui-text-primary);font-weight:600;outline:2px solid var(--ui-accent);outline-offset:2px}
+.wm-reports-segbtn:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}
 .wm-reports-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .wm-report-feedback{margin:8px 0 0;padding:8px 10px;border-inline-start:3px solid var(--ui-accent);
   border-radius:5px;background:var(--ui-fill-secondary);font-size:12px;overflow-wrap:anywhere}
@@ -9604,6 +9609,18 @@ const REPORTS_CSS = `
 .wm-digest-method summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none}
 .wm-digest-method summary::-webkit-details-marker{display:none}
 .wm-digest-method .wm-digest-notes{margin-top:10px}
+.wm-digest-status{display:grid;gap:4px;justify-items:start}
+.wm-digest-status small{font-size:11px;line-height:1.4;color:var(--ui-text-secondary)}
+.wm-digest-link{border:0;background:none;padding:0;font:inherit;font-size:11.5px;color:var(--ui-accent);cursor:pointer;text-align:left;text-decoration:underline;text-underline-offset:2px}
+.wm-digest-link:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px;border-radius:3px}
+.wm-digest-allowances-detail summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;font-size:12.5px;font-weight:600;border-radius:5px}
+.wm-digest-allowances-detail summary::-webkit-details-marker{display:none}
+.wm-digest-allowances-detail summary::before{content:"›";display:inline-block;font-size:17px;line-height:1;font-weight:700;color:var(--ui-text-primary);transition:transform .15s ease}
+.wm-digest-allowances-detail[open] > summary::before{transform:rotate(90deg)}
+.wm-digest-allowances-detail summary:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}
+.wm-digest-allowances-detail{min-width:0}
+.wm-digest-allowances-detail .wm-digest-table-wrap{margin-top:8px}
+@media (prefers-reduced-motion:reduce){.wm-digest-allowances-detail summary::before{transition:none}}
 .wm-digest-error{display:grid;gap:8px;justify-items:start;padding:12px 0}
 @media(max-width:560px){
   .wm-reports-bar{display:grid;grid-template-columns:minmax(0,1fr);align-items:start;gap:7px}
@@ -9615,6 +9632,75 @@ const REPORTS_CSS = `
   .wm-digest-overview,.wm-digest-section{padding:10px}
 }
 `
+
+/** First-column display names for ranked tables: the same friendly text
+ * Overview and the sidebar use on screen, with the exact stored slug in the
+ * tooltip; the Markdown export keeps raw slugs for provenance. */
+function digestNameCell(sectionId, cell, t) {
+  const raw = String(cell ?? '')
+  if (sectionId === 'models') {
+    const friendly = modelDisplayName(raw)
+    return { text: friendly || raw, title: raw }
+  }
+  if (sectionId === 'providers') {
+    const friendly = meterProviderLabel(raw, t)
+    return { text: friendly || raw, title: raw }
+  }
+  return null
+}
+
+/** Per-account allowance action: Memberships for readings and manual marks,
+ * Settings billing rules for cost-rule allowances, nothing for provider
+ * limitations the user cannot fix. */
+function digestAllowanceAction(meta, t) {
+  if (!meta || !meta.link) return null
+  if (meta.link === 'memberships' && !meta.account_id) return null
+  const label = meta.link === 'memberships' ? t('rpOpenMemberships') : t('rpOpenBillingRules')
+  return jsx('button', { type: 'button', className: 'wm-digest-link',
+    onClick: () => {
+      if (meta.link === 'memberships') {
+        queueMembershipTarget({ account: { id: meta.account_id }, issue: 'allowance-unknown',
+          target: { group: 'allowances', focus: 'allowances' } })
+        goLedgerTab('memberships')
+      } else {
+        goLedgerTab('settings')
+      }
+    },
+    children: label })
+}
+
+function digestStatusCell(section, rowIndex, cell, t) {
+  const meta = (section.row_meta || [])[rowIndex] || {}
+  if (!meta.why && !meta.link) return cell
+  return jsxs('span', { className: 'wm-digest-status', children: [
+    jsx('span', { children: cell }),
+    meta.why ? jsx('small', { children: meta.why }) : null,
+    digestAllowanceAction(meta, t),
+  ].filter(Boolean) })
+}
+
+function digestTable(section, t) {
+  return jsx('div', { className: 'wm-digest-table-wrap', role: 'region',
+    'aria-label': section.heading, tabIndex: 0, children: jsxs('table', { children: [
+    jsx('thead', { children: jsx('tr', { children: (section.columns || [])
+      .map((column, index) => jsx('th', { scope: 'col', children: column }, `h${index}`)) }) }),
+    jsx('tbody', { children: (section.rows || [])
+      .map((row, index) => jsx('tr', { children: row
+        .map((cell, cellIndex) => {
+          const named = cellIndex === 0 ? digestNameCell(section.id, cell, t) : null
+          if (named) return jsx('td', { title: named.title, children: named.text }, `c${cellIndex}`)
+          if (section.id === 'allowances' && cellIndex === row.length - 1) {
+            return jsx('td', { children: digestStatusCell(section, index, cell, t) }, `c${cellIndex}`)
+          }
+          return jsx('td', { children: cell }, `c${cellIndex}`)
+        }) }, `r${index}`)) }),
+  ] }) })
+}
+
+function digestNotesList(section) {
+  return (section.notes || []).length ? jsxs('ul', { className: 'wm-digest-notes',
+    children: section.notes.map((note, index) => jsx('li', { children: note }, `n${index}`)) }) : null
+}
 
 /** Generic section renderer: headings, tables, lines and notes, React-escaped. */
 function DigestPreview({ report }) {
@@ -9656,23 +9742,37 @@ function DigestPreview({ report }) {
         ] }),
         section.window && section.window !== report?.period?.label
           ? jsx('p', { className: 'wm-digest-context', children: section.window }) : null,
-        section.kind === 'table' ? jsx('div', { className: 'wm-digest-table-wrap', role: 'region',
-          'aria-label': section.heading, tabIndex: 0, children: jsxs('table', { children: [
-          jsx('thead', { children: jsx('tr', { children: (section.columns || [])
-            .map((column, index) => jsx('th', { scope: 'col', children: column }, `h${index}`)) }) }),
-          jsx('tbody', { children: (section.rows || [])
-            .map((row, index) => jsx('tr', { children: row
-              .map((cell, cellIndex) => jsx('td', { children: cell }, `c${cellIndex}`)) }, `r${index}`)) }),
-        ] }) }) : null,
+        section.notes_first ? digestNotesList(section) : null,
+        section.kind === 'table'
+          ? (section.id === 'allowances' && section.notes_first && (section.rows || []).length
+            ? jsxs('details', { className: 'wm-digest-allowances-detail', children: [
+              jsx('summary', { children: t('rpAllowanceDetails', (section.rows || []).length) }),
+              digestTable(section, t),
+            ] })
+            : digestTable(section, t))
+          : null,
         (section.lines || []).length ? jsxs('ul', { className: 'wm-digest-lines',
           children: section.lines.map((line, index) => jsxs('li', { children: [
             jsx('span', { children: line.label }),
             jsx('span', { children: line.value }),
           ] }, `l${index}`)) }) : null,
-        (section.notes || []).length ? jsxs('ul', { className: 'wm-digest-notes',
-          children: section.notes.map((note, index) => jsx('li', { children: note }, `n${index}`)) }) : null,
+        section.notes_first ? null : digestNotesList(section),
       ] }, section.id)),
   ] })
+}
+
+/**
+ * Page-local period switch. The host SegmentedControl's selected state cannot
+ * be targeted reliably from page CSS (see NewsScopeTabs), so Reports renders
+ * its own aria-pressed button group; the persistent selected ring lives in
+ * REPORTS_CSS under .wm-reports-seg, leaving shared primitives untouched.
+ */
+function ReportsPeriodSwitch({ days, onChange, t }) {
+  return jsxs('div', { className: 'wm-reports-seg', role: 'group', 'aria-label': t('rpPeriod'),
+    children: [['7', t('rpDays7')], ['30', t('rpDays30')]].map(([optionValue, label]) =>
+      jsx('button', { type: 'button', className: 'wm-reports-segbtn', value: optionValue,
+        'aria-pressed': String(days) === optionValue, children: label,
+        onClick: () => onChange(optionValue) }, optionValue)) })
 }
 
 function ReportsPage() {
@@ -9725,12 +9825,10 @@ function ReportsPage() {
     jsxs('div', { className: 'wm-shell wm-reports', children: [
       jsxs('div', { className: 'wm-reports-bar', children: [
         jsx('h2', { children: t('reportsTitle') }),
-        jsx('div', { className: 'wm-reports-period', role: 'group', 'aria-label': t('rpPeriod'),
-          children: jsx(SegmentedControl, {
-            onChange: v => { clearActionFeedback(); $digestDays.set(Number(v) === 7 ? 7 : 30) },
-            options: [{ id: '7', label: t('rpDays7') }, { id: '30', label: t('rpDays30') }],
-            value: String(days),
-          }) }),
+        jsx('div', { className: 'wm-reports-period', children: jsx(ReportsPeriodSwitch, {
+          days, t,
+          onChange: v => { clearActionFeedback(); $digestDays.set(Number(v) === 7 ? 7 : 30) },
+        }) }),
         jsxs('div', { className: 'wm-reports-actions', role: 'group', 'aria-label': t('rpActions'), children: [
           jsx(AsyncButton, { type: 'button', className: 'wm-button wm-accent',
             status: report.isFetching ? 'pending' : 'idle', pendingLabel: t('rpGenerating'),
@@ -12378,6 +12476,9 @@ const I18N = {
     rpRetry: 'Retry',
     rpEmpty: 'Choose a period, then Generate report.',
     rpStale: date => `Refresh failed — showing the report generated ${date}.`,
+    rpAllowanceDetails: count => `Account details (${count})`,
+    rpOpenMemberships: 'Open in Memberships',
+    rpOpenBillingRules: 'Open billing rules in Settings',
     // Model News.
     newsTitle: 'Model News',
     newsSubtitle: 'New models, price changes and subscription updates, matched against your own usage.',
@@ -13919,6 +14020,9 @@ const I18N = {
     rpRetry: '重试',
     rpEmpty: '选择周期，然后生成报告。',
     rpStale: date => `刷新失败——显示生成于${date}的报告。`,
+    rpAllowanceDetails: count => `账号明细（${count}）`,
+    rpOpenMemberships: '在“会员”中打开',
+    rpOpenBillingRules: '在“设置”中打开计费规则',
     // 模型动态。
     newsTitle: '模型动态',
     newsSubtitle: '新模型、价格变动与订阅更新，并对照您自己的用量。',
