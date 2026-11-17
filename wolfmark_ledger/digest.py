@@ -94,7 +94,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "label_fees_window": "Fees in window ({currency})",
         "label_usage_value": "Estimated API value covered by memberships",
         "label_difference": "Estimated value comparison (API-equivalent minus fees)",
-        "note_membership_basis": "What this usage would cost at API rates — not a bill, and not cash saved.",
+        "note_membership_basis": "What this usage would cost at API rates — not a bill, and not cash saved. Usage is attributed to subscriptions by route; any overage beyond included allowances is not split out.",
         "label_recording_since": "Recording since",
         "label_recording_last": "Last recorded call",
         "label_attributed": "Attributed tokens",
@@ -151,6 +151,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "why_allowance_unusable_limit": "Allowance limit unavailable or unusable",
         "why_allowance_no_configured": "No configured allowance window or saved reading",
         "why_allowance_other": "Evidence cannot support a verdict",
+        "fix_in_memberships": "fix in Memberships",
+        "fix_in_settings": "fix in Settings → Advanced billing rules",
         "note_no_memberships": "No memberships on file.",
         "note_no_models": "No models recorded in this window.",
         "note_no_providers": "No providers recorded in this window.",
@@ -214,7 +216,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "label_fees_window": "周期内费用（{currency}）",
         "label_usage_value": "会员覆盖用量的估计 API 价值",
         "label_difference": "估计价值对比（API 等值减费用）",
-        "note_membership_basis": "这是该用量按 API 价格计算的价值——不是账单，也不是实际省下的现金。",
+        "note_membership_basis": "这是该用量按 API 价格计算的价值——不是账单，也不是实际省下的现金。用量按路由归因至订阅；超出包含额度的部分未单独拆分。",
         "label_recording_since": "记录开始",
         "label_recording_last": "最近记录",
         "label_attributed": "已归因 token",
@@ -271,6 +273,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "why_allowance_unusable_limit": "额度上限不可用或无效",
         "why_allowance_no_configured": "没有已配置的额度窗口或已保存的读数",
         "why_allowance_other": "现有证据不足以判断",
+        "fix_in_memberships": "在“会员”中处理",
+        "fix_in_settings": "在“设置 → 高级计费规则”中处理",
         "note_no_memberships": "没有已确认的会员。",
         "note_no_models": "本周期内没有记录到模型。",
         "note_no_providers": "本周期内没有记录到服务商。",
@@ -706,7 +710,7 @@ def _allowances_section(S: Mapping[str, str], window_label: str,
         if state != "unknown":
             any_known = True
             row_meta.append({"account_id": account_id, "why": None,
-                             "link": None})
+                             "link": None, "export_status": None})
             continue
         windows = [row for row in (entry.get("windows") or []) if isinstance(row, dict)]
         unknown_windows = [row for row in windows if row.get("verdict") == "unknown"]
@@ -732,8 +736,16 @@ def _allowances_section(S: Mapping[str, str], window_label: str,
             reason = "note_allowance_other_unknown"
         unknown_reasons[reason] = unknown_reasons.get(reason, 0) + 1
         why_key, link = _ALLOWANCE_ACTIONS[reason]
+        # The Markdown export cannot carry the preview's per-row actions, so
+        # each Unknown row keeps a plain-text reason and fix target; the
+        # preview keeps reading the short shared rows.
+        export_status = f"{S['verdict_unknown']} — {S[why_key]}"
+        if link == "memberships":
+            export_status += f" ({S['fix_in_memberships']})"
+        elif link == "settings":
+            export_status += f" ({S['fix_in_settings']})"
         row_meta.append({"account_id": account_id, "why": S[why_key],
-                         "link": link})
+                         "link": link, "export_status": export_status})
     notes = [S["note_allowance_current"]]
     all_unknown = bool(rows) and not any_known
     if not rows:
@@ -923,8 +935,14 @@ def _render_markdown(title: str, period_label: str, generated_label: str,
             columns = section.get("columns", [])
             parts.append("| " + " | ".join(_escape(c) for c in columns) + " |")
             parts.append("|" + "|".join("---" for _ in columns) + "|")
-            for row in section.get("rows", []):
-                parts.append("| " + " | ".join(_escape(c) for c in row) + " |")
+            metas = section.get("row_meta") or []
+            for index, row in enumerate(section.get("rows", [])):
+                cells = list(row)
+                export = (metas[index] if index < len(metas) else {}).get(
+                    "export_status")
+                if export is not None and cells:
+                    cells[-1] = export
+                parts.append("| " + " | ".join(_escape(c) for c in cells) + " |")
             parts.append("")
         for line in section.get("lines", []):
             parts.append(f"- **{_escape(line['label'])}:** {_escape(line['value'])}")

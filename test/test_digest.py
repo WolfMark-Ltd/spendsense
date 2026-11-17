@@ -1236,6 +1236,9 @@ class Wp21ReportsClarityTests(DigestCase):
         notes = " ".join(fees["notes"])
         self.assertIn("What this usage would cost at API rates", notes)
         self.assertIn("not a bill, and not cash saved", notes)
+        self.assertIn("attributed to subscriptions by route", notes)
+        self.assertIn("overage beyond included allowances is not split out",
+                      notes)
         self.assertNotIn("Attributed usage value", result["markdown"])
 
     def test_membership_value_withheld_without_a_subscription(self):
@@ -1407,6 +1410,39 @@ class Wp21ReportsClarityTests(DigestCase):
                                        "verdict_basis": "conflicted"}])])
         notes = " ".join(section["notes"])
         self.assertIn("Resolve it in Memberships", notes)
+
+    def test_markdown_keeps_per_account_reasons_and_fixes(self):
+        accounts = [
+            self.allowance_entry(
+                "reading", windows=[{"verdict": "unknown",
+                                      "verdict_basis": "none"}]),
+            self.allowance_entry(
+                "limit", rules=[{"verdict": "unknown", "pool": "allowance_usd",
+                                  "verdict_basis": "none"}]),
+            self.allowance_entry(
+                "prepaid", rules=[{"verdict": "unknown",
+                                    "pool": "prepaid_spend",
+                                    "verdict_basis": "none"}]),
+            {"account_id": "known", "label": "known", "cycle": {},
+             "rollup": {"state": "on_track"}, "windows": [], "rules": []},
+        ]
+        section = D._allowances_section(D.STRINGS["en"], "cycle", accounts)
+        markdown = D._render_markdown("t", "period", "generated", [section])
+        self.assertIn("| reading |", markdown)
+        self.assertIn("Unknown — No provider reading or manual mark "
+                      "(fix in Memberships)", markdown)
+        self.assertIn("Unknown — Allowance limit unavailable or unusable "
+                      "(fix in Settings → Advanced billing rules)", markdown)
+        self.assertIn("Unknown — Prepaid top-ups are not tracked", markdown)
+        self.assertNotIn("Prepaid top-ups are not tracked (fix", markdown)
+        # The preview keeps the short shared rows; enrichment is export-only.
+        self.assertEqual(section["rows"][0][-1], "Unknown")
+        self.assertIn("On track", section["rows"][3][-1])
+        zh = D._allowances_section(
+            D.STRINGS["zh"], "cycle", accounts[:1])
+        zh_markdown = D._render_markdown("t", "period", "generated", [zh])
+        self.assertIn("未知 — 没有服务商读数或手动标记 (在“会员”中处理)",
+                      zh_markdown)
 
     def test_provider_limitations_carry_no_fix(self):
         section = D._allowances_section(
