@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.1'
+const PLUGIN_VERSION = '0.6.7'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 3
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -2321,6 +2321,11 @@ function InfoTip({ dir = 'down', id, label, text, wide = false }) {
   const btnRef = useRef(null)
   const popRef = useRef(null)
   const [placed, setPlaced] = useState(null)
+  useEffect(() => () => {
+    // A tooltip can be open on a page that is replaced by tab navigation.
+    // Clear only our own id so an unrelated, newly opened tooltip survives.
+    if ($infoOpen.get() === id) $infoOpen.set(null)
+  }, [id])
   useEffect(() => {
     if (!isOpen) { setPlaced(null); return }
     const btn = btnRef.current
@@ -2767,8 +2772,8 @@ const SHARED_CSS = [
   '.wm-async-status[data-status="error"]{color:var(--wm-error)}',
   '.wm-info{position:relative;display:inline-flex;align-items:center;flex-shrink:0;vertical-align:middle}',
   '.wm-info-btn{position:relative;width:24px;height:24px;min-width:24px;min-height:24px;border-radius:50%;border:1px solid transparent;background:none;color:var(--wm-text-quiet);font-size:inherit;line-height:1;font-style:normal;font-family:inherit;font-weight:400;padding:0;cursor:pointer;display:inline-grid;place-items:center;vertical-align:middle}',
-  '.wm-info-glyph{position:relative;z-index:1;font:italic 600 .62em/1 Georgia,serif}',
-  '.wm-info-btn::after{content:"";position:absolute;left:50%;top:50%;width:.78em;height:.78em;transform:translate(-50%,-50%);border-radius:50%;border:1px solid var(--wm-text-quiet);pointer-events:none}',
+  '.wm-info-glyph{position:relative;z-index:1;font:italic 600 max(7px,.46em)/1 Georgia,serif}',
+  '.wm-info-btn::after{content:"";position:absolute;left:50%;top:50%;width:max(9px,.58em);height:max(9px,.58em);transform:translate(-50%,-50%);border-radius:50%;border:1px solid var(--wm-text-quiet);pointer-events:none}',
   '.wm-info-btn:hover,.wm-info-btn:focus-visible{color:var(--wm-action)}',
   '.wm-info-btn:hover::after,.wm-info-btn:focus-visible::after{border-color:var(--wm-action)}',
   '.wm-info-btn:focus-visible{outline:2px solid var(--wm-action);outline-offset:2px}',
@@ -3059,6 +3064,7 @@ function analyticsReduce(state, action) {
   return state
 }
 const $analytics = atom({})
+const $analyticsFocus = atom(null)
 /** Scope uses synchronous active-route state only; profileRoutes is async inventory I/O. */
 function analyticsScope(profile, gateway, connectionId = host.state.connectionId?.get()) {
   const epoch = typeof gatewayActivationEpoch === 'function' ? gatewayActivationEpoch() : 0
@@ -3067,6 +3073,17 @@ function analyticsScope(profile, gateway, connectionId = host.state.connectionId
 function analyticsDispatch(scope, action) {
   const all = $analytics.get()
   $analytics.set({...all,[scope]:analyticsReduce(all[scope] || analyticsInitialState(),action)})
+}
+function openUsagePricingCoverage() {
+  const profile = host.state.profile?.get()
+  const gateway = host.state.gateway?.get()
+  const connection = host.state.connectionId?.get()
+  const scope = analyticsScope(profile, gateway, connection)
+  const all = $analytics.get()
+  const state = all[scope] || analyticsInitialState()
+  $analytics.set({...all,[scope]:{...state,filters:analyticsInitialState().filters,days:30,otherOpen:false,trendIndex:null}})
+  $analyticsFocus.set({scope,target:'pricing-coverage'})
+  goLedgerTab('usage')
 }
 function analyticsQuery(days, filters, scope) {
   const parameters = new URLSearchParams({days:String(days)})
@@ -3244,8 +3261,8 @@ function AnalyticsPanel({number,title,subtitle,controls,children,footer}) {
     jsxs('div',{className:'wm-panelhead',children:[jsxs('div',{children:[jsxs('div',{className:'wm-paneltitle',children:[jsx('span',{className:'wm-number',children:number}),jsx('h2',{children:title})]}),jsx('p',{className:'wm-subtle',children:subtitle})]}),controls]}),
     children,footer?jsx('div',{className:'wm-footnote',children:footer}):null]})
 }
-function AnalyticsStat({label,value,hint,extra,tone}) {
-  return jsxs('div',{className:'wm-stat',children:[jsx('div',{className:'wm-statlabel',children:label}),jsx('div',{className:cn('wm-statvalue wm-mono',tone),children:value}),jsx('div',{className:'wm-subtle',children:hint}),extra?jsx('div',{className:'wm-subtle',style:{marginTop:5},children:extra}):null]})
+function AnalyticsStat({id,tabIndex,label,value,hint,extra,tone}) {
+  return jsxs('div',{id,tabIndex,className:'wm-stat',children:[jsx('div',{className:'wm-statlabel',children:label}),jsx('div',{className:cn('wm-statvalue wm-mono',tone),children:value}),jsx('div',{className:'wm-subtle',children:hint}),extra?jsx('div',{className:'wm-subtle',style:{marginTop:5},children:extra}):null]})
 }
 function AnalyticsDonut({items,total,label,format,exact=format,onSelect,chart='distribution',t}) {
   const radius=72,circumference=2*Math.PI*radius
@@ -3564,22 +3581,22 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('div',{className:'wm-eyebrow',children:'WolfMark / SpendSense'}),jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
     jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')})]})]})
   const content = jsxs('div',{className:'wm-shell',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
-      query.error?jsxs('div',{className:'wm-alert',role:'alert',children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
+      query.error?jsxs('div',{id:'wm-usage-load-error',className:'wm-alert',role:'alert',tabIndex:-1,children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
     totals?jsxs('div',{className:'wm-stats',children:[
       jsxs('div',{className:'wm-statgroup',role:'group','aria-label':t('usageKpiMoney'),'data-kpi-group':'money',children:[jsx('div',{className:'wm-statgrouplabel','aria-hidden':'true',children:t('usageKpiMoney')}),
         jsx(AnalyticsStat,{label:t('usageStatApiEquiv'),value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',(num(totals.unpriced_tokens)||num(totals.unpriced_calls))&&'wm-warn'),children:analyticsPricing(totals, t)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd, t)) || t('usageStatApiExtra')}),
         jsx(AnalyticsStat,{label:t('usageStatSavings'),value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:t('usageStatSavingsHint'),extra:t('usageStatSavingsExtra', percent(economics.coverage))}),
-        jsx(AnalyticsStat,{label:t('usageStatCoverage'),value:num(totals.tokens)?percent(data.pricing_coverage?.coverage):t('usageUnknown'),hint:t('usageStatCoverageHint', exactTokens(totals.unpriced_tokens), exactTokens(totals.unpriced_calls)),extra:analyticsPricing(totals, t)})]}),
+        jsx(AnalyticsStat,{id:'wm-usage-pricing-summary',tabIndex:-1,label:t('usageStatCoverage'),value:num(totals.tokens)?percent(data.pricing_coverage?.coverage):t('usageUnknown'),hint:t('usageStatCoverageHint', exactTokens(totals.unpriced_tokens), exactTokens(totals.unpriced_calls)),extra:analyticsPricing(totals, t)})]}),
       jsxs('div',{className:'wm-statgroup',role:'group','aria-label':t('usageKpiActivity'),'data-kpi-group':'activity',children:[jsx('div',{className:'wm-statgrouplabel','aria-hidden':'true',children:t('usageKpiActivity')}),
         jsx(AnalyticsStat,{label:t('weightedCacheHit'),value:percent(totals.cache_hit_rate),tone:'wm-good',hint: totals.cache_prompt_coverage == null ? t('cacheCoverageUnavailable') : t('cacheCoveragePrompt', percent(totals.cache_prompt_coverage)),extra:t('cacheCoverageBasis')}),
         jsx(AnalyticsStat,{label:t('usageStatTokens'),value:fmtTokens(totals.tokens),hint:t('usageStatTokensHint', exactTokens(totals.calls)),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens, t)) || t('usageStatTokensExtra', fmtTokens(totals.input_tokens), fmtTokens(totals.output_tokens))})]})]}):null,
     totals&&analyticsInsights(data, t).length?jsx('div',{className:'wm-insights','aria-label':t('usageInsightsAria'),children:analyticsInsights(data, t).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{children:item.text})]},item.label))}):null,
     totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:billingMix || t('usageBillingTitle'),children:[jsx('strong',{children:t('usageBillingLabel')}),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),' ',jsx('span',{className:cn('wm-badge',!totals.billed_complete&&'wm-warn'),children:totals.billed_complete?t('usageBillingComplete'):totals.billed_usd==null?t('usageUnknown'):t('usageBillingPartial')}),t('usageBillingNote')]}),jsx('span',{className:'wm-mono',children:data.window?t('usageWindowDash', String(data.window.since_local || data.window.since || '').slice(0,10), String(data.window.until_local || data.window.until || '').slice(0,10), data.window.since_local ? data.window.timezone || 'local' : 'UTC'):t('usageWindowPending')})]}):null,
     totals&&data.previous&&!data.previous.comparable?jsx('div',{className:'wm-alert',children:t(data.previous.reason==='no_previous_calls'?'usagePreviousNoCalls':data.previous.reason==='insufficient_history'?'usagePreviousInsufficient':'usagePreviousUnavailable')}):null,
-    totals&&(num(totals.unpriced_tokens)||num(totals.unpriced_calls))?jsxs('div',{className:'wm-alert',children:[num(totals.unpriced_tokens)?t('usageUnpricedAlert', exactTokens(totals.unpriced_tokens)):'',num(totals.unpriced_calls)?t('usageUnpricedCallsAlert', exactTokens(totals.unpriced_calls), analyticsPricing(totals,t)):'']}):null,
+    totals&&(num(totals.unpriced_tokens)||num(totals.unpriced_calls))?jsxs('div',{id:'wm-usage-pricing-coverage',className:'wm-alert',role:'region',tabIndex:-1,'aria-label':t('usagePricingCoverageLabel',state.days),children:[num(totals.unpriced_tokens)?t('usageUnpricedAlert', exactTokens(totals.unpriced_tokens)):'',num(totals.unpriced_calls)?t('usageUnpricedCallsAlert', exactTokens(totals.unpriced_calls), analyticsPricing(totals,t)):'']}):null,
     totals&&!num(totals.calls)?jsxs('div',{className:'wm-empty',role:'status',children:[jsx('h2',{children:t('usageEmptyTitle')}),jsx('p',{children:t('usageEmptyBody')}),jsx(AnalyticsButton,{label:t('usageEmptyShowDesktop'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageEmptyShowDesktop')}),jsx(AnalyticsButton,{label:t('usageEmptyClear'),onClick:()=>dispatch({type:'clear'})})]}):null,
-    !totals&&!query.isLoading&&!query.error?jsx('div',{className:'wm-empty',role:'status',children:t('usageNoData')}):null,
+    !totals&&!query.isLoading&&!query.error?jsx('div',{id:'wm-usage-no-data',className:'wm-empty',role:'status',tabIndex:-1,children:t('usageNoData')}):null,
     totals?jsxs('div',{className:'wm-charts',children:[jsx(AnalyticsDistribution,{data,state,dispatch}),jsx(AnalyticsTrendChart,{data,state,dispatch}),jsx(AnalyticsDelegation,{data,state,dispatch}),jsx(AnalyticsRanking,{data,state,dispatch}),jsx(AnalyticsComposition,{data,state,dispatch})]}):null,
     totals?jsx(AnalyticsExplorer,{data,state,dispatch}):null,totals?jsx(AnalyticsEconomics,{data}):null,
     totals?jsxs('div',{className:'wm-subtle',children:[jsx('p',{children:t('usageRecordingLine', data.recording?.since || t('usageRecordingPending'), data.recording?.last || '—')}),jsx('p',{children:t('usageCacheFormula')}),jsxs('details',{style:{marginTop:10},children:[jsx('summary',{children:t('usageMethodologyTitle')}),...analyticsNotesText(data.notes, data.note_codes, t).map((note,i)=>jsx('p',{style:{marginTop:7},children:note},i))]})]}):null,
@@ -3597,6 +3614,25 @@ function AnalyticsPage({productPage=false}={}) {
   // Dispatch reads the latest atom, so rapid actions never borrow a stale render's filters.
   const dispatch=action=>analyticsDispatch(scope,action)
   const query=useQuery(analyticsQuery(state.days,state.filters,scope))
+  const focusRequest=useValue($analyticsFocus)
+  useEffect(()=>{
+    if(!productPage||!focusRequest)return
+    if(focusRequest.scope!==scope){$analyticsFocus.set(null);return}
+    if(focusRequest.target!=='pricing-coverage'||query.isFetching||query.isLoading&&!query.data&&!query.error)return
+    const targetId=query.error?'wm-usage-load-error'
+      :query.data?.totals&&(num(query.data.totals.unpriced_tokens)||num(query.data.totals.unpriced_calls))
+        ?'wm-usage-pricing-coverage'
+        :query.data?.totals?'wm-usage-pricing-summary':'wm-usage-no-data'
+    const target=document.getElementById(targetId)
+    if(!target)return
+    const product=target.closest('.wm-product')
+    const tabs=product?.querySelector('.wm-product-tabs')
+    target.style.scrollMarginTop=`${Math.ceil((tabs?.getBoundingClientRect().height||0)+8)}px`
+    target.focus()
+    const reduce=typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches
+    target.scrollIntoView?.({behavior:reduce?'auto':'smooth',block:'start'})
+    $analyticsFocus.set(null)
+  },[productPage,focusRequest,scope,query.isFetching,query.isLoading,query.data,query.error])
   return jsx(AnalyticsDashboard,{data:query.data,state,dispatch,query,scope,profile,productPage})
 }
 
@@ -4315,6 +4351,7 @@ function LedgerTabs() {
       const id = String(location.hash || '').replace('#', '')
       if (LEDGER_TABS.some(([known]) => known === id) && $ledgerTab.get() !== id) {
         $infoOpen.set(null)
+        if (id !== 'usage' && $analyticsFocus.get()) $analyticsFocus.set(null)
         $ledgerTab.set(id)
       }
     }
@@ -4359,6 +4396,7 @@ function LedgerTabs() {
 }
 
 function goLedgerTab(next) {
+  if (next !== 'usage' && $analyticsFocus.get()) $analyticsFocus.set(null)
   if ($ledgerTab.get() !== next) $infoOpen.set(null)
   $ledgerTab.set(next)
   try { if (typeof location !== 'undefined') history.replaceState(null, '', '#' + next) } catch {}
@@ -4757,8 +4795,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-account-chip[data-attention="true"]{border-color:var(--ui-warning);color:var(--ui-text-primary)}',
   '.wm-product .wm-overview-attention{margin:6px 0 4px;padding-left:18px;display:grid;gap:5px;font-size:13px;line-height:1.5;color:var(--ui-text-secondary)}',
   '.wm-product .wm-product-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:10px}',
-  '.wm-product .wm-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}',
-  '@container(min-width:1020px){.wm-product .wm-overview-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}',
+  '.wm-product .wm-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:1fr;align-items:stretch}',
   '.wm-product .wm-overview-panels{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(260px,1fr);gap:12px;align-items:start}',
   '.wm-product .wm-overview-panels>.wm-product-section{min-width:0}',
   '.wm-product .wm-product-card,.wm-product .wm-product-section,.wm-product .wm-product-stat{border:1px solid var(--wm-border);border-radius:var(--wm-radius-card);background:var(--wm-surface);min-width:0}',
@@ -4766,21 +4803,23 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-stat label{display:block;color:var(--ui-text-tertiary);font-size:12px}',
   '.wm-product .wm-product-stat strong{display:block;margin-top:5px;font-size:19px;line-height:1.3;font-weight:580;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
   '.wm-product .wm-kpi{display:flex;flex-direction:column;gap:6px;min-height:118px}',
-  '.wm-product .wm-kpi-eyebrow{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--ui-text-tertiary)}',
+  '.wm-product .wm-kpi-eyebrow{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ui-text-secondary)}',
   '.wm-product .wm-kpi-eyebrow span{min-width:0;overflow-wrap:anywhere}',
   '.wm-product .wm-kpi-scope{margin:0;color:var(--ui-text-tertiary);font-size:10.5px;line-height:1.35}',
   '.wm-product .wm-kpi-prov{margin:0}',
-  '.wm-product .wm-overview-grid .wm-kpi{min-height:0;align-items:flex-start;padding:12px 14px}',
-  '.wm-product .wm-overview-grid .wm-kpi-foot{margin-top:0;gap:4px}',
+  '.wm-product .wm-overview-grid .wm-kpi{display:grid;align-content:start;gap:7px;min-height:156px;align-items:start;padding:13px 14px 12px;border:1px solid var(--wm-border);border-left:3px solid var(--wm-kpi-accent,var(--ui-accent));border-radius:var(--wm-radius-card);background:var(--wm-surface)}',
+  '.wm-product .wm-overview-grid .wm-kpi[data-kpi="recorded-usage"]{--wm-kpi-accent:var(--ui-success)}.wm-product .wm-overview-grid .wm-kpi[data-kpi="actual-charges"]{--wm-kpi-accent:var(--ui-warning)}.wm-product .wm-overview-grid .wm-kpi[data-kpi="api-equivalent-estimate"]{--wm-kpi-accent:var(--ui-accent)}.wm-product .wm-overview-grid .wm-kpi[data-kpi="saved-fees"]{--wm-kpi-accent:var(--ui-accent)}',
+  '.wm-product .wm-overview-grid .wm-kpi-foot{margin-top:auto;gap:4px}',
   '.wm-product .wm-overview-grid .wm-kpi-foot .wm-certainty{padding-left:6px;padding-right:6px}',
-  '.wm-product .wm-overview-icon{display:block;flex:0 0 auto;color:var(--ui-text-tertiary)}',
+  '.wm-product .wm-overview-icon{display:block;width:15px;height:15px;flex:0 0 auto;color:var(--ui-accent)}',
+  '.wm-product .wm-overview-icon[data-tone="recorded"],.wm-product .wm-overview-icon[data-tone="fees"]{color:var(--ui-success)}.wm-product .wm-overview-icon[data-tone="charges"]{color:var(--ui-warning)}',
   '.wm-product .wm-scope-note{display:flex;align-items:center;gap:4px;margin:-7px 0 0;color:var(--ui-text-tertiary);font-size:11.5px;line-height:1.4}',
   '.wm-product .wm-scope-note>span{min-width:0;overflow-wrap:anywhere}',
   '.wm-product .wm-overview-attention h2,.wm-product .wm-overview-models h2{display:flex;align-items:center;gap:7px}',
   '.wm-product .wm-overview-model-name>.wm-info{align-self:center}',
   '.wm-product .wm-overview-model-name .wm-info-btn{font-size:12px}',
   '.wm-product .wm-kpi-figure{font-size:var(--wm-font-kpi,20px);line-height:1.25;font-weight:620;letter-spacing:-.3px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
-  '.wm-product .wm-overview-grid .wm-kpi-figure{font-size:clamp(18px,2.2cqi,26px)}',
+  '.wm-product .wm-overview-grid .wm-kpi-figure{font-size:clamp(22px,3.4cqi,29px);line-height:1.16;font-weight:640;letter-spacing:-.35px;color:var(--ui-text-primary)}',
   '.wm-product .wm-kpi-prov{font-size:11.5px;line-height:1.45;color:var(--ui-text-tertiary)}',
   '.wm-product .wm-kpi-foot{margin-top:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
   '.wm-product .wm-attn-strip{display:none}',
@@ -5857,7 +5896,7 @@ function OverviewIcon({ name }) {
   }
   return jsx('svg', { className: 'wm-overview-icon', width: 16, height: 16, viewBox: '0 0 20 20',
     fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round',
-    'aria-hidden': true, children: jsx('path', { d: paths[name] || paths.recorded }) })
+    'data-tone': name, 'aria-hidden': true, children: jsx('path', { d: paths[name] || paths.recorded }) })
 }
 function OverviewPage() {
   const t = usePluginI18n(ID)
@@ -5939,11 +5978,8 @@ function OverviewPage() {
           ] }),
           jsx('p', { className: 'wm-kpi-scope', children: t('ovRecordedScope') }),
           jsx('div', { className: 'wm-kpi-figure', children: ledgerPaused ? t('ledgerHistoryUnavailable') : !local.known ? t('ovUnknown')
-          : local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls || local.coverageUnknown
-            ? `${t('ovAtLeast')} ${fmtUsd(local.cost)}`
-            : fmtUsd(local.cost) }),
+          : fmtUsd(local.cost) }),
           jsx('p', { className: 'wm-kpi-prov', children: t('ovRecordedProv') }),
-          local.coverageUnknown ? jsx('p', { className: 'wm-kpi-prov', children: t('ovCoverageUnknown') }) : null,
           jsxs('div', { className: 'wm-kpi-foot', children: [
             certaintyChip('estimated', t('ovCertRecorded'), 'recorded'),
             !ledgerPaused && (local.unpricedTokens || local.unpricedCalls || local.missingUsageCalls || local.coverageUnknown)
@@ -5955,7 +5991,6 @@ function OverviewPage() {
             jsx(OverviewIcon, { name: 'charges' }), jsx('span', { children: t('ovChargesLabel') })
           ] }),
           jsx('div', { className: 'wm-kpi-figure', children: t('ovNotRecorded') }),
-          jsx('p', { className: 'wm-kpi-prov', children: t('ovChargesEndpointProv') }),
           jsx('div', { className: 'wm-kpi-foot', children:
             certaintyChip('unknown', t('ovCertChargesUnknown'), 'charge-unknown') })
         ] }),
@@ -5964,13 +5999,11 @@ function OverviewPage() {
             jsx(OverviewIcon, { name: 'estimate' }), jsx('span', { children: t('ovEstimatedLabel') })
           ] }),
           jsx('p', { className: 'wm-kpi-scope', children: t('ovBackendScope') }),
-          jsx('div', { className: 'wm-kpi-figure', children: result.list_usd == null ? t('ovUnknown')
-            : unpriced ? `${t('ovAtLeast')} ${fmtUsd(result.list_usd)}` : fmtUsd(result.list_usd) }),
+          jsx('div', { className: 'wm-kpi-figure', children: result.list_usd == null ? t('ovUnknown') : fmtUsd(result.list_usd) }),
           jsx('p', { className: 'wm-kpi-prov', children: analytics.isLoading && !analytics.data ? t('ovBackendLoading')
             : analytics.error && !analytics.data ? t('ovBackendError')
             : !analytics.data ? t('ovBackendNone')
-            : result.calls === 0 ? t('ovBackendEmpty') : unpricedCalls
-              ? t('ovBackendUnpricedCalls', analyticsPricing(result, t)) : t('ovBackendProv') }),
+            : result.calls === 0 ? t('ovBackendEmpty') : t('ovBackendProv') }),
           jsxs('div', { className: 'wm-kpi-foot', children: [
             certaintyChip('estimated', t('ovCertEstimated'), 'est'),
             unpriced ? certaintyChip('partial', t('ovCertPartial'), 'part') : null
@@ -5986,8 +6019,7 @@ function OverviewPage() {
             : unknownFeeCount ? t('ovUnknown') : t('ovNoFees') }),
           jsx('p', { className: 'wm-kpi-prov', children: !accountsReady
             ? accounts.error ? t('ovFeesError') : t('ovFeesLoading')
-            : t('ovPlansConfirmed', fees.withPlan, fees.total) + '. ' + t('ovFeesSummaryProv')
-              + (unknownFeeCount ? ' ' + t('ovFeesMissing', unknownFeeCount) : '') }),
+            : t('ovPlansConfirmed', fees.withPlan, fees.total) }),
           jsxs('div', { className: 'wm-kpi-foot', children: [
             ...feeChips,
             feeEntries && unknownFeeCount ? certaintyChip('partial', t('ovCertPartial'), 'fpart') : null,
@@ -6032,10 +6064,10 @@ function OverviewPage() {
                 jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
                 jsxs('div', { className: 'wm-attn-main', children: [
                   jsx('strong', { children: t('ovPricingTitle') }),
-                  jsx('span', { children: t('ovUnpriced', unpricedTokens, unpricedCalls) })
+                  jsx('span', { children: t('ovUnpriced') })
                 ] }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
-                  onClick: () => goLedgerTab('usage'), children: t('ovOpenUsage') })
+                  onClick: openUsagePricingCoverage, children: t('ovPricingAction') })
               ] }, 'unpriced') : null
             ].filter(Boolean) })
           : null,
@@ -6075,8 +6107,6 @@ function OverviewPage() {
                 }) })
               : result.calls === 0 ? jsx('p', { children: t('ovModelsEmpty') })
                 : jsx('p', { children: t('ovModelsBreakdownUnavailable') }),
-        jsx('div', { className: 'wm-setting-action', children:
-          jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => goLedgerTab('usage'), children: t('ovOpenUsage') }) })
       ] })
       ] }),
       jsx(BudgetPanel, {}),
@@ -11900,31 +11930,25 @@ const I18N = {
     ovRecordedLabel: 'Recorded usage',
     ovRecordedScope: 'All profiles · calendar month to date',
     ovRecordedProv: 'Desktop ledger · API-equivalent; not charges.',
-    ovCoverageUnknown: 'Older coverage unknown.',
     ovCertRecorded: 'Saved rate',
     ovUnknown: 'Unknown',
     ovEstimatedLabel: 'API-equivalent estimate',
     ovBackendScope: 'Active profile · rolling 30 days',
     ovCertEstimated: 'Estimated',
     ovCertPartial: 'Partial',
-    ovLowerBound: 'lower bound',
     ovBackendLoading: 'Reading backend usage…',
     ovBackendError: 'Backend usage could not be read for this connection.',
     ovBackendReadFailure: 'Backend usage could not be read or processed. Retry to refresh the estimate.',
     ovBackendNone: 'Backend usage data is not available for this connection.',
     ovBackendEmpty: 'No backend calls recorded in the last 30 days.',
     ovBackendProv: 'Backend analytics · current catalogue rates.',
-    ovBackendUnpricedCalls: reason => `API-equivalent estimate; not provider charges. ${reason}`,
     ovChargesLabel: 'Actual provider charges',
     ovNotRecorded: 'Not recorded',
-    ovChargesEndpointProv: 'Per-call actual-charge evidence is not in analytics.',
     ovCertChargesUnknown: 'No per-call evidence',
     ovFeesLabel: 'Saved account fees',
     ovFeesScope: 'Saved entries · original currencies and billing periods',
-    ovFeesSummaryProv: 'Saved amounts only.',
     ovPlansConfirmed: (w, t) => `${w} of ${t} plans confirmed`,
     ovNoFees: 'No saved recurring fees',
-    ovFeesMissing: n => `${n} fee${n === 1 ? '' : 's'} unknown; excluded.`,
     ovModelsTitle: 'Most-used models · 30 days',
     ovModelsSubtitle: 'Recorded backend calls only; this ranking does not compare spend.',
     ovModelsLoading: 'Reading model usage…',
@@ -11932,8 +11956,7 @@ const I18N = {
     ovModelsEmpty: 'No model calls recorded in the last 30 days.',
     ovModelsBreakdownUnavailable: 'A model breakdown was not provided for this period.',
     ovModelCalls: n => `${n.toLocaleString('en-GB')} ${n === 1 ? 'call' : 'calls'}`,
-    ovAtLeast: 'At least',
-    ovScopeNote: 'Usage figures cover different profiles and periods; do not add them together.',
+    ovScopeNote: 'Usage values use Hermes-recorded activity; unpriced or incomplete activity is excluded from priced subtotals. The two usage amounts cover different profiles and periods, so do not add them together.',
     ovScopeInfoLabel: 'About the usage periods',
     ovScopeInfo: 'Desktop ledger: all profiles, calendar month to date, API-equivalent at saved rates. Backend estimate: active profile, rolling 30 days, current catalogue rates. These figures cover different activity and are not like-for-like totals.',
     ovModelIdInfoLabel: 'Exact model and provider IDs',
@@ -12279,15 +12302,11 @@ const I18N = {
     ovAttentionHint: 'Each item names the account and the action.',
     ovNothingToDo: 'Nothing needs confirming right now.',
     ovPricingTitle: 'Usage pricing',
-    ovUnpriced: (tokens, calls) => {
-      const gaps = []
-      if (Number(tokens) > 0) gaps.push(`${Number(tokens).toLocaleString('en-GB')} tokens have no published price`)
-      if (Number(calls) > 0) gaps.push(`${Number(calls).toLocaleString('en-GB')} call(s) lack complete usage or price evidence`)
-      return `${gaps.join('; ')} in the last 30 days, so API-equivalent totals are partial.`
-    },
+    ovUnpriced: 'Pricing evidence is incomplete for some backend usage in the last 30 days.',
     ovWeatherStale: 'Refresh failed — weather warnings may be stale.',
     ovStrip: n => `${n} need attention`,
     ovStripReview: 'Review',
+    ovPricingAction: 'View 30-day pricing coverage',
     ovOpenUsage: 'Open Usage',
     ovOpenCosts: 'Open Costs',
     ovReviewMemberships: 'Review memberships',
@@ -13186,6 +13205,7 @@ const I18N = {
     usageStatTokensHint: calls => `${calls} recorded calls`,
     usageStatTokensExtra: (input, output) => `${input} in · ${output} out`,
     usageStatCoverage: 'Pricing coverage',
+    usagePricingCoverageLabel: days => `${days}-day pricing coverage details`,
     usageStatCoverageHint: (tokens, calls) => `${tokens} unpriced tokens · ${calls} calls without complete price evidence`,
     usageInsightsAria: 'What matters in this period',
     usageBillingTitle: 'Route/model billing classification from recorded calls; it can include estimates or included-route zero values and is not a provider invoice.',
@@ -13448,31 +13468,25 @@ const I18N = {
     ovRecordedLabel: '已记录用量',
     ovRecordedScope: '所有配置文件 · 本日历月至今',
     ovRecordedProv: '桌面账本 · API 等值；并非服务商费用。',
-    ovCoverageUnknown: '旧条目覆盖未知。',
     ovCertRecorded: '保存费率',
     ovUnknown: '未知',
     ovEstimatedLabel: 'API 等值估算',
     ovBackendScope: '当前配置文件 · 滚动 30 天',
     ovCertEstimated: '估算',
     ovCertPartial: '部分',
-    ovLowerBound: '下限',
     ovBackendLoading: '正在读取后端用量…',
     ovBackendError: '无法读取此连接的后端用量。',
     ovBackendReadFailure: '无法读取或处理后端用量。请重试以刷新估算。',
     ovBackendNone: '此连接没有可用的后端用量数据。',
     ovBackendEmpty: '过去 30 天没有后端调用记录。',
     ovBackendProv: '后端分析 · 当前目录价格。',
-    ovBackendUnpricedCalls: reason => `API 等值估算；不是服务商费用。${reason}`,
     ovChargesLabel: '实际服务商费用',
     ovNotRecorded: '未记录',
-    ovChargesEndpointProv: '分析数据没有逐次调用的实际费用证据。',
     ovCertChargesUnknown: '没有逐次费用证据',
     ovFeesLabel: '已保存账户费用',
     ovFeesScope: '已保存条目 · 保留原币种和账单周期',
-    ovFeesSummaryProv: '仅显示已保存金额。',
     ovPlansConfirmed: (w, t) => `${t} 个账户中 ${w} 个方案已确认`,
     ovNoFees: '没有已保存的周期性费用',
-    ovFeesMissing: n => `${n} 项费用未知；未计入。`,
     ovModelsTitle: '使用最多的模型 · 30 天',
     ovModelsSubtitle: '仅统计已记录的后端调用；此排名不比较费用。',
     ovModelsLoading: '正在读取模型用量…',
@@ -13480,8 +13494,7 @@ const I18N = {
     ovModelsEmpty: '过去 30 天没有模型调用记录。',
     ovModelsBreakdownUnavailable: '此期间没有提供模型明细。',
     ovModelCalls: n => `${n.toLocaleString('zh-CN')} 次调用`,
-    ovAtLeast: '至少',
-    ovScopeNote: '两项用量数据覆盖的配置文件和时间段不同；请勿相加。',
+    ovScopeNote: '用量金额依据 Hermes 已记录的活动；未定价或证据不完整的活动不计入已定价小计。两项用量金额覆盖的配置文件和周期不同，请勿相加。',
     ovScopeInfoLabel: '关于用量时间段',
     ovScopeInfo: '桌面账本：所有配置文件，本日历月至今，按保存费率计算 API 等值。后端估算：当前配置文件，滚动 30 天，按当前目录价格计算。两者覆盖的活动不同，不能视为同一口径的总额。',
     ovModelIdInfoLabel: '精确模型与服务商 ID',
@@ -13826,15 +13839,11 @@ const I18N = {
     ovAttentionHint: '每一项都列出账户与操作。',
     ovNothingToDo: '目前没有需要确认的事项。',
     ovPricingTitle: '用量定价',
-    ovUnpriced: (tokens, calls) => {
-      const gaps = []
-      if (Number(tokens) > 0) gaps.push(`${Number(tokens).toLocaleString('zh-CN')} 个 token 没有公布价格`)
-      if (Number(calls) > 0) gaps.push(`${Number(calls).toLocaleString('zh-CN')} 次调用缺少完整用量或价格证据`)
-      return `过去 30 天${gaps.join('；')}，因此 API 等价总额为部分数据。`
-    },
+    ovUnpriced: '过去 30 天的部分后端用量缺少完整定价证据。',
     ovWeatherStale: '刷新失败——额度预警可能已过期。',
     ovStrip: n => `有 ${n} 项需要注意`,
     ovStripReview: '查看',
+    ovPricingAction: '查看近 30 天定价覆盖率',
     ovOpenUsage: '打开用量',
     ovOpenCosts: '打开费用',
     ovReviewMemberships: '检查会员',
@@ -14733,6 +14742,7 @@ const I18N = {
     usageStatTokensHint: calls => `${calls} 已记录调用`,
     usageStatTokensExtra: (input, output) => `${input} 输入 · ${output} 输出`,
     usageStatCoverage: '定价覆盖率',
+    usagePricingCoverageLabel: days => `近 ${days} 天定价覆盖详情`,
     usageStatCoverageHint: (tokens, calls) => `${tokens} 个未定价令牌 · ${calls} 次调用缺少完整价格证据`,
     usageInsightsAria: '本期要点',
     usageBillingTitle: '来自已记录调用的线路／模型计费分类；可能包括估算值或 included 线路的零值，并非供应商账单。',
@@ -14926,7 +14936,7 @@ export const __test = {
   $settingsConfirmation, $modelRefreshState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, desktopTodayText, desktopTodayAmount, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
-  analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, $analytics,
+  analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, openUsagePricingCoverage, $analytics, $analyticsFocus,
   setRest: value => { $backendCompatibility.set([]); rest = wrapBackendTransport(value) },
   getRest: () => rest,
   restoreRest: value => { rest = value },

@@ -306,7 +306,7 @@ test('the idle status-chip tooltip names SpendSense in both locales', () => {
 
 test('Overview labels separate the all-profile ledger from the active-profile estimate in both locales', () => {
   for (const [language, dict] of [['en', en], ['zh', zh]]) {
-    for (const key of ['allProfiles', 'coverageUnknownShort', 'coverageUnknownNote', 'ovCoverageUnknown']) {
+    for (const key of ['allProfiles', 'coverageUnknownShort', 'coverageUnknownNote']) {
       assert.ok(dict[key] && dict[key] !== key, `${language} has ${key}`)
     }
   }
@@ -316,6 +316,8 @@ test('Overview labels separate the all-profile ledger from the active-profile es
   assert.match(en.ovRecordedProv, /Desktop ledger.*API-equivalent.*not charges/i)
   assert.match(en.ovCertRecorded, /saved rate/i)
   assert.match(en.ovBackendScope, /active profile.*rolling 30 days/i)
+  assert.match(en.ovScopeNote, /unpriced or incomplete activity is excluded from priced subtotals/i)
+  assert.match(zh.ovScopeNote, /未定价或证据不完整的活动不计入已定价小计/)
   assert.match(en.ovScopeNote, /different profiles and periods.*do not add/i)
   assert.match(en.ovMethodUsageBody, /all profiles in this ledger/i)
   assert.match(en.ovMethodUsageBody, /gateway-reported usage cost when supplied; otherwise.*API-equivalent rates saved at capture/i)
@@ -332,7 +334,7 @@ test('Overview labels separate the all-profile ledger from the active-profile es
   assert.match(zh.ovRecordedProv, /并非服务商费用/)
   assert.match(zh.ovCertRecorded, /保存费率/)
   assert.match(zh.ovBackendScope, /当前配置文件.*滚动 30 天/)
-  assert.match(zh.ovScopeNote, /配置文件和时间段不同；请勿相加/)
+  assert.match(zh.ovScopeNote, /覆盖的配置文件和周期不同，请勿相加/)
   assert.match(zh.ovMethodUsageBody, /桌面总额.*所有配置文件/)
   assert.match(zh.ovMethodUsageBody, /网关提供用量成本.*否则使用记录时保存的 API 等值费率/)
   assert.match(zh.ovMethodUsageBody, /两者都是估算，并非付款、发票或实际服务商费用/)
@@ -511,7 +513,7 @@ test('every settings string exists in English and Chinese', () => {
     'Central catalogue: stale The cached live catalogue is shown.')
   assert.equal(en.settingsCatalogueTotals(58, 50, 5, 3),
     '58 plans · 50 verified prices · 5 provisional · 3 without a published fee')
-  assert.equal(en.settingsAboutVersion('0.6.1'), 'SpendSense 0.6.1')
+  assert.equal(en.settingsAboutVersion('0.6.7'), 'SpendSense 0.6.7')
   // Proper names survive in both languages; the legal credit is identical.
   assert.match(en.settingsPrivacyP2, /models\.dev/)
   assert.match(zh.settingsPrivacyP2, /models\.dev/)
@@ -521,7 +523,7 @@ test('every settings string exists in English and Chinese', () => {
   // The Chinese composites interpolate every argument.
   assert.match(zh.settingsCatalogueVersion('实时', '2026-11-04.3', ' · 生成于X'), /实时会员目录/)
   assert.match(zh.settingsCatalogueTotals(58, 50, 5, 3), /58 个方案/)
-  assert.equal(zh.settingsAboutVersion('0.6.1'), 'SpendSense 0.6.1')
+  assert.equal(zh.settingsAboutVersion('0.6.7'), 'SpendSense 0.6.7')
   // WP12: the subtitle scans operational-first, and the licence disclosure
   // names the exact distribution terms from NOTICE (GPL-3.0, no "or later").
   assert.match(en.settingsSubtitle, /Budgets, pricing, updates/)
@@ -649,7 +651,7 @@ test('the InfoTip indicator is compact while its hit area stays accessible', () 
   // The interactive box keeps its full size for pointer and keyboard users.
   assert.match(T.METER_CSS, /\.wm-info-btn\{[^}]*width:24px;height:24px/)
   // The visible ring stays small inside the larger interactive box.
-  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*width:\.78em;height:\.78em/)
+  assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*width:max\(9px,\.58em\);height:max\(9px,\.58em\)/)
   assert.match(T.METER_CSS, /\.wm-info-btn::after\{[^}]*pointer-events:none/)
   // Hover and focus still recolour the ring; focus keeps its outline.
   assert.match(T.METER_CSS, /\.wm-info-btn:hover::after,\.wm-info-btn:focus-visible::after\{[^}]*border-color:var\(--wm-action\)/)

@@ -62,13 +62,17 @@ if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(win
         assert.equal(layout.cards, 4, tag)
         assert.ok(layout.paneOverflow <= 1, `${tag} product container has no horizontal scroll`)
         if (layout.documentOverflow !== null) assert.ok(layout.documentOverflow <= 1, `${tag} document has no horizontal scroll`)
-        assert.equal(layout.summaryColumns, layout.width <= 340 ? 1 : layout.width >= 1020 ? 4 : 2, tag)
+        assert.equal(layout.summaryColumns, layout.width <= 340 ? 1 : 2, tag)
         assert.equal(layout.panelColumns, layout.width <= 760 ? 1 : 2, tag)
         assert.deepEqual(layout.overflow, [], `${tag} has no overflowing card content`)
         assert.equal(layout.methodsCollapsed, true, `${tag} keeps methodology collapsed by default`)
         assert.equal(layout.methodSections, 5, `${tag} provides five named methodology sections`)
-        assert.ok(layout.kpiHeights.every(height => height < (layout.width >= 1020 ? 220 : 260)),
-          `${tag} KPI cards use their natural content height (${JSON.stringify(layout.kpiDetails)})`)
+        assert.ok(layout.kpiHeights.every(height => height < 260),
+          `${tag} KPI cards remain compact (${JSON.stringify(layout.kpiDetails)})`)
+        assert.ok(Math.max(...layout.kpiHeights) - Math.min(...layout.kpiHeights) <= 1,
+          `${tag} financial cards have equal heights (${layout.kpiHeights.join(', ')})`)
+        assert.ok(Math.max(...layout.kpiWidths) - Math.min(...layout.kpiWidths) <= 1,
+          `${tag} financial cards have equal widths (${layout.kpiWidths.join(', ')})`)
         assert.equal(layout.sticky.position, 'sticky', `${tag} keeps sticky navigation`)
         assert.equal(layout.sticky.zIndex, '30', `${tag} keeps navigation above page content`)
         assert.match(layout.sticky.backgroundImage, /linear-gradient/, `${tag} gives sticky navigation an opaque underlay`)
@@ -76,19 +80,21 @@ if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(win
         assert.ok(layout.navigationOverflow <= 1, `${tag} navigation tabs fit their available row width`)
         assert.deepEqual(layout.clippedButtons, [], `${tag} buttons stay inside the Overview pane`)
         assert.match(layout.charges, locale === 'en' ? /Not recorded/ : /未记录/, `${tag} preserves missing charge evidence`)
-        assert.match(layout.charges, locale === 'en' ? /per-call actual-charge evidence is not in analytics/i : /逐次调用的实际费用证据/, tag)
+        assert.match(layout.charges, locale === 'en' ? /No per-call evidence/i : /没有逐次费用证据/, tag)
         assert.doesNotMatch(layout.charges, /covers|\b\d+ of \d+ records\b/i, `${tag} does not infer charge coverage`)
         assert.match(layout.recorded, locale === 'en' ? /all profiles.*calendar month to date/i : /所有配置文件.*本日历月至今/, tag)
         assert.match(layout.estimate, locale === 'en' ? /active profile.*rolling 30 days/i : /当前配置文件.*滚动 30 天/, tag)
         assert.match(layout.text, locale === 'en' ? /do not add them together/i : /请勿相加/, `${tag} explains the scope difference`)
-        assert.match(layout.recorded, locale === 'en' ? /At least/ : /至少/, `${tag} preserves partial lower-bound wording`)
+        assert.match(layout.recorded, locale === 'en' ? /Partial/ : /部分/, `${tag} communicates partial evidence without prefixing the figure`)
+        assert.doesNotMatch(layout.figures['recorded-usage'], /At least|至少/, `${tag} keeps the recorded figure prominent`)
+        assert.doesNotMatch(layout.figures['api-equivalent-estimate'], /At least|至少/, `${tag} keeps the estimate figure prominent`)
         assert.match(layout.text, locale === 'en' ? /Actual provider charges/ : /实际服务商费用/, `${tag} labels charges separately`)
         assert.match(layout.text, locale === 'en' ? /Most-used models/ : /使用最多的模型/, `${tag} renders the call-count insight`)
         assert.match(layout.text, locale === 'en' ? /GBP 20\.00\/mo/ : /GBP 20\.00\/月/, `${tag} preserves GBP and its billing period`)
-        assert.match(layout.fees, locale === 'en' ? /fee unknown; excluded/i : /费用未知；未计入/, `${tag} explains the excluded unknown fee`)
         assert.match(layout.fees, locale === 'en' ? /Partial/ : /部分/, `${tag} marks the known-fee subtotal partial`)
-        assert.equal(layout.pricingAction, locale === 'en' ? 'Open Usage' : '打开用量',
-          `${tag} uses honest general navigation wording for the unpriced-usage shortcut`)
+        assert.equal(layout.pricingAction, locale === 'en' ? 'View 30-day pricing coverage' : '查看近 30 天定价覆盖率',
+          `${tag} names the pricing destination accurately`)
+        assert.equal(layout.modelUsageShortcut, false, `${tag} removes the redundant Usage action from Most-used models`)
         assert.equal(layout.modelLabels[0], 'GPT 5.1 Codex Super Long Model Name For Wrapping', `${tag} shows the friendly model name`)
         assert.equal(layout.modelDetails.length, 2, `${tag} keeps exact model IDs available through help controls`)
       }
@@ -122,8 +128,8 @@ if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(win
           assert.deepEqual(layout.clippedButtons, [], `${tag} buttons fit within the pane`)
           assert.deepEqual(layout.buttonsOutsidePane, [], `${tag} buttons fit within the full-height pane`)
           assert.equal(layout.methodsCollapsed, true, `${tag} methodology starts collapsed`)
-          assert.equal(layout.pricingAction, locale === 'en' ? 'Open Usage' : '打开用量',
-            `${tag} uses honest general navigation wording`)
+          assert.equal(layout.pricingAction, locale === 'en' ? 'View 30-day pricing coverage' : '查看近 30 天定价覆盖率',
+            `${tag} names the pricing destination accurately`)
           assert.equal(layout.paneLeft, 0, `${tag} pane is aligned to the screenshot origin`)
           assert.equal(layout.paneRight, width, `${tag} pane right edge matches its target width`)
           assert.ok(layout.paneBottom <= layout.viewportHeight + 1, `${tag} full pane fits the viewport`)
