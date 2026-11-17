@@ -1437,6 +1437,25 @@ class Wp21ReportsClarityTests(DigestCase):
         notes = " ".join(section["notes"])
         self.assertIn("会员", notes)
 
+    def test_billing_rule_notes_point_at_settings_rules(self):
+        billing = {
+            "metered_usd": 2.0, "excluded_out_of_cycle": 0,
+            "unclassified_tokens": 0, "unclassified_calls": 2,
+            "unclassified_missing_rule_calls": 1,
+            "evidence": {
+                "provider_reported": {"usd": None, "basis": "none", "calls": 0},
+                "incremental_cash": {"usd": None, "basis": "unknown"},
+                "credits_consumed": {"usd": None},
+            },
+        }
+        for lang, pointer in (("en", "Settings → Advanced billing rules"),
+                              ("zh", "设置 → 高级计费规则")):
+            section = D._spending_section(D.STRINGS[lang], "window", billing,
+                                          True, 2)
+            notes = " ".join(section["notes"])
+            self.assertIn(pointer, notes, lang)
+            self.assertNotIn("in Costs", notes, lang)
+
     # -- F87: compact history states -----------------------------------------
 
     def test_insufficient_history_note_is_compact(self):
