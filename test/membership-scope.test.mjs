@@ -157,6 +157,35 @@ const flush = async (times = 6) => {
   })
 }
 
+/**
+ * A queued attention target is applied after a short timer. Wait for the page
+ * to consume it instead of sleeping a fixed 150 ms, which is a race under load.
+ */
+const targetApplied = async (ms = 4000) => {
+  const deadline = Date.now() + ms
+  for (;;) {
+    if (!T.$membershipTarget.get()) return true
+    if (Date.now() >= deadline) return false
+    await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 25)) })
+  }
+}
+
+/**
+ * The destination may take focus a tick after the target is consumed. Poll,
+ * bounded, until the expected element holds focus, and return whichever
+ * element was asked for so the assertion stays readable.
+ */
+const focusSettles = async (find, ms = 4000) => {
+  const lookup = typeof find === 'function' ? find : () => find
+  const deadline = Date.now() + ms
+  for (;;) {
+    const element = lookup()
+    if (element && document.activeElement === element) return element
+    if (Date.now() >= deadline) return element
+    await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 25)) })
+  }
+}
+
 
 const typeAmount = async (container, value) => {
   const input = container.querySelector('form input[type="number"]')
@@ -2089,17 +2118,18 @@ test('PR-C: account rows are compact, collapsed by default, and expand on Detail
     'the disclosure button names the body it controls')
   assert.equal(card.querySelector('.wm-row-body').hidden, true)
   const summary = container.querySelector('dl.wm-membership-summary')
-  assert.ok(summary, 'headline figures render in a compact semantic summary strip')
+  assert.ok(summary, 'headline figures render as four summary cards')
   assert.equal(summary.getAttribute('aria-busy'), 'false', 'the loaded summary is not announced as busy')
   assert.match(summary.textContent, /Needs attention/)
   assert.match(summary.textContent, /GBP 45\.00\/mo/)
+  const feeCard = summary.querySelector('[data-summary-card="fees"]')
+  assert.ok(feeCard, 'the fee reading has its own card')
+  assert.match(feeCard.querySelector('.wm-membership-summary-note').textContent, /currency and period/)
+  assert.doesNotMatch(feeCard.querySelector('.wm-membership-summary-note').textContent, /Allowance percentages/,
+    'the concise note leaves extended methodology below the fold')
   const refreshNote = container.querySelector('.wm-membership-refresh-note')
   assert.match(refreshNote.textContent, /where supported/)
   assert.match(refreshNote.textContent, /never changes saved plans, fees or marks/)
-  const feeNote = container.querySelector('.wm-membership-fee-note')
-  assert.match(feeNote.textContent, /currency and period/)
-  assert.doesNotMatch(feeNote.textContent, /Allowance percentages/,
-    'the concise note leaves extended methodology below the fold')
   const feeHelp = container.querySelector('details.wm-membership-explainer')
   assert.equal(feeHelp.open, false, 'extended fee and allowance caveats are available in a collapsed disclosure')
   assert.match(feeHelp.querySelector('summary').textContent, /About fees and allowance readings/)
@@ -2139,7 +2169,7 @@ test('PR-C: attention summary counts accounts and separates its filter from acco
   const { container } = await boot()
   await flush(4)
   const summary = container.querySelector('.wm-membership-summary')
-  assert.equal(summary.querySelectorAll('dd')[2].textContent, '1',
+  assert.equal(summary.querySelector('[data-summary-card="attention"] .wm-membership-summary-value').textContent, '1',
     'the headline count matches the attention filter count of distinct accounts')
   const attentionSection = [...container.querySelectorAll('.wm-attention')]
     .find(el => el.getAttribute('aria-label') === 'Needs attention')
@@ -2335,7 +2365,10 @@ test('PR-C: Details → Allowances → exhaustion shows the exhaustion editor', 
   await flush(4)
   const card = container.querySelector('[data-account="openai-codex:default"]')
   await openCard(card)
-  await toggleGroup(card, 'allowances')
+  // WP27: the readings group opens with the row, so the exhaustion control is
+  // one click from the collapsed list rather than two.
+  assert.equal(card.querySelector('[data-group="allowances"]').open, true,
+    'opening a row shows its allowances without a second click')
   await clickByText(card, 'Mark account exhausted')
   await flush(2)
   assert.ok(card.querySelector('form.wm-exhaustion-form'), 'the exhaustion editor is shown')
@@ -2655,7 +2688,7 @@ test('PR-D: a queued target expands the account, opens the group and focuses the
     await flush(4)
     T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'xai:default',
       issue: 'unconfirmed', group: 'plan', focus: 'arrangement' })
-    await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+    await targetApplied()
     await flush(2)
     const card = container.querySelector('[data-account="xai:default"]')
     assert.equal(card.querySelector('.wm-row-head button').getAttribute('aria-expanded'), 'true',
@@ -2695,7 +2728,7 @@ test('PR-D: navigation waits for async loading instead of dropping the target', 
   assert.ok(T.$membershipTarget.get(), 'the target is held while accounts load')
   pending.resolve({ ok: true, accounts: [xai], store: { loaded: true, error: '' }, notes: [] })
   await flush(4)
-  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await targetApplied()
   await flush(2)
   assert.equal(container.querySelector('[data-account="xai:default"] .wm-row-head button')
     .getAttribute('aria-expanded'), 'true', 'navigation lands once the accounts arrive')
@@ -2735,7 +2768,7 @@ test('PR-D: navigation leaves an open fee draft intact', async () => {
   await typeAmount(container, '33')
   T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'xai:default',
     issue: 'unconfirmed', group: 'plan', focus: 'arrangement' })
-  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await targetApplied()
   await flush(2)
   const form = container.querySelector('[data-account="s:acct"] form.wm-fee-form')
   assert.ok(form, 'the fee draft stays open through navigation')
@@ -2758,7 +2791,7 @@ test('PR-D: a missing precise target falls back to the account Details section',
   await flush(4)
   T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'm:acct',
     issue: 'no-plan', group: 'plan', focus: 'plan' })
-  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await targetApplied()
   await flush(2)
   const card = container.querySelector('[data-account="m:acct"]')
   assert.equal(card.querySelector('.wm-row-head button').getAttribute('aria-expanded'), 'true')
@@ -2783,7 +2816,7 @@ test('PR-D: Memberships attention actions jump within the page', async () => {
     .find(el => el.getAttribute('aria-label') === 'Needs attention')
   assert.ok(section, 'the Memberships attention section renders')
   await clickByText(section, 'Confirm arrangement')
-  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await targetApplied()
   await flush(2)
   assert.equal(container.querySelector('[data-account="xai:default"] .wm-row-head button')
     .getAttribute('aria-expanded'), 'true', 'the in-page action expands the account')
@@ -2817,12 +2850,12 @@ test('PR-D review: an ahead warning targets its own weather reading, not a user 
   T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'w:acct',
     issue: 'ahead', group: 'allowances', focus: 'reading',
     readingKind: 'window', readingId: 'win-1' })
-  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
-  await flush(2)
   const card = container.querySelector('[data-account="w:acct"]')
+  const li = await focusSettles(() =>
+    card.querySelector('li[data-weather-kind="window"][data-weather-id="win-1"]'))
+  await flush(2)
   assert.equal(card.querySelector('.wm-weather-details').open, true,
     'the weather details open for the reading')
-  const li = card.querySelector('li[data-weather-kind="window"][data-weather-id="win-1"]')
   assert.ok(li, 'the reading row carries its stable identifier')
   assert.ok(document.activeElement === li, 'focus moves to the reading itself')
   assert.ok(li.classList.contains('wm-flash'), 'the reading is highlighted')
@@ -2849,7 +2882,7 @@ test('PR-D review: a reached rule warning targets the rule reading by profile an
   T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'r:acct',
     issue: 'reached', group: 'allowances', focus: 'reading',
     readingKind: 'rule', readingProfile: 'prof-1', readingPool: 'main' })
-  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  await targetApplied()
   await flush(2)
   const card = container.querySelector('[data-account="r:acct"]')
   const li = card.querySelector(
@@ -2870,10 +2903,9 @@ test('PR-D review: a disappeared reading falls back to the allowance section', a
   T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'g:acct',
     issue: 'ahead', group: 'allowances', focus: 'reading',
     readingKind: 'window', readingId: 'win-gone' })
-  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
-  await flush(2)
   const card = container.querySelector('[data-account="g:acct"]')
-  const summary = card.querySelector('[data-group="allowances"] > summary')
+  const summary = await focusSettles(() => card.querySelector('[data-group="allowances"] > summary'))
+  await flush(2)
   assert.ok(document.activeElement === summary,
     'a missing reading falls back to the allowance section')
   assert.ok(card.querySelector('[data-group="allowances"]').classList.contains('wm-flash'))
@@ -2896,10 +2928,10 @@ test('PR-D review: account exhaustion focuses the allowance section, not a clear
   await flush(4)
   T.$membershipTarget.set({ origin: T.membershipIdentityNow(), accountId: 'e:acct',
     issue: 'exhausted', group: 'allowances', focus: 'allowances' })
-  await React.act(async () => { await new Promise(r => setTimeout(r, 150)) })
-  await flush(2)
   const card = container.querySelector('[data-account="e:acct"]')
-  assert.ok(document.activeElement === card.querySelector('[data-group="allowances"] > summary'),
+  const summary = await focusSettles(() => card.querySelector('[data-group="allowances"] > summary'))
+  await flush(2)
+  assert.ok(document.activeElement === summary,
     'provider-reported exhaustion focuses the section, not another window mark')
   assert.ok(document.activeElement !== card.querySelector('button[data-action="clear-mark"]'))
 })

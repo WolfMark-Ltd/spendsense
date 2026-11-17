@@ -108,7 +108,12 @@ try {
           const narrow = document.getElementById('app-380')
           const card = narrow.querySelector('[data-account="anthropic:default"]')
           click([...card.querySelectorAll('.wm-row-head button')].find(b => /Details/.test(b.textContent)))
-          await step(150, () => click(card.querySelector('[data-group="allowances"] > summary')))
+          await step(150, () => {
+            const allowances = card.querySelector('[data-group="allowances"]')
+            // The readings group opens with the row; only close-then-open when
+            // this build still starts it shut.
+            if (!allowances.open) click(allowances.querySelector(':scope > summary'))
+          })
           await step(150, () => {
             const li = card.querySelector('li[data-window="win-2"]')
             const markLabel = b => (b.textContent || '').replace(/\s+/g, '').toLowerCase()
@@ -132,8 +137,9 @@ try {
           const host = document.getElementById(`app-${width}`)
           const summary = host.querySelector('.wm-membership-summary')
           const cols = getComputedStyle(summary).gridTemplateColumns.split(' ').filter(Boolean).length
-          const values = [...summary.querySelectorAll('dd')]
-          const feesText = summary.lastElementChild?.querySelector('dd')?.textContent || ''
+          const values = [...summary.querySelectorAll('.wm-membership-summary-value, .wm-membership-fee-lines li')]
+          const feesText = [...summary.querySelectorAll('.wm-membership-fee-lines li')]
+            .map(li => li.textContent).join(' ') || summary.querySelector('[data-summary-card="fees"] .wm-membership-summary-value')?.textContent || ''
           out.containers[width] = {
             columns: cols,
             accountNavColumns: getComputedStyle(host.querySelector('.wm-membership-account-nav')).gridTemplateColumns.split(' ').filter(Boolean).length,

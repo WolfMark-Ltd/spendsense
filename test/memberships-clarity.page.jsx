@@ -160,9 +160,21 @@ try {
     createRoot(document.getElementById(id)).render(React.createElement(T.MembershipsPage, {}))
   }
   const step = (ms, fn) => new Promise(resolve => setTimeout(() => resolve(fn()), ms))
+  // Bounded wait for the accounts to render: a fixed sleep that was ample
+  // becomes a race the moment the page grows or the machine is busy.
+  const waitFor = async (find, ms = 10000) => {
+    const deadline = Date.now() + ms
+    for (;;) {
+      const found = find()
+      if (found) return found
+      if (Date.now() >= deadline) return found
+      await step(25, () => {})
+    }
+  }
   setTimeout(() => {
     (async () => {
       try {
+        await waitFor(() => document.getElementById(ids[0])?.querySelector('[data-account]'))
         // $membershipExpanded is shared by every root, so one toggle shows the
         // reading notes in all four cases.
         {
@@ -219,8 +231,36 @@ try {
             diagnosticsSummary: host.querySelector('[data-wm-diagnostics] > summary')?.textContent || '',
             diagnosticsNote: host.querySelector('[data-wm-diagnostics] p')?.textContent || '',
             attentionScope: host.querySelector('[data-attention-scope]')?.textContent || '',
-            summaryLabels: [...host.querySelectorAll('.wm-membership-summary dt')].map(el => el.textContent),
-            summaryValues: [...host.querySelectorAll('.wm-membership-summary dd')].map(el => el.textContent),
+            summaryLabels: [...host.querySelectorAll('.wm-membership-summary-label')].map(el => el.textContent),
+            summaryCards: [...host.querySelectorAll('.wm-membership-summary [data-summary-card]')].map(card => {
+              const figure = card.querySelector('.wm-membership-summary-value')
+              const lines = [...card.querySelectorAll('.wm-membership-fee-lines li')]
+              // The fee reading is a list, not a single figure: measure the
+              // line a reader actually sees.
+              const style = figure ? getComputedStyle(figure)
+                : lines.length ? getComputedStyle(lines[0]) : null
+              const cardStyle = getComputedStyle(card)
+              return {
+                kind: card.dataset.summaryCard,
+                tone: card.dataset.tone,
+                label: card.querySelector('.wm-membership-summary-label')?.textContent || '',
+                value: figure ? figure.textContent : lines.map(el => el.textContent).join(' '),
+                lines: lines.map(el => el.textContent),
+                status: card.querySelector('.wm-membership-summary-status')?.textContent || '',
+                note: card.querySelector('.wm-membership-summary-note')?.textContent || '',
+                valueSize: style ? parseFloat(style.fontSize) : 0,
+                valueWeight: style ? Number(style.fontWeight) : 0,
+                railWidth: cardStyle.borderLeftWidth,
+                railColour: cardStyle.borderLeftColor,
+                background: cardStyle.backgroundColor,
+                overflow: card.scrollWidth - card.clientWidth,
+              }
+            }),
+            summaryColumns: getComputedStyle(host.querySelector('.wm-membership-summary'))
+              .gridTemplateColumns.split(' ').filter(Boolean).length,
+            arrangementSum: [...host.querySelectorAll('.wm-arrangement-chips li')]
+              .reduce((sum, li) => sum + Number(li.querySelector('.wm-arrangement-count')?.textContent || 0), 0),
+            arrangementLabels: [...host.querySelectorAll('.wm-arrangement-label')].map(el => el.textContent),
             groups: (() => {
               // Headings and cards share one parent, so group membership is
               // read from document order.

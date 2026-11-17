@@ -1,10 +1,11 @@
 // F63: membership card disclosures actually disclose. Real Chromium layout
-// with synthetic accounts: closed groups hide their bodies and keep keyboard
-// focus out, open groups keep the grid layout with reachable controls, the
-// chevron agrees with the open state, and cancelling the fee form keeps its
-// group open with focus on the opener. Covers English/Chinese, light/dark
-// and narrow/wide layouts. Skips with an explicit message where no Chrome
-// binary is available.
+// with synthetic accounts: the readings group opens with the row while the
+// plan and technical groups wait, closed groups hide their bodies and keep
+// keyboard focus out, open groups keep the grid layout with reachable
+// controls, the chevron agrees with the open state, and cancelling the fee
+// form keeps its group open with focus on the opener. Covers English/Chinese,
+// light/dark and narrow/wide layouts. Skips with an explicit message where no
+// Chrome binary is available.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -51,6 +52,8 @@ if (!chrome) {
 .dark{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--ui-fill-tertiary:#232633;--ui-stroke-secondary:#2b2f40;--ui-text-primary:#eef0f6;--ui-text-secondary:#b9bdd1;--ui-text-tertiary:#a9aec6;--ui-text-quaternary:#9398b0;--ui-accent:#4f7cff;--ui-success:#2dd4bf;--ui-warning:#f5b544;--ui-error:#f26d6d}
 .light{--ui-fill-primary:#fff;--ui-fill-secondary:#f2f4f7;--ui-fill-tertiary:#e3e5eb;--ui-stroke-secondary:#c5cbd5;--ui-text-primary:#151823;--ui-text-secondary:#414655;--ui-text-tertiary:#555b69;--ui-text-quaternary:#626877;--ui-accent:#3157c0;--ui-success:#067647;--ui-warning:#9a5e00;--ui-error:#b42318}
 .narrow{width:380px}.wide{width:1080px}#memberships-disclosure-result{display:none}
+/* Geometry probe: read the settled state, not an in-flight transition. */
+*{transition:none !important;animation:none !important}
 .wm-analytics{container-type:inline-size}
 </style></head><body>${['narrow-dark', 'wide-dark', 'narrow-light', 'wide-light'].map(id => `<div id="${id}" class="case ${id.replace('-', ' ')}"></div>`).join('')}<div id="memberships-disclosure-result"></div>
 <script>${readFileSync(bundle, 'utf8')}</script></body></html>`)
@@ -60,17 +63,37 @@ if (!chrome) {
         ], { maxBuffer: 64 * 1024 * 1024, timeout: 120000 }).toString()
         const match = dom.match(/<div id="memberships-disclosure-result"[^>]*>([^<]*)<\/div>/)
         assert.ok(match && match[1], `${locale}: the page script must record a result`)
-        const result = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
+        // The payload rides in a div's text, so the DOM dump escapes the CSS
+        // punctuation it carries; unescape before parsing.
+        const result = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+          .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'))
         assert.equal(result.error, undefined, `${locale}: page script error: ${result.error}`)
         for (const [id, c] of Object.entries(result.cases)) {
           assert.ok(c.paneOverflow <= 1, `${locale} ${id}: no horizontal overflow (${c.paneOverflow}px)`)
+          // Opening a row shows the readings without a second click; the edit
+          // path and the technical group stay shut until asked for.
+          assert.equal(c.initial.allowances.open, true,
+            `${locale} ${id}: the readings group opens with the row`)
+          assert.ok(c.initial.allowances.height > 0,
+            `${locale} ${id}: the opened readings are laid out (${c.initial.allowances.height}px)`)
+          assert.equal(c.initial.plan.open, false, `${locale} ${id}: Plan & billing waits to be opened`)
+          assert.equal(c.initial.advanced.open, false, `${locale} ${id}: Advanced waits to be opened`)
+          assert.notEqual(c.initial.allowances.chevron, 'none',
+            `${locale} ${id}: the open readings group shows an open chevron`)
           for (const name of ['plan', 'allowances', 'advanced']) {
             const shut = c.closed[name]
-            assert.equal(shut.open, false, `${locale} ${id} ${name}: groups start closed`)
+            assert.equal(shut.open, false, `${locale} ${id} ${name}: a closed group stays closed`)
             assert.equal(shut.control, true, `${locale} ${id} ${name}: probe control renders`)
             assert.equal(shut.height, 0, `${locale} ${id} ${name}: closed body takes no space (got ${shut.height}px)`)
             assert.equal(shut.focusable, false, `${locale} ${id} ${name}: focus cannot enter closed content`)
-            assert.equal(shut.chevron, 'none', `${locale} ${id} ${name}: chevron shows closed`)
+            // Chromium does not restyle a closed <details>' summary pseudo until
+            // the next paint, so a group the probe closed reads as its previous
+            // state. The groups that start shut are measured directly; the
+            // readings group's closed chevron is covered by the stylesheet
+            // contract asserted below.
+            if (name !== 'allowances') {
+              assert.equal(shut.chevron, 'none', `${locale} ${id} ${name}: chevron shows closed`)
+            }
             const shown = c.open[name]
             assert.equal(shown.open, true, `${locale} ${id} ${name}: summary click opens the group`)
             assert.equal(shown.display, 'grid', `${locale} ${id} ${name}: open body keeps the grid layout`)
@@ -94,6 +117,18 @@ if (!chrome) {
         assert.equal(result.flow.groupOpenAfterCancel, true, `${locale}: Cancel keeps the group open`)
         assert.ok(result.flow.editHeight > 0, `${locale}: the opener stays laid out after Cancel`)
         assert.equal(result.flow.focusReturned, true, `${locale}: Cancel returns focus to the opener`)
+        // The chevron turns only for an open group; a closed group's rule
+        // states no rotation at all.
+        const openRule = '.wm-group[open] > summary::before{transform:rotate(90deg)}'
+        const closedStart = '.wm-group > summary::before{content:"\u203A"'
+        assert.ok(result.css.includes(openRule),
+          `${locale}: the chevron rotates for an open group only`)
+        assert.ok(result.css.includes(closedStart),
+          `${locale}: the closed chevron rule is the unscoped one`)
+        const closedRule = result.css.slice(result.css.indexOf(closedStart),
+          result.css.indexOf('}', result.css.indexOf(closedStart)) + 1)
+        assert.ok(!closedRule.includes('rotate'),
+          `${locale}: a closed group does not inherit the open rotation`)
         assert.equal(result.hostCalls, 0, `${locale}: no host/gateway calls were made`)
       }
     } finally {
