@@ -35,7 +35,7 @@ plugin.register({
 
 const ledger = T.emptyLedger()
 if (scope === 'conversation') ledger.sessions.layout = {
-  input: 100000, output: 10000, cacheRead: 500000, cacheWrite: 0, calls: 26,
+  input: 80000, output: 10000, cacheRead: 500000, cacheWrite: 20000, calls: 26,
   pricedTokens: 610000, unpricedTokens: 0, unpricedCalls: 0, missingUsageCalls: 0,
   cost: 1.23, sources: { bundled: 610000 }, model: exactModelId, provider,
   foreignSlug: null, cacheEstimated: false,
@@ -178,6 +178,7 @@ setTimeout(async () => {
       glyphFontSize: parseFloat(getComputedStyle(button.querySelector('.wm-info-glyph')).fontSize),
     }))
     const providerBadge = node.querySelector('.wm-provider-badge')
+    const write = node.querySelector('.wm-mix-fill[data-part="write"]')
     const productTitle = node.querySelector('.wm-meter-brandrow .wm-meter-name')
     const statusRow = node.querySelector('.wm-meter-statusrow')
     const savedRow = node.querySelector('.wm-gauge-stat[data-kind="saved"]')
@@ -206,6 +207,8 @@ setTimeout(async () => {
       productTitleOverflow: productTitle ? Math.max(0, productTitle.scrollWidth - productTitle.clientWidth) : -1,
       productTitleOwnRow: !!productTitle && !!statusRow && productTitle.parentElement.nextElementSibling === statusRow,
       tooltipMetrics,
+      writePaint: write ? getComputedStyle(write).backgroundColor : null,
+      writeWidth: write ? rect(write).width : 0,
       provider: providerBadge?.textContent || '',
       providerOverflow: providerBadge ? Math.max(0, providerBadge.scrollWidth - providerBadge.clientWidth) : -1,
       providerSeparate: !!modelNameRow && modelNameRow.nextElementSibling === providerBadge,

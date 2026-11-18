@@ -377,8 +377,8 @@ test('token streams keep four distinct colours with a dedicated theme-aware cach
  assert.equal(new Set(colours).size,4,'input, output, read and write stay distinct')
  const read=streams.find(([key])=>key==='cache_read_tokens')[2]
  assert.notEqual(read,'var(--ui-warning)','cache-read no longer borrows the raw attention token')
- assert.ok(read.includes('var(--ui-warning)') && read.includes('var(--ui-text-primary)'),
-   'cache-read stays amber but adapts toward text in both themes')
+ assert.equal(read, 'color-mix(in srgb, var(--ui-warning,var(--ui-text-primary)) 68%, var(--ui-text-primary))',
+   'cache read keeps the warning blend when available and otherwise uses primary ink')
 })
 
 test('advanced filters stay available behind a disclosure that counts active slices', () => {
