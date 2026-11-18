@@ -11378,6 +11378,33 @@ const NEWS_SECTION_CATEGORY = {
   mixed_price_changes: null,
 }
 
+/**
+ * The items the local briefing is built from: the archive's own events, not the
+ * raw records. `newsGroupModels` has already deduped by exact id and merged a
+ * local/central pair only on an explicit same-event proof, so passing its
+ * events forward means one headline per change — never two because the same
+ * change arrived from both origins. Model-less cards are items too.
+ */
+function newsBriefingItems(grouped, items) {
+  const fallback = Array.isArray(items) ? items : []
+  if (!grouped || !Array.isArray(grouped.entries)) return fallback
+  const out = []
+  const seen = new Set()
+  const push = item => {
+    if (!item || typeof item !== 'object') return
+    const key = item.id ? String(item.id) : ''
+    if (key && seen.has(key)) return
+    if (key) seen.add(key)
+    out.push(item)
+  }
+  for (const entry of grouped.entries) {
+    if (entry.kind === 'group') {
+      for (const offer of entry.offers || []) for (const event of offer.events || []) push(event)
+    } else push(entry.item)
+  }
+  return out.length ? out : fallback
+}
+
 /** The briefing narrowed to the sections one category can honestly cover. */
 function newsBriefingForCategory(briefing, category) {
   if (!briefing || category === 'all' || !category) return briefing
@@ -11553,6 +11580,44 @@ function newsKind(entry, t) {
 const NEWS_STORY_PANEL_LIMIT = 6
 
 /**
+ * Evidence for a headline whose record is not in the archive's item list — a
+ * history-confirmed removal lives only in a published briefing, for example.
+ * The entry already carries the published facts (identity, date, confidence,
+ * event id, source link), so they are printed as they arrived. No rate table is
+ * invented for a removal: its evidence is the record and its confirmation
+ * count, not a before/after pair it never had.
+ */
+function NewsStoryEntryEvidence({ entry, t }) {
+  const ids = Array.isArray(entry?.event_ids) ? entry.event_ids : []
+  const observations = Number(entry?.headline_params?.observations)
+  const meta = [entry?.provenance, entry?.confidence].filter(Boolean).join(' · ')
+  return jsxs('div', { 'data-news-story-entry-evidence': 'true', children: [
+    jsx('p', { className: 'wm-news-historytitle', children: t('newsStoryEvents') }),
+    jsx('ul', { className: 'wm-news-storyrecords', children:
+      jsxs('li', { children: [
+        jsxs('p', { className: 'wm-news-meta', children: [
+          jsx('span', { children: entry?.provider || '' }),
+          ids.length ? jsx('span', { className: 'wm-news-storyid', children: ids.join(' · ') }) : null,
+          entry?.model ? jsx('span', { className: 'wm-news-storymodel', children: entry.model }) : null,
+        ] }),
+        Number.isFinite(observations) && observations > 0
+          ? jsx('p', { className: 'wm-news-meta', children: t('newsStoryObservations', observations) })
+          : null,
+        meta ? jsx('p', { className: 'wm-news-meta', children: meta }) : null,
+        jsxs('p', { className: 'wm-news-dates', children: [
+          t('newsObserved', entry?.observed_at || '—'),
+          entry?.effective_at ? ` · ${t('newsEffective', entry.effective_at)}` : '',
+        ] }),
+        entry?.source_url
+          ? jsx('p', { className: 'wm-news-meta', children: jsx('a', { href: entry.source_url,
+              target: '_blank', rel: 'noreferrer', className: 'wm-source-link',
+              children: t('newsSource') }) })
+          : null,
+      ] }, 'entry') }),
+  ] })
+}
+
+/**
  * One headline story: the claim, its provider and date, and — behind a
  * disclosure — every rate, identifier, provenance line and timestamp the
  * claim was derived from. A group keeps its family banner and lists each
@@ -11574,7 +11639,13 @@ function NewsStory({ entry, t, itemsById, lead = false }) {
     : confidence === 'curated' ? 'newsConfidenceCurated' : 'newsConfidenceObserved'
   const headline = newsHeadlineText(entry, t)
   const observed = entry?.observed_at ? fmtDay(entry.observed_at) : ''
+  // A story link must land on the event the reader clicked. Headlines ignore
+  // the category and date filters, so both are cleared before the search is
+  // applied; a retained category or an old window would otherwise open an
+  // archive that cannot contain it.
   const openArchive = () => {
+    $newsCategory.set('all')
+    $newsDays.set(null)
     $newsScope.set('all')
     $newsSearch.set(String(entry?.model || entry?.provider || ''))
     $newsShown.set(NEWS_PAGE_SIZE)
@@ -11635,7 +11706,7 @@ function NewsStory({ entry, t, itemsById, lead = false }) {
               ] }),
             ] }, `r-${item?.id || index}`)) }),
           ] })
-        : jsx('p', { className: 'wm-news-meta', children: entry?.model || entry?.provider || '' }),
+        : jsx(NewsStoryEntryEvidence, { entry, t }),
     ] }),
   ] })
 }
@@ -12519,23 +12590,6 @@ function NewsPage() {
     String(b.observed_at || '').localeCompare(String(a.observed_at || '')) ||
     String(a.id || '').localeCompare(String(b.id || '')))
   const impacts = current?.impacts || {}
-  // WP22 editorial layer: one shared briefing, built from the same verified
-  // events the archive renders. A published briefing wins; otherwise the same
-  // document is derived locally, so the headline surface never waits for an
-  // ops deploy. `itemsById` is the join back from a headline to its evidence.
-  const itemsById = new Map()
-  for (const item of combined) if (item?.id) itemsById.set(String(item.id), item)
-  const briefing = newsBriefingFor(central, combined)
-  // A category filter narrows the headlines to the sections it can honestly
-  // describe, so choosing "Increases" never leaves a price-cut lead above it.
-  const headlineBriefing = newsBriefingForCategory(briefing, category)
-  const headlineCount = (headlineBriefing.sections || []).reduce((total, section) =>
-    total + (Array.isArray(section.entries) ? section.entries.length : 0), 0)
-  const unsupportedReasons = new Set((briefing.unsupported || [])
-    .map(item => item?.reason_code).filter(Boolean))
-  const archiveTotal = Number(briefing.all_updates?.total) || combined.length
-  const archiveOldest = String(briefing.all_updates?.oldest || '').slice(0, 10)
-  const archiveNewest = String(briefing.all_updates?.newest || '').slice(0, 10)
   const refreshState = useValue($newsRefreshState)
   const refreshOurs = refreshState?.origin === identity
   const refreshPending = (refreshOurs && refreshState?.status === 'pending') || query.isFetching
@@ -12572,6 +12626,26 @@ function NewsPage() {
     }
     return forYouEntries.length
   })() : 0
+  // WP22 editorial layer: one shared briefing, built from the same verified
+  // EVENTS the archive renders — not the raw records. `newsBriefingItems`
+  // reuses the archive's own merge (exact ids plus an explicit same-event
+  // proof), so a local and a central copy of one change is one headline and
+  // its event ids are never duplicated. A published briefing still wins; the
+  // local document exists so the headline surface never waits for an ops
+  // deploy. `itemsById` is the join back from a headline to its evidence.
+  const itemsById = new Map()
+  for (const item of combined) if (item?.id) itemsById.set(String(item.id), item)
+  const briefing = newsBriefingFor(central, newsBriefingItems(grouped, combined))
+  // A category filter narrows the headlines to the sections it can honestly
+  // describe, so choosing "Increases" never leaves a price-cut lead above it.
+  const headlineBriefing = newsBriefingForCategory(briefing, category)
+  const headlineCount = (headlineBriefing.sections || []).reduce((total, section) =>
+    total + (Array.isArray(section.entries) ? section.entries.length : 0), 0)
+  const unsupportedReasons = new Set((briefing.unsupported || [])
+    .map(item => item?.reason_code).filter(Boolean))
+  const archiveTotal = Number(briefing.all_updates?.total) || combined.length
+  const archiveOldest = String(briefing.all_updates?.oldest || '').slice(0, 10)
+  const archiveNewest = String(briefing.all_updates?.newest || '').slice(0, 10)
   const forYouVisible = showAll
     ? forYouEntries : forYouEntries.slice(0, forYouPrefixCount)
   // For You narrows each model group to the offers that actually matched this
@@ -13759,6 +13833,7 @@ const I18N = {
     newsKindOther: 'Update',
     newsStoryDetails: 'Details',
     newsStoryEvents: 'Event records',
+    newsStoryObservations: n => `Confirmed across ${n} catalogue observation${n === 1 ? '' : 's'}.`,
     newsHeadVerbCut: 'cuts',
     newsHeadVerbRaise: 'raises',
     newsHeadSingleRate: (provider, model, verb, rate, pct, before, after) =>
@@ -15385,6 +15460,7 @@ const I18N = {
     newsKindOther: '动态',
     newsStoryDetails: '详情',
     newsStoryEvents: '事件记录',
+    newsStoryObservations: n => `经 ${n} 次目录观察确认。`,
     newsHeadVerbCut: '下调',
     newsHeadVerbRaise: '上调',
     newsHeadSingleRate: (provider, model, verb, rate, pct, before, after) =>
@@ -16351,7 +16427,7 @@ export const __test = {
   newsEditorialHeadline, newsEditorialVariant, newsEditorialGroup, newsEditorialMaterial,
   newsBuildBriefing, newsBriefingFor, newsSanitiseBriefing, newsWithinWindow,
   newsHeadlineText, newsSectionTitle, newsSectionEntries, newsFocusGroup,
-  newsBriefingForCategory, NEWS_SECTION_CATEGORY,
+  newsBriefingForCategory, NEWS_SECTION_CATEGORY, newsBriefingItems,
   NEWS_EDITORIAL_SECTIONS, NEWS_EDITORIAL_EVENT_TYPES, NEWS_EDITORIAL_MIN_PCT,
   NEWS_EDITORIAL_MIN_DELTA, NEWS_EDITORIAL_SECTION_LIMIT, NEWS_FAMILY_BRAND,
   NewsStory, NewsHeadlineSection, NewsBriefing, NEWS_HEADLINE_KEYS,

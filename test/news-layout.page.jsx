@@ -227,6 +227,45 @@ const FIXTURES = {
     central: { ...REALISTIC.central,
       items: REALISTIC.central.items.filter(item => item.category !== 'subscription') },
   },
+  // Page-local variant (never in the grid matrix): a publisher-supplied
+  // briefing whose removals section carries a history-confirmed record that
+  // exists nowhere in the archive's items. That is the shape the client must
+  // render from the entry's own evidence rather than from a joined record.
+  published: {
+    ...REALISTIC,
+    central: {
+      ...REALISTIC.central,
+      briefing: {
+        version: 1,
+        generated_at: REALISTIC.central.fetched_at,
+        sections: [
+          { id: 'biggest_reductions', total: 1, entries: [{
+            event_type: 'price_reduction',
+            headline_code: 'news_head_single_rate',
+            headline_params: { provider: 'openai', model: 'gpt-5.6-sol',
+              rate: 'news_rate_input', pct: -50, before: '$2.5', after: '$1.25', direction: 'down' },
+            headline: 'openai cuts gpt-5.6-sol input by 50% ($2.5 → $1.25 per 1M tokens)',
+            provider: 'openai', model: 'gpt-5.6-sol', model_family: 'gpt-5.6-sol',
+            observed_at: REALISTIC.central.fetched_at, confidence: 'observed',
+            event_ids: [REALISTIC.local.items[0].id],
+          }] },
+          { id: 'removals', total: 1, entries: [{
+            event_type: 'removed_from_provider',
+            headline_code: 'news_head_removed_from_provider',
+            headline_params: { provider: 'acme', model: 'alpha',
+              observations: 2 },
+            headline: 'acme no longer lists alpha (confirmed across 2 catalogue observations)',
+            provider: 'acme', model: 'alpha', model_family: 'alpha',
+            observed_at: '2026-11-09T00:00:00Z', confidence: 'observed',
+            source_url: 'https://models.dev/removals/rm-acme-alpha',
+            event_ids: ['rm-acme-alpha'],
+          }] },
+        ],
+        counts: { events: 2 },
+        unsupported: [],
+      },
+    },
+  },
 }
 
 const errors = (globalThis.__newsErrors = [])
@@ -446,6 +485,44 @@ function briefingSummary(pane) {
       .map(el => el.textContent.trim()),
     limits: [...block.querySelectorAll('.wm-news-briefing-limits li')]
       .map(el => el.textContent.trim()),
+    // A headline with no joinable archive record must still show its published
+    // evidence; capture both the text and the source links it carries.
+    entryEvidence: [...block.querySelectorAll('[data-news-story-entry-evidence]')].map(el => ({
+      text: el.textContent.trim(),
+      hrefs: [...el.querySelectorAll('a')].map(link => link.getAttribute('href')),
+    })),
+  }
+}
+
+/**
+ * WP22: a headline's archive link must land on the event the reader clicked.
+ * Records the scope/category/date/search state after the click plus the first
+ * rendered group id, so a retained filter that hides the event is visible.
+ */
+async function probeStory(pane) {
+  const story = pane.querySelector('[data-news-story]')
+  const button = story?.querySelector('[data-news-story-archive]')
+  if (!story || !button) return { missing: true }
+  const model = story.getAttribute('data-news-story-model') || ''
+  const before = {
+    scope: pane.querySelector('[data-news-scope] button[aria-pressed="true"]')?.textContent?.trim() || '',
+    search: pane.querySelector('[data-news-search]')?.value || '',
+  }
+  button.click()
+  await tick(200)
+  const pressed = selector => [...pane.querySelectorAll(`${selector} button`)]
+    .find(button => button.getAttribute('aria-pressed') === 'true')
+  return {
+    model,
+    before,
+    scope: pressed('[data-news-scope]')?.textContent?.trim() || '',
+    category: pressed('[data-news-category]')?.textContent?.trim() || '',
+    days: pressed('[data-news-days]')?.textContent?.trim() || '',
+    search: pane.querySelector('[data-news-search]')?.value || '',
+    groups: [...pane.querySelectorAll('[data-news-group]')]
+      .map(group => group.getAttribute('data-news-group')),
+    empty: pane.querySelector('.wm-empty')?.textContent?.trim() || '',
+    storyStillPresent: !!pane.querySelector('[data-news-briefing]'),
   }
 }
 
@@ -966,6 +1043,16 @@ async function measureCase(c) {
   const id = `${c.fixture}__${c.scope}__${c.w}__${c.theme}__${c.locale}`
   const pane = document.getElementById(id)
   if (!pane) return { id, error: 'container missing' }
+  // Bounded readiness gate. The page resolves its query and paints on React's
+  // own schedule, so a fixed wait measures whatever happens to be on screen:
+  // an early read has produced empty contrast counts and '' copy on unchanged
+  // revisions. Wait for the structure every assertion then measures, and keep
+  // every assertion as it was. Nothing here weakens a check — it only stops
+  // measuring a page that has not rendered yet.
+  const painted = () => !!(pane.querySelector('.wm-news-controls')
+    && (pane.querySelector('.wm-news-list') || pane.querySelector('.wm-empty')
+      || pane.querySelector('.wm-product-section')))
+  for (let waited = 0; waited < 2000 && !painted(); waited += 25) await tick(25)
   expandHidden(pane)
   await tick()
   const items = fixturesForCase(c)
@@ -1040,6 +1127,7 @@ async function measureCase(c) {
   }
   else if (PROBE) result.probe = { skipped: 'candidate DOM not detected ([data-news-group] absent)' }
   if (params.get('probe') === 'subscription') result.probeSubscription = await probeSubscription(pane)
+  if (params.get('probe') === 'story') result.probeStory = await probeStory(pane)
   return result
 }
 

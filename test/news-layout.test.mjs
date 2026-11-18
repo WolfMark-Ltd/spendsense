@@ -431,6 +431,50 @@ test('Model News names the source limitation behind an empty Subscription Update
     'All Updates states the published window it covers')
 })
 
+test('a headline opens in the archive with the event it names actually visible', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=realistic__foryou__380__dark__en&probe=story`)).cases[0]
+  assert.ok(result?.probeStory, 'story probe recorded')
+  const probe = result.probeStory
+  assert.ok(probe.model, 'the probe found a headline with a model identity')
+  // The story link asserts its own destination: All Updates, unfiltered, with
+  // the model in the search box — a retained category or date window would
+  // open an archive that cannot contain the clicked event.
+  assert.match(probe.scope, /All Updates|全部动态/i, 'the link selects All Updates')
+  assert.match(probe.category, /^All$/i, 'the link clears the category filter')
+  assert.match(probe.days, /All time|全部时间/i, 'the link clears the date window')
+  assert.equal(probe.search, probe.model, 'the link searches the event it names')
+  assert.deepEqual(probe.groups.includes(probe.model), true,
+    `the clicked event is visible after the link: ${JSON.stringify(probe.groups)}`)
+  assert.equal(probe.empty, '', 'the archive is not empty after the link')
+})
+
+test('a published briefing renders its own evidence when no archive record joins', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=published__foryou__380__dark__en`)).cases[0]
+  const briefing = result?.briefing
+  assert.ok(briefing?.present, 'the published briefing renders')
+  assert.equal(briefing.source, 'published', 'the publisher document wins over the local build')
+  assert.ok(briefing.kinds.includes('removed'),
+    `a history-confirmed removal is headlined: ${JSON.stringify(briefing.kinds)}`)
+  // Exactly one story has no joinable record (the removal); the joinable
+  // reduction uses the archive record instead.
+  assert.equal(briefing.entryEvidence.length, 1,
+    `only the unjoinable story falls back: ${JSON.stringify(briefing.entryEvidence)}`)
+  const [evidence] = briefing.entryEvidence
+  assert.match(evidence.text, /rm-acme-alpha/, 'the published event id survives')
+  assert.match(evidence.text, /acme/, 'the published provider survives')
+  assert.match(evidence.text, /2026-11-09/, 'the published timestamp survives')
+  assert.ok(evidence.hrefs.includes('https://models.dev/removals/rm-acme-alpha'),
+    `the published source link survives: ${JSON.stringify(evidence.hrefs)}`)
+})
+
 test('NEWS_LAYOUT_SHOTS containment rejects paths that resolve inside the repository', () => {
   // Absolute paths inside the repo, the repo root itself and an inside entry
   // whose name merely starts with ".." must all be rejected.

@@ -290,6 +290,46 @@ test('For You keeps a group intact when no offer or every offer matched', () => 
   assert.equal(complete.otherOffers.length, 0)
 })
 
+test('the local briefing counts merged events, never raw records', () => {
+  const localCentral = JSON.parse(readFileSync(
+    new URL('./fixtures/news/payload-local-central.json', import.meta.url), 'utf8'))
+  const records = [...localCentral.local.items, ...localCentral.central.items]
+  const grouped = S.newsGroupModels(records)
+  const archiveEvents = grouped.entries.reduce((count, entry) => entry.kind === 'group'
+    ? count + entry.offers.reduce((sum, offer) => sum + offer.events.length, 0) : count + 1, 0)
+  const mergedItems = S.newsBriefingItems(grouped, records)
+  // One event per change: the archive's own merge (exact id, or a local/central
+  // pair with an explicit same-event proof) decides what is one change.
+  assert.equal(mergedItems.length, archiveEvents)
+  assert.ok(mergedItems.length < records.length,
+    'the fixture really does carry the same change from both origins')
+  const raw = S.newsBuildBriefing(records, { generatedAt: GENERATED_AT })
+  const merged = S.newsBuildBriefing(mergedItems, { generatedAt: GENERATED_AT })
+  assert.equal(raw.counts.events, records.length, 'raw records would inflate the count')
+  assert.equal(merged.counts.events, archiveEvents)
+  for (const section of merged.sections) {
+    for (const entry of section.entries) {
+      assert.equal(new Set(entry.event_ids).size, entry.event_ids.length,
+        `${section.id} never repeats an event id`)
+      for (const id of entry.event_ids) {
+        assert.ok(mergedItems.some(item => item.id === id),
+          `every headlined id joins back to a supplied event: ${id}`)
+      }
+    }
+  }
+  // A group with two providers keeps one row per provider and no duplicate id.
+  const increase = merged.sections.find(section => section.id === 'biggest_increases')
+  for (const entry of increase.entries) {
+    assert.equal(new Set(entry.providers).size, entry.providers.length)
+  }
+})
+
+test('a missing grouped archive falls back to the supplied items', () => {
+  for (const grouped of [null, undefined, {}, { entries: [] }]) {
+    assert.deepEqual(S.newsBriefingItems(grouped, ITEMS), ITEMS)
+  }
+})
+
 // --- briefing source selection ------------------------------------------------
 
 test('a published briefing wins; a malformed one is ignored, never fatal', () => {
