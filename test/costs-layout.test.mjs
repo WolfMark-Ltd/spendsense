@@ -15,7 +15,7 @@ const CHROME = [
 
 const LAYOUT_STRINGS = {
   en: { charges: /Not recorded/, gbpFee: /GBP 20\.00\/mo/, usdFee: /USD 0\.00\/mo/,
-    partial: /fee unknown/, cachePartial: /Partial/, limit: /1 limit/,
+    partial: /fee unknown/, cachePartial: /Partial/, scope: /what Hermes recorded and priced/, limit: /1 limit/,
     groups: /Fees vs usage by currency/, attention: /What needs attention\?/, fix: /Fix now/,
     seeAttention: /1 issue needs attention/, blocker: /Add a dated user-supplied/,
     feeAction: /Set or confirm this account’s subscription fee/,
@@ -23,7 +23,7 @@ const LAYOUT_STRINGS = {
     verdict: /Partial evidence: .* in known fees vs .* of attributed usage/,
     fixHint: /use the action on each row/ },
   zh: { charges: /无法获取逐次调用/, gbpFee: /GBP 20\.00\/月/, usdFee: /USD 0\.00\/月/,
-    partial: /项费用未知/, cachePartial: /部分/, limit: /1 项限额/,
+    partial: /项费用未知/, cachePartial: /部分/, scope: /已记录并已定价/, limit: /1 项限额/,
     groups: /按货币对比费用与用量/, attention: /哪些事项需要注意？/, fix: /立即处理/,
     seeAttention: /1 个问题需要注意/, blocker: /添加注明日期的.*汇率/,
     feeAction: /设置或确认此账户的订阅费用/,
@@ -81,7 +81,9 @@ const name=new URLSearchParams(location.search).get('case');if(name){document.bo
         assert.match(layout.fees, expected.partial, `${id} marks the subtotal partial`)
         assert.equal(layout.feeLines.length, 2, `${id} keeps currencies and periods on separate lines`)
         assert.match(layout.cache, /\$0\.00/, `${id} preserves zero cache impact`)
-        assert.match(layout.cache, expected.cachePartial, `${id} exposes incomplete cache pricing coverage`)
+        assert.doesNotMatch(layout.cache, expected.cachePartial, `${id} states partial coverage once globally instead of a card pill`)
+        assert.equal(layout.scopeLines, 1, `${id} states priced-subtotal scope exactly once`)
+        assert.match(layout.scopeLine, expected.scope, `${id} explains priced-subtotal scope`)
         assert.match(layout.allowances, expected.limit, `${id} distinguishes plan limits from spend`)
         assert.match(layout.text, expected.groups, `${id} keeps the currency comparison visual`)
         assert.equal(layout.comparisons, 2, `${id} renders labelled fee and API-equivalent bars`)

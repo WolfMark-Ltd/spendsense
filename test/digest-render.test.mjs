@@ -224,6 +224,36 @@ test('the preview renders sections, tables and methodology disclosure', async ()
   assert.equal(hostileCell.textContent, T.modelDisplayName('<img src=x onerror=alert(1)>'))
 })
 
+test('value, spending and coverage sections keep their accent rails when host warning/error tokens are missing', async () => {
+  const report = digestFixture()
+  report.sections.push(
+    { id: 'spending', heading: 'Metered and cash spending', window: report.period.label, kind: 'lines',
+      lines: [{ label: 'Metered usage value (all cost rules)', value: '≥$5.38' }], notes: [] },
+    { id: 'coverage', heading: 'Attribution and reconciliation', window: report.period.label, kind: 'lines',
+      lines: [{ label: 'Attributed tokens', value: '518.85M' }], notes: [] },
+  )
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => {
+    root.render(React.createElement(T.DigestPreview, { report }))
+  })
+  for (const [id, heading] of [['value', 'Usage value'], ['spending', 'Metered and cash spending'],
+      ['coverage', 'Attribution and reconciliation']]) {
+    const section = container.querySelector(`.wm-digest-section[data-section="${id}"]`)
+    assert.ok(section, `${id} renders as an accent-railed section`)
+    assert.match(section.querySelector('h3')?.textContent || '', new RegExp(heading))
+  }
+  // The native host theme leaves --ui-warning/--ui-error undefined, which
+  // drops the rail declarations entirely. Fall back to the default section
+  // accent so the rails survive, using only existing theme tokens.
+  assert.match(T.REPORTS_CSS,
+    /\.wm-digest-section\[data-section="value"\],\.wm-digest-section\[data-section="spending"\]\{--wm-digest-accent:var\(--ui-warning,var\(--ui-accent\)\)\}/)
+  assert.match(T.REPORTS_CSS,
+    /\.wm-digest-section\[data-section="coverage"\]\{--wm-digest-accent:var\(--ui-error,var\(--ui-accent\)\)\}/)
+})
+
 test('the reports page fetches and previews the digest', async () => {
   const { container, text } = await bootReports()
   assert.match(text(), /Reports/)

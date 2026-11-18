@@ -133,7 +133,7 @@ setTimeout(() => {
     const cache = pane.querySelector('[data-cost-kind="cache"]')
     const feeLines = [...pane.querySelectorAll('.wm-cost-fee-lines li')].map(line => line.textContent)
     const columns = getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).length
-    const overflow = [pane, ...pane.querySelectorAll('.wm-shell, .wm-product-heading, .wm-cost-card, .wm-product-section')]
+    const overflow = [pane, ...pane.querySelectorAll('.wm-shell, .wm-product-heading, .wm-cost-card, .wm-product-section, .wm-cost-evidence-scope')]
       .map(element => ({ name: element.id || element.className, excess: element.scrollWidth - element.clientWidth }))
     output.layouts.push({
       id, width: pane.clientWidth, columns, overflow: overflow.filter(item => item.excess > 1),
@@ -157,6 +157,8 @@ setTimeout(() => {
       fees: pane.querySelector('[data-cost-kind="fees"]')?.textContent,
       feeLines,
       cache: cache?.textContent,
+      scopeLine: pane.querySelector('.wm-cost-evidence-scope')?.textContent,
+      scopeLines: pane.querySelectorAll('.wm-cost-evidence-scope').length,
       allowances: pane.querySelector('[data-cost-kind="allowances"]')?.textContent,
       comparisons: pane.querySelectorAll('.wm-econ-bars .wm-econ-bar-row').length,
       closedDetails: [...pane.querySelectorAll('.wm-cost-card-details, .wm-econ-disclosure')]
