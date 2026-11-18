@@ -238,6 +238,17 @@ async function measure() {
       const bg = parseColor(getComputedStyle(pane).backgroundColor)
       return fg && bg ? { color: getComputedStyle(dots[index]).backgroundColor, ratio: +contrast(fg, bg).toFixed(2) } : null
     }
+    const palette = T.CHART_COLORS.map(color => {
+      const sample = document.createElement('span')
+      sample.style.cssText = 'position:absolute;inset-inline-start:-10000px'
+      sample.style.color = color
+      pane.append(sample)
+      const computed = getComputedStyle(sample).color
+      const fg = parseColor(computed)
+      const bg = parseColor(getComputedStyle(pane).backgroundColor)
+      sample.remove()
+      return fg && bg ? { color: computed, ratio: +contrast(fg, bg).toFixed(2) } : null
+    })
     const stats = [...pane.querySelectorAll('.wm-stat')]
     const statOverflow = stats.filter(el => el.scrollWidth - el.clientWidth > 1).length
     const trendPoints = [...pane.querySelectorAll('[data-trend-point]')]
@@ -280,6 +291,7 @@ async function measure() {
       },
       chartKeyDots: dots.length,
       chartKeySwatches: [swatch(0), swatch(1), swatch(2), swatch(3)],
+      chartPalette: palette,
       trendPoints: trendPoints.length,
       trendTitles: trendPoints.filter(el => (el.querySelector('title')?.textContent || '').length > 0).length,
       legendTitles: legendRows.filter(el => (el.getAttribute('title') || '').length > 0).length,

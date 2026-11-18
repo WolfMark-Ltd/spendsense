@@ -110,9 +110,15 @@ test('all explorer columns sort deterministically, preserve negative savings and
  assert.equal(T.analyticsPricing({tokens:10,priced_tokens:5,unpriced_tokens:5,list_usd:0}),'Partial · 50.0%')
  assert.equal(T.analyticsPricing({tokens:10,priced_tokens:10,unpriced_tokens:0,list_usd:0}),'Complete')
  assert.equal(T.analyticsPricing({tokens:0,calls:1,priced_tokens:0,unpriced_tokens:0,unpriced_calls:1,list_usd:null}),
-  '1 call(s) have no token usage; value cannot be confirmed. Review Usage evidence.')
+  '1 call has no token usage; cost is unavailable.')
  assert.equal(T.analyticsPricing({tokens:0,calls:1,priced_tokens:0,unpriced_tokens:0,unpriced_calls:1,list_usd:null,
-  pricing_gaps:{provider_not_recorded:1}}),'Provider unidentified · 1 call(s). Confirm provider in Usage.')
+  pricing_gaps:{provider_not_recorded:1}}),'Provider unidentified · 1 call.')
+ assert.equal(T.analyticsPricing({tokens:10,calls:2,priced_tokens:0,unpriced_tokens:10,unpriced_calls:2,list_usd:null,
+  pricing_gaps:{call_failed:2}}),'2 calls failed; cost cannot be estimated.')
+ assert.equal(T.analyticsPricing({tokens:10,calls:1,priced_tokens:0,unpriced_tokens:10,unpriced_calls:1,list_usd:null,
+  pricing_gaps:{usage_missing:1}}),'1 call has no usage data.')
+ assert.equal(T.analyticsPricing({tokens:10,calls:1,priced_tokens:0,unpriced_tokens:10,unpriced_calls:1,list_usd:null,
+  pricing_gaps:{provider_not_in_catalogue:1}}),'No provider rate · 1 call.')
  assert.equal(T.analyticsPricing({tokens:10,priced_tokens:10,unpriced_tokens:0,list_usd:1,fallback_calls:2}),'Fallback rates · 2 calls')
  assert.equal(T.analyticsPricing({tokens:10,priced_tokens:5,unpriced_tokens:5,list_usd:1,fallback_calls:2}),'Partial · 50.0% · fallback rates')
 })
@@ -248,7 +254,7 @@ test('insights name the driver, cache verdict and delegated share from existing 
    economics:{savings_usd:-1,coverage:.5},by_scope:[{scope:'subagent',tokens:40,calls:3}]}
  const found=T.analyticsInsights(data)
  assert.deepEqual(found.map(i=>i.label),['Biggest driver','Cache verdict','Delegated work'])
- assert.match(found[0].text,/m1 via p1 is 60\.0%/)
+ assert.match(found[0].text,/M1 via p1 is 60\.0%/)
  assert.match(found[1].text,/writes cost/)
  assert.equal(T.deltaText(.125),'▲ 12.5% vs previous period')
  assert.equal(T.deltaText(null),null)
@@ -288,11 +294,92 @@ test('analytics pricing, insights and deltas follow the chosen language', () => 
     economics: { savings_usd: -1, coverage: .5 }, by_scope: [{ scope: 'subagent', tokens: 40, calls: 3 }] }
   const found = T.analyticsInsights(data, zhT)
   assert.deepEqual(found.map(i => i.label), ['最大驱动', '缓存结论', '委派工作'])
-  assert.match(found[0].text, /m1 经 p1/)
+  assert.match(found[0].text, /M1 经 p1/)
   const parts = T.analyticsComposition({ input_tokens: 1, output_tokens: 2, cache_read_tokens: 3, cache_write_tokens: 4 }, zhT)
   assert.deepEqual(parts.map(p => p.label), ['输入', '输出', '缓存读取', '缓存写入'])
   const dist = T.analyticsDistribution([{ model: '', provider: '', tokens: 10, list_usd: 1 }], 'cost', 'model', 6, zhT)
   assert.equal(dist.items[0].label, '未知模型')
+})
+
+test('model labels read naturally while retaining the exact route for filtering', () => {
+ const row={model:'anthropic/claude-opus-4-6',provider:'anthropic',calls:2,tokens:1200,input_tokens:600,
+  output_tokens:400,cache_read_tokens:150,cache_write_tokens:50,list_usd:.42,priced_tokens:1200,
+  unpriced_tokens:0,priced_calls:2,unpriced_calls:0,cache_hit_rate:.1875}
+ assert.equal(T.analyticsDistribution([row],'cost','model').items[0].label,'Claude Opus 4.6')
+
+ const actions=[]
+ const distribution=render(T.AnalyticsDistribution({data:{by_model:[row],by_route:[row]},
+  state:{distributionMetric:'cost',grouping:'model',otherOpen:false},dispatch:action=>actions.push(action)}))
+ const legend=nodes(distribution,n=>n.type==='button'&&n.props.className==='wm-legendrow')[0]
+ assert.match(legend.props['aria-label'],/Claude Opus 4\.6 \(anthropic\/claude-opus-4-6\)/)
+ assert.match(legend.props.title,/anthropic\/claude-opus-4-6/)
+ legend.props.onClick()
+ assert.equal(actions.at(-1).row.model,'anthropic/claude-opus-4-6','selection keeps the raw route id')
+
+ const explorer=render(T.AnalyticsExplorer({data:{by_model:[row]},
+  state:{sortKey:'list_usd',sortDirection:'desc',columnMode:'core',showAllModels:false},dispatch:action=>actions.push(action)}))
+ const model=nodes(explorer,n=>n.type==='button'&&n.props.className==='wm-modelbutton')[0]
+ assert.equal(text(model),'Claude Opus 4.6')
+ assert.match(model.props['aria-label'],/anthropic\/claude-opus-4-6/)
+ assert.match(model.props.title,/anthropic\/claude-opus-4-6/)
+ model.props.onClick()
+ assert.equal(actions.at(-1).row.model,'anthropic/claude-opus-4-6','Explorer filters the exact route id')
+ assert.equal(actions.at(-1).row.provider,'anthropic')
+ const allColumns=render(T.AnalyticsExplorer({data:{by_model:[row]},
+  state:{sortKey:'list_usd',sortDirection:'desc',columnMode:'all',showAllModels:false},dispatch:()=>{}}))
+ assert.equal(nodes(allColumns,n=>n.type==='th').length,T.ANALYTICS_COLUMNS.length,
+  'advanced model metrics remain available in the All columns view')
+})
+
+test('Data coverage explains separate token and call denominators, reasons and exact affected routes in EN/ZH',()=>{
+ const data={window:{days:30},totals:{tokens:1000,priced_tokens:700,unpriced_tokens:300,calls:6,
+   priced_calls:3,unpriced_calls:3,pricing_gaps:{call_failed:1,usage_missing:1,provider_not_recorded:1,
+     provider_not_in_catalogue:1,model_not_in_catalogue:1,price_evidence_missing:1}},
+  economics:{excluded_calls:4,gap_reasons:{call_failed:1,usage_missing:1,provider_unidentified:1,
+    cache_provenance_unknown:1,provider_price_catalogue_missing:1,rate_unavailable:1,missing_cache_read_rate:1}},
+  by_model:[{model:'anthropic/claude-opus-4-6',provider:'anthropic',unpriced_tokens:200,unpriced_calls:2,
+    tokens:500,calls:3},{model:'x-provider/custom-route',provider:'x-provider',unpriced_tokens:100,unpriced_calls:1,
+    tokens:500,calls:3}]}
+ const actions=[]
+ globalThis.analyticsLanguage='en'
+ const english=render(T.AnalyticsCoverageSummary({data,dispatch:action=>actions.push(action)}))
+ const enText=text(english)
+ assert.match(enText,/Data coverage/)
+ assert.match(enText,/70\.0% of tokens priced \(700 of 1,000\)/)
+ assert.match(enText,/3 of 6 calls priced; 3 incomplete/)
+ assert.match(enText,/Provider charges are not recorded/)
+ assert.match(enText,/1 call failed; cost cannot be estimated/)
+ assert.match(enText,/1 call has no token data/)
+ assert.match(enText,/1 call has no identified provider/)
+ assert.match(enText,/1 call has no published provider rate/)
+ assert.match(enText,/1 call has no published model rate/)
+ assert.match(enText,/1 call has no matching rate evidence/)
+ assert.match(enText,/1 call has no usable rate/)
+ assert.match(enText,/cache-read rate/)
+ assert.match(enText,/Claude Opus 4\.6/)
+ const detail=nodes(english,n=>n.type==='details')[0]
+ assert.ok(detail&&!detail.props.open,'technical reasons remain in one collapsed disclosure')
+ const route=nodes(english,n=>n.type==='button'&&n.props.className==='wm-coverageroute')[0]
+ assert.match(route.props['aria-label'],/anthropic\/claude-opus-4-6/)
+ route.props.onClick()
+ assert.equal(actions[0].row.model,'anthropic/claude-opus-4-6')
+ assert.equal(actions[0].row.provider,'anthropic')
+
+ try {
+  globalThis.analyticsLanguage='zh'
+  const chinese=render(T.AnalyticsCoverageSummary({data,dispatch:()=>{}}))
+  const zhText=text(chinese)
+  assert.match(zhText,/数据覆盖/)
+  assert.match(zhText,/700\/1,000/)
+  assert.match(zhText,/6 次调用中 3 次已定价，3 次不完整/)
+  assert.match(zhText,/未记录供应商实际费用/)
+  assert.match(zhText,/1 次调用失败，无法估算其成本/)
+  assert.match(zhText,/没有令牌数据/)
+  assert.match(zhText,/没有已识别的供应商/)
+  assert.match(zhText,/没有可用单价/)
+  assert.match(zhText,/缺少缓存读取单价/)
+  assert.match(zhText,/Claude Opus 4\.6/)
+ } finally { globalThis.analyticsLanguage='en' }
 })
 
 test('dashboard renders three SVG analytics, honest pricing/billing/cache coverage and a sortable explorer', () => {
@@ -302,15 +389,17 @@ test('dashboard renders three SVG analytics, honest pricing/billing/cache covera
  for(const title of ['Usage analytics','API-equivalent','Weighted cache hit','Theoretical net savings','Pricing coverage','Model Explorer','Cache economics']) assert.ok(text(tree).includes(title),title)
  assert.ok(text(tree).includes('Partial'))
  assert.ok(text(tree).includes('Billing classification'))
- assert.ok(text(tree).includes('not actual provider-recorded charges'))
+ assert.ok(text(tree).includes('Provider charges are not recorded'))
  assert.equal(nodes(tree,n=>n.type==='svg' && !!n.props['data-chart']).length,3,'distribution is bars; trend, ranking and composition stay SVG')
  assert.equal(nodes(tree,n=>n.type==='section').length,7,'charts, delegation, explorer, economics')
  assert.ok(text(tree).includes('Delegated operations'))
- assert.equal(nodes(tree,n=>n.type==='th').length,11,'core explorer columns by default')
+ assert.equal(nodes(tree,n=>n.type==='th').length,7,'the readable core view keeps key route and usage columns')
  const labels=nodes(tree,n=>n.type==='th').map(text)
- for(const label of ['Billing','$/call']) assert.ok(labels.some(value=>value.includes(label)),label)
- assert.ok(text(tree).includes('Reasoning is included in output'))
+ for(const label of ['Model','Provider','Calls','Tokens','Cache %','API cost','Pricing']) assert.ok(labels.some(value=>value.includes(label)),label)
+ assert.ok(text(tree).includes('Reasoning is already included in output'))
  assert.ok(nodes(tree,n=>n.type==='details' && nodes(n,x=>x.type==='summary' && text(x)==='Methodology & coverage details').length>0).some(n=>!n.props.open))
+ assert.equal(nodes(tree,n=>n.type==='div'&&n.props.className==='wm-coverage'&&n.props.role==='region').length,1,
+  'the page presents one Data coverage summary')
  assert.ok(nodes(tree,n=>n.type==='th').every(n=>!!n.props['aria-sort']))
  assert.equal(nodes(tree,n=>n.type==='select').length,7)
  assert.ok(nodes(tree,n=>n.type==='svg').every(n=>!!n.props.viewBox))
@@ -339,7 +428,7 @@ test('legend exact-selection, Other inspection, sorting and keyboard chart detai
  assert.deepEqual(T.$analytics.get()[scope].filters,T.analyticsInitialState().filters)
  tree=page()
  assert.ok(text(tree).includes('Remainder · 2 models'))
- button(tree,'Filter m6 via p0 · $4.00').props.onClick()
+ button(tree,'Filter M6 (m6) via p0 · $4.00').props.onClick()
  assert.deepEqual(T.$analytics.get()[scope].filters,{model:'m6',provider:'p0',surface:'',task:'',parent:'',scope:''})
  button(page(),'Sort by Calls').props.onClick()
  assert.equal(T.$analytics.get()[scope].sortKey,'calls')
@@ -377,8 +466,9 @@ test('token streams keep four distinct colours with a dedicated theme-aware cach
  assert.equal(new Set(colours).size,4,'input, output, read and write stay distinct')
  const read=streams.find(([key])=>key==='cache_read_tokens')[2]
  assert.notEqual(read,'var(--ui-warning)','cache-read no longer borrows the raw attention token')
- assert.equal(read, 'color-mix(in srgb, var(--ui-warning,var(--ui-text-primary)) 68%, var(--ui-text-primary))',
-   'cache read keeps the warning blend when available and otherwise uses primary ink')
+ assert.equal(read, T.CHART_COLORS[2], 'cache read keeps the WP34 theme-aware contrast blend')
+ assert.equal(T.CHART_COLORS.length,8,'model distribution has a broader categorical palette')
+ assert.equal(new Set(T.CHART_COLORS).size,8,'all categorical series have distinct colour recipes')
 })
 
 test('advanced filters stay available behind a disclosure that counts active slices', () => {
@@ -405,10 +495,10 @@ test('chart hover and focus surfaces carry exact values, not rounded ones', () =
  const detail=nodes(tree,n=>n.type==='div' && n.props.className==='wm-chartdetail')[0]
  assert.ok(text(detail).includes('10,000'),'trend detail shows the exact point total')
  assert.ok(text(detail).includes('6,000'),'trend detail shows exact stream counts')
- const legend=nodes(tree,n=>n.type==='button' && String(n.props['aria-label'] || '').startsWith('Filter m0 via p0'))[0]
- assert.equal(legend.props['aria-label'],'Filter m0 via p0 · $10.00')
+ const legend=nodes(tree,n=>n.type==='button' && String(n.props['aria-label'] || '').startsWith('Filter M0 (m0) via p0'))[0]
+ assert.equal(legend.props['aria-label'],'Filter M0 (m0) via p0 · $10.00')
  assert.ok(legend.props.title.includes('$10.00'),'legend hover title carries the exact figure')
- const rankRow=nodes(tree,n=>typeof n.props?.['aria-label']==='string' && n.props['aria-label'].startsWith('Filter m0 via p0;'))[0]
+ const rankRow=nodes(tree,n=>typeof n.props?.['aria-label']==='string' && n.props['aria-label'].startsWith('Filter M0 (m0) via p0;'))[0]
  assert.ok(rankRow.props['aria-label'].includes('6,000'),'ranking label carries exact read tokens')
  const keyButton=nodes(tree,n=>n.type==='button' && n.props['aria-label']==='Select Input composition')[0]
  assert.ok(keyButton.props.title.includes('2,000'),'composition key hover carries the exact count')
@@ -425,7 +515,7 @@ test('legend focus swaps the visible value to exact', () => {
  const scope=T.analyticsScope('default','connected','local')
  T.$analytics.set({[scope]:{...T.analyticsInitialState(),distributionMetric:'tokens'}})
  const tree=page()
- const row=nodes(tree,n=>n.type==='button' && String(n.props['aria-label']||'').startsWith('Filter m0 via p0'))[0]
+ const row=nodes(tree,n=>n.type==='button' && String(n.props['aria-label']||'').startsWith('Filter M0 (m0) via p0'))[0]
  assert.equal(text(nodes(row,n=>n.type==='span' && n.props.className==='wm-approx')[0]),'10.0k')
  assert.equal(text(nodes(row,n=>n.type==='span' && n.props.className==='wm-exact')[0]),'10,000')
  const css=T.ANALYTICS_CSS
@@ -546,7 +636,7 @@ test('delegation panel separates direct, delegated and auxiliary usage and filte
 
 test('economics comparison explains unchanged output cost and period uses calendar window labels', () => {
  const tree=page()
- assert.ok(text(tree).includes('same output cost'))
+ assert.ok(text(tree).includes('output cost stays the same'))
  const select=nodes(tree,n=>n.type==='select'&&n.props['aria-label']==='Period filter')[0]
  assert.ok(text(select).includes('Today'))
  assert.ok(!text(select).includes('24 hours'))
@@ -741,7 +831,7 @@ test('unpriced zero-token calls withhold per-call cost and mark the API subtotal
  const pricingIndex = T.ANALYTICS_COLUMNS.findIndex(([key])=>key==='pricing')
  assert.equal(text(rowCells[perCallIndex]),'—')
  assert.equal(text(rowCells[perMillionIndex]),'$10000.00')
- assert.match(text(rowCells[pricingIndex]),/Price evidence incomplete · 1 call\(s\)/)
+ assert.match(text(rowCells[pricingIndex]),/Price evidence incomplete · 1 call\./)
 })
 
 test('explorer CSV keeps price coverage beside the unit costs', () => {

@@ -93,6 +93,13 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         const colours = new Set([input.color, output.color, read.color, write.color])
         assert.equal(colours.size, 4, `${id} keeps four distinct stream colours`)
         assert.ok(read.ratio >= 3, `${id} keeps cache-read readable (${read.ratio}:1)`)
+        assert.equal(layout.chartPalette.length, 8, `${id} defines eight chart-series colours`)
+        const paletteColours = layout.chartPalette.map(entry => entry?.color)
+        assert.ok(paletteColours.every(Boolean), `${id} resolves every chart-series colour`)
+        assert.equal(new Set(paletteColours).size, 8, `${id} keeps the broader chart palette distinct`)
+        for (const entry of layout.chartPalette) {
+          assert.ok(entry.ratio >= 3, `${id} keeps a chart colour distinct from the panel (${entry.ratio}:1)`)
+        }
         assert.equal(layout.warningToken, stateTokens === 'present' ? (layout.id.endsWith('dark') ? '#f5b544' : '#9a5e00') : '', id)
         assert.notEqual(layout.cacheReadFill, 'rgb(0, 0, 0)', `${id} paints the cache-read SVG rect`)
         assert.equal(layout.cacheReadFill, read.color, `${id} uses the same paint for the bar and chart key`)
@@ -133,7 +140,7 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.ok(layout.legendRows > 0, `${id} renders legend rows`)
         assert.equal(layout.legendTitles, layout.legendRows, `${id} titles every legend row`)
         assert.match(layout.text, /72,000/, `${id} shows exact cache-read stream values`)
-        assert.equal(layout.explorerColumns, 11, `${id} keeps the core explorer columns`)
+        assert.equal(layout.explorerColumns, 7, `${id} keeps the readable core explorer columns`)
         assert.equal(layout.firstColumnSticky, 'sticky', `${id} pins the explorer model column`)
         assert.equal(layout.methodologyOpen, false, `${id} keeps Methodology collapsed`)
         assert.equal(layout.baselineOpen, false, `${id} keeps Baseline collapsed`)
@@ -147,7 +154,7 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
       const wide = result.layouts.find(l => l.id === 'wide-dark')
       if (locale === 'en') {
         assert.match(wide.text, /Theoretical net savings/, 'WP06 cache-savings evidence survives')
-        assert.match(wide.text, /not actual provider-recorded charges/, 'WP05 billing honesty survives')
+        assert.match(wide.text, /Provider charges are not recorded/, 'WP05 billing honesty survives')
         assert.match(wide.text, /Partial/, 'partial coverage stays visible')
         assert.match(wide.text, /Billing classification/, 'recorded-cost classification stays visible')
         assert.match(wide.text, /Methodology & coverage details/, 'methodology disclosure stays available')

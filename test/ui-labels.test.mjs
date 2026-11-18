@@ -567,7 +567,7 @@ test('every usage panel string exists in English and Chinese', () => {
     'usageLegendModels', 'usageLegendFilter', 'usageLegendInspectTitle', 'usageLegendApplyTitle',
     'usageDistTitle', 'usageDistSubtitle', 'usageSegDistribution', 'usageSegCost', 'usageSegTokens',
     'usageSegDistBy', 'usageSegModel', 'usageSegProvider', 'usageDistEmptyCost', 'usageDistEmptyTokens',
-    'usageDistRemainder', 'usageDistFooterCost', 'usageDistFooterTokens', 'usageDistFooterWarn',
+    'usageDistRemainder', 'usageDistFooterCost', 'usageDistFooterTokens',
     'usageDistFooterNote', 'usageTrendPoint', 'usageTrendTitle', 'usageTrendPanelTitle', 'usageTrendSubtitle',
     'usageSegTrend', 'usageTrendAria', 'usageTrendHint', 'usageTrendUnstacked', 'usageTrendTotal',
     'usageTrendStream', 'usageTrendEmpty', 'usageTrendFooterCost', 'usageTrendFooterTokens', 'usageDelegBar',
@@ -596,7 +596,7 @@ test('every usage panel string exists in English and Chinese', () => {
     'usageExplorerShowingTop', 'usageExplorerFooter', 'usageEconTitle', 'usageEconSubtitle',
     'usageEconNoPricing', 'usageEconWritePremium', 'usageEconBenefit', 'usageEconNetSavings',
     'usageEconWithoutCache', 'usageEconWithCache', 'usageEconBarAria', 'usageEconExplainRates',
-    'usageEconExplainNet', 'usageEconCoverage', 'usageEconExplainScope', 'usageFilterPeriod',
+    'usageEconExplainNet', 'usageFilterPeriod',
     'usageFilterPeriodTip', 'usagePeriodToday', 'usagePeriodWeek', 'usagePeriodMonth', 'usagePeriodQuarter',
     'usagePeriodYear', 'usageFilterModel', 'usageFilterModelName', 'usageFilterProvider',
     'usageFilterProviderName', 'usageFilterSurface', 'usageFilterSurfaceName', 'usageFilterTask',
@@ -626,7 +626,7 @@ test('every usage panel string exists in English and Chinese', () => {
   assert.equal(en.usageDonutAction(true, 'Input', '1K', '50%'), 'Inspect Input: 1K, 50%')
   assert.equal(en.usageTrendPoint('t', '$1', 0), 't: $1')
   assert.equal(en.usageRankFooter(8, 'weighted rate'),
-    'Top 8 by weighted rate. Zero-cache older rows are ambiguous, not confirmed misses. Unknown is not zero. All models remain in the explorer.')
+    'Top 8 by weighted rate. All models remain available in the explorer.')
   assert.match(zh.usageCompFocus('输入', '1K', '50%', '注'), /占全部令牌的/)
   assert.equal(en.usageFilterAdvanced(0), 'Advanced filters')
   assert.equal(en.usageFilterAdvanced(2), 'Advanced filters · 2 active')
@@ -661,7 +661,7 @@ test('granularity and filter-chip labels translate while English stays identical
     assert.equal(T.usageFilterChipValue('scope', value, t('zh')), chinese)
   }
   // Non-scope values are user data and pass through untouched.
-  assert.equal(T.usageFilterChipValue('model', 'm1', t('zh')), 'm1')
+  assert.equal(T.usageFilterChipValue('model', 'm1', t('zh')), 'M1')
   assert.equal(T.usageFilterChipValue('scope', 'future', t('zh')), 'future')
 })
 
