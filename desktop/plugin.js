@@ -4860,6 +4860,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-section{padding:17px}',
   '.wm-product .wm-product-section h2{margin:0 0 4px;font-size:16px;font-weight:590}',
   '.wm-product .wm-product-section > p{margin:4px 0 12px;color:var(--ui-text-tertiary);font-size:12px;line-height:1.5}',
+  '.wm-product .wm-product-section > p.wm-warn-note{color:var(--wm-attention)}',
   '.wm-product .wm-cost-list{display:grid;gap:0}',
   '.wm-product .wm-cost-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;border-top:1px solid var(--ui-stroke-secondary);padding:11px 2px}',
   '.wm-product .wm-cost-row:first-child{border-top:0}',

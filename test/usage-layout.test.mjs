@@ -124,6 +124,7 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.equal(stateStyles.error, error, `${id} styles the error chip`)
         assert.equal(stateStyles.feedback, error, `${id} styles the error feedback`)
         assert.equal(stateStyles.success, success, `${id} preserves the success chip`)
+        assert.equal(stateStyles.settingsWarning, warning, `${id} keeps Settings warning text visible in the attention colour`)
         assert.equal(stateStyles.confirmation, `1px solid ${warning}`, `${id} paints the Settings confirmation outline`)
         assert.equal(stateStyles.news, warning, `${id} styles the price increase badge`)
         // Exact chart values are reachable by hover (title) and focus (detail).

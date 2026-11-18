@@ -1,4 +1,5 @@
 import React from 'react'
+import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import plugin, { __test as T } from '../desktop/plugin.js'
 
@@ -155,21 +156,25 @@ function measureStateStyles(pane) {
     sample.style.setProperty('--ui-fill-secondary', 'initial')
     sample.style.setProperty('--ui-bg-editor', getComputedStyle(pane).backgroundColor)
   }
-  sample.innerHTML = `
-    <style>${T.ANALYTICS_CSS + T.PRODUCT_CSS + T.ECONOMICS_CSS + T.MEMBERSHIP_CSS + T.NEWS_CSS + T.REPORTS_CSS}</style>
-    <span class="wm-cost-attn-count">2</span>
-    <div class="wm-membership-summary-card" data-tone="attention">Needs attention</div>
-    <div class="wm-flash" style="animation:none">Destination highlight</div>
-    <span class="wm-status-chip" data-tone="attention">Partial</span>
-    <span class="wm-status-chip" data-tone="error">Error</span>
-    <span class="wm-status-chip" data-tone="positive">Ready</span>
-    <p class="wm-async-status" data-status="error" role="alert">Could not save</p>
-    <div class="wm-confirm-box">Confirm change</div>
-    <span class="wm-news-badge" data-cat="price_increase">Price increase</span>
-    <div class="wm-digest-section" data-section="coverage">Attribution</div>
-    <div class="wm-pane"><span class="wm-status-chip" data-tone="attention">Partial</span></div>
-  `
   pane.append(sample)
+  const root = createRoot(sample)
+  flushSync(() => root.render(<>
+    <style>{T.ANALYTICS_CSS + T.PRODUCT_CSS + T.ECONOMICS_CSS + T.MEMBERSHIP_CSS + T.NEWS_CSS + T.REPORTS_CSS}</style>
+    <span className="wm-cost-attn-count">2</span>
+    <div className="wm-membership-summary-card" data-tone="attention">Needs attention</div>
+    <div className="wm-flash" style={{ animation: 'none' }}>Destination highlight</div>
+    <span className="wm-status-chip" data-tone="attention">Partial</span>
+    <span className="wm-status-chip" data-tone="error">Error</span>
+    <span className="wm-status-chip" data-tone="positive">Ready</span>
+    <p className="wm-async-status" data-status="error" role="alert">Could not save</p>
+    <section className="wm-product-section">
+      <p className="wm-warn-note" role="status">Hermes could not refresh model availability</p>
+      <div className="wm-confirm-box">Confirm change</div>
+    </section>
+    <span className="wm-news-badge" data-cat="price_increase">Price increase</span>
+    <div className="wm-digest-section" data-section="coverage">Attribution</div>
+    <div className="wm-pane"><span className="wm-status-chip" data-tone="attention">Partial</span></div>
+  </>))
   const css = selector => getComputedStyle(sample.querySelector(selector))
   const pill = css('.wm-cost-attn-count')
   const rail = css('.wm-membership-summary-card')
@@ -185,9 +190,11 @@ function measureStateStyles(pane) {
     error: css('[data-tone="error"].wm-status-chip').color,
     success: css('[data-tone="positive"].wm-status-chip').color,
     feedback: css('.wm-async-status').color,
+    settingsWarning: css('.wm-product-section > .wm-warn-note').color,
     confirmation: css('.wm-confirm-box').borderLeft,
     news: css('.wm-news-badge').color,
   }
+  root.unmount()
   sample.remove()
   return properties
 }
