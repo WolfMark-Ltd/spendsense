@@ -153,7 +153,16 @@ def family_label(family: str) -> str:
         known = _BRAND.get(word)
         if known:
             out.append(known)
-        elif any(char.isdigit() for char in word):
+            continue
+        # A brand welded to its version (``qwen3.5``, ``glm5``) keeps the brand
+        # casing and the version as published; uppercasing the whole token
+        # would print ``QWEN3.5``, which is not how the vendor writes it.
+        head = re.match(r"[a-z]+", word)
+        prefix = head.group(0) if head else ""
+        if prefix and prefix != word and prefix in _BRAND:
+            out.append(_BRAND[prefix] + word[len(prefix):])
+            continue
+        if any(char.isdigit() for char in word):
             out.append(word.upper())
         else:
             out.append(word[:1].upper() + word[1:])

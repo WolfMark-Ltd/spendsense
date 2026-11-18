@@ -3211,7 +3211,7 @@ function ProductHeader({ title, subtitle, actions }) {
     actions || null
   ].filter(Boolean), 'wm-product-heading') })
 }
-function ProductShell({ children, pageStyles = '' }) {
+function ProductShell({ children, pageStyles = '', pageClass = '' }) {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const compatibility = useValue($backendCompatibility)
@@ -3222,7 +3222,7 @@ function ProductShell({ children, pageStyles = '' }) {
   // Mirror the Meter pane: a hover-opened tip has no focused button to catch
   // Escape, so dismiss it here on capture and keep the window-level ledger
   // closer out of it. Plain Escape (no tip open) still propagates as before.
-  return jsxs('div', { className: 'wm-analytics wm-product',
+  return jsxs('div', { className: `wm-analytics wm-product${pageClass ? ` ${pageClass}` : ''}`,
     onKeyDownCapture: event => {
       if (event.key === 'Escape' && $infoOpen.get()) {
         event.stopPropagation()
@@ -10677,6 +10677,1042 @@ function newsRankGroups(groups) {
   return newsRankForYou(groups, Date.now())
 }
 
+// --- WP22: deterministic editorial layer ------------------------------------
+//
+// The editorial surface is a deterministic transform of the same verified
+// events the archive already renders. Curation happens ONCE over the shared
+// feed; For You ranks those stories against this profile's configured
+// providers, selected plans and recorded use. Nothing here calls a model,
+// transmits usage or invents a fact: every claim is derived from the provider,
+// the exact model id, the published previous/current rates, observed_at,
+// source_url and confidence.
+//
+// Two sources feed one renderer. A publisher-supplied `central.briefing` is
+// preferred when it is present and well formed; otherwise the same document is
+// built locally from the items, so the headline experience does not depend on
+// an ops deploy. Both paths share one vocabulary (`news_section_*`,
+// `news_head_*`) and one payload shape, which is the contract
+// docs/model-news-editorial.md publishes.
+
+const NEWS_EDITORIAL_MIN_PCT = 2.0
+const NEWS_EDITORIAL_MIN_DELTA = 0.005
+const NEWS_EDITORIAL_SECTION_LIMIT = 8
+const NEWS_EDITORIAL_MAX_ENTRIES = 400
+const NEWS_EDITORIAL_VARIANT_LIMIT = 12
+const NEWS_EDITORIAL_LINK_LIMIT = 64
+const NEWS_EDITORIAL_REMOVAL_WINDOW_DAYS = 90
+
+const NEWS_EDITORIAL_EVENT_TYPES = [
+  'price_reduction', 'price_increase', 'price_mixed', 'new_to_catalogue',
+  'newly_available', 'provider_listed', 'removed_from_provider',
+  'provider_delisted', 'new_plan', 'plan_change', 'unknown',
+]
+
+/** Event weights behind the editorial order. Defaults, not measured truth. */
+const NEWS_EDITORIAL_WEIGHT = {
+  price_reduction: 3.0, price_increase: 3.2, price_mixed: 3.4,
+  new_to_catalogue: 2.2, newly_available: 1.4, provider_listed: 0.4,
+  removed_from_provider: 3.6, provider_delisted: 2.4, new_plan: 2.8,
+  plan_change: 3.0, unknown: 0.5,
+}
+
+/** Cosmetic brand casing. Display only; identity never depends on it. */
+const NEWS_FAMILY_BRAND = {
+  ai: 'AI', glm: 'GLM', gpt: 'GPT', hy: 'HY', llm: 'LLM', mimo: 'MiMo',
+  oss: 'OSS', phi: 'Phi', claude: 'Claude', deepseek: 'DeepSeek',
+  gemini: 'Gemini', gemma: 'Gemma', grok: 'Grok', kimi: 'Kimi',
+  llama: 'Llama', minimax: 'MiniMax', nemotron: 'Nemotron', openai: 'OpenAI',
+  qwen: 'Qwen', sonnet: 'Sonnet', opus: 'Opus', haiku: 'Haiku',
+  flash: 'Flash', fast: 'Fast', preview: 'Preview', pro: 'Pro',
+  nano: 'Nano', mini: 'Mini', coder: 'Coder', max: 'Max',
+}
+
+/** Suffixes naming a presentation variant of one model, not a new model. */
+const NEWS_FAMILY_VARIANT_SUFFIXES = new Set(['thinking', 'flex', 'fast', 'standard', 'default'])
+
+const NEWS_PREVIEW_PATTERN = new RegExp(
+  '(?:^|[\\s\\-_/:.])(preview|experimental|exp|alpha|beta|stealth|anonymous|'
+  + 'anon|unreleased|internal|canary)(?:$|[\\s\\-_/:.]|\\d)', 'i')
+
+const NEWS_EDITORIAL_SECTIONS = [
+  ['biggest_reductions', 'newsSectionBiggestReductions'],
+  ['biggest_increases', 'newsSectionBiggestIncreases'],
+  ['new_models', 'newsSectionNewModels'],
+  ['newly_available', 'newsSectionNewlyAvailable'],
+  ['removals', 'newsSectionRemovals'],
+  ['subscriptions', 'newsSectionSubscriptions'],
+  ['preview_models', 'newsSectionPreviewModels'],
+  ['mixed_price_changes', 'newsSectionMixedPriceChanges'],
+]
+
+/**
+ * Presentation family for a model id, or '' when there is none. A leading
+ * `vendor/` namespace is dropped, separators normalise and a known
+ * presentation-variant suffix is removed. Distinct versions stay distinct:
+ * `kimi-k3` and `kimi-k3.1-pro` are different families, while
+ * `gemma-4-26b-a4b-it` and `gemma-4-26b-a4b-it:thinking` share one.
+ */
+function newsModelFamily(model) {
+  let text = String(model == null ? '' : model).trim().toLowerCase()
+  if (!text) return ''
+  if (text.includes('/')) text = text.slice(text.lastIndexOf('/') + 1)
+  text = text.replace(/[\s_]+/g, '-').replace(/:+/g, '-')
+  const parts = text.split('-').filter(Boolean)
+  while (parts.length > 1 && NEWS_FAMILY_VARIANT_SUFFIXES.has(parts[parts.length - 1])) parts.pop()
+  return parts.join('-')
+}
+
+/** Human-readable label for a family key. Display only. */
+function newsFamilyLabel(family) {
+  const words = String(family == null ? '' : family).split('-').filter(Boolean)
+  return words.map(word => {
+    const known = NEWS_FAMILY_BRAND[word]
+    if (known) return known
+    // A brand welded to its version (`qwen3.5`, `glm5`) keeps the brand casing
+    // and the version as published; uppercasing the whole token would print
+    // `QWEN3.5`, which is not how the vendor writes it.
+    const head = /^[a-z]+/.exec(word)?.[0] || ''
+    if (head && head !== word && NEWS_FAMILY_BRAND[head]) {
+      return NEWS_FAMILY_BRAND[head] + word.slice(head.length)
+    }
+    if (/\d/.test(word)) return word.toUpperCase()
+    return word.slice(0, 1).toUpperCase() + word.slice(1)
+  }).join(' ')
+}
+
+/** True only when the provider-published id or name says preview/beta/stealth. */
+function newsPreviewSignal(model, modelName = '') {
+  for (const value of [model, modelName]) {
+    const text = String(value == null ? '' : value).trim()
+    if (text && NEWS_PREVIEW_PATTERN.test(text)) return true
+  }
+  return false
+}
+
+const newsEditorialRate = value => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null
+  return value
+}
+
+const newsEditorialRound = (value, places) => {
+  const scale = 10 ** places
+  return Math.round(value * scale) / scale
+}
+
+/**
+ * Per-rate-type comparison of two rate blocks. A rate type is comparable only
+ * when both sides publish a finite non-negative number; a zero baseline yields
+ * a delta but no percentage, because a percentage against zero is not a
+ * measurement. `dominant` is the rate that moves most in USD per 1M tokens, so
+ * a headline names the change a buyer feels and ranking uses that same rate's
+ * own percentage.
+ */
+function newsEditorialComparison(previous, current) {
+  const hasPrevious = !!previous && typeof previous === 'object'
+  const hasCurrent = !!current && typeof current === 'object'
+  const rates = {}
+  const incomparable = {}
+  for (const key of NEWS_RATE_FIELDS) {
+    const before = hasPrevious ? newsEditorialRate(previous[key]) : null
+    const after = hasCurrent ? newsEditorialRate(current[key]) : null
+    if (before == null || after == null) {
+      incomparable[key] = hasPrevious && hasCurrent ? 'news_ev_rate_absent' : 'news_ev_side_missing'
+      continue
+    }
+    const delta = after - before
+    rates[key] = {
+      before, after, delta: newsEditorialRound(delta, 6),
+      pct: before <= 0 ? null : newsEditorialRound(delta / before * 100, 1),
+    }
+    if (rates[key].pct == null && !(before === 0 && after === 0)) {
+      incomparable[key] = 'news_ev_zero_baseline'
+    }
+  }
+  const movedDown = NEWS_RATE_FIELDS.filter(key => rates[key]
+    && rates[key].before !== rates[key].after && rates[key].delta < 0)
+  const movedUp = NEWS_RATE_FIELDS.filter(key => rates[key]
+    && rates[key].before !== rates[key].after && rates[key].delta > 0)
+  let direction
+  if (movedDown.length && movedUp.length) direction = 'mixed'
+  else if (!(hasPrevious && hasCurrent)) direction = 'unknown'
+  else if (movedDown.length) direction = 'down'
+  else if (movedUp.length) direction = 'up'
+  else direction = 'flat'
+  let dominant = ''
+  let bestDelta = -1
+  for (const key of NEWS_RATE_FIELDS) {
+    const row = rates[key]
+    if (!row) continue
+    if (Math.abs(row.delta) > bestDelta) { dominant = key; bestDelta = Math.abs(row.delta) }
+  }
+  let maxAbsPct = null
+  for (const key of NEWS_RATE_FIELDS) {
+    const row = rates[key]
+    if (!row || row.pct == null) continue
+    const value = Math.abs(row.pct)
+    if (maxAbsPct == null || value > maxAbsPct) maxAbsPct = value
+  }
+  return {
+    rates, direction,
+    comparable: NEWS_RATE_FIELDS.filter(key => rates[key] && rates[key].pct != null),
+    incomparable,
+    max_abs_pct: maxAbsPct,
+    max_abs_delta: dominant ? newsEditorialRound(bestDelta, 6) : null,
+    dominant,
+    dominant_pct: dominant ? rates[dominant].pct : null,
+  }
+}
+
+/**
+ * Editorial event type for one feed item. A publisher-supplied `event_type`
+ * wins; otherwise the v1 `category` is refined from the item's own evidence:
+ * a model-less `new_model` is a provider listing (no model identity), a price
+ * change is re-read from its rate blocks so a mixed move is never reported as
+ * one-way, and a subscription item is a new plan or a plan change.
+ */
+function newsEditorialEventType(item) {
+  const explicit = String(item?.event_type || '').trim()
+  if (NEWS_EDITORIAL_EVENT_TYPES.includes(explicit)) return explicit
+  const category = String(item?.category || '').trim()
+  if (category === 'new_model') {
+    return String(item?.model || '').trim() ? 'new_to_catalogue' : 'provider_listed'
+  }
+  if (category === 'price_reduction' || category === 'price_increase') {
+    const direction = newsEditorialComparison(item?.previous, item?.current).direction
+    if (direction === 'mixed') return 'price_mixed'
+    if (direction === 'down') return 'price_reduction'
+    if (direction === 'up') return 'price_increase'
+    return category
+  }
+  if (category === 'subscription') {
+    return String(item?.summary_code || '').trim() === 'news_sum_new_plan' ? 'new_plan' : 'plan_change'
+  }
+  return 'unknown'
+}
+
+/** Signals that annotate an event without replacing its event type. */
+function newsEditorialSignals(item) {
+  const raw = Array.isArray(item?.signals) ? item.signals.map(value => String(value)) : []
+  const signals = new Set(raw)
+  if (!signals.has('preview') && newsPreviewSignal(item?.model, item?.model_name)) signals.add('preview')
+  return [...signals].sort()
+}
+
+/** Deterministic editorial rank: kind × log-scaled magnitude × corroboration. */
+function newsEditorialScore(item, providers = 1) {
+  const eventType = newsEditorialEventType(item)
+  const comparison = newsEditorialComparison(item?.previous, item?.current)
+  const pct = comparison.dominant_pct != null ? comparison.dominant_pct
+    : (comparison.max_abs_pct || 0)
+  const weight = NEWS_EDITORIAL_WEIGHT[eventType] ?? NEWS_EDITORIAL_WEIGHT.unknown
+  const corroboration = 1 + 0.05 * Math.max(0, Math.min(providers, 6) - 1)
+  return newsEditorialRound(weight * (1 + Math.log1p(Math.abs(pct))) * corroboration, 3)
+}
+
+const newsRateText = value => {
+  if (value == null || !Number.isFinite(value)) return '—'
+  const text = value.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')
+  return text ? `$${text}` : '$0'
+}
+
+/**
+ * Concise deterministic headline for one event: `{code, params, text}`. The
+ * code and parameters are the localisable contract; `text` is the English
+ * rendering of the same facts for a client without that message.
+ */
+function newsEditorialHeadline(item, eventType, signals = []) {
+  const provider = String(item?.provider || '').trim()
+  const model = String(item?.model || '').trim()
+  const comparison = newsEditorialComparison(item?.previous, item?.current)
+  const rates = comparison.rates
+  const dominant = comparison.dominant
+  const rateCode = key => `news_rate_${key}`
+  if (signals.includes('preview') && (eventType === 'new_to_catalogue' || eventType === 'newly_available')) {
+    return {
+      code: 'news_head_preview_observed',
+      params: { provider, model, observed_at: String(item?.observed_at || '') },
+      text: `Preview-labelled model ${model} observed at ${provider} (no vendor or launch identity inferred)`,
+    }
+  }
+  if ((eventType === 'price_reduction' || eventType === 'price_increase') && dominant) {
+    const row = rates[dominant]
+    const verb = eventType === 'price_reduction' ? 'cuts' : 'raises'
+    if (Object.values(rates).every(entry => entry.delta === 0)) {
+      return {
+        code: 'news_head_tiers_changed',
+        params: { provider, model },
+        text: `${provider} changes ${model} tier/context pricing (base rates unchanged)`,
+      }
+    }
+    if (row.pct == null) {
+      return {
+        code: 'news_head_from_zero',
+        params: { provider, model, rate: rateCode(dominant), after: newsRateText(row.after) },
+        text: `${provider} now lists ${model} ${dominant} at ${newsRateText(row.after)} per 1M tokens (previously $0; no meaningful percentage)`,
+      }
+    }
+    const moved = NEWS_RATE_FIELDS.filter(key => rates[key]
+      && rates[key].pct != null && rates[key].before !== rates[key].after)
+    const sameDirection = !!moved.length && moved.every(key => (eventType === 'price_reduction'
+      ? (rates[key].pct || 0) < 0 : (rates[key].pct || 0) > 0))
+    const sameSize = sameDirection && new Set(moved.map(key => rates[key].pct)).size === 1
+    if (moved.length > 1 && sameSize) {
+      return {
+        code: 'news_head_all_rates',
+        params: { provider, model, pct: row.pct, rates: moved.map(rateCode) },
+        text: `${provider} ${verb} ${model} prices by ${Math.abs(row.pct)}% (${moved.join(', ')})`,
+      }
+    }
+    return {
+      code: 'news_head_single_rate',
+      params: {
+        provider, model, rate: rateCode(dominant), pct: row.pct,
+        before: newsRateText(row.before), after: newsRateText(row.after),
+        also_moved: moved.filter(key => key !== dominant).map(rateCode),
+        direction: row.pct < 0 ? 'down' : 'up',
+      },
+      text: `${provider} ${verb} ${model} ${dominant} by ${Math.abs(row.pct)}% (${newsRateText(row.before)} → ${newsRateText(row.after)} per 1M tokens)`,
+    }
+  }
+  if (eventType === 'price_mixed') {
+    const up = NEWS_RATE_FIELDS.filter(key => rates[key]
+      && rates[key].before !== rates[key].after && rates[key].delta > 0)
+    const down = NEWS_RATE_FIELDS.filter(key => rates[key]
+      && rates[key].before !== rates[key].after && rates[key].delta < 0)
+    const largestPct = keys => {
+      const values = keys.map(key => rates[key].pct).filter(value => value != null).map(Math.abs)
+      return values.length ? Math.max(...values) : null
+    }
+    const valuesText = keys => keys.filter(key => rates[key].pct == null)
+      .map(key => `${key} ${newsRateText(rates[key].before)} → ${newsRateText(rates[key].after)}`).join('; ')
+    return {
+      code: 'news_head_mixed',
+      params: {
+        provider, model,
+        raised: up.map(rateCode), cut: down.map(rateCode),
+        raised_pct: largestPct(up), cut_pct: largestPct(down),
+        raised_values: valuesText(up), cut_values: valuesText(down),
+      },
+      text: `${provider} changes ${model} in both directions (${up.join(', ') || 'no rate'} raised, ${down.join(', ') || 'no rate'} cut)`,
+    }
+  }
+  if (eventType === 'newly_available') {
+    const count = typeof item?.other_provider_count === 'number' && Number.isFinite(item.other_provider_count)
+      ? item.other_provider_count
+      : (Array.isArray(item?.other_providers) ? item.other_providers.length : 0)
+    return {
+      code: 'news_head_newly_available',
+      params: { provider, model, others: count },
+      text: `${provider} now also lists ${model}${count ? ` (already listed by ${count} other provider(s))` : ''}`,
+    }
+  }
+  if (eventType === 'new_to_catalogue') {
+    const firstSeen = String(item?.first_seen_at || '').trim()
+    const confidence = String(item?.confidence || 'observed').trim()
+    if (confidence === 'verified' || confidence === 'curated') {
+      return {
+        code: 'news_head_launched',
+        params: { provider, model, first_seen: firstSeen, confidence },
+        text: `${provider} launches ${model}${firstSeen ? ` (first observed ${firstSeen.slice(0, 10)})` : ''}`,
+      }
+    }
+    return {
+      code: 'news_head_new_to_catalogue',
+      params: { provider, model, first_seen: firstSeen, confidence },
+      text: `${provider} starts listing ${model}${firstSeen
+        ? ` (first observed ${firstSeen.slice(0, 10)})` : ' (new catalogue entry; no launch claim)'}`,
+    }
+  }
+  if (eventType === 'provider_listed') {
+    return {
+      code: 'news_head_provider_listed',
+      params: { provider },
+      text: `${provider} newly appears in the catalogue`,
+    }
+  }
+  if (eventType === 'removed_from_provider') {
+    const observations = typeof item?.confirmations === 'number' ? item.confirmations : 0
+    return {
+      code: 'news_head_removed_from_provider',
+      params: { provider, model, observations },
+      text: `${provider} no longer lists ${model}${observations ? ` (confirmed across ${observations} catalogue observations)` : ''}`,
+    }
+  }
+  if (eventType === 'provider_delisted') {
+    const observations = typeof item?.confirmations === 'number' ? item.confirmations : 0
+    return {
+      code: 'news_head_provider_delisted',
+      params: { provider, observations },
+      text: `${provider} no longer appears in the catalogue${observations ? ` (confirmed across ${observations} observations)` : ''}`,
+    }
+  }
+  if (eventType === 'new_plan' || eventType === 'plan_change') {
+    const summary = String(item?.summary || '').trim()
+    return { code: 'news_head_plan_change', params: { provider, summary }, text: summary.slice(0, 200) }
+  }
+  const summary = String(item?.summary || '').trim()
+  return {
+    code: 'news_head_unclassified',
+    params: { provider, model, summary: summary.slice(0, 200) },
+    text: summary.slice(0, 200) || `${provider} ${model}`.trim(),
+  }
+}
+
+/** One editorial entry: the facts a story card is allowed to print. */
+function newsEditorialEntry(item, providers = 1) {
+  const eventType = newsEditorialEventType(item)
+  const comparison = newsEditorialComparison(item?.previous, item?.current)
+  const family = newsModelFamily(item?.model)
+  const signals = newsEditorialSignals(item)
+  const headline = newsEditorialHeadline(item, eventType, signals)
+  const entry = {
+    event_type: eventType,
+    headline_code: headline.code,
+    headline_params: headline.params,
+    headline: headline.text,
+    provider: String(item?.provider || ''),
+    model: String(item?.model || ''),
+    model_family: family,
+    family_label: newsFamilyLabel(family),
+    observed_at: String(item?.observed_at || ''),
+    effective_at: String(item?.effective_at || ''),
+    source_url: String(item?.source_url || ''),
+    confidence: String(item?.confidence || 'observed'),
+    event_ids: item?.id ? [String(item.id)] : [],
+    providers: [String(item?.provider || '')],
+    magnitude: {
+      max_abs_pct: comparison.max_abs_pct,
+      dominant_pct: comparison.dominant_pct,
+      max_abs_delta: comparison.max_abs_delta,
+      rate: comparison.dominant,
+      comparable_rates: comparison.comparable.length,
+      zero_baseline: !!(comparison.dominant && ratesMissingPct(comparison, comparison.dominant)),
+    },
+    score: newsEditorialScore(item, providers),
+  }
+  if (signals.length) entry.signals = signals
+  return entry
+}
+
+const ratesMissingPct = (comparison, key) =>
+  !!comparison.rates[key] && comparison.rates[key].pct == null
+
+const NEWS_EDITORIAL_VARIANT_FIELDS = ['event_type', 'headline_code', 'headline_params',
+  'headline', 'provider', 'model', 'observed_at', 'event_ids']
+
+/** Compact per-provider row inside a family group: localisable, never a copy. */
+function newsEditorialVariant(entry) {
+  const row = {}
+  for (const key of NEWS_EDITORIAL_VARIANT_FIELDS) if (key in entry) row[key] = entry[key]
+  const magnitude = entry.magnitude
+  if (magnitude && typeof magnitude === 'object') {
+    row.magnitude = { rate: magnitude.rate, max_abs_pct: magnitude.max_abs_pct }
+  }
+  return row
+}
+
+/**
+ * Group entries under their model family without merging identity: one grouped
+ * row per family, with every exact provider/model variant kept underneath.
+ */
+function newsEditorialGroup(entries) {
+  const buckets = new Map()
+  const loose = []
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const family = entry?.model_family || ''
+    if (family) {
+      if (!buckets.has(family)) buckets.set(family, [])
+      buckets.get(family).push(entry)
+    } else loose.push(entry)
+  }
+  const grouped = []
+  for (const [family, members] of buckets) {
+    const sorted = members.slice().sort((a, b) => (b.score - a.score)
+      || String(a.provider).localeCompare(String(b.provider))
+      || String(a.model).localeCompare(String(b.model))
+      || String(a.event_ids?.[0] || '').localeCompare(String(b.event_ids?.[0] || '')))
+    const head = sorted[0]
+    const providers = [...new Set(sorted.map(row => row.provider))].sort()
+    const entry = {
+      ...head,
+      family_event_count: sorted.length,
+      providers,
+      event_ids: sorted.flatMap(row => row.event_ids || []),
+      score: Math.max(...sorted.map(row => row.score)),
+      variants: sorted.slice(0, NEWS_EDITORIAL_VARIANT_LIMIT).map(newsEditorialVariant),
+    }
+    if (sorted.length > 1) {
+      const label = head.family_label || head.model
+      const where = providers.length === 1 ? `at ${providers[0]}` : `across ${providers.length} providers`
+      entry.headline_code = 'news_head_group'
+      entry.headline_params = { family: label, providers: providers.length, events: sorted.length }
+      entry.headline = `${label}: ${sorted.length} changes ${where}`
+    }
+    grouped.push(entry)
+  }
+  for (const entry of loose) {
+    grouped.push({ ...entry, family_event_count: 1, variants: [newsEditorialVariant(entry)] })
+  }
+  grouped.sort((a, b) => (b.score - a.score)
+    || String(a.model_family || a.provider).localeCompare(String(b.model_family || b.provider))
+    || String(a.provider).localeCompare(String(b.provider))
+    || String(a.model).localeCompare(String(b.model)))
+  return grouped
+}
+
+/** Materiality gate: a headline needs a real percentage and a real USD move. */
+function newsEditorialMaterial(entry, minPct = NEWS_EDITORIAL_MIN_PCT,
+                               minDelta = NEWS_EDITORIAL_MIN_DELTA) {
+  const magnitude = entry?.magnitude || {}
+  const pct = magnitude.dominant_pct != null ? magnitude.dominant_pct : magnitude.max_abs_pct
+  const delta = magnitude.max_abs_delta
+  const pctOk = magnitude.zero_baseline === true || pct == null || Math.abs(pct) >= minPct
+  const deltaOk = delta == null || delta >= minDelta
+  return pctOk && deltaOk
+}
+
+/**
+ * Build the shared briefing from verified items. Section order, ids and
+ * thresholds match the publisher's builder exactly (news_briefing.py), so a
+ * locally built document and a published one render identically.
+ *
+ * `removalTracking` is false unless the caller can prove absence history: with
+ * no evidence no removal is claimed, and the briefing says so in `unsupported`
+ * instead of rendering an empty section that looks like a quiet period.
+ */
+function newsBuildBriefing(items, {
+  generatedAt = '', removalTracking = false, removalWindowDays = NEWS_EDITORIAL_REMOVAL_WINDOW_DAYS,
+  minPct = NEWS_EDITORIAL_MIN_PCT, minDelta = NEWS_EDITORIAL_MIN_DELTA,
+  sectionLimit = NEWS_EDITORIAL_SECTION_LIMIT, maxEntries = NEWS_EDITORIAL_MAX_ENTRIES,
+} = {}) {
+  const source = (Array.isArray(items) ? items : [])
+    .filter(item => item && typeof item === 'object' && String(item.id || '').trim())
+  let entries = source.map(item => newsEditorialEntry(item, 1))
+  for (const entry of entries) {
+    const others = entry.headline_params?.others
+    if (typeof others === 'number' && others) {
+      entry.score = newsEditorialRound(entry.score * (1 + 0.05 * Math.min(others, 6)), 3)
+    }
+  }
+  const supplied = entries.length
+  if (maxEntries && supplied > maxEntries) {
+    entries = entries.slice().sort((a, b) => (b.score - a.score)
+      || String(a.provider).localeCompare(String(b.provider))
+      || String(a.model).localeCompare(String(b.model))).slice(0, maxEntries)
+  }
+  const counts = {}
+  for (const name of NEWS_EDITORIAL_EVENT_TYPES) counts[name] = 0
+  for (const entry of entries) counts[entry.event_type] = (counts[entry.event_type] || 0) + 1
+
+  const ranked = eventType => entries.filter(entry =>
+    entry.event_type === eventType && newsEditorialMaterial(entry, minPct, minDelta))
+  const section = (id, rows) => {
+    const grouped = newsEditorialGroup(rows)
+    return { id, total: grouped.length, entries: grouped.slice(0, sectionLimit) }
+  }
+  const removalEntries = entries.filter(entry =>
+    (entry.event_type === 'removed_from_provider' || entry.event_type === 'provider_delisted')
+    && newsWithinWindow(entry.observed_at, generatedAt, removalWindowDays))
+  const removalGroups = newsEditorialGroup(removalEntries).sort((a, b) =>
+    String(b.observed_at || '').localeCompare(String(a.observed_at || ''))
+    || String(a.provider).localeCompare(String(b.provider)))
+  const byType = (list, wanted) => list.filter(entry => entry.event_type === wanted)
+  const sections = [
+    // Payload order matches the publisher's builder (news_briefing.py): the
+    // document is a contract, not a layout. The page chooses its own reading
+    // order from NEWS_EDITORIAL_SECTIONS.
+    section('biggest_reductions', ranked('price_reduction')),
+    section('biggest_increases', ranked('price_increase')),
+    section('mixed_price_changes', ranked('price_mixed')),
+    section('new_models', byType(entries, 'new_to_catalogue')),
+    section('newly_available', byType(entries, 'newly_available')),
+    { id: 'removals', total: removalGroups.length, entries: removalGroups.slice(0, sectionLimit) },
+    section('subscriptions', entries.filter(entry =>
+      entry.event_type === 'new_plan' || entry.event_type === 'plan_change')),
+    section('preview_models', entries.filter(entry =>
+      (entry.signals || []).includes('preview')
+      && (entry.event_type === 'new_to_catalogue' || entry.event_type === 'newly_available'))),
+  ]
+  const unsupported = []
+  if (!removalTracking && !removalEntries.length) {
+    unsupported.push({ id: 'removals', reason_code: 'news_unsupported_no_absence_history' })
+  }
+  if (!counts.new_plan && !counts.plan_change) {
+    unsupported.push({ id: 'subscriptions', reason_code: 'news_unsupported_no_plan_events' })
+  }
+  const stamps = entries.map(entry => entry.observed_at).filter(Boolean).sort()
+  return {
+    version: 1,
+    generated_at: generatedAt,
+    local: true,
+    sections,
+    counts: {
+      ...counts,
+      events: entries.length,
+      headlined: sections.reduce((total, item) => total + item.entries.length, 0),
+    },
+    unsupported,
+    all_updates: { total: supplied, oldest: stamps[0] || '', newest: stamps[stamps.length - 1] || '' },
+    limits: { entries: maxEntries, truncated: supplied > entries.length },
+  }
+}
+
+/** True when `stamp` is inside the window ending at `generatedAt`. */
+function newsWithinWindow(stamp, generatedAt, windowDays) {
+  if (!generatedAt) return true
+  const end = Date.parse(generatedAt)
+  if (!Number.isFinite(end)) return true
+  if (!stamp) return true
+  const when = Date.parse(stamp)
+  if (!Number.isFinite(when)) return true
+  return when >= end - Math.max(0, windowDays) * 86_400_000
+}
+
+/**
+ * Client-side trust boundary for a fetched briefing block: display data is
+ * bounded and type-checked rather than trusted in full. Anything malformed is
+ * dropped silently, because the event archive must keep working even when the
+ * editorial layer regresses.
+ */
+function newsSanitiseBriefing(raw) {
+  if (!raw || typeof raw !== 'object' || raw.version !== 1) return null
+  if (!Array.isArray(raw.sections)) return null
+  const text = (value, limit) => (typeof value === 'string' ? value.trim().slice(0, limit) : '')
+  const scalarMap = (value, limit = 16) => {
+    const out = {}
+    if (!value || typeof value !== 'object') return out
+    for (const [key, item] of Object.entries(value).slice(0, limit)) {
+      if (typeof item === 'number' || typeof item === 'boolean' || typeof item === 'string') {
+        out[key.slice(0, 64)] = typeof item === 'string' ? item.slice(0, 500) : item
+      } else if (Array.isArray(item) && item.length <= limit) {
+        out[key.slice(0, 64)] = item.filter(sub => typeof sub === 'string'
+          || typeof sub === 'number').map(sub => (typeof sub === 'string' ? sub.slice(0, 64) : sub))
+      }
+    }
+    return out
+  }
+  const cleanEntry = (entry, depth = 0) => {
+    if (!entry || typeof entry !== 'object') return null
+    const out = {}
+    for (const key of ['event_type', 'headline_code', 'headline', 'provider', 'model',
+      'model_family', 'family_label', 'observed_at', 'effective_at', 'source_url',
+      'confidence', 'provenance']) out[key] = text(entry[key], 500)
+    if (!out.headline || !out.provider) return null
+    for (const key of ['score', 'family_event_count']) {
+      if (typeof entry[key] === 'number' && Number.isFinite(entry[key])) out[key] = entry[key]
+    }
+    for (const [key, limit] of [['headline_params', 16], ['magnitude', 8], ['rate_change', 8]]) {
+      const mapped = scalarMap(entry[key], limit)
+      if (Object.keys(mapped).length) out[key] = mapped
+    }
+    for (const key of ['signals', 'event_ids', 'providers']) {
+      if (Array.isArray(entry[key])) {
+        const links = entry[key].slice(0, NEWS_EDITORIAL_LINK_LIMIT)
+          .filter(item => typeof item === 'string').map(item => item.slice(0, 128))
+        if (links.length) out[key] = links
+      }
+    }
+    if (Array.isArray(entry.variants) && depth < 2) {
+      out.variants = entry.variants.slice(0, NEWS_EDITORIAL_VARIANT_LIMIT)
+        .map(item => cleanEntry(item, depth + 1)).filter(Boolean)
+    }
+    return out
+  }
+  const sections = []
+  for (const section of raw.sections.slice(0, 12)) {
+    if (!section || typeof section !== 'object') continue
+    const id = text(section.id, 64)
+    if (!id) continue
+    const rows = Array.isArray(section.entries)
+      ? section.entries.slice(0, 40).map(entry => cleanEntry(entry)).filter(Boolean) : []
+    sections.push({
+      id,
+      total: typeof section.total === 'number' && Number.isFinite(section.total) ? section.total : rows.length,
+      entries: rows,
+    })
+  }
+  const unsupported = Array.isArray(raw.unsupported) ? raw.unsupported.slice(0, 12)
+    .filter(item => item && typeof item === 'object')
+    .map(item => ({ id: text(item.id, 64), reason_code: text(item.reason_code, 64) }))
+    .filter(item => item.id) : []
+  return {
+    version: 1,
+    generated_at: text(raw.generated_at, 64),
+    sections,
+    counts: scalarMap(raw.counts, 24),
+    unsupported,
+    all_updates: scalarMap(raw.all_updates, 8),
+  }
+}
+
+/**
+ * The briefing the page renders: a publisher's own document when it is present
+ * and valid, otherwise the same document built locally from the items it was
+ * built from. `source` records which path produced it so the UI can be honest
+ * about where the headlines came from.
+ */
+function newsBriefingFor(central, items) {
+  const published = central && typeof central === 'object'
+    ? newsSanitiseBriefing(central.briefing) : null
+  if (published) {
+    return { ...published, source: 'published', unavailable: [] }
+  }
+  const list = Array.isArray(items) ? items : []
+  return { ...newsBuildBriefing(list, { generatedAt: String(central?.fetched_at || '') }),
+    source: 'local', unavailable: [] }
+}
+
+/**
+ * Which headline sections a v1 category filter keeps. A section with no honest
+ * v1 category (removals, mixed moves) appears only under `all`: it must never
+ * be shown under a filter that claims to describe it.
+ */
+const NEWS_SECTION_CATEGORY = {
+  biggest_reductions: 'price_reduction',
+  biggest_increases: 'price_increase',
+  new_models: 'new_model',
+  newly_available: 'new_model',
+  subscriptions: 'subscription',
+  preview_models: 'new_model',
+  removals: null,
+  mixed_price_changes: null,
+}
+
+/** The briefing narrowed to the sections one category can honestly cover. */
+function newsBriefingForCategory(briefing, category) {
+  if (!briefing || category === 'all' || !category) return briefing
+  return {
+    ...briefing,
+    sections: (briefing.sections || [])
+      .filter(section => NEWS_SECTION_CATEGORY[section?.id] === category),
+  }
+}
+
+// --- WP22: headline rendering -----------------------------------------------
+
+/** headline_code → message key for the templated headlines. A plan change is
+ * not here: it prints the operator's curated summary, never a template. */
+const NEWS_HEADLINE_KEYS = {
+  news_head_single_rate: 'newsHeadSingleRate',
+  news_head_all_rates: 'newsHeadAllRates',
+  news_head_from_zero: 'newsHeadFromZero',
+  news_head_mixed: 'newsHeadMixed',
+  news_head_tiers_changed: 'newsHeadTiersChanged',
+  news_head_new_to_catalogue: 'newsHeadNewToCatalogue',
+  news_head_launched: 'newsHeadLaunched',
+  news_head_newly_available: 'newsHeadNewlyAvailable',
+  news_head_provider_listed: 'newsHeadProviderListed',
+  news_head_removed_from_provider: 'newsHeadRemoved',
+  news_head_provider_delisted: 'newsHeadDelisted',
+  news_head_preview_observed: 'newsHeadPreview',
+  news_head_group: 'newsHeadGroup',
+}
+
+const NEWS_RATE_NAME_KEYS = {
+  news_rate_input: 'newsRateNameInput',
+  news_rate_output: 'newsRateNameOutput',
+  news_rate_cache_read: 'newsRateNameCacheRead',
+  news_rate_cache_write: 'newsRateNameCacheWrite',
+}
+
+/** Localised rate name for a `news_rate_*` code; unknown codes stay verbatim. */
+function newsRateName(code, t) {
+  const key = NEWS_RATE_NAME_KEYS[code]
+  return key ? t(key) : t('newsRateCodeUnknown', code)
+}
+
+const newsRateListText = (codes, t) => (Array.isArray(codes) && codes.length
+  ? codes.map(code => newsRateName(code, t)).join(', ')
+  : t('newsHeadNoRate'))
+
+/**
+ * Localised headline for one editorial entry. The codes and parameters are the
+ * contract; `entry.headline` is the English fallback the publisher shipped, so
+ * an unknown code still shows the verified sentence rather than nothing.
+ */
+function newsHeadlineText(entry, t) {
+  const params = entry?.headline_params && typeof entry.headline_params === 'object'
+    ? entry.headline_params : {}
+  const code = String(entry?.headline_code || '')
+  const provider = String(params.provider || entry?.provider || '')
+  const model = String(params.model || entry?.model || '')
+  switch (code) {
+    case 'news_head_single_rate': {
+      const direction = String(params.direction || '')
+      const pct = Math.abs(Number(params.pct))
+      if (!Number.isFinite(pct)) break
+      return t('newsHeadSingleRate', provider, model,
+        direction === 'down' ? t('newsHeadVerbCut') : t('newsHeadVerbRaise'),
+        newsRateName(params.rate, t), pct.toFixed(1), params.before || '—', params.after || '—')
+    }
+    case 'news_head_all_rates': {
+      const pct = Math.abs(Number(params.pct))
+      if (!Number.isFinite(pct)) break
+      const rates = newsRateListText(params.rates, t)
+      const verb = (entry?.event_type === 'price_reduction') ? t('newsHeadVerbCut') : t('newsHeadVerbRaise')
+      return t('newsHeadAllRates', provider, model, verb, pct.toFixed(1), rates)
+    }
+    case 'news_head_from_zero':
+      return t('newsHeadFromZero', provider, model, newsRateName(params.rate, t), params.after || '—')
+    case 'news_head_mixed':
+      return t('newsHeadMixed', provider, model,
+        newsRateListText(params.raised, t), newsRateListText(params.cut, t))
+    case 'news_head_tiers_changed':
+      return t('newsHeadTiersChanged', provider, model)
+    case 'news_head_new_to_catalogue':
+      return params.first_seen
+        ? t('newsHeadNewToCatalogue', provider, model, String(params.first_seen).slice(0, 10))
+        : t('newsHeadNewToCatalogueBare', provider, model)
+    case 'news_head_launched':
+      return t('newsHeadLaunched', provider, model,
+        params.first_seen ? String(params.first_seen).slice(0, 10) : '')
+    case 'news_head_newly_available': {
+      const others = Number(params.others)
+      return t('newsHeadNewlyAvailable', provider, model,
+        Number.isFinite(others) ? others : 0)
+    }
+    case 'news_head_provider_listed':
+      return t('newsHeadProviderListed', provider)
+    case 'news_head_removed_from_provider': {
+      const observations = Number(params.observations)
+      return t('newsHeadRemoved', provider, model, Number.isFinite(observations) ? observations : 0)
+    }
+    case 'news_head_provider_delisted': {
+      const observations = Number(params.observations)
+      return t('newsHeadDelisted', provider, Number.isFinite(observations) ? observations : 0)
+    }
+    case 'news_head_preview_observed':
+      return t('newsHeadPreview', provider, model)
+    case 'news_head_group': {
+      const events = Number(params.events)
+      const providers = Number(params.providers)
+      const where = providers === 1
+        ? t('newsHeadGroupAt', String(entry?.provider || provider))
+        : t('newsHeadGroupAcross', Number.isFinite(providers) ? providers : 0)
+      return `${t('newsHeadGroup', params.family || model, Number.isFinite(events) ? events : 0)}${where}`
+    }
+    case 'news_head_plan_change':
+      return String(params.summary || entry?.headline || '')
+    default:
+      break
+  }
+  return String(entry?.headline || '') || t('newsStoryNoHeadline')
+}
+
+/** Section heading for a briefing section id; unknown ids keep their code. */
+function newsSectionTitle(sectionId, t) {
+  const known = NEWS_EDITORIAL_SECTIONS.find(([id]) => id === sectionId)
+  return known ? t(known[1]) : String(sectionId || '')
+}
+
+/** The entries of one section, or an empty list. */
+function newsSectionEntries(briefing, sectionId) {
+  const section = (briefing?.sections || []).find(item => item?.id === sectionId)
+  return Array.isArray(section?.entries) ? section.entries : []
+}
+
+/**
+ * For You narrowing over one model group: the offers whose own event matched
+ * this profile, and the rest kept behind a disclosure. Relevance is the
+ * backend's exact provider+model evidence, so a sibling provider listing the
+ * same model never inherits it. With no relevant offer (or all of them
+ * relevant) the group is returned unchanged.
+ */
+function newsFocusGroup(group, nowMs = Date.now()) {
+  if (!group || group.kind !== 'group') return group
+  const offers = Array.isArray(group.offers) ? group.offers : []
+  const focus = offers.filter(offer => newsIsRelevant(offer.latest))
+  if (!focus.length || focus.length === offers.length) {
+    return { ...group, focusOffers: offers, otherOffers: [] }
+  }
+  return {
+    ...group,
+    focusOffers: focus,
+    otherOffers: offers.filter(offer => !focus.includes(offer)),
+  }
+}
+
+/** One badge per story, chosen from the event type. */
+function newsKind(entry, t) {
+  switch (entry?.event_type) {
+    case 'price_reduction': return ['cut', t('newsKindCut')]
+    case 'price_increase': return ['rise', t('newsKindRise')]
+    case 'price_mixed': return ['mixed', t('newsKindMixed')]
+    case 'new_to_catalogue': return ['new', t('newsKindNew')]
+    case 'newly_available': return ['available', t('newsKindAvailable')]
+    case 'removed_from_provider': return ['removed', t('newsKindRemoved')]
+    case 'provider_delisted': return ['delisted', t('newsKindDelisted')]
+    case 'new_plan':
+    case 'plan_change': return ['plan', t('newsKindPlan')]
+    default:
+      return (entry?.signals || []).includes('preview')
+        ? ['preview', t('newsKindPreview')] : ['other', t('newsKindOther')]
+  }
+}
+
+const NEWS_STORY_PANEL_LIMIT = 6
+
+/**
+ * One headline story: the claim, its provider and date, and — behind a
+ * disclosure — every rate, identifier, provenance line and timestamp the
+ * claim was derived from. A group keeps its family banner and lists each
+ * exact provider/model variant underneath; nothing is merged or averaged.
+ */
+function NewsStory({ entry, t, itemsById, lead = false }) {
+  const openDetails = useValue($newsDetailsOpen)
+  const eventIds = Array.isArray(entry?.event_ids) ? entry.event_ids : []
+  const panelId = `wm-news-story-${encodeURIComponent(eventIds.join('|')
+    || `${entry?.provider || ''}:${entry?.model || ''}`)}`
+  const open = openDetails.includes(panelId)
+  const [kindClass, kindLabel] = newsKind(entry, t)
+  const variants = Number(entry?.family_event_count) > 1 && Array.isArray(entry?.variants)
+    ? entry.variants : []
+  const records = eventIds.slice(0, NEWS_STORY_PANEL_LIMIT)
+    .map(id => itemsById?.get ? itemsById.get(id) : null).filter(Boolean)
+  const confidence = String(entry?.confidence || '')
+  const confidenceKey = confidence === 'verified' ? 'newsConfidenceVerified'
+    : confidence === 'curated' ? 'newsConfidenceCurated' : 'newsConfidenceObserved'
+  const headline = newsHeadlineText(entry, t)
+  const observed = entry?.observed_at ? fmtDay(entry.observed_at) : ''
+  const openArchive = () => {
+    $newsScope.set('all')
+    $newsSearch.set(String(entry?.model || entry?.provider || ''))
+    $newsShown.set(NEWS_PAGE_SIZE)
+  }
+  return jsxs('article', {
+    className: `wm-news-story${lead ? ' wm-news-story-lead' : ''}`,
+    'data-news-story': 'true', 'data-news-kind': kindClass,
+    'data-news-story-model': entry?.model || '', children: [
+    jsxs('div', { className: 'wm-news-storyhead', children: [
+      jsx('span', { className: 'wm-news-storykind', 'data-kind': kindClass, children: kindLabel }),
+      jsxs('span', { className: 'wm-news-storymeta', children: [
+        entry?.provider ? jsx('span', { 'data-news-story-provider': entry.provider, children: entry.provider }) : null,
+        observed ? jsx('span', { children: observed }) : null,
+        jsx('span', { 'data-news-confidence': confidence || 'observed', children: t(confidenceKey) }),
+      ] }),
+    ] }),
+    jsx('h3', { className: 'wm-news-storyheadline', 'data-news-story-headline': entry?.headline_code || '',
+      children: headline }),
+    variants.length
+      ? jsx('ul', { className: 'wm-news-storyvariants', children: variants.map((variant, index) =>
+          jsxs('li', { 'data-news-story-variant': `${variant.provider || ''}:${variant.model || ''}`,
+            children: [
+              jsx('span', { className: 'wm-news-storyvariantprovider', children: variant.provider || '' }),
+              jsx('span', { className: 'wm-news-storyvarianttext', children: newsHeadlineText(variant, t) }),
+            ] }, `v-${variant.provider || ''}-${variant.model || ''}-${index}`)) })
+      : null,
+    jsxs('div', { className: 'wm-news-storyfoot', children: [
+      jsx('button', { type: 'button', className: 'wm-news-details', 'data-news-story-details': 'true',
+        'aria-expanded': open, 'aria-controls': panelId,
+        onClick: () => newsToggleDetails(panelId), children: t('newsStoryDetails') }),
+      jsx('button', { type: 'button', className: 'wm-news-clear', 'data-news-story-archive': 'true',
+        onClick: openArchive, children: t('newsStoryOpenInArchive') }),
+    ] }),
+    jsxs('div', { id: panelId, className: 'wm-news-detailspanel', 'data-news-story-panel': 'true',
+      hidden: !open, children: [
+      records.length
+        ? jsxs('div', { children: [
+            jsx('p', { className: 'wm-news-historytitle', children: t('newsStoryEvents') }),
+            jsx('ul', { className: 'wm-news-storyrecords', children: records.map((item, index) =>
+            jsxs('li', { 'data-news-story-record': item?.id || '', children: [
+              jsxs('p', { className: 'wm-news-meta', children: [
+                jsx('span', { children: item?.provider || '' }),
+                jsx('span', { className: 'wm-news-storyid', children: item?.id || '' }),
+                item?.model ? jsx('span', { className: 'wm-news-storymodel', children: item.model }) : null,
+              ] }),
+              jsx(NewsRateTable, { previous: item?.previous, current: item?.current, t, exact: true }),
+              jsx(NewsTierBlocks, { event: item, t }),
+              jsxs('p', { className: 'wm-news-meta', children: [
+                `${item?.provenance || ''} · ${item?.confidence || ''}`,
+                item?.source_url
+                  ? jsxs('span', { children: [' · ', jsx('a', { href: item.source_url, target: '_blank',
+                      rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
+                  : null,
+              ] }),
+              jsxs('p', { className: 'wm-news-dates', children: [
+                t('newsObserved', item?.observed_at || '—'),
+                item?.effective_at ? ` · ${t('newsEffective', item.effective_at)}` : '',
+              ] }),
+            ] }, `r-${item?.id || index}`)) }),
+          ] })
+        : jsx('p', { className: 'wm-news-meta', children: entry?.model || entry?.provider || '' }),
+    ] }),
+  ] })
+}
+
+/**
+ * One headline section: a heading, at most `shown` stories, and the remainder
+ * behind one disclosure. Anything the section cap trimmed stays in All
+ * Updates, and the note says so rather than implying the list is complete.
+ */
+function NewsHeadlineSection({ section, t, itemsById, shown = 3, leadFirst = false }) {
+  const rows = Array.isArray(section?.entries) ? section.entries : []
+  if (!rows.length) return null
+  const head = rows.slice(0, shown)
+  const rest = rows.slice(shown)
+  const kept = Number(section.total) > rows.length
+  return jsxs('section', { className: 'wm-news-briefing-section', 'data-news-section': section.id, children: [
+    jsxs('div', { className: 'wm-news-briefing-head', children: [
+      jsx('h2', { children: newsSectionTitle(section.id, t) }),
+      Number(section.total) > 1
+        ? jsx('span', { className: 'wm-news-briefing-count', children: String(section.total) }) : null,
+    ] }),
+    jsx('div', { className: 'wm-news-briefing-list', children: head.map((entry, index) =>
+      jsx(NewsStory, { entry, t, itemsById, lead: leadFirst && index === 0 },
+        `s-${entry?.event_ids?.[0] || entry?.model || index}`)) }),
+    rest.length
+      ? jsxs('details', { className: 'wm-news-briefing-more', children: [
+          jsx('summary', { children: t('newsSectionMore', rest.length) }),
+          jsx('div', { className: 'wm-news-briefing-list', children: rest.map((entry, index) =>
+            jsx(NewsStory, { entry, t, itemsById },
+              `m-${entry?.event_ids?.[0] || entry?.model || index}`)) }),
+        ] })
+      : null,
+    kept ? jsx('p', { className: 'wm-news-note', children: t('newsSectionKept') }) : null,
+  ] })
+}
+
+/** Why a section is empty when the source itself cannot supply it. */
+const NEWS_UNSUPPORTED_KEYS = {
+  news_unsupported_no_plan_events: 'newsUnsupportedNoPlanEvents',
+  news_unsupported_no_absence_history: 'newsUnsupportedNoRemovals',
+}
+
+/**
+ * The shared editorial block: the biggest verified movers, launches and
+ * availability changes first, in feed order, followed by one line naming every
+ * section the source cannot supply. It is additive — the full archive below is
+ * untouched.
+ */
+function NewsBriefing({ briefing, t, itemsById }) {
+  const sections = NEWS_EDITORIAL_SECTIONS
+    .map(([id]) => (briefing?.sections || []).find(section => section?.id === id))
+    .filter(section => Array.isArray(section?.entries) && section.entries.length)
+  if (!sections.length) return null
+  const limits = (briefing?.unsupported || [])
+    .map(item => NEWS_UNSUPPORTED_KEYS[item?.reason_code])
+    .filter(Boolean).map(key => t(key))
+  return jsxs('section', { className: 'wm-news-briefing', 'data-news-briefing': 'true',
+    'aria-label': t('newsBriefingTitle'), children: [
+    jsxs('div', { className: 'wm-news-briefing-head', children: [
+      jsx('h2', { children: t('newsBriefingTitle') }),
+      jsx('p', { className: 'wm-news-note', children: t('newsBriefingNote') }),
+    ] }),
+    sections.map((section, index) => jsx(NewsHeadlineSection, {
+      section, t, itemsById, leadFirst: index === 0,
+      // The lead section earns three stories, the rest two: a front page, not
+      // a second archive. Everything not shown stays in All Updates.
+      shown: index === 0 ? 3 : 2,
+    }, section.id)),
+    limits.length
+      ? jsx('ul', { className: 'wm-news-briefing-limits', children:
+          limits.map((text, index) => jsx('li', { children: text }, `limit-${index}`)) })
+      : null,
+    jsx('p', { className: 'wm-news-briefing-source', 'data-news-briefing-source': briefing?.source || 'local',
+      children: briefing?.source === 'published' ? t('newsBriefingPublished') : t('newsBriefingLocal') }),
+  ] })
+}
+
 /**
  * Case-insensitive substring match over the exact model ID, the optional
  * friendly model_name, providers and related routes. Search narrows the list
@@ -10956,6 +11992,58 @@ const NEWS_CSS = `
 .wm-news-evidence{margin-top:8px}
 .wm-news-evidencetag{flex:none;font-size:10.5px;font-weight:600;border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:1px 8px;color:var(--ui-text-tertiary)}
 .wm-news-counts{margin:8px 0 0;font-size:11.5px;color:var(--ui-text-tertiary);display:flex;gap:6px;flex-wrap:wrap}
+/* WP22: ONE vertical scrolling surface. The Model News page is content-sized,
+   so the host pane keeps the only scrollbar: no descendant of this page is a
+   scroll container, and nothing here can capture the wheel from the feed. */
+.wm-product.wm-news-page{height:auto;overflow:visible}
+.wm-product.wm-news-page .wm-news-list{overflow:visible;max-height:none;height:auto}
+/* Editorial block: a publication lead, then the archive below it. */
+.wm-news-briefing{display:grid;gap:14px;border-top:1px solid var(--ui-stroke-secondary);padding-top:16px;min-width:0}
+.wm-news-briefing-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.wm-news-briefing-head h2{margin:0;font-size:16px;font-weight:650;letter-spacing:-.2px}
+.wm-news-briefing-section{display:grid;gap:8px;min-width:0}
+.wm-news-briefing-section>.wm-news-briefing-head h2{font-size:12px;font-weight:600;letter-spacing:.01em;color:var(--ui-text-secondary)}
+.wm-news-briefing-count{font-variant-numeric:tabular-nums;font-size:11px;color:var(--ui-text-tertiary);border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:1px 8px}
+.wm-news-briefing-list{display:grid;gap:8px;min-width:0}
+.wm-news-story{border:1px solid var(--ui-stroke-secondary);border-left:3px solid var(--ui-stroke-secondary);border-radius:8px;background:var(--ui-fill-primary);padding:11px 14px;min-width:0}
+.wm-news-story[data-news-kind="cut"]{border-left-color:var(--ui-success)}
+.wm-news-story[data-news-kind="rise"]{border-left-color:var(--ui-warning,var(--ui-accent))}
+.wm-news-story[data-news-kind="mixed"]{border-left-color:var(--ui-warning,var(--ui-accent))}
+.wm-news-story[data-news-kind="new"]{border-left-color:var(--ui-accent)}
+.wm-news-story[data-news-kind="available"]{border-left-color:var(--ui-accent)}
+.wm-news-story[data-news-kind="removed"]{border-left-color:var(--ui-warning,var(--ui-accent))}
+.wm-news-story[data-news-kind="delisted"]{border-left-color:var(--ui-warning,var(--ui-accent))}
+.wm-news-story[data-news-kind="plan"]{border-left-color:var(--ui-accent)}
+.wm-news-story[data-news-kind="preview"]{border-left-color:var(--ui-accent)}
+.wm-news-story-lead{padding:14px 16px;background:color-mix(in srgb,var(--ui-accent) 4%,var(--ui-fill-primary))}
+.wm-news-story-lead .wm-news-storyheadline{font-size:15.5px}
+.wm-news-storyhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.wm-news-storykind{flex:none;font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ui-text-secondary);background:var(--ui-fill-secondary);border-radius:99px;padding:2px 8px;white-space:nowrap}
+.wm-news-storymeta{display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--ui-text-tertiary);min-width:0;overflow-wrap:anywhere}
+.wm-news-storyheadline{margin:6px 0 0;font-size:14px;line-height:1.35;font-weight:600;overflow-wrap:anywhere;max-width:78ch}
+.wm-news-storyvariants{margin:8px 0 0;padding:0;list-style:none;display:grid;gap:4px}
+.wm-news-storyvariants li{display:grid;grid-template-columns:minmax(72px,auto) minmax(0,1fr);gap:8px;font-size:12.5px;line-height:1.45;color:var(--ui-text-secondary);border-top:1px solid var(--ui-stroke-secondary);padding-top:5px;min-width:0}
+.wm-news-storyvariantprovider{font-weight:600;color:var(--ui-text-primary);overflow-wrap:anywhere}
+.wm-news-storyvarianttext{overflow-wrap:anywhere}
+.wm-news-storyfoot{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
+.wm-news-storyrecords{margin:0;padding:0;list-style:none;display:grid;gap:10px}
+.wm-news-storyrecords>li{min-width:0}
+.wm-news-storyid,.wm-news-storymodel{font-family:var(--font-mono,ui-monospace,monospace);font-size:11px;overflow-wrap:anywhere;color:var(--ui-text-tertiary)}
+.wm-news-story button:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}
+.wm-news-briefing-more>summary{cursor:pointer;font-size:12px;color:var(--ui-text-secondary);min-height:32px;display:flex;align-items:center}
+.wm-news-briefing-more>summary:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}
+.wm-news-briefing-more .wm-news-briefing-list{margin-top:8px}
+.wm-news-briefing-limits{margin:0;padding:0 0 0 16px;font-size:11.5px;line-height:1.5;color:var(--ui-text-tertiary);display:grid;gap:4px;max-width:82ch}
+.wm-news-briefing-source{margin:0;font-size:11px;color:var(--ui-text-tertiary)}
+.wm-news-others{margin-top:8px;border-top:1px solid var(--ui-stroke-secondary);padding-top:6px}
+.wm-news-others>summary{cursor:pointer;font-size:12px;color:var(--ui-text-secondary);min-height:32px;display:flex;align-items:center}
+.wm-news-others>summary:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}
+.wm-news-othersnote{margin:0 0 4px;font-size:11px;line-height:1.5;color:var(--ui-text-tertiary);max-width:78ch}
+@container(max-width:560px){
+  .wm-news-story-lead .wm-news-storyheadline{font-size:14.5px}
+  .wm-news-storyvariants li{grid-template-columns:minmax(0,1fr);gap:2px}
+  .wm-news-storyfoot>.wm-news-details,.wm-news-storyfoot>.wm-news-clear{flex:1 1 auto}
+}
 @container(max-width:560px){
   .wm-news-offer{flex-direction:column;align-items:stretch;gap:6px}
   .wm-news-chips{flex:0 1 auto;width:100%}
@@ -11331,11 +12419,24 @@ const newsDetailsPanelId = (connectionKey, offer) =>
  */
 function NewsModelGroup({ group, impacts, t, matchedOffers = null, connectionKey = '' }) {
   const openDetails = useValue($newsDetailsOpen)
-  const anyNew = group.offers.some(offer => offer.news_class === 'new_listing')
+  // For You narrows the row list to the offers that matched this profile
+  // (newsFocusGroup); All Updates — and any category-filtered view, where the
+  // matched indices address the original list — keeps every offer inline.
+  const matchSet = Array.isArray(matchedOffers) ? new Set(matchedOffers) : null
+  const primary = matchSet ? group.offers
+    : (Array.isArray(group.focusOffers) ? group.focusOffers : group.offers)
+  const others = matchSet ? [] : (Array.isArray(group.otherOffers) ? group.otherOffers : [])
+  const anyNew = primary.some(offer => offer.news_class === 'new_listing')
   const reasonLabels = newsGroupReasons(group, t)
   const reasons = reasonLabels.length ? reasonLabels.join(' · ') : null
-  const classes = [...new Set(group.offers.map(offer => offer.news_class || 'none'))].join(' ')
-  const matchSet = Array.isArray(matchedOffers) ? new Set(matchedOffers) : null
+  const classes = [...new Set([...primary, ...others].map(offer => offer.news_class || 'none'))].join(' ')
+  const offerRow = (offer, matched) => {
+    const panelId = newsDetailsPanelId(connectionKey, offer)
+    return jsx(NewsOfferRow, {
+      offer, impacts, t, matched, panelId,
+      open: openDetails.includes(panelId),
+    }, `${offer.provider}:${offer.model}`)
+  }
   return jsxs('article', { className: 'wm-news-card wm-news-group', 'data-model': group.model,
     'data-news-group': group.model, 'data-news-classes': classes, children: [
     jsxs('div', { className: 'wm-news-grouphead', children: [
@@ -11350,15 +12451,14 @@ function NewsModelGroup({ group, impacts, t, matchedOffers = null, connectionKey
         children: t('newsClassNewListing') }) : null,
     ] }),
     reasons ? jsx('p', { className: 'wm-news-reasons', children: reasons }) : null,
-    group.offers.map((offer, index) => {
-      const panelId = newsDetailsPanelId(connectionKey, offer)
-      return jsx(NewsOfferRow, {
-        offer, impacts, t,
-        matched: matchSet ? matchSet.has(index) : false,
-        panelId,
-        open: openDetails.includes(panelId),
-      }, `${offer.provider}:${offer.model}`)
-    }),
+    primary.map((offer, index) => offerRow(offer, matchSet ? matchSet.has(index) : false)),
+    others.length
+      ? jsxs('details', { className: 'wm-news-others', children: [
+          jsx('summary', { children: t('newsOtherProviders', others.length) }),
+          jsx('p', { className: 'wm-news-othersnote', children: t('newsOtherProvidersNote') }),
+          others.map(offer => offerRow(offer, false)),
+        ] })
+      : null,
   ] })
 }
 
@@ -11419,6 +12519,23 @@ function NewsPage() {
     String(b.observed_at || '').localeCompare(String(a.observed_at || '')) ||
     String(a.id || '').localeCompare(String(b.id || '')))
   const impacts = current?.impacts || {}
+  // WP22 editorial layer: one shared briefing, built from the same verified
+  // events the archive renders. A published briefing wins; otherwise the same
+  // document is derived locally, so the headline surface never waits for an
+  // ops deploy. `itemsById` is the join back from a headline to its evidence.
+  const itemsById = new Map()
+  for (const item of combined) if (item?.id) itemsById.set(String(item.id), item)
+  const briefing = newsBriefingFor(central, combined)
+  // A category filter narrows the headlines to the sections it can honestly
+  // describe, so choosing "Increases" never leaves a price-cut lead above it.
+  const headlineBriefing = newsBriefingForCategory(briefing, category)
+  const headlineCount = (headlineBriefing.sections || []).reduce((total, section) =>
+    total + (Array.isArray(section.entries) ? section.entries.length : 0), 0)
+  const unsupportedReasons = new Set((briefing.unsupported || [])
+    .map(item => item?.reason_code).filter(Boolean))
+  const archiveTotal = Number(briefing.all_updates?.total) || combined.length
+  const archiveOldest = String(briefing.all_updates?.oldest || '').slice(0, 10)
+  const archiveNewest = String(briefing.all_updates?.newest || '').slice(0, 10)
   const refreshState = useValue($newsRefreshState)
   const refreshOurs = refreshState?.origin === identity
   const refreshPending = (refreshOurs && refreshState?.status === 'pending') || query.isFetching
@@ -11457,6 +12574,10 @@ function NewsPage() {
   })() : 0
   const forYouVisible = showAll
     ? forYouEntries : forYouEntries.slice(0, forYouPrefixCount)
+  // For You narrows each model group to the offers that actually matched this
+  // profile; the remaining providers stay one disclosure away, never deleted.
+  const forYouRender = forYouVisible.map(entry =>
+    entry.kind === 'group' ? newsFocusGroup(entry, nowMs) : entry)
   const filtered = grouped && scope === 'all'
     ? newsFilterEntries(grouped.entries, { category, search, days, nowMs }) : []
   const visibleEntries = filtered.slice(0, shown)
@@ -11478,6 +12599,11 @@ function NewsPage() {
     $newsShowAll.set(false)
     $newsShown.set(NEWS_PAGE_SIZE)
   }
+  // A category the source cannot supply is not an empty filter. The publisher
+  // compares the public model catalogue only, so plan and membership events do
+  // not exist to hide: say that instead of "no updates match".
+  const planUnsupported = category === 'subscription'
+    && unsupportedReasons.has('news_unsupported_no_plan_events')
   const listNode = !grouped
     ? (flatVisible.length
         ? jsx('div', { className: 'wm-news-list', role: 'list', children:
@@ -11486,7 +12612,7 @@ function NewsPage() {
     : scope === 'foryou'
       ? (forYouEntries.length
           ? jsxs('div', { className: 'wm-news-list', role: 'list', children: [
-              ...forYouVisible.map((entry, index) => entry.kind === 'group'
+              ...forYouRender.map((entry, index) => entry.kind === 'group'
                 ? jsx(NewsModelGroup, { group: entry, impacts, t,
                     matchedOffers: category === 'all' ? null : entry.matchedOffers,
                     connectionKey: identity },
@@ -11508,7 +12634,11 @@ function NewsPage() {
               children: jsx('p', { children: emptyText || t('newsNoResults') }) }))
       : filteredEmpty && hasFilters
         ? jsxs('div', { className: 'wm-empty', role: 'status', children: [
-            jsx('p', { children: t('newsNoResults') }),
+            jsx('p', { children: planUnsupported ? t('newsUnsupportedNoPlanEvents') : t('newsNoResults') }),
+            search.trim() && !planUnsupported
+              ? jsx('p', { className: 'wm-news-note', 'data-news-archive-note': 'search',
+                  children: t('newsArchiveSearchNote') })
+              : null,
             jsx('button', { type: 'button', className: 'wm-news-clear', 'data-news-clear': 'true',
               onClick: newsClearFilters, children: t('newsClearFilters') }),
           ] })
@@ -11531,7 +12661,7 @@ function NewsPage() {
                 : null,
             ] })
           : jsx('div', { className: 'wm-empty', role: 'status', children: jsx('p', { children: emptyText }) })
-  return jsx(ProductShell, { pageStyles: NEWS_CSS, children:
+  return jsx(ProductShell, { pageStyles: NEWS_CSS, pageClass: 'wm-news-page', children:
     jsxs('main', { className: 'wm-shell', children: [
       jsx(ProductHeader, { title: t('newsTitle'), subtitle: t('newsSubtitle'),
         actions: jsx(AsyncButton, { type: 'button', className: 'wm-button',
@@ -11593,6 +12723,17 @@ function NewsPage() {
         : null,
       (current?.local?.removed_model_count || 0) > 0
         ? jsx('p', { className: 'wm-news-note', children: t('newsRemoved', current.local.removed_model_count) })
+        : null,
+      // The publication: headlines first on For You, the complete archive below.
+      // All Updates stays a pure archive, so switching scope never mixes the two.
+      scope === 'foryou' && headlineCount
+        ? jsx(NewsBriefing, { briefing: headlineBriefing, t, itemsById }, 'news-briefing')
+        : null,
+      // The archive is a rolling window, not a history: say how far back the
+      // published feed actually reaches so a missing older event is readable.
+      scope === 'all' && archiveTotal
+        ? jsx('p', { className: 'wm-news-note', 'data-news-archive-note': 'window',
+            children: t('newsArchiveNote', archiveTotal, archiveOldest, archiveNewest) })
         : null,
       failed && !current
         ? jsxs('div', { className: 'wm-product-section', children: [
@@ -12590,6 +13731,87 @@ const I18N = {
     newsNoResults: 'No updates match the current filters.',
     newsShowAll: n => `Show all ${n}`,
     newsFilterMatch: 'Matches this filter',
+    // WP22 editorial surface: shared headlines, one archive.
+    newsBriefingTitle: 'Today’s headlines',
+    newsBriefingNote: 'Every headline is built from the published events below. Nothing is inferred.',
+    newsBriefingLocal: 'Headlines built on this device from the published events.',
+    newsBriefingPublished: 'Headlines published with the feed.',
+    newsSectionBiggestReductions: 'Biggest price cuts',
+    newsSectionBiggestIncreases: 'Biggest price rises',
+    newsSectionNewModels: 'New models listed',
+    newsSectionNewlyAvailable: 'Now at another provider',
+    newsSectionRemovals: 'Removed from a provider',
+    newsSectionSubscriptions: 'Membership and plan changes',
+    newsSectionPreviewModels: 'Stealth and preview models',
+    newsSectionMixedPriceChanges: 'Mixed price changes',
+    newsSectionMore: n => `Show ${n} more`,
+    newsSectionKept: 'Every event stays in All Updates.',
+    newsKindCut: 'Price cut',
+    newsKindRise: 'Price rise',
+    newsKindNew: 'New listing',
+    newsKindAvailable: 'Now at another provider',
+    newsKindRemoved: 'Removed',
+    newsKindDelisted: 'Provider delisted',
+    newsKindPlan: 'Plan change',
+    newsKindPreview: 'Preview',
+    newsKindMixed: 'Mixed change',
+    newsKindTiers: 'Tiers changed',
+    newsKindOther: 'Update',
+    newsStoryDetails: 'Details',
+    newsStoryEvents: 'Event records',
+    newsHeadVerbCut: 'cuts',
+    newsHeadVerbRaise: 'raises',
+    newsHeadSingleRate: (provider, model, verb, rate, pct, before, after) =>
+      `${provider} ${verb} ${model} ${rate} by ${pct}% (${before} → ${after} per 1M tokens)`,
+    newsHeadAllRates: (provider, model, verb, pct, rates) =>
+      `${provider} ${verb} ${model} prices by ${pct}% (${rates})`,
+    newsHeadFromZero: (provider, model, rate, after) =>
+      `${provider} now lists ${model} ${rate} at ${after} per 1M tokens (previously $0; no meaningful percentage)`,
+    newsHeadMixed: (provider, model, raised, cut) =>
+      `${provider} changes ${model} in both directions (${raised} raised, ${cut} cut)`,
+    newsHeadNoRate: 'no rate',
+    newsHeadTiersChanged: (provider, model) =>
+      `${provider} changes ${model} tier or context pricing (base rates unchanged)`,
+    newsHeadNewToCatalogue: (provider, model, firstSeen) =>
+      `${provider} starts listing ${model} (first observed ${firstSeen})`,
+    newsHeadNewToCatalogueBare: (provider, model) =>
+      `${provider} starts listing ${model} (new catalogue entry; no launch claim)`,
+    newsHeadLaunched: (provider, model, firstSeen) =>
+      firstSeen ? `${provider} launches ${model} (first observed ${firstSeen})`
+        : `${provider} launches ${model}`,
+    newsHeadNewlyAvailable: (provider, model, others) => others
+      ? `${provider} now also lists ${model} (already listed by ${others} other provider${others === 1 ? '' : 's'})`
+      : `${provider} now also lists ${model}`,
+    newsHeadProviderListed: provider => `${provider} newly appears in the catalogue`,
+    newsHeadRemoved: (provider, model, observations) => observations
+      ? `${provider} no longer lists ${model} (confirmed across ${observations} catalogue observations)`
+      : `${provider} no longer lists ${model}`,
+    newsHeadDelisted: (provider, observations) => observations
+      ? `${provider} no longer appears in the catalogue (confirmed across ${observations} observations)`
+      : `${provider} no longer appears in the catalogue`,
+    newsHeadPreview: (provider, model) =>
+      `Preview-labelled model ${model} observed at ${provider} (no vendor or launch identity inferred)`,
+    newsHeadGroup: (family, events) => `${family}: ${events} changes`,
+    newsHeadGroupAt: provider => ` at ${provider}`,
+    newsHeadGroupAcross: n => ` across ${n} providers`,
+    newsRateNameInput: 'input',
+    newsRateNameOutput: 'output',
+    newsRateNameCacheRead: 'cache read',
+    newsRateNameCacheWrite: 'cache write',
+    newsRateCodeUnknown: code => String(code || '').replace(/^news_rate_/, ''),
+    newsArchiveNote: (total, oldest, newest) => total
+      ? `The feed publishes its most recent ${total} events${oldest && newest ? ` (${oldest} to ${newest})` : ''}. Older events are not retained.`
+      : '',
+    newsArchiveSearchNote: 'Search covers the events the feed currently publishes; older events are not retained.',
+    newsUnsupportedNoPlanEvents: 'No plan or membership change events are published: the feed compares the public model catalogue only, so this is a source limitation rather than a filter hiding results.',
+    newsUnsupportedNoRemovals: 'Removal detection needs catalogue history the publisher does not keep, so no removal is claimed here.',
+    newsConfidenceObserved: 'Observed',
+    newsConfidenceVerified: 'Verified',
+    newsConfidenceCurated: 'Curated',
+    newsStoryOpenInArchive: 'Open in All Updates',
+    newsOtherProviders: n => `Also changed at ${n} other provider${n === 1 ? '' : 's'}`,
+    newsOtherProvidersNote: 'Not matched to your providers or recorded use. Every event stays in All Updates.',
+    newsStoryNoHeadline: 'No verified headline for this event.',
     newsImpactGroupFull: (money, dir, days) => `Hypothetical API-equivalent: ≈ ${money} ${dir} over your last ${days} days of usage — not a bill or guaranteed saving.`,
     newsImpactGroupPartial: (money, dir, days, reason) => `Partial hypothetical API-equivalent: ≈ ${money} ${dir} over your last ${days} days of usage (${reason}) — not a bill or guaranteed saving.`,
     newsImpactLower: 'lower',
@@ -14135,6 +15357,87 @@ const I18N = {
     newsNoResults: '没有符合当前筛选条件的动态。',
     newsShowAll: n => `显示全部 ${n} 个`,
     newsFilterMatch: '符合此筛选',
+    // WP22 编辑层：共享头条与完整存档。
+    newsBriefingTitle: '今日头条',
+    newsBriefingNote: '以下头条均根据已发布的事件生成，不含推测。',
+    newsBriefingLocal: '头条由本机根据已发布事件生成。',
+    newsBriefingPublished: '头条随数据源一并发布。',
+    newsSectionBiggestReductions: '最大降价',
+    newsSectionBiggestIncreases: '最大涨价',
+    newsSectionNewModels: '新收录模型',
+    newsSectionNewlyAvailable: '新增至其他供应商',
+    newsSectionRemovals: '供应商下架',
+    newsSectionSubscriptions: '订阅方案变化',
+    newsSectionPreviewModels: '预览与隐身模型',
+    newsSectionMixedPriceChanges: '双向价格变化',
+    newsSectionMore: n => `再显示 ${n} 条`,
+    newsSectionKept: '所有事件仍保留在“全部动态”中。',
+    newsKindCut: '降价',
+    newsKindRise: '涨价',
+    newsKindNew: '新收录',
+    newsKindAvailable: '新增供应商',
+    newsKindRemoved: '已下架',
+    newsKindDelisted: '供应商移除',
+    newsKindPlan: '方案变化',
+    newsKindPreview: '预览',
+    newsKindMixed: '双向变化',
+    newsKindTiers: '阶梯变化',
+    newsKindOther: '动态',
+    newsStoryDetails: '详情',
+    newsStoryEvents: '事件记录',
+    newsHeadVerbCut: '下调',
+    newsHeadVerbRaise: '上调',
+    newsHeadSingleRate: (provider, model, verb, rate, pct, before, after) =>
+      `${provider} 将 ${model} 的${rate}${verb} ${pct}%（${before} → ${after} / 百万 Token）`,
+    newsHeadAllRates: (provider, model, verb, pct, rates) =>
+      `${provider} 将 ${model} 价格${verb} ${pct}%（${rates}）`,
+    newsHeadFromZero: (provider, model, rate, after) =>
+      `${provider} 现列出 ${model} 的${rate}为 ${after} / 百万 Token（此前为 $0，无有效百分比）`,
+    newsHeadMixed: (provider, model, raised, cut) =>
+      `${provider} 对 ${model} 双向调价（${raised} 上调，${cut} 下调）`,
+    newsHeadNoRate: '无费率',
+    newsHeadTiersChanged: (provider, model) =>
+      `${provider} 调整 ${model} 的阶梯或上下文价格（基础费率未变）`,
+    newsHeadNewToCatalogue: (provider, model, firstSeen) =>
+      `${provider} 开始收录 ${model}（首次观察于 ${firstSeen}）`,
+    newsHeadNewToCatalogueBare: (provider, model) =>
+      `${provider} 开始收录 ${model}（新目录条目，未声明发布）`,
+    newsHeadLaunched: (provider, model, firstSeen) =>
+      firstSeen ? `${provider} 发布 ${model}（首次观察于 ${firstSeen}）`
+        : `${provider} 发布 ${model}`,
+    newsHeadNewlyAvailable: (provider, model, others) => others
+      ? `${provider} 现也收录 ${model}（另有 ${others} 家供应商已收录）`
+      : `${provider} 现也收录 ${model}`,
+    newsHeadProviderListed: provider => `${provider} 新出现在目录中`,
+    newsHeadRemoved: (provider, model, observations) => observations
+      ? `${provider} 不再收录 ${model}（经 ${observations} 次目录观察确认）`
+      : `${provider} 不再收录 ${model}`,
+    newsHeadDelisted: (provider, observations) => observations
+      ? `${provider} 已不在目录中（经 ${observations} 次观察确认）`
+      : `${provider} 已不在目录中`,
+    newsHeadPreview: (provider, model) =>
+      `在 ${provider} 观察到标注为预览的模型 ${model}（未推断厂商或发布身份）`,
+    newsHeadGroup: (family, events) => `${family}：${events} 项变化`,
+    newsHeadGroupAt: provider => `（${provider}）`,
+    newsHeadGroupAcross: n => `（涉及 ${n} 家供应商）`,
+    newsRateNameInput: '输入价格',
+    newsRateNameOutput: '输出价格',
+    newsRateNameCacheRead: '缓存读取价格',
+    newsRateNameCacheWrite: '缓存写入价格',
+    newsRateCodeUnknown: code => String(code || '').replace(/^news_rate_/, ''),
+    newsArchiveNote: (total, oldest, newest) => total
+      ? `数据源仅发布最近 ${total} 个事件${oldest && newest ? `（${oldest} 至 ${newest}）` : ''}，更早的事件不会保留。`
+      : '',
+    newsArchiveSearchNote: '搜索范围为数据源当前发布的事件；更早的事件不会保留。',
+    newsUnsupportedNoPlanEvents: '数据源不发布方案或会员变化事件：它只对比公开模型目录，因此这是来源限制，而不是筛选隐藏了结果。',
+    newsUnsupportedNoRemovals: '下架检测需要发布方保留目录历史，而目前并未保留，因此此处不作下架声明。',
+    newsConfidenceObserved: '已观察',
+    newsConfidenceVerified: '已核实',
+    newsConfidenceCurated: '人工编选',
+    newsStoryOpenInArchive: '在“全部动态”中查看',
+    newsOtherProviders: n => `另有 ${n} 家供应商发生变化`,
+    newsOtherProvidersNote: '未匹配您的供应商或已记录用量。所有事件仍保留在“全部动态”中。',
+    newsStoryNoHeadline: '此事件暂无已核实的头条。',
     newsImpactGroupFull: (money, dir, days) => `假设的 API 等效估算：按您过去 ${days} 天的用量约 ${money}（${dir}）—— 并非账单，也不保证节省。`,
     newsImpactGroupPartial: (money, dir, days, reason) => `部分假设的 API 等效估算：按您过去 ${days} 天的用量约 ${money}（${dir}；${reason}）—— 并非账单，也不保证节省。`,
     newsImpactLower: '更低',
@@ -15042,6 +16345,16 @@ export const __test = {
   newsOfferEvents, newsFieldDeltas: newsEventDeltas, newsTierComparison, newsRankForYou,
   newsNewestFirst, newsObservedMs,
   newsSearchFilter, newsPage, NewsOfferRow, NewsOfficial, $newsExpanded: $newsDetailsOpen,
+  // WP22 editorial layer: deterministic briefing, family grouping and headlines.
+  newsModelFamily, newsFamilyLabel, newsPreviewSignal, newsEditorialComparison,
+  newsEditorialEventType, newsEditorialSignals, newsEditorialScore, newsEditorialEntry,
+  newsEditorialHeadline, newsEditorialVariant, newsEditorialGroup, newsEditorialMaterial,
+  newsBuildBriefing, newsBriefingFor, newsSanitiseBriefing, newsWithinWindow,
+  newsHeadlineText, newsSectionTitle, newsSectionEntries, newsFocusGroup,
+  newsBriefingForCategory, NEWS_SECTION_CATEGORY,
+  NEWS_EDITORIAL_SECTIONS, NEWS_EDITORIAL_EVENT_TYPES, NEWS_EDITORIAL_MIN_PCT,
+  NEWS_EDITORIAL_MIN_DELTA, NEWS_EDITORIAL_SECTION_LIMIT, NEWS_FAMILY_BRAND,
+  NewsStory, NewsHeadlineSection, NewsBriefing, NEWS_HEADLINE_KEYS,
   NEWS_FOR_YOU_INITIAL, NEWS_EVENT_LINK_FIELDS, NEWS_RATE_CLASS_BY_CODE,
   newsUsedRecently, newsLastUsedMs, newsItemReasonCodes, newsGroupReasonCodes,
   newsMergeEvents, newsSameEventProof, newsTransitionKey, newsTransitionBase, newsSameTransition,

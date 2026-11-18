@@ -193,18 +193,47 @@ inferred in their absence.
 
 ## Desktop UI dependencies
 
-The feed already carries everything the Model News redesign needs; Luna's
-sidebar work does not depend on this change.
+The editorial layer has two legal sources and one renderer. A publisher-supplied
+`central.briefing` is preferred when it is present and well-formed; when it is
+absent — which is every published feed today — the Desktop plugin builds the
+same document from the items it already holds, using a port of
+`news_briefing.py` that is held to the Python builder by a golden fixture
+(`test/fixtures/news/editorial-golden.json`, regenerate with
+`python3 scripts/news-editorial-golden.py`). Nothing in the client-side path
+calls a model or transmits usage.
 
-- Render `central.briefing.sections` as the headline surface, in feed order
-  (`biggest_reductions`, `biggest_increases`, `mixed_price_changes`,
-  `new_models`, `newly_available`, `removals`, `subscriptions`,
-  `preview_models`).
+- Render the briefing as the For You first screen, in the page's own reading
+  order (`biggest_reductions`, `biggest_increases`, `new_models`,
+  `newly_available`, `removals`, `subscriptions`, `preview_models`,
+  `mixed_price_changes`). All Updates stays a pure archive: the headline block
+  is additive and never duplicates its list.
 - Localise `title_code`, `headline_code` and `headline_params`; treat
   `headline` as the English fallback, exactly like `summary_code`/`summary`.
 - Use `variants[]` for the per-provider rows under a family banner, and
   `event_ids` to join back to the full event in All Updates.
 - Honour `briefing.unsupported` — say "removal detection is not available"
-  rather than showing an empty section.
-- Treat a missing `briefing` as normal (byte-budget fallback) and keep the
+  rather than showing an empty section, and name the missing plan-event source
+  instead of reporting an empty Subscription Updates filter (F94).
+- Treat a missing briefing as normal (byte-budget fallback) and keep the
   existing item rendering.
+
+## One scrolling surface
+
+The Model News page is content-sized (`height:auto; overflow:visible`) and no
+descendant may be its own vertical scroll container: the host pane owns the
+only scrollbar. The layout harness asserts this on every case
+(`scrollSurfaces()` in `test/news-layout.page.jsx`). A second, nested scroller
+is an explicit owner blocker (F89) because the wheel latches onto whichever
+surface the pointer happens to be over.
+
+## What "All Updates" can and cannot promise (F102)
+
+The published feed is the latest 200 events with a rolling window, not a
+history: on 18 Nov 2026 the served document held 200 items spanning 18 hours
+and carried `truncated: {model_items_dropped: 10}`. OpenRouter **is** ingested —
+the same document carried 36 `openrouter` items, so the owner's empty
+`openrouter` search on 16 Nov 2026 was the archive window, not a filter or an
+alias defect. The UI therefore states the window it covers
+(`[data-news-archive-note]`) and repeats the limitation under a search that
+returns nothing, so a missing older event reads as a bounded archive rather
+than a broken feed.

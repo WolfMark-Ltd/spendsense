@@ -112,6 +112,14 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(nb.family_label(nb.model_family("deepseek/deepseek-v4.1-flash")),
                          "DeepSeek V4.1 Flash")
 
+    def test_family_label_keeps_a_welded_version_in_vendor_casing(self):
+        # `qwen3.5` is one token; uppercasing the whole token would print
+        # `QWEN3.5`, which is not how the vendor writes it. The brand prefix
+        # decides the casing and the version stays exactly as published.
+        self.assertEqual(nb.family_label(nb.model_family("qwen3.5-9b")), "Qwen3.5 9B")
+        self.assertEqual(nb.family_label(nb.model_family("glm-5.3-flash")), "GLM 5.3 Flash")
+        self.assertEqual(nb.family_label(nb.model_family("kimi-k3")), "Kimi K3")
+
     def test_preview_signal_needs_a_provider_label(self):
         self.assertTrue(nb.preview_signal("tencent/hy4-preview"))
         self.assertTrue(nb.preview_signal("model-x", "Foo Preview"))

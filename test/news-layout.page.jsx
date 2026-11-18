@@ -217,6 +217,16 @@ const FIXTURES = {
   stale: VARIANTS.stale,
   nosignals: VARIANTS.nosignals,
   evidence: EVIDENCE,
+  // Page-local variant (never in the grid matrix): the same verified events
+  // with no plan/membership announcement, so the Subscription Updates filter
+  // exercises the source-limitation path instead of an empty-result message.
+  noplan: {
+    ...REALISTIC,
+    local: { ...REALISTIC.local,
+      items: REALISTIC.local.items.filter(item => item.category !== 'subscription') },
+    central: { ...REALISTIC.central,
+      items: REALISTIC.central.items.filter(item => item.category !== 'subscription') },
+  },
 }
 
 const errors = (globalThis.__newsErrors = [])
@@ -392,9 +402,77 @@ function forbiddenHits(text) {
 
 function overflowList(pane) {
   return [...pane.querySelectorAll(
-    '.wm-news-card, .wm-news-controls, .wm-product-section, .wm-segments')]
+    '.wm-news-card, .wm-news-story, .wm-news-controls, .wm-product-section, .wm-segments')]
   .map(el => ({ cls: el.className, excess: el.scrollWidth - el.clientWidth }))
   .filter(x => x.excess > 1)
+}
+
+/**
+ * Every element that is its own vertical scroll container. Model News must
+ * expose exactly ONE scrolling surface — the host pane — so an empty list here
+ * is the assertion: no descendant may capture the wheel from the feed, and no
+ * dead scroll region may sit below the last card.
+ */
+function scrollSurfaces(pane) {
+  const out = []
+  for (const el of pane.querySelectorAll('*')) {
+    if (el.scrollHeight - el.clientHeight <= 1) continue
+    const overflowY = getComputedStyle(el).overflowY
+    if (overflowY !== 'auto' && overflowY !== 'scroll') continue
+    out.push({
+      tag: el.tagName.toLowerCase(),
+      cls: typeof el.className === 'string' ? el.className : '',
+      overflowY,
+      excess: el.scrollHeight - el.clientHeight,
+    })
+  }
+  return out
+}
+
+/** The headline block's own structure: sections, stories, kinds and provenance. */
+function briefingSummary(pane) {
+  const block = pane.querySelector('[data-news-briefing]')
+  if (!block) return { present: false }
+  const stories = [...block.querySelectorAll('[data-news-story]')]
+  return {
+    present: true,
+    sections: block.querySelectorAll('[data-news-section]').length,
+    stories: stories.length,
+    kinds: [...new Set(stories.map(el => el.getAttribute('data-news-kind')))].sort(),
+    variants: block.querySelectorAll('[data-news-story-variant]').length,
+    source: block.querySelector('[data-news-briefing-source]')
+      ?.getAttribute('data-news-briefing-source') || '',
+    headings: [...block.querySelectorAll('.wm-news-briefing-section>.wm-news-briefing-head h2')]
+      .map(el => el.textContent.trim()),
+    limits: [...block.querySelectorAll('.wm-news-briefing-limits li')]
+      .map(el => el.textContent.trim()),
+  }
+}
+
+/**
+ * WP22: what the Subscription Updates filter says when the source publishes no
+ * plan events at all. Drives the category control through its own click path
+ * (never by English copy) and restores the unfiltered view afterwards.
+ */
+async function probeSubscription(pane) {
+  const group = pane.querySelector(SELECTORS.category)
+  const buttons = [...(group?.querySelectorAll('button') || [])]
+  const value = index => buttons[index]?.getAttribute('value') || ''
+  const subscription = buttons.find(button => value(buttons.indexOf(button)) === 'subscription')
+    || buttons.find(button => /subscription|订阅/i.test(button.textContent || ''))
+  if (!subscription) return { missing: true }
+  subscription.click()
+  await tick(150)
+  const empty = pane.querySelector(SELECTORS.empty)
+  const out = {
+    pressed: subscription.getAttribute('aria-pressed'),
+    empty: empty?.textContent?.trim() || '',
+    groups: pane.querySelectorAll(SELECTORS.group).length,
+    note: pane.querySelector('[data-news-archive-note]')?.textContent?.trim() || '',
+  }
+  const all = buttons.find(button => value(buttons.indexOf(button)) === 'all')
+  if (all) { all.click(); await tick(120) }
+  return out
 }
 
 /** Observation only (not asserted): header overflow outside the A scope. */
@@ -439,7 +517,7 @@ function effectiveBackground(el) {
  * background; the test asserts the minimum is >= 4.5:1. */
 function contrastScan(pane) {
   const selectors = ['.wm-news-badge', '.wm-news-route', '.wm-news-impact',
-    '.wm-news-offerimpact', '.wm-news-chip']
+    '.wm-news-offerimpact', '.wm-news-chip', '.wm-news-storykind']
   const els = [...pane.querySelectorAll(selectors.join(','))]
   let min = Infinity
   let worst = null
@@ -941,6 +1019,8 @@ async function measureCase(c) {
     id, fixture: c.fixture, scope: c.scope, w: c.w, theme: c.theme, locale: c.locale,
     height: pane.scrollHeight, cards: pane.querySelectorAll('.wm-news-card').length,
     overflow: overflowList(pane),
+    scroll: scrollSurfaces(pane),
+    briefing: briefingSummary(pane),
     headerOverflow: headerOverflow(pane),
     labels,
     ids, presence: presenceGaps(pane, text, items),
@@ -959,6 +1039,7 @@ async function measureCase(c) {
     result.probe = await probeCandidate(c, pane)
   }
   else if (PROBE) result.probe = { skipped: 'candidate DOM not detected ([data-news-group] absent)' }
+  if (params.get('probe') === 'subscription') result.probeSubscription = await probeSubscription(pane)
   return result
 }
 

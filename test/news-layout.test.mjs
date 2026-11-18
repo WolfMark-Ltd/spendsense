@@ -271,6 +271,33 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
     }
     // A) no entitlement, actual-charge or blended-percentage wording
     assert.deepEqual(Object.keys(r.forbidden), [], `${label} keeps forbidden wording out: ${JSON.stringify(r.forbidden)}`)
+    // WP22/F89: ONE scrolling surface. No descendant of the Model News page may
+    // be its own vertical scroll container — the host pane owns the scrollbar,
+    // so the wheel can never latch onto a second, competing feed scrollbar.
+    assert.deepEqual(r.scroll, [],
+      `${label} exposes no descendant vertical scroll container: ${JSON.stringify(r.scroll)}`)
+    // WP22/F90: the headline block is the For You first screen and never
+    // duplicates the archive's own list on All Updates.
+    if (r.fixture !== 'empty' && r.fixture !== 'error') {
+      if (r.scope === 'foryou') {
+        assert.equal(r.briefing.present, true, `${label} leads with the editorial briefing`)
+        assert.ok(r.briefing.stories > 0, `${label} renders at least one headline story`)
+        assert.ok(r.briefing.sections > 0, `${label} renders at least one headline section`)
+        assert.equal(r.briefing.source, 'local',
+          `${label} names the local briefing provenance when the feed carries none`)
+        if (r.fixture === 'realistic') {
+          assert.ok(r.briefing.kinds.includes('cut'), `${label} headlines a verified price cut`)
+          const expected = r.locale === 'zh-CN' ? '最大降价' : 'Biggest price cuts'
+          assert.ok(r.briefing.headings.includes(expected),
+            `${label} localises the lead section heading: ${JSON.stringify(r.briefing.headings)}`)
+          assert.ok(r.briefing.limits.some(text => /removal|下架/.test(text)),
+            `${label} states the removal-detection limitation instead of an empty section`)
+        }
+      } else {
+        assert.equal(r.briefing.present, false,
+          `${label} keeps All Updates a pure archive (no duplicate headline block)`)
+      }
+    }
 
     if (r.fixture === 'realistic') {
       // A) exact model ID strings render verbatim. The baseline flat list
@@ -380,6 +407,28 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
       }
     }
   }
+})
+
+test('Model News names the source limitation behind an empty Subscription Updates filter', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // `noplan` is the same verified events without any plan/membership item, so
+  // the filter has to explain a source limitation rather than claim a filter
+  // hid results (F94).
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=noplan__all__380__dark__en&probe=subscription`)).cases[0]
+  assert.ok(result?.probeSubscription, 'subscription probe recorded')
+  assert.equal(result.probeSubscription.pressed, 'true', 'the category control is selected')
+  assert.equal(result.probeSubscription.groups, 0, 'no model group claims to be a plan change')
+  assert.match(result.probeSubscription.empty,
+    /public model catalogue only/, 'the empty filter names the ingestion limitation')
+  assert.doesNotMatch(result.probeSubscription.empty, /No updates match/,
+    'an unsupported category is never reported as an empty result set')
+  // The archive's rolling-window disclosure is present in All Updates, so a
+  // search that misses an older event is readable rather than mysterious.
+  assert.match(result.probeSubscription.note, /most recent \d+ events/,
+    'All Updates states the published window it covers')
 })
 
 test('NEWS_LAYOUT_SHOTS containment rejects paths that resolve inside the repository', () => {
