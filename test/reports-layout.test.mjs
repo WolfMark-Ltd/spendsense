@@ -123,7 +123,7 @@ body[data-theme="dark"]{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--
         assert.ok(result.tableRegions.length >= 2, `${id} keeps both report tables available`)
         assert.ok(result.tableRegions.every(region => region.width > 0 && region.tabIndex === 0),
           `${id} exposes tables through keyboard-scrollable regions`)
-        assert.ok(result.tableRegions.every(region => region.overflowX === 'auto' && region.overflowY === 'clip'),
+        assert.ok(result.tableRegions.every(region => region.overflowX === 'auto' && ['clip', 'hidden'].includes(region.overflowY)),
           `${id} keeps report tables horizontally scrollable without a vertical scroll area`)
         assert.ok(result.tableRegions.every(region => region.verticalDelta === 0),
           `${id} lets report tables expand to their full height`)

@@ -82,7 +82,8 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.ok(layout.stickyColumnWidth > 0 && layout.stickyColumnWidth < layout.tableViewportWidth,
           `${id} keeps the pinned model column inside the table viewport (${layout.stickyColumnWidth}/${layout.tableViewportWidth})`)
         assert.equal(layout.tableOverflowX, 'auto', `${id} keeps the explorer horizontally scrollable`)
-        assert.equal(layout.tableOverflowY, 'clip', `${id} prevents a nested vertical explorer scroller`)
+        assert.ok(['clip', 'hidden'].includes(layout.tableOverflowY),
+          `${id} clips vertical overflow in the horizontally scrollable explorer`)
         assert.equal(layout.tableVerticalDelta, 0, `${id} expands the explorer table to its full height`)
         assert.equal(layout.chips, 3, `${id} renders three active-filter chips`)
         assert.deepEqual(layout.filterOverlap, [], `${id} has no overlapping filters`)
