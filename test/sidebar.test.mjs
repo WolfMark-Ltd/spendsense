@@ -362,8 +362,8 @@ test('a cache coverage change redraws the gauge in place', async () => {
   assert.equal(ringAfter, ringBefore, 'the ring element is reused')
   const dashAfter = ringAfter.querySelector('.wm-ring-value').getAttribute('stroke-dasharray')
   assert.notEqual(dashAfter, dashBefore, 'the arc follows the new hit rate')
-  assert.match(ringAfter.getAttribute('aria-label'), /≈50%/)
-  assert.match(ringAfter.getAttribute('aria-label'), /estimatedLabel/)
+  assert.equal(ringAfter.querySelector('.wm-ring-text').textContent, '50%')
+  assert.equal(ringAfter.getAttribute('aria-label'), 'weightedCacheHit: 50% (estimatedLabel)')
   assert.ok(ringAfter.querySelector('.wm-ring-value').classList.contains('wm-ring-estimated'),
     'reconstructed coverage dims the ring')
   const estMetrics = [...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]

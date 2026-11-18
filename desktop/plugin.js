@@ -2594,6 +2594,7 @@ function CacheGauge({ t, view }) {
   const pct = view.cacheHitPct == null ? null : Math.max(0, Math.min(100, view.cacheHitPct))
   const approx = b.cacheEstimated ? '≈' : ''
   const estimated = !!b.cacheEstimated
+  const hitLabel = pct == null ? '—' : `${Math.round(pct)}%`
   const note = savedNote(t, view, estimated)
   const arc = pct == null ? 0 : (pct / 100) * RING_C
   return jsxs('section', { className: 'wm-card', 'aria-label': t('cacheTitle'), children: [
@@ -2607,7 +2608,7 @@ function CacheGauge({ t, view }) {
         className: 'wm-ring',
         viewBox: '0 0 64 64',
         role: 'img',
-        'aria-label': `${t('weightedCacheHit')}: ${pct == null ? '—' : `${approx}${Math.round(pct)}%`}${estimated ? ` (${t('estimatedLabel')})` : ''}`,
+        'aria-label': `${t('weightedCacheHit')}: ${hitLabel}${estimated ? ` (${t('estimatedLabel')})` : ''}`,
         children: [
           jsx('circle', { cx: 32, cy: 32, r: RING_R, className: 'wm-ring-track' }, 'track'),
           jsx('circle', {
@@ -2619,7 +2620,7 @@ function CacheGauge({ t, view }) {
           jsx('text', {
             x: 32, y: 32, textAnchor: 'middle', dominantBaseline: 'central',
             className: 'wm-ring-text',
-            children: pct == null ? '—' : `${approx}${Math.round(pct)}%`
+            children: hitLabel
           }, 'text')
         ]
       }, 'ring'),
@@ -11887,7 +11888,7 @@ const I18N = {
     sinceDate: d => `since ${d}`,
     promptMix: 'Prompt mix',
     cacheFresh: 'Fresh input',
-    cacheMethodInfo: 'Hit rate is cache-read tokens over covered prompt tokens (fresh input, reads and writes), weighted across calls. Gateway percentages reconstructed by Hermes are estimates, marked ≈.',
+    cacheMethodInfo: 'Hit rate is cache-read tokens over covered prompt tokens (fresh input, reads and writes), weighted across calls. Hit rates based on cache splits reconstructed by Hermes are estimates.',
     exactLabel: 'exact',
     estimatedLabel: 'estimated',
     infoLabel: 'More information',
@@ -13433,7 +13434,7 @@ const I18N = {
     sinceDate: d => `自 ${d} 起`,
     promptMix: '提示词构成',
     cacheFresh: '新增输入',
-    cacheMethodInfo: '命中率 = 缓存读取 ÷ 有缓存数据的提示词（新增输入、读取、写入），按调用加权。Hermes 推算的网关百分比为估算值，以 ≈ 标记。',
+    cacheMethodInfo: '命中率 = 缓存读取 ÷ 有缓存数据的提示词（新增输入、读取、写入），按调用加权。基于 Hermes 推算的缓存拆分计算的命中率为估算值。',
     exactLabel: '精确',
     estimatedLabel: '估算',
     infoLabel: '更多信息',
