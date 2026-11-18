@@ -27,10 +27,6 @@ from typing import Any, Iterable, Mapping, Optional
 
 from . import membership as mem
 
-#: Families whose account usage Hermes itself can report. Used only to decide
-#: whether asking is worth a subprocess; an unknown family is still asked, once.
-NATIVE_FAMILIES = ("openai-codex", "anthropic", "openrouter", "nous", "opencode-zen")
-
 #: Provider aliases that resolve to one canonical family. Mirrors how Hermes
 #: registers `-chat` / `-claude` wire variants of the same endpoint.
 PROVIDER_ALIASES = {
@@ -228,6 +224,10 @@ def discover(catalogue: Mapping[str, Any] | None, *, include_native: bool = True
             account = mem.member_from_native(snapshot, label=snapshot.get("title") or family,
                                              route_slugs=slots[family]["route_slugs"], discovered_at=now)
             account["usage_source"] = usage_source
+            if slots[family]["slots"] > 1 and not snapshot.get("identity"):
+                notes.append(f"{family}: {slots[family]['slots']} credentials are configured but Hermes "
+                             "did not say which account this reading came from, so it is kept on the "
+                             "default slot and not attributed to a named account.")
         else:
             account = _slot_only(family, slots[family], catalogue, now=now)
         snapshots[family] = snapshot
