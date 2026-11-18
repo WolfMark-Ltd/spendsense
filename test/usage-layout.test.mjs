@@ -67,6 +67,9 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.equal(layout.headingStart, locale === 'en' ? 'Usage analytics' : '用量分析', `${id} starts with the Usage title`)
         assert.deepEqual(layout.numbers, ['01', '02', '03', '04', '05', '06', '07'], `${id} numbers every section 01–07`)
         assert.equal(layout.sections, 7, `${id} renders seven panels`)
+        assert.equal(layout.usageOverflowY, 'visible', `${id} leaves vertical scrolling to the main host`)
+        assert.equal(layout.usageScrollDelta, 0, `${id} has no nested Usage vertical scroll range`)
+        assert.ok(layout.mainScrollDelta > 0, `${id} lets the main host scroll the full Usage page`)
         assert.equal(layout.stats, 5, `${id} keeps five KPI stats`)
         assert.ok(layout.statGroups.length >= 2, `${id} groups KPIs with labelled separators`)
         assert.equal(layout.selects, 7, `${id} keeps all seven filters`)
@@ -78,6 +81,9 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.equal(layout.advancedRowOverflow, 0, `${id} keeps the advanced row inside its pane`)
         assert.ok(layout.stickyColumnWidth > 0 && layout.stickyColumnWidth < layout.tableViewportWidth,
           `${id} keeps the pinned model column inside the table viewport (${layout.stickyColumnWidth}/${layout.tableViewportWidth})`)
+        assert.equal(layout.tableOverflowX, 'auto', `${id} keeps the explorer horizontally scrollable`)
+        assert.equal(layout.tableOverflowY, 'clip', `${id} prevents a nested vertical explorer scroller`)
+        assert.equal(layout.tableVerticalDelta, 0, `${id} expands the explorer table to its full height`)
         assert.equal(layout.chips, 3, `${id} renders three active-filter chips`)
         assert.deepEqual(layout.filterOverlap, [], `${id} has no overlapping filters`)
         assert.deepEqual(layout.chipOverlap, [], `${id} has no overlapping chips`)
@@ -151,6 +157,8 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
       assert.match(interaction.summaryAfterSurface || '', /1/, `the disclosure count drops to one (${locale})`)
       assert.equal(interaction.chipsAfterModel, 1, `removing the model chip leaves one (${locale})`)
       assert.equal(interaction.disclosureToggle, true, `the disclosure toggles closed and open (${locale})`)
+      assert.equal(interaction.otherListOverflowY, 'visible', `the expanded remainder list uses the main scroller (${locale})`)
+      assert.equal(interaction.otherListVerticalDelta, 0, `the expanded remainder list grows to full height (${locale})`)
       const wide = result.layouts.find(l => l.id === 'wide-dark')
       if (locale === 'en') {
         assert.match(wide.text, /Theoretical net savings/, 'WP06 cache-savings evidence survives')
