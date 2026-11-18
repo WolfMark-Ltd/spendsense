@@ -75,8 +75,8 @@ SIGNAL_PREVIEW = "preview"
 MIN_ABS_PCT = 2.0
 
 #: …and whose materially largest rate moves by at least this many USD per 1M
-#: tokens. Without it, a 1 850% move on a sub-cent cache rate outranks a real
-#: input-price change. Owner sign-off pending (WP22).
+#: tokens. Both floors apply, so a 1 850% move on a sub-cent cache rate cannot
+#: outrank a real input-price change. Owner sign-off pending (WP22).
 MIN_ABS_DELTA = 0.005
 
 #: Cap per section and on the total number of briefing entries.
@@ -285,10 +285,22 @@ def rate_deltas(previous: Any, current: Any) -> dict[str, Any]:
 
 
 def _rate_text(value: Optional[float]) -> str:
+    """Render one rate without ever turning a positive value into ``$0``.
+
+    Six decimals is the normal reading. A sub-micro rate (a per-token figure
+    carried through unchanged, say) would round to zero at that precision, and
+    a headline that says a rate became free when it only became very small is a
+    false claim, so precision is extended until a significant digit survives.
+    """
     if value is None:
         return "—"
-    text = f"{value:.6f}".rstrip("0").rstrip(".")
-    return f"${text}" if text else "$0"
+    if value == 0:
+        return "$0"
+    for places in (6, 12):
+        text = f"{value:.{places}f}".rstrip("0").rstrip(".")
+        if text and float(text) != 0.0:
+            return f"${text}"
+    return f"${value:.2e}"
 
 
 # ----------------------------------------------------------------- taxonomy
@@ -552,6 +564,9 @@ def _entry(item: Mapping[str, Any], *, providers: int = 1) -> dict[str, Any]:
             "dominant_pct": deltas["dominant_pct"],
             "max_abs_delta": deltas["max_abs_delta"],
             "rate": deltas["dominant"],
+            # The measured direction travel: "mixed" only when one rate fell and
+            # another rose, so a headline can never claim both from a category.
+            "direction": deltas["direction"],
             "comparable_rates": len(deltas["comparable"]),
             # A zero-baseline move has no percentage, so it can only be judged
             # material by its absolute delta.
@@ -660,6 +675,17 @@ def _utc(moment: datetime) -> datetime:
     return moment.astimezone(timezone.utc)
 
 
+def _instant(stamp: object) -> Optional[datetime]:
+    """Parsed UTC instant of one ISO stamp, or ``None`` when unreadable."""
+    text = str(stamp or "").strip()
+    if not text:
+        return None
+    try:
+        return _utc(datetime.fromisoformat(text))
+    except ValueError:
+        return None
+
+
 def _within_window(stamp: str, generated_at: str, window_days: int) -> bool:
     """True when ``stamp`` is inside the news window ending at ``generated_at``.
 
@@ -668,22 +694,14 @@ def _within_window(stamp: str, generated_at: str, window_days: int) -> bool:
     dropping evidence because of a format is worse than showing an undated
     record.
     """
-    end: Optional[datetime] = None
-    if generated_at:
-        try:
-            # Normalised before deriving the cutoff, so both bounds share one
-            # timezone discipline whatever the caller wrote.
-            end = _utc(datetime.fromisoformat(generated_at))
-        except ValueError:
-            end = None
+    # Normalised before deriving the cutoff, so both bounds share one timezone
+    # discipline whatever the caller wrote.
+    end = _instant(generated_at)
     if end is None:
         return True
     cutoff = end - timedelta(days=max(0, window_days))
-    if not stamp:
-        return True
-    try:
-        moment = _utc(datetime.fromisoformat(stamp))
-    except ValueError:
+    moment = _instant(stamp)
+    if moment is None:
         return True
     if moment > end:
         return False
@@ -769,11 +787,17 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
         counts[entry["event_type"]] = counts.get(entry["event_type"], 0) + 1
 
     def material(entry: Mapping[str, Any]) -> bool:
-        """A ranked price headline needs a MEASURED move.
+        """A ranked price headline needs a MEASURED move of real size.
 
-        A percentage must clear the floor; a move from a zero baseline has no
-        percentage, so its dollar delta must clear the absolute floor instead.
-        A price event whose two sides share no comparable rate has measured
+        Both floors apply to a percentage move: the relative change must clear
+        ``min_abs_pct`` AND the largest rate must move by at least
+        ``min_abs_delta`` USD per 1M tokens. Without the second floor a 1 850%
+        move on a sub-cent cache rate outranks a real input-price change, which
+        is exactly what the absolute floor exists to prevent. A move from a zero
+        baseline has no percentage, so its dollar delta carries the whole test.
+        A ``price_mixed`` claim additionally needs both directions to have been
+        measured on the rates themselves — a category alone never proves it. A
+        price event whose two sides share no comparable rate has measured
         nothing and is never headlined, however it was categorised.
         """
         magnitude = entry["magnitude"]
@@ -786,8 +810,12 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
             pct = magnitude.get("dominant_pct")
             if pct is None or abs(pct) < min_abs_pct:
                 return False
+            if not delta_ok:
+                return False
             return pct < 0 if event_type == "price_reduction" else pct > 0
         if event_type == "price_mixed":
+            if magnitude.get("direction") != "mixed":
+                return False
             pct = magnitude.get("max_abs_pct")
             return pct is not None and abs(pct) >= min_abs_pct and delta_ok
         return True
@@ -818,11 +846,20 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
         removal_entries.append(entry)
         counts[entry["event_type"]] = counts.get(entry["event_type"], 0) + 1
     removal_groups = _group(removal_entries)
+
     # Removals are the one section where "newest" beats "biggest": a confirmed
     # record never expires from history, so a fixed widening sort would let old
-    # removals push a fresh one out of the section forever.
-    removal_groups.sort(key=lambda row: (str(row.get("observed_at") or ""),
-                                         row["provider"], row["model"]), reverse=True)
+    # removals push a fresh one out of the section forever. The order is by PARSED
+    # instant — text collation puts "…T00:30:00+02:00" ahead of "…T23:30:00Z"
+    # although it happened an hour earlier — with the identity as tie-breaker and
+    # an undated record last, exactly as the Desktop builder orders it.
+    def _removal_order(row: Mapping[str, Any]) -> tuple[Any, ...]:
+        when = _instant(row.get("observed_at"))
+        if when is None:
+            return (1, 0.0, row["provider"], row["model"])
+        return (0, -when.timestamp(), row["provider"], row["model"])
+
+    removal_groups.sort(key=_removal_order)
 
     sections = [
         {"id": "biggest_reductions", "title_code": "news_section_biggest_reductions",

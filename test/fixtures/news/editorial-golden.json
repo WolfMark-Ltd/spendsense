@@ -34,6 +34,7 @@
             "dominant_pct": -50.0,
             "max_abs_delta": 5.0,
             "rate": "output",
+            "direction": "down",
             "zero_baseline": false
           },
           "variants": [
@@ -81,6 +82,7 @@
             "dominant_pct": -40.0,
             "max_abs_delta": 0.8,
             "rate": "output",
+            "direction": "down",
             "zero_baseline": false
           },
           "variants": [
@@ -149,6 +151,7 @@
             "dominant_pct": -25.0,
             "max_abs_delta": 1.5,
             "rate": "output",
+            "direction": "down",
             "zero_baseline": false
           },
           "variants": [
@@ -194,6 +197,7 @@
             "dominant_pct": -24.0,
             "max_abs_delta": 0.6,
             "rate": "output",
+            "direction": "down",
             "zero_baseline": false
           },
           "variants": [
@@ -270,6 +274,7 @@
             "dominant_pct": -20.0,
             "max_abs_delta": 0.4,
             "rate": "output",
+            "direction": "down",
             "zero_baseline": false
           },
           "variants": [
@@ -324,6 +329,7 @@
             "dominant_pct": 50.0,
             "max_abs_delta": 0.6,
             "rate": "output",
+            "direction": "up",
             "zero_baseline": false
           },
           "variants": [
@@ -373,6 +379,7 @@
             "dominant_pct": 20.0,
             "max_abs_delta": 5.0,
             "rate": "output",
+            "direction": "up",
             "zero_baseline": false
           },
           "variants": [
@@ -419,6 +426,7 @@
             "dominant_pct": 20.0,
             "max_abs_delta": 1.5,
             "rate": "output",
+            "direction": "up",
             "zero_baseline": false
           },
           "variants": [
@@ -493,6 +501,7 @@
             "dominant_pct": null,
             "max_abs_delta": null,
             "rate": "",
+            "direction": "unknown",
             "zero_baseline": false
           },
           "variants": [
@@ -535,6 +544,7 @@
             "dominant_pct": null,
             "max_abs_delta": null,
             "rate": "",
+            "direction": "unknown",
             "zero_baseline": false
           },
           "variants": [
@@ -577,6 +587,7 @@
             "dominant_pct": null,
             "max_abs_delta": null,
             "rate": "",
+            "direction": "unknown",
             "zero_baseline": false
           },
           "variants": [
@@ -619,6 +630,7 @@
             "dominant_pct": null,
             "max_abs_delta": null,
             "rate": "",
+            "direction": "unknown",
             "zero_baseline": false
           },
           "variants": [
@@ -676,6 +688,7 @@
             "dominant_pct": null,
             "max_abs_delta": null,
             "rate": "",
+            "direction": "unknown",
             "zero_baseline": false
           },
           "variants": [
@@ -718,6 +731,7 @@
             "dominant_pct": null,
             "max_abs_delta": null,
             "rate": "",
+            "direction": "unknown",
             "zero_baseline": false
           },
           "variants": [
@@ -775,6 +789,7 @@
             "dominant_pct": null,
             "max_abs_delta": null,
             "rate": "",
+            "direction": "unknown",
             "zero_baseline": false
           },
           "variants": [
@@ -817,6 +832,7 @@
             "dominant_pct": null,
             "max_abs_delta": null,
             "rate": "",
+            "direction": "unknown",
             "zero_baseline": false
           },
           "variants": [
@@ -873,6 +889,7 @@
             "dominant_pct": null,
             "max_abs_delta": null,
             "rate": "",
+            "direction": "unknown",
             "zero_baseline": false
           },
           "variants": [
@@ -911,6 +928,7 @@
             "dominant_pct": null,
             "max_abs_delta": null,
             "rate": "",
+            "direction": "unknown",
             "zero_baseline": false
           },
           "variants": [

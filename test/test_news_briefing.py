@@ -213,6 +213,65 @@ class MaterialityTests(unittest.TestCase):
         self.assertTrue(nb._within_window("", "2026-11-10T12:00:00Z", 90))
 
 
+    def test_a_huge_percentage_on_a_sub_cent_rate_is_counted_never_headlined(self):
+        item = {"id": "md-9", "provider": "acme", "model": "m1",
+                "category": "price_increase",
+                "previous": {"cache_read": 0.0001}, "current": {"cache_read": 0.00195},
+                "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([item], generated_at="2026-11-10T12:00:00Z")
+        section = {row["id"]: row for row in briefing["sections"]}["biggest_increases"]
+        self.assertEqual(section["total"], 0,
+                         "1 850% of a sub-cent rate must not outrank a real change")
+        self.assertEqual(briefing["counts"]["price_increase"], 1,
+                         "it is still counted, never hidden")
+
+    def test_a_real_move_past_both_floors_is_headlined(self):
+        item = {"id": "md-10", "provider": "acme", "model": "m1",
+                "category": "price_increase",
+                "previous": {"input": 1.0}, "current": {"input": 3.0},
+                "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([item], generated_at="2026-11-10T12:00:00Z")
+        section = {row["id"]: row for row in briefing["sections"]}["biggest_increases"]
+        self.assertEqual(section["total"], 1)
+
+    def test_a_mixed_headline_needs_both_directions_measured(self):
+        only_up = {"id": "md-11", "provider": "acme", "model": "m1",
+                   "event_type": "price_mixed",
+                   "previous": {"input": 1.0}, "current": {"input": 2.0},
+                   "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([only_up], generated_at="2026-11-10T12:00:00Z")
+        section = {row["id"]: row for row in briefing["sections"]}["mixed_price_changes"]
+        self.assertEqual(section["total"], 0, "nothing fell, so nothing is mixed")
+        self.assertEqual(briefing["counts"]["price_mixed"], 1)
+        both_ways = {"id": "md-12", "provider": "acme", "model": "m2",
+                     "event_type": "price_mixed",
+                     "previous": {"input": 1.0, "output": 10.0},
+                     "current": {"input": 2.0, "output": 5.0},
+                     "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([both_ways], generated_at="2026-11-10T12:00:00Z")
+        section = {row["id"]: row for row in briefing["sections"]}["mixed_price_changes"]
+        self.assertEqual(section["total"], 1)
+
+    def test_a_positive_rate_is_never_rendered_as_free(self):
+        self.assertEqual(nb._rate_text(0), "$0")
+        self.assertEqual(nb._rate_text(0.00000025), "$0.00000025")
+        self.assertEqual(nb._rate_text(1.25), "$1.25")
+        self.assertEqual(nb._rate_text(None), "—")
+
+    def test_removal_groups_order_by_instant_not_by_stamp_text(self):
+        removals = [
+            {"provider": "acme", "model": "acme-older", "consecutive": 2,
+             "removed_at": "2026-11-10T00:30:00+02:00"},
+            {"provider": "acme", "model": "acme-old", "consecutive": 2,
+             "removed_at": "2026-11-09T23:30:00Z"},
+        ]
+        briefing = nb.build_briefing([], generated_at="2026-11-10T12:00:00Z",
+                                     removals=removals, removal_tracking=True)
+        section = {row["id"]: row for row in briefing["sections"]}["removals"]
+        self.assertEqual([entry["model"] for entry in section["entries"]],
+                         ["acme-old", "acme-older"])
+
+
 class ClassificationTests(unittest.TestCase):
     def test_provider_listing_is_not_a_model_event(self):
         item = {"id": "md-1", "category": "new_model", "provider": "acme", "model": ""}

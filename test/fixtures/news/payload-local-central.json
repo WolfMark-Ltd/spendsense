@@ -59,6 +59,7 @@
               },
               "magnitude": {
                 "comparable_rates": 4,
+                "direction": "up",
                 "dominant_pct": 20.0,
                 "max_abs_delta": 0.25,
                 "max_abs_pct": 20.0,
@@ -144,6 +145,7 @@
               },
               "magnitude": {
                 "comparable_rates": 4,
+                "direction": "mixed",
                 "dominant_pct": -33.3,
                 "max_abs_delta": 1.0,
                 "max_abs_pct": 33.3,
@@ -225,6 +227,7 @@
               },
               "magnitude": {
                 "comparable_rates": 0,
+                "direction": "unknown",
                 "rate": "",
                 "zero_baseline": false
               },
@@ -313,6 +316,7 @@
               },
               "magnitude": {
                 "comparable_rates": 0,
+                "direction": "unknown",
                 "rate": "",
                 "zero_baseline": false
               },
@@ -374,6 +378,7 @@
               },
               "magnitude": {
                 "comparable_rates": 0,
+                "direction": "unknown",
                 "rate": "",
                 "zero_baseline": false
               },

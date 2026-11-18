@@ -4336,6 +4336,9 @@ const $newsShown = atom(10)
 const $newsShowAll = atom(false)
 /** Ids of the open per-offer Details panels on news group cards. */
 const $newsDetailsOpen = atom([])
+// The event a story link asked the archive to reveal. `nonce` makes a repeat
+// click on the same story scroll and focus again.
+const $newsFocus = atom(null)
 /** Explicit refresh status: the Refresh button bypasses the local-diff throttle. */
 const $newsRefreshState = atom(null)
 /** Live-updates opt-in flow: confirm box plus the last notice, per connection. */
@@ -10300,12 +10303,28 @@ function newsOfferClass(item) {
   return derived && NEWS_CODE_CONTRADICTS[coded]?.includes(derived) ? null : coded
 }
 
+/**
+ * Parsed epoch ms of one ISO stamp, or null when absent/unreadable.
+ *
+ * An offsetless date-time is read as UTC, because that is what the publisher's
+ * builder does (`datetime.fromisoformat` then normalise) and what the feed
+ * schema means. `Date.parse` alone would read it as LOCAL time, so the same
+ * record would land an offset away from the archive's own ordering — and, on a
+ * machine west of UTC, a removal observed an hour before publication would be
+ * rejected as future.
+ */
+function newsInstant(stamp) {
+  const raw = String(stamp ?? '').trim()
+  if (!raw) return null
+  const offsetless = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/
+  const text = offsetless.test(raw) ? `${raw.replace(' ', 'T')}Z` : raw
+  const when = Date.parse(text)
+  return Number.isFinite(when) ? when : null
+}
+
 /** Parsed epoch ms of one event's observed_at, or null when absent/invalid. */
 function newsObservedMs(item) {
-  const raw = String(item?.observed_at || '').trim()
-  if (!raw) return null
-  const when = Date.parse(raw)
-  return Number.isFinite(when) ? when : null
+  return newsInstant(item?.observed_at)
 }
 
 /**
@@ -10911,8 +10930,16 @@ function newsEditorialScore(item, providers = 1) {
 
 const newsRateText = value => {
   if (value == null || !Number.isFinite(value)) return '—'
-  const text = value.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')
-  return text ? `$${text}` : '$0'
+  // Six decimals is the normal reading, but a sub-micro rate would round to
+  // zero there — and a headline that says a rate became free when it only
+  // became very small is a false claim. Extend precision until a significant
+  // digit survives; `$0` stays reserved for an actual zero.
+  if (value === 0) return '$0'
+  for (const places of [6, 12]) {
+    const text = value.toFixed(places).replace(/0+$/, '').replace(/\.$/, '')
+    if (text && Number(text) !== 0) return `$${text}`
+  }
+  return `$${value.toExponential(2)}`
 }
 
 /**
@@ -11085,6 +11112,8 @@ function newsEditorialEntry(item, providers = 1) {
       dominant_pct: comparison.dominant_pct,
       max_abs_delta: comparison.max_abs_delta,
       rate: comparison.dominant,
+      // "mixed" only when one rate fell and another rose — measured, not claimed.
+      direction: comparison.direction,
       comparable_rates: comparison.comparable.length,
       zero_baseline: !!(comparison.dominant && ratesMissingPct(comparison, comparison.dominant)),
     },
@@ -11161,11 +11190,14 @@ function newsEditorialGroup(entries) {
 }
 
 /**
- * Materiality gate. A ranked price headline needs a MEASURED move: a
- * percentage that clears the floor, or — for a real move from a zero baseline,
- * which has no percentage — a dollar delta that clears the absolute floor. A
- * price event whose two sides share no comparable rate has measured nothing
- * and is never headlined, however it was categorised.
+ * Materiality gate. A ranked price headline needs a MEASURED move of real size:
+ * a percentage that clears the relative floor AND a dollar delta that clears the
+ * absolute one, or — for a real move from a zero baseline, which has no
+ * percentage — the dollar delta alone. Without the absolute floor a 1 850% move
+ * on a sub-cent cache rate outranks a real input-price change. A `price_mixed`
+ * claim also needs both directions measured on the rates themselves, because a
+ * category never proves that anything fell. An event whose two sides share no
+ * comparable rate has measured nothing and is never headlined.
  */
 function newsEditorialMaterial(entry, minPct = NEWS_EDITORIAL_MIN_PCT,
                                minDelta = NEWS_EDITORIAL_MIN_DELTA) {
@@ -11177,9 +11209,11 @@ function newsEditorialMaterial(entry, minPct = NEWS_EDITORIAL_MIN_PCT,
     const pct = magnitude.dominant_pct
     if (pct == null) return false
     if (Math.abs(pct) < minPct) return false
+    if (!deltaOk) return false
     return entry.event_type === 'price_reduction' ? pct < 0 : pct > 0
   }
   if (entry?.event_type === 'price_mixed') {
+    if (magnitude.direction !== 'mixed') return false
     const pct = magnitude.max_abs_pct
     return pct != null && Math.abs(pct) >= minPct && deltaOk
   }
@@ -11228,9 +11262,19 @@ function newsBuildBriefing(items, {
   const removalEntries = entries.filter(entry =>
     (entry.event_type === 'removed_from_provider' || entry.event_type === 'provider_delisted')
     && newsWithinWindow(entry.observed_at, generatedAt, removalWindowDays))
-  const removalGroups = newsEditorialGroup(removalEntries).sort((a, b) =>
-    String(b.observed_at || '').localeCompare(String(a.observed_at || ''))
-    || String(a.provider).localeCompare(String(b.provider)))
+  // Newest observation first by PARSED instant: text collation would put
+  // "…T00:30:00+02:00" ahead of "…T23:30:00Z" although it happened an hour
+  // earlier, and the section cap would then keep the older removal.
+  const removalGroups = newsEditorialGroup(removalEntries).sort((a, b) => {
+    const whenA = newsInstant(a.observed_at), whenB = newsInstant(b.observed_at)
+    if (whenA != null || whenB != null) {
+      if (whenA == null) return 1
+      if (whenB == null) return -1
+      if (whenA !== whenB) return whenB - whenA
+    }
+    return String(a.provider).localeCompare(String(b.provider))
+      || String(a.model).localeCompare(String(b.model))
+  })
   const byType = (list, wanted) => list.filter(entry => entry.event_type === wanted)
   const sections = [
     // Payload order matches the publisher's builder (news_briefing.py): the
@@ -11285,12 +11329,10 @@ function newsBuildBriefing(items, {
  * record — which is the rule the publisher's builder documents too.
  */
 function newsWithinWindow(stamp, generatedAt, windowDays) {
-  if (!generatedAt) return true
-  const end = Date.parse(generatedAt)
-  if (!Number.isFinite(end)) return true
-  if (!stamp) return true
-  const when = Date.parse(stamp)
-  if (!Number.isFinite(when)) return true
+  const end = newsInstant(generatedAt)
+  if (end == null) return true
+  const when = newsInstant(stamp)
+  if (when == null) return true
   if (when > end) return false
   return when >= end - Math.max(0, windowDays) * 86_400_000
 }
@@ -11692,8 +11734,28 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
   // first few event ids the entry carries.
   const recordIds = [...new Set([...eventIds,
     ...variants.flatMap(variant => (Array.isArray(variant?.event_ids) ? variant.event_ids : []))])]
-  const records = recordIds.slice(0, NEWS_STORY_PANEL_LIMIT)
+  const joined = recordIds.slice(0, NEWS_STORY_PANEL_LIMIT)
     .map(id => itemsById?.get ? itemsById.get(id) : null).filter(Boolean)
+  // A merged event holds BOTH original records. Details renders every one of
+  // them, because resolving the id to a single event would drop the other
+  // source's provenance, timestamps and tier evidence.
+  const records = []
+  const seenRecords = new Set()
+  for (const item of joined) {
+    for (const source of newsEvidenceRecords(item)) {
+      const key = String(source?.id || '')
+      if (key && seenRecords.has(key)) continue
+      if (key) seenRecords.add(key)
+      records.push(source)
+    }
+  }
+  const joinedIds = new Set(recordIds.filter(id => itemsById?.get?.(id)))
+  // A published variant that joins no archive record still has published
+  // evidence of its own; dropping it would hide the only provenance a reader
+  // can check for that provider.
+  const unjoined = variants.filter(variant =>
+    !(Array.isArray(variant?.event_ids) ? variant.event_ids : []).some(id => joinedIds.has(String(id))))
+  const unjoinedMeta = [entry?.provenance, entry?.confidence].filter(Boolean).join(' · ')
   const confidence = String(entry?.confidence || '')
   const confidenceKey = confidence === 'verified' ? 'newsConfidenceVerified'
     : confidence === 'curated' ? 'newsConfidenceCurated' : 'newsConfidenceObserved'
@@ -11708,6 +11770,20 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
     $newsDays.set(null)
     $newsScope.set('all')
     $newsSearch.set(String(entry?.model || entry?.provider || ''))
+    // The archive must open the RECORD, not just its model: a model with an
+    // older cut and a newer rise would otherwise land on the newest offer and
+    // leave this story's own event inside a collapsed panel.
+    const target = joined[0]
+    if (target?.model || target?.provider) {
+      const targetPanel = newsDetailsPanelId(connectionKey,
+        { model: target.model, provider: target.provider })
+      if (!openDetails.includes(targetPanel)) $newsDetailsOpen.set([...openDetails, targetPanel])
+    }
+    // Every id the story claims, not just the first: the archive may hold the
+    // same change under a different record id.
+    const focusIds = [...new Set([target?.id ? String(target.id) : '', ...eventIds]
+      .filter(Boolean))]
+    $newsFocus.set(focusIds.length ? { eventIds: focusIds, nonce: Date.now() } : null)
     $newsShown.set(NEWS_PAGE_SIZE)
   }
   return jsxs('article', {
@@ -11771,6 +11847,31 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
             ] }, `r-${item?.id || index}`)) }),
           ] })
         : jsx(NewsStoryEntryEvidence, { entry, t }),
+      unjoined.length
+        ? jsxs('div', { 'data-news-story-variant-evidence': 'true', children: [
+            jsx('p', { className: 'wm-news-historytitle', children: t('newsStoryEvents') }),
+            jsx('ul', { className: 'wm-news-storyrecords', children: unjoined.map((variant, index) =>
+              jsxs('li', { 'data-news-story-variant-record': variant.provider || '', children: [
+                jsxs('p', { className: 'wm-news-meta', children: [
+                  jsx('span', { children: variant.provider || '' }),
+                  (Array.isArray(variant?.event_ids) ? variant.event_ids : []).length
+                    ? jsx('span', { className: 'wm-news-storyid',
+                        children: variant.event_ids.join(' · ') })
+                    : null,
+                  variant?.model ? jsx('span', { className: 'wm-news-storymodel',
+                    children: variant.model }) : null,
+                ] }),
+                unjoinedMeta ? jsx('p', { className: 'wm-news-meta', children: unjoinedMeta }) : null,
+                jsx('p', { className: 'wm-news-dates', children:
+                  t('newsObserved', variant?.observed_at || '—') }),
+                entry?.source_url
+                  ? jsx('p', { className: 'wm-news-meta', children: jsx('a', {
+                      href: entry.source_url, target: '_blank', rel: 'noreferrer',
+                      className: 'wm-source-link', children: t('newsSource') }) })
+                  : null,
+              ] }, `uv-${index}`)) }),
+          ] })
+        : null,
     ] }),
   ] })
 }
@@ -11786,6 +11887,12 @@ function NewsHeadlineSection({ section, t, itemsById, connectionKey = '', shown 
   const head = rows.slice(0, shown)
   const rest = rows.slice(shown)
   const kept = Number(section.total) > rows.length
+  // "…stay in All Updates" is only true for entries the archive can actually
+  // hold. A history-confirmed removal may exist only in the published
+  // briefing, so the claim is made per section, from the join.
+  const joinable = entry => (Array.isArray(entry?.event_ids) ? entry.event_ids : [])
+    .some(id => itemsById?.get?.(String(id)))
+  const keptSearchable = rest.every(joinable) || !rest.length
   return jsxs('section', { className: 'wm-news-briefing-section', 'data-news-section': section.id, children: [
     jsxs('div', { className: 'wm-news-briefing-head', children: [
       jsx('h2', { children: newsSectionTitle(section.id, t) }),
@@ -11803,7 +11910,8 @@ function NewsHeadlineSection({ section, t, itemsById, connectionKey = '', shown 
               `m-${entry?.event_ids?.[0] || entry?.model || index}`)) }),
         ] })
       : null,
-    kept ? jsx('p', { className: 'wm-news-note', children: t('newsSectionKept') }) : null,
+    kept ? jsx('p', { className: 'wm-news-note', 'data-news-kept': keptSearchable ? 'archive' : 'briefing',
+      children: keptSearchable ? t('newsSectionKept') : t('newsSectionKeptBriefing') }) : null,
   ] })
 }
 
@@ -12040,6 +12148,8 @@ function newsClearFilters() {
   $newsDays.set(null)
   $newsCategory.set('all')
   $newsShown.set(NEWS_PAGE_SIZE)
+  // Clearing filters is the reader taking over: no story keeps the highlight.
+  $newsFocus.set(null)
 }
 
 function newsToggleDetails(id) {
@@ -12120,6 +12230,7 @@ const NEWS_CSS = `
 .wm-news-historytitle{margin:10px 0 0;font-size:11.5px;font-weight:600;color:var(--ui-text-tertiary)}
 .wm-news-history{margin:6px 0 0;padding:0;list-style:none}
 .wm-news-history li{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline;padding:6px 0;border-top:1px solid var(--ui-stroke-secondary);font-size:12px;color:var(--ui-text-secondary)}
+.wm-news-history li[data-news-focus="true"],.wm-news-offer[data-news-focus="true"]{background:var(--ui-accent-soft,rgba(127,127,127,.12));outline:1px solid var(--ui-accent,currentColor);outline-offset:3px;border-radius:6px}
 .wm-news-historycode{font-family:var(--font-mono,ui-monospace,monospace);font-size:11px;color:var(--ui-text-tertiary);overflow-wrap:anywhere}
 .wm-news-itemid{font-family:var(--font-mono,ui-monospace,monospace);font-size:11px;overflow-wrap:anywhere}
 .wm-news-official{margin:8px 0 0;font-size:12px;line-height:1.5;color:var(--ui-text-secondary)}
@@ -12372,6 +12483,18 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
   const srText = dir === 'down' ? t('newsDirDown') : dir === 'up' ? t('newsDirUp')
     : dir === 'new' ? t('newsDirNew') : newsClassLabel(cls, t)
   const latest = offer.latest
+  const focus = useValue($newsFocus)
+  // A story link lands on one event. Mark that row, matching the event id or any
+  // original record it absorbed, so the reader sees which record was asked for.
+  const focusIds = Array.isArray(focus?.eventIds) ? focus.eventIds : []
+  const focusedEvent = event => focusIds.length > 0
+    && (focusIds.includes(String(event?.id || ''))
+      || newsEvidenceRecords(event).some(rec => focusIds.includes(String(rec?.id || ''))))
+  // A single-event offer renders no History at all, so the row itself is the
+  // only thing a story link can mark. When History exists the matching event
+  // row carries the mark instead, which is more precise.
+  const historyFocused = (Array.isArray(offer.history) ? offer.history : []).some(focusedEvent)
+  const offerFocused = !!offer.latest && focusedEvent(offer.latest)
   // Per-field chips always show the actual comparable values, even when the
   // coded class disagrees; a not-comparable field carries its reason.
   const chipOf = (key, dirWord, text, reason) => jsxs('span', {
@@ -12434,7 +12557,8 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
   return jsxs('div', { className: 'wm-news-offer', 'data-news-offer': 'true',
     'data-news-provider': offer.provider || '', 'data-news-model': offer.model || '',
     'data-news-class': cls || 'none',
-    'data-news-match': matched ? 'true' : null, children: [
+    'data-news-match': matched ? 'true' : null,
+    'data-news-focus': offerFocused && !historyFocused ? 'true' : undefined, children: [
     jsx('span', { className: 'wm-news-provider', children: offer.provider || offer.model }),
     jsxs('span', { className: 'wm-news-dir', children: [
       jsx('span', { 'aria-hidden': 'true', 'data-dir': dir, children: glyph }),
@@ -12508,7 +12632,8 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
           jsx('p', { className: 'wm-news-historytitle', children:
             `${t('newsHistory')} (${t('newsCountEvents', offer.history.length)})` }),
           jsx('ul', { className: 'wm-news-history', 'data-news-history': 'true', children:
-            offer.history.map(event => jsxs('li', { 'data-news-event': event?.id || '', children: [
+            offer.history.map(event => jsxs('li', { 'data-news-event': event?.id || '',
+              'data-news-focus': focusedEvent(event) ? 'true' : undefined, children: [
             jsx('span', { className: 'wm-news-historycode', children: event?.id || '' }),
             jsx('span', { children: t('newsObserved', fmtDay(event?.observed_at)) }),
             jsx('span', { children: newsSummaryText(event, t) }),
@@ -12710,15 +12835,53 @@ function NewsPage() {
   // local document exists so the headline surface never waits for an ops
   // deploy. `itemsById` is the join back from a headline to its evidence.
   const itemsById = new Map()
-  for (const item of combined) {
-    // A merged event is reachable by its own id AND by every original record it
-    // absorbed, so a headline that cites either id still joins to its evidence.
-    for (const record of newsEvidenceRecords(item)) {
-      if (record?.id) itemsById.set(String(record.id), item)
+  // A merged event is reachable by its own id AND by every original record it
+  // absorbed, so a headline that cites either id still joins to its evidence.
+  // First writer wins, because both passes below run newest-first: overwriting
+  // would hand Details the oldest of two exact-id duplicates even though the
+  // headline was derived from the newest.
+  const registerEvent = event => {
+    for (const record of newsEvidenceRecords(event)) {
+      const key = String(record?.id || '')
+      if (key && !itemsById.has(key)) itemsById.set(key, event)
     }
-    if (item?.id) itemsById.set(String(item.id), item)
+    const own = String(event?.id || '')
+    if (own && !itemsById.has(own)) itemsById.set(own, event)
   }
+  // The ARCHIVE's events first: they carry the local/publish-side merge
+  // (`merged_sources`), which the raw feed records do not. Resolving an id
+  // against the raw list alone would show one source and silently drop the
+  // other's provenance, timestamps and tier evidence.
+  for (const entry of grouped?.entries || []) {
+    if (entry?.kind === 'group') {
+      for (const offer of entry.offers || []) {
+        for (const event of offer.events || []) registerEvent(event)
+      }
+    } else if (entry?.item) {
+      registerEvent(entry.item)
+    }
+  }
+  // Then anything the archive did not group, so no record becomes unreachable.
+  for (const item of combined) registerEvent(item)
   const briefing = newsBriefingFor(central, newsBriefingItems(grouped, combined))
+  // A story link asks the archive to reveal one event. The row is marked during
+  // render; this moves the reader onto it once the filtered list exists, so a
+  // keyboard user is not left at the top of a 200-event archive.
+  const newsFocusTarget = useValue($newsFocus)
+  useEffect(() => {
+    if (!newsFocusTarget?.eventIds?.length || typeof document === 'undefined') return undefined
+    const timer = setTimeout(() => {
+      let node = null
+      try { node = document.querySelector('[data-news-focus="true"]') } catch { return }
+      if (!node) return
+      node.scrollIntoView?.({ block: 'center' })
+      if (!node.hasAttribute('tabindex')) node.setAttribute('tabindex', '-1')
+      try { node.focus({ preventScroll: true }) } catch {
+        try { node.focus() } catch {}
+      }
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [newsFocusTarget?.nonce, scope, shown])
   // A category filter narrows the headlines to the sections it can honestly
   // describe, so choosing "Increases" never leaves a price-cut lead above it.
   const headlineBriefing = newsBriefingForCategory(briefing, category)
@@ -12756,6 +12919,7 @@ function NewsPage() {
   const changeScope = id => {
     if (id === scope) return
     $newsScope.set(id)
+    $newsFocus.set(null)
     // Both scope-local expansion states reset when the scope changes.
     $newsShowAll.set(false)
     $newsShown.set(NEWS_PAGE_SIZE)
@@ -12794,7 +12958,7 @@ function NewsPage() {
               // then chosen from the actually filtered entries, never blank.
               children: jsx('p', { children: planUnsupported ? t('newsUnsupportedNoPlanEvents')
                 : (emptyText || t('newsNoResults')) }) }))
-      : filteredEmpty && hasFilters
+      : (filteredEmpty && hasFilters) || planUnsupported
         ? jsxs('div', { className: 'wm-empty', role: 'status', children: [
             jsx('p', { children: planUnsupported ? t('newsUnsupportedNoPlanEvents') : t('newsNoResults') }),
             search.trim() && !planUnsupported
@@ -13908,6 +14072,7 @@ const I18N = {
     newsSectionMixedPriceChanges: 'Mixed price changes',
     newsSectionMore: n => `Show ${n} more`,
     newsSectionKept: 'Every event stays in All Updates.',
+    newsSectionKeptBriefing: 'Entries with no archive record appear only here, not in All Updates.',
     newsKindCut: 'Price cut',
     newsKindRise: 'Price rise',
     newsKindNew: 'New listing',
@@ -15535,6 +15700,7 @@ const I18N = {
     newsSectionMixedPriceChanges: '双向价格变化',
     newsSectionMore: n => `再显示 ${n} 条`,
     newsSectionKept: '所有事件仍保留在“全部动态”中。',
+    newsSectionKeptBriefing: '没有归档记录的事件只在此处显示，不会出现在“全部动态”中。',
     newsKindCut: '降价',
     newsKindRise: '涨价',
     newsKindNew: '新收录',
@@ -16514,6 +16680,7 @@ export const __test = {
   newsEditorialEventType, newsEditorialSignals, newsEditorialScore, newsEditorialEntry,
   newsEditorialHeadline, newsEditorialVariant, newsEditorialGroup, newsEditorialMaterial,
   newsBuildBriefing, newsBriefingFor, newsSanitiseBriefing, newsWithinWindow,
+  newsInstant, newsRateText, $newsFocus, $newsDetailsOpen, newsDetailsPanelId,
   newsHeadlineText, newsSectionTitle, newsSectionEntries, newsFocusGroup,
   newsBriefingForCategory, NEWS_SECTION_CATEGORY, newsBriefingItems,
   NEWS_EDITORIAL_SECTIONS, NEWS_EDITORIAL_EVENT_TYPES, NEWS_EDITORIAL_MIN_PCT,

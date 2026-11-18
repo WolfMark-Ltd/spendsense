@@ -431,6 +431,24 @@ test('Model News names the source limitation behind an empty Subscription Update
     'All Updates states the published window it covers')
 })
 
+test('an empty archive still names the source limitation for Subscription Updates', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // Zero published events is the same limitation as none-of-that-category: the
+  // publisher compares the public model catalogue only, so there are no plan
+  // events to find. A generic "no results" would read as a working filter that
+  // had nothing to show — exactly the confusion F94 describes.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=empty__all__380__dark__en&probe=subscription`)).cases[0]
+  assert.ok(result?.probeSubscription, 'subscription probe recorded')
+  assert.equal(result.probeSubscription.pressed, 'true', 'the category control is selected')
+  assert.match(result.probeSubscription.empty, /public model catalogue only/,
+    'the empty archive names the ingestion limitation')
+  assert.doesNotMatch(result.probeSubscription.empty, /No updates match/,
+    'an unsupported category is never reported as an empty result set')
+})
+
 test('a headline opens in the archive with the event it names actually visible', {
   skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
 }, async () => {
@@ -450,6 +468,37 @@ test('a headline opens in the archive with the event it names actually visible',
   assert.deepEqual(probe.groups.includes(probe.model), true,
     `the clicked event is visible after the link: ${JSON.stringify(probe.groups)}`)
   assert.equal(probe.empty, '', 'the archive is not empty after the link')
+  // …and it lands on the RECORD. A model can hold an older cut and a newer
+  // rise; searching the model alone would open the newest and leave the story's
+  // own event inside a collapsed panel.
+  assert.equal(probe.focus?.found, true,
+    `the story's own event is marked: ${JSON.stringify(probe.focus)}`)
+  assert.equal(probe.focus.panelOpen, true, 'its evidence panel is open, not just present')
+  assert.equal(probe.focus.insideGroup, probe.model, 'the mark belongs to the clicked model')
+  assert.ok(probe.focus.kind === 'event' ? probe.focus.event : probe.focus.offerModel,
+    `the marked row identifies the record: ${JSON.stringify(probe.focus)}`)
+})
+
+test('a merged story lists both source records, not just the one its id resolved to', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // The `evidence` fixture pairs a local and a publish-side record for one
+  // change: same transition, same source URL, same effective date, different
+  // ids and timestamps. That is ONE event with TWO sources, so Details must
+  // render both — resolving the id to a single record would silently drop the
+  // other source's provenance, timestamps and tier evidence.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=evmerged__foryou__380__dark__en&probe=storyrecords`)).cases[0]
+  const stories = result?.probeStoryRecords || []
+  assert.ok(stories.length, 'the probe opened at least one Details panel')
+  const merged = stories.find(story => story.records.includes('evidence-hist-local-1')
+    && story.records.includes('evidence-hist-central-1'))
+  assert.ok(merged, `both sources of the merged event are listed: ${JSON.stringify(stories)}`)
+  assert.equal(new Set(merged.records).size, merged.records.length,
+    'no record is listed twice')
+  // Every listed record is a real record id, never an index or a placeholder.
+  for (const id of merged.records) assert.ok(id && id.length > 3, `record id present: ${id}`)
 })
 
 test('a published briefing renders its own evidence when no archive record joins', {

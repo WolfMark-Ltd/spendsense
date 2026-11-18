@@ -35,7 +35,7 @@ is `price_mixed` even though its v1 category follows the input+output total.
 | `event_type` | Evidence required | Headline shape |
 | --- | --- | --- |
 | `price_reduction` / `price_increase` | Both rate blocks published; the dominant rate's own percentage | "wafer.ai cuts GLM-5.2 input by 86.4% ($1.4 → $0.19 per 1M tokens)" |
-| `price_mixed` | Rates moved in both directions | "opencheap changes kimi-k3 in both directions (output raised, input cut)" |
+| `price_mixed` | Rates measured moving in both directions (`magnitude.direction == "mixed"`), not merely categorised | "opencheap changes kimi-k3 in both directions (output raised, input cut)" |
 | `new_to_catalogue` | A model id absent from the previous snapshot | "lowrouter starts listing … (new catalogue entry; no launch claim)" |
 | `newly_available` | The same model id already listed by another provider in the same observation | "… now also lists … (already listed by N other provider(s))" |
 | `provider_listed` | A provider absent from the previous snapshot | Never headlined; counted and kept in All Updates |
@@ -154,10 +154,15 @@ operational and review burden is not.
 ## Decisions needing the owner's sign-off
 
 1. **Materiality thresholds.** `MIN_ABS_PCT = 2.0` and `MIN_ABS_DELTA = $0.005
-   per 1M tokens` decide what earns a headline. Both are named constants in
-   `news_briefing.py`. On the measured feed 49 of 57 price events qualify,
-   forming 44 family groups of which 8 per section are shown; the 8 events that
-   do not qualify stay in All Updates and in the counts.
+   per 1M tokens` decide what earns a headline, and a percentage move must clear
+   **both**: the relative change alone let a 1 850% move on a sub-cent cache rate
+   outrank a real input-price change. A zero-baseline move has no percentage, so
+   its dollar delta carries the whole test. Both are named constants in
+   `news_briefing.py`, mirrored in the Desktop port. On the live feed measured at
+   this head (200 items, 151 price events) 111 price groups qualify — 67
+   reductions, 32 increases, 12 mixed — against 117 under the percentage-only
+   rule, so the absolute floor removed 6 headline candidates; 8 per section are
+   shown and everything else stays in All Updates and in the counts.
 2. **Section caps.** Eight entries per section, eight sections.
 3. **`category` for removals.** Removals are published in `briefing.sections`
    only, with `event_type`, because the v1 `category` enum has no honest value
@@ -210,7 +215,17 @@ calls a model or transmits usage.
 - Localise `title_code`, `headline_code` and `headline_params`; treat
   `headline` as the English fallback, exactly like `summary_code`/`summary`.
 - Use `variants[]` for the per-provider rows under a family banner, and
-  `event_ids` to join back to the full event in All Updates.
+  `event_ids` to join back to the full event in All Updates. Join through the
+  archive's own grouped events, not the raw feed records: a merged local and
+  publish-side record is one event with `merged_sources`, and resolving an id
+  against the raw list alone drops the other source's provenance, timestamps and
+  tier evidence. A variant with no joinable record keeps its published evidence
+  rather than losing it.
+- "Open in All Updates" must land on the **event**, not the model: clear the
+  category and date filters, search the model, open the containing offer's panel
+  and mark the row whose id the story names (`data-news-focus`). A model with an
+  older cut and a newer rise would otherwise open on the newest record and leave
+  the story's own event inside a collapsed panel.
 - Honour `briefing.unsupported` — say "removal detection is not available"
   rather than showing an empty section, and name the missing plan-event source
   instead of reporting an empty Subscription Updates filter (F94).

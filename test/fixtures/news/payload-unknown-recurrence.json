@@ -53,6 +53,7 @@
               },
               "magnitude": {
                 "comparable_rates": 2,
+                "direction": "down",
                 "dominant_pct": -25.0,
                 "max_abs_delta": 0.5,
                 "max_abs_pct": 25.0,
@@ -135,6 +136,7 @@
               },
               "magnitude": {
                 "comparable_rates": 2,
+                "direction": "up",
                 "dominant_pct": 200.0,
                 "max_abs_delta": 2.0,
                 "max_abs_pct": 200.0,
@@ -219,6 +221,7 @@
               },
               "magnitude": {
                 "comparable_rates": 0,
+                "direction": "unknown",
                 "rate": "",
                 "zero_baseline": false
               },

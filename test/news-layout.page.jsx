@@ -217,6 +217,19 @@ const FIXTURES = {
   stale: VARIANTS.stale,
   nosignals: VARIANTS.nosignals,
   evidence: EVIDENCE,
+  // Page-local variant (never in the grid matrix): the evidence pairs marked
+  // relevant, so the headline surface renders the MERGED local/publish-side
+  // event — one change, two source records — and Details can be checked for
+  // both.
+  evmerged: {
+    ...EVIDENCE,
+    local: { ...EVIDENCE.local,
+      items: EVIDENCE.local.items.map(item => ({ ...item,
+        relevance: { relevant: true, reasons: [] } })) },
+    central: { ...EVIDENCE.central,
+      items: EVIDENCE.central.items.map(item => ({ ...item,
+        relevance: { relevant: true, reasons: [] } })) },
+  },
   // Page-local variant (never in the grid matrix): the same verified events
   // with no plan/membership announcement, so the Subscription Updates filter
   // exercises the source-limitation path instead of an empty-result message.
@@ -525,7 +538,58 @@ async function probeStory(pane) {
       .map(group => group.getAttribute('data-news-group')),
     empty: pane.querySelector('.wm-empty')?.textContent?.trim() || '',
     storyStillPresent: !!pane.querySelector('[data-news-briefing]'),
+    storyIds: [...story.querySelectorAll('[data-news-story-record]')]
+      .map(row => row.getAttribute('data-news-story-record')),
+    historyIds: [...pane.querySelectorAll('[data-news-history] li[data-news-event]')]
+      .slice(0, 12).map(row => row.getAttribute('data-news-event')),
+    historyLists: pane.querySelectorAll('[data-news-history]').length,
+    eventRows: pane.querySelectorAll('[data-news-event]').length,
+    openPanels: [...pane.querySelectorAll('[data-news-details-panel]')]
+      .filter(panel => !panel.hasAttribute('hidden')).length,
+    // The link promises the EVENT, not its model: a marked row must exist, it
+    // must be inside a panel that is actually open, and it must name the story's
+    // own record rather than the model's newest one.
+    focus: (() => {
+      const row = pane.querySelector('[data-news-focus="true"]')
+      if (!row) return { found: false }
+      const panel = row.closest('[data-news-details-panel]')
+        || row.querySelector('[data-news-details-panel]')
+      return {
+        found: true,
+        kind: row.hasAttribute('data-news-event') ? 'event' : 'offer',
+        event: row.getAttribute('data-news-event') || '',
+        offerModel: row.getAttribute('data-news-model') || '',
+        panelOpen: !!panel && !panel.hasAttribute('hidden'),
+        insideGroup: row.closest('[data-news-group]')?.getAttribute('data-news-group') || '',
+      }
+    })(),
   }
+}
+
+/**
+ * WP22: what a story's Details panel lists as its evidence. A merged local and
+ * publish-side record is ONE event with TWO sources, and both must be readable
+ * — dropping one loses that source's provenance, timestamps and tier evidence.
+ */
+async function probeStoryRecords(pane) {
+  const stories = [...pane.querySelectorAll('[data-news-story]')].slice(0, 6)
+  const out = []
+  for (const story of stories) {
+    const toggle = story.querySelector('[data-news-story-details]')
+    if (!toggle) continue
+    if (toggle.getAttribute('aria-expanded') !== 'true') {
+      toggle.click()
+      await tick(120)
+    }
+    out.push({
+      model: story.getAttribute('data-news-story-model') || '',
+      records: [...story.querySelectorAll('[data-news-story-record]')]
+        .map(row => row.getAttribute('data-news-story-record')),
+      variants: [...story.querySelectorAll('[data-news-story-variant-record]')]
+        .map(row => row.getAttribute('data-news-story-variant-record')),
+    })
+  }
+  return out
 }
 
 /**
@@ -1130,6 +1194,7 @@ async function measureCase(c) {
   else if (PROBE) result.probe = { skipped: 'candidate DOM not detected ([data-news-group] absent)' }
   if (params.get('probe') === 'subscription') result.probeSubscription = await probeSubscription(pane)
   if (params.get('probe') === 'story') result.probeStory = await probeStory(pane)
+  if (params.get('probe') === 'storyrecords') result.probeStoryRecords = await probeStoryRecords(pane)
   return result
 }
 

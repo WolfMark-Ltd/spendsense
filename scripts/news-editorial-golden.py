@@ -64,6 +64,7 @@ def main() -> int:
                             "dominant_pct": entry.get("magnitude", {}).get("dominant_pct"),
                             "max_abs_delta": entry.get("magnitude", {}).get("max_abs_delta"),
                             "rate": entry.get("magnitude", {}).get("rate"),
+                            "direction": entry.get("magnitude", {}).get("direction"),
                             "zero_baseline": entry.get("magnitude", {}).get("zero_baseline"),
                         },
                         "variants": [

@@ -564,3 +564,77 @@ test('headlines localise from codes and keep the verified numbers verbatim', () 
     'Published sentence')
   assert.equal(S.newsHeadlineText({}, en), 'No verified headline for this event.')
 })
+
+// --- review round 3: instants, rate text, both floors -------------------------
+
+test('an offsetless observation is read as UTC, exactly as the publisher reads it', () => {
+  assert.equal(S.newsInstant('2026-11-10T11:30:00'), Date.parse('2026-11-10T11:30:00Z'))
+  assert.equal(S.newsInstant('2026-11-10 11:30:00'), Date.parse('2026-11-10T11:30:00Z'))
+  assert.equal(S.newsInstant('2026-11-10T11:30:00Z'), Date.parse('2026-11-10T11:30:00Z'))
+  assert.equal(S.newsInstant('2026-11-10T11:30:00+02:00'), Date.parse('2026-11-10T09:30:00Z'))
+  assert.equal(S.newsInstant(''), null)
+  assert.equal(S.newsInstant('not-a-date'), null)
+})
+
+test('a host west of UTC still judges the window by UTC instants', () => {
+  const original = process.env.TZ
+  process.env.TZ = 'America/New_York'
+  try {
+    // The host really did change what a bare Date.parse would do with it…
+    assert.notEqual(Date.parse('2026-11-10T11:30:00'), Date.parse('2026-11-10T11:30:00Z'))
+    // …so an observation an hour BEFORE publication stays inside the window,
+    // rather than being rejected as future because the host read it as 16:30Z.
+    assert.equal(S.newsWithinWindow('2026-11-10T11:30:00', '2026-11-10T12:00:00Z', 90), true)
+    assert.equal(S.newsWithinWindow('2026-11-10T13:30:00', '2026-11-10T12:00:00Z', 90), false,
+      'a genuinely future observation is still rejected')
+  } finally {
+    if (original === undefined) delete process.env.TZ
+    else process.env.TZ = original
+  }
+})
+
+test('a positive rate is never printed as free', () => {
+  assert.equal(S.newsRateText(0), '$0', 'an actual zero stays $0')
+  assert.equal(S.newsRateText(0.00000025), '$0.00000025')
+  assert.equal(S.newsRateText(1.25), '$1.25')
+  assert.equal(S.newsRateText(0.0001), '$0.0001')
+  assert.equal(S.newsRateText(null), '—')
+})
+
+test('a mixed headline needs both directions measured, not merely categorised', () => {
+  const onlyUp = item({ id: 'mx-1', event_type: 'price_mixed',
+    previous: { input: 1 }, current: { input: 2 } })
+  const briefing = S.newsBuildBriefing([onlyUp], { generatedAt: '2026-11-10T00:00:00Z' })
+  assert.equal(briefing.sections.find(s => s.id === 'mixed_price_changes').total, 0,
+    'nothing fell, so nothing is mixed')
+  assert.equal(briefing.counts.price_mixed, 1, 'the event is still counted')
+  const bothWays = item({ id: 'mx-2', event_type: 'price_mixed',
+    previous: { input: 1, output: 10 }, current: { input: 2, output: 5 } })
+  assert.equal(S.newsBuildBriefing([bothWays],
+    { generatedAt: '2026-11-10T00:00:00Z' }).sections
+    .find(s => s.id === 'mixed_price_changes').total, 1)
+})
+
+test('both floors apply: a huge percentage on a sub-cent rate is never headlined', () => {
+  const tiny = item({ id: 'mz-1', event_type: 'price_increase',
+    previous: { cache_read: 0.0001 }, current: { cache_read: 0.00195 } })
+  const briefing = S.newsBuildBriefing([tiny], { generatedAt: '2026-11-10T00:00:00Z' })
+  assert.equal(briefing.sections.find(s => s.id === 'biggest_increases').total, 0,
+    '1 850% of a sub-cent rate is not news')
+  assert.equal(briefing.counts.price_increase, 1, 'but it is still counted, never hidden')
+  const real = item({ id: 'mz-2', event_type: 'price_increase',
+    previous: { input: 1 }, current: { input: 3 } })
+  assert.equal(S.newsBuildBriefing([real], { generatedAt: '2026-11-10T00:00:00Z' }).sections
+    .find(s => s.id === 'biggest_increases').total, 1)
+})
+
+test('removal groups order by the instant, not by the text of the stamp', () => {
+  const earlier = item({ id: 'rm-1', event_type: 'removed_from_provider', provider: 'acme',
+    model: 'acme-old', observed_at: '2026-11-09T23:30:00Z' })
+  // Textually "2026-11-10T00:30:00+02:00" sorts last, but it is 22:30Z — older.
+  const older = item({ id: 'rm-2', event_type: 'removed_from_provider', provider: 'acme',
+    model: 'acme-older', observed_at: '2026-11-10T00:30:00+02:00' })
+  const rows = S.newsBuildBriefing([older, earlier],
+    { generatedAt: '2026-11-10T12:00:00Z' }).sections.find(s => s.id === 'removals').entries
+  assert.deepEqual(rows.map(row => row.model), ['acme-old', 'acme-older'])
+})
