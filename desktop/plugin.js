@@ -9585,8 +9585,8 @@ const REPORTS_CSS = `
   padding:12px;border:1px solid var(--ui-stroke-secondary);border-inline-start:3px solid var(--wm-digest-accent);
   border-radius:8px;background:var(--ui-fill-primary)}
 .wm-digest-section[data-section="models"],.wm-digest-section[data-section="allowances"]{--wm-digest-accent:var(--ui-success)}
-.wm-digest-section[data-section="value"],.wm-digest-section[data-section="spending"]{--wm-digest-accent:var(--ui-warning)}
-.wm-digest-section[data-section="coverage"]{--wm-digest-accent:var(--ui-error)}
+.wm-digest-section[data-section="value"],.wm-digest-section[data-section="spending"]{--wm-digest-accent:var(--ui-warning,var(--ui-accent))}
+.wm-digest-section[data-section="coverage"]{--wm-digest-accent:var(--ui-error,var(--ui-accent))}
 .wm-digest-section[data-section="fees"],.wm-digest-section[data-section="methodology"]{--wm-digest-accent:var(--ui-text-tertiary)}
 .wm-digest-section-header{display:flex;align-items:center;gap:8px;min-width:0}
 .wm-digest-section h3{font-size:13px;font-weight:650;line-height:1.3;margin:0;overflow-wrap:anywhere}
