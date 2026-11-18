@@ -11160,15 +11160,30 @@ function newsEditorialGroup(entries) {
   return grouped
 }
 
-/** Materiality gate: a headline needs a real percentage and a real USD move. */
+/**
+ * Materiality gate. A ranked price headline needs a MEASURED move: a
+ * percentage that clears the floor, or — for a real move from a zero baseline,
+ * which has no percentage — a dollar delta that clears the absolute floor. A
+ * price event whose two sides share no comparable rate has measured nothing
+ * and is never headlined, however it was categorised.
+ */
 function newsEditorialMaterial(entry, minPct = NEWS_EDITORIAL_MIN_PCT,
                                minDelta = NEWS_EDITORIAL_MIN_DELTA) {
   const magnitude = entry?.magnitude || {}
-  const pct = magnitude.dominant_pct != null ? magnitude.dominant_pct : magnitude.max_abs_pct
   const delta = magnitude.max_abs_delta
-  const pctOk = magnitude.zero_baseline === true || pct == null || Math.abs(pct) >= minPct
-  const deltaOk = delta == null || delta >= minDelta
-  return pctOk && deltaOk
+  const deltaOk = delta != null && delta >= minDelta
+  if (entry?.event_type === 'price_reduction' || entry?.event_type === 'price_increase') {
+    if (magnitude.zero_baseline === true) return deltaOk
+    const pct = magnitude.dominant_pct
+    if (pct == null) return false
+    if (Math.abs(pct) < minPct) return false
+    return entry.event_type === 'price_reduction' ? pct < 0 : pct > 0
+  }
+  if (entry?.event_type === 'price_mixed') {
+    const pct = magnitude.max_abs_pct
+    return pct != null && Math.abs(pct) >= minPct && deltaOk
+  }
+  return true
 }
 
 /**
@@ -11224,8 +11239,12 @@ function newsBuildBriefing(items, {
     section('biggest_reductions', ranked('price_reduction')),
     section('biggest_increases', ranked('price_increase')),
     section('mixed_price_changes', ranked('price_mixed')),
-    section('new_models', byType(entries, 'new_to_catalogue')),
-    section('newly_available', byType(entries, 'newly_available')),
+    // A preview-labelled listing is a discovery, so it belongs to the preview
+    // section only — never there and in the regular listing sections too.
+    section('new_models', byType(entries, 'new_to_catalogue').filter(entry =>
+      !(entry.signals || []).includes('preview'))),
+    section('newly_available', byType(entries, 'newly_available').filter(entry =>
+      !(entry.signals || []).includes('preview'))),
     { id: 'removals', total: removalGroups.length, entries: removalGroups.slice(0, sectionLimit) },
     section('subscriptions', entries.filter(entry =>
       entry.event_type === 'new_plan' || entry.event_type === 'plan_change')),
@@ -11257,7 +11276,14 @@ function newsBuildBriefing(items, {
   }
 }
 
-/** True when `stamp` is inside the window ending at `generatedAt`. */
+/**
+ * True when `stamp` is inside the window ending at `generatedAt`.
+ *
+ * Both ends are enforced when the end is usable: a record observed *after*
+ * publication cannot be news, so it is rejected. A missing or unreadable stamp
+ * is kept — dropping evidence over a format is worse than showing an undated
+ * record — which is the rule the publisher's builder documents too.
+ */
 function newsWithinWindow(stamp, generatedAt, windowDays) {
   if (!generatedAt) return true
   const end = Date.parse(generatedAt)
@@ -11265,6 +11291,7 @@ function newsWithinWindow(stamp, generatedAt, windowDays) {
   if (!stamp) return true
   const when = Date.parse(stamp)
   if (!Number.isFinite(when)) return true
+  if (when > end) return false
   return when >= end - Math.max(0, windowDays) * 86_400_000
 }
 
@@ -11291,12 +11318,26 @@ function newsSanitiseBriefing(raw) {
     }
     return out
   }
+  // A published briefing is display data from another host: an evidence link
+  // may only be an http(s) URL, so a `javascript:` or `data:` scheme in
+  // `source_url` can never become an href.
+  const safeUrl = value => {
+    const raw = text(value, 500)
+    if (!raw) return ''
+    try {
+      const parsed = new URL(raw)
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? raw : ''
+    } catch {
+      return ''
+    }
+  }
   const cleanEntry = (entry, depth = 0) => {
     if (!entry || typeof entry !== 'object') return null
     const out = {}
     for (const key of ['event_type', 'headline_code', 'headline', 'provider', 'model',
-      'model_family', 'family_label', 'observed_at', 'effective_at', 'source_url',
+      'model_family', 'family_label', 'observed_at', 'effective_at',
       'confidence', 'provenance']) out[key] = text(entry[key], 500)
+    out.source_url = safeUrl(entry.source_url)
     if (!out.headline || !out.provider) return null
     for (const key of ['score', 'family_event_count']) {
       if (typeof entry[key] === 'number' && Number.isFinite(entry[key])) out[key] = entry[key]
@@ -11354,7 +11395,10 @@ function newsSanitiseBriefing(raw) {
 function newsBriefingFor(central, items) {
   const published = central && typeof central === 'object'
     ? newsSanitiseBriefing(central.briefing) : null
-  if (published) {
+  // A document whose sections all failed validation is not a briefing: it must
+  // not suppress the local headlines. A document with recognised sections that
+  // are legitimately empty is still the publisher's answer and is kept.
+  if (published && published.sections.length) {
     return { ...published, source: 'published', unavailable: [] }
   }
   const list = Array.isArray(items) ? items : []
@@ -11465,8 +11509,15 @@ function newsHeadlineText(entry, t) {
   const model = String(params.model || entry?.model || '')
   switch (code) {
     case 'news_head_single_rate': {
+      // A published headline is display data: an empty or malformed percentage
+      // must not become "by 0.0%", and a missing direction must not be
+      // defaulted to a rise. Anything unusable falls through to the headline
+      // the publisher actually wrote.
       const direction = String(params.direction || '')
-      const pct = Math.abs(Number(params.pct))
+      if (direction !== 'down' && direction !== 'up') break
+      const raw = params.pct
+      if (raw === '' || raw == null) break
+      const pct = Math.abs(Number(raw))
       if (!Number.isFinite(pct)) break
       return t('newsHeadSingleRate', provider, model,
         direction === 'down' ? t('newsHeadVerbCut') : t('newsHeadVerbRaise'),
@@ -11577,7 +11628,9 @@ function newsKind(entry, t) {
   }
 }
 
-const NEWS_STORY_PANEL_LIMIT = 6
+// One record per displayed variant must be reachable, and a variant row is
+// capped at NEWS_EDITORIAL_VARIANT_LIMIT, so the panel bound matches it.
+const NEWS_STORY_PANEL_LIMIT = 12
 
 /**
  * Evidence for a headline whose record is not in the archive's item list — a
@@ -11623,16 +11676,23 @@ function NewsStoryEntryEvidence({ entry, t }) {
  * claim was derived from. A group keeps its family banner and lists each
  * exact provider/model variant underneath; nothing is merged or averaged.
  */
-function NewsStory({ entry, t, itemsById, lead = false }) {
+function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
   const openDetails = useValue($newsDetailsOpen)
   const eventIds = Array.isArray(entry?.event_ids) ? entry.event_ids : []
-  const panelId = `wm-news-story-${encodeURIComponent(eventIds.join('|')
-    || `${entry?.provider || ''}:${entry?.model || ''}`)}`
+  // The panel id is scoped to the connection as well as the event: two profiles
+  // hosting the same story must never share, or inherit, an open panel.
+  const panelKey = String(eventIds.join('|')
+    || `${entry?.provider || ''}:${entry?.model || ''}`)
+  const panelId = `wm-news-story-${encodeURIComponent(JSON.stringify([String(connectionKey || ''), panelKey]))}`
   const open = openDetails.includes(panelId)
   const [kindClass, kindLabel] = newsKind(entry, t)
   const variants = Number(entry?.family_event_count) > 1 && Array.isArray(entry?.variants)
     ? entry.variants : []
-  const records = eventIds.slice(0, NEWS_STORY_PANEL_LIMIT)
+  // Every variant row on the card needs its own record in Details, not just the
+  // first few event ids the entry carries.
+  const recordIds = [...new Set([...eventIds,
+    ...variants.flatMap(variant => (Array.isArray(variant?.event_ids) ? variant.event_ids : []))])]
+  const records = recordIds.slice(0, NEWS_STORY_PANEL_LIMIT)
     .map(id => itemsById?.get ? itemsById.get(id) : null).filter(Boolean)
   const confidence = String(entry?.confidence || '')
   const confidenceKey = confidence === 'verified' ? 'newsConfidenceVerified'
@@ -11676,8 +11736,12 @@ function NewsStory({ entry, t, itemsById, lead = false }) {
       jsx('button', { type: 'button', className: 'wm-news-details', 'data-news-story-details': 'true',
         'aria-expanded': open, 'aria-controls': panelId,
         onClick: () => newsToggleDetails(panelId), children: t('newsStoryDetails') }),
-      jsx('button', { type: 'button', className: 'wm-news-clear', 'data-news-story-archive': 'true',
-        onClick: openArchive, children: t('newsStoryOpenInArchive') }),
+      // Without a joinable record the archive cannot contain this story (a
+      // history-confirmed removal, for example), so the action is not offered.
+      records.length
+        ? jsx('button', { type: 'button', className: 'wm-news-clear', 'data-news-story-archive': 'true',
+            onClick: openArchive, children: t('newsStoryOpenInArchive') })
+        : null,
     ] }),
     jsxs('div', { id: panelId, className: 'wm-news-detailspanel', 'data-news-story-panel': 'true',
       hidden: !open, children: [
@@ -11716,7 +11780,7 @@ function NewsStory({ entry, t, itemsById, lead = false }) {
  * behind one disclosure. Anything the section cap trimmed stays in All
  * Updates, and the note says so rather than implying the list is complete.
  */
-function NewsHeadlineSection({ section, t, itemsById, shown = 3, leadFirst = false }) {
+function NewsHeadlineSection({ section, t, itemsById, connectionKey = '', shown = 3, leadFirst = false }) {
   const rows = Array.isArray(section?.entries) ? section.entries : []
   if (!rows.length) return null
   const head = rows.slice(0, shown)
@@ -11729,13 +11793,13 @@ function NewsHeadlineSection({ section, t, itemsById, shown = 3, leadFirst = fal
         ? jsx('span', { className: 'wm-news-briefing-count', children: String(section.total) }) : null,
     ] }),
     jsx('div', { className: 'wm-news-briefing-list', children: head.map((entry, index) =>
-      jsx(NewsStory, { entry, t, itemsById, lead: leadFirst && index === 0 },
+      jsx(NewsStory, { entry, t, itemsById, connectionKey, lead: leadFirst && index === 0 },
         `s-${entry?.event_ids?.[0] || entry?.model || index}`)) }),
     rest.length
       ? jsxs('details', { className: 'wm-news-briefing-more', children: [
           jsx('summary', { children: t('newsSectionMore', rest.length) }),
           jsx('div', { className: 'wm-news-briefing-list', children: rest.map((entry, index) =>
-            jsx(NewsStory, { entry, t, itemsById },
+            jsx(NewsStory, { entry, t, itemsById, connectionKey },
               `m-${entry?.event_ids?.[0] || entry?.model || index}`)) }),
         ] })
       : null,
@@ -11755,7 +11819,7 @@ const NEWS_UNSUPPORTED_KEYS = {
  * section the source cannot supply. It is additive — the full archive below is
  * untouched.
  */
-function NewsBriefing({ briefing, t, itemsById }) {
+function NewsBriefing({ briefing, t, itemsById, connectionKey = '' }) {
   const sections = NEWS_EDITORIAL_SECTIONS
     .map(([id]) => (briefing?.sections || []).find(section => section?.id === id))
     .filter(section => Array.isArray(section?.entries) && section.entries.length)
@@ -11770,7 +11834,7 @@ function NewsBriefing({ briefing, t, itemsById }) {
       jsx('p', { className: 'wm-news-note', children: t('newsBriefingNote') }),
     ] }),
     sections.map((section, index) => jsx(NewsHeadlineSection, {
-      section, t, itemsById, leadFirst: index === 0,
+      section, t, itemsById, connectionKey, leadFirst: index === 0,
       // The lead section earns three stories, the rest two: a front page, not
       // a second archive. Everything not shown stays in All Updates.
       shown: index === 0 ? 3 : 2,
@@ -12494,9 +12558,21 @@ function NewsModelGroup({ group, impacts, t, matchedOffers = null, connectionKey
   // (newsFocusGroup); All Updates — and any category-filtered view, where the
   // matched indices address the original list — keeps every offer inline.
   const matchSet = Array.isArray(matchedOffers) ? new Set(matchedOffers) : null
-  const primary = matchSet ? group.offers
-    : (Array.isArray(group.focusOffers) ? group.focusOffers : group.offers)
-  const others = matchSet ? [] : (Array.isArray(group.otherOffers) ? group.otherOffers : [])
+  // For You keeps its narrowing even under a category filter; the category
+  // only decides which rows are marked as matching. Without a focus split (All
+  // Updates) every offer stays inline in its original order, because the
+  // matched indices address that list.
+  const focused = Array.isArray(group.focusOffers) ? group.focusOffers : null
+  const primary = focused || group.offers
+  const others = focused && Array.isArray(group.otherOffers) ? group.otherOffers : []
+  // `matchedOffers` are indices into the group's own offer list, so the mark
+  // is resolved by identity — a narrowed row list keeps its index only in the
+  // original list, never in the rendered subset.
+  const matchedOf = offer => {
+    if (!matchSet) return false
+    const index = group.offers.indexOf(offer)
+    return index >= 0 && matchSet.has(index)
+  }
   const anyNew = primary.some(offer => offer.news_class === 'new_listing')
   const reasonLabels = newsGroupReasons(group, t)
   const reasons = reasonLabels.length ? reasonLabels.join(' · ') : null
@@ -12522,7 +12598,7 @@ function NewsModelGroup({ group, impacts, t, matchedOffers = null, connectionKey
         children: t('newsClassNewListing') }) : null,
     ] }),
     reasons ? jsx('p', { className: 'wm-news-reasons', children: reasons }) : null,
-    primary.map((offer, index) => offerRow(offer, matchSet ? matchSet.has(index) : false)),
+    primary.map(offer => offerRow(offer, matchedOf(offer))),
     others.length
       ? jsxs('details', { className: 'wm-news-others', children: [
           jsx('summary', { children: t('newsOtherProviders', others.length) }),
@@ -12634,7 +12710,14 @@ function NewsPage() {
   // local document exists so the headline surface never waits for an ops
   // deploy. `itemsById` is the join back from a headline to its evidence.
   const itemsById = new Map()
-  for (const item of combined) if (item?.id) itemsById.set(String(item.id), item)
+  for (const item of combined) {
+    // A merged event is reachable by its own id AND by every original record it
+    // absorbed, so a headline that cites either id still joins to its evidence.
+    for (const record of newsEvidenceRecords(item)) {
+      if (record?.id) itemsById.set(String(record.id), item)
+    }
+    if (item?.id) itemsById.set(String(item.id), item)
+  }
   const briefing = newsBriefingFor(central, newsBriefingItems(grouped, combined))
   // A category filter narrows the headlines to the sections it can honestly
   // describe, so choosing "Increases" never leaves a price-cut lead above it.
@@ -12643,9 +12726,13 @@ function NewsPage() {
     total + (Array.isArray(section.entries) ? section.entries.length : 0), 0)
   const unsupportedReasons = new Set((briefing.unsupported || [])
     .map(item => item?.reason_code).filter(Boolean))
-  const archiveTotal = Number(briefing.all_updates?.total) || combined.length
-  const archiveOldest = String(briefing.all_updates?.oldest || '').slice(0, 10)
-  const archiveNewest = String(briefing.all_updates?.newest || '').slice(0, 10)
+  // The window note describes the archive THIS page holds. A published
+  // briefing's own coverage figure is the publisher's, and quoting it here
+  // would claim a reach the client cannot search.
+  const archiveStamps = combined.map(item => String(item?.observed_at || '')).filter(Boolean).sort()
+  const archiveTotal = combined.length
+  const archiveOldest = (archiveStamps[0] || '').slice(0, 10)
+  const archiveNewest = (archiveStamps[archiveStamps.length - 1] || '').slice(0, 10)
   const forYouVisible = showAll
     ? forYouEntries : forYouEntries.slice(0, forYouPrefixCount)
   // For You narrows each model group to the offers that actually matched this
@@ -12705,7 +12792,8 @@ function NewsPage() {
               // The flat pool can disagree with the filtered For You list (a
               // legacy category vs the latest offer's class); the message is
               // then chosen from the actually filtered entries, never blank.
-              children: jsx('p', { children: emptyText || t('newsNoResults') }) }))
+              children: jsx('p', { children: planUnsupported ? t('newsUnsupportedNoPlanEvents')
+                : (emptyText || t('newsNoResults')) }) }))
       : filteredEmpty && hasFilters
         ? jsxs('div', { className: 'wm-empty', role: 'status', children: [
             jsx('p', { children: planUnsupported ? t('newsUnsupportedNoPlanEvents') : t('newsNoResults') }),
@@ -12801,7 +12889,7 @@ function NewsPage() {
       // The publication: headlines first on For You, the complete archive below.
       // All Updates stays a pure archive, so switching scope never mixes the two.
       scope === 'foryou' && headlineCount
-        ? jsx(NewsBriefing, { briefing: headlineBriefing, t, itemsById }, 'news-briefing')
+        ? jsx(NewsBriefing, { briefing: headlineBriefing, t, itemsById, connectionKey: identity }, 'news-briefing')
         : null,
       // The archive is a rolling window, not a history: say how far back the
       // published feed actually reaches so a missing older event is readable.

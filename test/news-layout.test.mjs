@@ -473,6 +473,10 @@ test('a published briefing renders its own evidence when no archive record joins
   assert.match(evidence.text, /2026-11-09/, 'the published timestamp survives')
   assert.ok(evidence.hrefs.includes('https://models.dev/removals/rm-acme-alpha'),
     `the published source link survives: ${JSON.stringify(evidence.hrefs)}`)
+  // The archive cannot contain an event it never held, so that story offers no
+  // archive action while the joinable one still does.
+  assert.equal(briefing.archiveActions, briefing.stories - 1,
+    `only the joinable story links to the archive: ${briefing.archiveActions}/${briefing.stories}`)
 })
 
 test('NEWS_LAYOUT_SHOTS containment rejects paths that resolve inside the repository', () => {

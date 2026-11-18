@@ -127,6 +127,44 @@ class IdentityTests(unittest.TestCase):
         self.assertFalse(nb.preview_signal("previousthing"))
 
 
+class MaterialityTests(unittest.TestCase):
+    def test_a_price_event_with_no_comparable_rate_is_never_headlined(self):
+        item = {"id": "md-1", "provider": "acme", "model": "m1",
+                "category": "price_increase",
+                "previous": {"input": 2.0}, "current": {"output": 4.0},
+                "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([item], generated_at="2026-11-10T12:00:00Z")
+        section = {row["id"]: row for row in briefing["sections"]}["biggest_increases"]
+        self.assertEqual(section["total"], 0)
+        self.assertEqual(briefing["counts"]["events"], 1)
+        self.assertEqual(briefing["counts"]["price_increase"], 1)
+
+    def test_a_move_from_zero_is_judged_on_its_dollar_delta(self):
+        item = {"id": "md-2", "provider": "acme", "model": "m1",
+                "category": "price_increase",
+                "previous": {"input": 0.0}, "current": {"input": 0.25},
+                "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([item], generated_at="2026-11-10T12:00:00Z")
+        section = {row["id"]: row for row in briefing["sections"]}["biggest_increases"]
+        self.assertEqual(section["total"], 1)
+
+    def test_a_preview_listing_appears_in_one_section_only(self):
+        item = {"id": "md-3", "provider": "acme", "model": "acme-x-preview",
+                "category": "new_model", "current": {"input": 1.0, "output": 2.0},
+                "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([item], generated_at="2026-11-10T12:00:00Z")
+        hits = [section["id"] for section in briefing["sections"]
+                if any("md-3" in entry.get("event_ids", []) for entry in section["entries"])]
+        self.assertEqual(hits, ["preview_models"])
+
+    def test_the_removal_window_rejects_a_record_dated_after_publication(self):
+        self.assertTrue(nb._within_window("2026-11-09T00:00:00Z", "2026-11-10T12:00:00Z", 90))
+        self.assertFalse(nb._within_window("2026-11-11T00:00:00Z", "2026-11-10T12:00:00Z", 90))
+        self.assertFalse(nb._within_window("2026-01-01T00:00:00Z", "2026-11-10T12:00:00Z", 90))
+        # Undated evidence is kept: a format is not grounds to drop a record.
+        self.assertTrue(nb._within_window("", "2026-11-10T12:00:00Z", 90))
+
+
 class ClassificationTests(unittest.TestCase):
     def test_provider_listing_is_not_a_model_event(self):
         item = {"id": "md-1", "category": "new_model", "provider": "acme", "model": ""}

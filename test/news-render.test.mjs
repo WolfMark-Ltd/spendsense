@@ -499,6 +499,32 @@ const hookGroup = () => {
   ]).groups[0]
 }
 
+test('For You keeps the narrowed offer list and the other-provider disclosure under a category', async () => {
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  // One model, two providers: only the configured one matches this profile.
+  const [group] = T.newsGroupModels([
+    groupItem({ id: 'mine-1', provider: 'Acme', relevance: { relevant: true, reasons: ['configured_provider'] } }),
+    groupItem({ id: 'other-1', provider: 'Other', relevance: { relevant: false, reasons: [] } }),
+  ]).groups
+  const focused = T.newsFocusGroup(group)
+  // The category filter supplies matched indices into the group's own list.
+  const matchedIndex = focused.offers.findIndex(offer => offer.provider === 'Acme')
+  const view = await renderNode(React.createElement(T.NewsModelGroup, {
+    group: focused, impacts: {}, t: translator('en'), matchedOffers: [matchedIndex] }), 'en')
+  const card = view.container.querySelector('article[data-news-group]')
+  const inline = [...card.querySelectorAll('[data-news-offer]')]
+    .filter(offer => !offer.closest('details'))
+  assert.deepEqual(inline.map(offer => offer.getAttribute('data-news-provider')), ['Acme'],
+    'the matched provider is the inline row')
+  assert.equal(inline[0].getAttribute('data-news-match'), 'true',
+    'the category still marks the row it matched')
+  const others = card.querySelector('details.wm-news-others')
+  assert.ok(others, 'the other provider stays available behind one disclosure')
+  const disclosed = [...others.querySelectorAll('[data-news-offer]')]
+    .map(offer => offer.getAttribute('data-news-provider'))
+  assert.deepEqual(disclosed, ['Other'], 'and it is not deleted from the card')
+})
+
 test('the group and offer markup carries the full DOM hook contract', async () => {
   await React.act(async () => { T.$newsDetailsOpen.set([]) })
   const group = hookGroup()

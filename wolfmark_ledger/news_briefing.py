@@ -650,16 +650,20 @@ def _section(section_id: str, entries: list[dict[str, Any]],
 def _within_window(stamp: str, generated_at: str, window_days: int) -> bool:
     """True when ``stamp`` is inside the news window ending at ``generated_at``.
 
-    An unparseable or absent stamp is kept: dropping evidence because of a
-    format is worse than showing an undated record.
+    Both ends are enforced when the end is usable: a record observed *after*
+    publication cannot be news. An unparseable or absent stamp is kept:
+    dropping evidence because of a format is worse than showing an undated
+    record.
     """
     cutoff: Optional[datetime] = None
+    end: Optional[datetime] = None
     if generated_at:
         try:
-            cutoff = datetime.fromisoformat(generated_at) - timedelta(days=max(0, window_days))
+            end = datetime.fromisoformat(generated_at)
+            cutoff = end - timedelta(days=max(0, window_days))
         except ValueError:
-            cutoff = None
-    if cutoff is None:
+            cutoff, end = None, None
+    if cutoff is None or end is None:
         return True
     if cutoff.tzinfo is None:
         cutoff = cutoff.replace(tzinfo=timezone.utc)
@@ -671,6 +675,8 @@ def _within_window(stamp: str, generated_at: str, window_days: int) -> bool:
         return True
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
+    if moment > end:
+        return False
     return moment >= cutoff
 
 
@@ -753,15 +759,28 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
         counts[entry["event_type"]] = counts.get(entry["event_type"], 0) + 1
 
     def material(entry: Mapping[str, Any]) -> bool:
+        """A ranked price headline needs a MEASURED move.
+
+        A percentage must clear the floor; a move from a zero baseline has no
+        percentage, so its dollar delta must clear the absolute floor instead.
+        A price event whose two sides share no comparable rate has measured
+        nothing and is never headlined, however it was categorised.
+        """
         magnitude = entry["magnitude"]
-        pct = magnitude.get("dominant_pct")
-        if pct is None:
-            pct = magnitude.get("max_abs_pct")
         delta = magnitude.get("max_abs_delta")
-        pct_ok = (magnitude.get("zero_baseline") is True or pct is None
-                  or abs(pct) >= min_abs_pct)
-        delta_ok = delta is None or delta >= min_abs_delta
-        return pct_ok and delta_ok
+        delta_ok = delta is not None and delta >= min_abs_delta
+        event_type = entry["event_type"]
+        if event_type in ("price_reduction", "price_increase"):
+            if magnitude.get("zero_baseline") is True:
+                return delta_ok
+            pct = magnitude.get("dominant_pct")
+            if pct is None or abs(pct) < min_abs_pct:
+                return False
+            return pct < 0 if event_type == "price_reduction" else pct > 0
+        if event_type == "price_mixed":
+            pct = magnitude.get("max_abs_pct")
+            return pct is not None and abs(pct) >= min_abs_pct and delta_ok
+        return True
 
     def ranked(event_type: str) -> list[dict[str, Any]]:
         return [entry for entry in entries
@@ -802,11 +821,18 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
          "total": len(increases), "entries": increases[:section_limit]},
         {"id": "mixed_price_changes", "title_code": "news_section_mixed_price_changes",
          "total": len(mixed), "entries": mixed[:section_limit]},
+        # A preview-labelled listing is a discovery, so it belongs to the
+        # preview section only — never there and in the regular listing
+        # sections as well.
         _section("new_models",
-                 [entry for entry in entries if entry["event_type"] == "new_to_catalogue"],
+                 [entry for entry in entries
+                  if entry["event_type"] == "new_to_catalogue"
+                  and SIGNAL_PREVIEW not in entry.get("signals", ())],
                  limit=section_limit),
         _section("newly_available",
-                 [entry for entry in entries if entry["event_type"] == "newly_available"],
+                 [entry for entry in entries
+                  if entry["event_type"] == "newly_available"
+                  and SIGNAL_PREVIEW not in entry.get("signals", ())],
                  limit=section_limit),
         {"id": "removals", "title_code": "news_section_removals",
          "total": len(removal_groups), "entries": removal_groups[:section_limit]},

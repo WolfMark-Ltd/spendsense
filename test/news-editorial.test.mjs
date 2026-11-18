@@ -330,6 +330,99 @@ test('a missing grouped archive falls back to the supplied items', () => {
   }
 })
 
+test('a price event with no comparable rate is never headlined', () => {
+  // An old input rate against a new output rate measures nothing: both sides
+  // must publish the same rate type before a move can be claimed.
+  const unmeasured = item({
+    id: 'md-unmeasured', category: 'price_increase',
+    previous: { input: 2 }, current: { output: 4 },
+  })
+  const briefing = S.newsBuildBriefing([unmeasured], { generatedAt: GENERATED_AT })
+  assert.equal(briefing.counts.events, 1, 'the event is still counted')
+  assert.equal(briefing.counts.price_increase, 1, 'its category is unchanged')
+  assert.equal(briefing.sections.find(section => section.id === 'biggest_increases').total, 0,
+    'nothing is ranked without a measured move')
+  // The zero-baseline exception still works: a real move from $0 is a headline
+  // on its dollar delta alone.
+  const fromZero = item({
+    id: 'md-zero', category: 'price_increase',
+    previous: { input: 0 }, current: { input: 0.25 },
+  })
+  const ranked = S.newsBuildBriefing([fromZero], { generatedAt: GENERATED_AT })
+  assert.equal(ranked.sections.find(section => section.id === 'biggest_increases').total, 1)
+})
+
+test('a preview listing appears in exactly one headline section', () => {
+  const preview = item({
+    id: 'md-preview', category: 'new_model', provider: 'acme',
+    model: 'acme-x-preview', current: { input: 1, output: 2 },
+  })
+  const briefing = S.newsBuildBriefing([preview], { generatedAt: GENERATED_AT })
+  const hits = briefing.sections
+    .filter(section => section.entries.some(entry => entry.event_ids.includes('md-preview')))
+    .map(section => section.id)
+  assert.deepEqual(hits, ['preview_models'], 'one story, one section')
+})
+
+test('a published briefing whose sections all fail validation falls back locally', () => {
+  const broken = { version: 1, sections: [null, { id: '' }, 'nonsense'] }
+  const chosen = S.newsBriefingFor({ fetched_at: GENERATED_AT, briefing: broken }, ITEMS)
+  assert.equal(chosen.source, 'local')
+  assert.ok(chosen.sections.length > 0, 'the local headlines still render')
+  // A recognised section that is legitimately empty is the publisher's answer
+  // and is kept as published.
+  const quiet = { version: 1, sections: [{ id: 'biggest_reductions', total: 0, entries: [] }] }
+  assert.equal(S.newsBriefingFor({ briefing: quiet }, ITEMS).source, 'published')
+})
+
+test('a published evidence link is only kept when it is an http(s) URL', () => {
+  const entry = {
+    headline: 'acme no longer lists alpha', provider: 'acme', model: 'alpha',
+    event_ids: ['rm-1'],
+  }
+  const safe = S.newsSanitiseBriefing({ version: 1, sections: [{ id: 'removals',
+    entries: [{ ...entry, source_url: 'https://models.dev/removals/1' }] }] })
+  assert.equal(safe.sections[0].entries[0].source_url, 'https://models.dev/removals/1')
+  for (const hostile of ['javascript:alert(1)', 'data:text/html,<b>x</b>', 'not a url']) {
+    const unsafe = S.newsSanitiseBriefing({ version: 1, sections: [{ id: 'removals',
+      entries: [{ ...entry, source_url: hostile }] }] })
+    assert.equal(unsafe.sections[0].entries[0].source_url, '',
+      `an unusable evidence link is dropped: ${hostile}`)
+  }
+})
+
+test('an unusable price parameter falls back to the published headline', () => {
+  const en = (key, ...args) => {
+    const value = S.I18N.en[key]
+    return typeof value === 'function' ? value(...args) : value ?? key
+  }
+  const base = {
+    event_type: 'price_reduction',
+    headline_code: 'news_head_single_rate',
+    headline_params: { provider: 'acme', model: 'm1', rate: 'news_rate_input' },
+    headline: 'acme cuts m1 input ($1 → $0.5 per 1M tokens)',
+  }
+  for (const params of [{ pct: '', direction: 'down' }, { pct: 50 }, { pct: null, direction: 'down' },
+    { pct: 50, direction: 'sideways' }]) {
+    const text = S.newsHeadlineText({ ...base, headline_params: { ...base.headline_params, ...params } }, en)
+    assert.equal(text, base.headline, `falls back for ${JSON.stringify(params)}`)
+  }
+  // The valid shape still renders the template with its exact values.
+  const rendered = S.newsHeadlineText({ ...base, headline_params: { ...base.headline_params,
+    pct: -50, direction: 'down', before: '$1', after: '$0.5' } }, en)
+  assert.match(rendered, /cuts m1 input by 50\.0% \(\$1 → \$0\.5/)
+})
+
+test('the removal window rejects a record dated after publication', () => {
+  const end = '2026-11-10T12:00:00Z'
+  assert.equal(S.newsWithinWindow('2026-11-09T00:00:00Z', end, 90), true, 'inside the window')
+  assert.equal(S.newsWithinWindow('2026-11-11T00:00:00Z', end, 90), false, 'after publication')
+  assert.equal(S.newsWithinWindow('2026-01-01T00:00:00Z', end, 90), false, 'before the cutoff')
+  // Undated evidence is kept, never dropped over its format.
+  assert.equal(S.newsWithinWindow('', end, 90), true)
+  assert.equal(S.newsWithinWindow('not-a-date', end, 90), true)
+})
+
 // --- briefing source selection ------------------------------------------------
 
 test('a published briefing wins; a malformed one is ignored, never fatal', () => {

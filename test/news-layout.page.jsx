@@ -485,6 +485,8 @@ function briefingSummary(pane) {
       .map(el => el.textContent.trim()),
     limits: [...block.querySelectorAll('.wm-news-briefing-limits li')]
       .map(el => el.textContent.trim()),
+    // Only a story the archive can actually contain offers its archive action.
+    archiveActions: stories.filter(el => el.querySelector('[data-news-story-archive]')).length,
     // A headline with no joinable archive record must still show its published
     // evidence; capture both the text and the source links it carries.
     entryEvidence: [...block.querySelectorAll('[data-news-story-entry-evidence]')].map(el => ({
