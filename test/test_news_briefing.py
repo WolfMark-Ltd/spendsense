@@ -127,6 +127,54 @@ class IdentityTests(unittest.TestCase):
         self.assertFalse(nb.preview_signal("previousthing"))
 
 
+class RemovalWindowTests(unittest.TestCase):
+    """The removal window compares instants, so both ends must be comparable.
+
+    ``generated_at`` and a stored ``removed_at`` can arrive with different
+    timezone discipline — a publisher may write a naive ISO stamp while the
+    history sidecar carries an explicit offset. Normalising only one side turned
+    a dated removal into a TypeError, which is a crash in the publication path.
+    """
+
+    def brief(self, generated_at, removed_at):
+        removals = [{"provider": "acme", "model": "alpha", "removed_at": removed_at,
+                     "consecutive": 2}]
+        return nb.build_briefing([], generated_at=generated_at, removals=removals,
+                                 removal_tracking=True)
+
+    def removal_models(self, briefing):
+        section = next(row for row in briefing["sections"] if row["id"] == "removals")
+        return [entry["model"] for entry in section["entries"]]
+
+    def test_a_naive_generated_at_can_still_judge_an_aware_removal(self):
+        briefing = self.brief("2026-11-10T12:00:00", "2026-11-09T00:00:00Z")
+        self.assertEqual(self.removal_models(briefing), ["alpha"])
+
+    def test_an_aware_generated_at_can_still_judge_a_naive_removal(self):
+        briefing = self.brief("2026-11-10T12:00:00+00:00", "2026-11-09T00:00:00")
+        self.assertEqual(self.removal_models(briefing), ["alpha"])
+
+    def test_two_naive_stamps_are_compared_in_utc(self):
+        briefing = self.brief("2026-11-10T12:00:00", "2026-11-09T00:00:00")
+        self.assertEqual(self.removal_models(briefing), ["alpha"])
+
+    def test_a_naive_generated_at_still_rejects_a_future_removal(self):
+        for generated_at, removed_at in (
+            ("2026-11-10T12:00:00", "2026-11-11T00:00:00Z"),
+            ("2026-11-10T12:00:00+00:00", "2026-11-11T00:00:00"),
+            ("2026-11-10T12:00:00", "2026-11-11T00:00:00"),
+        ):
+            briefing = self.brief(generated_at, removed_at)
+            self.assertEqual(self.removal_models(briefing), [],
+                             f"a record observed after publication is not news: {generated_at}")
+
+    def test_an_undated_removal_is_still_kept(self):
+        for generated_at in ("2026-11-10T12:00:00", "2026-11-10T12:00:00+00:00"):
+            briefing = self.brief(generated_at, "")
+            self.assertEqual(self.removal_models(briefing), ["alpha"],
+                             "a format is not grounds to drop a confirmed removal")
+
+
 class MaterialityTests(unittest.TestCase):
     def test_a_price_event_with_no_comparable_rate_is_never_headlined(self):
         item = {"id": "md-1", "provider": "acme", "model": "m1",

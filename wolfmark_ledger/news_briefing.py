@@ -647,6 +647,19 @@ def _section(section_id: str, entries: list[dict[str, Any]],
     }
 
 
+def _utc(moment: datetime) -> datetime:
+    """Return ``moment`` in UTC, reading a timezone-less stamp as UTC.
+
+    Publishers are inconsistent about offsets — ``generated_at`` may be naive
+    while a stored record carries ``Z``, or the other way round. Comparing two
+    instants requires one discipline on both sides, so every parsed stamp goes
+    through this before any comparison.
+    """
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
 def _within_window(stamp: str, generated_at: str, window_days: int) -> bool:
     """True when ``stamp`` is inside the news window ending at ``generated_at``.
 
@@ -655,26 +668,23 @@ def _within_window(stamp: str, generated_at: str, window_days: int) -> bool:
     dropping evidence because of a format is worse than showing an undated
     record.
     """
-    cutoff: Optional[datetime] = None
     end: Optional[datetime] = None
     if generated_at:
         try:
-            end = datetime.fromisoformat(generated_at)
-            cutoff = end - timedelta(days=max(0, window_days))
+            # Normalised before deriving the cutoff, so both bounds share one
+            # timezone discipline whatever the caller wrote.
+            end = _utc(datetime.fromisoformat(generated_at))
         except ValueError:
-            cutoff, end = None, None
-    if cutoff is None or end is None:
+            end = None
+    if end is None:
         return True
-    if cutoff.tzinfo is None:
-        cutoff = cutoff.replace(tzinfo=timezone.utc)
+    cutoff = end - timedelta(days=max(0, window_days))
     if not stamp:
         return True
     try:
-        moment = datetime.fromisoformat(stamp)
+        moment = _utc(datetime.fromisoformat(stamp))
     except ValueError:
         return True
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=timezone.utc)
     if moment > end:
         return False
     return moment >= cutoff
