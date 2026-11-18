@@ -7211,7 +7211,7 @@ const MEMBERSHIP_CSS = `
 @keyframes wm-flash{0%{box-shadow:0 0 0 2px var(--wm-attention)}100%{box-shadow:0 0 0 0 transparent}}
 @media (prefers-reduced-motion:reduce){.wm-flash{animation:none}.wm-chev{transition:none}.wm-group > summary::before{transition:none}}
 .wm-memberships select:disabled,.wm-memberships input:disabled{opacity:.55}
-.wm-membership-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:0}
+.wm-membership-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:0;min-width:0;overflow-wrap:anywhere}
 /* The accepted Costs evidence language, page-scoped: a 3px rail and a dot name
    the reading, the figure dominates, and the chip and note stay subordinate. */
 .wm-membership-summary-card{--wm-mem-accent:var(--ui-text-quaternary);display:grid;align-content:start;gap:6px;
