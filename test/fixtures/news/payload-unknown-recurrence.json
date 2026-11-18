@@ -63,7 +63,7 @@
               "model": "m2",
               "model_family": "m2",
               "observed_at": "2027-01-01T05:03:52+00:00",
-              "provenance": "",
+              "provenance": "models.dev",
               "provider": "acme",
               "providers": [
                 "acme"
@@ -72,7 +72,7 @@
               "source_url": "https://models.dev",
               "variants": [
                 {
-                  "confidence": "",
+                  "confidence": "observed",
                   "effective_at": "",
                   "event_ids": [
                     "md-967823a5b771"
@@ -98,9 +98,9 @@
                   "model": "m2",
                   "model_family": "",
                   "observed_at": "2027-01-01T05:03:52+00:00",
-                  "provenance": "",
+                  "provenance": "models.dev",
                   "provider": "acme",
-                  "source_url": ""
+                  "source_url": "https://models.dev"
                 }
               ]
             }
@@ -146,7 +146,7 @@
               "model": "m1",
               "model_family": "m1",
               "observed_at": "2027-01-01T05:03:52+00:00",
-              "provenance": "",
+              "provenance": "models.dev",
               "provider": "acme",
               "providers": [
                 "acme"
@@ -155,7 +155,7 @@
               "source_url": "https://models.dev",
               "variants": [
                 {
-                  "confidence": "",
+                  "confidence": "observed",
                   "effective_at": "",
                   "event_ids": [
                     "md-c312c6eae578"
@@ -183,9 +183,9 @@
                   "model": "m1",
                   "model_family": "",
                   "observed_at": "2027-01-01T05:03:52+00:00",
-                  "provenance": "",
+                  "provenance": "models.dev",
                   "provider": "acme",
-                  "source_url": ""
+                  "source_url": "https://models.dev"
                 }
               ]
             }
@@ -228,7 +228,7 @@
               "model": "m4",
               "model_family": "m4",
               "observed_at": "2027-01-01T05:03:52+00:00",
-              "provenance": "",
+              "provenance": "models.dev",
               "provider": "acme",
               "providers": [
                 "acme"
@@ -237,7 +237,7 @@
               "source_url": "https://models.dev",
               "variants": [
                 {
-                  "confidence": "",
+                  "confidence": "observed",
                   "effective_at": "",
                   "event_ids": [
                     "md-975889460d2b"
@@ -258,9 +258,9 @@
                   "model": "m4",
                   "model_family": "",
                   "observed_at": "2027-01-01T05:03:52+00:00",
-                  "provenance": "",
+                  "provenance": "models.dev",
                   "provider": "acme",
-                  "source_url": ""
+                  "source_url": "https://models.dev"
                 }
               ]
             }

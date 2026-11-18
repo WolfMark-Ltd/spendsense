@@ -1074,3 +1074,82 @@ test('a mandatory candidate run fails instead of skipping when Chrome is missing
     `chromium-only default run: both named browser tests SKIP `
       + `(baseline: ${optionalBaseline}; candidate: ${optionalCandidate})`)
 })
+
+test('each variant keeps its own source, never the family head\'s', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // One family, two removal variants: `acme` joins an archive record, `zeta`
+  // exists only in the published briefing. Each carries a different source URL,
+  // and the family head carries a third. A panel that renders the head's link
+  // beside a provider's name attributes one record's evidence to another.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=variantsources__foryou__380__dark__en&probe=storyrecords`)).cases[0]
+  const stories = result?.probeStoryRecords || []
+  const unjoined = stories
+    .flatMap(story => story.variantEvidence || [])
+    .find(row => row.provider === 'zeta')
+  assert.ok(unjoined, `the unjoined variant has its own evidence block: ${JSON.stringify(stories)}`)
+  assert.deepEqual(unjoined.hrefs, ['https://builder.example/zeta-variant'],
+    'the variant links to its own source')
+  assert.ok(!unjoined.hrefs.includes('https://builder.example/family-head'),
+    'the family head\'s source is never attributed to another provider')
+  assert.match(unjoined.text, /publisher history \(zeta\)/,
+    'the variant carries its own provenance')
+})
+
+test('a story link reveals its group even when it sorts past the first page', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // Fourteen groups match the substring "pair-model" and the target is the
+  // oldest, so it is group fifteen of fifteen while the archive renders ten at a
+  // time. Marking a row that was never rendered is impossible, so the link must
+  // extend the page first.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=manygroups__foryou__380__dark__en&probe=reveal&model=pair-model`)).cases[0]
+  const reveal = result?.probeReveal
+  assert.ok(reveal && !reveal.missing, 'the story and its archive action are present')
+  assert.ok(reveal.groups.length >= 14,
+    `the archive rendered past its first page: ${reveal.groups.length}`)
+  assert.equal(reveal.found, true, 'the story\'s own event is marked after the page extends')
+  assert.equal(reveal.offerModel, 'pair-model', 'the mark is on the clicked model')
+  // A single-event offer has no History row to mark, so the offer itself carries
+  // it; where History exists the row names the exact event id.
+  assert.ok(reveal.kind === 'event' ? reveal.event : reveal.offerModel,
+    `the mark identifies the record: ${JSON.stringify(reveal)}`)
+})
+
+test('a publisher\'s unsupported reason never hides events this archive holds', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // The published briefing says "no plan events"; the local archive holds some.
+  // The limitation describes a missing SOURCE, so it may replace an empty result
+  // set only — never a populated one.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=plansource__all__380__dark__en&probe=subscription`)).cases[0]
+  assert.ok(result?.probeSubscription, 'subscription probe recorded')
+  assert.ok(result.probeSubscription.groups + result.probeSubscription.cards > 0,
+    `the local subscription events still render: ${JSON.stringify(result.probeSubscription)}`)
+  assert.equal(result.probeSubscription.empty, '',
+    'no limitation replaces a populated filter')
+})
+
+test('the section-cap note states the limit without promising where entries are', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // Nine removals counted, eight in the payload. The omitted one is not readable
+  // here, so nothing can be proved about whether the archive holds it.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=capnote__foryou__380__dark__en`)).cases[0]
+  const notes = result?.briefing?.keptNotes || []
+  assert.equal(notes.length, 1, `one note for the trimmed section: ${JSON.stringify(notes)}`)
+  const [note] = notes
+  assert.equal(note.kind, 'limit', 'the note is a limit statement')
+  assert.equal(note.section, 'removals', 'it belongs to the trimmed section')
+  assert.match(note.text, /more are counted/, `the count is stated: ${note.text}`)
+  assert.doesNotMatch(note.text, /All Updates/,
+    'it makes no archive-coverage claim about entries it cannot see')
+})

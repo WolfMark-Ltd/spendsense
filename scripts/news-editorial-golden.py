@@ -74,6 +74,10 @@ def main() -> int:
                                 "headline_params": variant.get("headline_params"),
                                 "provider": variant.get("provider"),
                                 "model": variant.get("model"),
+                                "observed_at": variant.get("observed_at"),
+                                "source_url": variant.get("source_url"),
+                                "provenance": variant.get("provenance"),
+                                "confidence": variant.get("confidence"),
                                 "event_ids": variant.get("event_ids"),
                             }
                             for variant in entry.get("variants") or []

@@ -54,6 +54,10 @@
               },
               "provider": "openai",
               "model": "gpt-5.6-sol",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-price-reduction-openai-gpt-5-6-sol--r-----cache-read---0-25---c-bed1f77339"
               ]
@@ -101,6 +105,10 @@
               },
               "provider": "google",
               "model": "gemini-3-flash",
+              "observed_at": "2026-11-10T07:59:50Z",
+              "source_url": "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-b",
+              "provenance": "SpendSense announcements",
+              "confidence": "curated",
               "event_ids": [
                 "central-2026-11-10-google-gemini-3-flash-cut-0843"
               ]
@@ -120,6 +128,10 @@
               },
               "provider": "google",
               "model": "gemini-3-flash",
+              "observed_at": "2026-11-10T07:59:50Z",
+              "source_url": "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-a",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-price-reduction-google-gemini-3-flash--r-----cache-read---0-05--65896e02e5"
               ]
@@ -169,6 +181,10 @@
               },
               "provider": "anthropic",
               "model": "claude-sonnet-4-5",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-price-reduction-anthropic-claude-sonnet-4-5--r-----cache-read---nu-bfb95db87b"
               ]
@@ -220,6 +236,10 @@
               },
               "provider": "moonshotai",
               "model": "kimi-k2.5",
+              "observed_at": "2026-11-07T08:40:00Z",
+              "source_url": "https://announcements.spend-sense.example/feed/moonshotai-kimi-k2-5-rate-cut",
+              "provenance": "SpendSense announcements",
+              "confidence": "curated",
               "event_ids": [
                 "central-2026-11-07-moonshotai-kimi-k2-5-rate-cut"
               ]
@@ -243,6 +263,10 @@
               },
               "provider": "moonshotai",
               "model": "kimi-k2.5",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "https://announcements.spend-sense.example/feed/moonshotai-kimi-k2-5-rate-cut",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-price-reduction-moonshotai-kimi-k2-5--r-----cache-read---0-06---cac-a5db338fa9"
               ]
@@ -292,6 +316,10 @@
               },
               "provider": "fixturelabs",
               "model": "x2",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-price-reduction-fixturelabs-x2--r-----cache-read---null---cache-writ-15360c2a46"
               ]
@@ -347,6 +375,10 @@
               },
               "provider": "xai",
               "model": "grok-5-fast",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-price-increase-xai-grok-5-fast--r-----cache-read---null---c-fdffff6c8b"
               ]
@@ -398,6 +430,10 @@
               },
               "provider": "openrouter",
               "model": "anthropic/claude-opus-4.1",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-price-increase-openrouter-anthropic-claude-opus-4-1--r-----cache-r-6abd483ba1"
               ]
@@ -444,6 +480,10 @@
               },
               "provider": "mistral",
               "model": "mistral-large-3",
+              "observed_at": "2026-11-06T12:00:00Z",
+              "source_url": "https://announcements.spend-sense.example/feed/mistral-large-3-pricing-update",
+              "provenance": "SpendSense announcements",
+              "confidence": "curated",
               "event_ids": [
                 "central-2026-11-06-mistral-large-3-pricing-update"
               ]
@@ -462,6 +502,10 @@
               },
               "provider": "mistral",
               "model": "mistral-large-3",
+              "observed_at": "2026-11-06T12:00:30Z",
+              "source_url": "https://announcements.spend-sense.example/feed/mistral-large-3-pricing-update-2",
+              "provenance": "SpendSense announcements",
+              "confidence": "curated",
               "event_ids": [
                 "central-2026-11-06-mistral-large-3-pricing-update-2"
               ]
@@ -516,6 +560,10 @@
               },
               "provider": "anthropic",
               "model": "claude-opus-4-1-20250805-thinking",
+              "observed_at": "2026-11-09T16:05:00Z",
+              "source_url": "https://announcements.spend-sense.example/feed/claude-opus-4-1-20250805-thinking",
+              "provenance": "SpendSense announcements",
+              "confidence": "verified",
               "event_ids": [
                 "central-2026-11-09-anthropic-claude-opus-4-1-20250805-thinking"
               ]
@@ -559,6 +607,10 @@
               },
               "provider": "amazon-bedrock",
               "model": "claude-sonnet-4-5-20250929",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-new-model-amazon-bedrock-claude-sonnet-4-5-20250929-9aff2f677c"
               ]
@@ -602,6 +654,10 @@
               },
               "provider": "openrouter",
               "model": "openrouter/anthropic/claude-sonnet-4.5",
+              "observed_at": "2026-11-09T21:30:00Z",
+              "source_url": "https://announcements.spend-sense.example/feed/openrouter-claude-sonnet-4-5",
+              "provenance": "SpendSense announcements",
+              "confidence": "curated",
               "event_ids": [
                 "central-2026-11-09-openrouter-anthropic-claude-sonnet-4-5"
               ]
@@ -645,6 +701,10 @@
               },
               "provider": "deepseek",
               "model": "deepseek-v4",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "https://announcements.spend-sense.example/feed/deepseek-v4-listing",
+              "provenance": "SpendSense announcements",
+              "confidence": "curated",
               "event_ids": [
                 "central-2026-11-10-deepseek-deepseek-v4-listing"
               ]
@@ -660,6 +720,10 @@
               },
               "provider": "deepseek",
               "model": "deepseek-v4",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-new-model-deepseek-deepseek-v4-5ddfff1ce6"
               ]
@@ -703,6 +767,10 @@
               },
               "provider": "deepinfra",
               "model": "deepseek-ai/deepseek-v4-pro",
+              "observed_at": "2026-11-09T18:00:00Z",
+              "source_url": "https://announcements.spend-sense.example/feed/deepseek-v4-pro",
+              "provenance": "SpendSense announcements",
+              "confidence": "curated",
               "event_ids": [
                 "central-2026-11-09-deepinfra-deepseek-v4-pro"
               ]
@@ -746,6 +814,10 @@
               },
               "provider": "azure-openai",
               "model": "gpt-5.6-sol",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-new-model-azure-openai-gpt-5-6-sol-0231bbf7ee"
               ]
@@ -761,6 +833,10 @@
               },
               "provider": "github-copilot",
               "model": "gpt-5.6-sol",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-new-model-github-copilot-gpt-5-6-sol-fdfdfe2f78"
               ]
@@ -804,6 +880,10 @@
               },
               "provider": "openai",
               "model": "gpt-5.6-sol-pro",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-new-model-openai-gpt-5-6-sol-pro-e0949ff877"
               ]
@@ -847,6 +927,10 @@
               },
               "provider": "fixturelabs",
               "model": "m1",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
               "event_ids": [
                 "local-new-model-fixturelabs-m1-0896a9539a"
               ]
@@ -902,6 +986,10 @@
               },
               "provider": "anthropic",
               "model": "",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "https://announcements.spend-sense.example/plans/claude-max-20x",
+              "provenance": "bundled membership catalogue",
+              "confidence": "observed",
               "event_ids": [
                 "local-plan-change-claude-max-20x---amount---100---currency----USD----peri-2884b79e6c"
               ]
@@ -941,6 +1029,10 @@
               },
               "provider": "google",
               "model": "",
+              "observed_at": "2026-11-10T09:15:00Z",
+              "source_url": "https://announcements.spend-sense.example/plans/gemini-code-assist-pro",
+              "provenance": "bundled membership catalogue",
+              "confidence": "observed",
               "event_ids": [
                 "local-new-plan-gemini-code-assist-pro---amount---19---currency----USD----perio-0540544813"
               ]

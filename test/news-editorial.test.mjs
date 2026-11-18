@@ -507,6 +507,12 @@ test('the Desktop briefing agrees with the Python builder fact for fact', () => 
           `${label} variant ${variantIndex} params`)
         assert.deepEqual(variant.event_ids, expectedVariant.event_ids,
           `${label} variant ${variantIndex} links`)
+        // A variant is a different provider's record: its own evidence must
+        // travel, never the family head's.
+        for (const key of ['observed_at', 'source_url', 'provenance', 'confidence']) {
+          assert.equal(variant[key], expectedVariant[key],
+            `${label} variant ${variantIndex} ${key}`)
+        }
       })
     })
   }

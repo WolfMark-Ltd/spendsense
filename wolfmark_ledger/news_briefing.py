@@ -557,6 +557,9 @@ def _entry(item: Mapping[str, Any], *, providers: int = 1) -> dict[str, Any]:
         "observed_at": str(item.get("observed_at") or ""),
         "source_url": str(item.get("source_url") or ""),
         "confidence": str(item.get("confidence") or "observed"),
+        # Which record produced the claim. Always present, like ``confidence``,
+        # so a variant row never has to borrow the family head's provenance.
+        "provenance": str(item.get("provenance") or ""),
         "event_ids": [str(item.get("id") or "")] if item.get("id") else [],
         "providers": [str(item.get("provider") or "")],
         "magnitude": {
@@ -584,8 +587,12 @@ def _entry(item: Mapping[str, Any], *, providers: int = 1) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- grouping
 
+#: Per-variant fields. The evidence fields travel too: a variant row is a
+#: different provider's record, so borrowing the family head's source link or
+#: provenance would attribute one record's evidence to another.
 _VARIANT_FIELDS = ("event_type", "headline_code", "headline_params", "headline",
-                   "provider", "model", "observed_at", "event_ids")
+                   "provider", "model", "observed_at", "event_ids",
+                   "source_url", "provenance", "confidence")
 
 
 def _variant(entry: Mapping[str, Any]) -> dict[str, Any]:

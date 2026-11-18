@@ -217,6 +217,97 @@ const FIXTURES = {
   stale: VARIANTS.stale,
   nosignals: VARIANTS.nosignals,
   evidence: EVIDENCE,
+  // Page-local variant: a family with two removal variants — one whose record
+  // the archive holds, one that exists only in the published briefing — each
+  // with its OWN source URL. Details must attribute each link to its provider.
+  variantsources: {
+    ...REALISTIC,
+    central: { ...REALISTIC.central, briefing: { version: 1,
+      generated_at: REALISTIC.central.fetched_at, unsupported: [], counts: {},
+      sections: [{ id: 'removals', total: 1, entries: [{
+        event_type: 'removed_from_provider', headline_code: 'news_head_removed',
+        headline_params: { provider: 'acme', model: 'pair-model' },
+        headline: 'acme no longer lists pair-model', provider: 'acme', model: 'pair-model',
+        model_family: 'pair-model', family_label: 'Pair Model',
+        observed_at: '2026-11-09T00:00:00Z', confidence: 'curated',
+        provenance: 'publisher history (family head)',
+        source_url: 'https://builder.example/family-head',
+        family_event_count: 2, event_ids: [REALISTIC.local.items[0].id],
+        variants: [
+          { event_type: 'removed_from_provider', headline_code: 'news_head_removed',
+            headline_params: { provider: 'acme', model: 'pair-model' },
+            headline: 'acme no longer lists pair-model', provider: 'acme', model: 'pair-model',
+            observed_at: '2026-11-09T00:00:00Z', confidence: 'curated',
+            provenance: 'publisher history (acme)',
+            source_url: 'https://builder.example/acme-variant',
+            event_ids: [REALISTIC.local.items[0].id] },
+          { event_type: 'removed_from_provider', headline_code: 'news_head_removed',
+            headline_params: { provider: 'zeta', model: 'pair-model' },
+            headline: 'zeta no longer lists pair-model', provider: 'zeta', model: 'pair-model',
+            observed_at: '2026-11-09T06:00:00Z', confidence: 'curated',
+            provenance: 'publisher history (zeta)',
+            source_url: 'https://builder.example/zeta-variant',
+            event_ids: ['ghost-zeta'] },
+        ],
+      }] }] } },
+  },
+  // Page-local variant: a section whose cap trimmed a ninth entry. The omitted
+  // entry is not in the payload, so the note may state the limit and the count
+  // but must not claim where the missing entry can be found.
+  capnote: {
+    ...REALISTIC,
+    central: { ...REALISTIC.central, briefing: { version: 1,
+      generated_at: REALISTIC.central.fetched_at, unsupported: [], counts: {},
+      sections: [{ id: 'removals', total: 9, entries: Array.from({ length: 8 }, (_, i) => ({
+        event_type: 'removed_from_provider', headline_code: 'news_head_removed',
+        headline_params: { provider: 'acme', model: `gone-${i}` },
+        headline: `acme no longer lists gone-${i}`,
+        provider: 'acme', model: `gone-${i}`, model_family: `gone-${i}`,
+        observed_at: '2026-11-09T00:00:00Z', confidence: 'curated',
+        source_url: 'https://builder.example/gone', event_ids: [`ghost-${i}`],
+      })) }] } },
+  },
+  // Page-local variant: a published briefing that reports no plan-event source
+  // while this archive DOES hold subscription events. The limitation must not
+  // replace a populated result.
+  plansource: {
+    ...REALISTIC,
+    central: { ...REALISTIC.central, briefing: { version: 1,
+      generated_at: REALISTIC.central.fetched_at, sections: [], counts: {},
+      unsupported: [{ id: 'subscriptions', reason_code: 'news_unsupported_no_plan_events' }] } },
+  },
+  // Page-local variant: one headline whose model is the OLDEST of a long
+  // substring-matching set, so its group sorts past the first page and has to be
+  // revealed before it can be marked.
+  manygroups: {
+    ...REALISTIC,
+    local: { ...REALISTIC.local, items: [...REALISTIC.local.items,
+      { id: 'local-page-target', origin: 'local', category: 'price_reduction',
+        provider: 'acme', model: 'pair-model',
+        previous: { input: 2, output: 4 }, current: { input: 1, output: 2 },
+        observed_at: '2026-11-09T00:00:00Z',
+        source_url: 'https://models.dev/page-head', provenance: 'Synthetic target',
+        confidence: 'observed', relevance: { relevant: false, reasons: [] } },
+      ...Array.from({ length: 13 }, (_, i) => ({
+        id: `local-page-${i}`, origin: 'local', category: 'price_increase',
+        provider: 'acme', model: `pair-model-${i + 2}`,
+        previous: { input: 1 + i, output: 2 + i }, current: { input: 2 + i, output: 4 + i },
+        observed_at: `2026-11-11T${String((i % 9) + 1).padStart(2, '0')}:00:00Z`,
+        source_url: 'https://models.dev/page', provenance: 'Synthetic page filler',
+        confidence: 'observed', relevance: { relevant: false, reasons: [] },
+      }))] },
+    central: { ...REALISTIC.central, briefing: { version: 1,
+      generated_at: REALISTIC.central.fetched_at, unsupported: [], counts: {},
+      sections: [{ id: 'biggest_reductions', total: 1, entries: [{
+        event_type: 'price_reduction', headline_code: 'news_head_single_rate',
+        headline_params: { provider: 'acme', model: 'pair-model',
+          rate: 'news_rate_input', pct: -50, before: '$2', after: '$1', direction: 'down' },
+        headline: 'acme cuts pair-model input by 50% ($2 → $1 per 1M tokens)',
+        provider: 'acme', model: 'pair-model', model_family: 'pair-model',
+        observed_at: '2026-11-09T00:00:00Z', confidence: 'observed',
+        source_url: 'https://models.dev/page-head', event_ids: ['local-page-target'],
+      }] }] } },
+  },
   // Page-local variant (never in the grid matrix): the evidence pairs marked
   // relevant, so the headline surface renders the MERGED local/publish-side
   // event — one change, two source records — and Details can be checked for
@@ -498,6 +589,12 @@ function briefingSummary(pane) {
       .map(el => el.textContent.trim()),
     limits: [...block.querySelectorAll('.wm-news-briefing-limits li')]
       .map(el => el.textContent.trim()),
+    // The section-cap note and what it claims: the omitted entries are not in
+    // the payload, so it must not promise where they can be found.
+    keptNotes: [...block.querySelectorAll('[data-news-kept]')].map(el => ({
+      kind: el.getAttribute('data-news-kept'), section: el.closest('[data-news-section]')
+        ?.getAttribute('data-news-section') || '', text: el.textContent.trim(),
+    })),
     // Only a story the archive can actually contain offers its archive action.
     archiveActions: stories.filter(el => el.querySelector('[data-news-story-archive]')).length,
     // A headline with no joinable archive record must still show its published
@@ -587,9 +684,39 @@ async function probeStoryRecords(pane) {
         .map(row => row.getAttribute('data-news-story-record')),
       variants: [...story.querySelectorAll('[data-news-story-variant-record]')]
         .map(row => row.getAttribute('data-news-story-variant-record')),
+      variantEvidence: [...story.querySelectorAll('[data-news-story-variant-evidence] li')]
+        .map(row => ({
+          provider: row.getAttribute('data-news-story-variant-record') || '',
+          hrefs: [...row.querySelectorAll('a')].map(a => a.getAttribute('href')),
+          text: row.textContent.trim().slice(0, 160),
+        })),
     })
   }
   return out
+}
+
+/**
+ * WP22: reveal probe. Finds the headline for one model, follows its archive
+ * link and reports what the archive actually rendered — the group count, the
+ * marked row and the page size in effect.
+ */
+async function probeStoryReveal(pane, model) {
+  const story = [...pane.querySelectorAll('[data-news-story]')]
+    .find(el => (el.getAttribute('data-news-story-model') || '') === model)
+  const button = story?.querySelector('[data-news-story-archive]')
+  if (!story || !button) return { missing: true, model }
+  button.click()
+  await tick(250)
+  const row = pane.querySelector('[data-news-focus="true"]')
+  return {
+    model,
+    groups: [...pane.querySelectorAll('[data-news-group]')]
+      .map(el => el.getAttribute('data-news-group')),
+    found: !!row,
+    event: row?.getAttribute('data-news-event') || '',
+    offerModel: row?.getAttribute('data-news-model') || '',
+    loadMore: !!pane.querySelector('[data-news-load-more]'),
+  }
 }
 
 /**
@@ -611,6 +738,8 @@ async function probeSubscription(pane) {
     pressed: subscription.getAttribute('aria-pressed'),
     empty: empty?.textContent?.trim() || '',
     groups: pane.querySelectorAll(SELECTORS.group).length,
+    // Plan events render as cards, not model groups, so both are counted.
+    cards: pane.querySelectorAll('.wm-news-card').length,
     note: pane.querySelector('[data-news-archive-note]')?.textContent?.trim() || '',
   }
   const all = buttons.find(button => value(buttons.indexOf(button)) === 'all')
@@ -1195,6 +1324,7 @@ async function measureCase(c) {
   if (params.get('probe') === 'subscription') result.probeSubscription = await probeSubscription(pane)
   if (params.get('probe') === 'story') result.probeStory = await probeStory(pane)
   if (params.get('probe') === 'storyrecords') result.probeStoryRecords = await probeStoryRecords(pane)
+  if (params.get('probe') === 'reveal') result.probeReveal = await probeStoryReveal(pane, params.get('model') || '')
   return result
 }
 

@@ -11105,6 +11105,9 @@ function newsEditorialEntry(item, providers = 1) {
     effective_at: String(item?.effective_at || ''),
     source_url: String(item?.source_url || ''),
     confidence: String(item?.confidence || 'observed'),
+    // Provenance travels with the entry and with every variant: it names which
+    // record produced the claim, so a provider row never borrows another's.
+    provenance: String(item?.provenance || ''),
     event_ids: item?.id ? [String(item.id)] : [],
     providers: [String(item?.provider || '')],
     magnitude: {
@@ -11126,8 +11129,12 @@ function newsEditorialEntry(item, providers = 1) {
 const ratesMissingPct = (comparison, key) =>
   !!comparison.rates[key] && comparison.rates[key].pct == null
 
+// A variant row is a DIFFERENT provider's record, so its own evidence fields
+// travel too — borrowing the family head's link would attribute one record's
+// source to another.
 const NEWS_EDITORIAL_VARIANT_FIELDS = ['event_type', 'headline_code', 'headline_params',
-  'headline', 'provider', 'model', 'observed_at', 'event_ids']
+  'headline', 'provider', 'model', 'observed_at', 'event_ids',
+  'source_url', 'provenance', 'confidence']
 
 /** Compact per-provider row inside a family group: localisable, never a copy. */
 function newsEditorialVariant(entry) {
@@ -11755,7 +11762,11 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
   // can check for that provider.
   const unjoined = variants.filter(variant =>
     !(Array.isArray(variant?.event_ids) ? variant.event_ids : []).some(id => joinedIds.has(String(id))))
-  const unjoinedMeta = [entry?.provenance, entry?.confidence].filter(Boolean).join(' · ')
+  // Each unjoined variant shows ITS OWN provenance, confidence and source link.
+  // Falling back to the entry would print another record's evidence beside this
+  // provider's name, which is the same attribution error in a quieter form.
+  const variantMeta = variant => [variant?.provenance, variant?.confidence]
+    .filter(Boolean).join(' · ')
   const confidence = String(entry?.confidence || '')
   const confidenceKey = confidence === 'verified' ? 'newsConfidenceVerified'
     : confidence === 'curated' ? 'newsConfidenceCurated' : 'newsConfidenceObserved'
@@ -11861,12 +11872,14 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
                   variant?.model ? jsx('span', { className: 'wm-news-storymodel',
                     children: variant.model }) : null,
                 ] }),
-                unjoinedMeta ? jsx('p', { className: 'wm-news-meta', children: unjoinedMeta }) : null,
+                variantMeta(variant)
+                  ? jsx('p', { className: 'wm-news-meta', children: variantMeta(variant) })
+                  : null,
                 jsx('p', { className: 'wm-news-dates', children:
                   t('newsObserved', variant?.observed_at || '—') }),
-                entry?.source_url
+                variant?.source_url
                   ? jsx('p', { className: 'wm-news-meta', children: jsx('a', {
-                      href: entry.source_url, target: '_blank', rel: 'noreferrer',
+                      href: variant.source_url, target: '_blank', rel: 'noreferrer',
                       className: 'wm-source-link', children: t('newsSource') }) })
                   : null,
               ] }, `uv-${index}`)) }),
@@ -11887,12 +11900,11 @@ function NewsHeadlineSection({ section, t, itemsById, connectionKey = '', shown 
   const head = rows.slice(0, shown)
   const rest = rows.slice(shown)
   const kept = Number(section.total) > rows.length
-  // "…stay in All Updates" is only true for entries the archive can actually
-  // hold. A history-confirmed removal may exist only in the published
-  // briefing, so the claim is made per section, from the join.
-  const joinable = entry => (Array.isArray(entry?.event_ids) ? entry.event_ids : [])
-    .some(id => itemsById?.get?.(String(id)))
-  const keptSearchable = rest.every(joinable) || !rest.length
+  // The entries the section cap omitted are not in the payload, so nothing can
+  // be proved about where they can be found — a history-confirmed removal may
+  // exist only in the published briefing. The note therefore states the limit
+  // and the count, and makes no archive-coverage claim.
+  const omitted = Math.max(0, Number(section.total) - rows.length)
   return jsxs('section', { className: 'wm-news-briefing-section', 'data-news-section': section.id, children: [
     jsxs('div', { className: 'wm-news-briefing-head', children: [
       jsx('h2', { children: newsSectionTitle(section.id, t) }),
@@ -11910,8 +11922,8 @@ function NewsHeadlineSection({ section, t, itemsById, connectionKey = '', shown 
               `m-${entry?.event_ids?.[0] || entry?.model || index}`)) }),
         ] })
       : null,
-    kept ? jsx('p', { className: 'wm-news-note', 'data-news-kept': keptSearchable ? 'archive' : 'briefing',
-      children: keptSearchable ? t('newsSectionKept') : t('newsSectionKeptBriefing') }) : null,
+    kept ? jsx('p', { className: 'wm-news-note', 'data-news-kept': 'limit',
+      children: t('newsSectionKept', omitted) }) : null,
   ] })
 }
 
@@ -12868,20 +12880,6 @@ function NewsPage() {
   // render; this moves the reader onto it once the filtered list exists, so a
   // keyboard user is not left at the top of a 200-event archive.
   const newsFocusTarget = useValue($newsFocus)
-  useEffect(() => {
-    if (!newsFocusTarget?.eventIds?.length || typeof document === 'undefined') return undefined
-    const timer = setTimeout(() => {
-      let node = null
-      try { node = document.querySelector('[data-news-focus="true"]') } catch { return }
-      if (!node) return
-      node.scrollIntoView?.({ block: 'center' })
-      if (!node.hasAttribute('tabindex')) node.setAttribute('tabindex', '-1')
-      try { node.focus({ preventScroll: true }) } catch {
-        try { node.focus() } catch {}
-      }
-    }, 0)
-    return () => clearTimeout(timer)
-  }, [newsFocusTarget?.nonce, scope, shown])
   // A category filter narrows the headlines to the sections it can honestly
   // describe, so choosing "Increases" never leaves a price-cut lead above it.
   const headlineBriefing = newsBriefingForCategory(briefing, category)
@@ -12904,6 +12902,35 @@ function NewsPage() {
     entry.kind === 'group' ? newsFocusGroup(entry, nowMs) : entry)
   const filtered = grouped && scope === 'all'
     ? newsFilterEntries(grouped.entries, { category, search, days, nowMs }) : []
+  // A story link asks the archive to reveal one event. Search is a substring
+  // match, so a target group can sit past the first page and never render — it
+  // must be brought into the visible page before it can be marked and focused.
+  useEffect(() => {
+    const ids = Array.isArray(newsFocusTarget?.eventIds) ? newsFocusTarget.eventIds : []
+    if (!ids.length || typeof document === 'undefined') return undefined
+    if (scope !== 'all') return undefined
+    const carries = event => ids.includes(String(event?.id || ''))
+      || newsEvidenceRecords(event).some(rec => ids.includes(String(rec?.id || '')))
+    const index = filtered.findIndex(entry => entry.kind === 'group'
+      ? (entry.offers || []).some(offer => (offer.events || []).some(carries))
+      : !!entry.item && carries(entry.item))
+    if (index >= 0 && index + 1 > shown) {
+      // Re-render with the page extended; this effect runs again and scrolls.
+      $newsShown.set(index + 1)
+      return undefined
+    }
+    const timer = setTimeout(() => {
+      let node = null
+      try { node = document.querySelector('[data-news-focus="true"]') } catch { return }
+      if (!node) return
+      node.scrollIntoView?.({ block: 'center' })
+      if (!node.hasAttribute('tabindex')) node.setAttribute('tabindex', '-1')
+      try { node.focus({ preventScroll: true }) } catch {
+        try { node.focus() } catch {}
+      }
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [newsFocusTarget?.nonce, scope, shown, search, category, days, filtered.length])
   const visibleEntries = filtered.slice(0, shown)
   const remaining = Math.max(0, filtered.length - visibleEntries.length)
   const flatVisible = newsFilter(combined, scope, category)
@@ -12927,8 +12954,17 @@ function NewsPage() {
   // A category the source cannot supply is not an empty filter. The publisher
   // compares the public model catalogue only, so plan and membership events do
   // not exist to hide: say that instead of "no updates match".
+  // A published briefing describes the PUBLISHER's coverage. The local feed
+  // emits plan and membership events independently (`news.py` builds them for
+  // bundled plan additions, fee changes and allowance changes), so "no plan
+  // events" is only true of this archive when the archive itself holds none —
+  // otherwise the limitation would hide real updates behind their own filter.
+  const planEventsInArchive = combined.some(item =>
+    ['new_plan', 'plan_change'].includes(String(item?.event_type || ''))
+    || String(item?.category || '') === 'subscription')
   const planUnsupported = category === 'subscription'
     && unsupportedReasons.has('news_unsupported_no_plan_events')
+    && !planEventsInArchive
   const listNode = !grouped
     ? (flatVisible.length
         ? jsx('div', { className: 'wm-news-list', role: 'list', children:
@@ -14071,8 +14107,7 @@ const I18N = {
     newsSectionPreviewModels: 'Stealth and preview models',
     newsSectionMixedPriceChanges: 'Mixed price changes',
     newsSectionMore: n => `Show ${n} more`,
-    newsSectionKept: 'Every event stays in All Updates.',
-    newsSectionKeptBriefing: 'Entries with no archive record appear only here, not in All Updates.',
+    newsSectionKept: n => `Showing the strongest entries only; ${n} more are counted.`,
     newsKindCut: 'Price cut',
     newsKindRise: 'Price rise',
     newsKindNew: 'New listing',
@@ -15699,8 +15734,7 @@ const I18N = {
     newsSectionPreviewModels: '预览与隐身模型',
     newsSectionMixedPriceChanges: '双向价格变化',
     newsSectionMore: n => `再显示 ${n} 条`,
-    newsSectionKept: '所有事件仍保留在“全部动态”中。',
-    newsSectionKeptBriefing: '没有归档记录的事件只在此处显示，不会出现在“全部动态”中。',
+    newsSectionKept: n => `仅显示最重要的条目；另有 ${n} 条计入总数。`,
     newsKindCut: '降价',
     newsKindRise: '涨价',
     newsKindNew: '新收录',

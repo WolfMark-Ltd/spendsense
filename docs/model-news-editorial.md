@@ -215,7 +215,10 @@ calls a model or transmits usage.
 - Localise `title_code`, `headline_code` and `headline_params`; treat
   `headline` as the English fallback, exactly like `summary_code`/`summary`.
 - Use `variants[]` for the per-provider rows under a family banner, and
-  `event_ids` to join back to the full event in All Updates. Join through the
+  `event_ids` to join back to the full event in All Updates. A variant carries
+  its own `source_url`, `provenance` and `confidence`: it is a different
+  provider's record, so borrowing the family head's evidence would attribute one
+  record's source to another. Join through the
   archive's own grouped events, not the raw feed records: a merged local and
   publish-side record is one event with `merged_sources`, and resolving an id
   against the raw list alone drops the other source's provenance, timestamps and
@@ -228,7 +231,15 @@ calls a model or transmits usage.
   the story's own event inside a collapsed panel.
 - Honour `briefing.unsupported` — say "removal detection is not available"
   rather than showing an empty section, and name the missing plan-event source
-  instead of reporting an empty Subscription Updates filter (F94).
+  instead of reporting an empty Subscription Updates filter (F94). A published
+  briefing describes the PUBLISHER's coverage, and the local feed emits plan
+  events independently, so the plan limitation applies only when this archive
+  holds no plan event either; otherwise it would hide real updates behind their
+  own filter.
+- A section-cap note may state the limit and the count, never where the omitted
+  entries can be found: they are not in the payload, so nothing can be proved
+  about whether the archive holds them. An earlier "every event stays in All
+  Updates" claim was wrong for briefing-only removals.
 - Treat a missing briefing as normal (byte-budget fallback) and keep the
   existing item rendering.
 
