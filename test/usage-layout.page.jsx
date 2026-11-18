@@ -1,4 +1,5 @@
 import React from 'react'
+import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import plugin, { __test as T } from '../desktop/plugin.js'
 
@@ -144,6 +145,64 @@ function overlapPairs(elements) {
   return pairs
 }
 
+// Use the production styles on representative state elements, including the
+// sidebar and product roots. Keep the fixture out of the Usage layout sample.
+function measureStateStyles(pane) {
+  const sample = document.createElement('div')
+  sample.style.cssText = 'position:absolute;inset-inline-start:-10000px'
+  sample.className = 'wm-analytics wm-product'
+  // The native host uses an editor background instead of the older raised fill.
+  if (!getComputedStyle(pane).getPropertyValue('--ui-warning').trim()) {
+    sample.style.setProperty('--ui-fill-secondary', 'initial')
+    sample.style.setProperty('--ui-bg-editor', getComputedStyle(pane).backgroundColor)
+  }
+  pane.append(sample)
+  const root = createRoot(sample)
+  flushSync(() => root.render(<>
+    <style>{T.ANALYTICS_CSS + T.PRODUCT_CSS + T.ECONOMICS_CSS + T.MEMBERSHIP_CSS + T.NEWS_CSS + T.REPORTS_CSS}</style>
+    <span className="wm-cost-attn-count">2</span>
+    <div className="wm-membership-summary-card" data-tone="attention">Needs attention</div>
+    <div className="wm-flash" style={{ animation: 'none' }}>Destination highlight</div>
+    <span className="wm-status-chip" data-tone="attention">Partial</span>
+    <span className="wm-status-chip" data-tone="error">Error</span>
+    <span className="wm-status-chip" data-tone="positive">Ready</span>
+    <p className="wm-async-status" data-status="error" role="alert">Could not save</p>
+    <section className="wm-product-section">
+      <p className="wm-warn-note" role="status">Hermes could not refresh model availability</p>
+      <div className="wm-confirm-box">Confirm change</div>
+    </section>
+    <span className="wm-news-badge" data-cat="price_increase">Price increase</span>
+    <div className="wm-digest-section" data-section="coverage">Attribution</div>
+    <div className="wm-pane"><span className="wm-status-chip" data-tone="attention">Partial</span></div>
+  </>))
+  const css = selector => getComputedStyle(sample.querySelector(selector))
+  const pill = css('.wm-cost-attn-count')
+  const rail = css('.wm-membership-summary-card')
+  const reports = css('.wm-digest-section')
+  const properties = {
+    pillBackground: pill.backgroundColor,
+    pillContrast: contrast(parseColor(pill.color), parseColor(pill.backgroundColor)),
+    rail: rail.borderLeft,
+    reportsRail: reports.borderLeft,
+    flash: css('.wm-flash').boxShadow,
+    partial: css('[data-tone="attention"].wm-status-chip').color,
+    sidebarPartial: css('.wm-pane .wm-status-chip').color,
+    error: css('[data-tone="error"].wm-status-chip').color,
+    success: css('[data-tone="positive"].wm-status-chip').color,
+    feedback: css('.wm-async-status').color,
+    settingsWarning: css('.wm-product-section > .wm-warn-note').color,
+    confirmation: css('.wm-confirm-box').borderLeft,
+    news: css('.wm-news-badge').color,
+  }
+  root.unmount()
+  sample.remove()
+  return properties
+}
+
+function chartPaint(pane, selector, property) {
+  return [...pane.querySelectorAll(selector)].map(element => getComputedStyle(element)[property])
+}
+
 async function measure() {
   await tick(1200)
   // The committed test opens every Advanced disclosure (?open=filters) so
@@ -159,6 +218,10 @@ async function measure() {
     await tick(300)
   }
   const output = { layouts: [], errors: window.__usageErrors || [], queryErrors: globalThis.__usageQueryErrors || [] }
+  const cacheReadPaint = (pane, tag, prop) => {
+    const segment = pane.querySelectorAll(`svg[data-chart="composition"] ${tag}[role="button"]`)[2]
+    return segment ? getComputedStyle(segment)[prop] : null
+  }
   for (const id of cases) {
     const pane = document.getElementById(id)
     const shell = pane.querySelector('.wm-shell')
@@ -186,6 +249,7 @@ async function measure() {
     const firstCell = pane.querySelector('tbody td:first-child')
     output.layouts.push({
       id, width: pane.clientWidth,
+      headingStart: pane.querySelector('.wm-topline > div > :first-child')?.textContent,
       numbers: [...pane.querySelectorAll('.wm-panel .wm-number')].map(el => el.textContent),
       sections: pane.querySelectorAll('section.wm-panel').length,
       stats: stats.length,
@@ -204,6 +268,16 @@ async function measure() {
       chips: chips.length,
       filtersOverflow: filters.filter(el => el.scrollWidth - el.clientWidth > 1).length,
       statOverflow,
+      stateStyles: measureStateStyles(pane),
+      warningToken: getComputedStyle(pane).getPropertyValue('--ui-warning').trim(),
+      cacheReadFill: cacheReadPaint(pane, 'rect', 'fill'),
+      chartPaint: {
+        distribution: chartPaint(pane, '.wm-legend .wm-barfill', 'backgroundColor'),
+        trend: chartPaint(pane, 'svg[data-chart="trend"] > path, svg[data-chart="trend"] circle', 'fill'),
+        comparisons: chartPaint(pane, '.wm-comparetrack, .wm-comparetrack > span', 'backgroundColor'),
+        ranking: chartPaint(pane, 'svg[data-chart="ranking"] rect', 'fill'),
+        composition: chartPaint(pane, 'svg[data-chart="composition"] rect', 'fill'),
+      },
       chartKeyDots: dots.length,
       chartKeySwatches: [swatch(0), swatch(1), swatch(2), swatch(3)],
       trendPoints: trendPoints.length,
@@ -226,6 +300,19 @@ async function measure() {
       baselineOpen: !!pane.querySelector('details.wm-baseline')?.open,
       text: shell.textContent,
     })
+  }
+  const compositionToggle = document.querySelector('svg[data-chart="composition"]')
+    ?.closest('section').querySelectorAll('.wm-segments button')
+  if (compositionToggle?.length === 2 && !selected) {
+    compositionToggle[1].click()
+    await tick(100)
+    for (const layout of output.layouts) {
+      const pane = document.getElementById(layout.id)
+      layout.cacheReadStroke = cacheReadPaint(pane, 'circle', 'stroke')
+      layout.chartPaint.doughnut = chartPaint(pane, 'svg[data-chart="composition"] circle', 'stroke')
+    }
+    compositionToggle[0].click()
+    await tick(100)
   }
   // Interaction probe on the first case only: all cases share one analytics
   // atom, so clicks here re-render every pane. Layout above is recorded first.

@@ -106,7 +106,7 @@ test('SHARED_CSS names the Phase A roles and enforces [hidden]', () => {
   assert.match(T.SHARED_CSS, /--wm-text:var\(--ui-text-primary\)/)
   assert.match(T.SHARED_CSS, /--wm-action:var\(--ui-accent\)/)
   assert.match(T.SHARED_CSS, /--wm-positive:/)
-  assert.match(T.SHARED_CSS, /--wm-attention:var\(--ui-warning\)/)
+  assert.match(T.SHARED_CSS, /--wm-attention:var\(--ui-warning,var\(--wm-action\)\)/)
   assert.match(T.SHARED_CSS, /--wm-space-3:12px/)
   assert.match(T.SHARED_CSS, /--wm-font-display:25px/)
   assert.match(T.SHARED_CSS, /--wm-radius-card:10px/)

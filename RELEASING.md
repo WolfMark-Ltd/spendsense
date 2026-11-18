@@ -31,12 +31,13 @@ assets have separate terms in BRANDING.md.
 
 ## Release identity and the pairing contract
 
-The current release declares `0.6.9` in `plugin.yaml`, `PLUGIN_VERSION`,
+The current source declares `0.6.12` in `plugin.yaml`, `PLUGIN_VERSION`,
 `dashboard/manifest.json`, `plugin_api.VERSION` and the README version badge.
-This coordinated increment accounts for PR #70 and PR #71 from the `0.6.7`
-baseline. Matching version labels alone do not establish installed file identity
-or runtime compatibility: earlier builds shared `0.6.0`. Verify these three facts
-as well:
+The wave advances from `0.6.9` by one patch for each of PRs #72, #73 and #74.
+The preceding wave advanced from `0.6.7` to `0.6.9` for PRs #70 and #71.
+
+To verify installed file identity and runtime compatibility, check the three facts
+below alongside the version labels. Earlier builds shared `0.6.0`.
 
 | Fact | Read it from | Proves |
 | --- | --- | --- |

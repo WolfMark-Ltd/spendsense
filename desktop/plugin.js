@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.9'
+const PLUGIN_VERSION = '0.6.12'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 3
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -2760,8 +2760,9 @@ function BrandMark({ size = 20, id = 'mark' }) {
  * (e.g. certainty chips with display:inline-flex) must never leak a hidden
  * element back into view.
  */
+// The Desktop SDK supplies an accent. Warning and error colours are optional.
 const SHARED_CSS = [
-  '.wm-analytics,.wm-pane{--wm-surface:var(--ui-fill-primary);--wm-surface-raised:var(--ui-fill-secondary);--wm-surface-subtle:var(--ui-fill-tertiary);--wm-border:var(--ui-stroke-secondary);--wm-text:var(--ui-text-primary);--wm-text-secondary:var(--ui-text-secondary);--wm-text-muted:var(--ui-text-tertiary);--wm-text-quiet:var(--ui-text-quaternary);--wm-action:var(--ui-accent);--wm-positive:var(--ui-success);--wm-attention:var(--ui-warning);--wm-declared:var(--ui-accent);--wm-error:var(--ui-error);--wm-space-1:4px;--wm-space-2:8px;--wm-space-3:12px;--wm-space-4:14px;--wm-space-5:22px;--wm-radius-card:10px;--wm-radius-nested:8px;--wm-radius-ctl:6px;--wm-font-display:25px;--wm-font-kpi:26px;--wm-font-section:14px;--wm-font-body:13px;--wm-font-caption:10.5px}',
+  '.wm-analytics,.wm-pane{--wm-surface:var(--ui-fill-primary);--wm-surface-raised:var(--ui-fill-secondary);--wm-surface-subtle:var(--ui-fill-tertiary);--wm-chart-track:var(--ui-fill-tertiary,var(--ui-bg-tertiary,var(--wm-border)));--wm-border:var(--ui-stroke-secondary);--wm-text:var(--ui-text-primary);--wm-text-secondary:var(--ui-text-secondary);--wm-text-muted:var(--ui-text-tertiary);--wm-text-quiet:var(--ui-text-quaternary);--wm-action:var(--ui-accent);--wm-positive:var(--ui-success);--wm-attention:var(--ui-warning,var(--wm-action));--wm-declared:var(--ui-accent);--wm-error:var(--ui-error,var(--wm-action));--wm-space-1:4px;--wm-space-2:8px;--wm-space-3:12px;--wm-space-4:14px;--wm-space-5:22px;--wm-radius-card:10px;--wm-radius-nested:8px;--wm-radius-ctl:6px;--wm-font-display:25px;--wm-font-kpi:26px;--wm-font-section:14px;--wm-font-body:13px;--wm-font-caption:10.5px}',
   '.wm-analytics [hidden],.wm-pane [hidden]{display:none!important}',
   '.wm-status-chip,.wm-certainty{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--wm-border);border-radius:99px;padding:2px 8px;min-height:22px;font-size:11px;line-height:1.35;color:var(--wm-text-secondary);white-space:nowrap;background:transparent}',
   '.wm-status-chip[data-tone="action"]{color:var(--wm-action);border-color:color-mix(in srgb,var(--wm-action) 45%,var(--wm-border))}',
@@ -2773,6 +2774,7 @@ const SHARED_CSS = [
   '.wm-async-status{font-size:11.5px;line-height:1.4}',
   '.wm-async-status[data-status="success"]{color:var(--wm-positive)}',
   '.wm-async-status[data-status="error"]{color:var(--wm-error)}',
+  '.wm-analytics .wm-warn-note,.wm-pane .wm-warn-note{color:var(--wm-attention)}',
   '.wm-info{position:relative;display:inline-flex;align-items:center;flex-shrink:0;vertical-align:middle}',
   '.wm-info-btn{position:relative;width:24px;height:24px;min-width:24px;min-height:24px;border-radius:50%;border:1px solid transparent;background:none;color:var(--wm-text-quiet);font-size:inherit;line-height:1;font-style:normal;font-family:inherit;font-weight:400;padding:0;cursor:pointer;display:inline-grid;place-items:center;vertical-align:middle}',
   '.wm-info-glyph{position:relative;z-index:1;font:italic 600 max(7px,.46em)/1 Georgia,serif}',
@@ -2819,11 +2821,11 @@ const METER_CSS = [
   '.wm-metric-label{font-size:10px;color:var(--ui-text-tertiary);white-space:nowrap}',
   '.wm-metric-value{font-size:13px;font-weight:560;font-variant-numeric:tabular-nums;color:var(--ui-text-primary);overflow-wrap:anywhere}',
   '.wm-kpi-since{font-size:10px;color:var(--ui-text-tertiary);min-height:14px}',
-  '.wm-mix-bar{display:flex;height:8px;border-radius:5px;overflow:hidden;background:var(--ui-fill-tertiary);min-width:0}',
+  '.wm-mix-bar{display:flex;height:8px;border-radius:5px;overflow:hidden;background:var(--wm-chart-track);min-width:0}',
   '.wm-mix-fill{height:100%;min-width:0}',
   '.wm-mix-fill[data-part="fresh"],.wm-swatch[data-part="fresh"]{background:var(--ui-accent)}',
   '.wm-mix-fill[data-part="read"],.wm-swatch[data-part="read"]{background:var(--ui-success)}',
-  '.wm-mix-fill[data-part="write"],.wm-swatch[data-part="write"]{background:var(--ui-warning)}',
+  '.wm-mix-fill[data-part="write"],.wm-swatch[data-part="write"]{background:var(--ui-warning,var(--ui-text-secondary))}',
   '.wm-legend{display:flex;flex-direction:column;gap:3px}',
   '.wm-legend-item{display:flex;align-items:baseline;gap:7px;font-size:12px;min-width:0}',
   '.wm-swatch{width:8px;height:8px;border-radius:2px;flex-shrink:0;align-self:center}',
@@ -2832,7 +2834,7 @@ const METER_CSS = [
   '.wm-legend-separate{border-top:1px solid var(--ui-stroke-secondary);padding-top:6px}',
   '.wm-gauge-row{--wm-gauge-ring:clamp(68px,22cqi,88px);display:grid;grid-template-columns:var(--wm-gauge-ring) minmax(0,1fr);gap:8px;align-items:center;min-height:var(--wm-gauge-ring)}',
   '.wm-ring{width:var(--wm-gauge-ring);height:var(--wm-gauge-ring);flex-shrink:0}',
-  '.wm-ring-track{fill:none;stroke:var(--ui-fill-tertiary);stroke-width:8}',
+  '.wm-ring-track{fill:none;stroke:var(--wm-chart-track);stroke-width:8}',
   '.wm-ring-value{fill:none;stroke:var(--ui-accent);stroke-width:8;stroke-linecap:round}',
   '.wm-ring-estimated{opacity:.45}',
   '.wm-ring-text{fill:var(--ui-text-primary);font-size:16px;font-weight:640;font-variant-numeric:tabular-nums}',
@@ -2948,9 +2950,11 @@ function analyticsDistribution(rows, metric = 'cost', grouping = 'model', limit 
  * host warning can be near-invisible on dark fills, and the read stream
  * dominates Usage charts, so it gets its own amber pulled toward primary
  * text — lighter on dark themes, darker on light themes — staying distinct
- * from the attention badges that keep the pure token.
+ * from the attention badges that keep the pure token. With no warning
+ * token, use primary ink for contrast against the panel and a neutral colour
+ * distinct from the accent-based streams.
  */
-const CACHE_READ_COLOR = 'color-mix(in srgb, var(--ui-warning) 68%, var(--ui-text-primary))'
+const CACHE_READ_COLOR = 'color-mix(in srgb, var(--ui-warning,var(--ui-text-primary)) 68%, var(--ui-text-primary))'
 const TOKEN_STREAMS = [
   ['input_tokens','Input','var(--ui-accent)'],
   ['output_tokens','Output','var(--ui-success)'],
@@ -3109,7 +3113,6 @@ const ANALYTICS_CSS = SHARED_CSS + `
 .wm-analytics{height:100%;overflow:auto;container-type:inline-size;color:var(--ui-text-primary);font-size:12px;line-height:1.5}
 .wm-analytics *{box-sizing:border-box}.wm-analytics .wm-shell{max-width:1560px;padding:28px 32px 40px;margin:auto;display:grid;gap:22px;min-width:0}
 .wm-analytics h1,.wm-analytics h2,.wm-analytics p{margin:0}.wm-analytics h1{font-size:27px;line-height:1.2;font-weight:650;letter-spacing:-1px}.wm-analytics h2{font-size:13px;font-weight:600;letter-spacing:-.15px}
-.wm-analytics .wm-eyebrow{font-size:10px;text-transform:uppercase;letter-spacing:1.6px;color:var(--ui-text-tertiary);margin-bottom:7px}
 .wm-analytics .wm-subtle{color:var(--ui-text-secondary);font-size:11.5px}.wm-analytics .wm-dim{color:var(--ui-text-quaternary)}
 .wm-analytics .wm-mono{font-family:var(--font-mono,ui-monospace,monospace);font-variant-numeric:tabular-nums;letter-spacing:-.3px}
 .wm-analytics .wm-topline,.wm-analytics .wm-panelhead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
@@ -3147,19 +3150,19 @@ const ANALYTICS_CSS = SHARED_CSS + `
 .wm-analytics .wm-rank{width:100%;min-height:200px}.wm-analytics .wm-composition{min-height:225px;display:grid;align-content:center;gap:20px}.wm-analytics .wm-compositiontotal{font-size:27px;font-weight:500;letter-spacing:-1px}.wm-analytics .wm-compositionkey{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}
 .wm-analytics .wm-tablewrap{overflow:auto;margin:0 -20px}.wm-analytics table{width:100%;border-collapse:collapse;white-space:nowrap;text-align:right;font-size:11px}.wm-analytics caption{text-align:left;position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .wm-analytics th{font-size:10px;color:var(--ui-text-tertiary);font-weight:450;border-bottom:1px solid var(--ui-stroke-secondary);position:sticky;top:0;background:var(--ui-fill-primary);z-index:1}.wm-analytics .wm-tablewrap th:first-child{left:0;z-index:2}.wm-analytics .wm-tablewrap td:first-child{position:sticky;left:0;background:var(--ui-fill-primary);z-index:1;box-shadow:1px 0 0 var(--ui-stroke-secondary)}.wm-analytics th button{font:inherit;color:inherit;border:0;background:transparent;padding:10px 10px;text-align:right;width:100%;white-space:nowrap}.wm-analytics td{padding:11px 10px;border-bottom:1px solid var(--ui-stroke-secondary);font-variant-numeric:tabular-nums}.wm-analytics td:first-child,.wm-analytics th:first-child{padding-left:20px;text-align:left}.wm-analytics td:last-child,.wm-analytics th:last-child{padding-right:20px}.wm-analytics tr:last-child td{border-bottom:0}.wm-analytics tbody tr:hover{background:var(--ui-fill-secondary)}
-.wm-analytics .wm-modelbutton{border:0;background:transparent;color:var(--ui-text-primary);text-align:left;padding:0;font-weight:500;max-width:260px;display:block;overflow:hidden;text-overflow:ellipsis}.wm-analytics .wm-meter{width:64px;height:3px;background:var(--ui-fill-tertiary);border-radius:2px;overflow:hidden;margin:5px 0 0 auto}.wm-analytics .wm-meter span{display:block;height:100%;background:var(--ui-accent)}
-.wm-analytics .wm-economics{display:grid;grid-template-columns:1fr 1fr;gap:28px}.wm-analytics .wm-comparison{display:grid;gap:15px;margin-top:20px}.wm-analytics .wm-comparerow{display:grid;gap:7px}.wm-analytics .wm-comparelabel{display:flex;justify-content:space-between;font-size:11px}.wm-analytics .wm-comparetrack{height:9px;background:var(--ui-fill-tertiary);border-radius:3px;overflow:hidden}.wm-analytics .wm-comparetrack span{display:block;height:100%;border-radius:3px}
-.wm-analytics .wm-explanation{border-left:1px solid var(--ui-stroke-secondary);padding-left:26px;color:var(--ui-text-tertiary);font-size:11px}.wm-analytics .wm-explanation p+p{margin-top:9px}.wm-analytics details summary{cursor:pointer;font-size:11px;color:var(--ui-text-tertiary)}.wm-analytics .wm-bars{display:grid;gap:10px;margin-top:14px}.wm-analytics .wm-bar{display:grid;grid-template-columns:150px minmax(0,1fr) 90px;gap:10px;align-items:center;font-size:11px}.wm-analytics .wm-bartrack{height:10px;border-radius:5px;background:var(--ui-fill-secondary);overflow:hidden}.wm-analytics .wm-barfill{height:100%;border-radius:5px;background:var(--ui-accent)}.wm-analytics .wm-barfill.wm-cash{background:var(--ui-warning)}.wm-analytics .wm-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}.wm-analytics .wm-card{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:12px;display:grid;gap:6px;min-width:0}.wm-analytics .wm-card b{font-weight:600}.wm-analytics .wm-baseline{border-top:1px solid var(--ui-stroke-secondary);padding-top:15px}.wm-analytics .wm-empty{padding:36px 20px;border:1px dashed var(--ui-stroke-secondary);border-radius:8px;text-align:center;display:grid;justify-items:center;gap:10px;color:var(--ui-text-tertiary)}.wm-analytics .wm-alert{border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));padding:14px;border-radius:6px;color:var(--ui-warning)}
+.wm-analytics .wm-modelbutton{border:0;background:transparent;color:var(--ui-text-primary);text-align:left;padding:0;font-weight:500;max-width:260px;display:block;overflow:hidden;text-overflow:ellipsis}.wm-analytics .wm-meter{width:64px;height:3px;background:var(--wm-chart-track);border-radius:2px;overflow:hidden;margin:5px 0 0 auto}.wm-analytics .wm-meter span{display:block;height:100%;background:var(--ui-accent)}
+.wm-analytics .wm-economics{display:grid;grid-template-columns:1fr 1fr;gap:28px}.wm-analytics .wm-comparison{display:grid;gap:15px;margin-top:20px}.wm-analytics .wm-comparerow{display:grid;gap:7px}.wm-analytics .wm-comparelabel{display:flex;justify-content:space-between;font-size:11px}.wm-analytics .wm-comparetrack{height:9px;background:var(--wm-chart-track);border-radius:3px;overflow:hidden}.wm-analytics .wm-comparetrack span{display:block;height:100%;border-radius:3px}
+.wm-analytics .wm-explanation{border-left:1px solid var(--ui-stroke-secondary);padding-left:26px;color:var(--ui-text-tertiary);font-size:11px}.wm-analytics .wm-explanation p+p{margin-top:9px}.wm-analytics details summary{cursor:pointer;font-size:11px;color:var(--ui-text-tertiary)}.wm-analytics .wm-bars{display:grid;gap:10px;margin-top:14px}.wm-analytics .wm-bar{display:grid;grid-template-columns:150px minmax(0,1fr) 90px;gap:10px;align-items:center;font-size:11px}.wm-analytics .wm-bartrack{height:10px;border-radius:5px;background:var(--ui-fill-secondary,var(--wm-chart-track));overflow:hidden}.wm-analytics .wm-barfill{height:100%;border-radius:5px;background:var(--ui-accent)}.wm-analytics .wm-barfill.wm-cash{background:var(--ui-warning)}.wm-analytics .wm-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}.wm-analytics .wm-card{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:12px;display:grid;gap:6px;min-width:0}.wm-analytics .wm-card b{font-weight:600}.wm-analytics .wm-baseline{border-top:1px solid var(--ui-stroke-secondary);padding-top:15px}.wm-analytics .wm-empty{padding:36px 20px;border:1px dashed var(--ui-stroke-secondary);border-radius:8px;text-align:center;display:grid;justify-items:center;gap:10px;color:var(--ui-text-tertiary)}.wm-analytics .wm-alert{border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));padding:14px;border-radius:6px;color:var(--ui-warning)}
 @container(max-width:1050px){.wm-analytics .wm-shell{padding:22px}.wm-analytics .wm-charts{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.wm-analytics .wm-donutbody{grid-template-columns:1fr;gap:10px}.wm-analytics .wm-donut{max-width:165px}.wm-analytics .wm-stats{flex-direction:column}.wm-analytics .wm-statgroup[data-kpi-group=activity]{border-left:0;border-top:1px solid var(--ui-stroke-secondary)}}
 @container(max-width:720px){.wm-analytics .wm-shell{padding:18px 14px;gap:17px}.wm-analytics .wm-charts{grid-template-columns:minmax(0,1fr)}.wm-analytics h1{font-size:24px}.wm-analytics .wm-economics{grid-template-columns:minmax(0,1fr);gap:18px}.wm-analytics .wm-explanation{border-left:0;border-top:1px solid var(--ui-stroke-secondary);padding:16px 0 0}.wm-analytics .wm-panel{padding:16px}.wm-analytics .wm-tablewrap{margin:0 -16px}.wm-analytics .wm-donutbody{grid-template-columns:minmax(120px,.85fr) minmax(0,1.15fr)}.wm-analytics .wm-stat{padding:16px}.wm-analytics .wm-statvalue{font-size:25px}.wm-analytics .wm-filter{max-width:none;min-width:125px}}
 @container(max-width:560px){.wm-analytics .wm-statgroup,.wm-analytics .wm-statgroup[data-kpi-group=activity]{grid-template-columns:minmax(0,1fr)}.wm-analytics .wm-stat{border-right:0;border-bottom:1px solid var(--ui-stroke-secondary)}.wm-analytics .wm-modelbutton{max-width:45cqi}}
 @container(max-width:380px){.wm-analytics .wm-donutbody{grid-template-columns:1fr}.wm-analytics .wm-compositionkey{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.wm-analytics *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `
-const CHART_COLORS = ['var(--ui-accent)','var(--ui-success)','var(--ui-warning)',
+const CHART_COLORS = ['var(--ui-accent)','var(--ui-success)','var(--ui-warning,var(--ui-text-secondary))',
   'color-mix(in srgb, var(--ui-accent) 40%, var(--ui-text-primary))',
   'color-mix(in srgb, var(--ui-success) 40%, var(--ui-text-primary))',
-  'color-mix(in srgb, var(--ui-warning) 45%, var(--ui-text-primary))','var(--ui-text-quaternary)']
+  'color-mix(in srgb, var(--ui-warning,var(--ui-text-secondary)) 45%, var(--ui-text-primary))','var(--ui-text-quaternary)']
 const percent = v => finiteValue(v)==null ? '—' : `${(v*100).toFixed(1)}%`
 const exactTokens = value => finiteValue(value)==null ? '—' : value.toLocaleString('en-US')
 function analyticMoney(value) { return finiteValue(value)==null ? '—' : value<0 ? `−${fmtUsd(-value)}` : fmtUsd(value) }
@@ -3272,7 +3275,7 @@ function AnalyticsDonut({items,total,label,format,exact=format,onSelect,chart='d
   let offset=0
   return jsxs('svg',{className:'wm-donut',viewBox:'0 0 200 200','data-chart':chart,role:'img','aria-label':`${label}: ${exact(total)}`,children:[
     jsx('title',{children:`${label}. ${items.map(r=>`${r.label}: ${exact(r.value)} (${percent(r.share)})`).join('; ')}`}),
-    jsx('circle',{cx:100,cy:100,r:radius,fill:'none',stroke:'var(--ui-fill-tertiary)',strokeWidth:22}),
+    jsx('circle',{cx:100,cy:100,r:radius,fill:'none',stroke:'var(--wm-chart-track)',strokeWidth:22}),
     ...items.map((item,i)=>{
       const start=offset;offset+=item.share*circumference
       const select=()=>onSelect(item)
@@ -3333,7 +3336,7 @@ function AnalyticsTrendChart({data,state,dispatch}) {
       trend.stacked&&trend.points.length===1?TOKEN_STREAMS.map(([, ,color],i)=>jsx('rect',{x:x(p)-15,width:30,y:y(p.values.slice(0,i+1).reduce((a,b)=>a+b,0)),height:(p.values[i]/(trend.max||1))*(bottom-top),fill:color},i)):null,
       jsx('line',{x1:x(p),x2:x(p),y1:top,y2:bottom,stroke:'var(--ui-accent)',strokeOpacity:active===p?.45:0}),
       jsx('rect',{x:x(p)-Math.min(18,(right-left)/Math.max(1,trend.points.length)/2),y:top,width:Math.min(36,(right-left)/Math.max(1,trend.points.length)),height:bottom-top,fill:'transparent'}),
-      p.total!=null?jsx('circle',{cx:x(p),cy:y(p.total),r:active===p?4:2.5,fill:'var(--ui-accent)',stroke:'var(--ui-fill-primary)',strokeWidth:1.5}):null]},p.ts))
+      p.total!=null?jsx('circle',{cx:x(p),cy:y(p.total),r:active===p?4:2.5,fill:'var(--ui-accent)',stroke:'var(--ui-fill-primary,var(--ui-bg-editor))',strokeWidth:1.5}):null]},p.ts))
   // The API may omit category-dollar streams. Draw only real total-dollar segments, never guessed stacks.
   const costLines=[]
   if(!trend.stacked) {
@@ -3391,8 +3394,8 @@ function AnalyticsRanking({data,state,dispatch}) {
         return jsxs('g',{transform:`translate(0,${i*42+5})`,role:'button',tabIndex:0,'aria-label':t('usageRankRowAria', row.model, row.provider, percent(row.cache_hit_rate), exactTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd)),onClick:action,onKeyDown:event=>keyActivate(event,action),style:{cursor:'pointer'},children:[
           jsx('title',{children:t('usageRankRowTitle', row.model, row.provider, row.cache_known_calls || 0, row.cache_unknown_calls || 0, exactTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
           jsx('text',{x:0,y:12,fill:'var(--ui-text-primary)',fontSize:12,children:row.model?.length>31?`${row.model.slice(0,29)}…`:row.model}),jsx('text',{x:0,y:26,className:'wm-axis',children:t('usageRankRowSub', row.provider || t('unknown'), fmtTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
-          jsx('rect',{x:signed?233:start,y:5,width:signed?200:range,height:8,rx:3,fill:'var(--ui-fill-tertiary)'}),
-          value!=null?jsx('rect',{x:value<0?start-barWidth:start,y:5,width:barWidth,height:8,rx:3,fill:value<0?'var(--ui-warning)':'var(--ui-success)'}):null,
+          jsx('rect',{x:signed?233:start,y:5,width:signed?200:range,height:8,rx:3,fill:'var(--wm-chart-track)'}),
+          value!=null?jsx('rect',{x:value<0?start-barWidth:start,y:5,width:barWidth,height:8,rx:3,fill:value<0?'var(--wm-attention)':'var(--ui-success)'}):null,
           signed?jsx('line',{x1:start,x2:start,y1:1,y2:18,stroke:'var(--ui-text-quaternary)'}):null,
           jsx('text',{x:609,y:13,textAnchor:'end',className:'wm-axis',children:value==null?t('unknown'):format(value)})]},analyticsId(row))})]}),
     footer:t('usageRankFooter', ranked.length, state.ranking==='savings'?t('usageRankModeSavings'):state.ranking==='cache_read_tokens'?t('usageRankModeVolume'):t('usageRankModeRate'))})
@@ -3408,7 +3411,7 @@ function AnalyticsComposition({data,state,dispatch}) {
     children:jsxs('div',{className:'wm-composition',children:[state.compositionMode==='doughnut'?
       jsx(AnalyticsDonut,{items:parts,total,label:t('usageDonutAllStreams'),format:fmtTokens,exact:exactTokens,onSelect:select,chart:'composition',t}):
       jsxs('div',{children:[jsx('div',{className:'wm-compositiontotal wm-mono',children:fmtTokens(total)}),jsx('p',{className:'wm-subtle',children:t('usageCompTokensTotal')}),
-        jsxs('svg',{viewBox:'0 0 600 44',style:{width:'100%',marginTop:18},'data-chart':'composition',role:'img','aria-label':t('usageCompAria', exactTokens(total)),children:[jsx('title',{children:parts.map(r=>t('usageCompSvgPart', r.label, exactTokens(r.value), percent(r.share))).join('; ')}),jsx('rect',{x:0,y:4,width:600,height:28,rx:4,fill:'var(--ui-fill-tertiary)'}),...parts.map(row=>{
+        jsxs('svg',{viewBox:'0 0 600 44',style:{width:'100%',marginTop:18},'data-chart':'composition',role:'img','aria-label':t('usageCompAria', exactTokens(total)),children:[jsx('title',{children:parts.map(r=>t('usageCompSvgPart', r.label, exactTokens(r.value), percent(r.share))).join('; ')}),jsx('rect',{x:0,y:4,width:600,height:28,rx:4,fill:'var(--wm-chart-track)'}),...parts.map(row=>{
           const start=x;x+=row.share*600
           return jsx('rect',{x:start,y:4,width:row.share*600,height:28,fill:row.color,role:'button',tabIndex:0,'aria-label':t('usageCompSelect', row.label),onClick:()=>select(row),onFocus:()=>select(row),onKeyDown:event=>keyActivate(event,()=>select(row)),children:jsx('title',{children:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share))})},row.id)
         })]})]}),
@@ -3581,7 +3584,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const economics=data?.economics || totals?.economics || {}
   const refresh=()=>query.refetch?.()
   const billingMix=totals?.billing_mix ? Object.entries(totals.billing_mix).map(([kind,value])=>`${kind}: ${typeof value==='number'?fmtTokens(value):String(value)}`).join(' · ') : ''
-  const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('div',{className:'wm-eyebrow',children:'WolfMark / SpendSense'}),jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
+  const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
     jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')})]})]})
   const content = jsxs('div',{className:'wm-shell',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
       query.error?jsxs('div',{id:'wm-usage-load-error',className:'wm-alert',role:'alert',tabIndex:-1,children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
@@ -4857,6 +4860,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-section{padding:17px}',
   '.wm-product .wm-product-section h2{margin:0 0 4px;font-size:16px;font-weight:590}',
   '.wm-product .wm-product-section > p{margin:4px 0 12px;color:var(--ui-text-tertiary);font-size:12px;line-height:1.5}',
+  '.wm-product .wm-product-section > p.wm-warn-note{color:var(--wm-attention)}',
   '.wm-product .wm-cost-list{display:grid;gap:0}',
   '.wm-product .wm-cost-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;border-top:1px solid var(--ui-stroke-secondary);padding:11px 2px}',
   '.wm-product .wm-cost-row:first-child{border-top:0}',
@@ -4877,7 +4881,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-custom-form input,.wm-product .wm-allowance-editor input,.wm-product .wm-exhaustion-form input{width:100%;min-height:34px;border:1px solid var(--ui-stroke-secondary);border-radius:6px;padding:7px 9px;background:var(--ui-fill-primary);color:var(--ui-text-primary);font:inherit}',
   '.wm-product .wm-allowances{display:grid;gap:9px;padding-top:8px;border-top:1px solid var(--ui-stroke-secondary)}',
   '.wm-product .wm-allowance-editor{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));align-items:end;gap:9px;padding:10px 0;border-top:1px solid var(--ui-stroke-secondary)}',
-  '.wm-product .wm-confirm-box{margin-top:10px;padding:11px;border:1px solid var(--ui-warning);border-radius:7px;background:color-mix(in srgb,var(--ui-warning) 7%,transparent)}',
+  '.wm-product .wm-confirm-box{margin-top:10px;padding:11px;border:1px solid var(--wm-attention);border-radius:7px;background:color-mix(in srgb,var(--wm-attention) 7%,transparent)}',
   '.wm-product .wm-exhaustion-form{display:grid;gap:10px;margin-top:10px;padding:12px;border:1px solid var(--ui-accent);border-radius:8px;background:var(--ui-fill-secondary)}',
   '.wm-product .wm-product-stat small{display:block;margin-top:6px;color:var(--ui-text-tertiary);font-size:11px;line-height:1.4}',
   '.wm-product .wm-product-section p{max-width:78ch}',
@@ -5699,7 +5703,7 @@ function EconomicsPanel({ identity, unknownFees = null }) {
 const ECONOMICS_CSS = [
   '.wm-product .wm-cost-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}',
   '.wm-product .wm-cost-card{display:grid;align-content:start;gap:7px;min-width:0;padding:13px 14px;border:1px solid var(--wm-border);border-left:3px solid var(--wm-cost-accent,var(--wm-border));border-radius:var(--wm-radius-card);background:var(--wm-surface)}',
-  '.wm-product .wm-cost-card-api{--wm-cost-accent:var(--ui-accent)}.wm-product .wm-cost-card-reported{--wm-cost-accent:var(--ui-success)}.wm-product .wm-cost-card-charges{--wm-cost-accent:var(--ui-warning)}.wm-product .wm-cost-card-cache{--wm-cost-accent:var(--ui-success)}.wm-product .wm-cost-card-cache-negative{--wm-cost-accent:var(--ui-warning)}.wm-product .wm-cost-card-fees{--wm-cost-accent:var(--ui-accent)}.wm-product .wm-cost-card-allowances{--wm-cost-accent:var(--ui-accent)}',
+  '.wm-product .wm-cost-card-api{--wm-cost-accent:var(--ui-accent)}.wm-product .wm-cost-card-reported{--wm-cost-accent:var(--ui-success)}.wm-product .wm-cost-card-charges{--wm-cost-accent:var(--wm-attention)}.wm-product .wm-cost-card-cache{--wm-cost-accent:var(--ui-success)}.wm-product .wm-cost-card-cache-negative{--wm-cost-accent:var(--wm-attention)}.wm-product .wm-cost-card-fees{--wm-cost-accent:var(--ui-accent)}.wm-product .wm-cost-card-allowances{--wm-cost-accent:var(--ui-accent)}',
   '.wm-product .wm-cost-card-label{margin:0;color:var(--ui-text-secondary);font-size:12px;font-weight:600;line-height:1.4}',
   '.wm-product .wm-cost-card-value{font-size:20px;line-height:1.25;font-weight:620;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
   '.wm-product .wm-cost-card-status{justify-self:start;padding:2px 7px;border:1px solid color-mix(in srgb,var(--wm-cost-accent) 45%,var(--ui-stroke-secondary));border-radius:99px;color:var(--ui-text-primary);font-size:10.5px;font-weight:600;line-height:1.4}',
@@ -5789,7 +5793,7 @@ const ECONOMICS_CSS = [
   '.wm-product .wm-cost-card-label::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--wm-cost-accent,var(--ui-text-quaternary));flex:none}',
   '.wm-product .wm-cost-card-note{font-size:12px}',
   '.wm-product #wm-costs-attention,.wm-product #wm-subscription-economics{scroll-margin-top:12px}',
-  '.wm-product .wm-cost-attn-count{font-size:11px;font-weight:600;color:#0a0b0f;background:var(--ui-warning);border-radius:99px;padding:0 7px;line-height:18px;margin-left:8px;vertical-align:2px}',
+  '.wm-product .wm-cost-attn-count{font-size:11px;font-weight:600;color:var(--wm-text);background:color-mix(in srgb,var(--wm-attention) 20%,var(--wm-surface-raised,var(--ui-bg-editor,transparent)));border-radius:99px;padding:0 7px;line-height:18px;margin-left:8px;vertical-align:2px}',
   '.wm-product .wm-cost-attn-hint{margin:4px 0 0;color:var(--ui-text-tertiary);font-size:12px}',
   '.wm-product .wm-cost-attn-cat{margin:12px 0 0}',
   '.wm-product .wm-cost-attn-cat-title{margin:0;font-size:12.5px;font-weight:600}',
@@ -5805,7 +5809,7 @@ const ECONOMICS_CSS = [
   '.wm-product .wm-cost-attn-accounts ul{margin:4px 0;padding-left:18px;color:var(--ui-text-secondary);font-size:12px;display:grid;gap:2px}',
   '.wm-product .wm-econ-chip{font-size:11px;font-weight:600;border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:1px 8px;color:var(--ui-text-tertiary);white-space:nowrap}',
   '.wm-product .wm-econ-chip[data-status="ok"]{color:var(--ui-success);border-color:color-mix(in srgb,var(--ui-success) 45%,var(--ui-stroke-secondary))}',
-  '.wm-product .wm-econ-chip[data-status="partial"]{color:var(--ui-warning);border-color:color-mix(in srgb,var(--ui-warning) 45%,var(--ui-stroke-secondary))}',
+  '.wm-product .wm-econ-chip[data-status="partial"]{color:var(--wm-attention);border-color:color-mix(in srgb,var(--wm-attention) 45%,var(--wm-border))}',
   '.wm-product .wm-econ-group-body{display:grid;gap:7px}',
   '.wm-product .wm-econ-group-money{margin:0;font-size:12.5px;color:var(--ui-text-secondary);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
   '.wm-product .wm-econ-trend-inline{display:grid;gap:8px;margin-top:16px}',
@@ -7053,7 +7057,6 @@ const MEMBERSHIP_CSS = `
 .wm-membership-explainer>summary{width:fit-content;min-height:26px;display:list-item;cursor:pointer;font-weight:600}
 .wm-membership-explainer>p{margin:4px 0 0;max-width:82ch}
 .wm-accent-note{color:var(--ui-accent)}
-.wm-warn-note{color:var(--ui-warning)}
 .wm-fee-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
  border-top:1px solid var(--ui-stroke-secondary);padding-top:8px}
 .wm-fee{font-size:13px;font-weight:550}
@@ -7086,8 +7089,8 @@ const MEMBERSHIP_CSS = `
 .wm-seg button:hover:not([disabled]){color:var(--ui-text-primary);background:var(--ui-fill-secondary)}
 .wm-seg button[aria-pressed="true"]{background:var(--ui-fill-tertiary);color:var(--ui-text-primary);font-weight:600}
 .wm-seg button[disabled]{opacity:.55;cursor:default}
-.wm-flash{box-shadow:0 0 0 2px var(--ui-warning);border-radius:6px;animation:wm-flash 1.6s ease}
-@keyframes wm-flash{0%{box-shadow:0 0 0 2px var(--ui-warning)}100%{box-shadow:0 0 0 0 transparent}}
+.wm-flash{box-shadow:0 0 0 2px var(--wm-attention);border-radius:6px;animation:wm-flash 1.6s ease}
+@keyframes wm-flash{0%{box-shadow:0 0 0 2px var(--wm-attention)}100%{box-shadow:0 0 0 0 transparent}}
 @media (prefers-reduced-motion:reduce){.wm-flash{animation:none}.wm-chev{transition:none}.wm-group > summary::before{transition:none}}
 .wm-memberships select:disabled,.wm-memberships input:disabled{opacity:.55}
 .wm-membership-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:0}
@@ -7098,7 +7101,7 @@ const MEMBERSHIP_CSS = `
  border-radius:var(--wm-radius-card);background:var(--wm-surface)}
 .wm-membership-summary-card[data-tone="declared"]{--wm-mem-accent:var(--ui-accent)}
 .wm-membership-summary-card[data-tone="positive"]{--wm-mem-accent:var(--ui-success)}
-.wm-membership-summary-card[data-tone="attention"]{--wm-mem-accent:var(--ui-warning)}
+.wm-membership-summary-card[data-tone="attention"]{--wm-mem-accent:var(--wm-attention)}
 .wm-membership-summary-label{margin:0;display:flex;align-items:center;gap:7px;color:var(--ui-text-secondary);
  font-size:12px;font-weight:600;line-height:1.4}
 .wm-membership-summary-label::before{content:"";width:7px;height:7px;border-radius:50%;
@@ -7140,7 +7143,7 @@ const MEMBERSHIP_CSS = `
 .wm-row-state{display:flex;align-items:center;justify-content:flex-start;gap:5px;flex-wrap:wrap;min-width:0}
 .wm-row-actions{justify-self:end}
 .wm-chip[data-state="reported"]{color:var(--ui-success,#3fb950);border-color:color-mix(in srgb,var(--ui-success,#3fb950) 45%,transparent)}
-.wm-chip[data-state="partial"],.wm-chip[data-state="stale"]{color:var(--ui-warning);border-color:color-mix(in srgb,var(--ui-warning) 45%,transparent)}
+.wm-chip[data-state="partial"],.wm-chip[data-state="stale"]{color:var(--wm-attention);border-color:color-mix(in srgb,var(--wm-attention) 45%,transparent)}
 .wm-chip[data-state="unreported"]{color:var(--ui-text-tertiary)}
 .wm-chev{display:inline-block;transition:transform .15s ease}
 button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
@@ -7190,7 +7193,7 @@ button[aria-expanded="true"] .wm-chev{transform:rotate(90deg)}
 .wm-card[data-arrangement="included"]{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--ui-success,#3fb950) 70%,transparent)}
 .wm-card[data-arrangement="free"]{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--ui-success,#3fb950) 35%,var(--ui-stroke-secondary))}
 .wm-card[data-arrangement="prepaid"],.wm-card[data-arrangement="metered"]{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--ui-accent) 35%,var(--ui-stroke-secondary))}
-.wm-card[data-arrangement="review"]{box-shadow:inset 3px 0 0 var(--ui-warning)}
+.wm-card[data-arrangement="review"]{box-shadow:inset 3px 0 0 var(--wm-attention)}
 `
 
 let membershipReadSerial = 0
@@ -10882,7 +10885,7 @@ const NEWS_CSS = `
 .wm-news-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .wm-news-badge{flex:none;font-size:11px;font-weight:600;border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:3px 10px;color:var(--ui-text-secondary);white-space:nowrap}
 .wm-news-badge[data-cat="price_reduction"]{color:var(--ui-success);border-color:var(--ui-success)}
-.wm-news-badge[data-cat="price_increase"]{color:var(--ui-warning);border-color:var(--ui-warning)}
+.wm-news-badge[data-cat="price_increase"]{color:var(--wm-attention);border-color:var(--wm-attention)}
 .wm-news-badge[data-cat="new_model"]{color:var(--ui-accent);border-color:var(--ui-accent)}
 .wm-news-dates{margin:7px 0 0;font-size:11.5px;color:var(--ui-text-tertiary)}
 .wm-news-summary{margin:9px 0 0;font-size:13px;line-height:1.55;color:var(--ui-text-primary);max-width:78ch}
@@ -10927,13 +10930,13 @@ const NEWS_CSS = `
 .wm-news-dir [data-dir="up"]{color:var(--ui-warning)}
 .wm-news-dir [data-dir="new"]{color:var(--ui-accent)}
 .wm-news-badge[data-class="reduction"]{color:var(--ui-success);border-color:var(--ui-success)}
-.wm-news-badge[data-class="increase"]{color:var(--ui-warning);border-color:var(--ui-warning)}
+.wm-news-badge[data-class="increase"]{color:var(--wm-attention);border-color:var(--wm-attention)}
 .wm-news-badge[data-class="new_listing"]{color:var(--ui-accent);border-color:var(--ui-accent)}
 .wm-news-badge[data-class="match"]{color:var(--ui-accent);border-color:var(--ui-accent)}
 .wm-news-chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;min-width:0;flex:2 1 320px}
 .wm-news-chip{border:1px solid var(--ui-stroke-secondary);border-radius:99px;padding:2px 9px;font-size:11.5px;color:var(--ui-text-secondary);font-variant-numeric:tabular-nums;white-space:nowrap}
 .wm-news-chip[data-tone="down"]{color:var(--ui-success);border-color:var(--ui-success)}
-.wm-news-chip[data-tone="up"]{color:var(--ui-warning);border-color:var(--ui-warning)}
+.wm-news-chip[data-tone="up"]{color:var(--wm-attention);border-color:var(--wm-attention)}
 .wm-news-chip[data-tone="na"]{color:var(--ui-text-tertiary)}
 .wm-news-offerimpact{flex:1 0 100%;margin:0;font-size:11.5px;line-height:1.5;color:var(--ui-text-secondary)}
 .wm-news-offerfoot{flex:1 0 100%;display:flex;flex-direction:column;align-items:flex-start;gap:8px}

@@ -35,16 +35,19 @@ test('Hermes sidebar keeps the model and net cache evidence readable from 268px 
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;font:13px/1.5 system-ui,sans-serif}body{padding:12px;background:#e7e9ee;color:#151823}
 #sidebar-layout-cases{display:grid;grid-template-columns:repeat(3,max-content);gap:12px;align-items:start}
 .case{overflow:hidden;background:var(--ui-fill-primary);color:var(--ui-text-primary)}
-.case.dark{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--ui-fill-tertiary:#232633;--ui-stroke-secondary:#2b2f40;--ui-text-primary:#eef0f6;--ui-text-secondary:#b9bdd1;--ui-text-tertiary:#a9aec6;--ui-text-quaternary:#9398b0;--ui-accent:#7fa0ff;--ui-success:#2dd4bf;--ui-warning:#f5b544;--ui-error:#f26d6d}
-.case.light{--ui-fill-primary:#fff;--ui-fill-secondary:#f2f4f7;--ui-fill-tertiary:#e3e5eb;--ui-stroke-secondary:#c5cbd5;--ui-text-primary:#151823;--ui-text-secondary:#414655;--ui-text-tertiary:#555b69;--ui-text-quaternary:#626877;--ui-accent:#3157c0;--ui-success:#087f5b;--ui-warning:#9a5e00;--ui-error:#b42318}
+.case.dark{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--ui-fill-tertiary:#232633;--ui-stroke-secondary:#2b2f40;--ui-text-primary:#eef0f6;--ui-text-secondary:#b9bdd1;--ui-text-tertiary:#a9aec6;--ui-text-quaternary:#9398b0;--ui-accent:#7fa0ff;--ui-success:#2dd4bf}
+body[data-state-tokens] .case.dark{--ui-warning:#f5b544;--ui-error:#f26d6d}
+.case.light{--ui-fill-primary:#fff;--ui-fill-secondary:#f2f4f7;--ui-fill-tertiary:#e3e5eb;--ui-stroke-secondary:#c5cbd5;--ui-text-primary:#151823;--ui-text-secondary:#414655;--ui-text-tertiary:#555b69;--ui-text-quaternary:#626877;--ui-accent:#3157c0;--ui-success:#087f5b}
+body[data-state-tokens] .case.light{--ui-warning:#9a5e00;--ui-error:#b42318}
 body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] #sidebar-layout-cases{display:block}body[data-single] .case{margin:0}
 </style></head><body><div id="sidebar-layout-cases"></div><div id="sidebar-layout-result"></div>
+<script>if(new URLSearchParams(location.search).get('stateTokens') !== 'absent') document.body.dataset.stateTokens = ''</script>
 <script>${readFileSync(bundle, 'utf8')}</script></body></html>`)
     const url = pathToFileURL(html).href
-    const run = (locale, tooltipInteraction = '', coverageInteraction = '', scope = 'conversation') => {
-      const query = `all=1&locale=${locale}&state=partial&scope=${scope}${tooltipInteraction ? `&tooltipInteraction=${tooltipInteraction}` : ''}${coverageInteraction ? `&coverageInteraction=${coverageInteraction}` : ''}`
+    const run = (locale, tooltipInteraction = '', coverageInteraction = '', scope = 'conversation', stateTokens = 'present') => {
+      const query = `all=1&locale=${locale}&state=partial&scope=${scope}&stateTokens=${stateTokens}${tooltipInteraction ? `&tooltipInteraction=${tooltipInteraction}` : ''}${coverageInteraction ? `&coverageInteraction=${coverageInteraction}` : ''}`
       const dom = execFileSync(CHROME, [
-        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-${locale}-${scope}`)}`,
+        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-${locale}-${scope}-${stateTokens}`)}`,
         '--virtual-time-budget=5000', '--dump-dom', `${url}?${query}`,
       ], { maxBuffer: 32 * 1024 * 1024, timeout: 120000 }).toString()
       const match = dom.match(/<div id="sidebar-layout-result"[^>]*>(.*?)<\/div>/s)
@@ -132,6 +135,21 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
           `${interaction} aligns the disclosure beside its trigger`)
         const gap = disclosure.popover.top - disclosure.trigger.bottom
         assert.ok(gap >= 4 && gap <= 12, `${interaction} opens directly below the trigger (${gap}px gap)`)
+      }
+      const nativeTokens = run(locale, '', 'focus', 'conversation', 'absent')
+      assert.deepEqual(nativeTokens.errors, [], `${locale} renders without the optional state tokens`)
+      assert.equal(nativeTokens.coverageDisclosure.expanded, true, `${locale} keeps keyboard Coverage help`)
+      assert.equal(nativeTokens.layouts.length, result.layouts.length)
+      for (const [index, layout] of nativeTokens.layouts.entries()) {
+        const withTokens = result.layouts[index]
+        const dark = layout.id.endsWith('dark')
+        assert.equal(layout.id, withTokens.id)
+        assert.equal(layout.horizontalOverflow, 0, `${locale}/${layout.id} fits without state tokens`)
+        assert.equal(layout.scrollDelta, withTokens.scrollDelta, `${locale}/${layout.id} retains scroll depth`)
+        assert.equal(layout.writePaint, dark ? 'rgb(185, 189, 209)' : 'rgb(65, 70, 85)')
+        assert.equal(withTokens.writePaint, dark ? 'rgb(245, 181, 68)' : 'rgb(154, 94, 0)')
+        assert.equal(layout.writeWidth, withTokens.writeWidth)
+        assert.ok(layout.writeWidth > 0)
       }
       const runScope = run(locale, '', 'focus', 'run')
       assert.deepEqual(runScope.errors, [], `no current-run browser errors (${locale})`)
