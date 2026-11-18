@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -89,6 +90,36 @@ def anthropic_snapshot(**kw):
             {"label": "Current week", "used_percent": 31.0, "reset_at": iso(NOW + timedelta(days=4)), "scope": "account"},
             {"label": "Opus week", "used_percent": 100.0, "reset_at": iso(NOW + timedelta(days=4)), "scope": "model"},
             {"label": "Sonnet week", "used_percent": 20.0, "reset_at": iso(NOW + timedelta(days=4)), "scope": "model"},
+        ],
+        "details": [],
+        "unavailable_reason": None,
+    }
+    base.update(kw)
+    return base
+
+
+def hermes_snapshot(**kw):
+    """A Hermes 0.23.1 ``usage --json`` document, post-discovery normalisation.
+
+    ``usage_snapshot_document`` emits windows without ``scope`` and no
+    snapshot ``identity``; the ``resets_at`` key is already normalised to
+    ``reset_at`` by the time ``native_usage`` sees it.
+    """
+    base = {
+        "provider": "anthropic",
+        "source": "oauth_usage_api",
+        "title": "Account limits",
+        "plan": None,
+        "fetched_at": iso(NOW - timedelta(minutes=1)),
+        "windows": [
+            {"label": "Current session", "used_percent": 12.0,
+             "reset_at": iso(NOW + timedelta(hours=3)), "detail": None},
+            {"label": "Current week", "used_percent": 31.0,
+             "reset_at": iso(NOW + timedelta(days=4)), "detail": None},
+            {"label": "Opus week", "used_percent": 100.0,
+             "reset_at": iso(NOW + timedelta(days=4)), "detail": None},
+            {"label": "Sonnet week", "used_percent": 20.0,
+             "reset_at": iso(NOW + timedelta(days=4)), "detail": None},
         ],
         "details": [],
         "unavailable_reason": None,
@@ -350,18 +381,23 @@ class NativePrefillTests(unittest.TestCase):
         self.assertTrue(view["notes"])
 
     def test_model_scoped_exhaustion_is_not_account_exhaustion(self):
-        view = M.native_usage(anthropic_snapshot(), membership(family="anthropic", plan_id="anthropic.claude-pro"),
-                              at=NOW)
+        # The snapshot is anonymous, so the membership is the default slot:
+        # applying it to a named account would assert an unverified identity.
+        account = membership(family="anthropic", plan_id="anthropic.claude-pro",
+                             identity=None, id=M.account_key("anthropic", None))
+        view = M.native_usage(anthropic_snapshot(), account, at=NOW)
         self.assertFalse(M.account_exhausted(view))
         self.assertEqual(M.model_exhausted(view), ["Opus week"])
         self.assertEqual([w["scope"] for w in view["windows"]],
                          ["account", "account", "model", "model"])
 
     def test_account_window_exhaustion_is_reported(self):
+        account = membership(family="anthropic", plan_id="anthropic.claude-pro",
+                             identity=None, id=M.account_key("anthropic", None))
         view = M.native_usage(anthropic_snapshot(windows=[
             {"label": "Current week", "used_percent": 100.0, "scope": "account"},
             {"label": "Opus week", "used_percent": 100.0, "scope": "model"},
-        ]), membership(family="anthropic", plan_id="anthropic.claude-pro"), at=NOW)
+        ]), account, at=NOW)
         self.assertTrue(M.account_exhausted(view))
 
     def test_missing_scope_defaults_to_account_and_is_flagged(self):
@@ -423,6 +459,189 @@ class NativePrefillTests(unittest.TestCase):
         member = M.member_from_native(anthropic_snapshot())
         self.assertEqual(member["id"], "anthropic:default")
         self.assertEqual(member["identity_source"], "provider_default_slot")
+
+
+class QuotaScopeTests(unittest.TestCase):
+    """F118: a model-scoped provider limit must never exhaust the account.
+
+    Hermes 0.23.1 omits ``scope`` from its usage JSON, so SpendSense must
+    recover the scope from the verified plan catalogue by exact window id —
+    and refuse an account-wide verdict when no verified scope exists.
+    """
+
+    def _account(self):
+        return membership(family="anthropic", plan_id="anthropic.claude-pro",
+                          identity=None, id=M.account_key("anthropic", None))
+
+    def _plan(self):
+        return M.plan_index(catalogue())["anthropic.claude-pro"]
+
+    def test_opus_only_exhaustion_is_model_not_account_exhaustion(self):
+        native = M.native_usage(hermes_snapshot(), self._account(), at=NOW)
+        quota = M.quota_view(self._account(), native, self._plan(), at=NOW)
+        self.assertFalse(quota["account_exhausted"],
+                         "only the Opus weekly window is full")
+        self.assertEqual(quota["model_exhausted"], ["Opus week"])
+        rows = {w["id"]: w for w in quota["windows"]}
+        self.assertEqual(rows["opus-week"]["scope"], "model")
+        self.assertEqual(rows["sonnet-week"]["scope"], "model")
+        self.assertEqual(rows["current-session"]["scope"], "account")
+        self.assertEqual(rows["current-week"]["scope"], "account")
+
+    def test_backfilled_scope_keeps_its_provenance(self):
+        native = M.native_usage(hermes_snapshot(), self._account(), at=NOW)
+        quota = M.quota_view(self._account(), native, self._plan(), at=NOW)
+        rows = {w["id"]: w for w in quota["windows"]}
+        # The provider said nothing: the catalogue supplied the scope.
+        self.assertTrue(rows["opus-week"]["scope_assumed"])
+        self.assertEqual(rows["opus-week"]["scope_source"], "plan_catalogue")
+
+    def test_explicit_provider_scope_wins_over_the_plan(self):
+        snap = hermes_snapshot(windows=[
+            {"label": "Opus week", "used_percent": 100.0,
+             "reset_at": iso(NOW + timedelta(days=1)), "scope": "account"},
+        ])
+        native = M.native_usage(snap, self._account(), at=NOW)
+        quota = M.quota_view(self._account(), native, self._plan(), at=NOW)
+        row = next(w for w in quota["windows"] if w["id"] == "opus-week")
+        self.assertEqual(row["scope"], "account")
+        self.assertFalse(row["scope_assumed"])
+        self.assertEqual(row["scope_source"], "provider")
+        self.assertTrue(quota["account_exhausted"])
+
+    def test_assumed_scope_without_a_plan_match_cannot_exhaust_the_account(self):
+        snap = hermes_snapshot(windows=[
+            {"label": "Session", "used_percent": 100.0,
+             "reset_at": iso(NOW + timedelta(hours=1))},
+        ])
+        account = membership(family="demo", plan_id=None, identity=None,
+                             id=M.account_key("demo", None))
+        native = M.native_usage(snap, account, at=NOW)
+        quota = M.quota_view(account, native, None, at=NOW)
+        self.assertFalse(quota["account_exhausted"])
+        self.assertEqual(quota["model_exhausted"], [])
+        row = next(w for w in quota["windows"] if w["id"] == "session")
+        self.assertEqual(row["used_percent"], 100.0)
+        self.assertEqual(row["scope_source"], "default")
+        self.assertTrue(any("scope" in note for note in quota["notes"]),
+                        f"the withheld verdict must be explained: {quota['notes']}")
+
+    def test_mixed_account_and_model_exhaustion_reports_both(self):
+        snap = hermes_snapshot(windows=[
+            {"label": "Current week", "used_percent": 100.0,
+             "reset_at": iso(NOW + timedelta(days=1))},
+            {"label": "Opus week", "used_percent": 100.0,
+             "reset_at": iso(NOW + timedelta(days=1))},
+        ])
+        native = M.native_usage(snap, self._account(), at=NOW)
+        quota = M.quota_view(self._account(), native, self._plan(), at=NOW)
+        self.assertTrue(quota["account_exhausted"])
+        self.assertEqual(quota["model_exhausted"], ["Opus week"])
+
+    def test_defaulted_custom_allowance_scope_cannot_backfill(self):
+        account = self._account()
+        custom_id = f"custom:{account['id']}"
+        account = {**account, "plan_id": custom_id,
+                   "custom_plan": {"id": custom_id, "name": "Mine",
+                                   "allowances": [{"label": "Opus week"}]}}
+        snap = hermes_snapshot(windows=[
+            {"label": "Opus week", "used_percent": 100.0,
+             "reset_at": iso(NOW + timedelta(days=1))},
+        ])
+        native = M.native_usage(snap, account, at=NOW)
+        quota = M.quota_view(account, native, M.custom_plan_view(account), at=NOW)
+        self.assertFalse(quota["account_exhausted"],
+                         "a defaulted scope is our assumption, not plan evidence")
+        row = next(w for w in quota["windows"] if w["id"] == "opus-week")
+        self.assertEqual(row["scope_source"], "default")
+
+    def test_explicit_custom_allowance_scope_backfills(self):
+        account = self._account()
+        custom_id = f"custom:{account['id']}"
+        account = {**account, "plan_id": custom_id,
+                   "custom_plan": {"id": custom_id, "name": "Mine",
+                                   "allowances": [{"label": "Opus week", "scope": "model"}]}}
+        snap = hermes_snapshot(windows=[
+            {"label": "Opus week", "used_percent": 100.0,
+             "reset_at": iso(NOW + timedelta(days=1))},
+        ])
+        native = M.native_usage(snap, account, at=NOW)
+        quota = M.quota_view(account, native, M.custom_plan_view(account), at=NOW)
+        self.assertFalse(quota["account_exhausted"])
+        self.assertEqual(quota["model_exhausted"], ["Opus week"])
+
+    def test_catalogue_window_without_a_stated_scope_cannot_backfill(self):
+        book = mini_catalogue(plans=[plan_entry(
+            plan_id="demo.plan", family="demo",
+            windows=[{"id": "session", "label": "Session"}])])
+        plan = M.plan_index(book)["demo.plan"]
+        snap = hermes_snapshot(provider="demo", windows=[
+            {"label": "Session", "used_percent": 100.0,
+             "reset_at": iso(NOW + timedelta(hours=1))},
+        ])
+        account = membership(family="demo", plan_id="demo.plan", identity=None,
+                             id=M.account_key("demo", None))
+        native = M.native_usage(snap, account, at=NOW)
+        quota = M.quota_view(account, native, plan, at=NOW)
+        self.assertFalse(quota["account_exhausted"])
+        row = next(w for w in quota["windows"] if w["id"] == "session")
+        self.assertEqual(row["scope_source"], "default")
+
+
+class IdentityVerificationTests(unittest.TestCase):
+    """F119: an unattributed reading is never shown as a named account's."""
+
+    def test_matching_identity_applies_the_reading(self):
+        view = M.native_usage(codex_snapshot(), membership(), at=NOW)
+        self.assertEqual(view["state"], "live")
+        self.assertEqual(len(view["windows"]), 2)
+
+    def test_absent_identity_on_both_sides_uses_the_default_slot(self):
+        account = membership(identity=None, id=M.account_key("openai-codex", None))
+        view = M.native_usage(codex_snapshot(identity=None), account, at=NOW)
+        self.assertEqual(view["state"], "live")
+        self.assertEqual(view["identity_source"], "provider_default_slot")
+        self.assertEqual(len(view["windows"]), 2)
+
+    def test_named_account_with_anonymous_snapshot_is_unverified(self):
+        view = M.native_usage(codex_snapshot(identity=None), membership(), at=NOW)
+        self.assertEqual(view["state"], "identity_unverified")
+        self.assertEqual(view["windows"], [])
+        self.assertTrue(view["notes"])
+
+
+class MoneyValidationTests(unittest.TestCase):
+    """F120: non-finite monetary values are rejected, never persisted."""
+
+    def test_money_rejects_non_finite_values(self):
+        for bad in (math.nan, math.inf, -math.inf):
+            self.assertIsNone(M._money(bad), f"_money({bad}) must be None")
+
+    def test_money_accepts_finite_amounts_only(self):
+        self.assertEqual(M._money(16.0), 16.0)
+        self.assertEqual(M._money(0), 0.0)
+        self.assertEqual(M._money(-3), -3.0)
+        self.assertIsNone(M._money(True))
+        self.assertIsNone(M._money("16"))
+        self.assertIsNone(M._money(None))
+        self.assertIsNone(M._money(10 ** 10000), "an int that overflows float is not money")
+
+    def test_override_amount_must_be_finite(self):
+        for bad in (math.nan, math.inf, -math.inf):
+            errors = M.validation_errors(membership(fee_overrides=[override(amount=bad)]))
+            self.assertTrue(any("finite" in e for e in errors),
+                            f"amount {bad} was accepted: {errors}")
+
+    def test_override_amount_still_accepts_finite_values(self):
+        for good in (16.0, 0, 0.0, -5.0):
+            errors = M.validation_errors(membership(fee_overrides=[override(amount=good)]))
+            self.assertEqual(errors, [], f"amount {good} was rejected")
+
+    def test_window_amount_rejects_non_finite_values(self):
+        windows = M.normalise_windows([{"id": "pool", "label": "Pool", "amount": math.nan}])
+        self.assertIsNone(windows[0]["amount"])
+        windows = M.normalise_windows([{"id": "pool", "label": "Pool", "amount": math.inf}])
+        self.assertIsNone(windows[0]["amount"])
 
 
 class ManualExhaustionTests(unittest.TestCase):

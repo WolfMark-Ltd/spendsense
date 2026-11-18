@@ -127,8 +127,10 @@ def account_card(account: Mapping[str, Any], catalogue: Mapping[str, Any],
     if custom:
         eligible = [*eligible, custom]
     # One snapshot serves a whole family: plan guidance must not read another
-    # account's label. native_usage already made the identity call above.
-    plan_snapshot = None if native.get("state") == "identity_mismatch" else snapshot
+    # account's label, nor an anonymous reading's. native_usage already made
+    # the identity call above.
+    plan_snapshot = (None if native.get("state") in ("identity_mismatch", "identity_unverified")
+                     else snapshot)
     reconfirmation = mem.plan_reconfirmation(account, catalogue, plan_snapshot)
     proposal = mem.propose_plan(plan_snapshot, catalogue, str(account.get("family") or ""))
     blocked = {p["id"] for p in excluded}
