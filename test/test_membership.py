@@ -538,6 +538,55 @@ class QuotaScopeTests(unittest.TestCase):
         self.assertTrue(quota["account_exhausted"])
         self.assertEqual(quota["model_exhausted"], ["Opus week"])
 
+    def test_defaulted_custom_allowance_scope_cannot_backfill(self):
+        account = self._account()
+        custom_id = f"custom:{account['id']}"
+        account = {**account, "plan_id": custom_id,
+                   "custom_plan": {"id": custom_id, "name": "Mine",
+                                   "allowances": [{"label": "Opus week"}]}}
+        snap = hermes_snapshot(windows=[
+            {"label": "Opus week", "used_percent": 100.0,
+             "reset_at": iso(NOW + timedelta(days=1))},
+        ])
+        native = M.native_usage(snap, account, at=NOW)
+        quota = M.quota_view(account, native, M.custom_plan_view(account), at=NOW)
+        self.assertFalse(quota["account_exhausted"],
+                         "a defaulted scope is our assumption, not plan evidence")
+        row = next(w for w in quota["windows"] if w["id"] == "opus-week")
+        self.assertEqual(row["scope_source"], "default")
+
+    def test_explicit_custom_allowance_scope_backfills(self):
+        account = self._account()
+        custom_id = f"custom:{account['id']}"
+        account = {**account, "plan_id": custom_id,
+                   "custom_plan": {"id": custom_id, "name": "Mine",
+                                   "allowances": [{"label": "Opus week", "scope": "model"}]}}
+        snap = hermes_snapshot(windows=[
+            {"label": "Opus week", "used_percent": 100.0,
+             "reset_at": iso(NOW + timedelta(days=1))},
+        ])
+        native = M.native_usage(snap, account, at=NOW)
+        quota = M.quota_view(account, native, M.custom_plan_view(account), at=NOW)
+        self.assertFalse(quota["account_exhausted"])
+        self.assertEqual(quota["model_exhausted"], ["Opus week"])
+
+    def test_catalogue_window_without_a_stated_scope_cannot_backfill(self):
+        book = mini_catalogue(plans=[plan_entry(
+            plan_id="demo.plan", family="demo",
+            windows=[{"id": "session", "label": "Session"}])])
+        plan = M.plan_index(book)["demo.plan"]
+        snap = hermes_snapshot(provider="demo", windows=[
+            {"label": "Session", "used_percent": 100.0,
+             "reset_at": iso(NOW + timedelta(hours=1))},
+        ])
+        account = membership(family="demo", plan_id="demo.plan", identity=None,
+                             id=M.account_key("demo", None))
+        native = M.native_usage(snap, account, at=NOW)
+        quota = M.quota_view(account, native, plan, at=NOW)
+        self.assertFalse(quota["account_exhausted"])
+        row = next(w for w in quota["windows"] if w["id"] == "session")
+        self.assertEqual(row["scope_source"], "default")
+
 
 class IdentityVerificationTests(unittest.TestCase):
     """F119: an unattributed reading is never shown as a named account's."""

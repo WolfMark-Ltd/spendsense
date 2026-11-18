@@ -246,6 +246,7 @@ def normalise_windows(windows_raw: Any) -> list[dict[str, Any]]:
         wid = _slug(window.get("id") or window.get("label") or "")
         if not wid:
             continue
+        scope_raw = window.get("scope")
         normalised.append({
             "id": wid,
             "label": str(window.get("label") or wid.replace("-", " ").title()),
@@ -253,7 +254,11 @@ def normalise_windows(windows_raw: Any) -> list[dict[str, Any]]:
             "duration_minutes": (int(window["duration_minutes"])
                                  if isinstance(window.get("duration_minutes"), (int, float)) else None),
             "limit": window.get("limit"),
-            "scope": str(window.get("scope") or "account"),
+            "scope": str(scope_raw or "account"),
+            # Whether the catalogue actually stated this scope. A defaulted
+            # scope is SpendSense's assumption, not evidence, and must never
+            # authorise an account-wide exhaustion verdict on its own.
+            "scope_explicit": isinstance(scope_raw, str) and scope_raw.strip().lower() in WINDOW_SCOPES,
             # A credit-value window carries an amount, not a percentage. Kept
             # so the pane can say "$20 of credit, not 20% used".
             "amount": _money(window.get("amount")),
@@ -530,6 +535,8 @@ def custom_plan_view(membership: Mapping[str, Any]) -> Optional[dict[str, Any]]:
             "duration_minutes": item.get("duration_minutes"),
             "limit": item.get("limit"),
             "scope": str(item.get("scope") or "account"),
+            "scope_explicit": isinstance(item.get("scope"), str)
+            and str(item.get("scope")).strip().lower() in WINDOW_SCOPES,
             "amount": item.get("amount"),
             "currency": str(item.get("currency") or "").upper() or None,
             "detail": "User-defined entitlement; provider usage remains unreported unless Hermes supplies it.",
@@ -940,7 +947,7 @@ def account_exhausted(view: Mapping[str, Any]) -> bool:
     A model-scoped window (Anthropic's Opus/Sonnet weekly limits) can never make
     the whole login count as exhausted — and neither can a window whose scope
     was merely assumed. A verdict needs evidence: an assumed scope that no
-    verified plan window confirmed stays out of the account verdict.
+    explicitly stated plan scope confirmed stays out of the account verdict.
     """
     for window in (view or {}).get("windows") or []:
         if window.get("scope") != "account":
@@ -1237,7 +1244,9 @@ def quota_view(membership: Mapping[str, Any], native: Mapping[str, Any] | None,
         if assumed:
             match = plan_windows.get(str(window.get("id") or ""))
             match_scope = (match or {}).get("scope") if isinstance(match, dict) else None
-            if match_scope in WINDOW_SCOPES:
+            # Only an explicitly stated plan scope backfills: a defaulted
+            # scope is this module's own assumption wearing a plan's name.
+            if match_scope in WINDOW_SCOPES and (match or {}).get("scope_explicit"):
                 scope = match_scope
                 scope_source = "plan_catalogue"
         rows[window["id"]] = {
