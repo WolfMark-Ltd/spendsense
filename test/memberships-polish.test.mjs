@@ -71,7 +71,7 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
         assert.equal(seg.focusable, 6, `${seg.account} options are keyboard-focusable`)
       }
       assert.ok(result.geometry.paneOverflow <= 1,
-        `the 380px pane has no horizontal overflow (${result.geometry.paneOverflow}px)`)
+        `the 380px pane has no horizontal overflow (${result.geometry.paneOverflow}px): ${JSON.stringify(result.geometry.overflowing)}`)
       for (const width of result.geometry.attnButtonWidths) {
         assert.ok(width >= 200, `attention actions go full-width in the pane (got ${width}px)`)
       }

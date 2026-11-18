@@ -169,10 +169,17 @@ try {
           }
         })
         const attnButtons = [...narrow.querySelectorAll('.wm-attention li .wm-button')]
+        const rightEdge = narrow.getBoundingClientRect().left + narrow.clientWidth
+        const overflowing = [...narrow.querySelectorAll('*')].flatMap(element => {
+          const right = element.getBoundingClientRect().right
+          const overflow = Math.max(right, right - element.clientWidth + element.scrollWidth) - rightEdge
+          return overflow > 1 ? [{ element: element.localName, class: element.getAttribute('class'), overflow: Math.round(overflow) }] : []
+        }).slice(-12)
         out.geometry = {
           rows: narrow.querySelectorAll('.wm-row-head').length,
           segs: segDetail,
           paneOverflow: narrow.scrollWidth - narrow.clientWidth,
+          overflowing,
           attnButtonWidths: attnButtons.map(b => Math.round(b.getBoundingClientRect().width)),
           cssSeg: T.MEMBERSHIP_CSS.includes('.wm-seg'),
           cssFlash: T.MEMBERSHIP_CSS.includes('.wm-flash'),
