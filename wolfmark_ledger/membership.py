@@ -191,9 +191,18 @@ def _slug(text: Any) -> str:
 
 
 def _money(amount: Any) -> Optional[float]:
+    """A finite float for a monetary amount, else None.
+
+    NaN and infinities are not money: they persist as literal ``NaN`` tokens
+    and break strict JSON responses on every later read.
+    """
     if isinstance(amount, bool) or not isinstance(amount, (int, float)):
         return None
-    return float(amount)
+    try:
+        value = float(amount)
+    except OverflowError:
+        return None
+    return value if math.isfinite(value) else None
 
 
 def _cycle(anchor_day: Any, period: Any) -> Optional[dict[str, Any]]:
@@ -247,9 +256,7 @@ def normalise_windows(windows_raw: Any) -> list[dict[str, Any]]:
             "scope": str(window.get("scope") or "account"),
             # A credit-value window carries an amount, not a percentage. Kept
             # so the pane can say "$20 of credit, not 20% used".
-            "amount": (float(window["amount"])
-                       if isinstance(window.get("amount"), (int, float))
-                       and not isinstance(window.get("amount"), bool) else None),
+            "amount": _money(window.get("amount")),
             "currency": str(window.get("currency") or "").upper() or None,
             "detail": str(window.get("detail") or ""),
         })
@@ -845,10 +852,12 @@ def native_usage(snapshot: Mapping[str, Any] | None, membership: Mapping[str, An
                  at: Any = None) -> dict[str, Any]:
     """Normalise a Hermes ``usage`` snapshot for one account.
 
-    State precedence: ``identity_mismatch`` (wrong account) → ``unavailable``
-    (Hermes said why) → ``absent`` (no snapshot) → ``stale`` → ``live``. A
-    mismatch is never downgraded: merging two accounts' usage would fabricate a
-    quota reading.
+    State precedence: ``identity_mismatch`` (wrong account) →
+    ``identity_unverified`` (named account, anonymous reading) →
+    ``unavailable`` (Hermes said why) → ``absent`` (no snapshot) → ``stale``
+    → ``live``. A mismatch is never downgraded: merging two accounts' usage
+    would fabricate a quota reading. An anonymous reading is likewise never
+    shown as a specifically identified account's.
     """
     moment = _now(at)
     if not snapshot:
@@ -862,6 +871,11 @@ def native_usage(snapshot: Mapping[str, Any] | None, membership: Mapping[str, An
         return {"state": "identity_mismatch", "windows": [], "details": [], "identity": identity,
                 "age_seconds": None, "source": snapshot.get("source"), "plan_hint": snapshot.get("plan"),
                 "notes": ["Hermes reported usage for a different account; it is not applied here."]}
+    if expected and not identity:
+        return {"state": "identity_unverified", "windows": [], "details": [], "identity": None,
+                "age_seconds": None, "source": snapshot.get("source"), "plan_hint": snapshot.get("plan"),
+                "notes": ["Hermes did not say which account this reading came from, "
+                          "so it is not shown as this account's."]}
 
     fetched = _epoch(snapshot.get("fetched_at"))
     age = None if fetched is None else max(0.0, moment - fetched)
@@ -874,6 +888,7 @@ def native_usage(snapshot: Mapping[str, Any] | None, membership: Mapping[str, An
         raw_scope = str(raw.get("scope") or "").strip().lower()
         scope_assumed = raw_scope not in WINDOW_SCOPES
         scope = raw_scope if raw_scope in WINDOW_SCOPES else "account"
+        scope_source = "provider" if not scope_assumed else "default"
         used = raw.get("used_percent")
         reset_raw = raw.get("reset_at")
         if isinstance(reset_raw, datetime):
@@ -888,6 +903,7 @@ def native_usage(snapshot: Mapping[str, Any] | None, membership: Mapping[str, An
             "detail": raw.get("detail"),
             "scope": scope,
             "scope_assumed": scope_assumed,
+            "scope_source": scope_source,
             "basis": "provider_reported",
             "source": snapshot.get("source"),
             "fetched_at": snapshot.get("fetched_at"),
@@ -922,10 +938,14 @@ def account_exhausted(view: Mapping[str, Any]) -> bool:
     """True only when an ``account``-scoped window is used up.
 
     A model-scoped window (Anthropic's Opus/Sonnet weekly limits) can never make
-    the whole login count as exhausted.
+    the whole login count as exhausted — and neither can a window whose scope
+    was merely assumed. A verdict needs evidence: an assumed scope that no
+    verified plan window confirmed stays out of the account verdict.
     """
     for window in (view or {}).get("windows") or []:
         if window.get("scope") != "account":
+            continue
+        if window.get("scope_assumed") and window.get("scope_source") != "plan_catalogue":
             continue
         used = window.get("used_percent")
         if isinstance(used, (int, float)) and used >= EXHAUSTED_PERCENT:
@@ -1195,17 +1215,37 @@ def quota_view(membership: Mapping[str, Any], native: Mapping[str, Any] | None,
     Every row keeps its own basis. A provider reading is never overwritten by a
     manual mark and vice versa; a window with neither is shown as ``no_data``
     rather than as zero used.
+
+    Hermes omits the window ``scope`` from its usage JSON, so an assumed scope
+    is backfilled from the resolved plan's window definitions — by exact
+    window id only, never by label guessing. An explicit provider scope always
+    wins. A scope that stays unverified is flagged, and can never produce an
+    account-wide exhaustion verdict on its own.
     """
     moment = _now(at)
     view = native or {"state": "absent", "windows": []}
     rows: dict[str, dict[str, Any]] = {}
     auto_cleared: list[str] = []
+    plan_windows = {str(w.get("id") or ""): w
+                    for w in ((plan or {}).get("entitlements") or {}).get("windows") or []
+                    if isinstance(w, dict)}
 
     for window in view.get("windows") or []:
+        scope = window.get("scope", "account")
+        assumed = bool(window.get("scope_assumed", False))
+        scope_source = window.get("scope_source") or ("provider" if not assumed else "default")
+        if assumed:
+            match = plan_windows.get(str(window.get("id") or ""))
+            match_scope = (match or {}).get("scope") if isinstance(match, dict) else None
+            if match_scope in WINDOW_SCOPES:
+                scope = match_scope
+                scope_source = "plan_catalogue"
         rows[window["id"]] = {
             "id": window["id"],
             "label": window.get("label"),
-            "scope": window.get("scope", "account"),
+            "scope": scope,
+            "scope_assumed": assumed,
+            "scope_source": scope_source,
             "used_percent": window.get("used_percent"),
             "reset_at": window.get("reset_at"),
             "state": "live" if view.get("state") == "live" else "stale",
@@ -1237,6 +1277,8 @@ def quota_view(membership: Mapping[str, Any], native: Mapping[str, Any] | None,
                 "id": sid,
                 "label": scope.get("label") or sid,
                 "scope": scope.get("kind") or "window",
+                "scope_assumed": False,
+                "scope_source": "manual",
                 "used_percent": (100.0 if evaluated["status"] == "active" else None),
                 "used_percent_from": ("manual" if evaluated["status"] == "active" else None),
                 "reset_at": entry.get("reset_at"),
@@ -1265,6 +1307,8 @@ def quota_view(membership: Mapping[str, Any], native: Mapping[str, Any] | None,
             "id": wid,
             "label": window.get("label") or wid,
             "scope": window.get("scope", "account"),
+            "scope_assumed": False,
+            "scope_source": "plan_catalogue",
             "used_percent": None,
             "reset_at": None,
             "state": "no_data",
@@ -1279,6 +1323,14 @@ def quota_view(membership: Mapping[str, Any], native: Mapping[str, Any] | None,
     notes = list(view.get("notes") or [])
     if auto_cleared:
         notes.append("Cleared automatically because their reset time passed: " + ", ".join(auto_cleared) + ".")
+    unverified_full = sorted({r["label"] or r["id"] for r in ordered
+                              if r.get("scope") == "account" and r.get("scope_assumed")
+                              and r.get("scope_source") != "plan_catalogue"
+                              and isinstance(r.get("used_percent"), (int, float))
+                              and r["used_percent"] >= EXHAUSTED_PERCENT})
+    if unverified_full:
+        notes.append("Full window(s) with unverified scope do not mark the account exhausted: "
+                     + ", ".join(unverified_full) + ".")
     return {
         "provider_state": view.get("state", "absent"),
         "provider_source": view.get("source"),
@@ -1670,6 +1722,8 @@ def validation_errors(membership: Mapping[str, Any]) -> list[str]:
         amount = override.get("amount")
         if amount is not None and (isinstance(amount, bool) or not isinstance(amount, (int, float))):
             errors.append("override amount must be a number")
+        elif amount is not None and _money(amount) is None:
+            errors.append("override amount must be a finite number")
         currency = str(override.get("currency") or "").upper()
         if currency and currency not in CURRENCIES:
             errors.append(f"unsupported currency: {currency}")

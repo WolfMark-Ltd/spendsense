@@ -296,5 +296,60 @@ class RouteFailureTest(unittest.TestCase):
         self.assertEqual(self.path.read_text(), '{"accounts": false}')
 
 
+class NonFinitePutTest(unittest.TestCase):
+    """F120 over HTTP: a NaN fee override is a 422, and the store is untouched."""
+
+    def setUp(self) -> None:
+        try:
+            from fastapi import FastAPI
+            from fastapi.testclient import TestClient
+            from dashboard import plugin_api
+        except Exception as exc:  # pragma: no cover - interpreter dependent
+            self.skipTest(f"FastAPI/test client unavailable: {exc}")
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.dir.name) / "memberships.json"
+        store.save_account(record("a", "A"), self.path)
+        app = FastAPI()
+        app.include_router(plugin_api.router, prefix="/api/plugins/spend-sense")
+        self.client = TestClient(app)
+        self.addCleanup(self.client.close)
+        self.addCleanup(self.dir.cleanup)
+        self.patch = unittest.mock.patch.object(store, "store_path", return_value=self.path)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+
+    def test_put_nan_fee_override_is_422_and_does_not_write(self) -> None:
+        before = self.path.read_bytes()
+        body = {**record("a", "A"), "fee_overrides": [
+            {"id": "r1", "amount": float("nan"), "currency": "USD",
+             "period": "month", "reason": "other",
+             "effective_from": "2026-11-01T00:00:00Z"}]}
+        # Raw content: a non-strict client (Python's default json) sends a
+        # literal NaN token, which the server's parser accepts as a float.
+        raw = json.dumps(body)
+        self.assertIn("NaN", raw)
+        response = self.client.put("/api/plugins/spend-sense/membership/accounts/a", content=raw,
+                                   headers={"Content-Type": "application/json"})
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertIn("finite", response.text)
+        self.assertEqual(self.path.read_bytes(), before,
+                         "a rejected write must not touch the owner's data")
+
+    def test_put_infinite_fee_override_is_422_and_does_not_write(self) -> None:
+        before = self.path.read_bytes()
+        body = {**record("a", "A"), "fee_overrides": [
+            {"id": "r1", "amount": float("inf"), "currency": "USD",
+             "period": "month", "reason": "other",
+             "effective_from": "2026-11-01T00:00:00Z"}]}
+        raw = json.dumps(body)
+        self.assertIn("Infinity", raw)
+        response = self.client.put("/api/plugins/spend-sense/membership/accounts/a", content=raw,
+                                   headers={"Content-Type": "application/json"})
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertIn("finite", response.text)
+        self.assertEqual(self.path.read_bytes(), before,
+                         "a rejected write must not touch the owner's data")
+
+
 if __name__ == "__main__":
     unittest.main()

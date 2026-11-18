@@ -7,6 +7,7 @@ looked like a missing route.
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
@@ -72,6 +73,41 @@ class ProbeCacheTest(unittest.TestCase):
             result = discovery.native_snapshot("p", home=self.homes[0])
         self.assertEqual(result["state"], "unavailable")
         self.assertIsNone(result["snapshot"])
+
+
+class MultiSlotDiscoveryTest(unittest.TestCase):
+    """F119: several credentials and no identity is ambiguity, not accounts.
+
+    One family with two credential slots and an anonymous Hermes reading
+    yields one default-slot account — never two invented per-slot accounts —
+    and the discovery notes must say the reading cannot be attributed.
+    """
+
+    def setUp(self) -> None:
+        discovery._CACHE.clear()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name)
+        (self.home / "auth.json").write_text(json.dumps({
+            "credential_pool": {"anthropic": [{"label": "work"}, {"label": "personal"}]}
+        }))
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(discovery._CACHE.clear)
+
+    def test_two_slots_and_no_identity_is_flagged_not_split(self) -> None:
+        snapshot = {"provider": "anthropic", "source": "oauth_usage_api",
+                    "title": "Account limits", "plan": None,
+                    "fetched_at": "2026-11-18T12:00:00+00:00",
+                    "windows": [{"label": "Opus week", "used_percent": 100.0,
+                                 "resets_at": "2026-11-25T00:00:00+00:00", "detail": None}],
+                    "details": [], "unavailable_reason": None}
+        with mock.patch.object(discovery, "native_snapshot",
+                               return_value={"state": "ok", "snapshot": snapshot, "reason": ""}):
+            out = discovery.discover({}, include_native=True, home=self.home)
+        self.assertEqual([a["id"] for a in out["accounts"]], ["anthropic:default"])
+        self.assertIsNone(out["accounts"][0]["identity"])
+        self.assertEqual(out["accounts"][0]["identity_source"], "provider_default_slot")
+        self.assertTrue(any("2" in note and "credential" in note for note in out["notes"]),
+                        f"multi-slot ambiguity must be named: {out['notes']}")
 
 
 if __name__ == "__main__":

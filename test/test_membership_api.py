@@ -723,6 +723,58 @@ class PlansEndpointContract(TempStore):
                 store.save_account({**account, "plan_id": custom_id, "custom_plan": plan}, self.store)
 
 
+class IdentityCardContract(TempStore):
+    """F119 at the card level: an anonymous reading is not a named account's."""
+
+    def _card_for(self, account, snapshot):
+        store.save_account(account, self.store)
+        cards = api.accounts_payload(path=self.store, catalogue=self.catalogue,
+                                     native_snapshots={"openai-codex": snapshot})["accounts"]
+        return next(card for card in cards if card["id"] == account["id"])
+
+    def test_anonymous_snapshot_on_a_named_account_is_unverified(self):
+        named = {**M.member_from_native(native_payload()), "family": "openai-codex",
+                 "id": "openai-codex:work", "identity": "codex:acct_9:user_1",
+                 "identity_source": "native"}
+        card = self._card_for(named, dict(native_payload(), identity=None))
+        self.assertEqual(card["native_state"], "identity_unverified")
+        self.assertEqual(card["quota"]["provider_state"], "identity_unverified")
+        self.assertFalse(any("provider_reported" in (w.get("basis") or [])
+                             for w in card["quota"]["windows"]),
+                         "an unattributed reading must not render on a named card")
+        # An unattributed plan label must not drive plan guidance either.
+        self.assertIsNone(card["plan_reconfirmation"])
+        self.assertIsNone((card["plan_proposal"] or {}).get("plan_id"))
+
+    def test_anonymous_snapshot_on_the_default_slot_still_applies(self):
+        account = {**M.member_from_native(native_payload()), "family": "openai-codex",
+                   "id": "openai-codex:default"}
+        card = self._card_for(account, dict(native_payload(), identity=None))
+        # The fixture is dated, so the reading may already be stale; what
+        # matters is that the default slot still shows its reading.
+        self.assertIn(card["native_state"], {"live", "stale"})
+        self.assertTrue(card["quota"]["windows"])
+
+
+class NonFiniteWriteContract(TempStore):
+    """F120 at the store boundary: a non-finite fee is rejected, data untouched."""
+
+    def test_nan_fee_override_is_rejected_and_leaves_the_store_untouched(self):
+        account = M.member_from_native(native_payload())
+        store.save_account(account, self.store)
+        before = Path(self.store).read_bytes()
+        card = api.accounts_payload(path=self.store, catalogue=self.catalogue)["accounts"][0]
+        bad = {**card, "fee_overrides": [{"id": "r1", "amount": float("nan"),
+                                          "currency": "USD", "period": "month",
+                                          "reason": "other",
+                                          "effective_from": "2026-11-01T00:00:00Z"}]}
+        with self.assertRaises(ValueError):
+            api.save_payload(card["id"], bad, path=self.store)
+        self.assertEqual(Path(self.store).read_bytes(), before,
+                         "a rejected write must not touch the owner's data")
+        self.assertEqual(store.accounts_by_id(self.store)[card["id"]]["fee_overrides"], [])
+
+
 def payload_family_plans(payload):
     return [plan for family in payload["families"] for plan in family["plans"]]
 
