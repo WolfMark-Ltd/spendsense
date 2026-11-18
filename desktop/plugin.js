@@ -3166,53 +3166,54 @@ const ANALYTICS_CSS = SHARED_CSS + `
 @container(max-width:720px){.wm-analytics .wm-shell{padding:18px 14px;gap:17px}.wm-analytics .wm-charts{grid-template-columns:minmax(0,1fr)}.wm-analytics h1{font-size:24px}.wm-analytics .wm-economics{grid-template-columns:minmax(0,1fr);gap:18px}.wm-analytics .wm-explanation{border-left:0;border-top:1px solid var(--ui-stroke-secondary);padding:16px 0 0}.wm-analytics .wm-panel{padding:16px}.wm-analytics .wm-tablewrap{margin:0 -16px}.wm-analytics .wm-donutbody{grid-template-columns:minmax(120px,.85fr) minmax(0,1.15fr)}.wm-analytics .wm-stat{padding:16px}.wm-analytics .wm-statvalue{font-size:25px}.wm-analytics .wm-filter{max-width:none;min-width:125px}}
 @container(max-width:560px){.wm-analytics .wm-statgroup,.wm-analytics .wm-statgroup[data-kpi-group=activity]{grid-template-columns:minmax(0,1fr)}.wm-analytics .wm-stat{border-right:0;border-bottom:1px solid var(--ui-stroke-secondary)}.wm-analytics .wm-modelbutton{max-width:45cqi}}
 @container(max-width:380px){.wm-analytics .wm-donutbody{grid-template-columns:1fr}.wm-analytics .wm-compositionkey{grid-template-columns:1fr}}
-.wm-analytics{font-size:14px;line-height:1.55}
-.wm-analytics h2{font-size:15px}
-.wm-analytics .wm-subtle{font-size:13px}
-.wm-analytics .wm-button{font-size:12px;min-height:34px}
-.wm-analytics .wm-segments button{font-size:12px;min-height:30px;padding:5px 9px}
-.wm-analytics .wm-filter span{font-size:12px}
-.wm-analytics select{font-size:13px;min-height:38px}
-.wm-analytics .wm-scopechips button{font-size:12px;min-height:30px;padding:4px 8px}
-.wm-analytics .wm-statlabel,.wm-analytics .wm-insight b{font-size:12px}
-.wm-analytics .wm-statgrouplabel{font-size:11px}
-.wm-analytics .wm-badge{font-size:11px}
-.wm-analytics .wm-paneltitle h2{font-size:15px}
-.wm-analytics .wm-number{font-size:11px}
-.wm-analytics .wm-donutbody{min-height:0}
-.wm-analytics .wm-svghint{font-size:11px}
-.wm-analytics .wm-legendrow{font-size:13px;grid-template-columns:9px minmax(0,1.2fr) minmax(60px,1fr) auto}
-.wm-analytics .wm-dot{width:8px;height:8px}
-.wm-analytics .wm-legendrow small{font-size:11px}
-.wm-analytics .wm-legendrow .wm-value{font-size:13px}
-.wm-analytics .wm-footnote{font-size:12px}
-.wm-analytics .wm-trend,.wm-analytics .wm-rank{min-height:0}
-.wm-analytics .wm-axis{font-size:12px}
-.wm-analytics .wm-chartkey,.wm-analytics .wm-chartdetail{font-size:12px}
-.wm-analytics .wm-chartdetail{min-height:0}
-.wm-analytics .wm-composition{min-height:0}
-.wm-analytics .wm-tablewrap{max-width:100%;overscroll-behavior-inline:contain;-webkit-overflow-scrolling:touch}
-.wm-analytics .wm-tablewrap table{min-width:760px;font-size:13px}
-.wm-analytics th{font-size:12px}
-.wm-analytics th button{padding-top:12px;padding-bottom:12px}
-.wm-analytics td{padding-top:13px;padding-bottom:13px}
-.wm-analytics .wm-modelbutton{font-size:13px;max-width:280px}
-.wm-analytics .wm-explanation{font-size:13px}
-.wm-analytics .wm-bars,.wm-analytics .wm-bar{font-size:12px}
-.wm-analytics .wm-charts{align-items:start}
-.wm-analytics .wm-coverage{display:grid;gap:9px;border:1px solid var(--ui-stroke-secondary);border-inline-start:3px solid var(--ui-accent);border-radius:8px;padding:14px 16px;background:color-mix(in srgb,var(--ui-fill-secondary) 22%,transparent)}
-.wm-analytics .wm-coveragehead{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
-.wm-analytics .wm-coveragecopy{color:var(--ui-text-secondary);font-size:13px;line-height:1.55}
-.wm-analytics .wm-coverage details summary{font-size:12px;color:var(--ui-text-secondary);min-height:28px;display:flex;align-items:center}
-.wm-analytics .wm-coveragedetails{display:grid;gap:10px;padding-top:8px}
-.wm-analytics .wm-coveragedetails h3{font-size:12px;margin:0;color:var(--ui-text-primary)}
-.wm-analytics .wm-coveragedetails ul{margin:4px 0 0;padding-inline-start:20px;display:grid;gap:5px;color:var(--ui-text-secondary);font-size:12px}
-.wm-analytics .wm-coverageroutes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:7px}
-.wm-analytics .wm-coverageroute{display:flex;align-items:flex-start;flex-wrap:wrap;gap:4px 8px;text-align:left;border:1px solid var(--ui-stroke-secondary);border-radius:6px;background:var(--ui-fill-primary);color:var(--ui-text-primary);padding:8px 10px;min-width:0;font:inherit;font-size:12px}
-.wm-analytics .wm-coverageroute:hover{border-color:var(--ui-accent)}
-.wm-analytics .wm-coverageroute small{color:var(--ui-text-secondary);font-size:12px}
-.wm-analytics .wm-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-@container(max-width:560px){.wm-analytics .wm-tablewrap table{min-width:700px}.wm-analytics .wm-modelbutton{max-width:180px}.wm-analytics .wm-coverageroute{padding:10px}.wm-analytics .wm-donutbody{grid-template-columns:minmax(120px,.85fr) minmax(0,1.15fr)}}
+/* Usage overrides belong to the dashboard, not the shared product shell. */
+.wm-usage{font-size:14px;line-height:1.55}
+.wm-usage h2{font-size:15px}
+.wm-usage .wm-subtle{font-size:13px}
+.wm-usage .wm-button{font-size:12px;min-height:34px}
+.wm-usage .wm-segments button{font-size:12px;min-height:30px;padding:5px 9px}
+.wm-usage .wm-filter span{font-size:12px}
+.wm-usage select{font-size:13px;min-height:38px}
+.wm-usage .wm-scopechips button{font-size:12px;min-height:30px;padding:4px 8px}
+.wm-usage .wm-statlabel,.wm-usage .wm-insight b{font-size:12px}
+.wm-usage .wm-statgrouplabel{font-size:11px}
+.wm-usage .wm-badge{font-size:11px}
+.wm-usage .wm-paneltitle h2{font-size:15px}
+.wm-usage .wm-number{font-size:11px}
+.wm-usage .wm-donutbody{min-height:0}
+.wm-usage .wm-svghint{font-size:11px}
+.wm-usage .wm-legendrow{font-size:13px;grid-template-columns:9px minmax(0,1.2fr) minmax(60px,1fr) auto}
+.wm-usage .wm-dot{width:8px;height:8px}
+.wm-usage .wm-legendrow small{font-size:11px}
+.wm-usage .wm-legendrow .wm-value{font-size:13px}
+.wm-usage .wm-footnote{font-size:12px}
+.wm-usage .wm-trend,.wm-usage .wm-rank{min-height:0}
+.wm-usage .wm-axis{font-size:12px}
+.wm-usage .wm-chartkey,.wm-usage .wm-chartdetail{font-size:12px}
+.wm-usage .wm-chartdetail{min-height:0}
+.wm-usage .wm-composition{min-height:0}
+.wm-usage .wm-tablewrap{max-width:100%;overscroll-behavior-inline:contain;-webkit-overflow-scrolling:touch}
+.wm-usage .wm-tablewrap table{min-width:760px;font-size:13px}
+.wm-usage th{font-size:12px}
+.wm-usage th button{padding-top:12px;padding-bottom:12px}
+.wm-usage td{padding-top:13px;padding-bottom:13px}
+.wm-usage .wm-modelbutton{font-size:13px;max-width:280px}
+.wm-usage .wm-explanation{font-size:13px}
+.wm-usage .wm-bars,.wm-usage .wm-bar{font-size:12px}
+.wm-usage .wm-charts{align-items:start}
+.wm-usage .wm-coverage{display:grid;gap:9px;border:1px solid var(--ui-stroke-secondary);border-inline-start:3px solid var(--ui-accent);border-radius:8px;padding:14px 16px;background:color-mix(in srgb,var(--ui-fill-secondary) 22%,transparent)}
+.wm-usage .wm-coveragehead{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.wm-usage .wm-coveragecopy{color:var(--ui-text-secondary);font-size:13px;line-height:1.55}
+.wm-usage .wm-coverage details summary{font-size:12px;color:var(--ui-text-secondary);min-height:28px;display:flex;align-items:center}
+.wm-usage .wm-coveragedetails{display:grid;gap:10px;padding-top:8px}
+.wm-usage .wm-coveragedetails h3{font-size:12px;margin:0;color:var(--ui-text-primary)}
+.wm-usage .wm-coveragedetails ul{margin:4px 0 0;padding-inline-start:20px;display:grid;gap:5px;color:var(--ui-text-secondary);font-size:12px}
+.wm-usage .wm-coverageroutes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:7px}
+.wm-usage .wm-coverageroute{display:flex;align-items:flex-start;flex-wrap:wrap;gap:4px 8px;text-align:left;border:1px solid var(--ui-stroke-secondary);border-radius:6px;background:var(--ui-fill-primary);color:var(--ui-text-primary);padding:8px 10px;min-width:0;font:inherit;font-size:12px}
+.wm-usage .wm-coverageroute:hover{border-color:var(--ui-accent)}
+.wm-usage .wm-coverageroute small{color:var(--ui-text-secondary);font-size:12px}
+.wm-usage .wm-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@container(max-width:560px){.wm-usage .wm-tablewrap table{min-width:700px}.wm-usage .wm-modelbutton{max-width:180px}.wm-usage .wm-coverageroute{padding:10px}.wm-usage .wm-donutbody{grid-template-columns:minmax(120px,.85fr) minmax(0,1.15fr)}}
 @media(prefers-reduced-motion:reduce){.wm-analytics *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `
 const percent = v => finiteValue(v)==null ? '—' : `${(v*100).toFixed(1)}%`
@@ -3704,7 +3705,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const billingMix=totals?.billing_mix ? Object.entries(totals.billing_mix).map(([kind,value])=>`${kind}: ${typeof value==='number'?fmtTokens(value):String(value)}`).join(' · ') : ''
   const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
     jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')})]})]})
-  const content = jsxs('div',{className:'wm-shell',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
+  const content = jsxs('div',{className:'wm-shell wm-usage',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
       query.error?jsxs('div',{id:'wm-usage-load-error',className:'wm-alert',role:'alert',tabIndex:-1,children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
     totals?jsxs('div',{className:'wm-stats',children:[
