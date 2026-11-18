@@ -4987,7 +4987,7 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   const unreadable = !summaryReady && !summaryLoading
   const cacheStatus = summaryLoading ? t('costsLoadingShort')
     : savings === null ? t('costsUnknownTag')
-    : cachePartial ? t('costsPartialTag')
+    : cachePartial ? null
     : cacheCoverage === null ? t('costsCoverageUnknownTag') : t('costsCompleteTag')
   const cacheNote = summaryLoading ? t('costsEvidenceLoading')
     : unreadable ? t('costsEvidenceUnavailable')
@@ -5016,7 +5016,7 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   const apiCoverageUnknown = !apiCoverageKnown
   const apiStatus = summaryLoading ? t('costsLoadingShort')
     : api.usd == null ? t('costsUnknownTag')
-    : apiPartial ? t('costsPartialTag')
+    : apiPartial ? null
     : apiCoverageUnknown ? t('costsCoverageUnknownTag') : t('costsCompleteTag')
   const apiNote = summaryLoading ? t('costsEvidenceLoading')
     : unreadable ? t('costsEvidenceUnavailable')
@@ -5065,6 +5065,8 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   return jsxs('section', { className: 'wm-product-section wm-cost-overview', 'aria-label': t('costsOverviewTitle'), children: [
     jsx('h2', { children: t('costsOverviewTitle') }),
     jsx('p', { children: t('costsOverviewIntro') }),
+    summaryReady && (apiPartial || cachePartial)
+      ? jsx('p', { className: 'wm-cost-evidence-scope', children: t('costsEvidenceScope') }) : null,
     summaryLoading ? jsx('p', { className: 'wm-subtle', children: t('costsEvidenceLoading') }) : null,
     jsxs('div', { className: 'wm-cost-summary-grid', children: [
       jsx(CostsEvidenceCard, { kind: 'api', label: api.label,
@@ -5702,6 +5704,7 @@ const ECONOMICS_CSS = [
   '.wm-product .wm-cost-card-status{justify-self:start;padding:2px 7px;border:1px solid color-mix(in srgb,var(--wm-cost-accent) 45%,var(--ui-stroke-secondary));border-radius:99px;color:var(--ui-text-primary);font-size:10.5px;font-weight:600;line-height:1.4}',
   '.wm-product .wm-cost-card-note{margin:0;color:var(--ui-text-tertiary);font-size:11px;line-height:1.45}',
   '.wm-product .wm-cost-card-action{margin-top:2px}',
+  '.wm-product .wm-cost-evidence-scope{margin:0;color:var(--ui-text-secondary);font-size:11.5px;line-height:1.5;overflow-wrap:anywhere}',
   '.wm-product .wm-cost-fee-lines{list-style:none;display:grid;gap:3px;margin:0;padding:0;font-size:16px;line-height:1.4;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
   '.wm-product .wm-cost-evidence-details{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}',
   '.wm-product .wm-cost-detail-row{padding:10px;border:1px solid var(--ui-stroke-secondary);border-radius:7px;background:var(--ui-fill-primary);min-width:0}',
@@ -12824,6 +12827,7 @@ const I18N = {
     costsSubtitle: 'Active profile · estimates, provider reports and plan limits stay separate.',
     costsOverviewTitle: 'Financial evidence',
     costsOverviewIntro: 'Values keep their source and scope. Unknown is not zero; provider-reported use is not a payment.',
+    costsEvidenceScope: 'Figures show what Hermes recorded and priced: unpriced usage is excluded from subtotals, never counted as zero. Details sit with each figure.',
     costsEvidenceDetails: 'Evidence sources and calculation details',
     costsEvidenceUnavailable: 'Evidence could not be read',
     costsBasisLabel: 'Basis',
@@ -14368,6 +14372,7 @@ const I18N = {
     costsSubtitle: '当前活动配置 · 估算、供应商上报值和方案限额分别显示。',
     costsOverviewTitle: '财务证据',
     costsOverviewIntro: '数值保留来源和范围。未知不等于零；供应商上报用量不是付款。',
+    costsEvidenceScope: '数值仅反映 Hermes 已记录并已定价的用量：未定价用量不计入小计，也不按零计算。详情见各数值处。',
     costsEvidenceDetails: '证据来源与计算详情',
     costsEvidenceUnavailable: '无法读取证据',
     costsBasisLabel: '依据',

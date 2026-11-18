@@ -369,7 +369,9 @@ test('Costs distinguishes reported use, API-equivalent zero, missing charges, mi
   assert.doesNotMatch(container.querySelector('[data-cost-kind="charges"]').textContent, /\$0\.00/)
   const cache = container.querySelector('[data-cost-kind="cache"]')
   assert.equal(cache.querySelector('.wm-cost-card-value').textContent, '$0.00')
-  assert.match(cache.textContent, /Partial/)
+  assert.equal(cache.querySelector('.wm-cost-card-status'), null,
+    'the generic Partial pill is stated once in the global evidence scope line')
+  assert.equal(container.querySelectorAll('.wm-cost-evidence-scope').length, 1)
   assert.match(cache.textContent, /API-equivalent value is zero/)
   const fees = [...container.querySelectorAll('.wm-cost-fee-lines li')].map(line => line.textContent)
   assert.deepEqual(fees, ['USD 0.00/mo', 'GBP 20.00/mo'])
@@ -395,13 +397,78 @@ test('Costs labels API-equivalent subtotals as partial and discloses exact cover
     } } }, language)
     const card = container.querySelector('[data-cost-kind="api"]')
     assert.equal(card.querySelector('.wm-cost-card-value').textContent, '$1.25')
-    assert.match(card.textContent, /Partial|部分/)
+    assert.equal(card.querySelector('.wm-cost-card-status'), null,
+      'the generic pill is stated once in the global evidence scope line')
+    assert.equal(container.querySelectorAll('.wm-cost-evidence-scope').length, 1)
     assert.match(card.textContent, new RegExp(partialLabel))
 
     container.querySelector('.wm-cost-other-billing').open = true
     const apiDetails = container.querySelector('.wm-cost-detail-row')
     assert.match(apiDetails.textContent, new RegExp(customPhrase))
     assert.match(apiDetails.textContent, new RegExp(counts))
+  }
+})
+
+test('Costs states priced-subtotal scope once globally instead of repeating Partial pills on evidence cards', async () => {
+  for (const [language, scope, neverZero, partialPill, pricedNote, unknownTag, savedTag] of [
+    ['en', 'what Hermes recorded and priced', 'never counted as zero', 'Partial',
+      'Priced subtotal', 'Unknown', 'Saved'],
+    ['zh', '已记录并已定价', '不按零计算', '部分',
+      '已定价小计', '未知', '已保存'],
+  ]) {
+    const { container } = await renderCostsSummary({
+      billing: { evidence: {
+        provider_reported: { usd: 0, basis: 'provider_history', source: 'Provider request history' },
+        api_equivalent: { usd: 1.25, basis: 'estimated', source: 'Published catalogue',
+          pricing_coverage: { priced_tokens: 100, unpriced_tokens: 50, priced_calls: 1, unpriced_calls: 2 } },
+        credits_consumed: { usd: 0, basis: 'membership_allowance', source: 'Declared allowance' },
+        incremental_cash: { usd: null, basis: 'incomplete', source: 'No complete evidence' },
+      } },
+      totals: { tokens: 200, economics: { savings_usd: 0.5, uncached_usd: 2, cached_usd: 1.5,
+        coverage: 0.5, covered_tokens: 100, covered_calls: 1, excluded_calls: 1,
+        gap_reasons: { missing_cache_read_rate: 1 } } },
+      accounts: [
+        { id: 'usd', effective_arrangement: 'subscription',
+          fee: { effective: { amount: 20, currency: 'USD', period: 'month' } }, plan: null },
+      ],
+    }, language)
+    const statuses = [...container.querySelectorAll('.wm-cost-card-status')].map(el => el.textContent)
+    assert.ok(!statuses.includes(partialPill),
+      `no generic ${partialPill} pill remains (got: ${statuses.join(' | ')})`)
+    const scopeLines = container.querySelectorAll('.wm-cost-evidence-scope')
+    assert.equal(scopeLines.length, 1)
+    assert.match(scopeLines[0].textContent, new RegExp(scope))
+    assert.match(scopeLines[0].textContent, new RegExp(neverZero))
+    assert.equal(container.querySelector('[data-cost-kind="api"] .wm-cost-card-value').textContent, '$1.25')
+    assert.match(container.querySelector('[data-cost-kind="api"]').textContent, new RegExp(pricedNote))
+    assert.equal(container.querySelector('[data-cost-kind="cache"] .wm-cost-card-value').textContent, '$0.500')
+    assert.match(container.querySelector('[data-cost-kind="charges"]').textContent, new RegExp(unknownTag))
+    assert.match(container.querySelector('[data-cost-kind="fees"]').textContent, new RegExp(savedTag))
+  }
+})
+
+test('Costs omits the global scope line when every evidence card is fully priced', async () => {
+  for (const language of ['en', 'zh']) {
+    const { container } = await renderCostsSummary({
+      billing: { evidence: {
+        provider_reported: { usd: 0, basis: 'provider_history', source: 'Provider request history' },
+        api_equivalent: { usd: 2, basis: 'current_catalogue', source: 'Current catalogue',
+          pricing_coverage: { priced_tokens: 100, unpriced_tokens: 0, priced_calls: 2, unpriced_calls: 0 } },
+        credits_consumed: { usd: 0, basis: 'membership_allowance', source: 'Declared allowance' },
+        incremental_cash: { usd: null, basis: 'incomplete', source: 'No complete evidence' },
+      } },
+      totals: { tokens: 100, economics: { savings_usd: 0.2, uncached_usd: 1, cached_usd: 0.8,
+        coverage: 1, covered_tokens: 100, covered_calls: 2, excluded_calls: 0, gap_reasons: {} } },
+      accounts: [
+        { id: 'usd', effective_arrangement: 'subscription',
+          fee: { effective: { amount: 20, currency: 'USD', period: 'month' } }, plan: null },
+      ],
+    }, language)
+    assert.equal(container.querySelectorAll('.wm-cost-evidence-scope').length, 0)
+    assert.match(container.querySelector('[data-cost-kind="api"]').textContent,
+      language === 'zh' ? /已完整定价/ : /Fully priced/)
+    assert.match(container.querySelector('[data-cost-kind="cache"]').textContent,
+      language === 'zh' ? /已完整定价/ : /Fully priced/)
   }
 })
 
@@ -457,7 +524,9 @@ test('Costs keeps negative cache savings and unknown coverage distinct in both l
     }, language)
     const negativeCard = container.querySelector('[data-cost-kind="cache-negative"]')
     assert.equal(negativeCard.querySelector('.wm-cost-card-value').textContent, negative)
-    assert.match(negativeCard.textContent, new RegExp(partial))
+    assert.equal(negativeCard.querySelector('.wm-cost-card-status'), null,
+      'the generic pill is stated once in the global evidence scope line')
+    assert.equal(container.querySelectorAll('.wm-cost-evidence-scope').length, 1)
     assert.match(negativeCard.textContent, new RegExp(negativeExplanation))
     await React.act(async () => { roots.pop().unmount() })
 
@@ -475,7 +544,9 @@ test('Costs keeps negative cache savings and unknown coverage distinct in both l
         covered_calls: 1, excluded_calls: 0 } },
     }, language)
     const partialCard = partialCoverage.container.querySelector('[data-cost-kind="cache"]')
-    assert.match(partialCard.textContent, new RegExp(partial), 'known coverage below 100% remains partial even with no excluded calls')
+    assert.equal(partialCard.querySelector('.wm-cost-card-status'), null)
+    assert.equal(partialCoverage.container.querySelectorAll('.wm-cost-evidence-scope').length, 1,
+      'known coverage below 100% is still disclosed once globally even with no excluded calls')
     await React.act(async () => { roots.pop().unmount() })
 
     const unknownCoverage = await renderCostsSummary({
