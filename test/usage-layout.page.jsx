@@ -224,6 +224,7 @@ async function measure() {
   }
   for (const id of cases) {
     const pane = document.getElementById(id)
+    const usageRoot = pane.querySelector('.wm-analytics')
     const shell = pane.querySelector('.wm-shell')
     if (!shell) {
       output.layouts.push({ id, missingUsage: true })
@@ -238,6 +239,17 @@ async function measure() {
       const bg = parseColor(getComputedStyle(pane).backgroundColor)
       return fg && bg ? { color: getComputedStyle(dots[index]).backgroundColor, ratio: +contrast(fg, bg).toFixed(2) } : null
     }
+    const palette = T.CHART_COLORS.map(color => {
+      const sample = document.createElement('span')
+      sample.style.cssText = 'position:absolute;inset-inline-start:-10000px'
+      sample.style.color = color
+      pane.append(sample)
+      const computed = getComputedStyle(sample).color
+      const fg = parseColor(computed)
+      const bg = parseColor(getComputedStyle(pane).backgroundColor)
+      sample.remove()
+      return fg && bg ? { color: computed, ratio: +contrast(fg, bg).toFixed(2) } : null
+    })
     const stats = [...pane.querySelectorAll('.wm-stat')]
     const statOverflow = stats.filter(el => el.scrollWidth - el.clientWidth > 1).length
     const trendPoints = [...pane.querySelectorAll('[data-trend-point]')]
@@ -249,6 +261,9 @@ async function measure() {
     const firstCell = pane.querySelector('tbody td:first-child')
     output.layouts.push({
       id, width: pane.clientWidth,
+      mainScrollDelta: Math.max(0, pane.scrollHeight - pane.clientHeight),
+      usageScrollDelta: Math.max(0, usageRoot.scrollHeight - usageRoot.clientHeight),
+      usageOverflowY: getComputedStyle(usageRoot).overflowY,
       headingStart: pane.querySelector('.wm-topline > div > :first-child')?.textContent,
       numbers: [...pane.querySelectorAll('.wm-panel .wm-number')].map(el => el.textContent),
       sections: pane.querySelectorAll('section.wm-panel').length,
@@ -263,6 +278,9 @@ async function measure() {
       advancedRowOverflow: advancedRow && advancedRow.scrollWidth - advancedRow.clientWidth > 1 ? 1 : 0,
       stickyColumnWidth: firstCell ? firstCell.offsetWidth : 0,
       tableViewportWidth: tableWrap ? tableWrap.clientWidth : 0,
+      tableOverflowX: tableWrap ? getComputedStyle(tableWrap).overflowX : '',
+      tableOverflowY: tableWrap ? getComputedStyle(tableWrap).overflowY : '',
+      tableVerticalDelta: tableWrap ? Math.max(0, tableWrap.scrollHeight - tableWrap.clientHeight) : 0,
       filterOverlap: overlapPairs(filters),
       chipOverlap: overlapPairs(chips),
       chips: chips.length,
@@ -280,6 +298,7 @@ async function measure() {
       },
       chartKeyDots: dots.length,
       chartKeySwatches: [swatch(0), swatch(1), swatch(2), swatch(3)],
+      chartPalette: palette,
       trendPoints: trendPoints.length,
       trendTitles: trendPoints.filter(el => (el.querySelector('title')?.textContent || '').length > 0).length,
       legendTitles: legendRows.filter(el => (el.getAttribute('title') || '').length > 0).length,
@@ -354,6 +373,15 @@ async function interactionProbe() {
     await tick(200)
     interaction.disclosureToggle = wasOpen && closed && toggle.open
   }
+  const allState = T.$analytics.get()
+  const current = allState[usageScope] || T.analyticsInitialState()
+  T.$analytics.set({ ...allState, [usageScope]: { ...current, otherOpen: true } })
+  await tick(300)
+  const remainder = probe.querySelector('.wm-remainder')
+  interaction.otherListOverflowY = remainder ? getComputedStyle(remainder).overflowY : ''
+  interaction.otherListVerticalDelta = remainder
+    ? Math.max(0, remainder.scrollHeight - remainder.clientHeight)
+    : -1
   return interaction
 }
 

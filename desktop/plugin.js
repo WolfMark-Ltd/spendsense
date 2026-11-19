@@ -2933,7 +2933,7 @@ function analyticsDistribution(rows, metric = 'cost', grouping = 'model', limit 
   const valueKey = metric === 'cost' ? 'list_usd' : 'tokens'
   const entries = rows.map(row => ({
     ...row, id: grouping === 'provider' ? row.provider : analyticsId(row),
-    label: grouping === 'provider' ? row.provider || t('usageUnknownProviderCap') : row.model || t('usageUnknownModel'),
+    label: grouping === 'provider' ? row.provider || t('usageUnknownProviderCap') : modelDisplayName(row.model) || row.model || t('usageUnknownModel'),
     value: finiteValue(row[valueKey])
   })).filter(row => row.value != null && row.value > 0)
     .sort((a, b) => b.value - a.value || String(a.id).localeCompare(String(b.id)))
@@ -2945,21 +2945,26 @@ function analyticsDistribution(rows, metric = 'cost', grouping = 'model', limit 
     unpricedTokens: rows.reduce((s,r)=>s+num(r.unpriced_tokens),0)}
 }
 
-/**
- * Cache-read stream colour. Deliberately not the raw attention token: the
- * host warning can be near-invisible on dark fills, and the read stream
- * dominates Usage charts, so it gets its own amber pulled toward primary
- * text — lighter on dark themes, darker on light themes — staying distinct
- * from the attention badges that keep the pure token. With no warning
- * token, use primary ink for contrast against the panel and a neutral colour
- * distinct from the accent-based streams.
- */
-const CACHE_READ_COLOR = 'color-mix(in srgb, var(--ui-warning,var(--ui-text-primary)) 68%, var(--ui-text-primary))'
+const CHART_ACCENT_COLOR = 'var(--ui-accent,#3157c0)'
+const CHART_SUCCESS_COLOR = 'color-mix(in srgb,var(--ui-success,#087f5b) 68%,var(--ui-text-primary,#151823))'
+const CHART_WARNING_COLOR = 'color-mix(in srgb,var(--ui-warning,#9a5e00) 68%,var(--ui-text-primary,#151823))'
+const CHART_ERROR_COLOR = 'color-mix(in srgb,var(--ui-error,#b42318) 68%,var(--ui-text-primary,#151823))'
+const CHART_COLORS = [
+  CHART_ACCENT_COLOR,
+  CHART_SUCCESS_COLOR,
+  CHART_WARNING_COLOR,
+  CHART_ERROR_COLOR,
+  `color-mix(in srgb,${CHART_ACCENT_COLOR} 52%,${CHART_SUCCESS_COLOR} 48%)`,
+  `color-mix(in srgb,${CHART_SUCCESS_COLOR} 52%,${CHART_WARNING_COLOR} 48%)`,
+  `color-mix(in srgb,${CHART_WARNING_COLOR} 52%,${CHART_ERROR_COLOR} 48%)`,
+  `color-mix(in srgb,${CHART_ERROR_COLOR} 52%,${CHART_ACCENT_COLOR} 48%)`,
+]
+const CACHE_READ_COLOR = CHART_COLORS[2]
 const TOKEN_STREAMS = [
-  ['input_tokens','Input','var(--ui-accent)'],
-  ['output_tokens','Output','var(--ui-success)'],
+  ['input_tokens','Input',CHART_COLORS[0]],
+  ['output_tokens','Output',CHART_COLORS[1]],
   ['cache_read_tokens','Cache read',CACHE_READ_COLOR],
-  ['cache_write_tokens','Cache write','color-mix(in srgb, var(--ui-accent) 45%, var(--ui-text-primary))']
+  ['cache_write_tokens','Cache write',CHART_COLORS[7]]
 ]
 /** Token-stream ids to their I18N labels. TOKEN_STREAMS keeps the canonical English. */
 const STREAM_LABEL_KEYS = {
@@ -2991,9 +2996,12 @@ function analyticsPricing(row, t = needsAttentionEn) {
   const calls = num(row.unpriced_calls)
   const gaps = row.pricing_gaps || {}
   if (calls > 0) {
+    if (num(gaps.call_failed)) return t('usagePricingCallFailed', num(gaps.call_failed))
+    if (num(gaps.usage_missing)) return t('usagePricingUsageMissing', num(gaps.usage_missing))
     if (num(gaps.provider_not_recorded)) return t('usagePricingProviderUnknown', num(gaps.provider_not_recorded))
     if (num(gaps.provider_not_in_catalogue)) return t('usagePricingProviderUnpriced', num(gaps.provider_not_in_catalogue))
     if (num(gaps.model_not_in_catalogue)) return t('usagePricingModelUnpriced', num(gaps.model_not_in_catalogue))
+    if (num(gaps.price_evidence_missing)) return t('usagePricingPriceMissing', num(gaps.price_evidence_missing))
     if (!num(row.tokens)) return t('usagePricingCallsNoTokens', calls)
     if (finiteValue(row.list_usd) == null || !num(row.priced_tokens) || !num(row.unpriced_tokens))
       return t('usagePricingCallsUnknown', calls)
@@ -3029,7 +3037,8 @@ function analyticsInsights(data, t = needsAttentionEn) {
   if (priced.length && num(totals.list_usd)) {
     const top = priced[0]
     insights.push({label: t('usageInsightDriver'), text: t('usageInsightDriverText',
-      top.model || t('usageUnknownModel'), top.provider || t('unknown'), percent(num(top.list_usd) / num(totals.list_usd)))})
+      modelDisplayName(top.model) || top.model || t('usageUnknownModel'), top.provider || t('unknown'), percent(num(top.list_usd) / num(totals.list_usd))),
+      model:top.model,provider:top.provider})
   }
   const e = data?.economics || totals.economics || {}
   if (finiteValue(e.savings_usd) != null) insights.push({label: t('usageInsightVerdict'), text: e.savings_usd < 0
@@ -3110,7 +3119,7 @@ function analyticsQuery(days, filters, scope) {
 /* ---------------------------------------------------------- analytics UI */
 
 const ANALYTICS_CSS = SHARED_CSS + `
-.wm-analytics{height:100%;overflow:auto;container-type:inline-size;color:var(--ui-text-primary);font-size:12px;line-height:1.5}
+.wm-analytics{height:auto;overflow:visible;container-type:inline-size;color:var(--ui-text-primary);font-size:12px;line-height:1.5}
 .wm-analytics *{box-sizing:border-box}.wm-analytics .wm-shell{max-width:1560px;padding:28px 32px 40px;margin:auto;display:grid;gap:22px;min-width:0}
 .wm-analytics h1,.wm-analytics h2,.wm-analytics p{margin:0}.wm-analytics h1{font-size:27px;line-height:1.2;font-weight:650;letter-spacing:-1px}.wm-analytics h2{font-size:13px;font-weight:600;letter-spacing:-.15px}
 .wm-analytics .wm-subtle{color:var(--ui-text-secondary);font-size:11.5px}.wm-analytics .wm-dim{color:var(--ui-text-quaternary)}
@@ -3144,11 +3153,11 @@ const ANALYTICS_CSS = SHARED_CSS + `
 .wm-analytics .wm-svgtext{fill:var(--ui-text-primary);font-family:var(--font-mono,ui-monospace,monospace);font-size:19px;font-weight:500}.wm-analytics .wm-svghint{fill:var(--ui-text-tertiary);font-size:9px}
 .wm-analytics .wm-legend{display:grid;gap:4px;min-width:0}.wm-analytics .wm-legendrow{display:grid;grid-template-columns:7px minmax(0,1.2fr) minmax(60px,1fr) auto;gap:8px;text-align:left;align-items:center;padding:7px 4px;border:0;background:transparent;border-radius:4px;font-size:11px;width:100%;min-width:0}.wm-analytics .wm-bartrack{height:8px;background:var(--ui-stroke-secondary);border-radius:99px;overflow:hidden}.wm-analytics .wm-barfill{display:block;height:100%;border-radius:99px}
 .wm-analytics .wm-dot{width:6px;height:6px;border-radius:2px;display:inline-block;flex-shrink:0}.wm-analytics .wm-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;min-width:0}.wm-analytics .wm-legendrow small{font-size:9px;color:var(--ui-text-quaternary);display:block}.wm-analytics .wm-legendrow .wm-value{text-align:right;font-size:11px;white-space:nowrap}.wm-analytics .wm-legendrow .wm-exact{display:none}.wm-analytics .wm-legendrow:focus-visible .wm-exact{display:inline}.wm-analytics .wm-legendrow:focus-visible .wm-approx{display:none}
-.wm-analytics .wm-footnote{border-top:1px solid var(--ui-stroke-secondary);padding-top:12px;margin-top:15px;font-size:11px;color:var(--ui-text-tertiary);line-height:1.6}.wm-analytics .wm-remainder{padding:12px;background:var(--ui-fill-secondary);border-radius:6px;margin-top:12px;max-height:240px;overflow:auto}
+.wm-analytics .wm-footnote{border-top:1px solid var(--ui-stroke-secondary);padding-top:12px;margin-top:15px;font-size:11px;color:var(--ui-text-tertiary);line-height:1.6}.wm-analytics .wm-remainder{padding:12px;background:var(--ui-fill-secondary);border-radius:6px;margin-top:12px}
 .wm-analytics .wm-trend{width:100%;height:auto;min-height:180px;margin-top:10px}.wm-analytics .wm-gridline{stroke:var(--ui-stroke-secondary);stroke-width:1;stroke-dasharray:3 5}.wm-analytics .wm-axis{fill:var(--ui-text-tertiary);font-family:var(--font-mono,ui-monospace,monospace);font-size:11px}
 .wm-analytics .wm-chartkey{display:flex;gap:13px;flex-wrap:wrap;font-size:11px;color:var(--ui-text-tertiary);margin-top:10px}.wm-analytics .wm-chartkey span{display:inline-flex;align-items:center;gap:5px}.wm-analytics .wm-chartdetail{display:flex;justify-content:space-between;gap:9px;flex-wrap:wrap;min-height:32px;padding-top:10px;font-size:11px;color:var(--ui-text-tertiary)}
 .wm-analytics .wm-rank{width:100%;min-height:200px}.wm-analytics .wm-composition{min-height:225px;display:grid;align-content:center;gap:20px}.wm-analytics .wm-compositiontotal{font-size:27px;font-weight:500;letter-spacing:-1px}.wm-analytics .wm-compositionkey{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}
-.wm-analytics .wm-tablewrap{overflow:auto;margin:0 -20px}.wm-analytics table{width:100%;border-collapse:collapse;white-space:nowrap;text-align:right;font-size:11px}.wm-analytics caption{text-align:left;position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.wm-analytics .wm-tablewrap{overflow-x:auto;overflow-y:clip;margin:0 -20px}.wm-analytics table{width:100%;border-collapse:collapse;white-space:nowrap;text-align:right;font-size:11px}.wm-analytics caption{text-align:left;position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .wm-analytics th{font-size:10px;color:var(--ui-text-tertiary);font-weight:450;border-bottom:1px solid var(--ui-stroke-secondary);position:sticky;top:0;background:var(--ui-fill-primary);z-index:1}.wm-analytics .wm-tablewrap th:first-child{left:0;z-index:2}.wm-analytics .wm-tablewrap td:first-child{position:sticky;left:0;background:var(--ui-fill-primary);z-index:1;box-shadow:1px 0 0 var(--ui-stroke-secondary)}.wm-analytics th button{font:inherit;color:inherit;border:0;background:transparent;padding:10px 10px;text-align:right;width:100%;white-space:nowrap}.wm-analytics td{padding:11px 10px;border-bottom:1px solid var(--ui-stroke-secondary);font-variant-numeric:tabular-nums}.wm-analytics td:first-child,.wm-analytics th:first-child{padding-left:20px;text-align:left}.wm-analytics td:last-child,.wm-analytics th:last-child{padding-right:20px}.wm-analytics tr:last-child td{border-bottom:0}.wm-analytics tbody tr:hover{background:var(--ui-fill-secondary)}
 .wm-analytics .wm-modelbutton{border:0;background:transparent;color:var(--ui-text-primary);text-align:left;padding:0;font-weight:500;max-width:260px;display:block;overflow:hidden;text-overflow:ellipsis}.wm-analytics .wm-meter{width:64px;height:3px;background:var(--wm-chart-track);border-radius:2px;overflow:hidden;margin:5px 0 0 auto}.wm-analytics .wm-meter span{display:block;height:100%;background:var(--ui-accent)}
 .wm-analytics .wm-economics{display:grid;grid-template-columns:1fr 1fr;gap:28px}.wm-analytics .wm-comparison{display:grid;gap:15px;margin-top:20px}.wm-analytics .wm-comparerow{display:grid;gap:7px}.wm-analytics .wm-comparelabel{display:flex;justify-content:space-between;font-size:11px}.wm-analytics .wm-comparetrack{height:9px;background:var(--wm-chart-track);border-radius:3px;overflow:hidden}.wm-analytics .wm-comparetrack span{display:block;height:100%;border-radius:3px}
@@ -3157,12 +3166,56 @@ const ANALYTICS_CSS = SHARED_CSS + `
 @container(max-width:720px){.wm-analytics .wm-shell{padding:18px 14px;gap:17px}.wm-analytics .wm-charts{grid-template-columns:minmax(0,1fr)}.wm-analytics h1{font-size:24px}.wm-analytics .wm-economics{grid-template-columns:minmax(0,1fr);gap:18px}.wm-analytics .wm-explanation{border-left:0;border-top:1px solid var(--ui-stroke-secondary);padding:16px 0 0}.wm-analytics .wm-panel{padding:16px}.wm-analytics .wm-tablewrap{margin:0 -16px}.wm-analytics .wm-donutbody{grid-template-columns:minmax(120px,.85fr) minmax(0,1.15fr)}.wm-analytics .wm-stat{padding:16px}.wm-analytics .wm-statvalue{font-size:25px}.wm-analytics .wm-filter{max-width:none;min-width:125px}}
 @container(max-width:560px){.wm-analytics .wm-statgroup,.wm-analytics .wm-statgroup[data-kpi-group=activity]{grid-template-columns:minmax(0,1fr)}.wm-analytics .wm-stat{border-right:0;border-bottom:1px solid var(--ui-stroke-secondary)}.wm-analytics .wm-modelbutton{max-width:45cqi}}
 @container(max-width:380px){.wm-analytics .wm-donutbody{grid-template-columns:1fr}.wm-analytics .wm-compositionkey{grid-template-columns:1fr}}
+/* Usage overrides belong to the dashboard, not the shared product shell. */
+.wm-usage{font-size:14px;line-height:1.55}
+.wm-usage h2{font-size:15px}
+.wm-usage .wm-subtle{font-size:13px}
+.wm-usage .wm-button{font-size:12px;min-height:34px}
+.wm-usage .wm-segments button{font-size:12px;min-height:30px;padding:5px 9px}
+.wm-usage .wm-filter span{font-size:12px}
+.wm-usage select{font-size:13px;min-height:38px}
+.wm-usage .wm-scopechips button{font-size:12px;min-height:30px;padding:4px 8px}
+.wm-usage .wm-statlabel,.wm-usage .wm-insight b{font-size:12px}
+.wm-usage .wm-statgrouplabel{font-size:11px}
+.wm-usage .wm-badge{font-size:11px}
+.wm-usage .wm-paneltitle h2{font-size:15px}
+.wm-usage .wm-number{font-size:11px}
+.wm-usage .wm-donutbody{min-height:0}
+.wm-usage .wm-svghint{font-size:11px}
+.wm-usage .wm-legendrow{font-size:13px;grid-template-columns:9px minmax(0,1.2fr) minmax(60px,1fr) auto}
+.wm-usage .wm-dot{width:8px;height:8px}
+.wm-usage .wm-legendrow small{font-size:11px}
+.wm-usage .wm-legendrow .wm-value{font-size:13px}
+.wm-usage .wm-footnote{font-size:12px}
+.wm-usage .wm-trend,.wm-usage .wm-rank{min-height:0}
+.wm-usage .wm-axis{font-size:12px}
+.wm-usage .wm-chartkey,.wm-usage .wm-chartdetail{font-size:12px}
+.wm-usage .wm-chartdetail{min-height:0}
+.wm-usage .wm-composition{min-height:0}
+.wm-usage .wm-tablewrap{max-width:100%;overscroll-behavior-inline:contain;-webkit-overflow-scrolling:touch}
+.wm-usage .wm-tablewrap table{min-width:760px;font-size:13px}
+.wm-usage th{font-size:12px}
+.wm-usage th button{padding-top:12px;padding-bottom:12px}
+.wm-usage td{padding-top:13px;padding-bottom:13px}
+.wm-usage .wm-modelbutton{font-size:13px;max-width:280px}
+.wm-usage .wm-explanation{font-size:13px}
+.wm-usage .wm-bars,.wm-usage .wm-bar{font-size:12px}
+.wm-usage .wm-charts{align-items:start}
+.wm-usage .wm-coverage{display:grid;gap:9px;border:1px solid var(--ui-stroke-secondary);border-inline-start:3px solid var(--ui-accent);border-radius:8px;padding:14px 16px;background:color-mix(in srgb,var(--ui-fill-secondary) 22%,transparent)}
+.wm-usage .wm-coveragehead{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.wm-usage .wm-coveragecopy{color:var(--ui-text-secondary);font-size:13px;line-height:1.55}
+.wm-usage .wm-coverage details summary{font-size:12px;color:var(--ui-text-secondary);min-height:28px;display:flex;align-items:center}
+.wm-usage .wm-coveragedetails{display:grid;gap:10px;padding-top:8px}
+.wm-usage .wm-coveragedetails h3{font-size:12px;margin:0;color:var(--ui-text-primary)}
+.wm-usage .wm-coveragedetails ul{margin:4px 0 0;padding-inline-start:20px;display:grid;gap:5px;color:var(--ui-text-secondary);font-size:12px}
+.wm-usage .wm-coverageroutes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:7px}
+.wm-usage .wm-coverageroute{display:flex;align-items:flex-start;flex-wrap:wrap;gap:4px 8px;text-align:left;border:1px solid var(--ui-stroke-secondary);border-radius:6px;background:var(--ui-fill-primary);color:var(--ui-text-primary);padding:8px 10px;min-width:0;font:inherit;font-size:12px}
+.wm-usage .wm-coverageroute:hover{border-color:var(--ui-accent)}
+.wm-usage .wm-coverageroute small{color:var(--ui-text-secondary);font-size:12px}
+.wm-usage .wm-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@container(max-width:560px){.wm-usage .wm-tablewrap table{min-width:700px}.wm-usage .wm-modelbutton{max-width:180px}.wm-usage .wm-coverageroute{padding:10px}.wm-usage .wm-donutbody{grid-template-columns:minmax(120px,.85fr) minmax(0,1.15fr)}}
 @media(prefers-reduced-motion:reduce){.wm-analytics *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `
-const CHART_COLORS = ['var(--ui-accent)','var(--ui-success)','var(--ui-warning,var(--ui-text-secondary))',
-  'color-mix(in srgb, var(--ui-accent) 40%, var(--ui-text-primary))',
-  'color-mix(in srgb, var(--ui-success) 40%, var(--ui-text-primary))',
-  'color-mix(in srgb, var(--ui-warning,var(--ui-text-secondary)) 45%, var(--ui-text-primary))','var(--ui-text-quaternary)']
 const percent = v => finiteValue(v)==null ? '—' : `${(v*100).toFixed(1)}%`
 const exactTokens = value => finiteValue(value)==null ? '—' : value.toLocaleString('en-US')
 function analyticMoney(value) { return finiteValue(value)==null ? '—' : value<0 ? `−${fmtUsd(-value)}` : fmtUsd(value) }
@@ -3281,8 +3334,8 @@ function AnalyticsDonut({items,total,label,format,exact=format,onSelect,chart='d
       const select=()=>onSelect(item)
       return jsx('circle',{className:'wm-ring',cx:100,cy:100,r:radius,fill:'none',stroke:item.color || CHART_COLORS[i%CHART_COLORS.length],strokeWidth:22,
         strokeDasharray:`${item.share*circumference} ${circumference}`,strokeDashoffset:-start,
-        role:'button',tabIndex:0,'aria-label':t('usageDonutAction', item.other, item.label, exact(item.value), percent(item.share)),
-        onClick:select,onKeyDown:event=>keyActivate(event,select),style:{cursor:'pointer'},children:jsx('title',{children:`${item.label} · ${exact(item.value)} · ${percent(item.share)}`})},item.id)
+        role:'button',tabIndex:0,'aria-label':t('usageDonutAction', item.other, item.model?`${item.label} (${item.model})`:item.label, exact(item.value), percent(item.share)),
+        onClick:select,onKeyDown:event=>keyActivate(event,select),style:{cursor:'pointer'},children:jsx('title',{children:`${item.label}${item.model?` · ${item.model} · ${item.provider||''}`:''} · ${exact(item.value)} · ${percent(item.share)}`})},item.id)
     }),jsx('text',{x:100,y:97,textAnchor:'middle',className:'wm-svgtext',children:format(total)}),jsx('text',{x:100,y:116,textAnchor:'middle',className:'wm-svghint',children:label})]})
 }
 function AnalyticsDistribution({data,state,dispatch}) {
@@ -3295,8 +3348,8 @@ function AnalyticsDistribution({data,state,dispatch}) {
   // both carry the exact figure the bar conserves.
   const legendExact=row=>state.distributionMetric==='cost'?analyticMoney(row.value):exactTokens(row.value)
   const legend=(row,i)=>jsxs('button',{type:'button',className:'wm-legendrow',
-    'aria-label':row.other?`${t('usageLegendInspectOther', grouped?t('usageLegendProviders'):t('usageLegendModels'))} · ${legendExact(row)}`:t('usageLegendFilter', grouped?row.provider:row.model, row.provider, legendExact(row)),
-    'aria-expanded':row.other?state.otherOpen:undefined,onClick:()=>select(row),title:row.other?`${t('usageLegendInspectTitle')} · ${legendExact(row)}`:`${t('usageLegendApplyTitle', state.grouping)} · ${legendExact(row)}`,children:[
+    'aria-label':row.other?`${t('usageLegendInspectOther', grouped?t('usageLegendProviders'):t('usageLegendModels'))} · ${legendExact(row)}`:t('usageLegendFilter', grouped?row.provider:`${row.label} (${row.model})`, row.provider, legendExact(row)),
+    'aria-expanded':row.other?state.otherOpen:undefined,onClick:()=>select(row),title:row.other?`${t('usageLegendInspectTitle')} · ${legendExact(row)}`:`${t('usageLegendApplyTitle', state.grouping)} · ${row.model||row.provider} · ${row.provider||''} · ${legendExact(row)}`,children:[
       jsx('span',{className:'wm-dot',style:{background:CHART_COLORS[i%CHART_COLORS.length]}}),
       jsxs('span',{className:'wm-label',children:[row.label,!grouped&&!row.other?jsx('small',{children:row.provider || t('usageUnknownProviderCap')}):null]}),
       jsx('span',{className:'wm-bartrack','aria-hidden':'true',children:jsx('span',{className:'wm-barfill',style:{width:`${Math.max(0,Math.min(100,row.share*100))}%`,background:CHART_COLORS[i%CHART_COLORS.length]}})}),
@@ -3306,7 +3359,7 @@ function AnalyticsDistribution({data,state,dispatch}) {
     jsx(AnalyticsSegments,{label:t('usageSegDistBy'),value:state.grouping,options:[['model',t('usageSegModel')],['provider',t('usageSegProvider')]],onChange:value=>dispatch({type:'set',key:'grouping',value})})]}),
     children:jsxs('div',{children:[jsx('div',{className:'wm-legend',children:dist.items.length?dist.items.map(legend):jsx('p',{className:'wm-subtle',children:state.distributionMetric==='cost'?t('usageDistEmptyCost'):t('usageDistEmptyTokens')})}),
       state.otherOpen?jsxs('div',{className:'wm-remainder',children:[jsx('h2',{children:t('usageDistRemainder', dist.remainder.length, grouped?t('usageLegendProviders'):t('usageLegendModels'))}),...dist.remainder.map((r,i)=>legend(r,i+6))]}):null]}),
-    footer:jsxs('span',{children:[state.distributionMetric==='cost'?t('usageDistFooterCost'):t('usageDistFooterTokens'),num(dist.unpricedTokens)?jsx('span',{className:'wm-warn',children:t('usageDistFooterWarn', fmtTokens(dist.unpricedTokens))}):null,t('usageDistFooterNote')]})})
+    footer:jsxs('span',{children:[state.distributionMetric==='cost'?t('usageDistFooterCost'):t('usageDistFooterTokens'),t('usageDistFooterNote')]})})
 }
 function AnalyticsTrendChart({data,state,dispatch}) {
   const t = usePluginI18n(ID)
@@ -3369,7 +3422,7 @@ function AnalyticsDelegation({data,state,dispatch}) {
     jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:t('usageDelegBar', analyticMoney(row?.list_usd), fmtTokens(row?.tokens), exactTokens(row?.calls))})]}),
     jsx('div',{className:'wm-comparetrack',role:'img','aria-label':t('usageDelegBarAria', label, analyticMoney(row?.list_usd)),children:row&&num(row.list_usd)?jsx('span',{style:{width:`${num(row.list_usd)/max*100}%`,background:color}}):null})]},label)
   return jsx(AnalyticsPanel,{number:'03',title:t('usageDelegTitle'),subtitle:t('usageDelegSubtitle'),controls:jsx(AnalyticsSegments,{label:t('usageSegDelegScope'),value:state.filters.scope || 'all',options:[['all',t('usageSegAll')],['direct',t('usageSegParent')],['subagent',t('usageSegSubagents')]],onChange:value=>dispatch({type:'filter',key:'scope',value:value==='all'?'':value})}),children:jsxs('div',{children:[
-    jsx('div',{className:'wm-comparison',children:[bar(direct,t('usageDelegParent'),'var(--ui-accent)'),bar(sub,t('usageDelegSubagents'),'var(--ui-success)')]}),
+    jsx('div',{className:'wm-comparison',children:[bar(direct,t('usageDelegParent'),CHART_COLORS[0]),bar(sub,t('usageDelegSubagents'),CHART_COLORS[1])]}),
     jsxs('div',{className:'wm-subtle',style:{marginTop:14},children:[
       jsx('p',{children:t('usageDelegKnown', exactTokens(attribution.child_sessions), exactTokens(sub?.calls || 0))}),
       jsx('p',{children:t('usageDelegCache', percent(direct?.cache_hit_rate), percent(sub?.cache_hit_rate), percent(aux?.cache_hit_rate))}),
@@ -3391,11 +3444,13 @@ function AnalyticsRanking({data,state,dispatch}) {
       ...ranked.map((row,i)=>{
         const value=numeric(row),barWidth=Math.abs(value || 0)/(state.ranking==='cache_hit_rate'?1:maximum)*range
         const action=()=>dispatch({type:'select',group:'model',row})
-        return jsxs('g',{transform:`translate(0,${i*42+5})`,role:'button',tabIndex:0,'aria-label':t('usageRankRowAria', row.model, row.provider, percent(row.cache_hit_rate), exactTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd)),onClick:action,onKeyDown:event=>keyActivate(event,action),style:{cursor:'pointer'},children:[
-          jsx('title',{children:t('usageRankRowTitle', row.model, row.provider, row.cache_known_calls || 0, row.cache_unknown_calls || 0, exactTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
-          jsx('text',{x:0,y:12,fill:'var(--ui-text-primary)',fontSize:12,children:row.model?.length>31?`${row.model.slice(0,29)}…`:row.model}),jsx('text',{x:0,y:26,className:'wm-axis',children:t('usageRankRowSub', row.provider || t('unknown'), fmtTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
+        const name=modelDisplayName(row.model)||row.model||t('usageUnknownModel')
+        const modelWithRoute=row.model?`${name} (${row.model})`:name
+        return jsxs('g',{transform:`translate(0,${i*42+5})`,role:'button',tabIndex:0,'aria-label':t('usageRankRowAria', modelWithRoute, row.provider, percent(row.cache_hit_rate), exactTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd)),onClick:action,onKeyDown:event=>keyActivate(event,action),style:{cursor:'pointer'},children:[
+          jsx('title',{children:t('usageRankRowTitle', modelWithRoute, row.provider, row.cache_known_calls || 0, row.cache_unknown_calls || 0, exactTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
+          jsx('text',{x:0,y:12,fill:'var(--ui-text-primary)',fontSize:13,children:name.length>31?`${name.slice(0,29)}…`:name}),jsx('text',{x:0,y:26,className:'wm-axis',children:t('usageRankRowSub', row.provider || t('unknown'), fmtTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
           jsx('rect',{x:signed?233:start,y:5,width:signed?200:range,height:8,rx:3,fill:'var(--wm-chart-track)'}),
-          value!=null?jsx('rect',{x:value<0?start-barWidth:start,y:5,width:barWidth,height:8,rx:3,fill:value<0?'var(--wm-attention)':'var(--ui-success)'}):null,
+          value!=null?jsx('rect',{x:value<0?start-barWidth:start,y:5,width:barWidth,height:8,rx:3,fill:value<0?CHART_COLORS[3]:CHART_COLORS[1]}):null,
           signed?jsx('line',{x1:start,x2:start,y1:1,y2:18,stroke:'var(--ui-text-quaternary)'}):null,
           jsx('text',{x:609,y:13,textAnchor:'end',className:'wm-axis',children:value==null?t('unknown'):format(value)})]},analyticsId(row))})]}),
     footer:t('usageRankFooter', ranked.length, state.ranking==='savings'?t('usageRankModeSavings'):state.ranking==='cache_read_tokens'?t('usageRankModeVolume'):t('usageRankModeRate'))})
@@ -3419,7 +3474,7 @@ function AnalyticsComposition({data,state,dispatch}) {
     footer:jsx('div',{'aria-live':'polite',children:focus?t('usageCompFocus', focus.label, exactTokens(focus.value), percent(focus.share), focus.id==='cache_read_tokens'?t('usageCompNoteCacheRead'):focus.id==='cache_write_tokens'?t('usageCompNoteCacheWrite'):focus.id==='input_tokens'?t('usageCompNoteInput'):t('usageCompNoteOutput')):t('usageCompEmpty')})})
 }
 const ANALYTICS_COLUMNS = [['model','Model'],['provider','Provider'],['calls','Calls'],['tokens','Tokens'],['input_tokens','Input'],['output_tokens','Output'],['reasoning_tokens','Reasoning'],['cache_read_tokens','Read'],['cache_write_tokens','Write'],['cache_hit_rate','Cache %'],['savings','Net savings'],['list_usd','API cost'],['per_call','$/call'],['per_million','$/1M tokens'],['pricing','Pricing'],['billing','Billing']]
-const ANALYTICS_CORE_COLUMNS = ['model','provider','calls','tokens','input_tokens','output_tokens','list_usd','per_call','per_million','pricing','billing']
+const ANALYTICS_CORE_COLUMNS = ['model','provider','calls','tokens','cache_hit_rate','list_usd','pricing']
 /**
  * API-equivalent unit costs for one explorer row. list_usd is a priced
  * subtotal, so the averages stay unknown while any tokens are unpriced:
@@ -3478,12 +3533,12 @@ function AnalyticsExplorer({data,state,dispatch}) {
     rows.length>25?jsx(AnalyticsButton,{label:state.showAllModels?t('usageExplorerTop25Tip'):t('usageExplorerShowAllTip'),onClick:()=>dispatch({type:'toggle',key:'showAllModels'}),children:state.showAllModels?t('usageExplorerTop25'):t('usageExplorerShowAll')}):null,
     jsx(AnalyticsButton,{label:t('usageExplorerExportTip'),onClick:()=>downloadAnalyticsCsv(rows),children:t('usageExplorerExport')}),
     jsx('span',{className:'wm-badge',children:t('usageExplorerBadge')})]}),
-    children:jsxs('div',{children:[jsx('div',{className:'wm-tablewrap',children:jsxs('table',{children:[jsx('caption',{children:t('usageExplorerCaption')}),
+    children:jsxs('div',{children:[jsx('div',{className:'wm-tablewrap',role:'region',tabIndex:0,'aria-label':t('usageExplorerScrollRegion'),children:jsxs('table',{children:[jsx('caption',{children:t('usageExplorerCaption')}),
       jsx('thead',{children:jsx('tr',{children:columns.map(([key])=>jsx('th',{scope:'col','aria-sort':state.sortKey===key?(state.sortDirection==='asc'?'ascending':'descending'):'none',children:jsx('button',{type:'button','aria-label':t('usageExplorerSortBy', t(EXPLORER_COLUMN_KEYS[key])),onClick:()=>dispatch({type:'sort',key}),children:t('usageExplorerSortLabel', t(EXPLORER_COLUMN_KEYS[key]), state.sortKey===key?(state.sortDirection==='desc'?' ↓':' ↑'):'')})},key))})}),
       jsx('tbody',{children:visible.map(row=>jsx('tr',{children:columns.map(([key])=>{
         let content
         const partial = num(row.unpriced_tokens) || num(row.unpriced_calls)
-        if(key==='model') content=jsx('button',{type:'button',className:'wm-modelbutton',title:row.model,'aria-label':t('usageLegendFilter', row.model, row.provider),onClick:()=>dispatch({type:'select',group:'model',row}),children:row.model || t('usageUnknownModel')})
+        if(key==='model') content=jsx('button',{type:'button',className:'wm-modelbutton',title:`${row.model||''} · ${row.provider||''}`,'aria-label':t('usageLegendFilter', `${modelDisplayName(row.model)||row.model||t('usageUnknownModel')} (${row.model||''})`, row.provider),onClick:()=>dispatch({type:'select',group:'model',row}),children:modelDisplayName(row.model) || row.model || t('usageUnknownModel')})
         else if(key==='provider') content=jsx('span',{className:'wm-subtle',children:row.provider || t('usageUnknown')})
         else if(key==='billing') content=jsx('span',{className:'wm-badge',title:t('usageExplorerBillingTitle'),children:Object.keys(row.billing_mix || {}).filter(kind=>row.billing_mix[kind]>0).sort().join(' + ') || t('unknown')})
         else if(key==='cache_hit_rate') content=jsxs('div',{title:t('usageExplorerCacheTitle', row.cache_known_calls || 0, row.cache_unknown_calls || 0),children:[percent(row.cache_hit_rate),row.cache_hit_rate!=null?jsx('div',{className:'wm-meter',children:jsx('span',{style:{width:`${Math.max(0,Math.min(1,row.cache_hit_rate))*100}%`}})}):null]})
@@ -3505,11 +3560,74 @@ function AnalyticsEconomics({data}) {
   const max=Math.max(num(e.uncached_usd),num(e.cached_usd)) || 1
   return jsx(AnalyticsPanel,{number:'07',title:t('usageEconTitle'),subtitle:t('usageEconSubtitle'),controls:jsx('span',{className:cn('wm-badge',e.savings_usd<0?'wm-warn':'wm-good'),children:e.savings_usd==null?t('usageEconNoPricing'):e.savings_usd<0?t('usageEconWritePremium'):t('usageEconBenefit')}),children:jsxs('div',{className:'wm-economics',children:[
     jsxs('div',{children:[jsx('div',{className:cn('wm-compositiontotal wm-mono',e.savings_usd<0?'wm-warn':'wm-good'),children:analyticMoney(e.savings_usd)}),jsx('div',{className:'wm-subtle',children:t('usageEconNetSavings')}),
-      jsx('div',{className:'wm-comparison',children:[[t('usageEconWithoutCache'),e.uncached_usd,'var(--ui-text-quaternary)'],[t('usageEconWithCache'),e.cached_usd,'var(--ui-success)']].map(([label,value,color])=>jsxs('div',{className:'wm-comparerow',children:[jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:analyticMoney(value)})]}),jsx('div',{className:'wm-comparetrack',role:'img','aria-label':t('usageEconBarAria', label, analyticMoney(value)),children:finiteValue(value)!=null?jsx('span',{style:{width:`${num(value)/max*100}%`,background:color}}):null})]},label))})]}),
+      jsx('div',{className:'wm-comparison',children:[[t('usageEconWithoutCache'),e.uncached_usd,CHART_COLORS[0]],[t('usageEconWithCache'),e.cached_usd,CHART_COLORS[1]]].map(([label,value,color])=>jsxs('div',{className:'wm-comparerow',children:[jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:analyticMoney(value)})]}),jsx('div',{className:'wm-comparetrack',role:'img','aria-label':t('usageEconBarAria', label, analyticMoney(value)),children:finiteValue(value)!=null?jsx('span',{style:{width:`${num(value)/max*100}%`,background:color}}):null})]},label))})]}),
     jsxs('div',{className:'wm-explanation',children:[jsx('p',{children:t('usageEconExplainRates')}),
-      jsx('p',{children:t('usageEconExplainNet')}),
-      jsx('p',{className:'wm-mono',children:t('usageEconCoverage', percent(e.coverage), exactTokens(e.covered_tokens), exactTokens(e.covered_calls), exactTokens(e.excluded_calls))}),
-      jsx('p',{children:t('usageEconExplainScope')})]})]})})
+      jsx('p',{children:t('usageEconExplainNet')})]})]})})
+}
+const ANALYTICS_GAP_LABELS = {
+  call_failed: 'usageCoverageCallFailed',
+  usage_missing: 'usageCoverageUsageMissing',
+  provider_not_recorded: 'usageCoverageProviderUnknown',
+  provider_unidentified: 'usageCoverageProviderUnknown',
+  provider_not_in_catalogue: 'usageCoverageProviderRateMissing',
+  provider_price_catalogue_missing: 'usageCoverageProviderRateMissing',
+  model_not_in_catalogue: 'usageCoverageModelRateMissing',
+  model_unidentified: 'usageCoverageModelUnknown',
+  price_evidence_missing: 'usageCoveragePriceMissing',
+  rate_unavailable: 'usageCoverageRateMissing',
+  tier_rate_unavailable: 'usageCoverageTierRateMissing',
+  missing_base_rate: 'usageCoverageBaseRateMissing',
+  missing_cache_read_rate: 'usageCoverageCacheReadRateMissing',
+  missing_cache_write_rate: 'usageCoverageCacheWriteRateMissing',
+  cache_provenance_unknown: 'usageCoverageCacheUnknown',
+}
+function AnalyticsCoverageSummary({data,dispatch,days}) {
+  const t = usePluginI18n(ID)
+  const totals = data?.totals || {}
+  const economics = data?.economics || totals.economics || {}
+  const tokens = num(totals.tokens)
+  const calls = num(totals.calls)
+  const unpricedTokens = num(totals.unpriced_tokens)
+  const unpricedCalls = num(totals.unpriced_calls)
+  const pricingGaps = Object.entries(totals.pricing_gaps || {}).filter(([,count])=>num(count)>0)
+    .map(([reason,count])=>t(ANALYTICS_GAP_LABELS[reason] || 'usageCoverageOtherReason', num(count)))
+  const economicsGaps = Object.entries(economics.gap_reasons || {}).filter(([,count])=>num(count)>0)
+    .map(([reason,count])=>t(ANALYTICS_GAP_LABELS[reason] || 'usageCoverageOtherReason', num(count)))
+  const affected = (data.by_model || []).filter(row=>num(row.unpriced_tokens)||num(row.unpriced_calls))
+    .sort((a,b)=>num(b.unpriced_calls)-num(a.unpriced_calls)||num(b.unpriced_tokens)-num(a.unpriced_tokens)||analyticsId(a).localeCompare(analyticsId(b)))
+  const tokenShare = tokens ? percent(num(totals.priced_tokens)/tokens) : null
+  const callShare = calls ? t('usageCoverageCallShare', num(totals.priced_calls), unpricedCalls, calls) : t('usageCoverageNoCalls')
+  const partial = unpricedTokens > 0 || unpricedCalls > 0
+  return jsxs('div',{id:'wm-usage-pricing-coverage',className:'wm-coverage',role:'region',tabIndex:-1,
+    'aria-label':t('usagePricingCoverageLabel',days || data.window?.days || 30),children:[
+      jsxs('div',{className:'wm-coveragehead',children:[jsx('h2',{children:t('usageCoverageTitle')},'title'),
+        jsx('span',{className:cn('wm-badge',partial&&'wm-warn'),children:partial?t('usageCoveragePartial'):t('usageCoverageComplete')},'status')]},'header'),
+      jsx('p',{className:'wm-coveragecopy',children:jsxs('span',{children:[
+        tokenShare?t('usageCoverageTokenShare',tokenShare,exactTokens(totals.priced_tokens),exactTokens(tokens)):t('usageCoverageNoTokens',calls),
+        ' ',callShare,' ',t('usageCoverageCharges')
+      ]})},'summary'),
+      jsxs('details',{children:[jsx('summary',{children:t('usageCoverageDetails')},'summary'),
+        jsxs('div',{className:'wm-coveragedetails',children:[
+          jsx('ul',{children:[
+            jsx('li',{children:t('usageCoverageRateBasis')},'rate-basis'),
+            ...pricingGaps.map((line,i)=>jsx('li',{children:line},`pricing-${i}`)),
+            ...economicsGaps.length?[jsx('li',{children:t('usageCoverageEconomicsLabel',num(economics.excluded_calls))},'economics-label'),...economicsGaps.map((line,i)=>jsx('li',{children:line},`economics-${i}`))]:[],
+            jsx('li',{children:t('usageCoverageBillingBasis')},'billing-basis')
+          ]},'reasons'),
+          affected.length?jsxs('div',{children:[jsx('h3',{children:t('usageCoverageAffectedRoutes',affected.length)},'heading'),
+            jsx('div',{className:'wm-coverageroutes',children:affected.slice(0,8).map(row=>{
+              const name=modelDisplayName(row.model)||row.model||t('usageUnknownModel')
+              const route=row.provider||t('usageUnknownProviderCap')
+              return jsxs('button',{type:'button',className:'wm-coverageroute',title:row.model||'',
+                'aria-label':t('usageCoverageFilterRoute',name,route,row.model||''),
+                onClick:()=>dispatch({type:'select',group:'model',row}),children:[
+                  jsx('strong',{children:name},'model'),jsx('span',{className:'wm-subtle',children:route},'provider'),
+                  jsx('small',{children:t('usageCoverageRouteImpact',num(row.unpriced_calls),num(row.unpriced_tokens))},'impact')
+                ]},analyticsId(row))
+            })},'routes'),
+            affected.length>8?jsx('p',{className:'wm-subtle',children:t('usageCoverageMoreRoutes',affected.length-8)},'more-routes'):null]},'affected-routes'):null
+        ]},'details-body')]},'details')
+    ]})
 }
 /** Display names for active-filter chips; unknown future keys pass through raw. */
 const USAGE_FILTER_CHIP_KEYS = {
@@ -3536,6 +3654,7 @@ const USAGE_FILTER_SCOPE_KEYS = {
 
 /** Display text for a chip value. Only scope values are translated; user data passes through. */
 function usageFilterChipValue(key, value, t) {
+  if (key === 'model') return modelDisplayName(value) || value
   if (key !== 'scope') return value
   const mapped = USAGE_FILTER_SCOPE_KEYS[value]
   return mapped ? t(mapped) : value
@@ -3551,7 +3670,7 @@ function AnalyticsFilters({data,state,dispatch}) {
   const named=([key,label,raw,ariaName])=>{
     const options=key==='model'?[...new Set(raw.map(r=>typeof r==='string'?r:r.model))]:[...raw]
     if(state.filters[key]&&!options.includes(state.filters[key]))options.unshift(state.filters[key])
-    return jsxs('label',{className:'wm-filter',children:[jsx('span',{children:label}),jsx('select',{'aria-label':t('usageFilterTip', ariaName),value:state.filters[key],onChange:event=>filter(key,event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAll', key)},'all'),...options.map(value=>jsx('option',{value,children:value || t('usageUnknown')},value))]})]},key)
+    return jsxs('label',{className:'wm-filter',children:[jsx('span',{children:label}),jsx('select',{'aria-label':t('usageFilterTip', ariaName),value:state.filters[key],onChange:event=>filter(key,event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAll', key)},'all'),...options.map(value=>jsx('option',{value,title:key==='model'?value:undefined,children:key==='model'?modelDisplayName(value)||value:value || t('usageUnknown')},value))]})]},key)
   }
   const primary=[['model',t('usageFilterModel'),opts.models || [],t('usageFilterModelName')],['provider',t('usageFilterProvider'),opts.providers || [],t('usageFilterProviderName')]]
   const advanced=[['surface',t('usageFilterSurface'),opts.surfaces || [],t('usageFilterSurfaceName')],['task',t('usageFilterTask'),opts.tasks || [],t('usageFilterTaskName')]]
@@ -3564,7 +3683,7 @@ function AnalyticsFilters({data,state,dispatch}) {
       jsxs('div',{className:'wm-advancedrow',children:[...advanced.map(named),
         jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterParentOp')}),jsx('select',{'aria-label':t('usageFilterOpTip'),value:state.filters.parent,onChange:event=>filter('parent',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterAllOps')},'all'),...(opts.operations || []).map(o=>jsx('option',{value:o.parent,children:t('usageDelegOpWorkers', o.parent, o.subagent_calls)},o.parent))]})]}),
         jsxs('label',{className:'wm-filter',children:[jsx('span',{children:t('usageFilterWho')}),jsx('select',{'aria-label':t('usageFilterDelegTip'),value:state.filters.scope,onChange:event=>filter('scope',event.target.value),children:[jsx('option',{value:'',children:t('usageFilterEveryone')},'all'),jsx('option',{value:'direct',children:t('usageFilterDirectOnly')},'direct'),jsx('option',{value:'subagent',children:t('usageFilterSubagentsOnly')},'subagent'),jsx('option',{value:'auxiliary',children:t('usageFilterAuxOnly')},'auxiliary'),jsx('option',{value:'unattributed',children:t('usageFilterUnattributedOnly')},'unattributed')]})]})]})]})]}),
-    Object.values(state.filters).some(Boolean)?jsxs('div',{style:{marginTop:10},children:[jsx('p',{className:'wm-subtle',children:t('usageFilterActiveNote')}),jsx('div',{className:'wm-scopechips',children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':t('usageFilterRemove', usageFilterChipName(key, t)),onClick:()=>filter(key,''),children:t('usageFilterChip', usageFilterChipName(key, t), usageFilterChipValue(key, value, t))},key))})]}):null]})
+    Object.values(state.filters).some(Boolean)?jsxs('div',{style:{marginTop:10},children:[jsx('p',{className:'wm-subtle',children:t('usageFilterActiveNote')}),jsx('div',{className:'wm-scopechips',children:Object.entries(state.filters).filter(([,value])=>value).map(([key,value])=>jsx('button',{type:'button','aria-label':t('usageFilterRemove', usageFilterChipName(key, t)),title:key==='model'?value:undefined,onClick:()=>filter(key,''),children:t('usageFilterChip', usageFilterChipName(key, t), usageFilterChipValue(key, value, t))},key))})]}):null]})
 }
 function AnalyticsBaseline({days,scope}) {
   const t = usePluginI18n(ID)
@@ -3586,21 +3705,21 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const billingMix=totals?.billing_mix ? Object.entries(totals.billing_mix).map(([kind,value])=>`${kind}: ${typeof value==='number'?fmtTokens(value):String(value)}`).join(' · ') : ''
   const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
     jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')})]})]})
-  const content = jsxs('div',{className:'wm-shell',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
+  const content = jsxs('div',{className:'wm-shell wm-usage',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
       query.error?jsxs('div',{id:'wm-usage-load-error',className:'wm-alert',role:'alert',tabIndex:-1,children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
     totals?jsxs('div',{className:'wm-stats',children:[
       jsxs('div',{className:'wm-statgroup',role:'group','aria-label':t('usageKpiMoney'),'data-kpi-group':'money',children:[jsx('div',{className:'wm-statgrouplabel','aria-hidden':'true',children:t('usageKpiMoney')}),
         jsx(AnalyticsStat,{label:t('usageStatApiEquiv'),value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',(num(totals.unpriced_tokens)||num(totals.unpriced_calls))&&'wm-warn'),children:analyticsPricing(totals, t)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd, t)) || t('usageStatApiExtra')}),
         jsx(AnalyticsStat,{label:t('usageStatSavings'),value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:t('usageStatSavingsHint'),extra:t('usageStatSavingsExtra', percent(economics.coverage))}),
-        jsx(AnalyticsStat,{id:'wm-usage-pricing-summary',tabIndex:-1,label:t('usageStatCoverage'),value:num(totals.tokens)?percent(data.pricing_coverage?.coverage):t('usageUnknown'),hint:t('usageStatCoverageHint', exactTokens(totals.unpriced_tokens), exactTokens(totals.unpriced_calls)),extra:analyticsPricing(totals, t)})]}),
+        jsx(AnalyticsStat,{id:'wm-usage-pricing-summary',tabIndex:-1,label:t('usageStatCoverage'),value:num(totals.tokens)?percent(data.pricing_coverage?.coverage):t('usageUnknown'),hint:t('usageStatCoverageHint'),extra:t('usageStatCoverageExtra')})]}),
       jsxs('div',{className:'wm-statgroup',role:'group','aria-label':t('usageKpiActivity'),'data-kpi-group':'activity',children:[jsx('div',{className:'wm-statgrouplabel','aria-hidden':'true',children:t('usageKpiActivity')}),
         jsx(AnalyticsStat,{label:t('weightedCacheHit'),value:percent(totals.cache_hit_rate),tone:'wm-good',hint: totals.cache_prompt_coverage == null ? t('cacheCoverageUnavailable') : t('cacheCoveragePrompt', percent(totals.cache_prompt_coverage)),extra:t('cacheCoverageBasis')}),
         jsx(AnalyticsStat,{label:t('usageStatTokens'),value:fmtTokens(totals.tokens),hint:t('usageStatTokensHint', exactTokens(totals.calls)),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens, t)) || t('usageStatTokensExtra', fmtTokens(totals.input_tokens), fmtTokens(totals.output_tokens))})]})]}):null,
-    totals&&analyticsInsights(data, t).length?jsx('div',{className:'wm-insights','aria-label':t('usageInsightsAria'),children:analyticsInsights(data, t).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{children:item.text})]},item.label))}):null,
+    totals&&analyticsInsights(data, t).length?jsx('div',{className:'wm-insights','aria-label':t('usageInsightsAria'),children:analyticsInsights(data, t).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{title:item.model?`${item.model} · ${item.provider||''}`:undefined,'aria-label':item.model?`${item.text} (${item.model} · ${item.provider||''})`:undefined,children:item.text})]},item.label))}):null,
     totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:billingMix || t('usageBillingTitle'),children:[jsx('strong',{children:t('usageBillingLabel')}),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),' ',jsx('span',{className:cn('wm-badge',!totals.billed_complete&&'wm-warn'),children:totals.billed_complete?t('usageBillingComplete'):totals.billed_usd==null?t('usageUnknown'):t('usageBillingPartial')}),t('usageBillingNote')]}),jsx('span',{className:'wm-mono',children:data.window?t('usageWindowDash', String(data.window.since_local || data.window.since || '').slice(0,10), String(data.window.until_local || data.window.until || '').slice(0,10), data.window.since_local ? data.window.timezone || 'local' : 'UTC'):t('usageWindowPending')})]}):null,
+    totals&&num(totals.calls)?jsx(AnalyticsCoverageSummary,{data,dispatch,days:state.days}):null,
     totals&&data.previous&&!data.previous.comparable?jsx('div',{className:'wm-alert',children:t(data.previous.reason==='no_previous_calls'?'usagePreviousNoCalls':data.previous.reason==='insufficient_history'?'usagePreviousInsufficient':'usagePreviousUnavailable')}):null,
-    totals&&(num(totals.unpriced_tokens)||num(totals.unpriced_calls))?jsxs('div',{id:'wm-usage-pricing-coverage',className:'wm-alert',role:'region',tabIndex:-1,'aria-label':t('usagePricingCoverageLabel',state.days),children:[num(totals.unpriced_tokens)?t('usageUnpricedAlert', exactTokens(totals.unpriced_tokens)):'',num(totals.unpriced_calls)?t('usageUnpricedCallsAlert', exactTokens(totals.unpriced_calls), analyticsPricing(totals,t)):'']}):null,
     totals&&!num(totals.calls)?jsxs('div',{className:'wm-empty',role:'status',children:[jsx('h2',{children:t('usageEmptyTitle')}),jsx('p',{children:t('usageEmptyBody')}),jsx(AnalyticsButton,{label:t('usageEmptyShowDesktop'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageEmptyShowDesktop')}),jsx(AnalyticsButton,{label:t('usageEmptyClear'),onClick:()=>dispatch({type:'clear'})})]}):null,
     !totals&&!query.isLoading&&!query.error?jsx('div',{id:'wm-usage-no-data',className:'wm-empty',role:'status',tabIndex:-1,children:t('usageNoData')}):null,
     totals?jsxs('div',{className:'wm-charts',children:[jsx(AnalyticsDistribution,{data,state,dispatch}),jsx(AnalyticsTrendChart,{data,state,dispatch}),jsx(AnalyticsDelegation,{data,state,dispatch}),jsx(AnalyticsRanking,{data,state,dispatch}),jsx(AnalyticsComposition,{data,state,dispatch})]}):null,
@@ -3626,8 +3745,7 @@ function AnalyticsPage({productPage=false}={}) {
     if(focusRequest.scope!==scope){$analyticsFocus.set(null);return}
     if(focusRequest.target!=='pricing-coverage'||query.isFetching||query.isLoading&&!query.data&&!query.error)return
     const targetId=query.error?'wm-usage-load-error'
-      :query.data?.totals&&(num(query.data.totals.unpriced_tokens)||num(query.data.totals.unpriced_calls))
-        ?'wm-usage-pricing-coverage'
+      :query.data?.totals&&num(query.data.totals.calls)?'wm-usage-pricing-coverage'
         :query.data?.totals?'wm-usage-pricing-summary':'wm-usage-no-data'
     const target=document.getElementById(targetId)
     if(!target)return
@@ -5774,7 +5892,7 @@ const ECONOMICS_CSS = [
   '.wm-product .wm-econ-fee{background:var(--ui-accent)}',
   '.wm-product .wm-econ-usage{background:var(--ui-success)}',
   '.wm-product .wm-econ-bar-value{font-variant-numeric:tabular-nums;font-size:12px;min-width:64px;text-align:right}',
-  '.wm-product .wm-econ-scroll{overflow-x:auto}',
+  '.wm-product .wm-econ-scroll{overflow-x:auto;overflow-y:clip}',
   '.wm-product .wm-econ-table{width:100%;border-collapse:collapse;font-size:12px;min-width:640px}',
   '.wm-product .wm-econ-table th{text-align:left;color:var(--ui-text-tertiary);font-weight:500;padding:6px 10px 6px 0;border-bottom:1px solid var(--ui-stroke-secondary);white-space:nowrap}',
   '.wm-product .wm-econ-table td{padding:9px 10px 9px 0;border-bottom:1px solid var(--ui-stroke-secondary);vertical-align:top}',
@@ -7103,7 +7221,7 @@ const MEMBERSHIP_CSS = `
 @keyframes wm-flash{0%{box-shadow:0 0 0 2px var(--wm-attention)}100%{box-shadow:0 0 0 0 transparent}}
 @media (prefers-reduced-motion:reduce){.wm-flash{animation:none}.wm-chev{transition:none}.wm-group > summary::before{transition:none}}
 .wm-memberships select:disabled,.wm-memberships input:disabled{opacity:.55}
-.wm-membership-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:0}
+.wm-membership-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:0;min-width:0;overflow-wrap:anywhere}
 /* The accepted Costs evidence language, page-scoped: a 3px rail and a dot name
    the reading, the figure dominates, and the chip and note stay subordinate. */
 .wm-membership-summary-card{--wm-mem-accent:var(--ui-text-quaternary);display:grid;align-content:start;gap:6px;
@@ -9612,7 +9730,7 @@ const REPORTS_CSS = `
 .wm-digest-lines li{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0}
 .wm-digest-lines li span:first-child{color:var(--ui-text-secondary);min-width:0;overflow-wrap:anywhere}
 .wm-digest-lines li span:last-child{text-align:right;font-variant-numeric:tabular-nums;min-width:0;max-width:60%;overflow-wrap:anywhere}
-.wm-digest-table-wrap{max-width:100%;overflow:auto;border-radius:5px;overscroll-behavior-inline:contain}
+.wm-digest-table-wrap{max-width:100%;overflow-x:auto;overflow-y:clip;border-radius:5px;overscroll-behavior-inline:contain}
 .wm-digest-table-wrap:focus-visible{outline:2px solid var(--ui-accent);outline-offset:2px}
 .wm-digest table{width:100%;min-width:420px;border-collapse:collapse;font-size:12px}
 .wm-digest th{text-align:left;font-weight:600;color:var(--ui-text-secondary);padding:7px 9px 7px 0;
@@ -14772,12 +14890,45 @@ const I18N = {
     usagePricingNone: 'No usage',
     usagePricingUnpriced: 'Unpriced',
     usagePricingPartial: (pct, fallback) => `Partial · ${pct}%${fallback ? ' · fallback rates' : ''}`,
-    usagePricingPartialCalls: (pct, calls, fallback) => `Partial · ${pct}% of tokens priced · ${calls} call(s) lack price evidence${fallback ? ' · fallback rates' : ''}`,
-    usagePricingCallsNoTokens: count => `${count} call(s) have no token usage; value cannot be confirmed. Review Usage evidence.`,
-    usagePricingCallsUnknown: count => `Price evidence incomplete · ${count} call(s). Check provider, model and captured usage in Usage.`,
-    usagePricingProviderUnknown: count => `Provider unidentified · ${count} call(s). Confirm provider in Usage.`,
-    usagePricingProviderUnpriced: count => `Provider price missing · ${count} call(s). Check the provider route in Usage.`,
-    usagePricingModelUnpriced: count => `Model price missing · ${count} call(s). Check the provider and model in Usage.`,
+    usagePricingPartialCalls: (pct, calls, fallback) => `Partial · ${pct}% priced · ${exactTokens(calls)} ${calls===1?'call':'calls'} incomplete${fallback ? ' · fallback rates' : ''}`,
+    usagePricingCallsNoTokens: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no token usage; cost is unavailable.`,
+    usagePricingCallsUnknown: count => `Price evidence incomplete · ${exactTokens(count)} ${count===1?'call':'calls'}.`,
+    usagePricingCallFailed: count => `${exactTokens(count)} ${count===1?'call':'calls'} failed; cost cannot be estimated.`,
+    usagePricingUsageMissing: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no usage data.`,
+    usagePricingPriceMissing: count => `No matching rate · ${exactTokens(count)} ${count===1?'call':'calls'}.`,
+    usagePricingProviderUnknown: count => `Provider unidentified · ${exactTokens(count)} ${count===1?'call':'calls'}.`,
+    usagePricingProviderUnpriced: count => `No provider rate · ${exactTokens(count)} ${count===1?'call':'calls'}.`,
+    usagePricingModelUnpriced: count => `No model rate · ${exactTokens(count)} ${count===1?'call':'calls'}.`,
+    usageCoverageTitle: 'Data coverage',
+    usageCoveragePartial: 'Partial',
+    usageCoverageComplete: 'Complete',
+    usageCoverageTokenShare: (share, priced, total) => `${share} of tokens priced (${priced} of ${total}).`,
+    usageCoverageNoTokens: calls => `No token totals are available from ${exactTokens(calls)} ${calls===1?'call':'calls'}.`,
+    usageCoverageCallShare: (priced, incomplete, total) => `${exactTokens(priced)} of ${exactTokens(total)} ${total===1?'call':'calls'} priced; ${exactTokens(incomplete)} incomplete.`,
+    usageCoverageNoCalls: 'No calls recorded.',
+    usageCoverageCharges: 'Provider charges are not recorded.',
+    usageCoverageDetails: 'Review reasons and affected routes',
+    usageCoverageRateBasis: 'API-equivalent totals use current catalogue rates. A partial amount is the priced subtotal; unknown values remain unknown, not zero.',
+    usageCoverageBillingBasis: 'Billing shows the latest route/model classification, not per-call provider charges.',
+    usageCoverageEconomicsLabel: calls => `Cache comparison excludes ${exactTokens(calls)} ${calls===1?'call':'calls'}:`,
+    usageCoverageCallFailed: count => `${exactTokens(count)} ${count===1?'call':'calls'} failed; cost cannot be estimated.`,
+    usageCoverageUsageMissing: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no token data.`,
+    usageCoverageProviderUnknown: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no identified provider.`,
+    usageCoverageProviderRateMissing: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no published provider rate.`,
+    usageCoverageModelRateMissing: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no published model rate.`,
+    usageCoverageModelUnknown: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no identified model.`,
+    usageCoveragePriceMissing: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no matching rate evidence.`,
+    usageCoverageRateMissing: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no usable rate.`,
+    usageCoverageTierRateMissing: count => `${exactTokens(count)} ${count===1?'call is':'calls are'} missing a tier rate.`,
+    usageCoverageBaseRateMissing: count => `${exactTokens(count)} ${count===1?'call is':'calls are'} missing a base rate.`,
+    usageCoverageCacheReadRateMissing: count => `${exactTokens(count)} ${count===1?'call is':'calls are'} missing a cache-read rate.`,
+    usageCoverageCacheWriteRateMissing: count => `${exactTokens(count)} ${count===1?'call is':'calls are'} missing a cache-write rate.`,
+    usageCoverageCacheUnknown: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} unknown cache evidence.`,
+    usageCoverageOtherReason: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} incomplete pricing evidence.`,
+    usageCoverageAffectedRoutes: count => `Affected model routes (${count})`,
+    usageCoverageFilterRoute: (name, provider, raw) => `Filter ${name} via ${provider}. Raw model route: ${raw}.`,
+    usageCoverageRouteImpact: (calls, tokens) => `Incomplete: ${exactTokens(calls)} ${calls===1?'call':'calls'} · ${exactTokens(tokens)} tokens`,
+    usageCoverageMoreRoutes: count => `${count} more routes are in Model Explorer.`,
     usagePricingFallback: n => `Fallback rates · ${n} calls`,
     usagePricingComplete: 'Complete',
     usageInsightDriver: 'Biggest driver',
@@ -14812,12 +14963,11 @@ const I18N = {
     usageSegDistBy: 'Distribution by',
     usageSegModel: 'Model',
     usageSegProvider: 'Provider',
-    usageDistEmptyCost: 'No priced cost to distribute. Known free usage has zero cost; unpriced usage is not zero.',
+    usageDistEmptyCost: 'No priced cost to distribute. Known free usage costs nothing; see Data coverage for unpriced routes.',
     usageDistEmptyTokens: 'No tokens to distribute.',
     usageDistRemainder: (n, grouped) => `Remainder · ${n} ${grouped}`,
     usageDistFooterCost: 'Shares of the PRICED subtotal only. ',
     usageDistFooterTokens: 'Shares of all recorded tokens. ',
-    usageDistFooterWarn: tokens => `${tokens} unpriced tokens are excluded from cost shares. `,
     usageDistFooterNote: 'Top 6 + Other conserves the total. Click a legend to filter; Other only inspects.',
     usageTrendPoint: (ts, value, partial) => `${ts}: ${value}${partial ? ' partial priced subtotal' : ''}`,
     usageTrendTitle: (ts, value, calls) => `${ts} · ${value} · ${calls} calls`,
@@ -14832,7 +14982,7 @@ const I18N = {
     usageTrendTotal: (value, partial) => `${value}${partial ? ' · partial' : ''}`,
     usageTrendStream: (label, count) => `${label} ${count}`,
     usageTrendEmpty: 'Hover or keyboard-focus a point to inspect exact usage. ← → selects adjacent timestamps.',
-    usageTrendFooterCost: 'API-equivalent cost, not recorded billing. Unknown prices leave gaps; unpriced tokens are never counted as $0.',
+    usageTrendFooterCost: 'Catalogue-rate API-equivalent cost.',
     usageTrendFooterTokens: 'Stacked fresh input + output + cache read + cache write. X positions reflect real elapsed time, not array indices.',
     usageDelegBar: (money, tokens, calls) => `${money} · ${tokens} tok · ${calls} calls`,
     usageDelegBarAria: (label, money) => `${label}: ${money}`,
@@ -14861,7 +15011,7 @@ const I18N = {
     usageRankRowAria: (model, provider, hit, read, savings) => `Filter ${model} via ${provider}; hit ${hit}, ${read} read tokens, net savings ${savings}`,
     usageRankRowTitle: (model, provider, known, unknown, read, savings) => `${model} · ${provider}\nKnown-cache calls: ${known}; unknown: ${unknown}\nRead tokens: ${read}; theoretical net savings: ${savings}`,
     usageRankRowSub: (provider, read, savings) => `${provider} · ${read} read · ${savings} net`,
-    usageRankFooter: (n, mode) => `Top ${n} by ${mode}. Zero-cache older rows are ambiguous, not confirmed misses. Unknown is not zero. All models remain in the explorer.`,
+    usageRankFooter: (n, mode) => `Top ${n} by ${mode}. All models remain available in the explorer.`,
     usageRankModeSavings: 'theoretical net savings',
     usageRankModeVolume: 'cache-read volume',
     usageRankModeRate: 'weighted rate',
@@ -14886,7 +15036,8 @@ const I18N = {
     usageSegColumns: 'Columns',
     usageSegCore: 'Core',
     usageExplorerTitle: 'Model Explorer',
-    usageExplorerSubtitle: n => `${n} model × route pairs · every column sortable`,
+    usageExplorerSubtitle: n => `${n} model-route pairs`,
+    usageExplorerScrollRegion: 'Model Explorer table. Scroll horizontally for more columns.',
     usageExplorerTop25Tip: 'Show top 25 only',
     usageExplorerShowAllTip: 'Show all models',
     usageExplorerTop25: 'Top 25',
@@ -14920,7 +15071,7 @@ const I18N = {
     usageExplorerPricingTitle: (priced, total) => `${priced} priced / ${total} total tokens`,
     usageExplorerShowingAll: n => `Showing all ${n} pairs.`,
     usageExplorerShowingTop: n => `Showing top 25 of ${n} pairs by the current sort. Use Show all for the full table.`,
-    usageExplorerFooter: '$/call and $/1M tokens are API-equivalent averages, not recorded billing. They stay unknown while any tokens are unpriced. Reasoning is included in output, never added again to the four-stream total. Billing is the latest route classification, not an allocated per-call invoice. API cost is the priced subtotal when coverage is partial. Cache % is a weighted rate on calls with known cache activity; it is not an average of model percentages. Click a model to apply its exact model + provider pair.',
+    usageExplorerFooter: 'API cost and unit averages use current rates; an incomplete row shows only its priced subtotal. Reasoning is already included in output. Billing is the latest route classification. Cache % is weighted across calls with known cache activity. Select a model to filter its exact route.',
     usageEconTitle: 'Cache economics',
     usageEconSubtitle: 'A theoretical counterfactual, not a billing credit',
     usageEconNoPricing: 'INSUFFICIENT PRICING',
@@ -14930,10 +15081,8 @@ const I18N = {
     usageEconWithoutCache: 'Without cache',
     usageEconWithCache: 'With cache',
     usageEconBarAria: (label, money) => `${label}: ${money}`,
-    usageEconExplainRates: 'Without cache: the same prompt tokens at uncached input rates. With cache: fresh input + cache reads + cache writes at their effective per-call catalogue rates. Both include the same output cost, which cancels out of net savings.',
-    usageEconExplainNet: 'Net = uncached prompt cost − cached prompt cost. Write premiums may outweigh read discounts, so savings can be negative. This does not represent money returned on subscription or included routes.',
-    usageEconCoverage: (coverage, tokens, calls, excluded) => `${coverage} token coverage · ${tokens} covered tokens · ${calls} covered calls · ${excluded} excluded calls`,
-    usageEconExplainScope: 'Calls with unknown input/read/write prices or ambiguous cache splits are excluded, not assumed free. All comparisons use the same period and exact scope filters.',
+    usageEconExplainRates: 'Compares the same calls at uncached and cached current catalogue rates; output cost stays the same and cancels out.',
+    usageEconExplainNet: 'Cache writes can cost more than reads save, so the estimate can be negative. This is not a billing credit.',
     usageFilterPeriod: 'Period',
     usageFilterPeriodTip: 'Period filter',
     usagePeriodToday: 'Today',
@@ -14993,19 +15142,20 @@ const I18N = {
     usageStatApiExtra: 'Priced per-call estimate · not an invoice',
     usageStatSavings: 'Theoretical net savings',
     usageStatSavingsHint: 'Read discounts − write premiums',
-    usageStatSavingsExtra: coverage => `${coverage} economics coverage · detail below`,
+    usageStatSavingsExtra: coverage => `${coverage} of tokens included`,
     usageStatTokens: 'Tokens / calls',
     usageStatTokensHint: calls => `${calls} recorded calls`,
     usageStatTokensExtra: (input, output) => `${input} in · ${output} out`,
     usageStatCoverage: 'Pricing coverage',
     usagePricingCoverageLabel: days => `${days}-day pricing coverage details`,
-    usageStatCoverageHint: (tokens, calls) => `${tokens} unpriced tokens · ${calls} calls without complete price evidence`,
+    usageStatCoverageHint: 'Share of recorded tokens with prices',
+    usageStatCoverageExtra: 'Call coverage and reasons below',
     usageInsightsAria: 'What matters in this period',
     usageBillingTitle: 'Route/model billing classification from recorded calls; it can include estimates or included-route zero values and is not a provider invoice.',
     usageBillingLabel: 'Billing classification ',
     usageBillingComplete: 'Complete',
     usageBillingPartial: 'Partial',
-    usageBillingNote: ' · route/model classification, not actual provider-recorded charges.',
+    usageBillingNote: ' · route/model classification.',
     usageWindowDash: (since, until, tz) => `${since} → ${until} · ${tz}`,
     usageWindowPending: 'Timestamped window',
     usageUnpricedAlert: tokens => `${tokens} unpriced tokens. API-equivalent cost is a partial priced subtotal; unknown prices are excluded, not counted as zero.`,
@@ -16399,12 +16549,45 @@ const I18N = {
     usagePricingNone: '无用量',
     usagePricingUnpriced: '未定价',
     usagePricingPartial: (pct, fallback) => `部分 · ${pct}%${fallback ? ' · 回退单价' : ''}`,
-    usagePricingPartialCalls: (pct, calls, fallback) => `部分 · ${pct}% 的 token 已定价 · ${calls} 次调用缺少价格证据${fallback ? ' · 回退单价' : ''}`,
-    usagePricingCallsNoTokens: count => `${count} 次调用没有令牌用量；无法确认价值。请检查“用量”证据。`,
-    usagePricingCallsUnknown: count => `价格证据不完整 · ${count} 次调用。请在“用量”中检查供应商、模型和捕获的用量。`,
-    usagePricingProviderUnknown: count => `供应商未知 · ${count} 次调用。请在“用量”中确认供应商。`,
-    usagePricingProviderUnpriced: count => `缺少供应商价格 · ${count} 次调用。请在“用量”中检查供应商线路。`,
-    usagePricingModelUnpriced: count => `缺少模型价格 · ${count} 次调用。请在“用量”中检查供应商和模型。`,
+    usagePricingPartialCalls: (pct, calls, fallback) => `部分 · ${pct}% 已定价 · ${exactTokens(calls)} 次调用不完整${fallback ? ' · 回退单价' : ''}`,
+    usagePricingCallsNoTokens: count => `${exactTokens(count)} 次调用没有令牌用量，成本不可用。`,
+    usagePricingCallsUnknown: count => `价格证据不完整 · ${exactTokens(count)} 次调用。`,
+    usagePricingCallFailed: count => `${exactTokens(count)} 次调用失败，无法估算成本。`,
+    usagePricingUsageMissing: count => `${exactTokens(count)} 次调用缺少用量数据。`,
+    usagePricingPriceMissing: count => `没有匹配单价 · ${exactTokens(count)} 次调用。`,
+    usagePricingProviderUnknown: count => `供应商未知 · ${exactTokens(count)} 次调用。`,
+    usagePricingProviderUnpriced: count => `缺少供应商单价 · ${exactTokens(count)} 次调用。`,
+    usagePricingModelUnpriced: count => `缺少模型单价 · ${exactTokens(count)} 次调用。`,
+    usageCoverageTitle: '数据覆盖',
+    usageCoveragePartial: '部分',
+    usageCoverageComplete: '完整',
+    usageCoverageTokenShare: (share, priced, total) => `${share} 的令牌已有单价（${priced}/${total}）。`,
+    usageCoverageNoTokens: calls => `${exactTokens(calls)} 次调用没有可用的令牌总数。`,
+    usageCoverageCallShare: (priced, incomplete, total) => `${exactTokens(total)} 次调用中 ${exactTokens(priced)} 次已定价，${exactTokens(incomplete)} 次不完整。`,
+    usageCoverageNoCalls: '没有记录调用。',
+    usageCoverageCharges: '未记录供应商实际费用。',
+    usageCoverageDetails: '查看原因与受影响线路',
+    usageCoverageRateBasis: 'API 等值总额按当前目录单价计算。部分金额为已定价小计；未知仍是未知，不当作零。',
+    usageCoverageBillingBasis: '计费显示最近线路/模型分类，不是逐次供应商费用。',
+    usageCoverageEconomicsLabel: calls => `缓存比较排除了 ${exactTokens(calls)} 次调用：`,
+    usageCoverageCallFailed: count => `${exactTokens(count)} 次调用失败，无法估算其成本。`,
+    usageCoverageUsageMissing: count => `${exactTokens(count)} 次调用没有令牌数据。`,
+    usageCoverageProviderUnknown: count => `${exactTokens(count)} 次调用没有已识别的供应商。`,
+    usageCoverageProviderRateMissing: count => `${exactTokens(count)} 次调用缺少已发布的供应商单价。`,
+    usageCoverageModelRateMissing: count => `${exactTokens(count)} 次调用缺少已发布的模型单价。`,
+    usageCoverageModelUnknown: count => `${exactTokens(count)} 次调用没有已识别的模型。`,
+    usageCoveragePriceMissing: count => `${exactTokens(count)} 次调用没有匹配的价格证据。`,
+    usageCoverageRateMissing: count => `${exactTokens(count)} 次调用没有可用单价。`,
+    usageCoverageTierRateMissing: count => `${exactTokens(count)} 次调用缺少阶梯单价。`,
+    usageCoverageBaseRateMissing: count => `${exactTokens(count)} 次调用缺少基础单价。`,
+    usageCoverageCacheReadRateMissing: count => `${exactTokens(count)} 次调用缺少缓存读取单价。`,
+    usageCoverageCacheWriteRateMissing: count => `${exactTokens(count)} 次调用缺少缓存写入单价。`,
+    usageCoverageCacheUnknown: count => `${exactTokens(count)} 次调用的缓存证据未知。`,
+    usageCoverageOtherReason: count => `${exactTokens(count)} 次调用的定价证据不完整。`,
+    usageCoverageAffectedRoutes: count => `受影响的模型线路（${count}）`,
+    usageCoverageFilterRoute: (name, provider, raw) => `筛选 ${name}（经 ${provider}）。原始模型线路：${raw}。`,
+    usageCoverageRouteImpact: (calls, tokens) => `不完整：${exactTokens(calls)} 次调用 · ${exactTokens(tokens)} 个令牌`,
+    usageCoverageMoreRoutes: count => `另有 ${count} 条线路可在“模型浏览器”查看。`,
     usagePricingFallback: n => `回退单价 · ${n} 次调用`,
     usagePricingComplete: '完成',
     usageInsightDriver: '最大驱动',
@@ -16439,12 +16622,11 @@ const I18N = {
     usageSegDistBy: '分布维度',
     usageSegModel: '模型',
     usageSegProvider: '供应商',
-    usageDistEmptyCost: '无已定价成本可分布。已知免费用量成本为零；未定价用量不是零。',
+    usageDistEmptyCost: '无已定价成本可分布。已知免费用量无需付费；未定价线路请查看“数据覆盖”。',
     usageDistEmptyTokens: '无令牌可分布。',
     usageDistRemainder: (n, grouped) => `余项 · ${n} 个${grouped}`,
     usageDistFooterCost: '仅为已定价小计的份额。',
     usageDistFooterTokens: '为全部已记录令牌的份额。',
-    usageDistFooterWarn: tokens => `${tokens} 未定价令牌不计入成本份额。`,
     usageDistFooterNote: '前 6 名 + 其他保持总数守恒。点击图例筛选；“其他”仅供查看。',
     usageTrendPoint: (ts, value, partial) => `${ts}：${value}${partial ? '（部分已定价小计）' : ''}`,
     usageTrendTitle: (ts, value, calls) => `${ts} · ${value} · ${calls} 次调用`,
@@ -16459,7 +16641,7 @@ const I18N = {
     usageTrendTotal: (value, partial) => `${value}${partial ? ' · 部分' : ''}`,
     usageTrendStream: (label, count) => `${label} ${count}`,
     usageTrendEmpty: '悬停或用键盘聚焦数据点以查看确切用量。← → 选择相邻时间戳。',
-    usageTrendFooterCost: 'API 等值成本，非已记录账单。未知价格留空；未定价令牌永不计为 $0。',
+    usageTrendFooterCost: '按目录价格计算的 API 等值成本。',
     usageTrendFooterTokens: '堆叠的新输入 + 输出 + 缓存读取 + 缓存写入。X 位置反映真实流逝时间，而非数组下标。',
     usageDelegBar: (money, tokens, calls) => `${money} · ${tokens} 令牌 · ${calls} 次调用`,
     usageDelegBarAria: (label, money) => `${label}：${money}`,
@@ -16488,7 +16670,7 @@ const I18N = {
     usageRankRowAria: (model, provider, hit, read, savings) => `按 ${model}（经 ${provider}）筛选；命中 ${hit}，${read} 读取令牌，净节省 ${savings}`,
     usageRankRowTitle: (model, provider, known, unknown, read, savings) => `${model} · ${provider}\n已知缓存调用：${known}；未知：${unknown}\n读取令牌：${read}；理论净节省：${savings}`,
     usageRankRowSub: (provider, read, savings) => `${provider} · ${read} 读取 · ${savings} 净额`,
-    usageRankFooter: (n, mode) => `按${mode}排列的前 ${n} 名。零缓存旧行含义不明，并非确认未命中。未知不是零。所有模型保留在浏览器中。`,
+    usageRankFooter: (n, mode) => `按${mode}排列的前 ${n} 名。所有模型均可在模型浏览器中查看。`,
     usageRankModeSavings: '理论净节省',
     usageRankModeVolume: '缓存读取量',
     usageRankModeRate: '加权命中率',
@@ -16513,7 +16695,8 @@ const I18N = {
     usageSegColumns: '列',
     usageSegCore: '核心',
     usageExplorerTitle: '模型浏览器',
-    usageExplorerSubtitle: n => `${n} 个模型 × 线路对 · 每列可排序`,
+    usageExplorerSubtitle: n => `${n} 个模型线路组合`,
+    usageExplorerScrollRegion: '模型浏览器表格。可横向滚动查看其他列。',
     usageExplorerTop25Tip: '仅显示前 25 名',
     usageExplorerShowAllTip: '显示全部模型',
     usageExplorerTop25: '前 25',
@@ -16547,7 +16730,7 @@ const I18N = {
     usageExplorerPricingTitle: (priced, total) => `${priced} 已定价 / ${total} 令牌总数`,
     usageExplorerShowingAll: n => `显示全部 ${n} 对。`,
     usageExplorerShowingTop: n => `按当前排序显示前 25 对，共 ${n} 对。使用“显示全部”查看完整表格。`,
-    usageExplorerFooter: '美元/次与美元/百万令牌为 API 等值均值，非已记录账单。只要有令牌未定价即保持未知。推理计入输出，永不重复计入四流合计。账单为最新线路分类，非分摊的按次账单。覆盖不完整时 API 成本为已定价小计。缓存 % 为已知缓存活动调用的加权命中率，非模型百分比均值。点击模型以应用其确切模型 + 供应商对。',
+    usageExplorerFooter: 'API 成本与单位均值按当前单价计算；覆盖不完整时仅显示已定价小计。推理已计入输出。账单为最新线路分类。缓存 % 按已知缓存调用加权。选择模型可筛选其确切线路。',
     usageEconTitle: '缓存经济',
     usageEconSubtitle: '理论反事实，非账单抵扣',
     usageEconNoPricing: '定价不足',
@@ -16557,10 +16740,8 @@ const I18N = {
     usageEconWithoutCache: '无缓存',
     usageEconWithCache: '有缓存',
     usageEconBarAria: (label, money) => `${label}：${money}`,
-    usageEconExplainRates: '无缓存：相同提示词令牌按未缓存输入单价。有缓存：新鲜输入 + 缓存读取 + 缓存写入按其有效按次目录单价。两者包含相同的输出成本，在净节省中抵消。',
-    usageEconExplainNet: '净额 = 未缓存提示词成本 − 已缓存提示词成本。写入溢价可能超过读取折扣，因此节省可为负。这不代表订阅或包含线路上的退款。',
-    usageEconCoverage: (coverage, tokens, calls, excluded) => `${coverage} 令牌覆盖率 · ${tokens} 已覆盖令牌 · ${calls} 已覆盖调用 · ${excluded} 已排除调用`,
-    usageEconExplainScope: '输入/读取/写入价格未知或缓存拆分不明确的调用予以排除，不视为免费。所有比较使用相同时期与确切范围筛选。',
+    usageEconExplainRates: '按当前目录单价比较同一批调用在未缓存与已缓存时的成本；输出成本相同并相互抵消。',
+    usageEconExplainNet: '缓存写入成本可能高于读取折扣，因此估算结果可能为负；这不是账单抵扣。',
     usageFilterPeriod: '周期',
     usageFilterPeriodTip: '周期筛选',
     usagePeriodToday: '今天',
@@ -16620,19 +16801,20 @@ const I18N = {
     usageStatApiExtra: '已定价按次估算 · 非账单',
     usageStatSavings: '理论净节省',
     usageStatSavingsHint: '读取折扣 − 写入溢价',
-    usageStatSavingsExtra: coverage => `${coverage} 经济覆盖率 · 详情见下`,
+    usageStatSavingsExtra: coverage => `${coverage} 的令牌已纳入`,
     usageStatTokens: '令牌 / 调用',
     usageStatTokensHint: calls => `${calls} 已记录调用`,
     usageStatTokensExtra: (input, output) => `${input} 输入 · ${output} 输出`,
     usageStatCoverage: '定价覆盖率',
     usagePricingCoverageLabel: days => `近 ${days} 天定价覆盖详情`,
-    usageStatCoverageHint: (tokens, calls) => `${tokens} 个未定价令牌 · ${calls} 次调用缺少完整价格证据`,
+    usageStatCoverageHint: '已记录令牌中有价格的比例',
+    usageStatCoverageExtra: '调用覆盖与原因见下方',
     usageInsightsAria: '本期要点',
     usageBillingTitle: '来自已记录调用的线路／模型计费分类；可能包括估算值或 included 线路的零值，并非供应商账单。',
     usageBillingLabel: '计费分类 ',
     usageBillingComplete: '完成',
     usageBillingPartial: '部分',
-    usageBillingNote: ' · 线路／模型分类，不是供应商实际记录的费用。',
+    usageBillingNote: ' · 线路／模型分类。',
     usageWindowDash: (since, until, tz) => `${since} → ${until} · ${tz}`,
     usageWindowPending: '带时间戳窗口',
     usageUnpricedAlert: tokens => `${tokens} 未定价令牌。API 等值成本为部分已定价小计；未知价格予以排除，不计为零。`,
@@ -16756,8 +16938,8 @@ export default {
 /** Pure internals, exported for the node test-suite (the host only reads `default`). */
 export const __test = {
   Chip, BudgetPanel, BudgetStatusIndicator, budgetLevel, budgetColour, sessionBudgetStatus, usageValueDelta, budgetQuery, budgetWrite, budgetPayload, newBudgetDraft, budgetTooltip, $budgetDraft, $budgetBusy, $budgetNotice, BUDGET_CSS,
-  analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS,
-  AnalyticsPage, AnalyticsDashboard, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
+  analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS, CHART_COLORS,
+  AnalyticsPage, AnalyticsDashboard, AnalyticsCoverageSummary, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
   AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS, AnalyticsSegments,
   usageFilterChipName, USAGE_FILTER_CHIP_KEYS, usageFilterChipValue, USAGE_FILTER_SCOPE_KEYS,
   backendQuery, catalogQuery, liveProvider, sameModel, getCatalog, ensureBackendRate, $view, $automaticModelOptions,

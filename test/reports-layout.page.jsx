@@ -106,6 +106,8 @@ async function measure() {
   const summary = host.querySelector('.wm-digest-summary')
   const tableRegions = [...host.querySelectorAll('.wm-digest-table-wrap')].map(node => ({
     width: node.clientWidth, scroll: node.scrollWidth, tabIndex: node.tabIndex,
+    overflowX: getComputedStyle(node).overflowX, overflowY: getComputedStyle(node).overflowY,
+    verticalDelta: Math.max(0, node.scrollHeight - node.clientHeight),
   }))
   const result = {
     errors, locale, theme, days, viewport: window.innerWidth,
