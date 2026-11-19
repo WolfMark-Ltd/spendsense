@@ -536,7 +536,7 @@ test('every settings string exists in English and Chinese', () => {
     'Central catalogue: stale The cached live catalogue is shown.')
   assert.equal(en.settingsCatalogueTotals(58, 50, 5, 3),
     '58 plans · 50 verified prices · 5 provisional · 3 without a published fee')
-  assert.equal(en.settingsAboutVersion('0.6.12'), 'SpendSense 0.6.12')
+  assert.equal(en.settingsAboutVersion('0.6.15'), 'SpendSense 0.6.15')
   // Proper names survive in both languages; the legal credit is identical.
   assert.match(en.settingsPrivacyP2, /models\.dev/)
   assert.match(zh.settingsPrivacyP2, /models\.dev/)
@@ -546,7 +546,7 @@ test('every settings string exists in English and Chinese', () => {
   // The Chinese composites interpolate every argument.
   assert.match(zh.settingsCatalogueVersion('实时', '2026-11-04.3', ' · 生成于X'), /实时会员目录/)
   assert.match(zh.settingsCatalogueTotals(58, 50, 5, 3), /58 个方案/)
-  assert.equal(zh.settingsAboutVersion('0.6.12'), 'SpendSense 0.6.12')
+  assert.equal(zh.settingsAboutVersion('0.6.15'), 'SpendSense 0.6.15')
   // WP12: the subtitle scans operational-first, and the licence disclosure
   // names the exact distribution terms from NOTICE (GPL-3.0, no "or later").
   assert.match(en.settingsSubtitle, /Budgets, pricing, updates/)
