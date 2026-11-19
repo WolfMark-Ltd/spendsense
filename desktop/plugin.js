@@ -4339,6 +4339,13 @@ const $newsDetailsOpen = atom([])
 // The event a story link asked the archive to reveal. `nonce` makes a repeat
 // click on the same story scroll and focus again.
 const $newsFocus = atom(null)
+// Nonce of the last focus request already answered. Module-level, not a render
+// ref: the page unmounts on every tab switch, and a satisfied request must not
+// replay itself when the page comes back. A new click carries a new nonce.
+let newsFocusConsumedNonce = 0
+// Requests are numbered, not timestamped: two clicks in the same millisecond
+// (and any caller with a pinned clock) must still be two distinct requests.
+let newsFocusSerial = 0
 /** Explicit refresh status: the Refresh button bypasses the local-diff throttle. */
 const $newsRefreshState = atom(null)
 /** Live-updates opt-in flow: confirm box plus the last notice, per connection. */
@@ -10847,10 +10854,13 @@ function newsEditorialComparison(previous, current) {
       incomparable[key] = 'news_ev_zero_baseline'
     }
   }
+  // Direction is read from the PUBLISHED values, never from the rounded delta:
+  // a move smaller than half a micro-dollar rounds to zero and would vanish
+  // from the classification although the rates differ.
   const movedDown = NEWS_RATE_FIELDS.filter(key => rates[key]
-    && rates[key].before !== rates[key].after && rates[key].delta < 0)
+    && rates[key].after < rates[key].before)
   const movedUp = NEWS_RATE_FIELDS.filter(key => rates[key]
-    && rates[key].before !== rates[key].after && rates[key].delta > 0)
+    && rates[key].after > rates[key].before)
   let direction
   if (movedDown.length && movedUp.length) direction = 'mixed'
   else if (!(hasPrevious && hasCurrent)) direction = 'unknown'
@@ -10901,6 +10911,10 @@ function newsEditorialEventType(item) {
     if (direction === 'mixed') return 'price_mixed'
     if (direction === 'down') return 'price_reduction'
     if (direction === 'up') return 'price_increase'
+    // Neither measured. The publisher's category stands (a tier/context-only
+    // change is a real price change whose base rates did not move), but the
+    // materiality gate still refuses to headline it without a move in the
+    // claimed direction.
     return category
   }
   if (category === 'subscription') {
@@ -11003,9 +11017,9 @@ function newsEditorialHeadline(item, eventType, signals = []) {
   }
   if (eventType === 'price_mixed') {
     const up = NEWS_RATE_FIELDS.filter(key => rates[key]
-      && rates[key].before !== rates[key].after && rates[key].delta > 0)
+      && rates[key].after > rates[key].before)
     const down = NEWS_RATE_FIELDS.filter(key => rates[key]
-      && rates[key].before !== rates[key].after && rates[key].delta < 0)
+      && rates[key].after < rates[key].before)
     const largestPct = keys => {
       const values = keys.map(key => rates[key].pct).filter(value => value != null).map(Math.abs)
       return values.length ? Math.max(...values) : null
@@ -11148,6 +11162,28 @@ function newsEditorialVariant(entry) {
 }
 
 /**
+ * Newest parseable `observed_at` among a group's members, or ''. A group is one
+ * row, so its date must be the newest event inside it: the highest-scoring
+ * member is chosen for identity, not freshness, and a date-ordered section
+ * (removals) would otherwise sort on a stale head. Instants are compared, not
+ * text, because the feed accepts several UTC offsets; an undated member never
+ * wins, so undated groups stay last.
+ */
+function newsEditorialNewest(members) {
+  let best = ''
+  let bestAt = null
+  for (const member of members) {
+    const at = newsInstant(member?.observed_at)
+    if (at == null) continue
+    if (bestAt == null || at > bestAt) {
+      best = String(member.observed_at || '')
+      bestAt = at
+    }
+  }
+  return best
+}
+
+/**
  * Group entries under their model family without merging identity: one grouped
  * row per family, with every exact provider/model variant kept underneath.
  */
@@ -11171,6 +11207,10 @@ function newsEditorialGroup(entries) {
     const providers = [...new Set(sorted.map(row => row.provider))].sort()
     const entry = {
       ...head,
+      // The group's own date is the newest event it contains, computed before
+      // variant truncation: a capped variant list must not hide a fresher
+      // member, and a date-ordered section must sort on the real newest.
+      observed_at: newsEditorialNewest(sorted) || head.observed_at,
       family_event_count: sorted.length,
       providers,
       event_ids: sorted.flatMap(row => row.event_ids || []),
@@ -11212,6 +11252,12 @@ function newsEditorialMaterial(entry, minPct = NEWS_EDITORIAL_MIN_PCT,
   const delta = magnitude.max_abs_delta
   const deltaOk = delta != null && delta >= minDelta
   if (entry?.event_type === 'price_reduction' || entry?.event_type === 'price_increase') {
+    // The measured direction must agree with the class before either branch may
+    // accept the event. A zero-baseline increase is still a measured 'up' move,
+    // so it survives; a move the other way, or no measured move at all, can
+    // never be headlined as this class.
+    const wanted = entry.event_type === 'price_reduction' ? 'down' : 'up'
+    if (magnitude.direction !== wanted) return false
     if (magnitude.zero_baseline === true) return deltaOk
     const pct = magnitude.dominant_pct
     if (pct == null) return false
@@ -11794,7 +11840,7 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
     // same change under a different record id.
     const focusIds = [...new Set([target?.id ? String(target.id) : '', ...eventIds]
       .filter(Boolean))]
-    $newsFocus.set(focusIds.length ? { eventIds: focusIds, nonce: Date.now() } : null)
+    $newsFocus.set(focusIds.length ? { eventIds: focusIds, nonce: ++newsFocusSerial } : null)
     $newsShown.set(NEWS_PAGE_SIZE)
   }
   return jsxs('article', {
@@ -12393,6 +12439,17 @@ function NewsTierBlocks({ event, t }) {
 function NewsCard({ item, impact, t, flat = false }) {
   const title = item.model || item.provider
   const subtitle = item.model ? item.provider : null
+  // A story link can land on a card too: a plan change or a provider listing has
+  // no model group, so this record is only ever rendered here. The marker is
+  // matched by event id (or a record the event absorbed), the same rule the
+  // offer and history rows use.
+  const focus = useValue($newsFocus)
+  const focusIds = Array.isArray(focus?.eventIds) ? focus.eventIds : []
+  const cardFocusId = !focusIds.length ? ''
+    : focusIds.includes(String(item?.id || '')) ? String(item.id)
+    : String(newsEvidenceRecords(item)
+        .map(record => record?.id || '')
+        .find(id => id && focusIds.includes(String(id))) || '')
   const impactText = newsImpactText(impact, t)
   const tone = !impact || impact.basis === 'unavailable' ? null
     : impact.delta_usd < 0 ? 'good' : impact.delta_usd > 0 ? 'warn' : null
@@ -12418,7 +12475,11 @@ function NewsCard({ item, impact, t, flat = false }) {
     : item.category === 'subscription' ? { 'data-news-plan': 'true' }
     : item.category === 'new_model' ? { 'data-news-listing': 'true' }
     : {}
-  return jsxs('article', { className: 'wm-news-card', ...kindAttrs, children: [
+  return jsxs('article', { className: 'wm-news-card', ...kindAttrs,
+    // Event-ID-matched focus marker for the archive effect: a card has no model
+    // group, so without it a plan or listing story could never be located.
+    'data-news-focus': cardFocusId ? 'true' : undefined,
+    'data-news-focus-event': cardFocusId || undefined, children: [
     jsxs('div', { className: 'wm-news-top', children: [
       jsxs('h3', { children: [title, subtitle ? jsx('small', { children: subtitle }) : null] }),
       jsx('span', { className: 'wm-news-badge', 'data-cat': item.category,
@@ -12499,14 +12560,23 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
   // A story link lands on one event. Mark that row, matching the event id or any
   // original record it absorbed, so the reader sees which record was asked for.
   const focusIds = Array.isArray(focus?.eventIds) ? focus.eventIds : []
-  const focusedEvent = event => focusIds.length > 0
-    && (focusIds.includes(String(event?.id || ''))
-      || newsEvidenceRecords(event).some(rec => focusIds.includes(String(rec?.id || ''))))
-  // A single-event offer renders no History at all, so the row itself is the
-  // only thing a story link can mark. When History exists the matching event
-  // row carries the mark instead, which is more precise.
-  const historyFocused = (Array.isArray(offer.history) ? offer.history : []).some(focusedEvent)
-  const offerFocused = !!offer.latest && focusedEvent(offer.latest)
+  // The id the reader actually asked for: the event's own id, else the id of a
+  // record it absorbed. The marker carries it, so a story link can be shown to
+  // land on its own record rather than merely somewhere in the model.
+  const focusedId = event => {
+    if (!event || !focusIds.length) return ''
+    const own = String(event.id || '')
+    if (own && focusIds.includes(own)) return own
+    const absorbed = newsEvidenceRecords(event)
+      .map(rec => String(rec?.id || ''))
+      .find(id => id && focusIds.includes(id))
+    return absorbed || ''
+  }
+  const historyFocusId = (Array.isArray(offer.history) ? offer.history : [])
+    .map(focusedId).find(Boolean) || ''
+  const offerFocusId = focusedId(offer.latest)
+  const historyFocused = !!historyFocusId
+  const offerFocused = !!offerFocusId
   // Per-field chips always show the actual comparable values, even when the
   // coded class disagrees; a not-comparable field carries its reason.
   const chipOf = (key, dirWord, text, reason) => jsxs('span', {
@@ -12570,7 +12640,10 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
     'data-news-provider': offer.provider || '', 'data-news-model': offer.model || '',
     'data-news-class': cls || 'none',
     'data-news-match': matched ? 'true' : null,
-    'data-news-focus': offerFocused && !historyFocused ? 'true' : undefined, children: [
+    // A single-event offer renders no History, so the row itself is the only
+    // thing a story link can mark; the marker carries the matched record id.
+    'data-news-focus': offerFocused && !historyFocused ? 'true' : undefined,
+    'data-news-focus-event': offerFocused && !historyFocused ? offerFocusId : undefined, children: [
     jsx('span', { className: 'wm-news-provider', children: offer.provider || offer.model }),
     jsxs('span', { className: 'wm-news-dir', children: [
       jsx('span', { 'aria-hidden': 'true', 'data-dir': dir, children: glyph }),
@@ -12645,7 +12718,9 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
             `${t('newsHistory')} (${t('newsCountEvents', offer.history.length)})` }),
           jsx('ul', { className: 'wm-news-history', 'data-news-history': 'true', children:
             offer.history.map(event => jsxs('li', { 'data-news-event': event?.id || '',
-              'data-news-focus': focusedEvent(event) ? 'true' : undefined, children: [
+              // The matched record id, when this row is the story's destination.
+              'data-news-focus-event': focusedId(event) || undefined,
+              'data-news-focus': focusedId(event) ? 'true' : undefined, children: [
             jsx('span', { className: 'wm-news-historycode', children: event?.id || '' }),
             jsx('span', { children: t('newsObserved', fmtDay(event?.observed_at)) }),
             jsx('span', { children: newsSummaryText(event, t) }),
@@ -12907,7 +12982,14 @@ function NewsPage() {
   // must be brought into the visible page before it can be marked and focused.
   useEffect(() => {
     const ids = Array.isArray(newsFocusTarget?.eventIds) ? newsFocusTarget.eventIds : []
-    if (!ids.length || typeof document === 'undefined') return undefined
+    const nonce = newsFocusTarget?.nonce
+    if (!ids.length || nonce == null || typeof document === 'undefined') return undefined
+    // One request, one navigation. The nonce is consumed once the target has
+    // been revealed — or is provably absent from this archive — so a later
+    // search or filter edit never drags the reader back to the story; a new
+    // click carries a new nonce and navigates again. The highlight itself stays
+    // keyed to $newsFocus, so consuming the request leaves the mark in place.
+    if (newsFocusConsumedNonce === nonce) return undefined
     if (scope !== 'all') return undefined
     const carries = event => ids.includes(String(event?.id || ''))
       || newsEvidenceRecords(event).some(rec => ids.includes(String(rec?.id || '')))
@@ -12919,6 +13001,7 @@ function NewsPage() {
       $newsShown.set(index + 1)
       return undefined
     }
+    newsFocusConsumedNonce = nonce
     const timer = setTimeout(() => {
       let node = null
       try { node = document.querySelector('[data-news-focus="true"]') } catch { return }

@@ -644,3 +644,77 @@ test('removal groups order by the instant, not by the text of the stamp', () => 
     { generatedAt: '2026-11-10T12:00:00Z' }).sections.find(s => s.id === 'removals').entries
   assert.deepEqual(rows.map(row => row.model), ['acme-old', 'acme-older'])
 })
+
+// --- direction, zero baseline and group date (round-5 review) -----------------
+
+test('direction comes from the published values, not the rounded delta', () => {
+  const down = item({ id: 'ur-1', category: 'price_reduction',
+    previous: { input: 1.0000004, output: 2 }, current: { input: 1.0000001, output: 2 } })
+  const comparison = S.newsEditorialComparison(down.previous, down.current)
+  assert.ok(Math.abs(comparison.rates.input.delta) === 0,
+    `the displayed delta rounds to zero (${comparison.rates.input.delta})`)
+  assert.equal(comparison.direction, 'down',
+    'the published values still decide the direction')
+  assert.equal(S.newsEditorialEventType(down), 'price_reduction')
+  // Opposite sub-micro moves are a real mixed change, not a flat one.
+  const mixed = item({ id: 'ur-2', category: 'price_reduction',
+    previous: { input: 1.0000004, output: 2.0000001 },
+    current: { input: 1.0000001, output: 2.0000004 } })
+  assert.equal(S.newsEditorialComparison(mixed.previous, mixed.current).direction, 'mixed')
+  assert.equal(S.newsEditorialEventType(mixed), 'price_mixed')
+})
+
+test('a price class the rates do not move in is counted, never headlined', () => {
+  const flat = item({ id: 'ur-3', category: 'price_reduction',
+    previous: { input: 1, output: 2 }, current: { input: 1, output: 2 } })
+  const briefing = S.newsBuildBriefing([flat], { generatedAt: '2026-11-10T00:00:00Z' })
+  assert.equal(briefing.counts.price_reduction, 1)
+  assert.equal(briefing.sections.find(s => s.id === 'biggest_reductions').total, 0,
+    'a category alone never headlined a move')
+  assert.equal(briefing.counts.events, 1, 'the event stays in the archive')
+})
+
+test('a zero-baseline move must agree with its declared class', () => {
+  const rise = item({ id: 'ur-4', event_type: 'price_increase',
+    previous: { input: 0 }, current: { input: 0.5 } })
+  assert.equal(S.newsBuildBriefing([rise], { generatedAt: '2026-11-10T00:00:00Z' })
+    .sections.find(s => s.id === 'biggest_increases').total, 1,
+  'a zero-baseline increase is preserved')
+  const claimedCut = item({ id: 'ur-5', event_type: 'price_reduction',
+    previous: { input: 0 }, current: { input: 0.5 } })
+  const briefing = S.newsBuildBriefing([claimedCut], { generatedAt: '2026-11-10T00:00:00Z' })
+  assert.equal(briefing.sections.find(s => s.id === 'biggest_reductions').total, 0,
+    'a rise can never be headlined as a cut')
+  assert.equal(briefing.counts.price_reduction, 1, 'the rejected event is still counted')
+})
+
+test('a group carries the newest date among its members', () => {
+  const head = item({ id: 'ur-6', model: 'acme-x', provider: 'acme',
+    previous: { input: 10 }, current: { input: 5 }, observed_at: '2026-11-01T00:00:00Z' })
+  const fresher = item({ id: 'ur-7', model: 'acme-x:thinking', provider: 'zeta',
+    previous: { input: 10 }, current: { input: 6 }, observed_at: '2026-11-09T00:00:00Z' })
+  const [group] = S.newsEditorialGroup([S.newsEditorialEntry(head), S.newsEditorialEntry(fresher)])
+  assert.equal(group.model_family, 'acme-x')
+  assert.equal(group.observed_at, '2026-11-09T00:00:00Z',
+    "the group date is its newest member, not the head's")
+  const undated = item({ id: 'ur-8', model: 'beta-y', provider: 'acme',
+    previous: { input: 10 }, current: { input: 5 }, observed_at: '' })
+  const dated = item({ id: 'ur-9', model: 'beta-y:flex', provider: 'zeta',
+    previous: { input: 10 }, current: { input: 5 }, observed_at: '2026-11-02T00:00:00Z' })
+  assert.equal(S.newsEditorialGroup([S.newsEditorialEntry(undated),
+    S.newsEditorialEntry(dated)])[0].observed_at, '2026-11-02T00:00:00Z',
+  'an undated member never wins the group date')
+})
+
+test('a removal family orders by its newest member', () => {
+  const older = item({ id: 'ur-10', event_type: 'removed_from_provider',
+    provider: 'acme', model: 'acme-a', observed_at: '2026-11-01T00:00:00Z' })
+  const newer = item({ id: 'ur-11', event_type: 'removed_from_provider',
+    provider: 'acme', model: 'acme-a:thinking', observed_at: '2026-11-09T00:00:00Z' })
+  const other = item({ id: 'ur-12', event_type: 'removed_from_provider',
+    provider: 'zeta', model: 'zeta-b', observed_at: '2026-11-05T00:00:00Z' })
+  const rows = S.newsBuildBriefing([older, newer, other],
+    { generatedAt: '2026-11-10T12:00:00Z' }).sections.find(s => s.id === 'removals').entries
+  assert.deepEqual(rows.map(row => row.model_family), ['acme-a', 'zeta-b'],
+    'the family sorts on its freshest member, not its head')
+})

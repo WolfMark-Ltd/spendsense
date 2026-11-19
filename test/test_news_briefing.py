@@ -53,6 +53,18 @@ class RateDeltaTests(unittest.TestCase):
                           {"input": 1.0, "output": 100.01})
         self.assertEqual(nb.classify_event(item), "price_mixed")
 
+    def test_direction_survives_a_delta_that_rounds_to_zero(self):
+        # A move smaller than half a micro-dollar rounds away at six decimals.
+        # The published rates still differ, so the direction must not vanish.
+        deltas = nb.rate_deltas({"input": 1.0000004, "output": 2.0},
+                                {"input": 1.0000001, "output": 2.0})
+        self.assertEqual(deltas["rates"]["input"]["delta"], 0.0)
+        self.assertEqual(deltas["direction"], "down")
+        mixed = nb.rate_deltas({"input": 1.0000004, "output": 2.0000001},
+                               {"input": 1.0000001, "output": 2.0000004})
+        self.assertEqual(mixed["direction"], "mixed",
+                         "opposite sub-micro moves are a real mixed change")
+
     def test_mixed_move_with_a_zero_baseline_reports_no_percentage(self):
         item = price_item("acme", "alpha", {"input": 0.0, "output": 2.0},
                           {"input": 1.0, "output": 1.0})
@@ -271,6 +283,71 @@ class MaterialityTests(unittest.TestCase):
         self.assertEqual([entry["model"] for entry in section["entries"]],
                          ["acme-old", "acme-older"])
 
+    def test_an_unmeasured_price_category_is_counted_never_headlined(self):
+        # The category claims a cut; the rates show no measurable move, so no
+        # section may repeat the claim. The event is still counted.
+        item = price_item("acme", "alpha", {"input": 1.0, "output": 2.0},
+                          {"input": 1.0, "output": 2.0})
+        briefing = nb.build_briefing([item], generated_at=OBSERVED)
+        self.assertEqual(briefing["counts"]["price_reduction"], 1)
+        self.assertEqual({row["id"]: row for row in briefing["sections"]}
+                         ["biggest_reductions"]["total"], 0)
+        self.assertEqual(briefing["counts"]["events"], 1,
+                         "the event stays part of the supplied archive")
+
+    def test_a_zero_baseline_move_must_agree_with_its_class(self):
+        # A published event may assert its own type. A rise from zero is an
+        # increase and stays one; the same rise claimed as a reduction is
+        # rejected by the direction predicate, not headlined as a cut.
+        rise = price_item("acme", "alpha", {"input": 0.0}, {"input": 0.5},
+                          event_type="price_increase")
+        rise_sections = {row["id"]: row for row in nb.build_briefing(
+            [rise], generated_at=OBSERVED)["sections"]}
+        self.assertEqual(rise_sections["biggest_increases"]["total"], 1,
+                         "a zero-baseline increase is preserved")
+        claimed_cut = price_item("acme", "alpha", {"input": 0.0}, {"input": 0.5},
+                                 event_type="price_reduction")
+        briefing = nb.build_briefing([claimed_cut], generated_at=OBSERVED)
+        self.assertEqual({row["id"]: row for row in briefing["sections"]}
+                         ["biggest_reductions"]["total"], 0)
+        self.assertEqual(briefing["counts"]["price_reduction"], 1,
+                         "the rejected event is still counted")
+
+    def test_a_group_carries_the_newest_member_date(self):
+        head = price_item("acme", "acme-x", {"input": 10.0}, {"input": 5.0},
+                          observed_at="2026-11-01T00:00:00Z")
+        fresher = price_item("zeta", "acme-x:thinking", {"input": 10.0},
+                             {"input": 6.0}, observed_at="2026-11-09T00:00:00Z")
+        group = nb.build_briefing([head, fresher],
+                                  generated_at=OBSERVED)["sections"][0]["entries"][0]
+        self.assertEqual(group["model_family"], "acme-x")
+        self.assertEqual(group["observed_at"], "2026-11-09T00:00:00Z",
+                         "the group date is its newest member, not the head's")
+        undated = price_item("acme", "beta-y", {"input": 10.0}, {"input": 5.0},
+                             observed_at="")
+        dated = price_item("zeta", "beta-y:flex", {"input": 10.0}, {"input": 5.0},
+                           observed_at="2026-11-02T00:00:00Z")
+        self.assertEqual(nb.build_briefing([undated, dated], generated_at=OBSERVED)
+                         ["sections"][0]["entries"][0]["observed_at"],
+                         "2026-11-02T00:00:00Z",
+                         "an undated member never wins the group date")
+
+    def test_a_removal_family_orders_by_its_newest_member(self):
+        older = price_item("acme", "acme-a", {"input": 1.0}, {"input": 1.0},
+                           observed_at="2026-11-01T00:00:00Z",
+                           event_type="removed_from_provider")
+        newer = price_item("acme", "acme-a:thinking", {"input": 1.0}, {"input": 1.0},
+                           observed_at="2026-11-09T00:00:00Z",
+                           event_type="removed_from_provider")
+        other = price_item("zeta", "zeta-b", {"input": 1.0}, {"input": 1.0},
+                           observed_at="2026-11-05T00:00:00Z",
+                           event_type="removed_from_provider")
+        section = {row["id"]: row for row in nb.build_briefing(
+            [older, newer, other], generated_at=OBSERVED)["sections"]}
+        self.assertEqual([entry["model_family"] for entry in section["removals"]["entries"]],
+                         ["acme-a", "zeta-b"],
+                         "the family sorts on its freshest member, not its head")
+
 
 class ClassificationTests(unittest.TestCase):
     def test_provider_listing_is_not_a_model_event(self):
@@ -291,6 +368,11 @@ class ClassificationTests(unittest.TestCase):
                           {"input": 0.044, "output": 2.0})
         item["category"] = "price_increase"
         self.assertEqual(nb.classify_event(item), "price_mixed")
+
+    def test_a_zero_baseline_increase_stays_an_increase(self):
+        item = price_item("acme", "alpha", {"input": 0.0}, {"input": 0.5})
+        item["category"] = "price_increase"
+        self.assertEqual(nb.classify_event(item), "price_increase")
 
     def test_subscription_events_are_plan_events(self):
         base = {"id": "sub-1", "category": "subscription", "provider": "acme"}

@@ -157,7 +157,9 @@ operational and review burden is not.
    per 1M tokens` decide what earns a headline, and a percentage move must clear
    **both**: the relative change alone let a 1 850% move on a sub-cent cache rate
    outrank a real input-price change. A zero-baseline move has no percentage, so
-   its dollar delta carries the whole test. Both are named constants in
+   its dollar delta carries the whole test, and the measured direction must still
+   agree with the class: a zero-baseline rise is headlined as an increase and can
+   never be accepted as a reduction. Both are named constants in
    `news_briefing.py`, mirrored in the Desktop port. On the live feed measured at
    this head (200 items, 151 price events) 111 price groups qualify — 67
    reductions, 32 increases, 12 mixed — against 117 under the percentage-only
@@ -223,12 +225,20 @@ calls a model or transmits usage.
   publish-side record is one event with `merged_sources`, and resolving an id
   against the raw list alone drops the other source's provenance, timestamps and
   tier evidence. A variant with no joinable record keeps its published evidence
-  rather than losing it.
+  rather than losing it. A grouped row's `observed_at` is the newest observation
+  among **all** its members, not the head's: the head is chosen for identity
+  (highest score), and a date-ordered section such as removals must sort on the
+  freshest record inside the family, even when the variant cap hides it.
 - "Open in All Updates" must land on the **event**, not the model: clear the
   category and date filters, search the model, open the containing offer's panel
-  and mark the row whose id the story names (`data-news-focus`). A model with an
+  and mark the row whose id the story names (`data-news-focus`, with the matched
+  record id in `data-news-focus-event`). The mark also exists on archive cards,
+  because a plan change or a provider listing has no model group. A model with an
   older cut and a newer rise would otherwise open on the newest record and leave
-  the story's own event inside a collapsed panel.
+  the story's own event inside a collapsed panel. A focus request is consumed
+  once, after pagination has revealed it: a later search edit must not drag the
+  reader back, the highlight stays until the scope changes, and a new click on
+  the same story is a new request that navigates again.
 - Honour `briefing.unsupported` — say "removal detection is not available"
   rather than showing an empty section, and name the missing plan-event source
   instead of reporting an empty Subscription Updates filter (F94). A published

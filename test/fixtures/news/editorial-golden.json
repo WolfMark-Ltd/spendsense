@@ -202,7 +202,7 @@
           "provider": "moonshotai",
           "model": "kimi-k2.5",
           "model_family": "kimi-k2.5",
-          "observed_at": "2026-11-07T08:40:00Z",
+          "observed_at": "2026-11-10T09:15:00Z",
           "confidence": "curated",
           "event_ids": [
             "central-2026-11-07-moonshotai-kimi-k2-5-rate-cut",
@@ -451,7 +451,7 @@
           "provider": "mistral",
           "model": "mistral-large-3",
           "model_family": "mistral-large-3",
-          "observed_at": "2026-11-06T12:00:00Z",
+          "observed_at": "2026-11-06T12:00:30Z",
           "confidence": "curated",
           "event_ids": [
             "central-2026-11-06-mistral-large-3-pricing-update",

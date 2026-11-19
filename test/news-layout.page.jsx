@@ -611,11 +611,17 @@ function briefingSummary(pane) {
  * Records the scope/category/date/search state after the click plus the first
  * rendered group id, so a retained filter that hides the event is visible.
  */
-async function probeStory(pane) {
-  const story = pane.querySelector('[data-news-story]')
+async function probeStory(pane, pick = null) {
+  const stories = [...pane.querySelectorAll('[data-news-story]')]
+  const story = pick == null ? stories[0]
+    : stories.find(node => (node.getAttribute('data-news-story-model') || '') === pick)
   const button = story?.querySelector('[data-news-story-archive]')
   if (!story || !button) return { missing: true }
   const model = story.getAttribute('data-news-story-model') || ''
+  // The record this story claims, captured BEFORE the link is followed: the
+  // destination must be this record, not merely some marked row in the model.
+  const recordId = story.querySelector('[data-news-story-record]')
+    ?.getAttribute('data-news-story-record') || ''
   const before = {
     scope: pane.querySelector('[data-news-scope] button[aria-pressed="true"]')?.textContent?.trim() || '',
     search: pane.querySelector('[data-news-search]')?.value || '',
@@ -626,6 +632,7 @@ async function probeStory(pane) {
     .find(button => button.getAttribute('aria-pressed') === 'true')
   return {
     model,
+    recordId,
     before,
     scope: pressed('[data-news-scope]')?.textContent?.trim() || '',
     category: pressed('[data-news-category]')?.textContent?.trim() || '',
@@ -654,7 +661,10 @@ async function probeStory(pane) {
       return {
         found: true,
         kind: row.hasAttribute('data-news-event') ? 'event' : 'offer',
-        event: row.getAttribute('data-news-event') || '',
+        // The matched record id travels with every marker, so the destination
+        // can be compared with the story's own record instead of trusted.
+        event: row.getAttribute('data-news-focus-event')
+          || row.getAttribute('data-news-event') || '',
         offerModel: row.getAttribute('data-news-model') || '',
         panelOpen: !!panel && !panel.hasAttribute('hidden'),
         insideGroup: row.closest('[data-news-group]')?.getAttribute('data-news-group') || '',
@@ -716,6 +726,57 @@ async function probeStoryReveal(pane, model) {
     event: row?.getAttribute('data-news-event') || '',
     offerModel: row?.getAttribute('data-news-model') || '',
     loadMore: !!pane.querySelector('[data-news-load-more]'),
+  }
+}
+
+/**
+ * WP22: a story link is consumed once. After it lands, editing the search must
+ * not drag the reader back to the story, the highlight must stay, and a second
+ * click on the same story must navigate again.
+ */
+async function probeFocusOnce(pane) {
+  const storyOf = () => [...pane.querySelectorAll('[data-news-story]')]
+    .find(node => (node.getAttribute('data-news-story-model') || '') !== '')
+  const story = storyOf()
+  const model = story?.getAttribute('data-news-story-model') || ''
+  if (!story || !story.querySelector('[data-news-story-archive]')) return { missing: true }
+  const marked = () => pane.querySelector('[data-news-focus="true"]')
+  story.querySelector('[data-news-story-archive]').click()
+  await tick(250)
+  const first = marked()
+  const landed = !!first && document.activeElement === first
+  const input = pane.querySelector('[data-news-search]')
+  if (!input) return { missing: 'search', model, landed }
+  // The reader moves on: focus the search box and edit the query. A consumed
+  // request must leave them there.
+  input.focus()
+  setInputValue(input, `${model} `)
+  await tick(200)
+  const afterEdit = {
+    focusStayed: document.activeElement === input,
+    marked: !!marked(),
+    refocused: !!marked() && document.activeElement === marked(),
+    stories: pane.querySelectorAll('[data-news-story]').length,
+    links: pane.querySelectorAll('[data-news-story-archive]').length,
+    empty: pane.querySelector('.wm-empty')?.textContent?.trim().slice(0, 80) || '',
+  }
+  // The headline block lives on For You only, so returning there is the reader's
+  // own path back to the same story; a new click is a new request.
+  const forYou = [...pane.querySelectorAll('[data-news-scope] button')]
+    .find(button => button.getAttribute('value') === 'foryou')
+  if (!forYou) return { missing: 'foryou', model, landed, afterEdit }
+  forYou.click()
+  await tick(200)
+  const again = storyOf()?.querySelector('[data-news-story-archive]')
+  if (!again) return { missing: 'second-link', model, landed, afterEdit }
+  again.click()
+  await tick(250)
+  const second = marked()
+  return {
+    model, landed, afterEdit,
+    rearmed: !!second && document.activeElement === second,
+    markedId: second?.getAttribute('data-news-focus-event')
+      || second?.getAttribute('data-news-event') || '',
   }
 }
 
@@ -1322,9 +1383,14 @@ async function measureCase(c) {
   }
   else if (PROBE) result.probe = { skipped: 'candidate DOM not detected ([data-news-group] absent)' }
   if (params.get('probe') === 'subscription') result.probeSubscription = await probeSubscription(pane)
-  if (params.get('probe') === 'story') result.probeStory = await probeStory(pane)
+  if (params.get('probe') === 'story') {
+    // `model=` (possibly empty) selects the story by its model attribute, so a
+    // record with no model — a plan or a provider listing — can be probed too.
+    result.probeStory = await probeStory(pane, params.has('model') ? params.get('model') : null)
+  }
   if (params.get('probe') === 'storyrecords') result.probeStoryRecords = await probeStoryRecords(pane)
   if (params.get('probe') === 'reveal') result.probeReveal = await probeStoryReveal(pane, params.get('model') || '')
+  if (params.get('probe') === 'focusonce') result.probeFocusOnce = await probeFocusOnce(pane)
   return result
 }
 

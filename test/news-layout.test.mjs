@@ -471,12 +471,56 @@ test('a headline opens in the archive with the event it names actually visible',
   // …and it lands on the RECORD. A model can hold an older cut and a newer
   // rise; searching the model alone would open the newest and leave the story's
   // own event inside a collapsed panel.
+  assert.ok(probe.recordId, 'the clicked story names its own record before the link is followed')
   assert.equal(probe.focus?.found, true,
     `the story's own event is marked: ${JSON.stringify(probe.focus)}`)
   assert.equal(probe.focus.panelOpen, true, 'its evidence panel is open, not just present')
   assert.equal(probe.focus.insideGroup, probe.model, 'the mark belongs to the clicked model')
-  assert.ok(probe.focus.kind === 'event' ? probe.focus.event : probe.focus.offerModel,
-    `the marked row identifies the record: ${JSON.stringify(probe.focus)}`)
+  // The mark must be the clicked record itself, not merely some row in the model.
+  assert.equal(probe.focus.event, probe.recordId,
+    `the marked row is exactly the clicked record: ${JSON.stringify(probe.focus)}`)
+})
+
+test('a story without a model lands on its archive card, not on a neighbouring group', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // A plan change has no model identity, so the archive renders it as a card,
+  // never as a model group. Before the card carried the focus marker the effect
+  // could not find it: the reader was left at the top of the archive with the
+  // story unreachable.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=realistic__foryou__380__dark__en&probe=story&model=`)).cases[0]
+  assert.ok(result?.probeStory && !result.probeStory.missing, 'the story probe found a modelless story')
+  const probe = result.probeStory
+  assert.equal(probe.model, '', 'the probed story has no model identity')
+  assert.ok(probe.recordId, 'the card story names its own record before the link is followed')
+  assert.equal(probe.focus?.found, true,
+    `the card is marked as the destination: ${JSON.stringify(probe.focus)}`)
+  assert.equal(probe.focus.event, probe.recordId,
+    `the marked card is exactly the clicked record: ${JSON.stringify(probe.focus)}`)
+  assert.equal(probe.focus.insideGroup, '', 'a card is not inside a model group')
+  assert.equal(probe.empty, '', 'the archive is not empty after the link')
+})
+
+test('a story link is consumed once and re-arms only on a new click', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=realistic__foryou__380__dark__en&probe=focusonce`)).cases[0]
+  const probe = result?.probeFocusOnce
+  assert.ok(probe && !probe.missing, `focus lifecycle probe recorded: ${JSON.stringify(probe)}`)
+  assert.equal(probe.landed, true, 'the link lands on the story row')
+  // The request is consumed, not merely quiet: editing the search afterwards
+  // must leave the reader where they are.
+  assert.equal(probe.afterEdit.focusStayed, true,
+    'editing the search keeps the reader in the search box')
+  assert.equal(probe.afterEdit.refocused, false,
+    'a consumed request never re-scrolls or re-focuses the story')
+  assert.equal(probe.afterEdit.marked, true,
+    'the story highlight survives the consumed request')
+  assert.equal(probe.rearmed, true, 'a second click on the same story navigates again')
 })
 
 test('a merged story lists both source records, not just the one its id resolved to', {

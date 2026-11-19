@@ -228,19 +228,22 @@ def rate_deltas(previous: Any, current: Any) -> dict[str, Any]:
         if rates[key]["pct"] is None and not (before == 0 and after == 0):
             incomparable[key] = "news_ev_zero_baseline"
 
-    def _signed(row: Mapping[str, Any]) -> float:
-        """Direction of one rate move, from the published values themselves.
+    def _moved(row: Mapping[str, Any]) -> int:
+        """Direction of one rate move, from the PUBLISHED values themselves.
 
-        A zero baseline has no percentage but its delta still has a sign, and a
-        change too small to survive one-decimal rounding is still a change in
-        direction: only the *displayed* percentage is rounded.
+        ``delta`` is rounded for display, so a move smaller than half a
+        micro-dollar rounds to zero and would vanish from the classification
+        although the published rates differ. Direction is therefore read from
+        before/after; rounding stays a display and magnitude concern.
         """
-        return float(row["delta"])
+        if row["after"] < row["before"]:
+            return -1
+        if row["after"] > row["before"]:
+            return 1
+        return 0
 
-    moved_down = [key for key, row in rates.items()
-                  if row["before"] != row["after"] and _signed(row) < 0]
-    moved_up = [key for key, row in rates.items()
-                if row["before"] != row["after"] and _signed(row) > 0]
+    moved_down = [key for key, row in rates.items() if _moved(row) < 0]
+    moved_up = [key for key, row in rates.items() if _moved(row) > 0]
     if moved_down and moved_up:
         direction = "mixed"
     elif not (have_previous and have_current):
@@ -328,6 +331,10 @@ def classify_event(item: Mapping[str, Any]) -> str:
             return "price_reduction"
         if direction == "up":
             return "price_increase"
+        # Neither measured. The publisher's category stands (a tier/context-only
+        # change is a real price change whose base rates did not move), but the
+        # materiality gate below still refuses to headline it without a move in
+        # the claimed direction.
         return category
     if category == "subscription":
         summary_code = str(item.get("summary_code") or "").strip()
@@ -433,8 +440,9 @@ def _headline(item: Mapping[str, Any], event_type: str,
         }
     if event_type == "price_mixed":
         def _up(key: str) -> bool:
-            row = rates[key]
-            return row["delta"] > 0
+            # The published values decide, not the rounded delta: a sub-micro
+            # rise still names the rate as raised rather than cut.
+            return rates[key]["after"] > rates[key]["before"]
 
         up = [key for key in RATE_KEYS if key in rates
               and rates[key]["before"] != rates[key]["after"] and _up(key)]
@@ -634,6 +642,11 @@ def _group(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         providers = sorted({row["provider"] for row in members})
         entry = {
             **head,
+            # The group's own date is the newest event it contains, computed
+            # before variant truncation: a capped variant list must not hide a
+            # fresher member, and a date-ordered section must sort on the real
+            # newest. Falls back to the head's stamp when nothing parses.
+            "observed_at": _newest_observed(members) or head["observed_at"],
             "family_event_count": len(members),
             "providers": providers,
             "event_ids": [event_id for row in members for event_id in row["event_ids"]],
@@ -691,6 +704,27 @@ def _instant(stamp: object) -> Optional[datetime]:
         return _utc(datetime.fromisoformat(text))
     except ValueError:
         return None
+
+
+def _newest_observed(entries: Iterable[Mapping[str, Any]]) -> str:
+    """Newest parseable ``observed_at`` among a group's members, or ``""``.
+
+    A group is one row, so its date must be the newest event inside it: the
+    highest-scoring member is chosen for identity, not for freshness, and a
+    date-ordered section (removals) would otherwise sort on a stale head. The
+    stamps are compared as instants because the feed accepts several UTC
+    offsets; an undated member never wins, so undated groups stay last.
+    """
+    best = ""
+    best_moment: Optional[datetime] = None
+    for entry in entries:
+        moment = _instant(entry.get("observed_at"))
+        if moment is None:
+            continue
+        if best_moment is None or moment > best_moment:
+            best = str(entry.get("observed_at") or "")
+            best_moment = moment
+    return best
 
 
 def _within_window(stamp: str, generated_at: str, window_days: int) -> bool:
@@ -812,6 +846,13 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
         delta_ok = delta is not None and delta >= min_abs_delta
         event_type = entry["event_type"]
         if event_type in ("price_reduction", "price_increase"):
+            # The measured direction must agree with the class before either
+            # branch may accept the event. A zero-baseline increase is still a
+            # measured "up" move, so it survives; a move the other way, or no
+            # measured move at all, can never be headlined as this class.
+            wanted = "down" if event_type == "price_reduction" else "up"
+            if magnitude.get("direction") != wanted:
+                return False
             if magnitude.get("zero_baseline") is True:
                 return delta_ok
             pct = magnitude.get("dominant_pct")
