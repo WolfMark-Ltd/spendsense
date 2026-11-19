@@ -271,6 +271,33 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
     }
     // A) no entitlement, actual-charge or blended-percentage wording
     assert.deepEqual(Object.keys(r.forbidden), [], `${label} keeps forbidden wording out: ${JSON.stringify(r.forbidden)}`)
+    // WP22/F89: ONE scrolling surface. No descendant of the Model News page may
+    // be its own vertical scroll container — the host pane owns the scrollbar,
+    // so the wheel can never latch onto a second, competing feed scrollbar.
+    assert.deepEqual(r.scroll, [],
+      `${label} exposes no descendant vertical scroll container: ${JSON.stringify(r.scroll)}`)
+    // WP22/F90: the headline block is the For You first screen and never
+    // duplicates the archive's own list on All Updates.
+    if (r.fixture !== 'empty' && r.fixture !== 'error') {
+      if (r.scope === 'foryou') {
+        assert.equal(r.briefing.present, true, `${label} leads with the editorial briefing`)
+        assert.ok(r.briefing.stories > 0, `${label} renders at least one headline story`)
+        assert.ok(r.briefing.sections > 0, `${label} renders at least one headline section`)
+        assert.equal(r.briefing.source, 'local',
+          `${label} names the local briefing provenance when the feed carries none`)
+        if (r.fixture === 'realistic') {
+          assert.ok(r.briefing.kinds.includes('cut'), `${label} headlines a verified price cut`)
+          const expected = r.locale === 'zh-CN' ? '最大降价' : 'Biggest price cuts'
+          assert.ok(r.briefing.headings.includes(expected),
+            `${label} localises the lead section heading: ${JSON.stringify(r.briefing.headings)}`)
+          assert.ok(r.briefing.limits.some(text => /removal|下架/.test(text)),
+            `${label} states the removal-detection limitation instead of an empty section`)
+        }
+      } else {
+        assert.equal(r.briefing.present, false,
+          `${label} keeps All Updates a pure archive (no duplicate headline block)`)
+      }
+    }
 
     if (r.fixture === 'realistic') {
       // A) exact model ID strings render verbatim. The baseline flat list
@@ -380,6 +407,190 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
       }
     }
   }
+})
+
+test('Model News names the source limitation behind an empty Subscription Updates filter', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // `noplan` is the same verified events without any plan/membership item, so
+  // the filter has to explain a source limitation rather than claim a filter
+  // hid results (F94).
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=noplan__all__380__dark__en&probe=subscription`)).cases[0]
+  assert.ok(result?.probeSubscription, 'subscription probe recorded')
+  assert.equal(result.probeSubscription.pressed, 'true', 'the category control is selected')
+  assert.equal(result.probeSubscription.groups, 0, 'no model group claims to be a plan change')
+  assert.match(result.probeSubscription.empty,
+    /public model catalogue only/, 'the empty filter names the ingestion limitation')
+  assert.doesNotMatch(result.probeSubscription.empty, /No updates match/,
+    'an unsupported category is never reported as an empty result set')
+  // The archive's rolling-window disclosure is present in All Updates, so a
+  // search that misses an older event is readable rather than mysterious.
+  assert.match(result.probeSubscription.note, /most recent \d+ events/,
+    'All Updates states the published window it covers')
+})
+
+test('an empty archive still names the source limitation for Subscription Updates', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // Zero published events is the same limitation as none-of-that-category: the
+  // publisher compares the public model catalogue only, so there are no plan
+  // events to find. A generic "no results" would read as a working filter that
+  // had nothing to show — exactly the confusion F94 describes.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=empty__all__380__dark__en&probe=subscription`)).cases[0]
+  assert.ok(result?.probeSubscription, 'subscription probe recorded')
+  assert.equal(result.probeSubscription.pressed, 'true', 'the category control is selected')
+  assert.match(result.probeSubscription.empty, /public model catalogue only/,
+    'the empty archive names the ingestion limitation')
+  assert.doesNotMatch(result.probeSubscription.empty, /No updates match/,
+    'an unsupported category is never reported as an empty result set')
+})
+
+test('a headline opens in the archive with the event it names actually visible', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=realistic__foryou__380__dark__en&probe=story`)).cases[0]
+  assert.ok(result?.probeStory, 'story probe recorded')
+  const probe = result.probeStory
+  assert.ok(probe.model, 'the probe found a headline with a model identity')
+  // The story link asserts its own destination: All Updates, unfiltered, with
+  // the model in the search box — a retained category or date window would
+  // open an archive that cannot contain the clicked event.
+  assert.match(probe.scope, /All Updates|全部动态/i, 'the link selects All Updates')
+  assert.match(probe.category, /^All$/i, 'the link clears the category filter')
+  assert.match(probe.days, /All time|全部时间/i, 'the link clears the date window')
+  assert.equal(probe.search, probe.model, 'the link searches the event it names')
+  assert.deepEqual(probe.groups.includes(probe.model), true,
+    `the clicked event is visible after the link: ${JSON.stringify(probe.groups)}`)
+  assert.equal(probe.empty, '', 'the archive is not empty after the link')
+  // …and it lands on the RECORD. A model can hold an older cut and a newer
+  // rise; searching the model alone would open the newest and leave the story's
+  // own event inside a collapsed panel.
+  assert.ok(probe.recordId, 'the clicked story names its own record before the link is followed')
+  assert.equal(probe.focus?.found, true,
+    `the story's own event is marked: ${JSON.stringify(probe.focus)}`)
+  assert.equal(probe.focus.panelOpen, true, 'its evidence panel is open, not just present')
+  assert.equal(probe.focus.insideGroup, probe.model, 'the mark belongs to the clicked model')
+  // The mark must be the clicked record itself, not merely some row in the model.
+  assert.equal(probe.focus.event, probe.recordId,
+    `the marked row is exactly the clicked record: ${JSON.stringify(probe.focus)}`)
+})
+
+test('a story without a model lands on its archive card, not on a neighbouring group', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // A plan change has no model identity, so the archive renders it as a card,
+  // never as a model group. Before the card carried the focus marker the effect
+  // could not find it: the reader was left at the top of the archive with the
+  // story unreachable.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=realistic__foryou__380__dark__en&probe=story&model=`)).cases[0]
+  assert.ok(result?.probeStory && !result.probeStory.missing, 'the story probe found a modelless story')
+  const probe = result.probeStory
+  assert.equal(probe.model, '', 'the probed story has no model identity')
+  assert.ok(probe.recordId, 'the card story names its own record before the link is followed')
+  assert.equal(probe.focus?.found, true,
+    `the card is marked as the destination: ${JSON.stringify(probe.focus)}`)
+  assert.equal(probe.focus.event, probe.recordId,
+    `the marked card is exactly the clicked record: ${JSON.stringify(probe.focus)}`)
+  assert.equal(probe.focus.insideGroup, '', 'a card is not inside a model group')
+  assert.equal(probe.empty, '', 'the archive is not empty after the link')
+})
+
+test('a family story lands on its own event, never a hidden sibling row', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // One model, two providers: the story's headlined cut is `acme`'s, while
+  // `zeta` has a newer rise, so the archive sorts zeta's offer first and its
+  // matching cut is a History row inside zeta's own panel. Marking the whole
+  // family would select that hidden row and consume the request; the link must
+  // land on the event it names, inside the panel it opened.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=splitfamily__foryou__380__dark__en&probe=story&model=split-model`)).cases[0]
+  const probe = result?.probeStory
+  assert.ok(probe && !probe.missing, `split-family story probe recorded: ${JSON.stringify(probe)}`)
+  assert.equal(probe.recordId, 'split-a', 'the story leads with the higher-scoring cut')
+  assert.equal(probe.focus?.found, true, `a destination exists: ${JSON.stringify(probe.focus)}`)
+  assert.equal(probe.focus.panelOpen, true,
+    `the marked row is inside the panel the link opened: ${JSON.stringify(probe.focus)}`)
+  assert.equal(probe.focus.event, probe.recordId, 'the mark is exactly the clicked record')
+  assert.equal(probe.focus.insideGroup, 'split-model', 'the mark belongs to the clicked model')
+})
+
+test('a story link is consumed once and re-arms only on a new click', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=realistic__foryou__380__dark__en&probe=focusonce`)).cases[0]
+  const probe = result?.probeFocusOnce
+  assert.ok(probe && !probe.missing, `focus lifecycle probe recorded: ${JSON.stringify(probe)}`)
+  assert.equal(probe.landed, true, 'the link lands on the story row')
+  // The request is consumed, not merely quiet: editing the search afterwards
+  // must leave the reader where they are.
+  assert.equal(probe.afterEdit.focusStayed, true,
+    'editing the search keeps the reader in the search box')
+  assert.equal(probe.afterEdit.refocused, false,
+    'a consumed request never re-scrolls or re-focuses the story')
+  assert.equal(probe.afterEdit.marked, true,
+    'the story highlight survives the consumed request')
+  assert.equal(probe.rearmed, true, 'a second click on the same story navigates again')
+})
+
+test('a merged story lists both source records, not just the one its id resolved to', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // The `evidence` fixture pairs a local and a publish-side record for one
+  // change: same transition, same source URL, same effective date, different
+  // ids and timestamps. That is ONE event with TWO sources, so Details must
+  // render both — resolving the id to a single record would silently drop the
+  // other source's provenance, timestamps and tier evidence.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=evmerged__foryou__380__dark__en&probe=storyrecords`)).cases[0]
+  const stories = result?.probeStoryRecords || []
+  assert.ok(stories.length, 'the probe opened at least one Details panel')
+  const merged = stories.find(story => story.records.includes('evidence-hist-local-1')
+    && story.records.includes('evidence-hist-central-1'))
+  assert.ok(merged, `both sources of the merged event are listed: ${JSON.stringify(stories)}`)
+  assert.equal(new Set(merged.records).size, merged.records.length,
+    'no record is listed twice')
+  // Every listed record is a real record id, never an index or a placeholder.
+  for (const id of merged.records) assert.ok(id && id.length > 3, `record id present: ${id}`)
+})
+
+test('a published briefing renders its own evidence when no archive record joins', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=published__foryou__380__dark__en`)).cases[0]
+  const briefing = result?.briefing
+  assert.ok(briefing?.present, 'the published briefing renders')
+  assert.equal(briefing.source, 'published', 'the publisher document wins over the local build')
+  assert.ok(briefing.kinds.includes('removed'),
+    `a history-confirmed removal is headlined: ${JSON.stringify(briefing.kinds)}`)
+  // Exactly one story has no joinable record (the removal); the joinable
+  // reduction uses the archive record instead.
+  assert.equal(briefing.entryEvidence.length, 1,
+    `only the unjoinable story falls back: ${JSON.stringify(briefing.entryEvidence)}`)
+  const [evidence] = briefing.entryEvidence
+  assert.match(evidence.text, /rm-acme-alpha/, 'the published event id survives')
+  assert.match(evidence.text, /acme/, 'the published provider survives')
+  assert.match(evidence.text, /2026-11-09/, 'the published timestamp survives')
+  assert.ok(evidence.hrefs.includes('https://models.dev/removals/rm-acme-alpha'),
+    `the published source link survives: ${JSON.stringify(evidence.hrefs)}`)
+  // The archive cannot contain an event it never held, so that story offers no
+  // archive action while the joinable one still does.
+  assert.equal(briefing.archiveActions, briefing.stories - 1,
+    `only the joinable story links to the archive: ${briefing.archiveActions}/${briefing.stories}`)
 })
 
 test('NEWS_LAYOUT_SHOTS containment rejects paths that resolve inside the repository', () => {
@@ -927,4 +1138,83 @@ test('a mandatory candidate run fails instead of skipping when Chrome is missing
   assert.ok(optionalBaseline?.startsWith('﹣') && optionalCandidate?.startsWith('﹣'),
     `chromium-only default run: both named browser tests SKIP `
       + `(baseline: ${optionalBaseline}; candidate: ${optionalCandidate})`)
+})
+
+test('each variant keeps its own source, never the family head\'s', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // One family, two removal variants: `acme` joins an archive record, `zeta`
+  // exists only in the published briefing. Each carries a different source URL,
+  // and the family head carries a third. A panel that renders the head's link
+  // beside a provider's name attributes one record's evidence to another.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=variantsources__foryou__380__dark__en&probe=storyrecords`)).cases[0]
+  const stories = result?.probeStoryRecords || []
+  const unjoined = stories
+    .flatMap(story => story.variantEvidence || [])
+    .find(row => row.provider === 'zeta')
+  assert.ok(unjoined, `the unjoined variant has its own evidence block: ${JSON.stringify(stories)}`)
+  assert.deepEqual(unjoined.hrefs, ['https://builder.example/zeta-variant'],
+    'the variant links to its own source')
+  assert.ok(!unjoined.hrefs.includes('https://builder.example/family-head'),
+    'the family head\'s source is never attributed to another provider')
+  assert.match(unjoined.text, /publisher history \(zeta\)/,
+    'the variant carries its own provenance')
+})
+
+test('a story link reveals its group even when it sorts past the first page', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // Fourteen groups match the substring "pair-model" and the target is the
+  // oldest, so it is group fifteen of fifteen while the archive renders ten at a
+  // time. Marking a row that was never rendered is impossible, so the link must
+  // extend the page first.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=manygroups__foryou__380__dark__en&probe=reveal&model=pair-model`)).cases[0]
+  const reveal = result?.probeReveal
+  assert.ok(reveal && !reveal.missing, 'the story and its archive action are present')
+  assert.ok(reveal.groups.length >= 14,
+    `the archive rendered past its first page: ${reveal.groups.length}`)
+  assert.equal(reveal.found, true, 'the story\'s own event is marked after the page extends')
+  assert.equal(reveal.offerModel, 'pair-model', 'the mark is on the clicked model')
+  // A single-event offer has no History row to mark, so the offer itself carries
+  // it; where History exists the row names the exact event id.
+  assert.ok(reveal.kind === 'event' ? reveal.event : reveal.offerModel,
+    `the mark identifies the record: ${JSON.stringify(reveal)}`)
+})
+
+test('a publisher\'s unsupported reason never hides events this archive holds', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // The published briefing says "no plan events"; the local archive holds some.
+  // The limitation describes a missing SOURCE, so it may replace an empty result
+  // set only — never a populated one.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=plansource__all__380__dark__en&probe=subscription`)).cases[0]
+  assert.ok(result?.probeSubscription, 'subscription probe recorded')
+  assert.ok(result.probeSubscription.groups + result.probeSubscription.cards > 0,
+    `the local subscription events still render: ${JSON.stringify(result.probeSubscription)}`)
+  assert.equal(result.probeSubscription.empty, '',
+    'no limitation replaces a populated filter')
+})
+
+test('the section-cap note states the limit without promising where entries are', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // Nine removals counted, eight in the payload. The omitted one is not readable
+  // here, so nothing can be proved about whether the archive holds it.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=capnote__foryou__380__dark__en`)).cases[0]
+  const notes = result?.briefing?.keptNotes || []
+  assert.equal(notes.length, 1, `one note for the trimmed section: ${JSON.stringify(notes)}`)
+  const [note] = notes
+  assert.equal(note.kind, 'limit', 'the note is a limit statement')
+  assert.equal(note.section, 'removals', 'it belongs to the trimmed section')
+  assert.match(note.text, /more are counted/, `the count is stated: ${note.text}`)
+  assert.doesNotMatch(note.text, /All Updates/,
+    'it makes no archive-coverage claim about entries it cannot see')
 })

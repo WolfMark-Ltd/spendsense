@@ -75,8 +75,8 @@ SIGNAL_PREVIEW = "preview"
 MIN_ABS_PCT = 2.0
 
 #: …and whose materially largest rate moves by at least this many USD per 1M
-#: tokens. Without it, a 1 850% move on a sub-cent cache rate outranks a real
-#: input-price change. Owner sign-off pending (WP22).
+#: tokens. Both floors apply, so a 1 850% move on a sub-cent cache rate cannot
+#: outrank a real input-price change. Owner sign-off pending (WP22).
 MIN_ABS_DELTA = 0.005
 
 #: Cap per section and on the total number of briefing entries.
@@ -153,7 +153,16 @@ def family_label(family: str) -> str:
         known = _BRAND.get(word)
         if known:
             out.append(known)
-        elif any(char.isdigit() for char in word):
+            continue
+        # A brand welded to its version (``qwen3.5``, ``glm5``) keeps the brand
+        # casing and the version as published; uppercasing the whole token
+        # would print ``QWEN3.5``, which is not how the vendor writes it.
+        head = re.match(r"[a-z]+", word)
+        prefix = head.group(0) if head else ""
+        if prefix and prefix != word and prefix in _BRAND:
+            out.append(_BRAND[prefix] + word[len(prefix):])
+            continue
+        if any(char.isdigit() for char in word):
             out.append(word.upper())
         else:
             out.append(word[:1].upper() + word[1:])
@@ -219,19 +228,22 @@ def rate_deltas(previous: Any, current: Any) -> dict[str, Any]:
         if rates[key]["pct"] is None and not (before == 0 and after == 0):
             incomparable[key] = "news_ev_zero_baseline"
 
-    def _signed(row: Mapping[str, Any]) -> float:
-        """Direction of one rate move, from the published values themselves.
+    def _moved(row: Mapping[str, Any]) -> int:
+        """Direction of one rate move, from the PUBLISHED values themselves.
 
-        A zero baseline has no percentage but its delta still has a sign, and a
-        change too small to survive one-decimal rounding is still a change in
-        direction: only the *displayed* percentage is rounded.
+        ``delta`` is rounded for display, so a move smaller than half a
+        micro-dollar rounds to zero and would vanish from the classification
+        although the published rates differ. Direction is therefore read from
+        before/after; rounding stays a display and magnitude concern.
         """
-        return float(row["delta"])
+        if row["after"] < row["before"]:
+            return -1
+        if row["after"] > row["before"]:
+            return 1
+        return 0
 
-    moved_down = [key for key, row in rates.items()
-                  if row["before"] != row["after"] and _signed(row) < 0]
-    moved_up = [key for key, row in rates.items()
-                if row["before"] != row["after"] and _signed(row) > 0]
+    moved_down = [key for key, row in rates.items() if _moved(row) < 0]
+    moved_up = [key for key, row in rates.items() if _moved(row) > 0]
     if moved_down and moved_up:
         direction = "mixed"
     elif not (have_previous and have_current):
@@ -276,10 +288,22 @@ def rate_deltas(previous: Any, current: Any) -> dict[str, Any]:
 
 
 def _rate_text(value: Optional[float]) -> str:
+    """Render one rate without ever turning a positive value into ``$0``.
+
+    Six decimals is the normal reading. A sub-micro rate (a per-token figure
+    carried through unchanged, say) would round to zero at that precision, and
+    a headline that says a rate became free when it only became very small is a
+    false claim, so precision is extended until a significant digit survives.
+    """
     if value is None:
         return "—"
-    text = f"{value:.6f}".rstrip("0").rstrip(".")
-    return f"${text}" if text else "$0"
+    if value == 0:
+        return "$0"
+    for places in (6, 12):
+        text = f"{value:.{places}f}".rstrip("0").rstrip(".")
+        if text and float(text) != 0.0:
+            return f"${text}"
+    return f"${value:.2e}"
 
 
 # ----------------------------------------------------------------- taxonomy
@@ -307,6 +331,10 @@ def classify_event(item: Mapping[str, Any]) -> str:
             return "price_reduction"
         if direction == "up":
             return "price_increase"
+        # Neither measured. The publisher's category stands (a tier/context-only
+        # change is a real price change whose base rates did not move), but the
+        # materiality gate below still refuses to headline it without a move in
+        # the claimed direction.
         return category
     if category == "subscription":
         summary_code = str(item.get("summary_code") or "").strip()
@@ -412,8 +440,9 @@ def _headline(item: Mapping[str, Any], event_type: str,
         }
     if event_type == "price_mixed":
         def _up(key: str) -> bool:
-            row = rates[key]
-            return row["delta"] > 0
+            # The published values decide, not the rounded delta: a sub-micro
+            # rise still names the rate as raised rather than cut.
+            return rates[key]["after"] > rates[key]["before"]
 
         up = [key for key in RATE_KEYS if key in rates
               and rates[key]["before"] != rates[key]["after"] and _up(key)]
@@ -536,6 +565,9 @@ def _entry(item: Mapping[str, Any], *, providers: int = 1) -> dict[str, Any]:
         "observed_at": str(item.get("observed_at") or ""),
         "source_url": str(item.get("source_url") or ""),
         "confidence": str(item.get("confidence") or "observed"),
+        # Which record produced the claim. Always present, like ``confidence``,
+        # so a variant row never has to borrow the family head's provenance.
+        "provenance": str(item.get("provenance") or ""),
         "event_ids": [str(item.get("id") or "")] if item.get("id") else [],
         "providers": [str(item.get("provider") or "")],
         "magnitude": {
@@ -543,6 +575,9 @@ def _entry(item: Mapping[str, Any], *, providers: int = 1) -> dict[str, Any]:
             "dominant_pct": deltas["dominant_pct"],
             "max_abs_delta": deltas["max_abs_delta"],
             "rate": deltas["dominant"],
+            # The measured direction travel: "mixed" only when one rate fell and
+            # another rose, so a headline can never claim both from a category.
+            "direction": deltas["direction"],
             "comparable_rates": len(deltas["comparable"]),
             # A zero-baseline move has no percentage, so it can only be judged
             # material by its absolute delta.
@@ -560,8 +595,12 @@ def _entry(item: Mapping[str, Any], *, providers: int = 1) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- grouping
 
+#: Per-variant fields. The evidence fields travel too: a variant row is a
+#: different provider's record, so borrowing the family head's source link or
+#: provenance would attribute one record's evidence to another.
 _VARIANT_FIELDS = ("event_type", "headline_code", "headline_params", "headline",
-                   "provider", "model", "observed_at", "event_ids")
+                   "provider", "model", "observed_at", "event_ids",
+                   "source_url", "provenance", "confidence")
 
 
 def _variant(entry: Mapping[str, Any]) -> dict[str, Any]:
@@ -603,6 +642,11 @@ def _group(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         providers = sorted({row["provider"] for row in members})
         entry = {
             **head,
+            # The group's own date is the newest event it contains, computed
+            # before variant truncation: a capped variant list must not hide a
+            # fresher member, and a date-ordered section must sort on the real
+            # newest. Falls back to the head's stamp when nothing parses.
+            "observed_at": _newest_observed(members) or head["observed_at"],
             "family_event_count": len(members),
             "providers": providers,
             "event_ids": [event_id for row in members for event_id in row["event_ids"]],
@@ -638,30 +682,70 @@ def _section(section_id: str, entries: list[dict[str, Any]],
     }
 
 
+def _utc(moment: datetime) -> datetime:
+    """Return ``moment`` in UTC, reading a timezone-less stamp as UTC.
+
+    Publishers are inconsistent about offsets — ``generated_at`` may be naive
+    while a stored record carries ``Z``, or the other way round. Comparing two
+    instants requires one discipline on both sides, so every parsed stamp goes
+    through this before any comparison.
+    """
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def _instant(stamp: object) -> Optional[datetime]:
+    """Parsed UTC instant of one ISO stamp, or ``None`` when unreadable."""
+    text = str(stamp or "").strip()
+    if not text:
+        return None
+    try:
+        return _utc(datetime.fromisoformat(text))
+    except ValueError:
+        return None
+
+
+def _newest_observed(entries: Iterable[Mapping[str, Any]]) -> str:
+    """Newest parseable ``observed_at`` among a group's members, or ``""``.
+
+    A group is one row, so its date must be the newest event inside it: the
+    highest-scoring member is chosen for identity, not for freshness, and a
+    date-ordered section (removals) would otherwise sort on a stale head. The
+    stamps are compared as instants because the feed accepts several UTC
+    offsets; an undated member never wins, so undated groups stay last.
+    """
+    best = ""
+    best_moment: Optional[datetime] = None
+    for entry in entries:
+        moment = _instant(entry.get("observed_at"))
+        if moment is None:
+            continue
+        if best_moment is None or moment > best_moment:
+            best = str(entry.get("observed_at") or "")
+            best_moment = moment
+    return best
+
+
 def _within_window(stamp: str, generated_at: str, window_days: int) -> bool:
     """True when ``stamp`` is inside the news window ending at ``generated_at``.
 
-    An unparseable or absent stamp is kept: dropping evidence because of a
-    format is worse than showing an undated record.
+    Both ends are enforced when the end is usable: a record observed *after*
+    publication cannot be news. An unparseable or absent stamp is kept:
+    dropping evidence because of a format is worse than showing an undated
+    record.
     """
-    cutoff: Optional[datetime] = None
-    if generated_at:
-        try:
-            cutoff = datetime.fromisoformat(generated_at) - timedelta(days=max(0, window_days))
-        except ValueError:
-            cutoff = None
-    if cutoff is None:
+    # Normalised before deriving the cutoff, so both bounds share one timezone
+    # discipline whatever the caller wrote.
+    end = _instant(generated_at)
+    if end is None:
         return True
-    if cutoff.tzinfo is None:
-        cutoff = cutoff.replace(tzinfo=timezone.utc)
-    if not stamp:
+    cutoff = end - timedelta(days=max(0, window_days))
+    moment = _instant(stamp)
+    if moment is None:
         return True
-    try:
-        moment = datetime.fromisoformat(stamp)
-    except ValueError:
-        return True
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=timezone.utc)
+    if moment > end:
+        return False
     return moment >= cutoff
 
 
@@ -744,15 +828,45 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
         counts[entry["event_type"]] = counts.get(entry["event_type"], 0) + 1
 
     def material(entry: Mapping[str, Any]) -> bool:
+        """A ranked price headline needs a MEASURED move of real size.
+
+        Both floors apply to a percentage move: the relative change must clear
+        ``min_abs_pct`` AND the largest rate must move by at least
+        ``min_abs_delta`` USD per 1M tokens. Without the second floor a 1 850%
+        move on a sub-cent cache rate outranks a real input-price change, which
+        is exactly what the absolute floor exists to prevent. A move from a zero
+        baseline has no percentage, so its dollar delta carries the whole test.
+        A ``price_mixed`` claim additionally needs both directions to have been
+        measured on the rates themselves — a category alone never proves it. A
+        price event whose two sides share no comparable rate has measured
+        nothing and is never headlined, however it was categorised.
+        """
         magnitude = entry["magnitude"]
-        pct = magnitude.get("dominant_pct")
-        if pct is None:
-            pct = magnitude.get("max_abs_pct")
         delta = magnitude.get("max_abs_delta")
-        pct_ok = (magnitude.get("zero_baseline") is True or pct is None
-                  or abs(pct) >= min_abs_pct)
-        delta_ok = delta is None or delta >= min_abs_delta
-        return pct_ok and delta_ok
+        delta_ok = delta is not None and delta >= min_abs_delta
+        event_type = entry["event_type"]
+        if event_type in ("price_reduction", "price_increase"):
+            # The measured direction must agree with the class before either
+            # branch may accept the event. A zero-baseline increase is still a
+            # measured "up" move, so it survives; a move the other way, or no
+            # measured move at all, can never be headlined as this class.
+            wanted = "down" if event_type == "price_reduction" else "up"
+            if magnitude.get("direction") != wanted:
+                return False
+            if magnitude.get("zero_baseline") is True:
+                return delta_ok
+            pct = magnitude.get("dominant_pct")
+            if pct is None or abs(pct) < min_abs_pct:
+                return False
+            if not delta_ok:
+                return False
+            return pct < 0 if event_type == "price_reduction" else pct > 0
+        if event_type == "price_mixed":
+            if magnitude.get("direction") != "mixed":
+                return False
+            pct = magnitude.get("max_abs_pct")
+            return pct is not None and abs(pct) >= min_abs_pct and delta_ok
+        return True
 
     def ranked(event_type: str) -> list[dict[str, Any]]:
         return [entry for entry in entries
@@ -780,11 +894,20 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
         removal_entries.append(entry)
         counts[entry["event_type"]] = counts.get(entry["event_type"], 0) + 1
     removal_groups = _group(removal_entries)
+
     # Removals are the one section where "newest" beats "biggest": a confirmed
     # record never expires from history, so a fixed widening sort would let old
-    # removals push a fresh one out of the section forever.
-    removal_groups.sort(key=lambda row: (str(row.get("observed_at") or ""),
-                                         row["provider"], row["model"]), reverse=True)
+    # removals push a fresh one out of the section forever. The order is by PARSED
+    # instant — text collation puts "…T00:30:00+02:00" ahead of "…T23:30:00Z"
+    # although it happened an hour earlier — with the identity as tie-breaker and
+    # an undated record last, exactly as the Desktop builder orders it.
+    def _removal_order(row: Mapping[str, Any]) -> tuple[Any, ...]:
+        when = _instant(row.get("observed_at"))
+        if when is None:
+            return (1, 0.0, row["provider"], row["model"])
+        return (0, -when.timestamp(), row["provider"], row["model"])
+
+    removal_groups.sort(key=_removal_order)
 
     sections = [
         {"id": "biggest_reductions", "title_code": "news_section_biggest_reductions",
@@ -793,11 +916,18 @@ def build_briefing(items: Iterable[Mapping[str, Any]], *,
          "total": len(increases), "entries": increases[:section_limit]},
         {"id": "mixed_price_changes", "title_code": "news_section_mixed_price_changes",
          "total": len(mixed), "entries": mixed[:section_limit]},
+        # A preview-labelled listing is a discovery, so it belongs to the
+        # preview section only — never there and in the regular listing
+        # sections as well.
         _section("new_models",
-                 [entry for entry in entries if entry["event_type"] == "new_to_catalogue"],
+                 [entry for entry in entries
+                  if entry["event_type"] == "new_to_catalogue"
+                  and SIGNAL_PREVIEW not in entry.get("signals", ())],
                  limit=section_limit),
         _section("newly_available",
-                 [entry for entry in entries if entry["event_type"] == "newly_available"],
+                 [entry for entry in entries
+                  if entry["event_type"] == "newly_available"
+                  and SIGNAL_PREVIEW not in entry.get("signals", ())],
                  limit=section_limit),
         {"id": "removals", "title_code": "news_section_removals",
          "total": len(removal_groups), "entries": removal_groups[:section_limit]},

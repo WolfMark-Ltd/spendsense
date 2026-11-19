@@ -53,6 +53,18 @@ class RateDeltaTests(unittest.TestCase):
                           {"input": 1.0, "output": 100.01})
         self.assertEqual(nb.classify_event(item), "price_mixed")
 
+    def test_direction_survives_a_delta_that_rounds_to_zero(self):
+        # A move smaller than half a micro-dollar rounds away at six decimals.
+        # The published rates still differ, so the direction must not vanish.
+        deltas = nb.rate_deltas({"input": 1.0000004, "output": 2.0},
+                                {"input": 1.0000001, "output": 2.0})
+        self.assertEqual(deltas["rates"]["input"]["delta"], 0.0)
+        self.assertEqual(deltas["direction"], "down")
+        mixed = nb.rate_deltas({"input": 1.0000004, "output": 2.0000001},
+                               {"input": 1.0000001, "output": 2.0000004})
+        self.assertEqual(mixed["direction"], "mixed",
+                         "opposite sub-micro moves are a real mixed change")
+
     def test_mixed_move_with_a_zero_baseline_reports_no_percentage(self):
         item = price_item("acme", "alpha", {"input": 0.0, "output": 2.0},
                           {"input": 1.0, "output": 1.0})
@@ -112,11 +124,229 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(nb.family_label(nb.model_family("deepseek/deepseek-v4.1-flash")),
                          "DeepSeek V4.1 Flash")
 
+    def test_family_label_keeps_a_welded_version_in_vendor_casing(self):
+        # `qwen3.5` is one token; uppercasing the whole token would print
+        # `QWEN3.5`, which is not how the vendor writes it. The brand prefix
+        # decides the casing and the version stays exactly as published.
+        self.assertEqual(nb.family_label(nb.model_family("qwen3.5-9b")), "Qwen3.5 9B")
+        self.assertEqual(nb.family_label(nb.model_family("glm-5.3-flash")), "GLM 5.3 Flash")
+        self.assertEqual(nb.family_label(nb.model_family("kimi-k3")), "Kimi K3")
+
     def test_preview_signal_needs_a_provider_label(self):
         self.assertTrue(nb.preview_signal("tencent/hy4-preview"))
         self.assertTrue(nb.preview_signal("model-x", "Foo Preview"))
         self.assertFalse(nb.preview_signal("claude-sonnet-5"))
         self.assertFalse(nb.preview_signal("previousthing"))
+
+
+class RemovalWindowTests(unittest.TestCase):
+    """The removal window compares instants, so both ends must be comparable.
+
+    ``generated_at`` and a stored ``removed_at`` can arrive with different
+    timezone discipline — a publisher may write a naive ISO stamp while the
+    history sidecar carries an explicit offset. Normalising only one side turned
+    a dated removal into a TypeError, which is a crash in the publication path.
+    """
+
+    def brief(self, generated_at, removed_at):
+        removals = [{"provider": "acme", "model": "alpha", "removed_at": removed_at,
+                     "consecutive": 2}]
+        return nb.build_briefing([], generated_at=generated_at, removals=removals,
+                                 removal_tracking=True)
+
+    def removal_models(self, briefing):
+        section = next(row for row in briefing["sections"] if row["id"] == "removals")
+        return [entry["model"] for entry in section["entries"]]
+
+    def test_a_naive_generated_at_can_still_judge_an_aware_removal(self):
+        briefing = self.brief("2026-11-10T12:00:00", "2026-11-09T00:00:00Z")
+        self.assertEqual(self.removal_models(briefing), ["alpha"])
+
+    def test_an_aware_generated_at_can_still_judge_a_naive_removal(self):
+        briefing = self.brief("2026-11-10T12:00:00+00:00", "2026-11-09T00:00:00")
+        self.assertEqual(self.removal_models(briefing), ["alpha"])
+
+    def test_two_naive_stamps_are_compared_in_utc(self):
+        briefing = self.brief("2026-11-10T12:00:00", "2026-11-09T00:00:00")
+        self.assertEqual(self.removal_models(briefing), ["alpha"])
+
+    def test_a_naive_generated_at_still_rejects_a_future_removal(self):
+        for generated_at, removed_at in (
+            ("2026-11-10T12:00:00", "2026-11-11T00:00:00Z"),
+            ("2026-11-10T12:00:00+00:00", "2026-11-11T00:00:00"),
+            ("2026-11-10T12:00:00", "2026-11-11T00:00:00"),
+        ):
+            briefing = self.brief(generated_at, removed_at)
+            self.assertEqual(self.removal_models(briefing), [],
+                             f"a record observed after publication is not news: {generated_at}")
+
+    def test_an_undated_removal_is_still_kept(self):
+        for generated_at in ("2026-11-10T12:00:00", "2026-11-10T12:00:00+00:00"):
+            briefing = self.brief(generated_at, "")
+            self.assertEqual(self.removal_models(briefing), ["alpha"],
+                             "a format is not grounds to drop a confirmed removal")
+
+
+class MaterialityTests(unittest.TestCase):
+    def test_a_price_event_with_no_comparable_rate_is_never_headlined(self):
+        item = {"id": "md-1", "provider": "acme", "model": "m1",
+                "category": "price_increase",
+                "previous": {"input": 2.0}, "current": {"output": 4.0},
+                "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([item], generated_at="2026-11-10T12:00:00Z")
+        section = {row["id"]: row for row in briefing["sections"]}["biggest_increases"]
+        self.assertEqual(section["total"], 0)
+        self.assertEqual(briefing["counts"]["events"], 1)
+        self.assertEqual(briefing["counts"]["price_increase"], 1)
+
+    def test_a_move_from_zero_is_judged_on_its_dollar_delta(self):
+        item = {"id": "md-2", "provider": "acme", "model": "m1",
+                "category": "price_increase",
+                "previous": {"input": 0.0}, "current": {"input": 0.25},
+                "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([item], generated_at="2026-11-10T12:00:00Z")
+        section = {row["id"]: row for row in briefing["sections"]}["biggest_increases"]
+        self.assertEqual(section["total"], 1)
+
+    def test_a_preview_listing_appears_in_one_section_only(self):
+        item = {"id": "md-3", "provider": "acme", "model": "acme-x-preview",
+                "category": "new_model", "current": {"input": 1.0, "output": 2.0},
+                "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([item], generated_at="2026-11-10T12:00:00Z")
+        hits = [section["id"] for section in briefing["sections"]
+                if any("md-3" in entry.get("event_ids", []) for entry in section["entries"])]
+        self.assertEqual(hits, ["preview_models"])
+
+    def test_the_removal_window_rejects_a_record_dated_after_publication(self):
+        self.assertTrue(nb._within_window("2026-11-09T00:00:00Z", "2026-11-10T12:00:00Z", 90))
+        self.assertFalse(nb._within_window("2026-11-11T00:00:00Z", "2026-11-10T12:00:00Z", 90))
+        self.assertFalse(nb._within_window("2026-01-01T00:00:00Z", "2026-11-10T12:00:00Z", 90))
+        # Undated evidence is kept: a format is not grounds to drop a record.
+        self.assertTrue(nb._within_window("", "2026-11-10T12:00:00Z", 90))
+
+
+    def test_a_huge_percentage_on_a_sub_cent_rate_is_counted_never_headlined(self):
+        item = {"id": "md-9", "provider": "acme", "model": "m1",
+                "category": "price_increase",
+                "previous": {"cache_read": 0.0001}, "current": {"cache_read": 0.00195},
+                "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([item], generated_at="2026-11-10T12:00:00Z")
+        section = {row["id"]: row for row in briefing["sections"]}["biggest_increases"]
+        self.assertEqual(section["total"], 0,
+                         "1 850% of a sub-cent rate must not outrank a real change")
+        self.assertEqual(briefing["counts"]["price_increase"], 1,
+                         "it is still counted, never hidden")
+
+    def test_a_real_move_past_both_floors_is_headlined(self):
+        item = {"id": "md-10", "provider": "acme", "model": "m1",
+                "category": "price_increase",
+                "previous": {"input": 1.0}, "current": {"input": 3.0},
+                "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([item], generated_at="2026-11-10T12:00:00Z")
+        section = {row["id"]: row for row in briefing["sections"]}["biggest_increases"]
+        self.assertEqual(section["total"], 1)
+
+    def test_a_mixed_headline_needs_both_directions_measured(self):
+        only_up = {"id": "md-11", "provider": "acme", "model": "m1",
+                   "event_type": "price_mixed",
+                   "previous": {"input": 1.0}, "current": {"input": 2.0},
+                   "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([only_up], generated_at="2026-11-10T12:00:00Z")
+        section = {row["id"]: row for row in briefing["sections"]}["mixed_price_changes"]
+        self.assertEqual(section["total"], 0, "nothing fell, so nothing is mixed")
+        self.assertEqual(briefing["counts"]["price_mixed"], 1)
+        both_ways = {"id": "md-12", "provider": "acme", "model": "m2",
+                     "event_type": "price_mixed",
+                     "previous": {"input": 1.0, "output": 10.0},
+                     "current": {"input": 2.0, "output": 5.0},
+                     "observed_at": "2026-11-10T00:00:00Z"}
+        briefing = nb.build_briefing([both_ways], generated_at="2026-11-10T12:00:00Z")
+        section = {row["id"]: row for row in briefing["sections"]}["mixed_price_changes"]
+        self.assertEqual(section["total"], 1)
+
+    def test_a_positive_rate_is_never_rendered_as_free(self):
+        self.assertEqual(nb._rate_text(0), "$0")
+        self.assertEqual(nb._rate_text(0.00000025), "$0.00000025")
+        self.assertEqual(nb._rate_text(1.25), "$1.25")
+        self.assertEqual(nb._rate_text(None), "—")
+
+    def test_removal_groups_order_by_instant_not_by_stamp_text(self):
+        removals = [
+            {"provider": "acme", "model": "acme-older", "consecutive": 2,
+             "removed_at": "2026-11-10T00:30:00+02:00"},
+            {"provider": "acme", "model": "acme-old", "consecutive": 2,
+             "removed_at": "2026-11-09T23:30:00Z"},
+        ]
+        briefing = nb.build_briefing([], generated_at="2026-11-10T12:00:00Z",
+                                     removals=removals, removal_tracking=True)
+        section = {row["id"]: row for row in briefing["sections"]}["removals"]
+        self.assertEqual([entry["model"] for entry in section["entries"]],
+                         ["acme-old", "acme-older"])
+
+    def test_an_unmeasured_price_category_is_counted_never_headlined(self):
+        # The category claims a cut; the rates show no measurable move, so no
+        # section may repeat the claim. The event is still counted.
+        item = price_item("acme", "alpha", {"input": 1.0, "output": 2.0},
+                          {"input": 1.0, "output": 2.0})
+        briefing = nb.build_briefing([item], generated_at=OBSERVED)
+        self.assertEqual(briefing["counts"]["price_reduction"], 1)
+        self.assertEqual({row["id"]: row for row in briefing["sections"]}
+                         ["biggest_reductions"]["total"], 0)
+        self.assertEqual(briefing["counts"]["events"], 1,
+                         "the event stays part of the supplied archive")
+
+    def test_a_zero_baseline_move_must_agree_with_its_class(self):
+        # A published event may assert its own type. A rise from zero is an
+        # increase and stays one; the same rise claimed as a reduction is
+        # rejected by the direction predicate, not headlined as a cut.
+        rise = price_item("acme", "alpha", {"input": 0.0}, {"input": 0.5},
+                          event_type="price_increase")
+        rise_sections = {row["id"]: row for row in nb.build_briefing(
+            [rise], generated_at=OBSERVED)["sections"]}
+        self.assertEqual(rise_sections["biggest_increases"]["total"], 1,
+                         "a zero-baseline increase is preserved")
+        claimed_cut = price_item("acme", "alpha", {"input": 0.0}, {"input": 0.5},
+                                 event_type="price_reduction")
+        briefing = nb.build_briefing([claimed_cut], generated_at=OBSERVED)
+        self.assertEqual({row["id"]: row for row in briefing["sections"]}
+                         ["biggest_reductions"]["total"], 0)
+        self.assertEqual(briefing["counts"]["price_reduction"], 1,
+                         "the rejected event is still counted")
+
+    def test_a_group_carries_the_newest_member_date(self):
+        head = price_item("acme", "acme-x", {"input": 10.0}, {"input": 5.0},
+                          observed_at="2026-11-01T00:00:00Z")
+        fresher = price_item("zeta", "acme-x:thinking", {"input": 10.0},
+                             {"input": 6.0}, observed_at="2026-11-09T00:00:00Z")
+        group = nb.build_briefing([head, fresher],
+                                  generated_at=OBSERVED)["sections"][0]["entries"][0]
+        self.assertEqual(group["model_family"], "acme-x")
+        self.assertEqual(group["observed_at"], "2026-11-09T00:00:00Z",
+                         "the group date is its newest member, not the head's")
+        undated = price_item("acme", "beta-y", {"input": 10.0}, {"input": 5.0},
+                             observed_at="")
+        dated = price_item("zeta", "beta-y:flex", {"input": 10.0}, {"input": 5.0},
+                           observed_at="2026-11-02T00:00:00Z")
+        self.assertEqual(nb.build_briefing([undated, dated], generated_at=OBSERVED)
+                         ["sections"][0]["entries"][0]["observed_at"],
+                         "2026-11-02T00:00:00Z",
+                         "an undated member never wins the group date")
+
+    def test_a_removal_family_orders_by_its_newest_member(self):
+        older = price_item("acme", "acme-a", {"input": 1.0}, {"input": 1.0},
+                           observed_at="2026-11-01T00:00:00Z",
+                           event_type="removed_from_provider")
+        newer = price_item("acme", "acme-a:thinking", {"input": 1.0}, {"input": 1.0},
+                           observed_at="2026-11-09T00:00:00Z",
+                           event_type="removed_from_provider")
+        other = price_item("zeta", "zeta-b", {"input": 1.0}, {"input": 1.0},
+                           observed_at="2026-11-05T00:00:00Z",
+                           event_type="removed_from_provider")
+        section = {row["id"]: row for row in nb.build_briefing(
+            [older, newer, other], generated_at=OBSERVED)["sections"]}
+        self.assertEqual([entry["model_family"] for entry in section["removals"]["entries"]],
+                         ["acme-a", "zeta-b"],
+                         "the family sorts on its freshest member, not its head")
 
 
 class ClassificationTests(unittest.TestCase):
@@ -138,6 +368,11 @@ class ClassificationTests(unittest.TestCase):
                           {"input": 0.044, "output": 2.0})
         item["category"] = "price_increase"
         self.assertEqual(nb.classify_event(item), "price_mixed")
+
+    def test_a_zero_baseline_increase_stays_an_increase(self):
+        item = price_item("acme", "alpha", {"input": 0.0}, {"input": 0.5})
+        item["category"] = "price_increase"
+        self.assertEqual(nb.classify_event(item), "price_increase")
 
     def test_subscription_events_are_plan_events(self):
         base = {"id": "sub-1", "category": "subscription", "provider": "acme"}

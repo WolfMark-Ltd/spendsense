@@ -35,7 +35,7 @@ is `price_mixed` even though its v1 category follows the input+output total.
 | `event_type` | Evidence required | Headline shape |
 | --- | --- | --- |
 | `price_reduction` / `price_increase` | Both rate blocks published; the dominant rate's own percentage | "wafer.ai cuts GLM-5.2 input by 86.4% ($1.4 → $0.19 per 1M tokens)" |
-| `price_mixed` | Rates moved in both directions | "opencheap changes kimi-k3 in both directions (output raised, input cut)" |
+| `price_mixed` | Rates measured moving in both directions (`magnitude.direction == "mixed"`), not merely categorised | "opencheap changes kimi-k3 in both directions (output raised, input cut)" |
 | `new_to_catalogue` | A model id absent from the previous snapshot | "lowrouter starts listing … (new catalogue entry; no launch claim)" |
 | `newly_available` | The same model id already listed by another provider in the same observation | "… now also lists … (already listed by N other provider(s))" |
 | `provider_listed` | A provider absent from the previous snapshot | Never headlined; counted and kept in All Updates |
@@ -154,10 +154,17 @@ operational and review burden is not.
 ## Decisions needing the owner's sign-off
 
 1. **Materiality thresholds.** `MIN_ABS_PCT = 2.0` and `MIN_ABS_DELTA = $0.005
-   per 1M tokens` decide what earns a headline. Both are named constants in
-   `news_briefing.py`. On the measured feed 49 of 57 price events qualify,
-   forming 44 family groups of which 8 per section are shown; the 8 events that
-   do not qualify stay in All Updates and in the counts.
+   per 1M tokens` decide what earns a headline, and a percentage move must clear
+   **both**: the relative change alone let a 1 850% move on a sub-cent cache rate
+   outrank a real input-price change. A zero-baseline move has no percentage, so
+   its dollar delta carries the whole test, and the measured direction must still
+   agree with the class: a zero-baseline rise is headlined as an increase and can
+   never be accepted as a reduction. Both are named constants in
+   `news_briefing.py`, mirrored in the Desktop port. On the live feed measured at
+   this head (200 items, 151 price events) 111 price groups qualify — 67
+   reductions, 32 increases, 12 mixed — against 117 under the percentage-only
+   rule, so the absolute floor removed 6 headline candidates; 8 per section are
+   shown and everything else stays in All Updates and in the counts.
 2. **Section caps.** Eight entries per section, eight sections.
 3. **`category` for removals.** Removals are published in `briefing.sections`
    only, with `event_type`, because the v1 `category` enum has no honest value
@@ -193,18 +200,84 @@ inferred in their absence.
 
 ## Desktop UI dependencies
 
-The feed already carries everything the Model News redesign needs; Luna's
-sidebar work does not depend on this change.
+The editorial layer has two legal sources and one renderer. A publisher-supplied
+`central.briefing` is preferred when it is present and well-formed; when it is
+absent — which is every published feed today — the Desktop plugin builds the
+same document from the items it already holds, using a port of
+`news_briefing.py` that is held to the Python builder by a golden fixture
+(`test/fixtures/news/editorial-golden.json`, regenerate with
+`python3 scripts/news-editorial-golden.py`). Nothing in the client-side path
+calls a model or transmits usage.
 
-- Render `central.briefing.sections` as the headline surface, in feed order
-  (`biggest_reductions`, `biggest_increases`, `mixed_price_changes`,
-  `new_models`, `newly_available`, `removals`, `subscriptions`,
-  `preview_models`).
+- Render the briefing as the For You first screen, in the page's own reading
+  order (`biggest_reductions`, `biggest_increases`, `new_models`,
+  `newly_available`, `removals`, `subscriptions`, `preview_models`,
+  `mixed_price_changes`). All Updates stays a pure archive: the headline block
+  is additive and never duplicates its list.
 - Localise `title_code`, `headline_code` and `headline_params`; treat
   `headline` as the English fallback, exactly like `summary_code`/`summary`.
 - Use `variants[]` for the per-provider rows under a family banner, and
-  `event_ids` to join back to the full event in All Updates.
+  `event_ids` to join back to the full event in All Updates. A variant carries
+  its own `source_url`, `provenance` and `confidence`: it is a different
+  provider's record, so borrowing the family head's evidence would attribute one
+  record's source to another. Join through the
+  archive's own grouped events, not the raw feed records: a merged local and
+  publish-side record is one event with `merged_sources`, and resolving an id
+  against the raw list alone drops the other source's provenance, timestamps and
+  tier evidence. A variant with no joinable record keeps its published evidence
+  rather than losing it. A grouped row's `observed_at` is the newest observation
+  among **all** its members, not the head's: the head is chosen for identity
+  (highest score), and a date-ordered section such as removals must sort on the
+  freshest record inside the family, even when the variant cap hides it.
+- "Open in All Updates" must land on the **event**, not the model: clear the
+  category and date filters, search the model, open the containing offer's panel
+  and mark the row whose id the story names (`data-news-focus`, with the matched
+  record id in `data-news-focus-event`). The mark also exists on archive cards,
+  because a plan change or a provider listing has no model group. A model with an
+  older cut and a newer rise would otherwise open on the newest record and leave
+  the story's own event inside a collapsed panel. The marked ids are the landing
+  event and the records it absorbed — never every event in the family: a sibling
+  provider's row can sit inside a panel this action never opened, so marking it
+  would send the reader to a hidden element and consume the request. A focus
+  request is consumed once, after pagination has revealed it: a later search edit
+  must not drag the reader back, the highlight stays until the scope changes, and
+  a new click on the same story is a new request that navigates again.
 - Honour `briefing.unsupported` — say "removal detection is not available"
-  rather than showing an empty section.
-- Treat a missing `briefing` as normal (byte-budget fallback) and keep the
+  rather than showing an empty section, and name the missing plan-event source
+  instead of reporting an empty Subscription Updates filter (F94). A published
+  briefing describes the PUBLISHER's coverage, and the local feed emits plan
+  events independently, so the plan limitation applies only when this archive
+  holds no plan event either; otherwise it would hide real updates behind their
+  own filter.
+- A section-cap note may state the limit and the count, never where the omitted
+  entries can be found: they are not in the payload, so nothing can be proved
+  about whether the archive holds them. An earlier "every event stays in All
+  Updates" claim was wrong for briefing-only removals.
+- Treat a missing briefing as normal (byte-budget fallback) and keep the
   existing item rendering.
+- A published briefing wins only when it carries at least one section this client
+  renders. Sanitising keeps unknown section ids as data, so a version-1 document
+  made only of unrecognised ids would otherwise be chosen and then render
+  nothing, hiding local headlines the archive could still build. A recognised
+  section that is legitimately empty stays authoritative.
+
+## One scrolling surface
+
+The Model News page is content-sized (`height:auto; overflow:visible`) and no
+descendant may be its own vertical scroll container: the host pane owns the
+only scrollbar. The layout harness asserts this on every case
+(`scrollSurfaces()` in `test/news-layout.page.jsx`). A second, nested scroller
+is an explicit owner blocker (F89) because the wheel latches onto whichever
+surface the pointer happens to be over.
+
+## What "All Updates" can and cannot promise (F102)
+
+The published feed is the latest 200 events with a rolling window, not a
+history: on 18 Nov 2026 the served document held 200 items spanning 18 hours
+and carried `truncated: {model_items_dropped: 10}`. OpenRouter **is** ingested —
+the same document carried 36 `openrouter` items, so the owner's empty
+`openrouter` search on 16 Nov 2026 was the archive window, not a filter or an
+alias defect. The UI therefore states the window it covers
+(`[data-news-archive-note]`) and repeats the limitation under a search that
+returns nothing, so a missing older event reads as a bounded archive rather
+than a broken feed.

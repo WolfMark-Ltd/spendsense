@@ -59,6 +59,7 @@
               },
               "magnitude": {
                 "comparable_rates": 4,
+                "direction": "up",
                 "dominant_pct": 20.0,
                 "max_abs_delta": 0.25,
                 "max_abs_pct": 20.0,
@@ -68,7 +69,7 @@
               "model": "claude-opus-4",
               "model_family": "claude-opus-4",
               "observed_at": "2027-01-01T02:03:52+00:00",
-              "provenance": "",
+              "provenance": "models.dev",
               "provider": "anthropic",
               "providers": [
                 "anthropic"
@@ -77,7 +78,7 @@
               "source_url": "https://models.dev",
               "variants": [
                 {
-                  "confidence": "",
+                  "confidence": "observed",
                   "effective_at": "",
                   "event_ids": [
                     "md-24899fccd5fb"
@@ -103,9 +104,9 @@
                   "model": "claude-opus-4",
                   "model_family": "",
                   "observed_at": "2027-01-01T02:03:52+00:00",
-                  "provenance": "",
+                  "provenance": "models.dev",
                   "provider": "anthropic",
-                  "source_url": ""
+                  "source_url": "https://models.dev"
                 }
               ]
             }
@@ -144,6 +145,7 @@
               },
               "magnitude": {
                 "comparable_rates": 4,
+                "direction": "mixed",
                 "dominant_pct": -33.3,
                 "max_abs_delta": 1.0,
                 "max_abs_pct": 33.3,
@@ -153,7 +155,7 @@
               "model": "claude-sonnet-4",
               "model_family": "claude-sonnet-4",
               "observed_at": "2027-01-01T02:03:52+00:00",
-              "provenance": "",
+              "provenance": "models.dev",
               "provider": "anthropic",
               "providers": [
                 "anthropic"
@@ -162,7 +164,7 @@
               "source_url": "https://models.dev",
               "variants": [
                 {
-                  "confidence": "",
+                  "confidence": "observed",
                   "effective_at": "",
                   "event_ids": [
                     "md-cca3c3148481"
@@ -193,9 +195,9 @@
                   "model": "claude-sonnet-4",
                   "model_family": "",
                   "observed_at": "2027-01-01T02:03:52+00:00",
-                  "provenance": "",
+                  "provenance": "models.dev",
                   "provider": "anthropic",
-                  "source_url": ""
+                  "source_url": "https://models.dev"
                 }
               ]
             }
@@ -225,13 +227,14 @@
               },
               "magnitude": {
                 "comparable_rates": 0,
+                "direction": "unknown",
                 "rate": "",
                 "zero_baseline": false
               },
               "model": "claude-haiku-4-5",
               "model_family": "claude-haiku-4-5",
               "observed_at": "2027-01-01T02:03:52+00:00",
-              "provenance": "",
+              "provenance": "models.dev",
               "provider": "anthropic",
               "providers": [
                 "anthropic",
@@ -241,7 +244,7 @@
               "source_url": "https://models.dev",
               "variants": [
                 {
-                  "confidence": "",
+                  "confidence": "observed",
                   "effective_at": "",
                   "event_ids": [
                     "md-560364661e93"
@@ -262,12 +265,12 @@
                   "model": "claude-haiku-4-5",
                   "model_family": "",
                   "observed_at": "2027-01-01T02:03:52+00:00",
-                  "provenance": "",
+                  "provenance": "models.dev",
                   "provider": "anthropic",
-                  "source_url": ""
+                  "source_url": "https://models.dev"
                 },
                 {
-                  "confidence": "",
+                  "confidence": "observed",
                   "effective_at": "",
                   "event_ids": [
                     "md-65e50764b396"
@@ -288,9 +291,9 @@
                   "model": "anthropic/claude-haiku-4-5",
                   "model_family": "",
                   "observed_at": "2027-01-01T02:03:52+00:00",
-                  "provenance": "",
+                  "provenance": "models.dev",
                   "provider": "openrouter",
-                  "source_url": ""
+                  "source_url": "https://models.dev"
                 }
               ]
             },
@@ -313,13 +316,14 @@
               },
               "magnitude": {
                 "comparable_rates": 0,
+                "direction": "unknown",
                 "rate": "",
                 "zero_baseline": false
               },
               "model": "claude-haiku-4-5-20251001",
               "model_family": "claude-haiku-4-5-20251001",
               "observed_at": "2027-01-01T02:03:52+00:00",
-              "provenance": "",
+              "provenance": "models.dev",
               "provider": "anthropic",
               "providers": [
                 "anthropic"
@@ -328,7 +332,7 @@
               "source_url": "https://models.dev",
               "variants": [
                 {
-                  "confidence": "",
+                  "confidence": "observed",
                   "effective_at": "",
                   "event_ids": [
                     "md-d8ddebe56810"
@@ -349,9 +353,9 @@
                   "model": "claude-haiku-4-5-20251001",
                   "model_family": "",
                   "observed_at": "2027-01-01T02:03:52+00:00",
-                  "provenance": "",
+                  "provenance": "models.dev",
                   "provider": "anthropic",
-                  "source_url": ""
+                  "source_url": "https://models.dev"
                 }
               ]
             },
@@ -374,13 +378,14 @@
               },
               "magnitude": {
                 "comparable_rates": 0,
+                "direction": "unknown",
                 "rate": "",
                 "zero_baseline": false
               },
               "model": "text-plain",
               "model_family": "text-plain",
               "observed_at": "2027-01-01T02:03:52+00:00",
-              "provenance": "",
+              "provenance": "models.dev",
               "provider": "vercel",
               "providers": [
                 "vercel"
@@ -389,7 +394,7 @@
               "source_url": "https://models.dev",
               "variants": [
                 {
-                  "confidence": "",
+                  "confidence": "observed",
                   "effective_at": "",
                   "event_ids": [
                     "md-c813aecc4517"
@@ -410,9 +415,9 @@
                   "model": "text-plain",
                   "model_family": "",
                   "observed_at": "2027-01-01T02:03:52+00:00",
-                  "provenance": "",
+                  "provenance": "models.dev",
                   "provider": "vercel",
-                  "source_url": ""
+                  "source_url": "https://models.dev"
                 }
               ]
             }

@@ -53,6 +53,7 @@
               },
               "magnitude": {
                 "comparable_rates": 2,
+                "direction": "down",
                 "dominant_pct": -25.0,
                 "max_abs_delta": 0.5,
                 "max_abs_pct": 25.0,
@@ -62,7 +63,7 @@
               "model": "m2",
               "model_family": "m2",
               "observed_at": "2027-01-01T05:03:52+00:00",
-              "provenance": "",
+              "provenance": "models.dev",
               "provider": "acme",
               "providers": [
                 "acme"
@@ -71,7 +72,7 @@
               "source_url": "https://models.dev",
               "variants": [
                 {
-                  "confidence": "",
+                  "confidence": "observed",
                   "effective_at": "",
                   "event_ids": [
                     "md-967823a5b771"
@@ -97,9 +98,9 @@
                   "model": "m2",
                   "model_family": "",
                   "observed_at": "2027-01-01T05:03:52+00:00",
-                  "provenance": "",
+                  "provenance": "models.dev",
                   "provider": "acme",
-                  "source_url": ""
+                  "source_url": "https://models.dev"
                 }
               ]
             }
@@ -135,6 +136,7 @@
               },
               "magnitude": {
                 "comparable_rates": 2,
+                "direction": "up",
                 "dominant_pct": 200.0,
                 "max_abs_delta": 2.0,
                 "max_abs_pct": 200.0,
@@ -144,7 +146,7 @@
               "model": "m1",
               "model_family": "m1",
               "observed_at": "2027-01-01T05:03:52+00:00",
-              "provenance": "",
+              "provenance": "models.dev",
               "provider": "acme",
               "providers": [
                 "acme"
@@ -153,7 +155,7 @@
               "source_url": "https://models.dev",
               "variants": [
                 {
-                  "confidence": "",
+                  "confidence": "observed",
                   "effective_at": "",
                   "event_ids": [
                     "md-c312c6eae578"
@@ -181,9 +183,9 @@
                   "model": "m1",
                   "model_family": "",
                   "observed_at": "2027-01-01T05:03:52+00:00",
-                  "provenance": "",
+                  "provenance": "models.dev",
                   "provider": "acme",
-                  "source_url": ""
+                  "source_url": "https://models.dev"
                 }
               ]
             }
@@ -219,13 +221,14 @@
               },
               "magnitude": {
                 "comparable_rates": 0,
+                "direction": "unknown",
                 "rate": "",
                 "zero_baseline": false
               },
               "model": "m4",
               "model_family": "m4",
               "observed_at": "2027-01-01T05:03:52+00:00",
-              "provenance": "",
+              "provenance": "models.dev",
               "provider": "acme",
               "providers": [
                 "acme"
@@ -234,7 +237,7 @@
               "source_url": "https://models.dev",
               "variants": [
                 {
-                  "confidence": "",
+                  "confidence": "observed",
                   "effective_at": "",
                   "event_ids": [
                     "md-975889460d2b"
@@ -255,9 +258,9 @@
                   "model": "m4",
                   "model_family": "",
                   "observed_at": "2027-01-01T05:03:52+00:00",
-                  "provenance": "",
+                  "provenance": "models.dev",
                   "provider": "acme",
-                  "source_url": ""
+                  "source_url": "https://models.dev"
                 }
               ]
             }
