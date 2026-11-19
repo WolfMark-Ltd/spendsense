@@ -10771,6 +10771,9 @@ const NEWS_EDITORIAL_SECTIONS = [
   ['mixed_price_changes', 'newsSectionMixedPriceChanges'],
 ]
 
+/** Section ids this client can actually render; a published document needs one. */
+const NEWS_SECTION_IDS = new Set(NEWS_EDITORIAL_SECTIONS.map(([id]) => id))
+
 /**
  * Presentation family for a model id, or '' when there is none. A leading
  * `vendor/` namespace is dropped, separators normalise and a known
@@ -11490,10 +11493,12 @@ function newsSanitiseBriefing(raw) {
 function newsBriefingFor(central, items) {
   const published = central && typeof central === 'object'
     ? newsSanitiseBriefing(central.briefing) : null
-  // A document whose sections all failed validation is not a briefing: it must
-  // not suppress the local headlines. A document with recognised sections that
-  // are legitimately empty is still the publisher's answer and is kept.
-  if (published && published.sections.length) {
+  // A document whose sections are all unrecognised is not a briefing this client
+  // can render: `NewsBriefing` keeps only known ids, so choosing it would blank
+  // the headline surface even though the archive could build local headlines.
+  // A recognised section that is legitimately empty is still the publisher's
+  // answer and is kept.
+  if (published && published.sections.some(section => NEWS_SECTION_IDS.has(section.id))) {
     return { ...published, source: 'published', unavailable: [] }
   }
   const list = Array.isArray(items) ? items : []
@@ -11836,10 +11841,15 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
         { model: target.model, provider: target.provider })
       if (!openDetails.includes(targetPanel)) $newsDetailsOpen.set([...openDetails, targetPanel])
     }
-    // Every id the story claims, not just the first: the archive may hold the
-    // same change under a different record id.
-    const focusIds = [...new Set([target?.id ? String(target.id) : '', ...eventIds]
-      .filter(Boolean))]
+    // Only the event this story lands on, and the records it absorbed — never
+    // every id in the family. Marking a sibling provider's event can select a row
+    // inside a panel this action did not open: the reader would be sent to a
+    // hidden element and the request consumed. Every id that resolves through
+    // `itemsById` to this event is covered, so a merged record still matches.
+    const focusIds = target
+      ? [...new Set([String(target.id || ''),
+        ...newsEvidenceRecords(target).map(record => String(record?.id || ''))].filter(Boolean))]
+      : []
     $newsFocus.set(focusIds.length ? { eventIds: focusIds, nonce: ++newsFocusSerial } : null)
     $newsShown.set(NEWS_PAGE_SIZE)
   }

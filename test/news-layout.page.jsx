@@ -308,6 +308,35 @@ const FIXTURES = {
         source_url: 'https://models.dev/page-head', event_ids: ['local-page-target'],
       }] }] } },
   },
+  // Page-local variant (never in the grid matrix): one model family whose
+  // members sit on two providers. The headlined cut belongs to `acme`, while
+  // `zeta` has a NEWER price rise, so the archive sorts zeta's offer first and
+  // its matching cut is a History row inside zeta's own (closed) panel. A link
+  // that marks every event in the family would land on that hidden row.
+  splitfamily: {
+    ...REALISTIC,
+    local: { ...REALISTIC.local, items: [...REALISTIC.local.items,
+      { id: 'split-a', origin: 'local', category: 'price_reduction',
+        provider: 'acme', model: 'split-model',
+        previous: { input: 10, output: 20 }, current: { input: 5, output: 10 },
+        observed_at: '2026-11-02T00:00:00Z',
+        source_url: 'https://models.dev/split-a', provenance: 'Synthetic split A',
+        confidence: 'observed', relevance: { relevant: true, reasons: [] } },
+      { id: 'split-b-cut', origin: 'local', category: 'price_reduction',
+        provider: 'zeta', model: 'split-model',
+        previous: { input: 10, output: 20 }, current: { input: 6, output: 12 },
+        observed_at: '2026-11-01T00:00:00Z',
+        source_url: 'https://models.dev/split-b-cut', provenance: 'Synthetic split B cut',
+        confidence: 'observed', relevance: { relevant: true, reasons: [] } },
+      { id: 'split-b-rise', origin: 'local', category: 'price_increase',
+        provider: 'zeta', model: 'split-model',
+        previous: { input: 2, output: 4 }, current: { input: 3, output: 6 },
+        observed_at: '2026-11-09T00:00:00Z',
+        source_url: 'https://models.dev/split-b-rise', provenance: 'Synthetic split B rise',
+        confidence: 'observed', relevance: { relevant: true, reasons: [] } },
+    ] },
+    central: { ...REALISTIC.central, briefing: null },
+  },
   // Page-local variant (never in the grid matrix): the evidence pairs marked
   // relevant, so the headline surface renders the MERGED local/publish-side
   // event — one change, two source records — and Details can be checked for

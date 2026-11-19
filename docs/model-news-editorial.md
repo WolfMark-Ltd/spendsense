@@ -235,10 +235,13 @@ calls a model or transmits usage.
   record id in `data-news-focus-event`). The mark also exists on archive cards,
   because a plan change or a provider listing has no model group. A model with an
   older cut and a newer rise would otherwise open on the newest record and leave
-  the story's own event inside a collapsed panel. A focus request is consumed
-  once, after pagination has revealed it: a later search edit must not drag the
-  reader back, the highlight stays until the scope changes, and a new click on
-  the same story is a new request that navigates again.
+  the story's own event inside a collapsed panel. The marked ids are the landing
+  event and the records it absorbed — never every event in the family: a sibling
+  provider's row can sit inside a panel this action never opened, so marking it
+  would send the reader to a hidden element and consume the request. A focus
+  request is consumed once, after pagination has revealed it: a later search edit
+  must not drag the reader back, the highlight stays until the scope changes, and
+  a new click on the same story is a new request that navigates again.
 - Honour `briefing.unsupported` — say "removal detection is not available"
   rather than showing an empty section, and name the missing plan-event source
   instead of reporting an empty Subscription Updates filter (F94). A published
@@ -252,6 +255,11 @@ calls a model or transmits usage.
   Updates" claim was wrong for briefing-only removals.
 - Treat a missing briefing as normal (byte-budget fallback) and keep the
   existing item rendering.
+- A published briefing wins only when it carries at least one section this client
+  renders. Sanitising keeps unknown section ids as data, so a version-1 document
+  made only of unrecognised ids would otherwise be chosen and then render
+  nothing, hiding local headlines the archive could still build. A recognised
+  section that is legitimately empty stays authoritative.
 
 ## One scrolling surface
 

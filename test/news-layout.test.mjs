@@ -503,6 +503,27 @@ test('a story without a model lands on its archive card, not on a neighbouring g
   assert.equal(probe.empty, '', 'the archive is not empty after the link')
 })
 
+test('a family story lands on its own event, never a hidden sibling row', {
+  skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
+}, async () => {
+  const h = await harness()
+  // One model, two providers: the story's headlined cut is `acme`'s, while
+  // `zeta` has a newer rise, so the archive sorts zeta's offer first and its
+  // matching cut is a History row inside zeta's own panel. Marking the whole
+  // family would select that hidden row and consume the request; the link must
+  // land on the event it names, inside the panel it opened.
+  const result = parsePayload(chromeDom(CHROME,
+    `${h.url}?case=splitfamily__foryou__380__dark__en&probe=story&model=split-model`)).cases[0]
+  const probe = result?.probeStory
+  assert.ok(probe && !probe.missing, `split-family story probe recorded: ${JSON.stringify(probe)}`)
+  assert.equal(probe.recordId, 'split-a', 'the story leads with the higher-scoring cut')
+  assert.equal(probe.focus?.found, true, `a destination exists: ${JSON.stringify(probe.focus)}`)
+  assert.equal(probe.focus.panelOpen, true,
+    `the marked row is inside the panel the link opened: ${JSON.stringify(probe.focus)}`)
+  assert.equal(probe.focus.event, probe.recordId, 'the mark is exactly the clicked record')
+  assert.equal(probe.focus.insideGroup, 'split-model', 'the mark belongs to the clicked model')
+})
+
 test('a story link is consumed once and re-arms only on a new click', {
   skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
 }, async () => {

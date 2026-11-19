@@ -718,3 +718,31 @@ test('a removal family orders by its newest member', () => {
   assert.deepEqual(rows.map(row => row.model_family), ['acme-a', 'zeta-b'],
     'the family sorts on its freshest member, not its head')
 })
+
+test('a published briefing needs at least one section this client renders', () => {
+  const items = [item({ id: 'us-1', category: 'price_reduction',
+    previous: { input: 2 }, current: { input: 1 } })]
+  const unknownOnly = {
+    fetched_at: '2026-11-10T00:00:00Z',
+    briefing: { version: 1, generated_at: '2026-11-10T00:00:00Z', unsupported: [],
+      sections: [{ id: 'future_section', total: 1, entries: [{
+        event_type: 'price_reduction', headline_code: 'news_head_single_rate',
+        headline: 'someone cut something', provider: 'acme',
+        observed_at: '2026-11-09T00:00:00Z',
+      }] }] },
+  }
+  const local = S.newsBriefingFor(unknownOnly, items)
+  assert.equal(local.source, 'local',
+    'a published document with no renderable section does not win')
+  assert.ok(local.sections.some(section => section.id === 'biggest_reductions'
+    && section.entries.length), 'the archive still produces local headlines')
+
+  // A recognised section that is legitimately empty stays authoritative.
+  const recognisedEmpty = {
+    fetched_at: '2026-11-10T00:00:00Z',
+    briefing: { version: 1, sections: [{ id: 'removals', total: 0, entries: [] }] },
+  }
+  const kept = S.newsBriefingFor(recognisedEmpty, items)
+  assert.equal(kept.source, 'published')
+  assert.deepEqual(kept.sections.map(section => section.id), ['removals'])
+})
