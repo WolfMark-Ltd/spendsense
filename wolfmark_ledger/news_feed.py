@@ -7,7 +7,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Optional
 
-from .news import CATEGORIES, CONFIDENCES, FEED_MAX_ITEMS, rate_direction, validate_feed
+from .news import (CATEGORIES, CONFIDENCES, FEED_MAX_ITEMS, NATIVE_FEED_PROVIDERS,
+                   matches_preference, rate_direction, validate_feed)
 from . import news_briefing
 from .pricing import _parse_catalogue
 
@@ -583,7 +584,8 @@ def _carried_items(prior_feed: Any, fresh_ids: set[str], observed_at: str,
     invalid fails the run rather than republishing bad data. Carried items
     split into curated and model groups by this generator's own id scheme.
     """
-    validated, prior_problems = validate_feed(prior_feed)
+    validated, prior_problems = validate_feed(prior_feed,
+                                              prefer=set(NATIVE_FEED_PROVIDERS))
     if validated is None or prior_problems:
         detail = "; ".join(prior_problems) or "unreadable"
         return [], [f"prior feed invalid: {detail}"]
@@ -714,15 +716,24 @@ def build_feed(current: Any, previous: Any, curated_doc: Any, *,
     curated_items.sort(key=_sort_key, reverse=True)
     room = max(0, FEED_MAX_ITEMS - len(curated_items))
     if len(model_items) > room:
-        # Generic "provider newly listed" lines are the lowest-value events in
-        # the feed: they name no model and describe catalogue bookkeeping. Drop
-        # them before any event with a model identity, so the cap costs the
-        # archive as little as possible.
-        generic = [item for item in model_items if _is_generic_listing(item)]
-        specific = [item for item in model_items if not _is_generic_listing(item)]
-        kept_models = specific[:room]
-        if len(kept_models) < room:
-            kept_models.extend(generic[:room - len(kept_models)])
+        # The cap costs the least actionable events first: Hermes-native
+        # providers ahead of the long tail (so unsupported providers cannot
+        # displace eligible updates), and — within each side — generic
+        # "provider newly listed" lines after every event with a model
+        # identity, since they name no model and describe catalogue
+        # bookkeeping.
+        native = set(NATIVE_FEED_PROVIDERS)
+        liked = [item for item in model_items
+                 if matches_preference(item.get("provider"), native)]
+        rest = [item for item in model_items
+                if not matches_preference(item.get("provider"), native)]
+
+        def _ordered(pool: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            generic = [item for item in pool if _is_generic_listing(item)]
+            specific = [item for item in pool if not _is_generic_listing(item)]
+            return specific + generic
+
+        kept_models = (_ordered(liked) + _ordered(rest))[:room]
         kept_models.sort(key=_sort_key, reverse=True)
     else:
         kept_models = model_items[:room]

@@ -63,6 +63,9 @@ def credential_slots(home: Optional[Path | str] = None) -> dict[str, dict[str, A
     Returns ``{family: {"slots": n, "route_slugs": [...]}}``. The credential
     entries themselves are never read past their count: a slot is proof that
     something is configured, not proof of entitlement or of inference.
+    A pool entry that carries no credential (an emptied list left behind by
+    a logout or removal, which Hermes itself no longer lists) is residue,
+    not a configured family, and is skipped.
     """
     target = hermes_home(home) / "auth.json"
     try:
@@ -77,12 +80,15 @@ def credential_slots(home: Optional[Path | str] = None) -> dict[str, dict[str, A
         slug = str(raw).strip().lower()
         if not slug or slug in CONNECTOR_SLOTS:
             continue
+        try:
+            count = len(entries or [])
+        except TypeError:
+            count = 1
+        if not count:
+            continue
         family = canonical_provider(slug)
         block = out.setdefault(family, {"slots": 0, "route_slugs": []})
-        try:
-            block["slots"] += len(entries or [])
-        except TypeError:
-            block["slots"] += 1
+        block["slots"] += count
         if slug not in block["route_slugs"]:
             block["route_slugs"].append(slug)
     return out

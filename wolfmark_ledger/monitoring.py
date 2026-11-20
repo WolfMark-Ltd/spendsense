@@ -427,7 +427,8 @@ def news_view(*, data_dir: Optional[Path | str] = None,
             "empty": state, "settings": payload.get("settings", {}),
             "catalogue": payload.get("catalogue", {}),
             "for_you_count": sum(1 for item in personalised
-                                 if _is_relevant(item)),
+                                 if _is_relevant(item)
+                                 and item.get("eligible", True)),
             "sources": {kind: describe_source(kind) for kind in SOURCE_KINDS}}
 
 

@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.15'
+const PLUGIN_VERSION = '0.6.16'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 3
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -10147,7 +10147,17 @@ function newsSummaryText(item, t) {
       : params.fee_before !== params.fee_after
     const bits = []
     if (feeChanged) bits.push(t('newsPlanFeeBit', params.fee_before, params.fee_after))
-    if (params.terms_changed) bits.push(t('newsPlanTermsChanged'))
+    // F139: changed fields with before/after values; items without them keep
+    // the legacy generic bit.
+    const fieldChanges = Array.isArray(params.field_changes) ? params.field_changes : []
+    if (fieldChanges.length) {
+      for (const change of fieldChanges) {
+        const bit = newsPlanFieldBit(change, t)
+        if (bit) bits.push(bit)
+      }
+    } else if (params.terms_changed) {
+      bits.push(t('newsPlanTermsChanged'))
+    }
     if (!bits.length) return fallback
     return t('newsSumPlanChange', params.plan, bits.join('; '))
   }
@@ -10158,6 +10168,35 @@ function newsSummaryText(item, t) {
   if (code === 'news_sum_price_change_feed' && need('model', 'provider'))
     return t('newsSumPriceChangeFeed', params.model, params.provider)
   return fallback
+}
+
+/** F139 field codes from wolfmark_ledger/news.py `_PLAN_FIELD_NAMES`. */
+const NEWS_PLAN_FIELD_KEYS = {
+  allowance: 'newsPlanFieldAllowance',
+  model: 'newsPlanFieldModel',
+  reset_policy: 'newsPlanFieldResetPolicy',
+  profile: 'newsPlanFieldProfile',
+}
+
+/**
+ * One changed plan field as a localised bit. The field category localises;
+ * the label (window id, model key, sub-field) and the before/after values
+ * are catalogue data and print as they arrived. Unknown shapes render
+ * nothing rather than a half sentence.
+ */
+function newsPlanFieldBit(change, t) {
+  if (!change || typeof change !== 'object') return ''
+  const key = NEWS_PLAN_FIELD_KEYS[change.field]
+  const field = key ? t(key) : String(change.field || '')
+  const label = String(change.label || '')
+  const head = [field, label].filter(Boolean).join(' ')
+  if (!head) return ''
+  const before = change.before == null ? '' : String(change.before)
+  const after = change.after == null ? '' : String(change.after)
+  if (change.kind === 'added') return t('newsPlanAddedBit', head, after)
+  if (change.kind === 'removed') return t('newsPlanRemovedBit', head, before)
+  if (change.kind === 'changed') return t('newsPlanChangedBit', head, before, after)
+  return ''
 }
 
 /** Localised news conditions from conditions_code; raw conditions is the fallback. */
@@ -10220,6 +10259,16 @@ function newsIsRelevant(item) {
   return !!item.for_you
 }
 
+/**
+ * F138 provider eligibility: both scopes show eligible providers only. A
+ * missing flag (an older cached payload) keeps the item rather than hiding
+ * history it cannot judge.
+ */
+function newsIsEligible(item) {
+  if (!item || typeof item !== 'object') return false
+  return item.eligible !== false
+}
+
 /** Mirror of monitoring.has_signals. An empty list is no signal (unlike JS truthiness). */
 function newsHasSignals(signals) {
   if (!signals || typeof signals !== 'object') return false
@@ -10231,7 +10280,7 @@ function newsHasSignals(signals) {
  * Mirror of monitoring.empty_state. When the backend sent no signals (an old
  * cached payload), the legacy generic texts keep the previous wording.
  */
-function newsEmptyText({ items, scope, category, baseline, signals }, t) {
+function newsEmptyText({ items, scope, category, baseline, signals, excluded = 0 }, t) {
   const list = Array.isArray(items) ? items.filter(item => item && typeof item === 'object') : []
   if (signals == null) {
     if (scope === 'foryou' && category === 'all') return t('newsEmptyForYou')
@@ -10241,6 +10290,9 @@ function newsEmptyText({ items, scope, category, baseline, signals }, t) {
   let pool = scope === 'foryou' ? list.filter(newsIsRelevant) : list.slice()
   if (category !== 'all') pool = pool.filter(item => String(item.category || '') === category)
   if (pool.length) return null
+  // F138: an empty All Updates that is only empty because unsupported
+  // providers were held back says so; "unchanged" would be a lie.
+  if (scope === 'all' && excluded > 0) return t('newsEmptyUnsupported', excluded)
   if (baseline && !list.length) return t('newsEmptyBaseline')
   if (category !== 'all') return t('newsEmptyCategory')
   if (scope === 'foryou' && list.length) {
@@ -13002,15 +13054,22 @@ function NewsPage() {
   const centralItems = current?.central?.items || []
   const central = current?.central || {}
   const liveOn = !!current?.settings?.live_updates
-  const combined = [...localItems, ...centralItems].sort((a, b) =>
+  const combined = [...localItems, ...centralItems].filter(newsIsEligible).sort((a, b) =>
     String(b.observed_at || '').localeCompare(String(a.observed_at || '')) ||
     String(a.id || '').localeCompare(String(b.id || '')))
+  // F138: held-back events stay countable for honest notes and empty states.
+  const ineligible = [...localItems, ...centralItems]
+    .filter(item => item && typeof item === 'object' && item.eligible === false)
+  const excludedTotal = ineligible.length
+  const excludedForCategory = category === 'all' ? excludedTotal
+    : ineligible.filter(item => String(item.category || '') === category).length
   const impacts = current?.impacts || {}
   const refreshState = useValue($newsRefreshState)
   const refreshOurs = refreshState?.origin === identity
   const refreshPending = (refreshOurs && refreshState?.status === 'pending') || query.isFetching
   const emptyText = newsEmptyText({ items: combined, scope, category,
-    baseline: !!current?.local?.baseline, signals: current?.signals ?? null }, t)
+    baseline: !!current?.local?.baseline, signals: current?.signals ?? null,
+    excluded: excludedForCategory }, t)
   const freshDays = newsAgeDays(central.fetched_at, Date.now())
   const centralAlert = liveOn ? newsCentralAlert(central, t) : null
 
@@ -13307,6 +13366,12 @@ function NewsPage() {
       scope === 'all' && archiveTotal
         ? jsx('p', { className: 'wm-news-note', 'data-news-archive-note': 'window',
             children: t('newsArchiveNote', archiveTotal, archiveOldest, archiveNewest) })
+        : null,
+      // F138: name held-back events while the archive still shows the rest;
+      // when nothing eligible remains the empty state explains instead.
+      scope === 'all' && archiveTotal > 0 && excludedTotal > 0
+        ? jsx('p', { className: 'wm-news-note', 'data-news-archive-note': 'eligibility',
+            children: t('newsHiddenUnsupported', excludedTotal) })
         : null,
       failed && !current
         ? jsxs('div', { className: 'wm-product-section', children: [
@@ -14223,6 +14288,9 @@ const I18N = {
     newsEmptyNoChanges: 'Catalogues unchanged since the last check. New models, prices and plans will appear here.',
     newsEmptyNoMatches: 'There is news, but none of it mentions your configured providers, recorded usage or selected plans.',
     newsEmptyNoConfig: 'Nothing to personalise yet: no providers are configured, no usage is recorded, and no plans are selected.',
+    newsEmptyUnsupported: n => n === 1
+      ? 'There is 1 update, but it is from a provider this Hermes build does not support.'
+      : `There are ${n} updates, but all are from providers this Hermes build does not support.`,
     newsWhyRelevant: reasons => `For you because it ${reasons}.`,
     newsReasonUsedRecently: 'Used recently',
     newsReasonUsedBefore: 'Used before',
@@ -14261,6 +14329,13 @@ const I18N = {
     newsSumPlanChange: (plan, bits) => `${plan}: ${bits}.`,
     newsPlanFeeBit: (before, after) => `fee ${before} → ${after}`,
     newsPlanTermsChanged: 'allowances/terms changed',
+    newsPlanFieldAllowance: 'allowance window',
+    newsPlanFieldModel: 'model availability',
+    newsPlanFieldResetPolicy: 'reset policy',
+    newsPlanFieldProfile: 'plan',
+    newsPlanChangedBit: (head, before, after) => `${head}: ${before} → ${after}`,
+    newsPlanAddedBit: (head, after) => after ? `${head} added: ${after}` : `${head} added`,
+    newsPlanRemovedBit: (head, before) => before ? `${head} removed (was ${before})` : `${head} removed`,
     newsSumNewProviderFeed: (provider, count) => `${provider} newly listed on models.dev with ${count} priced model(s).`,
     newsSumNewModelFeed: (model, provider) => `${model} newly listed under ${provider} on models.dev.`,
     newsSumPriceChangeFeed: (model, provider) => `${model} (${provider}) list price changed on models.dev.`,
@@ -14377,6 +14452,9 @@ const I18N = {
       ? `The feed publishes its most recent ${total} events${oldest && newest ? ` (${oldest} to ${newest})` : ''}. Older events are not retained.`
       : '',
     newsArchiveSearchNote: 'Search covers the events the feed currently publishes; older events are not retained.',
+    newsHiddenUnsupported: n => n === 1
+      ? 'Plus 1 event from a provider this Hermes build does not support (hidden).'
+      : `Plus ${n} events from providers this Hermes build does not support (hidden).`,
     newsUnsupportedNoPlanEvents: 'No plan or membership change events are published: the feed compares the public model catalogue only, so this is a source limitation rather than a filter hiding results.',
     newsUnsupportedNoRemovals: 'Removal detection needs catalogue history the publisher does not keep, so no removal is claimed here.',
     newsConfidenceObserved: 'Observed',
@@ -15882,6 +15960,7 @@ const I18N = {
     newsEmptyNoChanges: '自上次检查以来目录没有变化。新的模型、价格和套餐会出现在这里。',
     newsEmptyNoMatches: '已有动态，但均未涉及您配置的供应商、已记录的用量或已选的套餐。',
     newsEmptyNoConfig: '暂无可个性化的内容：未配置供应商、未记录用量，也未选择套餐。',
+    newsEmptyUnsupported: n => `共有 ${n} 个事件，但全部来自此 Hermes 版本不支持的供应商。`,
     newsWhyRelevant: reasons => `与您相关：${reasons}。`,
     newsReasonUsedRecently: '最近使用过',
     newsReasonUsedBefore: '之前使用过',
@@ -15920,6 +15999,13 @@ const I18N = {
     newsSumPlanChange: (plan, bits) => `${plan}：${bits}。`,
     newsPlanFeeBit: (before, after) => `费用 ${before} → ${after}`,
     newsPlanTermsChanged: '额度/条款已变更',
+    newsPlanFieldAllowance: '额度窗口',
+    newsPlanFieldModel: '模型可用性',
+    newsPlanFieldResetPolicy: '重置规则',
+    newsPlanFieldProfile: '套餐',
+    newsPlanChangedBit: (head, before, after) => `${head}：${before} → ${after}`,
+    newsPlanAddedBit: (head, after) => after ? `${head} 新增：${after}` : `${head} 新增`,
+    newsPlanRemovedBit: (head, before) => before ? `${head} 已移除（原为 ${before}）` : `${head} 已移除`,
     newsSumNewProviderFeed: (provider, count) => `${provider} 已在 models.dev 上架，共有 ${count} 个已定价模型。`,
     newsSumNewModelFeed: (model, provider) => `${model} 已在 models.dev ${provider} 分类下上架。`,
     newsSumPriceChangeFeed: (model, provider) => `${model}（${provider}）在 models.dev 上的标价已变更。`,
@@ -16036,6 +16122,7 @@ const I18N = {
       ? `数据源仅发布最近 ${total} 个事件${oldest && newest ? `（${oldest} 至 ${newest}）` : ''}，更早的事件不会保留。`
       : '',
     newsArchiveSearchNote: '搜索范围为数据源当前发布的事件；更早的事件不会保留。',
+    newsHiddenUnsupported: n => `另有 ${n} 个事件来自此 Hermes 版本不支持的供应商，已隐藏。`,
     newsUnsupportedNoPlanEvents: '数据源不发布方案或会员变化事件：它只对比公开模型目录，因此这是来源限制，而不是筛选隐藏了结果。',
     newsUnsupportedNoRemovals: '下架检测需要发布方保留目录历史，而目前并未保留，因此此处不作下架声明。',
     newsConfidenceObserved: '已观察',
@@ -16973,8 +17060,8 @@ export const __test = {
   digestQuery, uiLocale, digestCopy, digestDownload, DigestPreview, ReportsPage,
   REPORTS_CSS, $digestDays,
   newsQuery, newsSettingsQuery, newsSaveSettings, invalidateNewsFor, newsFilter, newsCategoryLabel,
-  newsImpactText, newsReasonLabel, newsAgeDays, newsFreshLabel, newsCentralAlert, newsIsRelevant, newsHasSignals, newsRelevanceReasons, newsRelevanceText, newsEmptyText, NEWS_RELEVANCE_ORDER, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
-  newsSummaryText, newsConditionsText, newsImpactReasonText, NEWS_SUMMARY_CODES, NEWS_CONDITION_KEYS, NEWS_IMPACT_REASON_KEYS,
+  newsImpactText, newsReasonLabel, newsAgeDays, newsFreshLabel, newsCentralAlert, newsIsRelevant, newsIsEligible, newsHasSignals, newsRelevanceReasons, newsRelevanceText, newsEmptyText, NEWS_RELEVANCE_ORDER, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
+  newsSummaryText, newsConditionsText, newsImpactReasonText, NEWS_SUMMARY_CODES, NEWS_CONDITION_KEYS, NEWS_IMPACT_REASON_KEYS, NEWS_PLAN_FIELD_KEYS,
   newsGroupModels, newsFieldDelta, newsTierStatus, newsEventDeltas, newsOfferClass, newsRankGroups,
   newsItemReasons, newsGroupReasons, newsEntryMatchesSearch, newsFilterEntries, newsGroupImpactText,
   newsFmtPct, newsClassLabel, newsClearFilters, newsToggleDetails, NewsScopeTabs, NewsModelGroup,

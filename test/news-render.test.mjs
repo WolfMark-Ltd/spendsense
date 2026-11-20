@@ -978,6 +978,89 @@ test('NewsPage carries the scope, category, search, days, count and paging hooks
   }
 })
 
+/** Render the settled full NewsPage over an explicit item list. */
+const renderNewsPageItems = async (items, scope = 'all') => {
+  const payload = {
+    ok: true,
+    local: {
+      baseline: false, snapshot_at: '2026-11-01T00:00:00Z', removed_model_count: 0,
+      items,
+    },
+    central: { items: [] },
+    impacts: {},
+    settings: { live_updates: false },
+    signals: { configured_families: ['acme'] },
+  }
+  T.setRest(async path => path === '/news/refresh' ? payload : { ok: true })
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => { T.$newsScope.set(scope) })
+  await React.act(async () => { T.$newsCategory.set('all') })
+  await React.act(async () => { T.$newsSearch.set('') })
+  await React.act(async () => { T.$newsDays.set(null) })
+  await React.act(async () => { T.$newsShown.set(T.NEWS_PAGE_SIZE) })
+  await React.act(async () => { T.$newsShowAll.set(false) })
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  await React.act(async () => {
+    root.render(React.createElement(QueryClientProvider, { client: queryClient },
+      React.createElement(T.NewsPage)))
+  })
+  await React.act(async () => {
+    for (let i = 0; i < 6; i += 1) await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  return container
+}
+
+const eligibilityItem = (id, model, eligible, relevant) => ({
+  id, origin: 'local', category: 'price_reduction',
+  provider: 'Acme', model,
+  summary_code: '', summary_params: null, summary: `${model} changed.`,
+  previous: { input: 5.0, output: 25.0, cache_read: null, cache_write: null },
+  current: { input: 4.0, output: 25.0, cache_read: null, cache_write: null },
+  has_tiers: false, observed_at: '2026-11-03T00:00:00Z', effective_at: '',
+  source_url: '', provenance: '', confidence: 'observed',
+  eligible, relevance: { relevant, reasons: relevant ? ['configured_provider'] : [] },
+})
+
+test('NewsPage holds back ineligible providers in both scopes and says so', async () => {
+  // F138: All Updates shows eligible providers only, with a note naming the
+  // held-back count; For You never surfaces an ineligible group either.
+  const items = [
+    eligibilityItem('keep-1', 'acme/keep-1', true, true),
+    eligibilityItem('keep-2', 'acme/keep-2', true, false),
+    eligibilityItem('held-1', 'acme/held-1', false, true),
+    eligibilityItem('held-2', 'acme/held-2', false, false),
+  ]
+  const container = await renderNewsPageItems(items, 'all')
+  const models = [...container.querySelectorAll('[data-news-group]')]
+    .map(el => el.getAttribute('data-news-group')).sort()
+  assert.deepEqual(models, ['acme/keep-1', 'acme/keep-2'])
+  const note = container.querySelector('[data-news-archive-note="eligibility"]')
+  assert.ok(note, 'the held-back count is named beside the archive')
+  assert.match(note.textContent, /2/)
+  const scope = container.querySelector('[data-news-scope]')
+  const forYou = [...scope.querySelectorAll('button')].find(b => b.getAttribute('value') === 'foryou')
+  await React.act(async () => { forYou.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  assert.deepEqual([...container.querySelectorAll('[data-news-group]')]
+    .map(el => el.getAttribute('data-news-group')), ['acme/keep-1'])
+  assert.equal(container.querySelector('[data-news-archive-note="eligibility"]'), null,
+    'For You needs no archive note')
+})
+
+test('NewsPage explains an archive held back entirely by eligibility', async () => {
+  // F138: nothing eligible to show is an eligibility empty state, not an
+  // "unchanged" claim and not a window note over zero events.
+  const items = [eligibilityItem('held-1', 'acme/held-1', false, false)]
+  const container = await renderNewsPageItems(items, 'all')
+  assert.equal(container.querySelectorAll('[data-news-group]').length, 0)
+  assert.equal(container.querySelector('[data-news-archive-note="window"]'), null)
+  const empty = container.querySelector('.wm-empty')
+  assert.ok(empty, 'the empty state renders')
+  assert.match(empty.textContent, /does not support/)
+})
+
 /** A paginated NewsPage payload: `count` relevant model events. */
 const newsPagePayload = count => ({
   ok: true,

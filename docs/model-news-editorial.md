@@ -90,6 +90,11 @@ is `price_mixed` even though its v1 category follows the input+output total.
 - **Grouping never merges.** Model families group headlines for scanning
   (`DeepSeek V4.1 Flash: 2 changes at wally`), while every variant keeps its
   exact provider and model id and its own event id.
+- **A re-verification is not a plan change.** The plan diff compares price,
+  allowance windows, model availability, reset policy and plan profile;
+  verification metadata and display prose never emit on their own, and a
+  change that leaves the fee untouched names its field with before/after
+  values instead of a generic allowances note.
 
 ## What the current publisher can and cannot support
 
@@ -171,9 +176,13 @@ operational and review burden is not.
    for them and adding one would make older clients drop the item *and* fail
    carry-forward on the next run. A UI that wants removals in All Updates needs
    either a v2 category or a category-independent renderer.
-4. **Truncation policy.** Generic provider listings are now dropped before any
-   event with a model identity when the 200-item cap binds — including listings
-   carried from an older feed that has no `event_type` yet.
+4. **Truncation policy.** When the 200-item cap binds, the least actionable
+   events go first: Hermes-native providers are kept ahead of the long tail,
+   and — within each side — generic provider listings are dropped before any
+   event with a model identity, including listings carried from an older feed
+   that has no `event_type` yet. Subscription items are never displaced by
+   model events. The same preference applies when the client re-validates a
+   fetched feed, where the configured providers join the native set.
 5. **Removal window.** 90 days, matching the feed's retention.
 6. **Size budget.** The document is held under 200 KiB, below the client's
    256 KiB cap. The editorial layer is trimmed first, then dropped; if items
@@ -280,4 +289,8 @@ the same document carried 36 `openrouter` items, so the owner's empty
 alias defect. The UI therefore states the window it covers
 (`[data-news-archive-note]`) and repeats the limitation under a search that
 returns nothing, so a missing older event reads as a bounded archive rather
-than a broken feed.
+than a broken feed. Since 0.6.16 the archive additionally holds back providers
+the Hermes build cannot route to (F138): native providers, anything configured
+in the profile, and subscription items are shown, and anything else is counted
+in the archive note — an archive held back entirely says so instead of
+reporting "unchanged".

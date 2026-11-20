@@ -342,6 +342,7 @@
           "output": 4.0
         },
         "effective_at": "",
+        "eligible": false,
         "event_type": "price_increase",
         "for_you": false,
         "has_tiers": false,
@@ -380,6 +381,7 @@
           "output": 0.75
         },
         "effective_at": "",
+        "eligible": false,
         "event_type": "new_to_catalogue",
         "first_seen_at": "2027-01-01T05:03:52+00:00",
         "for_you": false,
@@ -436,6 +438,7 @@
           "output": 4.0
         },
         "effective_at": "",
+        "eligible": false,
         "event_type": "price_reduction",
         "for_you": false,
         "has_tiers": false,
@@ -483,6 +486,7 @@
           "output": 4.0
         },
         "effective_at": "",
+        "eligible": false,
         "for_you": false,
         "has_tiers": false,
         "id": "local-price-reduction-acme-m2--r-----cache-read---null---cache-writ-81e25c80a6",
@@ -527,6 +531,7 @@
           "output": 0.75
         },
         "effective_at": "",
+        "eligible": false,
         "for_you": false,
         "id": "local-new-model-acme-m4-c28532e423",
         "last_used_at": "",
@@ -563,6 +568,7 @@
           "output": 4.0
         },
         "effective_at": "",
+        "eligible": false,
         "for_you": false,
         "has_tiers": false,
         "id": "local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22-r4def01",
@@ -607,6 +613,7 @@
           "output": 2.0
         },
         "effective_at": "",
+        "eligible": false,
         "for_you": false,
         "has_tiers": false,
         "id": "local-price-reduction-acme-m1--r-----cache-read---null---cache-writ-8f80b1eeda",
@@ -651,6 +658,7 @@
           "output": 4.0
         },
         "effective_at": "",
+        "eligible": false,
         "for_you": false,
         "has_tiers": false,
         "id": "local-price-increase-acme-m1--r-----cache-read---null---cache-writ-eb62304d22",
@@ -692,5 +700,12 @@
   ],
   "settings": {
     "live_updates": true
+  },
+  "unsupported_excluded": {
+    "central": 3,
+    "local": 5,
+    "providers": [
+      "acme"
+    ]
   }
 }
