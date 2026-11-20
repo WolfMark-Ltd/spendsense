@@ -512,6 +512,34 @@ class PlanCatalogueTests(NewsTestCase):
                          ("profile", "billing arrangement"))
         self.assertIn("billing arrangement", result["items"][0]["summary"])
 
+    def test_consecutive_profile_only_changes_each_reported(self):
+        # Review: profile values join the event identity, so successive
+        # profile-only transitions cannot collapse onto one id and lose
+        # the later update to the retry guard.
+        news = news_module()
+        terms = {"windows": ["monthly-credits"]}
+        news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW,
+            plans_doc=plans_doc([self.plan_with_terms(
+                "demo.basic", terms, kind="subscription",
+                billing_arrangement="recurring_subscription",
+                seat_pricing={"usual_minimum": 1})]))
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([self.plan_with_terms(
+                "demo.basic", terms, kind="subscription",
+                billing_arrangement="recurring_subscription",
+                seat_pricing={"usual_minimum": 2})]))
+        self.assertEqual(len(result["items"]), 1)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 20,
+            plans_doc=plans_doc([self.plan_with_terms(
+                "demo.basic", terms, kind="subscription",
+                billing_arrangement="recurring_subscription",
+                seat_pricing={"usual_minimum": 3})]))
+        self.assertEqual(len(result["items"]), 2)
+        self.assertEqual(len({item["id"] for item in result["items"]}), 2)
+
     def test_profile_skipped_when_snapshot_predates_the_keys(self):
         # F139: pre-upgrade snapshots lack profile keys; the upgrade refresh
         # must not report their appearance as news.

@@ -1004,6 +1004,8 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
             continue
         fee_before = json.dumps(before.get("price"), sort_keys=True, default=str)
         fee_after = json.dumps(after.get("price"), sort_keys=True, default=str)
+        terms_before, terms_after = (str(before.get("terms")),
+                                     str(after.get("terms")))
         fee_changed, field_changes = _plan_field_changes(plan_id, before, after)
         if not fee_changed and not field_changes:
             continue
@@ -1011,9 +1013,21 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
         if fee_changed:
             bits.append(f"fee {_fee_text(before.get('price') or {})} → {_fee_text(after.get('price') or {})}")
         bits.extend(_plan_change_bit(change) for change in field_changes)
+        id_parts = ["plan-change", str(plan_id), fee_before, fee_after,
+                    terms_before, terms_after]
+        if fee_before == fee_after and terms_before == terms_after:
+            # Profile-only transition: the legacy components cannot tell two
+            # successive profile changes apart, so the compared profile values
+            # join the identity. Mirrors the raw-only tier material for rate
+            # changes: existing ids stay byte-identical.
+            id_parts += [
+                json.dumps({key: before[key] for key in _PLAN_PROFILE_FIELDS
+                            if key in before}, sort_keys=True, default=str),
+                json.dumps({key: after[key] for key in _PLAN_PROFILE_FIELDS
+                            if key in after}, sort_keys=True, default=str),
+            ]
         items.append({
-            "id": _stable_id("plan-change", str(plan_id), fee_before, fee_after,
-                             str(before.get("terms")), str(after.get("terms"))),
+            "id": _stable_id(*id_parts),
             "origin": "local", "category": "subscription",
             "provider": str(after.get("family") or before.get("family") or ""), "model": "",
             "summary": f"{after.get('name') or plan_id}: {'; '.join(bits)}.",
