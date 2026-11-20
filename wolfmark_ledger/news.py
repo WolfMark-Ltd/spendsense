@@ -743,10 +743,19 @@ def _plan_window_changes(before: list[dict[str, Any]],
                       for window in before)
     new_sigs = sorted(json.dumps(window, sort_keys=True, default=str)
                       for window in after)
-    if old_sigs != new_sigs:
+    if old_sigs == new_sigs:
+        return changes
+    if len(before) != len(after):
         changes.append({"kind": "changed", "field": "allowance",
-                        "label": "window count",
+                        "label": "count",
                         "before": str(len(before)), "after": str(len(after))})
+        return changes
+    # Same count, different content, unpairable ids: report the structural
+    # values themselves rather than a vacuous N → N. The windows are never
+    # paired to guess which one moved.
+    changes.append({"kind": "changed", "field": "allowance", "label": "",
+                    "before": _plan_display([json.loads(sig) for sig in old_sigs]),
+                    "after": _plan_display([json.loads(sig) for sig in new_sigs])})
     return changes
 
 

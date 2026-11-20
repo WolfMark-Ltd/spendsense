@@ -540,6 +540,44 @@ class PlanCatalogueTests(NewsTestCase):
         self.assertEqual(len(result["items"]), 2)
         self.assertEqual(len({item["id"] for item in result["items"]}), 2)
 
+    def test_duplicate_window_ids_report_values_not_vacuous_count(self):
+        # Review: unpairable ids with matching counts must show the structural
+        # before/after values, never a vacuous N → N.
+        news = news_module()
+        old = {"windows": [{"id": "w", "amount": 1}, {"id": "w", "amount": 2}]}
+        new = {"windows": [{"id": "w", "amount": 1}, {"id": "w", "amount": 3}]}
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc(
+                               [self.plan_with_terms("demo.basic", old)]),
+                           now=NOW)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([self.plan_with_terms("demo.basic", new)]))
+        self.assertEqual(len(result["items"]), 1)
+        (change,) = result["items"][0]["summary_params"]["field_changes"]
+        self.assertEqual(change["field"], "allowance")
+        self.assertIn('"amount": 2', change["before"])
+        self.assertIn('"amount": 3', change["after"])
+        self.assertNotIn("2 → 2", result["items"][0]["summary"])
+
+    def test_id_less_windows_fall_back_to_an_honest_count(self):
+        news = news_module()
+        old = {"windows": [{"limit": "percent"}]}
+        new = {"windows": [{"limit": "percent"}, {"limit": "requests"}]}
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc(
+                               [self.plan_with_terms("demo.basic", old)]),
+                           now=NOW)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([self.plan_with_terms("demo.basic", new)]))
+        self.assertEqual(len(result["items"]), 1)
+        (change,) = result["items"][0]["summary_params"]["field_changes"]
+        self.assertEqual((change["before"], change["after"]), ("1", "2"))
+        self.assertIn("allowance window count: 1 → 2",
+                      result["items"][0]["summary"])
+        self.assertNotIn("window window", result["items"][0]["summary"])
+
     def test_profile_skipped_when_snapshot_predates_the_keys(self):
         # F139: pre-upgrade snapshots lack profile keys; the upgrade refresh
         # must not report their appearance as news.
