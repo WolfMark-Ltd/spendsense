@@ -264,11 +264,13 @@ calls a model or transmits usage.
   Updates" claim was wrong for briefing-only removals.
 - Treat a missing briefing as normal (byte-budget fallback) and keep the
   existing item rendering.
-- A published briefing wins only when it carries at least one section this client
-  renders. Sanitising keeps unknown section ids as data, so a version-1 document
-  made only of unrecognised ids would otherwise be chosen and then render
-  nothing, hiding local headlines the archive could still build. A recognised
-  section that is legitimately empty stays authoritative.
+- A published briefing wins only when it carries at least one personal entry
+  in a section this client renders. Sanitising keeps unknown section ids as
+  data, so a version-1 document made only of unrecognised ids would otherwise
+  be chosen and then render nothing, hiding local headlines the archive could
+  still build. Entries without personal flags, and documents with nothing
+  personal, fall back to the local briefing, which builds from the profile's
+  own relevant events.
 
 ## One scrolling surface
 
@@ -289,8 +291,14 @@ the same document carried 36 `openrouter` items, so the owner's empty
 alias defect. The UI therefore states the window it covers
 (`[data-news-archive-note]`) and repeats the limitation under a search that
 returns nothing, so a missing older event reads as a bounded archive rather
-than a broken feed. Since 0.6.16 the archive additionally holds back providers
-the Hermes build cannot route to (F138): native providers, anything configured
-in the profile, and subscription items are shown, and anything else is counted
-in the archive note — an archive held back entirely says so instead of
-reporting "unchanged".
+than a broken feed. Since 0.6.16 the scopes enforce provider eligibility
+(F138). All Updates shows Hermes-native providers plus subscription items;
+anything else is counted in the archive note, and an archive held back
+entirely says so instead of reporting "unchanged". For You is personal:
+model and provider news from currently configured providers (plus plan news
+for configured or selected-plan families), whether or not the provider is
+native — so a configured custom route surfaces in For You but never in All
+Updates. Headlines follow the same rule: a published briefing renders its
+personal entries only (flagged server-side), and the local briefing builds
+from personal events; when a published briefing cannot be filtered reliably
+the local one answers instead.

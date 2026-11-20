@@ -11610,6 +11610,9 @@ function newsSanitiseBriefing(raw) {
     for (const key of ['score', 'family_event_count']) {
       if (typeof entry[key] === 'number' && Number.isFinite(entry[key])) out[key] = entry[key]
     }
+    // F138: the backend's personal flag survives sanitising so For You can
+    // show personal headlines only. Anything but a boolean is dropped.
+    if (typeof entry.personal === 'boolean') out.personal = entry.personal
     for (const [key, limit] of [['headline_params', 16], ['magnitude', 8], ['rate_change', 8]]) {
       const mapped = scalarMap(entry[key], limit)
       if (Object.keys(mapped).length) out[key] = mapped
@@ -11655,6 +11658,37 @@ function newsSanitiseBriefing(raw) {
 }
 
 /**
+ * F138: a published briefing shows personal headlines only. Entries the
+ * backend did not flag cannot be filtered reliably, so a published
+ * document is usable only when every entry in its recognised sections
+ * carries a personal flag — otherwise, or when nothing personal remains,
+ * the caller falls back to the local briefing instead of showing
+ * unrelated headlines. Whole entries keep or drop together; counts and
+ * sections still describe the publication.
+ */
+function newsFilterBriefingPersonal(briefing) {
+  if (!briefing || !Array.isArray(briefing.sections)) return null
+  let personal = 0
+  const sections = []
+  for (const section of briefing.sections) {
+    if (!section || typeof section !== 'object') continue
+    if (!NEWS_SECTION_IDS.has(section.id)) {
+      sections.push(section)
+      continue
+    }
+    const entries = Array.isArray(section.entries) ? section.entries : []
+    for (const entry of entries) {
+      if (!entry || typeof entry.personal !== 'boolean') return null
+    }
+    const kept = entries.filter(entry => entry.personal)
+    personal += kept.length
+    sections.push({ ...section, entries: kept })
+  }
+  if (!personal) return null
+  return { ...briefing, sections }
+}
+
+/**
  * The briefing the page renders: a publisher's own document when it is present
  * and valid, otherwise the same document built locally from the items it was
  * built from. `source` records which path produced it so the UI can be honest
@@ -11666,10 +11700,9 @@ function newsBriefingFor(central, items) {
   // A document whose sections are all unrecognised is not a briefing this client
   // can render: `NewsBriefing` keeps only known ids, so choosing it would blank
   // the headline surface even though the archive could build local headlines.
-  // A recognised section that is legitimately empty is still the publisher's
-  // answer and is kept.
   if (published && published.sections.some(section => NEWS_SECTION_IDS.has(section.id))) {
-    return { ...published, source: 'published', unavailable: [] }
+    const personal = newsFilterBriefingPersonal(published)
+    if (personal) return { ...personal, source: 'published', unavailable: [] }
   }
   const list = Array.isArray(items) ? items : []
   return { ...newsBuildBriefing(list, { generatedAt: String(central?.fetched_at || '') }),
@@ -13054,9 +13087,15 @@ function NewsPage() {
   const centralItems = current?.central?.items || []
   const central = current?.central || {}
   const liveOn = !!current?.settings?.live_updates
-  const combined = [...localItems, ...centralItems].filter(newsIsEligible).sort((a, b) =>
+  // F138: the scopes pool differently. All Updates holds eligible providers
+  // only (native plus subscription items); For You holds relevant items
+  // (configured providers and selected plans), so a configured custom route
+  // can be personal without being native.
+  const allItems = [...localItems, ...centralItems].sort((a, b) =>
     String(b.observed_at || '').localeCompare(String(a.observed_at || '')) ||
     String(a.id || '').localeCompare(String(b.id || '')))
+  const combined = allItems.filter(newsIsEligible)
+  const forYouPool = allItems.filter(newsIsRelevant)
   // F138: held-back events stay countable for honest notes and empty states.
   const ineligible = [...localItems, ...centralItems]
     .filter(item => item && typeof item === 'object' && item.eligible === false)
@@ -13067,7 +13106,8 @@ function NewsPage() {
   const refreshState = useValue($newsRefreshState)
   const refreshOurs = refreshState?.origin === identity
   const refreshPending = (refreshOurs && refreshState?.status === 'pending') || query.isFetching
-  const emptyText = newsEmptyText({ items: combined, scope, category,
+  const emptyText = newsEmptyText({ items: scope === 'foryou' ? allItems : combined,
+    scope, category,
     baseline: !!current?.local?.baseline, signals: current?.signals ?? null,
     excluded: excludedForCategory }, t)
   const freshDays = newsAgeDays(central.fetched_at, Date.now())
@@ -13079,19 +13119,22 @@ function NewsPage() {
   let grouped = null
   try { grouped = newsGroupModels(combined) } catch { grouped = null }
   if (grouped && !grouped.entries.length && combined.length) grouped = null
+  let forYouGrouped = null
+  try { forYouGrouped = newsGroupModels(forYouPool) } catch { forYouGrouped = null }
+  if (forYouGrouped && !forYouGrouped.entries.length && forYouPool.length) forYouGrouped = null
   const nowMs = Date.now()
-  const relevantEntries = grouped ? newsRankForYou(grouped.entries, nowMs) : []
-  const forYouCount = grouped ? relevantEntries.length : combined.filter(newsIsRelevant).length
+  const relevantEntries = forYouGrouped ? newsRankForYou(forYouGrouped.entries, nowMs) : []
+  const forYouCount = forYouGrouped ? relevantEntries.length : forYouPool.length
   const allCount = grouped ? grouped.entries.length : combined.length
   // The category filter is semantic at offer level in both scopes; search and
   // the observed-at window apply to All Updates only.
-  const forYouEntries = grouped
+  const forYouEntries = forYouGrouped
     ? newsFilterEntries(relevantEntries, { category, nowMs }) : []
   // Initial For You page: the smallest ranked prefix through the fifth model
   // group — relevant cards ranked before that group keep their original rank
   // and stay visible, and the fifth group is never displaced. With fewer
   // than five groups, every entry shows. No reordering, no new sections.
-  const forYouPrefixCount = grouped ? (() => {
+  const forYouPrefixCount = forYouGrouped ? (() => {
     let groups = 0
     for (let index = 0; index < forYouEntries.length; index += 1) {
       if (forYouEntries[index].kind === 'group') {
@@ -13125,19 +13168,27 @@ function NewsPage() {
   // The ARCHIVE's events first: they carry the local/publish-side merge
   // (`merged_sources`), which the raw feed records do not. Resolving an id
   // against the raw list alone would show one source and silently drop the
-  // other's provenance, timestamps and tier evidence.
-  for (const entry of grouped?.entries || []) {
-    if (entry?.kind === 'group') {
-      for (const offer of entry.offers || []) {
-        for (const event of offer.events || []) registerEvent(event)
+  // other's provenance, timestamps and tier evidence. Both groupings
+  // register, so a personal headline always joins its evidence even when
+  // its event is held back from All Updates.
+  for (const grouping of [grouped, forYouGrouped]) {
+    for (const entry of grouping?.entries || []) {
+      if (entry?.kind === 'group') {
+        for (const offer of entry.offers || []) {
+          for (const event of offer.events || []) registerEvent(event)
+        }
+      } else if (entry?.item) {
+        registerEvent(entry.item)
       }
-    } else if (entry?.item) {
-      registerEvent(entry.item)
     }
   }
   // Then anything the archive did not group, so no record becomes unreachable.
   for (const item of combined) registerEvent(item)
-  const briefing = newsBriefingFor(central, newsBriefingItems(grouped, combined))
+  for (const item of forYouPool) registerEvent(item)
+  // F138: the local briefing builds from personal events, so For You
+  // headlines are personal by construction; a usable published briefing
+  // still wins, filtered to its personal entries inside newsBriefingFor.
+  const briefing = newsBriefingFor(central, newsBriefingItems(forYouGrouped, forYouPool))
   // A story link asks the archive to reveal one event. The row is marked during
   // render; this moves the reader onto it once the filtered list exists, so a
   // keyboard user is not left at the top of a 200-event archive.
@@ -13203,7 +13254,7 @@ function NewsPage() {
   }, [newsFocusTarget?.nonce, scope, shown, search, category, days, filtered.length])
   const visibleEntries = filtered.slice(0, shown)
   const remaining = Math.max(0, filtered.length - visibleEntries.length)
-  const flatVisible = newsFilter(combined, scope, category)
+  const flatVisible = newsFilter(scope === 'foryou' ? forYouPool : combined, scope, category)
   const filteredEmpty = !!grouped && scope === 'all' && grouped.entries.length > 0 && !filtered.length
   const hasFilters = search.trim() !== '' || days != null || category !== 'all'
   // Count summary: groups on For You, events under All (every offer event and
@@ -17075,7 +17126,7 @@ export const __test = {
   newsModelFamily, newsFamilyLabel, newsPreviewSignal, newsEditorialComparison,
   newsEditorialEventType, newsEditorialSignals, newsEditorialScore, newsEditorialEntry,
   newsEditorialHeadline, newsEditorialVariant, newsEditorialGroup, newsEditorialMaterial,
-  newsBuildBriefing, newsBriefingFor, newsSanitiseBriefing, newsWithinWindow,
+  newsBuildBriefing, newsBriefingFor, newsFilterBriefingPersonal, newsSanitiseBriefing, newsWithinWindow,
   newsInstant, newsRateText, $newsFocus, $newsDetailsOpen, newsDetailsPanelId,
   newsHeadlineText, newsSectionTitle, newsSectionEntries, newsFocusGroup,
   newsBriefingForCategory, NEWS_SECTION_CATEGORY, newsBriefingItems,

@@ -281,11 +281,18 @@ def match_relevance(item: Optional[Mapping[str, Any]],
     """Explain why one news item is (or is not) relevant locally.
 
     Returns ``{"relevant", "reasons"}``; ``reasons`` holds stable codes from
-    :data:`RELEVANCE_REASONS`. Provider comparison reuses the news route
-    matching (:func:`news.canonical_route_provider`) so recorded routes
-    such as ``openai-codex`` match catalogue providers such as ``openai``,
-    exactly as For You ranking does. Matching uses only the local
-    signals — never the network.
+    :data:`RELEVANCE_REASONS`. Relevant means configured or selected-plan:
+    the item's provider has a credential in this profile, or its family
+    carries a selected membership plan. Historical usage alone never
+    qualifies a now-unconfigured provider, and a native-but-unconfigured
+    provider does not qualify. Usage matches still annotate relevant items
+    (recency, related routes), but only relevance-gated reasons are
+    reported, so an irrelevant item always carries an empty list. Provider
+    comparison reuses the news route matching
+    (:func:`news.canonical_route_provider`) so recorded routes such as
+    ``openai-codex`` match catalogue providers such as ``openai``, exactly
+    as For You ranking does. Matching uses only the local signals — never
+    the network.
     """
     entry = item if isinstance(item, Mapping) else {}
     provided = signals if isinstance(signals, Mapping) else {}
@@ -295,31 +302,70 @@ def match_relevance(item: Optional[Mapping[str, Any]],
         return {"relevant": False, "reasons": []}
     family = _normalise_family(provider)
     route = news.canonical_route_provider(provider)
-    reasons: list[str] = []
+    matched: list[str] = []
     configured = {_normalise_family(family_name)
                   for family_name in provided.get("configured_families", [])}
     configured |= {news.canonical_route_provider(family_name)
                    for family_name in provided.get("configured_families", [])}
     if family in configured or route in configured:
-        reasons.append("configured_provider")
+        matched.append("configured_provider")
     used_providers = {news.canonical_route_provider(str(name or ""))
                       for name in provided.get("used_providers", [])}
     if route in used_providers:
-        reasons.append("used_provider")
+        matched.append("used_provider")
     if model:
         pairs = {(news.canonical_route_provider(str(pair.get("provider") or "")),
                   str(pair.get("model") or "").strip().lower())
                  for pair in provided.get("used_models", [])
                  if isinstance(pair, Mapping)}
         if (route, model.lower()) in pairs:
-            reasons.append("used_model")
+            matched.append("used_model")
     planned = {_normalise_family(family_name)
                for family_name in provided.get("plan_families", [])}
     planned |= {news.canonical_route_provider(family_name)
                 for family_name in provided.get("plan_families", [])}
     if family in planned or route in planned:
-        reasons.append("selected_plan_family")
-    return {"relevant": bool(reasons), "reasons": reasons}
+        matched.append("selected_plan_family")
+    relevant = "configured_provider" in matched or "selected_plan_family" in matched
+    return {"relevant": relevant, "reasons": matched if relevant else []}
+
+
+def _briefing_entry_personal(entry: Mapping[str, Any],
+                             signals: Optional[Mapping[str, Any]]) -> bool:
+    """Whether a briefing entry is personal to this profile.
+
+    The head provider or any variant provider must be relevant under
+    :func:`match_relevance` (configured or selected-plan). Whole entries
+    keep or drop together, so family counts, provider lists and event links
+    stay truthful; variants are never pruned apart.
+    """
+    providers = [entry.get("provider")]
+    variants = entry.get("variants")
+    if isinstance(variants, list):
+        providers.extend(row.get("provider") for row in variants
+                         if isinstance(row, Mapping))
+    return any(match_relevance({"provider": provider}, signals).get("relevant")
+               for provider in providers if provider)
+
+
+def _flag_briefing_personal(briefing: Any,
+                            signals: Optional[Mapping[str, Any]]) -> None:
+    """Mark each briefing entry personal or not, in place.
+
+    Generation stays global; the flags let the client show only personal
+    headlines on For You without reimplementing alias matching. Counts and
+    sections describe the publication and are left untouched.
+    """
+    sections = briefing.get("sections") if isinstance(briefing, Mapping) else None
+    if not isinstance(sections, list):
+        return
+    for section in sections:
+        entries = section.get("entries") if isinstance(section, dict) else None
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if isinstance(entry, dict):
+                entry["personal"] = _briefing_entry_personal(entry, signals)
 
 
 def personalise_items(items: list[Mapping[str, Any]],
@@ -427,8 +473,7 @@ def news_view(*, data_dir: Optional[Path | str] = None,
             "empty": state, "settings": payload.get("settings", {}),
             "catalogue": payload.get("catalogue", {}),
             "for_you_count": sum(1 for item in personalised
-                                 if _is_relevant(item)
-                                 and item.get("eligible", True)),
+                                 if _is_relevant(item)),
             "sources": {kind: describe_source(kind) for kind in SOURCE_KINDS}}
 
 
@@ -445,16 +490,20 @@ def personalise_payload(payload: dict[str, Any], *,
     """Annotate a news API payload with relevance reasons and an empty state.
 
     Additive only: each item in ``local``/``central`` gains a ``relevance``
-    entry, and the payload gains ``signals``, ``sources`` and ``empty``.
-    Stored ``for_you`` flags and ``for_you_count`` are left untouched as the
-    ranking source of truth. Reads config and usage for signals; writes
-    nothing and fetches nothing, so ``GET``-side enrichment stays read-only.
+    entry, each published briefing entry gains a ``personal`` flag, and the
+    payload gains ``signals``, ``sources`` and ``empty``. Stored ``for_you``
+    flags and ``for_you_count`` are left untouched as the ranking source of
+    truth. Reads config and usage for signals; writes nothing and fetches
+    nothing, so ``GET``-side enrichment stays read-only.
     """
     if signals is None:
         signals = local_signals(home=home, event_db=event_db,
                                 store_path=store_path,
                                 plans_catalogue=plans_catalogue,
                                 data_dir=data_dir, now=now)
+    central_block = payload.get("central", {}) or {}
+    if isinstance(central_block, dict):
+        _flag_briefing_personal(central_block.get("briefing"), signals)
     local = payload.get("local", {}) or {}
     central = payload.get("central", {}) or {}
     combined = [*(local.get("items", []) or []),

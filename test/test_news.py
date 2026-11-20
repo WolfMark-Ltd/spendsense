@@ -864,10 +864,15 @@ class CentralFetchTests(NewsTestCase):
 
 class RankingTests(NewsTestCase):
     def test_for_you_prefers_configured_providers_and_used_models(self):
+        # F138: usage annotates a configured provider, but usage alone never
+        # qualifies a now-unconfigured one — evidence without membership.
         news = news_module()
-        self.write_auth({"commandcode": [{"token": "secret"}]})
+        self.write_auth({"commandcode": [{"token": "secret"}],
+                         "openrouter": [{"token": "secret"}]})
         self.create_events([
             {"provider": "openrouter", "model": "acme/alpha",
+             "input_tokens": 100, "output_tokens": 50},
+            {"provider": "uberllm", "model": "beta",
              "input_tokens": 100, "output_tokens": 50},
         ])
         items = [
@@ -880,6 +885,9 @@ class RankingTests(NewsTestCase):
             {"id": "c", "origin": "local", "category": "new_model",
              "provider": "stranger", "model": "zzz",
              "observed_at": "2026-11-02T00:00:00+00:00"},
+            {"id": "d", "origin": "local", "category": "price_reduction",
+             "provider": "uberllm", "model": "beta",
+             "observed_at": "2026-11-02T00:00:00+00:00"},
         ]
         evidence = news.usage_summary(self.events, days=90, now=NOW)
         ranked = news.rank_items(items, usage=evidence,
@@ -891,6 +899,9 @@ class RankingTests(NewsTestCase):
         self.assertEqual(by_id["b"]["related_routes"], ["openrouter"])
         self.assertFalse(by_id["c"]["for_you"])
         self.assertEqual(by_id["c"]["related_routes"], [])
+        self.assertFalse(by_id["d"]["for_you"])
+        self.assertEqual(by_id["d"]["related_routes"], ["uberllm"])
+        self.assertTrue(by_id["d"]["last_used_at"])
 
     def test_ranking_without_usage_or_credentials_marks_nothing(self):
         news = news_module()
@@ -1077,8 +1088,9 @@ class PayloadTests(NewsTestCase):
 # ------------------------------------------------------------------ eligibility
 
 class EligibilityTests(NewsTestCase):
-    """F138: All Updates shows Hermes-native providers, anything configured
-    in this profile, and subscription items — nothing else."""
+    """F138: All Updates shows Hermes-native providers and subscription
+    items — nothing else. For You is scoped by configuration instead, so a
+    configured custom route can be personal without being native."""
 
     def test_native_providers_need_no_configuration(self):
         news = news_module()
@@ -1089,49 +1101,46 @@ class EligibilityTests(NewsTestCase):
                          "commandcode", "opencode", "opencode-go",
                          "opencode-zen", "kilocode", "ollama-cloud", "arcee",
                          "lmstudio", "nvidia", "xiaomi", "stepfun"):
-            self.assertTrue(news.provider_eligible(provider, ()),
-                            provider)
+            self.assertTrue(news.provider_eligible(provider), provider)
 
     def test_router_identity_stays_distinct_from_direct_providers(self):
         # A model available through OpenRouter belongs under OpenRouter: the
-        # router spelling never normalises to a direct provider, and an
-        # OpenRouter credential does not bless unrelated direct providers.
+        # router spelling never normalises to a direct provider, and a
+        # non-native vendor is not eligible by association with it.
         news = news_module()
         self.assertEqual(news._provider_keys("openrouter"), {"openrouter"})
-        self.assertTrue(news.provider_eligible("openrouter", ()))
+        self.assertTrue(news.provider_eligible("openrouter"))
         self.assertTrue(news.item_eligible(
             {"category": "price_reduction", "provider": "openrouter",
-             "model": "acme/alpha"}, ()))
-        self.assertFalse(news.provider_eligible("acme", ("openrouter",)))
+             "model": "acme/alpha"}))
+        self.assertFalse(news.provider_eligible("acme"))
 
-    def test_unsupported_providers_excluded_unless_configured(self):
+    def test_unsupported_providers_excluded_even_when_configured(self):
+        # A configured custom/plugin route does not satisfy the native-only
+        # All Updates rule; it surfaces in For You instead.
         news = news_module()
-        self.assertFalse(news.provider_eligible("uberllm", ()))
-        self.assertFalse(news.provider_eligible("groq", ()))
+        self.assertFalse(news.provider_eligible("uberllm"))
+        self.assertFalse(news.provider_eligible("groq"))
         self.assertFalse(news.item_eligible(
-            {"category": "new_model", "provider": "uberllm", "model": "x"},
-            ()))
-        # A credential proves this install can use it (custom/plugin route).
-        self.assertTrue(news.provider_eligible("groq", ("groq",)))
-        self.assertTrue(news.item_eligible(
-            {"category": "new_model", "provider": "groq", "model": "x"},
-            ("groq",)))
+            {"category": "new_model", "provider": "uberllm", "model": "x"}))
+        self.assertFalse(news.item_eligible(
+            {"category": "new_model", "provider": "groq", "model": "x"}))
 
     def test_alias_spellings_resolve_to_the_same_eligibility(self):
         news = news_module()
         # Config-side and curated spellings canonicalise onto feed spellings.
-        self.assertTrue(news.provider_eligible("openai-codex", ()))
-        self.assertTrue(news.provider_eligible("github-copilot", ("copilot",)))
-        self.assertTrue(news.provider_eligible("openai", ("openai-codex",)))
+        self.assertTrue(news.provider_eligible("openai-codex"))
+        self.assertTrue(news.provider_eligible("github-copilot"))
+        self.assertTrue(news.provider_eligible("openai"))
 
     def test_subscription_items_are_always_eligible(self):
         news = news_module()
         self.assertTrue(news.item_eligible(
             {"category": "subscription", "provider": "cline-pass",
-             "model": ""}, ()))
+             "model": ""}))
         self.assertFalse(news.item_eligible(
             {"category": "new_model", "provider": "cline-pass",
-             "model": "x"}, ()))
+             "model": "x"}))
 
     def test_payload_flags_eligibility_and_reports_excluded(self):
         news = news_module()
@@ -1158,7 +1167,9 @@ class EligibilityTests(NewsTestCase):
         self.assertEqual(payload["unsupported_excluded"]["providers"],
                          ["uberllm"])
 
-    def test_payload_marks_configured_custom_providers_eligible(self):
+    def test_payload_configured_custom_is_personal_but_not_native(self):
+        # F138: a configured custom route is For You material (configured)
+        # without qualifying for All Updates (not native).
         news = news_module()
         self.write_auth({"groq": [{"token": "secret"}]})
         news.refresh_local(
@@ -1172,8 +1183,10 @@ class EligibilityTests(NewsTestCase):
         payload = news.news_payload(data_dir=self.data, event_db=self.events,
                                     home=self.home, now=NOW + 10)
         self.assertEqual(len(payload["local"]["items"]), 1)
-        self.assertTrue(payload["local"]["items"][0]["eligible"])
-        self.assertEqual(payload["unsupported_excluded"]["local"], 0)
+        item = payload["local"]["items"][0]
+        self.assertFalse(item["eligible"])
+        self.assertTrue(item["for_you"])
+        self.assertEqual(payload["unsupported_excluded"]["local"], 1)
         self.assertEqual(payload["for_you_count"], 1)
 
 

@@ -279,7 +279,11 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
     // WP22/F90: the headline block is the For You first screen and never
     // duplicates the archive's own list on All Updates.
     if (r.fixture !== 'empty' && r.fixture !== 'error') {
-      if (r.scope === 'foryou') {
+      if (r.scope === 'foryou' && r.fixture === 'nosignals') {
+        // F138: no signals means nothing personal — For You honestly shows
+        // no headlines instead of unrelated ones.
+        assert.equal(r.briefing.present, false, `${label} shows no headlines without personal news`)
+      } else if (r.scope === 'foryou') {
         assert.equal(r.briefing.present, true, `${label} leads with the editorial briefing`)
         assert.ok(r.briefing.stories > 0, `${label} renders at least one headline story`)
         assert.ok(r.briefing.sections > 0, `${label} renders at least one headline section`)

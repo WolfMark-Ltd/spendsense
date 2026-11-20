@@ -654,7 +654,11 @@ def _plan_window_sig(window: Any) -> dict[str, Any]:
 
     A bare string is an id-only window (the shape raw catalogues use); a
     mapping projects its structural fields. Label and detail prose never
-    join the signature.
+    join the signature. An id-less mapping falls back to its label for
+    identity, mirroring ``normalise_windows``; the shipped catalogue has
+    zero such windows, so a label reword there can only rename identity in
+    a catalogue that drops explicit ids first. No rename inference is
+    attempted: identity follows the catalogue's own rule.
     """
     sig = {key: None for key in _PLAN_WINDOW_FIELDS}
     if isinstance(window, str):
@@ -1446,13 +1450,15 @@ def canonical_route_provider(route: str) -> str:
 
 
 #: Feed-provider spellings Hermes itself can route to (F138). All Updates
-#: shows only these, plus anything configured in this profile (a credential
-#: proves Hermes can use it, including custom and plugin providers), plus
-#: subscription items (plan families, not inference providers, so the
-#: membership catalogue is never filtered).
+#: shows only these, plus subscription items (plan families, not inference
+#: providers, so the membership catalogue is never filtered). A configured
+#: custom/plugin route does not satisfy this native-only rule; it surfaces
+#: in For You instead, which is scoped by configuration rather than by
+#: native support.
 #:
-#: The inference ids mirror Hermes 0.23.2's native provider registry
-#: (``hermes_cli.auth.PROVIDER_REGISTRY``: nous, openai-codex, openai-api,
+#: The inference ids mirror the installed Hermes native provider registry
+#: (``hermes_cli.auth.PROVIDER_REGISTRY`` as shipped in Hermes 0.23.3,
+#: satisfying the ``>=0.22.5`` floor: nous, openai-codex, openai-api,
 #: xai-oauth, qwen-oauth, lmstudio, gemini, zai, kimi-coding, kimi-coding-cn,
 #: stepfun, arcee, gmi, actual, minimax, minimax-oauth, anthropic, alibaba,
 #: alibaba-coding-plan, minimax-cn, deepseek, xai, nvidia, ai-gateway,
@@ -1512,9 +1518,10 @@ def _provider_keys(provider: Any) -> set[str]:
 def eligible_keys(configured: Iterable[str] = ()) -> set[str]:
     """Truncation-preference keys: native spellings plus configured families.
 
-    A feed kept under its cap drops from the least actionable end first, so
-    the preference set carries every spelling an eligible item can match
-    under — native ids plus each configured family's own spellings.
+    Intake feeds both scopes, so the preference set is the union both need:
+    native ids for All Updates plus each configured family's own spellings,
+    so a configured custom route survives the cap for For You even though
+    it never qualifies for All Updates.
     """
     keys = set(NATIVE_FEED_PROVIDERS)
     for family in configured or ():
@@ -1529,37 +1536,31 @@ def matches_preference(provider: Any, prefer: Optional[set[str]]) -> bool:
     return bool(_provider_keys(provider) & prefer)
 
 
-def provider_eligible(provider: Any, configured: Iterable[str] = ()) -> bool:
-    """Whether a feed provider may appear in this profile's news.
+def provider_eligible(provider: Any) -> bool:
+    """Whether a feed provider may appear in All Updates.
 
-    Eligible means natively supported by Hermes (:data:`NATIVE_FEED_PROVIDERS`)
-    or matching a configured credential family (which proves this install can
-    use it, covering custom and plugin providers). Matching reuses the same
-    alias normalisations as relevance, in both directions.
+    Eligible means natively supported by Hermes
+    (:data:`NATIVE_FEED_PROVIDERS`). A configured custom/plugin route does
+    not satisfy this native-only rule; it surfaces in For You instead.
+    Matching reuses the same alias normalisations as relevance.
     """
     keys = _provider_keys(provider)
-    if not keys:
-        return False
-    if keys & NATIVE_FEED_PROVIDERS:
-        return True
-    for family in configured or ():
-        if keys & _provider_keys(family):
-            return True
-    return False
+    return bool(keys) and bool(keys & NATIVE_FEED_PROVIDERS)
 
 
-def item_eligible(item: Mapping[str, Any], configured: Iterable[str] = ()) -> bool:
-    """Whether one news item may appear in this profile's news.
+def item_eligible(item: Mapping[str, Any]) -> bool:
+    """Whether one news item may appear in All Updates.
 
     Subscription items are plan-catalogue products rather than routed
-    inference providers, so they are always eligible; everything else must
-    clear :func:`provider_eligible`.
+    inference providers, so their legitimacy comes from the plan rules
+    (genuine F139 changes) rather than the native-provider rule; everything
+    else must clear :func:`provider_eligible`.
     """
     if not isinstance(item, Mapping):
         return False
     if str(item.get("category") or "") == "subscription":
         return True
-    return provider_eligible(item.get("provider"), configured)
+    return provider_eligible(item.get("provider"))
 
 
 def usage_summary(event_db: Optional[Path | str] = None, *, days: int = IMPACT_DAYS,
@@ -1678,14 +1679,16 @@ def rank_items(items: list[dict[str, Any]], *,
                tokens: Optional[set[str]] = None) -> list[dict[str, Any]]:
     """Annotate news with For You evidence. Never promises account access.
 
-    Model evidence is the exact (provider, model) pair: a model recorded
-    under another provider, or a shared last path segment, never sets
-    ``for_you`` or ``related_routes`` on its own. Provider-used and
-    configured-provider signals stay provider-level.
+    For You means configured: only a provider with a credential in this
+    profile qualifies. Historical usage alone never qualifies a
+    now-unconfigured provider, and a native-but-unconfigured provider does
+    not qualify either. Usage evidence (related routes, last use) still
+    annotates every item for display and impact estimates: model evidence
+    is the exact (provider, model) pair, and a model recorded under another
+    provider, or a shared last path segment, never sets evidence on its own.
     """
     usage = usage if usage is not None else {}
     tokens = tokens if tokens is not None else set()
-    used_providers = {canonical_route_provider(route) for route, _ in usage}
     ranked: list[dict[str, Any]] = []
     for item in items:
         provider = str(item.get("provider") or "").lower()
@@ -1694,12 +1697,7 @@ def rank_items(items: list[dict[str, Any]], *,
                           if canonical_route_provider(route) == provider
                           and (not model or _models_match(recorded, model))})[:5]
         configured = bool(provider) and provider in tokens
-        model_used = bool(model) and any(
-            canonical_route_provider(route) == provider and recorded == model
-            for (route, recorded) in usage)
-        for_you = bool(provider) and (
-            provider in used_providers or provider in tokens or model_used)
-        ranked.append({**item, "for_you": for_you, "configured_provider": configured,
+        ranked.append({**item, "for_you": configured, "configured_provider": configured,
                        "related_routes": related,
                        "last_used_at": _last_used_at(item, usage)})
     return ranked
@@ -1796,11 +1794,12 @@ def news_payload(*, data_dir: Optional[Path | str] = None,
                  now: Optional[float] = None) -> dict[str, Any]:
     """Read-only combined view: stored local news plus the cached central feed.
 
-    Every item carries an ``eligible`` flag (F138): Hermes-native providers,
-    anything configured in this profile, and subscription items. Scopes
-    filter on it — the payload keeps every event, like the stores behind
-    it, and ``unsupported_excluded`` stays honest about what the scopes
-    hold back.
+    Every item carries an ``eligible`` flag (F138): Hermes-native providers
+    and subscription items. All Updates filters on it; For You filters on
+    relevance instead, so a configured custom route can be personal without
+    being native. The payload keeps every event, like the stores behind it,
+    and ``unsupported_excluded`` stays honest about what All Updates holds
+    back.
     """
     stored = load_items(items_path(data_dir))
     settings = load_settings(settings_path(data_dir))
@@ -1823,7 +1822,7 @@ def news_payload(*, data_dir: Optional[Path | str] = None,
     combined = rank_items([*local_items, *central_items], usage=evidence,
                           tokens=configured_tokens(home))
     for item in combined:
-        item["eligible"] = item_eligible(item, providers_configured)
+        item["eligible"] = item_eligible(item)
     combined.sort(key=lambda item: (str(item.get("observed_at") or ""), str(item.get("id") or "")),
                   reverse=True)
     excluded_local = [item for item in combined
@@ -1850,8 +1849,7 @@ def news_payload(*, data_dir: Optional[Path | str] = None,
                                  if settings["live_updates"]
                                  and isinstance(cached["feed"], dict) else None),
                     "fetched_at": cached["fetched_at"], "error": cached["error"]},
-        "for_you_count": sum(1 for item in combined
-                             if item.get("for_you") and item["eligible"]),
+        "for_you_count": sum(1 for item in combined if item.get("for_you")),
         "providers_configured": providers_configured,
         "unsupported_excluded": {"local": len(excluded_local),
                                  "central": len(excluded_central),
