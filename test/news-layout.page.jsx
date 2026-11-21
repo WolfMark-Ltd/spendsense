@@ -3,12 +3,15 @@
 // committed synthetic fixtures in test/fixtures/news/. All data is invented;
 // no network, no real user data, no secrets.
 //
-// Modes (URL parameters):
-//   ?run=foryou|all   grid of every matrix case at that scope (one Chrome run)
-//   ?case=<fixture>__<scope>__<w>__<theme>__<locale>[&probe=1]
-//                     single case; with probe=1 the page also drives the
-//                     candidate-design interactions (groups, search, focus)
-// The Node test reads the JSON recorded in #news-layout-result.
+// ONE page, ONE case. The driver navigates a fresh browser context to
+//   ?case=<fixture>__<scope>__<w>__<theme>__<locale>
+//                                                     [&probe=1|story|reveal|focusonce]
+//                                                     [&model=<value>]
+// so fixture, scope and locale are established before React renders and can
+// never carry over from a previous scenario. With probe=1 the page also drives
+// the candidate-design interactions (groups, search, focus); the other probe
+// values run a single story/focus/reveal probe. The Node test polls the JSON
+// recorded in #news-layout-result.
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import plugin, { __test as T } from '../desktop/plugin.js'
@@ -161,15 +164,7 @@ plugin.register({
   os: {}, pet: null, i18n: { register() {}, t: key => key },
 })
 
-// case = <fixture>__<scope>__<w>__<theme>__<locale>
-const CASE = (() => {
-  const raw = new URLSearchParams(location.search).get('case') || ''
-  const parts = raw ? raw.split('__') : []
-  const [fixture = 'realistic', scope = 'foryou', w = '380', theme = 'dark', locale = 'en'] = parts
-  return { raw, fixture, scope, w: Number(w), theme, locale }
-})()
 const PROBE = new URLSearchParams(location.search).get('probe') === '1'
-const RUN = new URLSearchParams(location.search).get('run') || ''
 
 const fixturesForCase = ({ fixture, scope }) => {
   if (fixture === 'error') return []
@@ -178,60 +173,47 @@ const fixturesForCase = ({ fixture, scope }) => {
   return scope === 'foryou' ? items.filter(item => item.relevance?.relevant) : items
 }
 
-// ------------------------------------------------------------------ matrix
-const MATRIX = []
-for (const scope of ['foryou', 'all'])
-  for (const w of [380, 1200])
-    for (const theme of ['dark', 'light'])
-      for (const locale of ['en', 'zh-CN'])
-        MATRIX.push({ fixture: 'realistic', scope, w, theme, locale })
-for (const fixture of ['empty', 'partial', 'nosignals'])
-  for (const scope of ['foryou', 'all'])
-    MATRIX.push({ fixture, scope, w: 380, theme: 'dark', locale: 'en' })
-for (const fixture of ['stale', 'error'])
-  MATRIX.push({ fixture, scope: 'foryou', w: 380, theme: 'dark', locale: 'en' })
-
-// Single-case mode is driven by ?case=; grid mode by
-// ?fixture=<f>&run=<scope>&locale=<l>, optionally sliced into chunks
-// (?chunk=0&chunks=3) so no single Chrome run is too heavy. Fixture, scope
-// and locale are fixed for a whole run and set ONCE before any render:
-// React may defer the initial renders, so per-case globals would be read too
-// late.
+// ------------------------------------------------------------------ case
+// One page, one case. The driver navigates a FRESH browser context to
+// ?case=<fixture>__<scope>__<w>__<theme>__<locale>, so fixture, scope and locale
+// cannot leak from a previous scenario. They are fixed once, before any React
+// render, because React may defer rendering and read them asynchronously.
 const params = new URLSearchParams(location.search)
-const chunkIndex = Number(params.get('chunk') || 0)
-const chunkCount = Number(params.get('chunks') || 1)
-const runLocale = params.get('locale') || ''
-const runFixture = params.get('fixture') || ''
-globalThis.__wp11Fixture = CASE.raw ? CASE.fixture : (runFixture || 'realistic')
-const scopedCases = CASE.raw
-  ? MATRIX.filter(c => `${c.fixture}__${c.scope}__${c.w}__${c.theme}__${c.locale}` === CASE.raw)
-  : MATRIX.filter(c => (!RUN || c.scope === RUN) && (!runLocale || c.locale === runLocale)
-    && (!runFixture || c.fixture === runFixture))
-const cases = CASE.raw
-  ? scopedCases
-  : scopedCases.filter((_c, index) => index % chunkCount === chunkIndex)
-if (CASE.raw && !cases.length) cases.push({ fixture: CASE.fixture, scope: CASE.scope, w: CASE.w, theme: CASE.theme, locale: CASE.locale })
+const CASE_ID = params.get('case') || ''
+const [fixture = 'realistic', scope = 'foryou', w = '380', theme = 'dark', locale = 'en'] =
+  CASE_ID ? CASE_ID.split('__') : []
+const CASE = { id: CASE_ID, fixture, scope, w: Number(w), theme, locale }
+
+// Per-context storage marker. The driver asserts `prior === null` for every
+// case, which is only evidence if the marker is observable: its negative
+// control navigates twice inside ONE context and must see this value.
+const ISOLATION_KEY = 'wm-news-layout-case'
+const ISOLATION = (() => {
+  if (!CASE_ID) return { prior: null, wrote: false, error: 'missing ?case=' }
+  try {
+    const prior = localStorage.getItem(ISOLATION_KEY)
+    localStorage.setItem(ISOLATION_KEY, CASE_ID)
+    return { prior, wrote: true }
+  } catch (error) {
+    return { prior: null, wrote: false, error: String(error?.message || error) }
+  }
+})()
 
 globalThis.__wp11I18N = T.I18N
-globalThis.__wp11Locale = (CASE.raw ? CASE.locale : (runLocale || cases[0]?.locale || 'en'))
-T.$newsScope.set(CASE.raw ? CASE.scope : (RUN || 'foryou'))
+globalThis.__wp11Locale = CASE.locale
+globalThis.__wp11Fixture = CASE.fixture
+T.$newsScope.set(CASE.scope)
 T.$newsCategory.set('all')
 
 const root = document.getElementById('news-layout-cases')
-for (const c of cases) {
-  const id = `${c.fixture}__${c.scope}__${c.w}__${c.theme}__${c.locale}`
-  let container = document.getElementById(id)
-  if (!container) {
-    container = document.createElement('div')
-    container.id = id
-    container.className = 'case wm-news-host'
-    root.appendChild(container)
-  }
-  container.classList.add(c.theme)
-  container.style.width = `${c.w}px`
-  if (CASE.raw) document.body.dataset.single = c.theme
-  const reactRoot = createRoot(container)
-  reactRoot.render(React.createElement(T.NewsPage))
+{
+  const container = document.createElement('div')
+  container.id = CASE_ID || 'missing-case'
+  container.className = `case wm-news-host ${CASE.theme}`
+  container.style.width = `${CASE.w}px`
+  document.body.dataset.single = CASE.theme
+  root.appendChild(container)
+  createRoot(container).render(React.createElement(T.NewsPage))
 }
 
 const tick = (ms = 25) => new Promise(resolve => setTimeout(resolve, ms))
@@ -968,23 +950,51 @@ function paneText(pane) {
   return clone.textContent
 }
 
+/** The bounded readiness ceiling for one case, in milliseconds. */
+const READY_TIMEOUT_MS = 8000
+
 async function measureCase(c) {
   const id = `${c.fixture}__${c.scope}__${c.w}__${c.theme}__${c.locale}`
   const pane = document.getElementById(id)
   if (!pane) return { id, error: 'container missing' }
+  const items = fixturesForCase(c)
   // Bounded readiness gate. The page resolves its query and paints on React's
   // own schedule, so a fixed wait measures whatever happens to be on screen:
   // an early read has produced empty contrast counts and '' copy on unchanged
-  // revisions. Wait for the structure every assertion then measures, and keep
-  // every assertion as it was. Nothing here weakens a check — it only stops
-  // measuring a page that has not rendered yet.
-  const painted = () => !!(pane.querySelector('.wm-news-controls')
-    && (pane.querySelector('.wm-news-list') || pane.querySelector('.wm-empty')
-      || pane.querySelector('.wm-product-section')))
-  for (let waited = 0; waited < 2000 && !painted(); waited += 25) await tick(25)
+  // revisions. Require the FINAL structure every assertion then measures and
+  // REPORT a page that never got there rather than measuring it as if it had.
+  // Nothing here weakens a check.
+  //
+  // The pre-query page is not a fixture state: NewsPage renders the controls
+  // (and, with live updates off, the product section) while the query is still
+  // pending, so a status note means "still loading" whatever the fixture is.
+  // A case that carries items must show the rendered list and at least one
+  // card; a case that carries none must show its final empty or error state.
+  const ready = () => {
+    if (!pane.querySelector('.wm-news-controls')) return false
+    if (pane.querySelector('.wm-note[role="status"]')) return false
+    if (items.length) {
+      return !!(pane.querySelector('.wm-news-list')
+        && pane.querySelector('.wm-news-card, [data-news-group]'))
+    }
+    return !!(pane.querySelector('.wm-empty')
+      || pane.querySelector('.wm-product-section [role="alert"]'))
+  }
+  let waitedMs = 0
+  while (waitedMs < READY_TIMEOUT_MS && !ready()) {
+    await tick(25)
+    waitedMs += 25
+  }
+  const readiness = { ready: ready(), waitedMs, expectedItems: items.length }
+  // A page that missed its readiness deadline is not measured: publishing
+  // numbers from a page known to be incomplete is how an empty layout passes a
+  // set of assertions about nothing.
+  if (!readiness.ready) {
+    throw new Error(`the Model News page reached no final state within ${READY_TIMEOUT_MS}ms: `
+      + JSON.stringify(readiness))
+  }
   expandHidden(pane)
   await tick()
-  const items = fixturesForCase(c)
   const text = paneText(pane)
   const candidateDetected = !!pane.querySelector(SELECTORS.group)
   // Item reachability, per design generation:
@@ -1034,6 +1044,7 @@ async function measureCase(c) {
   const result = {
     id, fixture: c.fixture, scope: c.scope, w: c.w, theme: c.theme, locale: c.locale,
     height: pane.scrollHeight, cards: pane.querySelectorAll('.wm-news-card').length,
+    readiness, isolation: ISOLATION,
     overflow: overflowList(pane),
     scroll: scrollSurfaces(pane),
     briefing: briefingSummary(pane),
@@ -1066,7 +1077,19 @@ async function measureCase(c) {
 }
 
 setTimeout(async () => {
-  const results = []
-  for (const c of cases) results.push(await measureCase(c))
-  document.getElementById('news-layout-result').textContent = JSON.stringify({ cases: results, total: scopedCases.length })
-}, 900)
+  const target = document.getElementById('news-layout-result')
+  if (!CASE_ID) {
+    target.textContent = JSON.stringify({ cases: [], total: 0,
+      error: 'the Model News layout page needs ?case=<fixture>__<scope>__<w>__<theme>__<locale>' })
+    return
+  }
+  try {
+    const cases = [await measureCase(CASE)]
+    target.textContent = JSON.stringify({ cases, total: 1 })
+  } catch (error) {
+    // A probe or measurement that throws must say so, not leave an empty result
+    // node the driver can only report as a timeout.
+    target.textContent = JSON.stringify({ cases: [], total: 0,
+      error: `the page failed to measure ${CASE_ID}: ${error?.message || error}` })
+  }
+}, 0)

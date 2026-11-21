@@ -144,6 +144,13 @@ the totals (28 / 20) were counted from it. Wall clock is a single run per state;
 the browserless totals moved by more than the added tests explain, so treat the
 108.7 → 97.1 s delta as noise rather than a saving.
 
+A later stage-2 change replaced the command-line lifecycle this table was
+measured against: the suite now runs one Chromium process with an isolated
+browser context per case. See
+[stage-2-model-news-chromium-reuse.md](stage-2-model-news-chromium-reuse.md).
+The case counts and assertion coverage in this document are unchanged by that
+work; only the launch count and wall clock differ.
+
 ## 6. Risks and limitations
 
 - **jsdom is not Chromium.** A copy or data assertion moved here proves the DOM
