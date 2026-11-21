@@ -1105,6 +1105,35 @@ test('NewsPage falls back locally when a briefing cannot be filtered', async () 
     'the local briefing answers from the personal event')
 })
 
+test('NewsPage withholds the archive jump when All Updates cannot show the event', async () => {
+  // A personal-but-ineligible story keeps its inline Details evidence but
+  // offers no "Open in All Updates": the archive list cannot contain it.
+  const items = [eligibilityItem('held-1', 'acme/held-1', false, true)]
+  const briefing = { version: 1, generated_at: '2026-11-10T00:00:00Z',
+    sections: [{ id: 'biggest_reductions', total: 1, entries: [{
+      ...briefingEntry('Held story decoy', true), event_ids: ['held-1'],
+    }] }], counts: {}, unsupported: [] }
+  const container = await renderNewsPageItems(items, 'foryou', briefing)
+  const stories = [...container.querySelectorAll('[data-news-story]')]
+  assert.equal(stories.length, 1, 'the personal story renders')
+  assert.ok(stories[0].textContent.includes('Held story decoy'))
+  assert.equal(stories[0].querySelector('[data-news-story-archive]'), null,
+    'no archive jump for an event All Updates cannot show')
+  assert.ok(stories[0].querySelector('[data-news-story-details]'),
+    'inline Details evidence stays available')
+})
+
+test('NewsPage keeps the archive jump when All Updates can show the event', async () => {
+  const container = await renderNewsPageItems(
+    [eligibilityItem('keep-1', 'acme/keep-1', true, true)], 'foryou',
+    { version: 1, generated_at: '2026-11-10T00:00:00Z',
+      sections: [{ id: 'biggest_reductions', total: 1, entries: [{
+        ...briefingEntry('Kept story decoy', true), event_ids: ['keep-1'],
+      }] }], counts: {}, unsupported: [] })
+  assert.ok(container.querySelector('[data-news-story-archive]'),
+    'an event All Updates can show keeps its archive jump')
+})
+
 test('NewsPage scope split renders in Chinese', async () => {
   // F138 EN/ZH: the same scope split under the Chinese catalogue — All
   // Updates holds back ineligible providers with a localised note, For You

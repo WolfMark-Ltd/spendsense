@@ -12026,6 +12026,12 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
     : confidence === 'curated' ? 'newsConfidenceCurated' : 'newsConfidenceObserved'
   const headline = newsHeadlineText(entry, t)
   const observed = entry?.observed_at ? fmtDay(entry.observed_at) : ''
+  // The archive action lands on this story's own event: the first joined
+  // record. It is only offered when All Updates can actually show it — a
+  // configured custom route is personal to For You without being native,
+  // so its story keeps Details inline but offers no archive jump.
+  const archiveTarget = joined[0] || null
+  const archiveOpenable = !!archiveTarget && newsIsEligible(archiveTarget)
   // A story link must land on the event the reader clicked. Headlines ignore
   // the category and date filters, so both are cleared before the search is
   // applied; a retained category or an old window would otherwise open an
@@ -12038,7 +12044,7 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
     // The archive must open the RECORD, not just its model: a model with an
     // older cut and a newer rise would otherwise land on the newest offer and
     // leave this story's own event inside a collapsed panel.
-    const target = joined[0]
+    const target = archiveTarget
     if (target?.model || target?.provider) {
       const targetPanel = newsDetailsPanelId(connectionKey,
         { model: target.model, provider: target.provider })
@@ -12084,7 +12090,8 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
         onClick: () => newsToggleDetails(panelId), children: t('newsStoryDetails') }),
       // Without a joinable record the archive cannot contain this story (a
       // history-confirmed removal, for example), so the action is not offered.
-      records.length
+      // The same holds when the joined event is held back from All Updates.
+      archiveOpenable
         ? jsx('button', { type: 'button', className: 'wm-news-clear', 'data-news-story-archive': 'true',
             onClick: openArchive, children: t('newsStoryOpenInArchive') })
         : null,
