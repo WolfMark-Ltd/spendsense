@@ -15366,7 +15366,7 @@ const I18N = {
     sessionEvidenceNote: (scope, read, write, basis) =>
       `${scope} · cache read ${read} · cache write ${write} · API-equivalent basis ${basis}`,
     sessionSavingsSourceNote: 'Theoretical API-equivalent estimate from backend main-population calls; not billed or subscription savings.',
-    localEstimateScopeNote: 'Population unverified; this conversation only.',
+    localEstimateScopeNote: 'Population unverified.',
     savedBackendNote: (read, write, rateScope) =>
       `Backend main-call valuation · read evidence ${read} · write evidence ${write} · cache-hit denominator ${rateScope}. Theoretical API-equivalent value, not billed or subscription savings.`,
     savedLocalRunNote: () => 'Run population unverified.',
@@ -17009,7 +17009,7 @@ const I18N = {
     sessionEvidenceNote: (scope, read, write, basis) =>
       `${scope} · 缓存读取 ${read} · 缓存写入 ${write} · API 等值依据 ${basis}`,
     sessionSavingsSourceNote: '根据后端主调用总体计算的理论 API 等值估算；不是账单费用或订阅节省。',
-    localEstimateScopeNote: '主／辅助总体未验证；仅此对话。',
+    localEstimateScopeNote: '主／辅助总体未验证。',
     savedBackendNote: (read, write, rateScope) =>
       `后端主调用估值 · 读取证据 ${read} · 写入证据 ${write} · 缓存命中分母 ${rateScope}。理论 API 等值，不是账单费用或订阅节省。`,
     savedLocalRunNote: () => '本轮主／辅助总体未验证。',

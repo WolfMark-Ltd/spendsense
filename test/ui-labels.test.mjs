@@ -582,9 +582,9 @@ test('WP42 population and cache-evidence disclosures have English and Chinese pa
     assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
   }
   assert.match(en.sessionSavingsSourceNote, /not billed or subscription savings/)
-  assert.match(en.localEstimateScopeNote, /Population unverified; this conversation only/)
+  assert.match(en.localEstimateScopeNote, /Population unverified/)
   assert.match(en.coverageScopeLocalConversation, /locally recorded conversation; population unverified/)
-  assert.match(zh.localEstimateScopeNote, /总体未验证；仅此对话/)
+  assert.match(zh.localEstimateScopeNote, /主／辅助总体未验证/)
   assert.match(zh.coverageScopeLocalConversation, /总体分类尚未验证的本地记录对话/)
   assert.match(en.usagePopulationEvidenceNote, /unclassified calls are not assumed to be main/)
   assert.match(zh.rpEvidenceNote, /不是供应商费用或订阅节省/)
