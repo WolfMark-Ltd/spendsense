@@ -197,8 +197,8 @@ The Reports process-ownership controls are untouched.
 
 ## 11. Measurements
 
-Measured on GitHub-hosted `ubuntu-latest` runners via `workflow_dispatch`, one
-run of `main` (`069d752`, the old lifecycle) and two runs of this branch. File
+Measured on GitHub-hosted `ubuntu-latest` runners via `workflow_dispatch`: one
+run of `main` (`069d752`, the old lifecycle) and three runs of this branch. File
 timings are the runner's own log intervals between per-file completion lines;
 the job figure is the `chromium` job's start-to-finish.
 
@@ -208,18 +208,18 @@ the job figure is the `chromium` job's start-to-finish.
 | Model News Node test cases | 7 | 7 |
 | Layout matrix combinations | 24 | 24 |
 | Page executions (cases + probes + isolation control) | 20 | 32 |
-| `news-layout.test.mjs` wall clock | 19.8 s | 21.3 s, 22.6 s |
-| Whole browser suite span | 88.1 s | 94.3 s |
-| `chromium` job total | 109 s | 109 s, 112 s |
+| `news-layout.test.mjs` wall clock | 19.8 s | 18.4 s, 21.3 s, 22.6 s |
+| Whole browser suite span | 88.1 s | 74.9 s, 94.3 s |
+| `chromium` job total | 109 s | 92 s, 109 s, 112 s |
 | Browserless cases | 808 across 28 files | 825 across 29 files (+17) |
 
-**Execution time did not improve, and this PR does not claim it did.** The old
-20 launches amortised up to eight matrix cases per page (chunked grid runs) and
-used `--virtual-time-budget` to collapse the page's own timers. The new design
-runs one case per page — 32 page executions including probes and the isolation
-control — with real timers, so the work per case is slightly higher even though
-the process churn is much lower. The difference (about +2 s on one file) is
-within run-to-run contention noise and does not move the job total beyond it.
+**Wall clock is indistinguishable from the baseline, and this PR makes no
+execution-time claim.** Run-to-run variance on hosted runners (18.4–22.6 s for
+the same file and design) is larger than the difference from the baseline. The
+old 20 launches amortised up to eight matrix cases per page and used
+`--virtual-time-budget` to collapse the page's own timers; the new design runs
+32 page executions — 24 isolated cases, 6 probes and 2 isolation-control loads —
+with real timers. Process churn falls 95%; time is flat.
 
 CPU time and peak RSS of the browser tree are not exposed by the hosted runner,
 so no claim is made about them. Peak *owned process count* is sampled once per
