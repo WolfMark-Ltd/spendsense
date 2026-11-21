@@ -17,7 +17,8 @@ from typing import Any, Optional
 
 from . import store
 from .db import default_db_path, fetch_usage_rows
-from .pricing import PROVIDER_ALIASES, Catalogue, load_catalogue, price
+from .pricing import (PROVIDER_ALIASES, Catalogue, _amount, _effective_rate,
+                      load_catalogue, price, reachable_band_lowers_cost)
 
 
 BASIS_MODES = ("billed", "list", "hybrid")
@@ -40,6 +41,16 @@ def _int(value: Any) -> int:
         return max(0, int(value or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _tri(value: Any) -> Optional[bool]:
+    """A stored presence flag: True/False, or None when it was never recorded."""
+    if value is None or value == "":
+        return None
+    try:
+        return bool(int(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _iso(epoch: Optional[float]) -> str:
@@ -270,6 +281,8 @@ def _row_result(row: dict[str, Any], catalogue: Catalogue, mode: str) -> dict[st
             "cache_read_defaulted": priced.cache_read_defaulted,
             "cache_write_defaulted": priced.cache_write_defaulted,
             "cache_savings_usd": priced.cache_savings,
+            "cache_savings_kind": "gross_read_discount",
+            "gross_cache_read_savings_usd": priced.cache_savings,
         }
         if list_usd is None:
             miss = priced.reason
@@ -544,6 +557,13 @@ def _billing_class(statuses: dict[str, dict], provider: str, model: str) -> str:
     return statuses.get("exact", {}).get((provider, model)) or "unknown"
 
 
+def _reported(flag: Any, value: Any) -> bool:
+    """Tri-state presence: an explicit flag wins; otherwise a positive value proves itself."""
+    if flag is not None:
+        return bool(int(flag))
+    return bool(int(value or 0))
+
+
 def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
                   statuses: dict[str, dict], *, allow_third_party: bool = False,
                   allow_approximate: bool = False, at: float | None = None) -> dict[str, Any]:
@@ -559,6 +579,9 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     output_tokens = _int(row.get("output_tokens"))
     cache_read = _int(row.get("cache_read_tokens"))
     cache_write = _int(row.get("cache_write_tokens"))
+    cache_read_reported = _tri(row.get("cache_read_reported"))
+    cache_write_reported = _tri(row.get("cache_write_reported"))
+    call_class = str(row.get("call_class") or "").strip() or None
     reasoning = _int(row.get("reasoning_tokens"))
     tokens = input_tokens + output_tokens + cache_read + cache_write
 
@@ -579,6 +602,24 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     # Each event is one call, so the tiered amount is exact; use the
     # upper branch of price(), not the conservative cumulative base.
     list_usd = priced.usd_upper if priced and not failure and not missing else None
+    # The amount at the call's own effective band, independent of whether that
+    # band raises or lowers the price. The ledger keeps the conservative upper
+    # figure for compatibility; session valuation uses this one.
+    prompt = input_tokens + cache_read + cache_write
+    effective_rate, tier_selected = (
+        _effective_rate(lookup.rate, prompt) if lookup else (None, False))
+    effective = (
+        price(effective_rate, input_tokens=input_tokens, output_tokens=output_tokens,
+              cache_read_tokens=cache_read, cache_write_tokens=cache_write, calls=1)
+        if effective_rate is not None else None)
+    # Session valuation keeps the unrounded amount and rounds once at
+    # serialization. The legacy ledger figure above keeps price()'s rounding.
+    if failure or missing or effective_rate is None or effective is None \
+            or effective.usd_upper is None:
+        effective_usd = None
+    else:
+        effective_usd = _amount(effective_rate, input_tokens, output_tokens,
+                                cache_read, cache_write)[0]
     if priced and list_usd is None:
         miss = priced.reason
     elif not lookup:
@@ -598,6 +639,65 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         basis_usd = list_usd
     basis_kind = ("billed" if mode == "billed" else "list") if basis_usd is not None else "unpriced"
     tier_applied = bool(priced and priced.tier_possible and list_usd is not None)
+    write_known = _reported(cache_write_reported, cache_write)
+    read_known = _reported(cache_read_reported, cache_read)
+    write_rate = effective_rate.cache_write if effective_rate is not None else None
+    read_rate = effective_rate.cache_read if effective_rate is not None else None
+    write_defaulted = bool(effective and effective.cache_write_defaulted)
+    write_options = (sorted({float(value) for _, value in effective_rate.cache_write_rates})
+                     if effective_rate is not None else [])
+    write_prices = ([float(value) for _, value in effective_rate.cache_write_rates]
+                    if effective_rate is not None else [])
+    if not write_prices and write_rate is not None:
+        write_prices = [float(write_rate)]
+    retention_range = bool(write_known and cache_write > 0
+                           and len(write_options) > 1 and effective_usd is not None)
+    cost_low = cost_high = effective_usd
+    if retention_range and effective_rate is not None and effective_rate.cache_write is not None:
+        scalar_write = float(effective_rate.cache_write)
+        base_usd = float(effective_usd or 0.0)
+        cost_low = base_usd + cache_write * (write_options[0] - scalar_write) / 1_000_000
+        cost_high = base_usd + cache_write * (write_options[-1] - scalar_write) / 1_000_000
+    # An unproven counter whose price is positive can only add cost, so the
+    # priced amount is a lower bound; an unknown price cannot be bounded at all.
+    # Price completeness is a separate question from provenance: a positive
+    # counter charged at a fallback (or no) rate is not an established amount,
+    # while an explicit zero never needs a price for the bucket it did not use.
+    cost_bounds: set[str] = set()
+    cost_causes: set[str] = set()
+    write_price_missing = write_rate is None or write_defaulted
+    if write_price_missing and (not write_known or cache_write > 0):
+        cost_bounds.add("incomplete")
+        cost_causes.add("write")
+    elif not write_known and any(option > 0 for option in write_prices):
+        cost_bounds.add("lower")
+        cost_causes.add("write")
+    if read_rate is None and (not read_known or cache_read > 0):
+        cost_bounds.add("incomplete")
+        cost_causes.add("read")
+    elif not read_known and float(read_rate or 0) > 0:
+        cost_bounds.add("lower")
+        cost_causes.add("read")
+    if retention_range:
+        cost_bounds.add("range")
+    if (lookup is not None and not (read_known and write_known)
+            and reachable_band_lowers_cost(
+                lookup.rate, prompt,
+                input_tokens=input_tokens, output_tokens=output_tokens,
+                cache_read_tokens=cache_read, cache_write_tokens=cache_write,
+                current_usd=effective_usd)):
+        # An unproven counter could cross into a cheaper band, so the amount at
+        # the recorded band is not a lower bound on the true cost.
+        cost_bounds.discard("lower")
+        cost_bounds.add("incomplete")
+        cost_causes.add("tier")
+        if not write_known:
+            cost_causes.add("write")
+        if not read_known:
+            cost_causes.add("read")
+    if effective_usd is None:
+        cost_bounds = set()
+        cost_causes = set()
 
     return {
         "_session_id": str(row.get("session_id") or ""),
@@ -612,10 +712,21 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         "_output": output_tokens,
         "_cache_read": cache_read,
         "_cache_write": cache_write,
+        "_cache_read_reported": cache_read_reported,
+        "_cache_write_reported": cache_write_reported,
+        "_call_class": call_class,
         "_reasoning": reasoning,
         "_calls": 1,
         "_tokens": tokens,
         "_tier_applied": tier_applied,
+        "_tier_selected": bool(tier_selected),
+        "_cost_bounds": tuple(sorted(cost_bounds)),
+        "_cost_causes": tuple(sorted(cost_causes)),
+        "_cost_high": cost_high,
+        "_cost_low": cost_low,
+        "_retention_range": retention_range,
+        "_write_rate_options": tuple(write_options),
+        "effective_usd": effective_usd,
         "_failure": failure,
         "_missing": missing,
         "_billing_class": billing_class,

@@ -102,10 +102,10 @@ def main() -> int:
 
     report.insert(0, {"file": "desktop/plugin.js", "change": f"ID {args.source_id} -> {args.test_id}", "count": 1})
 
-    version_declaration = "const PLUGIN_VERSION = '0.6.16'"
-    if source.count(version_declaration) != 1:
+    declaration = re.search(r"^const PLUGIN_VERSION = '([^']+)'", source, re.M)
+    if not declaration or source.count(declaration.group(0)) != 1:
         raise SystemExit("Desktop version declaration is missing or ambiguous")
-    source = source.replace(version_declaration, f"const PLUGIN_VERSION = '{TEST_VERSION}'", 1)
+    source = source.replace(declaration.group(0), f"const PLUGIN_VERSION = '{TEST_VERSION}'", 1)
 
     # 2b. the route the app resolves follows --test-id, so two builds with
     # different ids never claim the same path (first match wins in
@@ -182,9 +182,10 @@ def main() -> int:
     # 5. the API announces which build it is
     api = out / "dashboard" / "plugin_api.py"
     api_source = api.read_text(encoding="utf-8")
-    if 'VERSION = "0.6.16"' not in api_source:
-        raise SystemExit("plugin_api.py VERSION is not the expected 0.6.16")
-    api.write_text(api_source.replace('VERSION = "0.6.16"', f'VERSION = "{TEST_VERSION}"', 1),
+    version = re.search(r'^VERSION = "([^"]+)"', api_source, re.M)
+    if not version or api_source.count(version.group(0)) != 1:
+        raise SystemExit("plugin_api.py VERSION is missing or ambiguous")
+    api.write_text(api_source.replace(version.group(0), f'VERSION = "{TEST_VERSION}"', 1),
                    encoding="utf-8")
     report.append({"file": "dashboard/plugin_api.py", "change": f"VERSION -> {TEST_VERSION}", "count": 1})
 

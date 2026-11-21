@@ -13,6 +13,335 @@
         {"days": [0, 1, 2, 3, 4], "start_minute": 60,  "end_minute": 240, "input": 0.30, "output": 1.20},
         {"days": [0, 1, 2, 3, 4], "start_minute": 360, "end_minute": 600, "input": 0.30, "output": 1.20}
       ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6.2-sol",
+      "input": 2.0,
+      "cache_read": 0.1,
+      "cache_write": 2.5,
+      "output": 10.0,
+      "cache_write_rates": [
+        {"retention": "30m", "rate": 2.5},
+        {"retention": "12h", "rate": 5.0}
+      ],
+      "tiers": [
+        {
+          "threshold": 272000,
+          "input": 4.0,
+          "cache_read": 0.2,
+          "cache_write": 5.0,
+          "output": 15.0,
+          "cache_write_rates": [
+            {"retention": "30m", "rate": 5.0},
+            {"retention": "12h", "rate": 10.0}
+          ]
+        }
+      ],
+      "source_url": "https://developers.openai.com/api/docs/models/gpt-6.2-sol",
+      "verified_at": "2026-11-21",
+      "note": "Standard text prices, USD per 1M tokens. cache_write is the published 30-minute retention rate; the short-context 12-hour write of $5 is listed separately. Above 272K input tokens the full request uses doubled input/cache rates and 1.5x output; the long-context 12-hour write of $10 is derived by applying that published doubling rule, not a separately displayed price. API-equivalent valuation only: it does not establish a Codex subscription charge."
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6.2-astra",
+      "input": 8.0,
+      "cache_read": 0.4,
+      "cache_write": 10.0,
+      "output": 40.0,
+      "cache_write_rates": [
+        {"retention": "30m", "rate": 10.0},
+        {"retention": "12h", "rate": 20.0}
+      ],
+      "tiers": [
+        {
+          "threshold": 272000,
+          "input": 16.0,
+          "cache_read": 0.8,
+          "cache_write": 20.0,
+          "output": 60.0,
+          "cache_write_rates": [
+            {"retention": "30m", "rate": 20.0},
+            {"retention": "12h", "rate": 40.0}
+          ]
+        }
+      ],
+      "source_url": "https://developers.openai.com/api/docs/models/gpt-6.2-astra",
+      "verified_at": "2026-11-21",
+      "note": "Standard text prices. Above 272K input tokens input and cache rates double and output is 1.5x for the full request; long-context cache writes are derived by the same published rule."
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "input": 10.0,
+      "cache_read": 1.0,
+      "cache_write": 12.5,
+      "output": 50.0,
+      "tiers": [
+        {"threshold": 272000, "input": 20.0, "cache_read": 2.0,
+         "cache_write": 25.0, "output": 75.0}
+      ],
+      "source_url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+      "verified_at": "2026-11-21",
+      "note": "Standard text prices. Cache writes are billed at 1.25x input and only the 30-minute retention is published, so no retention alternatives are recorded. Above 272K input tokens input and cache rates double and output is 1.5x for the full request."
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "input": 2.0,
+      "cache_read": 0.1,
+      "cache_write": 2.5,
+      "output": 10.0,
+      "cache_write_rates": [
+        {"retention": "30m", "rate": 2.5},
+        {"retention": "12h", "rate": 5.0}
+      ],
+      "tiers": [
+        {
+          "threshold": 272000,
+          "input": 4.0,
+          "cache_read": 0.2,
+          "cache_write": 5.0,
+          "output": 15.0,
+          "cache_write_rates": [
+            {"retention": "30m", "rate": 5.0},
+            {"retention": "12h", "rate": 10.0}
+          ]
+        }
+      ],
+      "source_url": "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+      "verified_at": "2026-11-21",
+      "note": "Standard text prices. Above 272K input tokens input and cache rates double and output is 1.5x for the full request."
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "input": 2.0,
+      "cache_read": 0.2,
+      "cache_write": 2.5,
+      "output": 10.0,
+      "cache_write_rates": [
+        {"retention": "5m", "rate": 2.5},
+        {"retention": "1h", "rate": 4.0}
+      ],
+      "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Standard API prices. Cache writes: 5-minute retention 1.25x input, 1-hour retention 2x input; cache hits and refreshes 0.1x input."
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "input": 5.0,
+      "cache_read": 0.5,
+      "cache_write": 6.25,
+      "output": 25.0,
+      "cache_write_rates": [
+        {"retention": "5m", "rate": 6.25},
+        {"retention": "1h", "rate": 10.0}
+      ],
+      "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Standard API prices. Cache writes: 5-minute retention 1.25x input, 1-hour retention 2x input; cache hits and refreshes 0.1x input."
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-opus-5-5",
+      "input": 4.0,
+      "cache_read": 0.2,
+      "cache_write": 5.0,
+      "output": 20.0,
+      "cache_write_rates": [
+        {"retention": "5m", "rate": 5.0},
+        {"retention": "1h", "rate": 8.0}
+      ],
+      "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Standard API prices as published (cache hits and refreshes are $0.20/MTok, not the usual 0.1x input). Cache writes: 5-minute 1.25x input, 1-hour 2x input."
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-5-5",
+      "input": 2.0,
+      "cache_read": 0.1,
+      "cache_write": 2.5,
+      "output": 10.0,
+      "cache_write_rates": [
+        {"retention": "5m", "rate": 2.5},
+        {"retention": "1h", "rate": 4.0}
+      ],
+      "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Standard API prices as published (cache hits and refreshes are $0.10/MTok). Cache writes: 5-minute 1.25x input, 1-hour 2x input."
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-haiku-5-5",
+      "input": 0.1,
+      "cache_read": 0.01,
+      "cache_write": 0.125,
+      "output": 0.5,
+      "cache_write_rates": [
+        {"retention": "5m", "rate": 0.125},
+        {"retention": "1h", "rate": 0.2}
+      ],
+      "tiers": [
+        {
+          "threshold": 100000,
+          "input": 0.5,
+          "cache_read": 0.05,
+          "cache_write": 0.625,
+          "output": 2.5,
+          "cache_write_rates": [
+            {"retention": "5m", "rate": 0.625},
+            {"retention": "1h", "rate": 1.0}
+          ]
+        }
+      ],
+      "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Standard API prices. Prompts up to 100,000 tokens use the base row; prompts over 100,000 tokens use the tier. Cache writes: 5-minute 1.25x input, 1-hour 2x input."
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input": 10.0,
+      "cache_read": 1.0,
+      "cache_write": 12.5,
+      "output": 50.0,
+      "cache_write_rates": [
+        {"retention": "5m", "rate": 12.5},
+        {"retention": "1h", "rate": 20.0}
+      ],
+      "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Standard API prices. Cache writes: 5-minute 1.25x input, 1-hour 2x input; cache hits and refreshes 0.1x input."
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-fable-5-1",
+      "input": 10.0,
+      "cache_read": 0.25,
+      "cache_write": 12.5,
+      "output": 50.0,
+      "cache_write_rates": [
+        {"retention": "5m", "rate": 12.5},
+        {"retention": "1h", "rate": 20.0}
+      ],
+      "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Standard API prices as published (cache hits and refreshes are $0.25/MTok). Cache writes: 5-minute 1.25x input, 1-hour 2x input."
+    },
+    {
+      "provider": "xai",
+      "model": "grok-4.7",
+      "input": 2.0,
+      "cache_read": 0.5,
+      "output": 6.0,
+      "tiers": [
+        {"threshold": 200000, "inclusive": true, "input": 4.0,
+         "cache_read": 1.0, "output": 12.0}
+      ],
+      "source_url": "https://docs.x.ai/developers/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Long-context pricing applies to ALL tokens once the prompt reaches 200K (>=, inclusive). xAI publishes no cache-write price, so writes stay unknown rather than zero."
+    },
+    {
+      "provider": "xai",
+      "model": "grok-4.6",
+      "input": 2.0,
+      "cache_read": 0.5,
+      "output": 6.0,
+      "tiers": [
+        {"threshold": 200000, "inclusive": true, "input": 4.0,
+         "cache_read": 1.0, "output": 12.0}
+      ],
+      "source_url": "https://docs.x.ai/developers/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Long-context pricing applies to ALL tokens once the prompt reaches 200K (>=, inclusive). xAI publishes no cache-write price, so writes stay unknown rather than zero."
+    },
+    {
+      "provider": "xai",
+      "model": "grok-4.5",
+      "input": 2.0,
+      "cache_read": 0.3,
+      "output": 6.0,
+      "tiers": [
+        {"threshold": 200000, "inclusive": true, "input": 4.0,
+         "cache_read": 0.6, "output": 12.0}
+      ],
+      "source_url": "https://docs.x.ai/developers/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Long-context pricing applies to ALL tokens once the prompt reaches 200K (>=, inclusive). xAI publishes no cache-write price, so writes stay unknown rather than zero."
+    },
+    {
+      "provider": "xai",
+      "model": "grok-4.3",
+      "input": 1.25,
+      "cache_read": 0.2,
+      "output": 2.5,
+      "tiers": [
+        {"threshold": 200000, "inclusive": true, "input": 2.5,
+         "cache_read": 0.4, "output": 5.0}
+      ],
+      "source_url": "https://docs.x.ai/developers/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Long-context pricing applies to ALL tokens once the prompt reaches 200K (>=, inclusive). xAI publishes no cache-write price, so writes stay unknown rather than zero."
+    },
+    {
+      "provider": "xai",
+      "model": "grok-4.20-0309-reasoning",
+      "input": 1.25,
+      "cache_read": 0.2,
+      "output": 2.5,
+      "tiers": [
+        {"threshold": 200000, "inclusive": true, "input": 2.5,
+         "cache_read": 0.4, "output": 5.0}
+      ],
+      "source_url": "https://docs.x.ai/developers/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Long-context pricing applies to ALL tokens once the prompt reaches 200K (>=, inclusive). xAI publishes no cache-write price, so writes stay unknown rather than zero."
+    },
+    {
+      "provider": "xai",
+      "model": "grok-4.20-0309-non-reasoning",
+      "input": 1.25,
+      "cache_read": 0.2,
+      "output": 2.5,
+      "tiers": [
+        {"threshold": 200000, "inclusive": true, "input": 2.5,
+         "cache_read": 0.4, "output": 5.0}
+      ],
+      "source_url": "https://docs.x.ai/developers/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Long-context pricing applies to ALL tokens once the prompt reaches 200K (>=, inclusive). xAI publishes no cache-write price, so writes stay unknown rather than zero."
+    },
+    {
+      "provider": "xai",
+      "model": "grok-4.20-multi-agent-0309",
+      "input": 1.25,
+      "cache_read": 0.2,
+      "output": 2.5,
+      "tiers": [
+        {"threshold": 200000, "inclusive": true, "input": 2.5,
+         "cache_read": 0.4, "output": 5.0}
+      ],
+      "source_url": "https://docs.x.ai/developers/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Long-context pricing applies to ALL tokens once the prompt reaches 200K (>=, inclusive). xAI publishes no cache-write price, so writes stay unknown rather than zero."
+    },
+    {
+      "provider": "xai",
+      "model": "grok-build-0.1",
+      "input": 1.0,
+      "cache_read": 0.2,
+      "output": 2.0,
+      "tiers": [
+        {"threshold": 200000, "inclusive": true, "input": 2.0,
+         "cache_read": 0.4, "output": 4.0}
+      ],
+      "source_url": "https://docs.x.ai/developers/pricing",
+      "verified_at": "2026-11-21",
+      "note": "Long-context pricing applies to ALL tokens once the prompt reaches 200K (>=, inclusive). xAI publishes no cache-write price, so writes stay unknown rather than zero."
     }
   ]
 }
