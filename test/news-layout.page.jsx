@@ -14,6 +14,7 @@ import { createRoot } from 'react-dom/client'
 import plugin, { __test as T } from '../desktop/plugin.js'
 import REALISTIC from './fixtures/news/realistic.json'
 import VARIANTS from './fixtures/news/variants.json'
+import { buildNewsScenarios } from './news-layout.scenarios.mjs'
 
 // ------------------------------------------------------------------ SELECTORS
 // PLACEHOLDER DOM hooks for the WP11 candidate design ("model-first groups").
@@ -110,105 +111,10 @@ const FORBIDDEN = {
 
 const ERROR_FIXTURE = VARIANTS.error
 
-// ---------------------------------------------------------------- evidence payload
-// Page-local payload for the two source-evidence retention regressions (no
-// fixture regeneration; never part of the grid matrix, only probed as a
-// single case). All data invented; same shape as /news/refresh returns.
-//
-// 1) Same-ID local+central records: both items share ONE id, so the offer
-//    dedupes to exactly one event — but the two records stay distinguishable
-//    by source_url, observed_at, effective_at and provenance, and Details
-//    must keep BOTH recoverable.
-// 2) A proven distinct-ID pair (identical transition + the settled proof:
-//    same NONEMPTY source_url AND same NONEMPTY effective_at) collapsed into
-//    one event, which becomes HISTORY once a newer update lands in the same
-//    offer: the historical event must keep every original id, both source
-//    evidences, full timestamps, provenance, its exact previous/current
-//    rates and its raw tier rows recoverable.
-const EVIDENCE_SHARED_ID = 'evidence-shared-event-1'
-const evidenceSharedLocal = {
-  id: EVIDENCE_SHARED_ID, origin: 'local', category: 'price_reduction',
-  provider: 'evidenceco', model: 'ev-model',
-  summary: 'ev-model (evidenceco) list price changed.',
-  previous: { input: 2.0, output: 8.0, cache_read: 0.2, cache_write: 2.0 },
-  current: { input: 1.5, output: 6.0, cache_read: 0.15, cache_write: 1.5 },
-  observed_at: '2026-11-09T08:00:00Z', effective_at: '2026-11-08',
-  source_url: 'https://announcements.spend-sense.example/feed/ev-shared-local',
-  provenance: 'Synthetic local diff (evidence variant)', confidence: 'observed',
-  relevance: { relevant: false, reasons: [] },
-}
-const evidenceSharedCentral = {
-  ...evidenceSharedLocal,
-  origin: 'central',
-  observed_at: '2026-11-10T10:00:00Z', effective_at: '2026-11-09',
-  source_url: 'https://announcements.spend-sense.example/feed/ev-shared-central',
-  provenance: 'Synthetic central feed (evidence variant)', confidence: 'curated',
-}
-const EVIDENCE_HIST_LOCAL_ID = 'evidence-hist-local-1'
-const EVIDENCE_HIST_CENTRAL_ID = 'evidence-hist-central-1'
-const EVIDENCE_HIST_RATES_PREV = { input: 2.04, output: 8.16, cache_read: 0.204, cache_write: 2.56 }
-const EVIDENCE_HIST_RATES_CUR = { input: 2.55, output: 10.2, cache_read: 0.255, cache_write: 3.2 }
-const EVIDENCE_HIST_TIERS_BEFORE = [{
-  type: 'standard', size: 250000, ...EVIDENCE_HIST_RATES_PREV,
-}]
-const EVIDENCE_HIST_TIERS_AFTER = [{
-  type: 'standard', size: 250000, ...EVIDENCE_HIST_RATES_CUR,
-}]
-const evidenceHistLocal = {
-  id: EVIDENCE_HIST_LOCAL_ID, origin: 'local', category: 'price_increase',
-  provider: 'evidenceco', model: 'hist-model',
-  summary: 'hist-model (evidenceco) list price changed.',
-  previous: EVIDENCE_HIST_RATES_PREV, current: EVIDENCE_HIST_RATES_CUR,
-  tiers_detail: 'known',
-  tiers_before: EVIDENCE_HIST_TIERS_BEFORE, tiers_after: EVIDENCE_HIST_TIERS_AFTER,
-  observed_at: '2026-11-08T11:00:00Z', effective_at: '2026-11-07',
-  source_url: 'https://announcements.spend-sense.example/feed/hist-pair',
-  provenance: 'Synthetic local diff (history variant)', confidence: 'observed',
-  relevance: { relevant: false, reasons: [] },
-}
-const evidenceHistCentral = {
-  id: EVIDENCE_HIST_CENTRAL_ID, origin: 'central', category: 'price_increase',
-  provider: 'evidenceco', model: 'hist-model',
-  summary: 'hist-model (evidenceco) list price changed.',
-  previous: EVIDENCE_HIST_RATES_PREV, current: EVIDENCE_HIST_RATES_CUR,
-  tiers_detail: 'known',
-  tiers_before: EVIDENCE_HIST_TIERS_BEFORE, tiers_after: EVIDENCE_HIST_TIERS_AFTER,
-  observed_at: '2026-11-08T09:30:00Z', effective_at: '2026-11-07',
-  source_url: 'https://announcements.spend-sense.example/feed/hist-pair',
-  provenance: 'Synthetic central feed (history variant)', confidence: 'curated',
-  relevance: { relevant: false, reasons: [] },
-}
-const evidenceHistNewer = {
-  id: 'evidence-hist-newer-1', origin: 'local', category: 'price_reduction',
-  provider: 'evidenceco', model: 'hist-model',
-  summary: 'hist-model (evidenceco) list price changed.',
-  previous: EVIDENCE_HIST_RATES_CUR, current: { input: 1.0, output: 4.0, cache_read: 0.1, cache_write: 1.0 },
-  observed_at: '2026-11-10T12:00:00Z',
-  source_url: 'https://announcements.spend-sense.example/feed/hist-newer',
-  provenance: 'Synthetic local diff (history variant)', confidence: 'observed',
-  relevance: { relevant: false, reasons: [] },
-}
-const EVIDENCE = {
-  ok: true,
-  settings: { live_updates: true },
-  catalogue: { source: 'models.dev cache (synthetic fixture)',
-    as_of: '2026-11-09', snapshot_at: '2026-11-10T09:15:00Z' },
-  providers_configured: [],
-  impact_window_days: 30,
-  local: {
-    items: [evidenceSharedLocal, evidenceHistLocal, evidenceHistNewer],
-    baseline: false, store_error: '', snapshot_at: '2026-11-10T09:15:00Z',
-    removed_models: [], removed_model_count: 0, removed_plan_count: 0,
-  },
-  central: {
-    state: 'fresh', items: [evidenceSharedCentral, evidenceHistCentral],
-    fetched_at: '2026-11-10T06:40:00Z', error: '',
-  },
-  for_you_count: 0,
-  impacts: {},
-  signals: { configured_families: [], used_providers: [], used_models: [],
-    plan_ids: [], plan_families: [] },
-}
+// Page-local scenarios are shared with the browserless NewsPage tests: one
+// definition, so the Chromium page and its browserless replacement cannot
+// disagree about what a scenario contains.
+const SCENARIOS = buildNewsScenarios({ realistic: REALISTIC, variants: VARIANTS })
 
 const FIXTURES = {
   realistic: REALISTIC,
@@ -216,192 +122,7 @@ const FIXTURES = {
   partial: VARIANTS.partial,
   stale: VARIANTS.stale,
   nosignals: VARIANTS.nosignals,
-  evidence: EVIDENCE,
-  // Page-local variant: a family with two removal variants — one whose record
-  // the archive holds, one that exists only in the published briefing — each
-  // with its OWN source URL. Details must attribute each link to its provider.
-  variantsources: {
-    ...REALISTIC,
-    central: { ...REALISTIC.central, briefing: { version: 1,
-      generated_at: REALISTIC.central.fetched_at, unsupported: [], counts: {},
-      sections: [{ id: 'removals', total: 1, entries: [{
-        event_type: 'removed_from_provider', headline_code: 'news_head_removed',
-        headline_params: { provider: 'acme', model: 'pair-model' },
-        headline: 'acme no longer lists pair-model', provider: 'acme', model: 'pair-model',
-        model_family: 'pair-model', family_label: 'Pair Model',
-        observed_at: '2026-11-09T00:00:00Z', confidence: 'curated',
-        provenance: 'publisher history (family head)',
-        source_url: 'https://builder.example/family-head',
-        personal: true,
-        family_event_count: 2, event_ids: [REALISTIC.local.items[0].id],
-        variants: [
-          { event_type: 'removed_from_provider', headline_code: 'news_head_removed',
-            headline_params: { provider: 'acme', model: 'pair-model' },
-            headline: 'acme no longer lists pair-model', provider: 'acme', model: 'pair-model',
-            observed_at: '2026-11-09T00:00:00Z', confidence: 'curated',
-            provenance: 'publisher history (acme)',
-            source_url: 'https://builder.example/acme-variant',
-            event_ids: [REALISTIC.local.items[0].id] },
-          { event_type: 'removed_from_provider', headline_code: 'news_head_removed',
-            headline_params: { provider: 'zeta', model: 'pair-model' },
-            headline: 'zeta no longer lists pair-model', provider: 'zeta', model: 'pair-model',
-            observed_at: '2026-11-09T06:00:00Z', confidence: 'curated',
-            provenance: 'publisher history (zeta)',
-            source_url: 'https://builder.example/zeta-variant',
-            event_ids: ['ghost-zeta'] },
-        ],
-      }] }] } },
-  },
-  // Page-local variant: a section whose cap trimmed a ninth entry. The omitted
-  // entry is not in the payload, so the note may state the limit and the count
-  // but must not claim where the missing entry can be found.
-  capnote: {
-    ...REALISTIC,
-    central: { ...REALISTIC.central, briefing: { version: 1,
-      generated_at: REALISTIC.central.fetched_at, unsupported: [], counts: {},
-      sections: [{ id: 'removals', total: 9, entries: Array.from({ length: 8 }, (_, i) => ({
-        event_type: 'removed_from_provider', headline_code: 'news_head_removed',
-        headline_params: { provider: 'acme', model: `gone-${i}` },
-        headline: `acme no longer lists gone-${i}`,
-        provider: 'acme', model: `gone-${i}`, model_family: `gone-${i}`,
-        observed_at: '2026-11-09T00:00:00Z', confidence: 'curated',
-        source_url: 'https://builder.example/gone', event_ids: [`ghost-${i}`],
-        personal: true,
-      })) }] } },
-  },
-  // Page-local variant: a published briefing that reports no plan-event source
-  // while this archive DOES hold subscription events. The limitation must not
-  // replace a populated result.
-  plansource: {
-    ...REALISTIC,
-    central: { ...REALISTIC.central, briefing: { version: 1,
-      generated_at: REALISTIC.central.fetched_at, sections: [], counts: {},
-      unsupported: [{ id: 'subscriptions', reason_code: 'news_unsupported_no_plan_events' }] } },
-  },
-  // Page-local variant: one headline whose model is the OLDEST of a long
-  // substring-matching set, so its group sorts past the first page and has to be
-  // revealed before it can be marked.
-  manygroups: {
-    ...REALISTIC,
-    local: { ...REALISTIC.local, items: [...REALISTIC.local.items,
-      { id: 'local-page-target', origin: 'local', category: 'price_reduction',
-        provider: 'acme', model: 'pair-model',
-        previous: { input: 2, output: 4 }, current: { input: 1, output: 2 },
-        observed_at: '2026-11-09T00:00:00Z',
-        source_url: 'https://models.dev/page-head', provenance: 'Synthetic target',
-        confidence: 'observed', relevance: { relevant: false, reasons: [] } },
-      ...Array.from({ length: 13 }, (_, i) => ({
-        id: `local-page-${i}`, origin: 'local', category: 'price_increase',
-        provider: 'acme', model: `pair-model-${i + 2}`,
-        previous: { input: 1 + i, output: 2 + i }, current: { input: 2 + i, output: 4 + i },
-        observed_at: `2026-11-11T${String((i % 9) + 1).padStart(2, '0')}:00:00Z`,
-        source_url: 'https://models.dev/page', provenance: 'Synthetic page filler',
-        confidence: 'observed', relevance: { relevant: false, reasons: [] },
-      }))] },
-    central: { ...REALISTIC.central, briefing: { version: 1,
-      generated_at: REALISTIC.central.fetched_at, unsupported: [], counts: {},
-      sections: [{ id: 'biggest_reductions', total: 1, entries: [{
-        event_type: 'price_reduction', headline_code: 'news_head_single_rate',
-        headline_params: { provider: 'acme', model: 'pair-model',
-          rate: 'news_rate_input', pct: -50, before: '$2', after: '$1', direction: 'down' },
-        headline: 'acme cuts pair-model input by 50% ($2 → $1 per 1M tokens)',
-        provider: 'acme', model: 'pair-model', model_family: 'pair-model',
-        observed_at: '2026-11-09T00:00:00Z', confidence: 'observed',
-        source_url: 'https://models.dev/page-head', event_ids: ['local-page-target'],
-        personal: true,
-      }] }] } },
-  },
-  // Page-local variant (never in the grid matrix): one model family whose
-  // members sit on two providers. The headlined cut belongs to `acme`, while
-  // `zeta` has a NEWER price rise, so the archive sorts zeta's offer first and
-  // its matching cut is a History row inside zeta's own (closed) panel. A link
-  // that marks every event in the family would land on that hidden row.
-  splitfamily: {
-    ...REALISTIC,
-    local: { ...REALISTIC.local, items: [...REALISTIC.local.items,
-      { id: 'split-a', origin: 'local', category: 'price_reduction',
-        provider: 'acme', model: 'split-model',
-        previous: { input: 10, output: 20 }, current: { input: 5, output: 10 },
-        observed_at: '2026-11-02T00:00:00Z',
-        source_url: 'https://models.dev/split-a', provenance: 'Synthetic split A',
-        confidence: 'observed', relevance: { relevant: true, reasons: [] } },
-      { id: 'split-b-cut', origin: 'local', category: 'price_reduction',
-        provider: 'zeta', model: 'split-model',
-        previous: { input: 10, output: 20 }, current: { input: 6, output: 12 },
-        observed_at: '2026-11-01T00:00:00Z',
-        source_url: 'https://models.dev/split-b-cut', provenance: 'Synthetic split B cut',
-        confidence: 'observed', relevance: { relevant: true, reasons: [] } },
-      { id: 'split-b-rise', origin: 'local', category: 'price_increase',
-        provider: 'zeta', model: 'split-model',
-        previous: { input: 2, output: 4 }, current: { input: 3, output: 6 },
-        observed_at: '2026-11-09T00:00:00Z',
-        source_url: 'https://models.dev/split-b-rise', provenance: 'Synthetic split B rise',
-        confidence: 'observed', relevance: { relevant: true, reasons: [] } },
-    ] },
-    central: { ...REALISTIC.central, briefing: null },
-  },
-  // Page-local variant (never in the grid matrix): the evidence pairs marked
-  // relevant, so the headline surface renders the MERGED local/publish-side
-  // event — one change, two source records — and Details can be checked for
-  // both.
-  evmerged: {
-    ...EVIDENCE,
-    local: { ...EVIDENCE.local,
-      items: EVIDENCE.local.items.map(item => ({ ...item,
-        relevance: { relevant: true, reasons: [] } })) },
-    central: { ...EVIDENCE.central,
-      items: EVIDENCE.central.items.map(item => ({ ...item,
-        relevance: { relevant: true, reasons: [] } })) },
-  },
-  // Page-local variant (never in the grid matrix): the same verified events
-  // with no plan/membership announcement, so the Subscription Updates filter
-  // exercises the source-limitation path instead of an empty-result message.
-  noplan: {
-    ...REALISTIC,
-    local: { ...REALISTIC.local,
-      items: REALISTIC.local.items.filter(item => item.category !== 'subscription') },
-    central: { ...REALISTIC.central,
-      items: REALISTIC.central.items.filter(item => item.category !== 'subscription') },
-  },
-  // Page-local variant (never in the grid matrix): a publisher-supplied
-  // briefing whose removals section carries a history-confirmed record that
-  // exists nowhere in the archive's items. That is the shape the client must
-  // render from the entry's own evidence rather than from a joined record.
-  published: {
-    ...REALISTIC,
-    central: {
-      ...REALISTIC.central,
-      briefing: {
-        version: 1,
-        generated_at: REALISTIC.central.fetched_at,
-        sections: [
-          { id: 'biggest_reductions', total: 1, entries: [{
-            event_type: 'price_reduction',
-            headline_code: 'news_head_single_rate',
-            headline_params: { provider: 'openai', model: 'gpt-5.6-sol',
-              rate: 'news_rate_input', pct: -50, before: '$2.5', after: '$1.25', direction: 'down' },
-            headline: 'openai cuts gpt-5.6-sol input by 50% ($2.5 → $1.25 per 1M tokens)',
-            provider: 'openai', model: 'gpt-5.6-sol', model_family: 'gpt-5.6-sol',
-            observed_at: REALISTIC.central.fetched_at, confidence: 'observed',
-            event_ids: [REALISTIC.local.items[0].id], personal: true,
-          }] },
-          { id: 'removals', total: 1, entries: [{
-            event_type: 'removed_from_provider',
-            headline_code: 'news_head_removed_from_provider',
-            headline_params: { provider: 'acme', model: 'alpha',
-              observations: 2 },
-            headline: 'acme no longer lists alpha (confirmed across 2 catalogue observations)',
-            provider: 'acme', model: 'alpha', model_family: 'alpha',
-            observed_at: '2026-11-09T00:00:00Z', confidence: 'observed',
-            source_url: 'https://models.dev/removals/rm-acme-alpha',
-            event_ids: ['rm-acme-alpha'], personal: true,
-          }] },
-        ],
-        counts: { events: 2 },
-        unsupported: [],
-      },
-    },
-  },
+  ...SCENARIOS,
 }
 
 const errors = (globalThis.__newsErrors = [])
@@ -706,38 +427,6 @@ async function probeStory(pane, pick = null) {
 }
 
 /**
- * WP22: what a story's Details panel lists as its evidence. A merged local and
- * publish-side record is ONE event with TWO sources, and both must be readable
- * — dropping one loses that source's provenance, timestamps and tier evidence.
- */
-async function probeStoryRecords(pane) {
-  const stories = [...pane.querySelectorAll('[data-news-story]')].slice(0, 6)
-  const out = []
-  for (const story of stories) {
-    const toggle = story.querySelector('[data-news-story-details]')
-    if (!toggle) continue
-    if (toggle.getAttribute('aria-expanded') !== 'true') {
-      toggle.click()
-      await tick(120)
-    }
-    out.push({
-      model: story.getAttribute('data-news-story-model') || '',
-      records: [...story.querySelectorAll('[data-news-story-record]')]
-        .map(row => row.getAttribute('data-news-story-record')),
-      variants: [...story.querySelectorAll('[data-news-story-variant-record]')]
-        .map(row => row.getAttribute('data-news-story-variant-record')),
-      variantEvidence: [...story.querySelectorAll('[data-news-story-variant-evidence] li')]
-        .map(row => ({
-          provider: row.getAttribute('data-news-story-variant-record') || '',
-          hrefs: [...row.querySelectorAll('a')].map(a => a.getAttribute('href')),
-          text: row.textContent.trim().slice(0, 160),
-        })),
-    })
-  }
-  return out
-}
-
-/**
  * WP22: reveal probe. Finds the headline for one model, follows its archive
  * link and reports what the archive actually rendered — the group count, the
  * marked row and the page size in effect.
@@ -810,34 +499,6 @@ async function probeFocusOnce(pane) {
     markedId: second?.getAttribute('data-news-focus-event')
       || second?.getAttribute('data-news-event') || '',
   }
-}
-
-/**
- * WP22: what the Subscription Updates filter says when the source publishes no
- * plan events at all. Drives the category control through its own click path
- * (never by English copy) and restores the unfiltered view afterwards.
- */
-async function probeSubscription(pane) {
-  const group = pane.querySelector(SELECTORS.category)
-  const buttons = [...(group?.querySelectorAll('button') || [])]
-  const value = index => buttons[index]?.getAttribute('value') || ''
-  const subscription = buttons.find(button => value(buttons.indexOf(button)) === 'subscription')
-    || buttons.find(button => /subscription|订阅/i.test(button.textContent || ''))
-  if (!subscription) return { missing: true }
-  subscription.click()
-  await tick(150)
-  const empty = pane.querySelector(SELECTORS.empty)
-  const out = {
-    pressed: subscription.getAttribute('aria-pressed'),
-    empty: empty?.textContent?.trim() || '',
-    groups: pane.querySelectorAll(SELECTORS.group).length,
-    // Plan events render as cards, not model groups, so both are counted.
-    cards: pane.querySelectorAll('.wm-news-card').length,
-    note: pane.querySelector('[data-news-archive-note]')?.textContent?.trim() || '',
-  }
-  const all = buttons.find(button => value(buttons.indexOf(button)) === 'all')
-  if (all) { all.click(); await tick(120) }
-  return out
 }
 
 /** Observation only (not asserted): header overflow outside the A scope. */
@@ -1091,26 +752,6 @@ async function probeCandidate(c, pane) {
         panelHtml: panel ? panel.outerHTML : '',
       }
     })
-    return out
-  }
-
-  if (c.fixture === 'nosignals' && c.scope === 'foryou') {
-    // The final UI has no link-to-All hook in the empty state; the navigation
-    // path is the scope tab itself.
-    const empty = pane.querySelector(SELECTORS.empty)
-    const scopeButtons = [...pane.querySelectorAll(`${SELECTORS.scope} button`)]
-    const allTab = scopeButtons.find(b => /all updates|全部动态/i.test(b.textContent || ''))
-    out.emptyForYou = {
-      present: !!empty,
-      message: empty?.textContent?.trim() || '',
-      hasPathToAll: !!allTab
-        && (allTab.offsetParent !== null || allTab.getClientRects().length > 0),
-    }
-    if (allTab) {
-      allTab.click()
-      await tick(150)
-      out.emptyForYou.groupsAfterClick = groupEls().length
-    }
     return out
   }
 
@@ -1414,13 +1055,11 @@ async function measureCase(c) {
     result.probe = await probeCandidate(c, pane)
   }
   else if (PROBE) result.probe = { skipped: 'candidate DOM not detected ([data-news-group] absent)' }
-  if (params.get('probe') === 'subscription') result.probeSubscription = await probeSubscription(pane)
   if (params.get('probe') === 'story') {
     // `model=` (possibly empty) selects the story by its model attribute, so a
     // record with no model — a plan or a provider listing — can be probed too.
     result.probeStory = await probeStory(pane, params.has('model') ? params.get('model') : null)
   }
-  if (params.get('probe') === 'storyrecords') result.probeStoryRecords = await probeStoryRecords(pane)
   if (params.get('probe') === 'reveal') result.probeReveal = await probeStoryReveal(pane, params.get('model') || '')
   if (params.get('probe') === 'focusonce') result.probeFocusOnce = await probeFocusOnce(pane)
   return result

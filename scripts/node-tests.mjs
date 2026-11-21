@@ -11,7 +11,7 @@ const suites = {
     ['digest-render', 24, true], ['economics', 28], ['economics-render', 51, true],
     ['membership', 38], ['membership-scope', 99, true], ['news', 24],
     ['news-editorial', 46], ['news-groups', 52], ['news-layout.harness', 4],
-    ['news-render', 52, true], ['node-runner', 5], ['plugin', 65], ['recount', 16],
+    ['news-render', 60, true], ['node-runner', 5], ['plugin', 65], ['recount', 16],
     ['reports-layout.chromium', 17], ['reports-layout.devtools', 10],
     ['sidebar', 39, true], ['ui-labels', 48],
     ['ux-primitives', 32, true], ['weather', 11], ['weather-render', 9, true],
@@ -21,7 +21,7 @@ const suites = {
     ['budgets-layout', 1], ['costs-layout', 1], ['memberships-cards', 1],
     ['memberships-clarity', 1], ['memberships-disclosure', 1],
     ['memberships-layout', 1], ['memberships-polish', 1], ['memberships-visibility', 1],
-    ['news-layout', 14], ['overview-layout', 1], ['reports-layout', 1],
+    ['news-layout', 7], ['overview-layout', 1], ['reports-layout', 1],
     ['settings-layout', 1], ['sidebar-layout', 1], ['tooltip-layout', 1], ['usage-layout', 1],
   ],
 }

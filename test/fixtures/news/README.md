@@ -143,11 +143,12 @@ Deliberately included:
 | `nosignals` | Full item list but empty signals: relevance/`for_you` all false, no impacts, For You empty with the "nothing to personalise" state while All stays complete. |
 | `error` | Transport-level failure: `rest('/news/refresh')` resolves `{ok:false, detail: …}` so the query rejects and the page shows its error + Retry state. This one is not a payload — it is what the harness transport returns. |
 
-## Evidence-retention regressions (page-local payload)
+## Evidence-retention regressions (shared scenarios)
 
-Two further cases live only in `test/news-layout.page.jsx` under the
-`evidence` fixture name (probed as a single case; never part of the grid
-matrix and never written to these JSON files — no fixture churn):
+Two further cases are built in `test/news-layout.scenarios.mjs` (exported as the
+`evidence` and `evmerged` scenarios; never written to these JSON files — no
+fixture churn). Both renderers consume that one module, so the Chromium page and
+the browserless NewsPage tests cannot drift:
 
 - `ev-model`: two records sharing ONE id (one local, one central) that
   dedupe to exactly one event, while both records' source URL, full
@@ -166,5 +167,9 @@ matrix and never written to these JSON files — no fixture churn):
 - `test/news-layout.test.mjs` + `test/news-layout.page.jsx` +
   `test/news-layout.sdk.mjs` — the layout/verification harness (real headless
   Chrome; screenshot mode via `NEWS_LAYOUT_SHOTS=<dir>`).
+- `test/news-render.test.mjs` — the browserless NewsPage tests, which render
+  the same fixture payloads and scenarios in jsdom (`renderNewsPagePayload`).
+  Data, copy and provenance assertions live there; the Chromium suite keeps
+  layout, contrast, scrolling and real interaction.
 - The scratch baseline harness under `/tmp/wp11-baseline-harness/` used
   hand-written equivalents of these fixtures before they were committed.
