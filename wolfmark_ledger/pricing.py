@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -94,6 +95,8 @@ class Tier:
     output: Optional[float] = None
     cache_read: Optional[float] = None
     cache_write: Optional[float] = None
+    #: Named write-retention alternatives, e.g. (("30m", 2.5), ("12h", 5.0)).
+    cache_write_rates: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -103,6 +106,9 @@ class Rate:
     cache_read: Optional[float] = None
     cache_write: Optional[float] = None
     tiers: tuple[Tier, ...] = ()
+    #: Named write-retention alternatives; ``cache_write`` stays the documented
+    #: default (30 minutes for OpenAI) for compatibility with existing readers.
+    cache_write_rates: tuple[tuple[str, float], ...] = ()
 
     def has_base_price(self) -> bool:
         return self.input is not None or self.output is not None
@@ -230,6 +236,33 @@ def _num(value: Any) -> Optional[float]:
     return number if math.isfinite(number) and number >= 0 else None
 
 
+def _retention_minutes(name: str) -> int:
+    """Sort key for retention labels such as ``30m`` or ``12h`` (unknown last)."""
+    match = re.fullmatch(r"\s*(\d+)\s*([mh])\s*", name or "")
+    if not match:
+        return 10**9
+    return int(match.group(1)) * (60 if match.group(2) == "h" else 1)
+
+
+def _write_rates(value: Any) -> tuple[tuple[str, float], ...]:
+    """Parse named write-retention prices, de-duplicated and ordered by duration.
+
+    Accepts ``[{"retention": "30m", "rate": 2.5}, …]``. A malformed or empty
+    entry is dropped rather than guessed.
+    """
+    if not isinstance(value, list):
+        return ()
+    out: dict[str, float] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("retention") or "").strip()
+        rate = _num(item.get("rate"))
+        if name and rate is not None:
+            out[name] = rate
+    return tuple(sorted(out.items(), key=lambda pair: (_retention_minutes(pair[0]), pair[0])))
+
+
 def _tier_from_dict(raw: dict[str, Any]) -> Optional[Tier]:
     if not isinstance(raw, dict):
         return None
@@ -243,6 +276,7 @@ def _tier_from_dict(raw: dict[str, Any]) -> Optional[Tier]:
         output=_num(raw.get("output")),
         cache_read=_num(raw.get("cache_read")),
         cache_write=_num(raw.get("cache_write")),
+        cache_write_rates=_write_rates(raw.get("cache_write_rates")),
     )
 
 
@@ -286,6 +320,7 @@ def _rate_from_cost(cost: Any) -> Optional[Rate]:
         cache_read=_num(cost.get("cache_read")),
         cache_write=_num(cost.get("cache_write")),
         tiers=tuple(tiers),
+        cache_write_rates=_write_rates(cost.get("cache_write_rates")),
     )
 
 
@@ -330,6 +365,7 @@ def _windowed_rate(rate: Rate, windows: tuple, at: Optional[float]) -> Rate:
             cache_read=cr if cr is not None else rate.cache_read,
             cache_write=cw if cw is not None else rate.cache_write,
             tiers=rate.tiers,
+            cache_write_rates=rate.cache_write_rates,
         )
     return rate
 
@@ -356,9 +392,16 @@ def load_official(path: Optional[Path] = None) -> dict[tuple[str, str], tuple[Ra
         if not provider or not model:
             continue
         try:
-            rate = Rate(input=float(row["input"]), output=float(row["output"]),
-                        cache_read=float(row["cache_read"]) if row.get("cache_read") is not None else None,
-                        cache_write=float(row["cache_write"]) if row.get("cache_write") is not None else None)
+            tiers = [t for t in (_tier_from_dict(raw_tier)
+                                 for raw_tier in row.get("tiers") or []) if t]
+            tiers.sort(key=lambda t: t.threshold)
+            rate = Rate(
+                input=float(row["input"]), output=float(row["output"]),
+                cache_read=float(row["cache_read"]) if row.get("cache_read") is not None else None,
+                cache_write=float(row["cache_write"]) if row.get("cache_write") is not None else None,
+                tiers=tuple(tiers),
+                cache_write_rates=_write_rates(row.get("cache_write_rates")),
+            )
         except (KeyError, TypeError, ValueError):
             continue
         windows = []
@@ -518,6 +561,12 @@ def _effective_rate(rate: Rate, avg_prompt: float) -> tuple[Rate, bool]:
     if not applicable:
         return rate, False
     tier = max(applicable, key=lambda t: t.threshold)
+    # A tier that overrides the scalar write price without naming retention
+    # options cannot inherit the base card's alternatives: its write price is a
+    # different one.
+    write_options = (tier.cache_write_rates if tier.cache_write_rates
+                     else rate.cache_write_rates if tier.cache_write is None
+                     else ())
     return (
         Rate(
             input=tier.input if tier.input is not None else rate.input,
@@ -525,6 +574,7 @@ def _effective_rate(rate: Rate, avg_prompt: float) -> tuple[Rate, bool]:
             cache_read=tier.cache_read if tier.cache_read is not None else rate.cache_read,
             cache_write=tier.cache_write if tier.cache_write is not None else rate.cache_write,
             tiers=(),
+            cache_write_rates=write_options,
         ),
         True,
     )

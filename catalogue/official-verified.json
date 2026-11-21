@@ -13,6 +13,34 @@
         {"days": [0, 1, 2, 3, 4], "start_minute": 60,  "end_minute": 240, "input": 0.30, "output": 1.20},
         {"days": [0, 1, 2, 3, 4], "start_minute": 360, "end_minute": 600, "input": 0.30, "output": 1.20}
       ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6.2-sol",
+      "input": 2.0,
+      "cache_read": 0.1,
+      "cache_write": 2.5,
+      "output": 10.0,
+      "cache_write_rates": [
+        {"retention": "30m", "rate": 2.5},
+        {"retention": "12h", "rate": 5.0}
+      ],
+      "tiers": [
+        {
+          "threshold": 272000,
+          "input": 4.0,
+          "cache_read": 0.2,
+          "cache_write": 5.0,
+          "output": 15.0,
+          "cache_write_rates": [
+            {"retention": "30m", "rate": 5.0},
+            {"retention": "12h", "rate": 10.0}
+          ]
+        }
+      ],
+      "source_url": "https://developers.openai.com/api/docs/models/gpt-6.2-sol",
+      "verified_at": "2026-11-21",
+      "note": "Standard text prices, USD per 1M tokens. cache_write is the published 30-minute retention rate; the short-context 12-hour write of $5 is listed separately. Above 272K input tokens the full request uses doubled input/cache rates and 1.5x output; the long-context 12-hour write of $10 is derived by applying that published doubling rule, not a separately displayed price. API-equivalent valuation only: it does not establish a Codex subscription charge."
     }
   ]
 }

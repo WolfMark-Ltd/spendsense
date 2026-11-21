@@ -635,8 +635,20 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     write_known = _reported(cache_write_reported, cache_write)
     write_rate = effective_rate.cache_write if effective_rate is not None else None
     write_defaulted = bool(effective and effective.cache_write_defaulted)
+    write_options = (sorted({float(value) for _, value in effective_rate.cache_write_rates})
+                     if effective_rate is not None else [])
+    retention_range = bool(write_known and cache_write > 0
+                           and len(write_options) > 1 and effective_usd is not None)
+    cost_low = cost_high = effective_usd
+    if retention_range and effective_rate is not None and effective_rate.cache_write is not None:
+        scalar_write = float(effective_rate.cache_write)
+        base_usd = float(effective_usd or 0.0)
+        cost_low = base_usd + cache_write * (write_options[0] - scalar_write) / 1_000_000
+        cost_high = base_usd + cache_write * (write_options[-1] - scalar_write) / 1_000_000
     if effective_usd is None:
         cost_bound = None
+    elif retention_range:
+        cost_bound = "range"
     elif write_known and not write_defaulted:
         cost_bound = "exact"
     elif write_rate is None or write_defaulted:
@@ -668,6 +680,10 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         "_tier_applied": tier_applied,
         "_tier_selected": bool(tier_selected),
         "_cost_bound": cost_bound,
+        "_cost_high": cost_high,
+        "_cost_low": cost_low,
+        "_retention_range": retention_range,
+        "_write_rate_options": tuple(write_options),
         "effective_usd": effective_usd,
         "_failure": failure,
         "_missing": missing,

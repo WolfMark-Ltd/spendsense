@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from wolfmark_ledger import aggregate, analytics, collector, store
-from wolfmark_ledger.pricing import Catalogue, Rate, Tier
+from wolfmark_ledger.pricing import Catalogue, Rate, Tier, load_catalogue
 
 NOW = datetime(2026, 11, 21, 12, tzinfo=timezone.utc).timestamp()
 
@@ -381,6 +381,167 @@ class ProvenanceContractTests(unittest.TestCase):
     def test_api_contract_is_four(self):
         from dashboard import plugin_api
         self.assertEqual(plugin_api.API_CONTRACT, 4)
+
+
+class OfficialRateRowTests(unittest.TestCase):
+    """GPT-6.2 Sol: official tiers, retention alternatives, alias scope."""
+
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR"))
+        self.addCleanup(self.scratch.cleanup)
+        self.events = Path(self.scratch.name) / "usage.db"
+        self.state = Path(self.scratch.name) / "state.db"
+        self.book = load_catalogue()
+        self.addCleanup(self._release_writer)
+
+    @staticmethod
+    def _release_writer():
+        if store._WRITER is not None:
+            try:
+                store._WRITER.close()
+            except Exception:  # noqa: BLE001
+                pass
+        store._WRITER = None
+        store._WRITER_PATH = None
+
+    def create_events(self, rows):
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.executescript(store._SCHEMA)
+            for index, row in enumerate(rows):
+                values = {"event_id": f"official-{index}", "ts": NOW - 60,
+                          "session_id": "sol", "model": "gpt-6.2-sol",
+                          "provider": "openai-codex", "outcome": "ok",
+                          "recorded_at": NOW, **row}
+                columns = list(values)
+                conn.execute(f"INSERT INTO calls ({','.join(columns)}) VALUES "
+                             f"({','.join('?' for _ in columns)})", list(values.values()))
+
+    def summary(self, **kwargs):
+        return analytics.build_session_summary(
+            self.events, state_db_path=self.state, catalogue=self.book,
+            now=NOW, **kwargs)
+
+    def test_official_row_loads_tiers_and_retention(self):
+        hit = self.book.lookup("openai-codex", "gpt-6.2-sol")
+        assert hit is not None
+        self.assertEqual(hit.provenance, "official_verified")
+        self.assertTrue(hit.alias_used)
+        self.assertEqual((hit.rate.input, hit.rate.output, hit.rate.cache_read,
+                          hit.rate.cache_write), (2.0, 10.0, 0.1, 2.5))
+        self.assertEqual(dict(hit.rate.cache_write_rates), {"30m": 2.5, "12h": 5.0})
+        self.assertEqual([(t.threshold, t.input, t.output, t.cache_read, t.cache_write)
+                          for t in hit.rate.tiers], [(272000, 4.0, 15.0, 0.2, 5.0)])
+        self.assertEqual(dict(hit.rate.tiers[0].cache_write_rates),
+                         {"30m": 5.0, "12h": 10.0})
+
+    def test_context_boundary_is_strictly_above_272k(self):
+        self.create_events([{"input_tokens": 272_000, "output_tokens": 0}])
+        at_limit = self.summary(session_id="sol")
+        self.assertEqual(at_limit["provenance"]["tiers"]["applied"], {"base": 1, "tiered": 0})
+        self.assertAlmostEqual(at_limit["valuation"]["api_equivalent_usd"],
+                               272_000 * 2.0 / 1e6, places=9)
+        os.remove(self.events)
+        self.create_events([{"input_tokens": 272_001, "output_tokens": 0}])
+        above = self.summary(session_id="sol")
+        self.assertEqual(above["provenance"]["tiers"]["applied"], {"base": 0, "tiered": 1})
+        self.assertAlmostEqual(above["valuation"]["api_equivalent_usd"],
+                               272_001 * 4.0 / 1e6, places=9)
+
+    def test_both_retentions_at_both_bands(self):
+        # Base band: prompt 100,000; base rates apply.
+        self.create_events([{"cache_write_tokens": 100_000, "cache_write_reported": 1,
+                             "cache_read_reported": 1}])
+        base = self.summary(session_id="sol")["valuation"]
+        self.assertEqual(base["savings_basis"], "range")
+        self.assertEqual(base["savings_bound_reason"], "retention_unknown")
+        self.assertAlmostEqual(base["savings_usd"], -0.3, places=6)   # 12h: $5/M
+        self.assertAlmostEqual(base["savings_usd_high"], -0.05, places=6)  # 30m: $2.5/M
+        os.remove(self.events)
+        # Long band: 300k input + 100k write = 400k prompt; tier rates apply.
+        self.create_events([{"input_tokens": 300_000, "cache_write_tokens": 100_000,
+                             "cache_write_reported": 1, "cache_read_reported": 1}])
+        long = self.summary(session_id="sol")["valuation"]
+        self.assertEqual(long["savings_basis"], "range")
+        self.assertAlmostEqual(long["savings_usd"], -0.6, places=6)    # 12h: $10/M
+        self.assertAlmostEqual(long["savings_usd_high"], -0.1, places=6)  # 30m: $5/M
+
+    def test_positive_writes_with_unknown_retention_are_never_exact(self):
+        self.create_events([{"cache_write_tokens": 100_000, "cache_write_reported": 1,
+                             "cache_read_reported": 1}])
+        out = self.summary(session_id="sol")
+        self.assertEqual(out["valuation"]["retention_unknown_calls"], 1)
+        self.assertEqual(out["valuation"]["savings_basis"], "range")
+        self.assertEqual(out["valuation"]["api_equivalent_basis"], "range")
+        self.assertEqual(out["valuation"]["api_equivalent_bound_reason"],
+                         "retention_unknown")
+        self.assertLess(out["valuation"]["api_equivalent_usd"],
+                        out["valuation"]["api_equivalent_usd_high"])
+
+    def test_explicit_zero_writes_are_exact(self):
+        self.create_events([{"input_tokens": 1_000, "output_tokens": 100,
+                             "cache_write_reported": 1, "cache_read_reported": 1}])
+        valuation = self.summary(session_id="sol")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "exact")
+        self.assertEqual(valuation["api_equivalent_basis"], "exact")
+        self.assertAlmostEqual(valuation["savings_usd"], 0.0, places=9)
+        self.assertEqual(valuation["retention_unknown_calls"], 0)
+
+    def test_unreported_writes_stay_directional_without_a_range(self):
+        self.create_events([{"input_tokens": 1_000, "cache_read_tokens": 9_000}])
+        valuation = self.summary(session_id="sol")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "upper_bound")
+        self.assertEqual(valuation["savings_usd"], valuation["savings_usd_high"],
+                         "an unknown write count must not manufacture a range")
+        self.assertEqual(valuation["retention_unknown_calls"], 0)
+        self.assertEqual(valuation["api_equivalent_basis"], "lower_bound")
+
+    def test_negative_savings_are_not_clamped(self):
+        self.create_events([{"cache_write_tokens": 100_000,
+                             "cache_write_reported": 1}])
+        self.assertLess(self.summary(session_id="sol")["valuation"]["savings_usd"], 0)
+
+    def test_partial_pricing_leaves_the_total_incomplete(self):
+        self.create_events([{"input_tokens": 1_000, "cache_read_tokens": 9_000},
+                            {"provider": "mystery", "model": "unpriced",
+                             "input_tokens": 500}])
+        valuation = self.summary(session_id="sol")["valuation"]
+        self.assertEqual(valuation["api_equivalent_basis"], "incomplete")
+        self.assertEqual(valuation["api_equivalent_bound_reason"], "unpriced_tokens")
+        self.assertEqual(valuation["covered_calls"], 1)
+        self.assertEqual(valuation["excluded_calls"], 1)
+
+    def test_context_buckets_are_summed_not_duplicated(self):
+        # Three disjoint buckets, each below the threshold; only their sum crosses it.
+        self.create_events([{"input_tokens": 100_000, "cache_read_tokens": 100_000,
+                             "cache_write_tokens": 100_000, "cache_write_reported": 1}])
+        out = self.summary(session_id="sol")
+        self.assertEqual(out["totals"]["prompt_tokens"], 300_000)
+        self.assertEqual(out["provenance"]["tiers"]["applied"], {"base": 0, "tiered": 1})
+
+    def test_alias_prices_the_route_but_never_claims_a_bill(self):
+        self.create_events([{"input_tokens": 1_000, "output_tokens": 100}])
+        row = {"input_tokens": 1_000, "output_tokens": 100, "provider": "openai-codex",
+               "model": "gpt-6.2-sol", "outcome": "ok", "ts": NOW, "session_id": "sol"}
+        result = aggregate._event_result(row, self.book, "list", {}, at=NOW)
+        self.assertIsNotNone(result["list_usd"])
+        self.assertEqual(result["billing_class"], "unknown")
+        self.assertIsNone(result["billed_usd"])
+        self.assertEqual(result["pricing"]["provenance"], "official_verified")
+
+    def test_rates_endpoint_keeps_contract_four_shape(self):
+        from dashboard import plugin_api
+        payload = plugin_api.rates(provider="openai-codex", model="gpt-6.2-sol", at=None)
+        rate = payload["rate"]
+        self.assertTrue(rate["has_tiers"])
+        self.assertFalse(rate["flat"])
+        self.assertEqual(rate["tier_semantics"], "whole_request")
+        self.assertEqual([item["retention"] for item in rate["cache_write_rates"]],
+                         ["30m", "12h"])
+        self.assertEqual(rate["tiers"][0]["threshold"], 272000)
+        self.assertEqual([item["retention"] for item in rate["tiers"][0]["cache_write_rates"]],
+                         ["30m", "12h"])
+        for key in ("input", "output", "cache_read", "cache_write", "provenance"):
+            self.assertIn(key, rate)
 
 
 if __name__ == "__main__":

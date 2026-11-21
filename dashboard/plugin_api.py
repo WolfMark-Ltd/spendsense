@@ -351,11 +351,16 @@ def rates(provider: str | None = Query(None), model: str | None = Query(None),
             "provider": hit.provider, "model": hit.model, "route_provider": hit.route_provider,
             "input": hit.rate.input, "output": hit.rate.output,
             "cache_read": hit.rate.cache_read, "cache_write": hit.rate.cache_write,
+            "cache_write_rates": [{"retention": name, "rate": value}
+                                  for name, value in hit.rate.cache_write_rates],
             "has_tiers": bool(hit.rate.tiers),
             "flat": not hit.rate.tiers,
             "tiers": [{"threshold": tier.threshold, "input": tier.input,
                        "output": tier.output, "cache_read": tier.cache_read,
-                       "cache_write": tier.cache_write} for tier in hit.rate.tiers],
+                       "cache_write": tier.cache_write,
+                       "cache_write_rates": [{"retention": name, "rate": value}
+                                             for name, value in tier.cache_write_rates]}
+                      for tier in hit.rate.tiers],
             "tier_semantics": "whole_request" if hit.rate.tiers else None,
             "provenance": hit.provenance, "source": hit.source,
             "provisional": list(getattr(hit, "provisional", ())),

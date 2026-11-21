@@ -109,19 +109,22 @@ def _savings_directions(rate: Rate, *, read_known: bool, write_known: bool
     Unknown writes add ``write_rate − input_rate`` per unreported write; unknown
     reads add ``input_rate − cache_read_rate`` per unreported read. A direction
     of ``lower`` means the figure can only rise once the counter is known.
+    With several retention prices, every option must agree on the direction.
     """
     directions: list[tuple[str, str]] = []
     input_rate = rate.input
     if input_rate is None:
         return [("indeterminate", "write")]
     if not write_known:
-        write_rate = rate.cache_write
-        if write_rate is None:
+        write_rates = [value for _, value in rate.cache_write_rates]
+        if not write_rates:
+            write_rates = [rate.cache_write] if rate.cache_write is not None else []
+        if not write_rates:
             return [("indeterminate", "write")]
-        premium = float(write_rate) - float(input_rate)
-        if premium > 0:
+        premiums = [float(value) - float(input_rate) for value in write_rates]
+        if any(premium > 0 for premium in premiums):
             directions.append(("upper", "write"))
-        elif premium < 0:
+        if any(premium < 0 for premium in premiums):
             directions.append(("lower", "write"))
     if not read_known:
         read_rate = rate.cache_read
@@ -179,10 +182,29 @@ def _call_economics(row: dict[str, Any], book: Catalogue, *,
     cached = (row["_input"] * rate.input + row["_output"] * rate.output
               + row["_cache_read"] * (rate.cache_read or 0)
               + row["_cache_write"] * (rate.cache_write or 0)) / 1_000_000
+    base_savings = uncached - cached
+    low = high = base_savings
+    retention_range = False
+    write_options = sorted({float(value) for _, value in rate.cache_write_rates})
+    scalar_write = float(rate.cache_write) if rate.cache_write is not None else None
+    # Positive, measured writes whose retention is not recorded span every
+    # published retention price. Unknown write counts never get a finite range:
+    # there is no evidence to bound how many tokens were written.
+    if write_known and row["_cache_write"] > 0 and len(write_options) > 1 \
+            and scalar_write is not None:
+        delta_low = row["_cache_write"] * (write_options[0] - scalar_write) / 1_000_000
+        delta_high = row["_cache_write"] * (write_options[-1] - scalar_write) / 1_000_000
+        high = base_savings - delta_low   # cheapest retention saves the most
+        low = base_savings - delta_high
+        retention_range = True
     premium = None
-    if not write_known and rate.cache_write is not None:
-        premium = round(float(rate.cache_write) - float(rate.input), 6)
+    if not write_known:
+        options = write_options or ([scalar_write] if scalar_write is not None else [])
+        premiums = {round(value - float(rate.input), 6) for value in options}
+        premium = next(iter(premiums)) if len(premiums) == 1 else None
     return {"uncached": uncached, "cached": cached,
+            "savings_low": low, "savings_high": high,
+            "retention_range": retention_range,
             "savings": _savings_directions(rate, read_known=read_known,
                                            write_known=write_known),
             "premium": premium}, ""
@@ -199,6 +221,11 @@ class _AnalyticsAcc:
         self.known_write_tokens = 0
         self.uncached_usd = 0.0
         self.cached_usd = 0.0
+        self.savings_low_usd = 0.0
+        self.savings_high_usd = 0.0
+        self.retention_calls = 0
+        self.api_high_usd = 0.0
+        self.priced_calls = 0
         self.covered_tokens = 0
         self.covered_calls = 0
         self.tiered_calls = 0
@@ -232,6 +259,10 @@ class _AnalyticsAcc:
         else:
             self.uncached_usd += economics["uncached"]
             self.cached_usd += economics["cached"]
+            self.savings_low_usd += economics["savings_low"]
+            self.savings_high_usd += economics["savings_high"]
+            if economics["retention_range"]:
+                self.retention_calls += 1
             self.covered_tokens += row["_tokens"]
             self.covered_calls += 1
             for direction, cause in economics["savings"]:
@@ -243,6 +274,11 @@ class _AnalyticsAcc:
         # from the savings comparison above.
         if row.get("list_usd") is not None and row.get("_cost_bound") not in (None, "exact"):
             self.cost_bounds.add(row["_cost_bound"])
+        list_usd = row.get("list_usd")
+        if list_usd is not None:
+            self.priced_calls += 1
+            high = row.get("_cost_high")
+            self.api_high_usd += float(high) if high is not None else float(list_usd)
         if row.get("list_usd") is None:
             self.pricing_gaps[row.get("pricing_miss") or "price_evidence_missing"] += 1
         self.total_prompt_tokens += prompt
@@ -263,10 +299,16 @@ class _AnalyticsAcc:
         write_state, write_reason = self.write_prov.state(self.known_write_tokens)
         savings_basis, bound_reason, premium = _savings_basis(
             self.bounds, self.premiums, self.bound_causes, self.covered_calls)
+        if self.retention_calls:
+            savings_basis = "range"
+            bound_reason = ("retention_and_counter_uncertainty" if self.bounds
+                            else "retention_unknown")
         if base["unpriced_tokens"]:
             api_basis, api_reason = "incomplete", "unpriced_tokens"
         elif "incomplete" in self.cost_bounds:
             api_basis, api_reason = "incomplete", "write_rate_missing"
+        elif "range" in self.cost_bounds:
+            api_basis, api_reason = "range", "retention_unknown"
         elif "lower" in self.cost_bounds:
             api_basis, api_reason = "lower_bound", "write_not_reported"
         else:
@@ -298,12 +340,16 @@ class _AnalyticsAcc:
                 "economics": {
                     "uncached_usd": round(self.uncached_usd, 6) if self.covered_calls else None,
                     "cached_usd": round(self.cached_usd, 6) if self.covered_calls else None,
-                    "savings_usd": round(self.uncached_usd - self.cached_usd, 6) if self.covered_calls else None,
+                    "savings_usd": round(self.savings_low_usd, 6) if self.covered_calls else None,
+                    "savings_usd_high": round(self.savings_high_usd, 6) if self.covered_calls else None,
                     "savings_basis": savings_basis,
                     "savings_bound_reason": bound_reason,
+                    "retention_unknown_calls": self.retention_calls,
                     "write_premium_usd_per_mtok": premium,
                     "api_equivalent_basis": api_basis,
                     "api_equivalent_bound_reason": api_reason,
+                    "api_equivalent_usd_high": (round(self.api_high_usd, 6)
+                                                if self.priced_calls else None),
                     "covered_tokens": self.covered_tokens,
                     "coverage": round(self.covered_tokens / base["tokens"], 6) if base["tokens"] else 0.0,
                     "covered_calls": self.covered_calls,
@@ -754,13 +800,16 @@ def build_session_summary(
             },
             "valuation": {
                 "api_equivalent_usd": totals_raw["list_usd"] if totals_raw["priced_tokens"] else None,
+                "api_equivalent_usd_high": economics["api_equivalent_usd_high"],
                 "api_equivalent_basis": api_basis,
                 "api_equivalent_bound_reason": api_reason,
                 "uncached_usd": economics["uncached_usd"],
                 "cached_usd": economics["cached_usd"],
                 "savings_usd": economics["savings_usd"],
+                "savings_usd_high": economics["savings_usd_high"],
                 "savings_basis": economics["savings_basis"],
                 "savings_bound_reason": economics["savings_bound_reason"],
+                "retention_unknown_calls": economics["retention_unknown_calls"],
                 "write_premium_usd_per_mtok": economics["write_premium_usd_per_mtok"],
                 "covered_calls": economics["covered_calls"],
                 "excluded_calls": economics["excluded_calls"],
