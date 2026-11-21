@@ -192,10 +192,12 @@ a geometry check, and both now fail if the page never reaches that content.
 4. **A fixed wait measured whatever happened to be on screen.** The Overview
    page measured at `setTimeout(…, 900)` and Usage at `tick(1200)`. A run during
    this work published `missingOverview` for one of six cases on an unchanged
-   revision — the same signature recorded for this harness before PR #79. Both
-   pages now poll (bounded: 4000 ms and 6000 ms of page time) for the final
-   structure every assertion depends on, publish `readiness`, and report a page
-   that missed the deadline by name.
+   revision, and the pristine baseline was then made to reproduce it in a cold
+   worktree at `origin/main`: one failure in four runs, eight launches in, no
+   product difference between the passing and failing trees. Both pages now poll
+   (bounded: 4000 ms and 6000 ms of page time) for the final structure every
+   assertion depends on, publish `readiness`, and report a page that missed the
+   deadline by name. The gate-equipped tree passed every run.
 5. **Overview had no page-error capture at all.** `window.__overviewErrors` was
    referenced but never populated. The probe now registers the listener and the
    suite asserts the list is empty.
