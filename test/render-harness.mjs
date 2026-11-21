@@ -41,7 +41,12 @@ export const translatorFor = (I18N, locale) => (key, ...args) => {
  */
 export async function loadPageHarness({ extraExports = '' } = {}) {
   const work = mkdtempSync(join(tmpdir(), 'wm-page-'))
+  // `--test-force-exit` can end the process before an `after` hook runs, so the
+  // working tree is removed on exit as well; 3 MB of bundle per case otherwise
+  // accumulates in the temp directory.
+  process.on('exit', () => rmSync(work, { recursive: true, force: true }))
   const entry = join(work, 'entry.mjs')
+
   writeFileSync(entry, `
 export { default as plugin, __test as T } from '${join(ROOT, 'desktop', 'plugin.js')}'
 export * as React from 'react'
