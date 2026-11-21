@@ -6,7 +6,7 @@ production installation require separate authorisation.
 1. Review the exact commit, its dependencies, licences, privacy disclosures and
    changes to persistent data. Keep the existing plugin ID and route unless a
    tested migration has been explicitly agreed.
-2. Run the Python and Node suites in README and validate that exact commit with
+2. Run the Python, browserless Node and Chromium suites in README and validate that exact commit with
    `hermes plugins validate /path/to/plugin --install-deps`. Review every warning.
 3. On an isolated Hermes profile, test both Desktop and backend together, including
    install, restart, upgrade, rollback, network behaviour and account changes.

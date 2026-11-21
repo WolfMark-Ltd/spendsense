@@ -236,13 +236,22 @@ python3 -m venv .venv
 
 With [uv](https://docs.astral.sh/uv/) instead: `uv venv .venv && uv pip install --python .venv/bin/python fastapi httpx`, then run the tests as above.
 
-Run the JavaScript tests with:
+Install the development-only UI dependencies with `npm ci --prefix test/harness`.
+With Node 22 or later, run the browserless JavaScript checks during development:
 
 ```bash
-node --test --test-force-exit test/*.test.mjs
+bash scripts/node-tests.sh browserless
 ```
 
-Some API tests need FastAPI and HTTPX (installed above) and are skipped without them. The development-only UI test dependencies are installed with `npm ci --prefix test/harness`. Hermes catalogue admission additionally requires `hermes plugins validate /path/to/plugin --install-deps` on the exact commit.
+Run Chromium acceptance separately on a test machine with Chrome/Chromium installed, or use the hosted PR checks. Do not run this suite on the production VPS:
+
+```bash
+bash scripts/node-tests.sh browser
+```
+
+The browser command runs one test file at a time and fails if Chromium is missing or any expected case is skipped. Screenshots are opt-in via the relevant suite's environment variable. Both commands verify per-file completion, not just Node's exit status. When adding a file or changing its test count, update the inventory in `scripts/node-tests.mjs`.
+
+Some API tests need FastAPI and HTTPX (installed above) and are skipped without them. Hermes catalogue admission additionally requires `hermes plugins validate /path/to/plugin --install-deps` on the exact commit.
 
 Do not run integration tests against production data.
 
