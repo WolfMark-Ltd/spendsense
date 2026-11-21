@@ -562,19 +562,8 @@ def load_catalogue(models_dev_cache: Optional[Path] = None) -> Catalogue:
                      official=load_official())
 
 
-def _effective_rate(rate: Rate, avg_prompt: float) -> tuple[Rate, bool]:
-    """Apply whole-request context tiers (models.dev semantics).
-
-    Per-call prompt sizes are not stored, so the caller passes the average
-    prompt size of the row. This is a heuristic; the report labels it.
-    """
-    if not rate.tiers or avg_prompt <= 0:
-        return rate, False
-    applicable = [t for t in rate.tiers
-                  if (avg_prompt >= t.threshold if t.inclusive else avg_prompt > t.threshold)]
-    if not applicable:
-        return rate, False
-    tier = max(applicable, key=lambda t: t.threshold)
+def _band_rate(rate: Rate, tier: Tier) -> Rate:
+    """The rate row that applies inside ``tier``, inheriting unset fields."""
     # A tier that names retention prices without its own scalar takes the
     # cheapest (shortest-retention) option as its scalar, so the compatibility
     # number is always one of the prices the tier actually publishes. A tier
@@ -588,17 +577,57 @@ def _effective_rate(rate: Rate, avg_prompt: float) -> tuple[Rate, bool]:
         tier_scalar, write_options = None, rate.cache_write_rates
     else:
         tier_scalar, write_options = tier.cache_write, ()
-    return (
-        Rate(
-            input=tier.input if tier.input is not None else rate.input,
-            output=tier.output if tier.output is not None else rate.output,
-            cache_read=tier.cache_read if tier.cache_read is not None else rate.cache_read,
-            cache_write=tier_scalar if tier_scalar is not None else rate.cache_write,
-            tiers=(),
-            cache_write_rates=write_options,
-        ),
-        True,
+    return Rate(
+        input=tier.input if tier.input is not None else rate.input,
+        output=tier.output if tier.output is not None else rate.output,
+        cache_read=tier.cache_read if tier.cache_read is not None else rate.cache_read,
+        cache_write=tier_scalar if tier_scalar is not None else rate.cache_write,
+        tiers=(),
+        cache_write_rates=write_options,
     )
+
+
+def _effective_rate(rate: Rate, avg_prompt: float) -> tuple[Rate, bool]:
+    """Apply whole-request context tiers (models.dev semantics).
+
+    Per-call prompt sizes are not stored, so the caller passes the average
+    prompt size of the row. This is a heuristic; the report labels it.
+    """
+    if not rate.tiers or avg_prompt <= 0:
+        return rate, False
+    applicable = [t for t in rate.tiers
+                  if (avg_prompt >= t.threshold if t.inclusive else avg_prompt > t.threshold)]
+    if not applicable:
+        return rate, False
+    tier = max(applicable, key=lambda t: t.threshold)
+    return _band_rate(rate, tier), True
+
+
+def reachable_band_lowers_cost(
+    rate: Rate, prompt_tokens: float, *,
+    input_tokens: int, output_tokens: int,
+    cache_read_tokens: int, cache_write_tokens: int,
+    current_usd: float | None,
+) -> bool:
+    """True when an unentered band would price the recorded tokens below ``current_usd``.
+
+    An unproven counter can add prompt tokens and move the request into a band
+    that reprices every token. If that band is cheaper for the recorded usage,
+    the amount at the recorded band is not a lower bound on the true cost.
+    """
+    if current_usd is None:
+        return False
+    for tier in rate.tiers:
+        reachable = (tier.threshold > prompt_tokens if tier.inclusive
+                     else tier.threshold >= prompt_tokens)
+        if not reachable:
+            continue
+        band = _band_rate(rate, tier)
+        amount, _ = _amount(band, input_tokens, output_tokens,
+                            cache_read_tokens, cache_write_tokens)
+        if amount < current_usd - 1e-12:
+            return True
+    return False
 
 
 def reaches_unapplied_tier(rate: Rate, prompt_tokens: float) -> bool:

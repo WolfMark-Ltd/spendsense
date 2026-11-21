@@ -298,8 +298,13 @@ class _AnalyticsAcc:
         list_usd = row.get("list_usd")
         if list_usd is not None:
             self.priced_calls += 1
-            high = row.get("_cost_high")
-            self.api_high_usd += float(high) if high is not None else float(list_usd)
+        high = row.get("_cost_high")
+        if high is None:
+            high = row.get("effective_usd")
+        if high is not None:
+            self.api_high_usd += float(high)
+        elif list_usd is not None:
+            self.api_high_usd += float(list_usd)
         if row.get("list_usd") is None:
             self.pricing_gaps[row.get("pricing_miss") or "price_evidence_missing"] += 1
         self.total_prompt_tokens += prompt
@@ -308,7 +313,8 @@ class _AnalyticsAcc:
             self.cache_known_calls += 1
             self.known_prompt_tokens += prompt
             self.known_read_tokens += row["_cache_read"]
-        value_usd = row.get("effective_usd")
+        value_usd = (row.get("_cost_low") if row.get("_retention_range")
+                     else row.get("effective_usd"))
         self.accounting.add(row, value_usd if value_usd is not None else row["list_usd"],
                             row["list_usd_upper"],
                             row["billed_usd"], row["billed_kind"],
@@ -353,8 +359,11 @@ class _AnalyticsAcc:
             api_basis, api_reason, api_high = "incomplete", "unpriced_tokens", None
         elif "incomplete" in self.cost_bounds:
             api_basis = "incomplete"
-            api_reason = ("write_rate_missing" if "write" in self.cost_causes
-                          else "read_rate_missing")
+            if "tier" in self.cost_causes:
+                api_reason = "context_tier_unknown"
+            else:
+                api_reason = ("write_rate_missing" if "write" in self.cost_causes
+                              else "read_rate_missing")
             api_high = None
         elif "lower" in self.cost_bounds:
             api_basis = "lower_bound"
@@ -814,9 +823,13 @@ def build_session_summary(
         totals_raw = acc.as_dict()
         economics = totals_raw["economics"]
         ints = lambda key: sum(int(r.get(key) or 0) for r in selected)
-        prompt_total = ints("prompt_tokens") or sum(
-            int(r.get("input_tokens") or 0) + int(r.get("cache_read_tokens") or 0)
-            + int(r.get("cache_write_tokens") or 0) for r in selected)
+        def _row_prompt(r: dict[str, Any]) -> int:
+            recorded = int(r.get("prompt_tokens") or 0)
+            if recorded:
+                return recorded
+            return (int(r.get("input_tokens") or 0) + int(r.get("cache_read_tokens") or 0)
+                    + int(r.get("cache_write_tokens") or 0))
+        prompt_total = sum(_row_prompt(r) for r in selected)
         unpriced_tokens = totals_raw["unpriced_tokens"]
         thresholds: set[int] = set()
         for route, name in {(str(r.get("provider") or ""), str(r.get("model") or "")) for r in selected}:

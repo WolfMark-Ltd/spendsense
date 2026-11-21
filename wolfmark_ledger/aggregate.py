@@ -17,7 +17,8 @@ from typing import Any, Optional
 
 from . import store
 from .db import default_db_path, fetch_usage_rows
-from .pricing import PROVIDER_ALIASES, Catalogue, _effective_rate, load_catalogue, price
+from .pricing import (PROVIDER_ALIASES, Catalogue, _amount, _effective_rate,
+                      load_catalogue, price, reachable_band_lowers_cost)
 
 
 BASIS_MODES = ("billed", "list", "hybrid")
@@ -611,8 +612,14 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         price(effective_rate, input_tokens=input_tokens, output_tokens=output_tokens,
               cache_read_tokens=cache_read, cache_write_tokens=cache_write, calls=1)
         if effective_rate is not None else None)
-    effective_usd = (effective.usd_upper
-                     if effective and not failure and not missing else None)
+    # Session valuation keeps the unrounded amount and rounds once at
+    # serialization. The legacy ledger figure above keeps price()'s rounding.
+    if failure or missing or effective_rate is None or effective is None \
+            or effective.usd_upper is None:
+        effective_usd = None
+    else:
+        effective_usd = _amount(effective_rate, input_tokens, output_tokens,
+                                cache_read, cache_write)[0]
     if priced and list_usd is None:
         miss = priced.reason
     elif not lookup:
@@ -639,6 +646,10 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     write_defaulted = bool(effective and effective.cache_write_defaulted)
     write_options = (sorted({float(value) for _, value in effective_rate.cache_write_rates})
                      if effective_rate is not None else [])
+    write_prices = ([float(value) for _, value in effective_rate.cache_write_rates]
+                    if effective_rate is not None else [])
+    if not write_prices and write_rate is not None:
+        write_prices = [float(write_rate)]
     retention_range = bool(write_known and cache_write > 0
                            and len(write_options) > 1 and effective_usd is not None)
     cost_low = cost_high = effective_usd
@@ -658,7 +669,7 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     if write_price_missing and (not write_known or cache_write > 0):
         cost_bounds.add("incomplete")
         cost_causes.add("write")
-    elif not write_known and float(write_rate or 0) > 0:
+    elif not write_known and any(option > 0 for option in write_prices):
         cost_bounds.add("lower")
         cost_causes.add("write")
     if read_rate is None and (not read_known or cache_read > 0):
@@ -669,6 +680,21 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         cost_causes.add("read")
     if retention_range:
         cost_bounds.add("range")
+    if (lookup is not None and not (read_known and write_known)
+            and reachable_band_lowers_cost(
+                lookup.rate, prompt,
+                input_tokens=input_tokens, output_tokens=output_tokens,
+                cache_read_tokens=cache_read, cache_write_tokens=cache_write,
+                current_usd=effective_usd)):
+        # An unproven counter could cross into a cheaper band, so the amount at
+        # the recorded band is not a lower bound on the true cost.
+        cost_bounds.discard("lower")
+        cost_bounds.add("incomplete")
+        cost_causes.add("tier")
+        if not write_known:
+            cost_causes.add("write")
+        if not read_known:
+            cost_causes.add("read")
     if effective_usd is None:
         cost_bounds = set()
         cost_causes = set()

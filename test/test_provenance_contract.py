@@ -42,6 +42,14 @@ MULTI_TIERED = Rate(2, 10, .1, 2.5,
                     tiers=(Tier(100, 6, 20, .2, 5), Tier(200, 4, 15, .2, 10)))
 XAI_INCLUSIVE = Rate(2, 6, .5, 2.5,
                      tiers=(Tier(200000, 4, 12, 1.0, 5.0, inclusive=True),))
+RETENTION_WIDE = Rate(2, 10, .1, 2.5,
+                      cache_write_rates=(("30m", 2.0), ("12h", 5.0)))
+FREE_OPTION = Rate(2, 10, .1, 0.0,
+                   cache_write_rates=(("30m", 0.0), ("12h", 5.0)))
+ALL_FREE_OPTIONS = Rate(2, 10, .1, 0.0,
+                        cache_write_rates=(("30m", 0.0), ("12h", 0.0)))
+CHEAPER_BAND = Rate(2, 10, .1, 2.5, tiers=(Tier(272000, 1, 8, .05, 2.0),))
+FINE = Rate(0.4, 1, None, None)
 
 
 class ProvenanceContractTests(unittest.TestCase):
@@ -57,7 +65,9 @@ class ProvenanceContractTests(unittest.TestCase):
              "noread": {"m": NO_READ_PRICE},
              "freewrite": {"m": FREE_WRITE}, "tiered": {"m": TIERED},
              "inclusive": {"m": INCLUSIVE}, "multitier": {"m": MULTI_TIERED},
-             "xaiincl": {"m": XAI_INCLUSIVE},
+             "xaiincl": {"m": XAI_INCLUSIVE}, "retwide": {"m": RETENTION_WIDE},
+             "freeopt": {"m": FREE_OPTION}, "allfree": {"m": ALL_FREE_OPTIONS},
+             "cheaperband": {"m": CHEAPER_BAND}, "fine": {"m": FINE},
              "tierwrite": {"m": TIER_SUPPLIES_WRITE},
              "retention": {"m": RETENTION}, "inverted": {"m": INVERTED},
              "namedtier": {"m": NAMED_TIER}},
@@ -353,6 +363,56 @@ class ProvenanceContractTests(unittest.TestCase):
                              "cache_read_reported": 1}])
         self.assertEqual(self.summary(session_id="s1")["valuation"]["savings_basis"],
                          "upper_bound")
+
+    def test_named_retention_option_charges_an_unreported_write(self):
+        # Scalar write price is zero, but a named retention option is not:
+        # unreported writes could still add cost, so the subtotal is a bound.
+        self.create_events([{"provider": "freeopt", "input_tokens": 1_000,
+                             "cache_read_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["api_equivalent_basis"], "lower_bound")
+        self.assertEqual(valuation["api_equivalent_bound_reason"], "write_not_reported")
+
+    def test_all_free_options_keep_an_unreported_write_exact(self):
+        self.create_events([{"provider": "allfree", "input_tokens": 1_000,
+                             "cache_read_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["api_equivalent_basis"], "exact")
+
+    def test_reachable_cheaper_band_makes_cost_incomplete(self):
+        # The 272K band is cheaper for the recorded tokens, so an unreported
+        # write crossing it could lower the true cost below the recorded band.
+        self.create_events([{"provider": "cheaperband", "input_tokens": 271_999,
+                             "cache_read_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["api_equivalent_basis"], "incomplete")
+        self.assertEqual(valuation["api_equivalent_bound_reason"], "context_tier_unknown")
+
+    def test_retention_lower_endpoint_uses_the_cheapest_option(self):
+        self.create_events([{"provider": "retwide", "input_tokens": 1_000,
+                             "cache_write_tokens": 100_000, "cache_write_reported": 1,
+                             "cache_read_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["api_equivalent_basis"], "range")
+        self.assertAlmostEqual(valuation["api_equivalent_usd"], 0.202, places=9)
+        self.assertAlmostEqual(valuation["api_equivalent_usd_high"], 0.502, places=9)
+
+    def test_session_totals_keep_sub_micro_precision(self):
+        # 4e-7 per row: per-call rounding would discard both; the sum rounds to 1e-6.
+        rows = [{"provider": "fine", "input_tokens": 1,
+                 "cache_read_reported": 1, "cache_write_reported": 1} for _ in range(2)]
+        self.create_events(rows)
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertAlmostEqual(valuation["api_equivalent_usd"], 0.000001, places=12)
+
+    def test_prompt_tokens_fall_back_per_row(self):
+        self.create_events([
+            {"provider": "premium", "prompt_tokens": 500, "input_tokens": 1_000,
+             "cache_read_reported": 1, "cache_write_reported": 1},
+            {"provider": "premium", "input_tokens": 100,
+             "cache_read_reported": 1, "cache_write_reported": 1},
+        ])
+        self.assertEqual(self.summary(session_id="s1")["totals"]["prompt_tokens"], 600)
 
     def test_reachability_uses_the_catalogue_rate_across_multiple_tiers(self):
         # Prompt 150 crosses the 100 band, so the effective rate has its
