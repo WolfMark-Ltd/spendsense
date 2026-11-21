@@ -5,15 +5,34 @@ export const PAGE_LOAD_TIMEOUT_MS = 10000
 export const LAYOUT_RESULT_TIMEOUT_MS = 5000
 export const LAYOUT_POLL_INTERVAL_MS = 50
 
+// Flattened CDP sessions let one browser-level socket drive several isolated
+// pages: a command carries its `sessionId` and the reply echoes it back, so a
+// single pending table and a single command counter remain sufficient.
 export function createDevToolsClient(socket, {
   commandTimeoutMs = DEVTOOLS_COMMAND_TIMEOUT_MS,
   pageLoadTimeoutMs = PAGE_LOAD_TIMEOUT_MS,
 } = {}) {
   const pending = new Map()
+  const pageLoads = new Map()
   let commandId = 0
   let connectionError = null
-  let pageLoadSeen = false
-  let pageLoadWaiter = null
+
+  const pageLoadState = sessionId => {
+    const key = sessionId ?? null
+    let state = pageLoads.get(key)
+    if (!state) {
+      state = { seen: false, waiter: null }
+      pageLoads.set(key, state)
+    }
+    return state
+  }
+
+  const settleWaiter = (waiter, settle, value) => {
+    if (!waiter || waiter.settled) return
+    waiter.settled = true
+    clearTimeout(waiter.timeout)
+    settle(value)
+  }
 
   const rejectConnection = error => {
     if (connectionError) return
@@ -23,12 +42,10 @@ export function createDevToolsClient(socket, {
       pending.delete(id)
       request.reject(error)
     }
-    if (pageLoadWaiter && !pageLoadWaiter.settled) {
-      const waiter = pageLoadWaiter
-      pageLoadWaiter = null
-      waiter.settled = true
-      clearTimeout(waiter.timeout)
-      waiter.reject(error)
+    for (const state of pageLoads.values()) {
+      const waiter = state.waiter
+      state.waiter = null
+      settleWaiter(waiter, waiter?.reject, error)
     }
   }
 
@@ -47,12 +64,13 @@ export function createDevToolsClient(socket, {
       if (message.error) request.reject(new Error(message.error.message))
       else request.resolve(message.result)
     } else if (message.method === 'Page.loadEventFired') {
-      pageLoadSeen = true
-      if (pageLoadWaiter && !pageLoadWaiter.settled) {
-        pageLoadWaiter.settled = true
-        clearTimeout(pageLoadWaiter.timeout)
-        pageLoadWaiter.resolve()
-      }
+      // A load event belongs to the session that produced it, so a page that
+      // finishes loading can never satisfy another page's readiness wait.
+      const state = pageLoadState(message.sessionId)
+      state.seen = true
+      const waiter = state.waiter
+      state.waiter = null
+      settleWaiter(waiter, waiter?.resolve)
     }
   })
   socket.addEventListener('close', () => {
@@ -62,7 +80,7 @@ export function createDevToolsClient(socket, {
     rejectConnection(new Error('Chromium DevTools connection failed'))
   }, { once: true })
 
-  const command = (method, params = {}, timeoutMs = commandTimeoutMs) => new Promise((resolve, reject) => {
+  const command = (method, params = {}, timeoutMs = commandTimeoutMs, sessionId = null) => new Promise((resolve, reject) => {
     if (connectionError) return reject(connectionError)
     if (socket.readyState !== OPEN) return reject(new Error('Chromium DevTools connection is not open'))
 
@@ -74,7 +92,7 @@ export function createDevToolsClient(socket, {
     }, timeoutMs)
     pending.set(id, { resolve, reject, timeout })
     try {
-      socket.send(JSON.stringify({ id, method, params }))
+      socket.send(JSON.stringify(sessionId ? { id, method, params, sessionId } : { id, method, params }))
     } catch (error) {
       clearTimeout(timeout)
       pending.delete(id)
@@ -82,13 +100,25 @@ export function createDevToolsClient(socket, {
     }
   })
 
-  const waitForPageLoad = (timeoutMs = pageLoadTimeoutMs) => {
-    if (pageLoadSeen) return Promise.resolve()
+  const sessionCommand = (sessionId, method, params = {}, timeoutMs = commandTimeoutMs) => {
+    if (!sessionId) return Promise.reject(new Error(`DevTools command ${method} needs a page session`))
+    return command(method, params, timeoutMs, sessionId)
+  }
+
+  const attachToTarget = async (targetId, timeoutMs = commandTimeoutMs) => {
+    const { sessionId } = await command('Target.attachToTarget', { targetId, flatten: true }, timeoutMs)
+    if (!sessionId) throw new Error('Chromium did not open a DevTools session for the page target')
+    return sessionId
+  }
+
+  const waitForPageLoad = (sessionId = null, timeoutMs = pageLoadTimeoutMs) => {
+    const state = pageLoadState(sessionId)
+    if (state.seen) return Promise.resolve()
     if (connectionError) return Promise.reject(connectionError)
     if (socket.readyState !== OPEN) {
       return Promise.reject(new Error('Chromium DevTools connection is not open'))
     }
-    if (pageLoadWaiter) return pageLoadWaiter.promise
+    if (state.waiter) return state.waiter.promise
 
     let resolve
     let reject
@@ -99,15 +129,24 @@ export function createDevToolsClient(socket, {
     const waiter = { promise, resolve, reject, timeout: null, settled: false }
     waiter.timeout = setTimeout(() => {
       if (waiter.settled) return
-      waiter.settled = true
-      pageLoadWaiter = null
-      reject(new Error(`Chromium page load timed out after ${timeoutMs}ms`))
+      state.waiter = null
+      settleWaiter(waiter, reject, new Error(`Chromium page load timed out after ${timeoutMs}ms`))
     }, timeoutMs)
-    pageLoadWaiter = waiter
+    state.waiter = waiter
     return promise
   }
 
-  return { command, waitForPageLoad }
+  // A freshly created target loads about:blank, which can race with Page.enable.
+  // Clearing the flag before navigating makes the next load event unambiguous.
+  const resetPageLoad = (sessionId = null) => {
+    const state = pageLoadState(sessionId)
+    state.seen = false
+    const waiter = state.waiter
+    state.waiter = null
+    settleWaiter(waiter, waiter?.reject, new Error('Reports page-load wait was reset before it settled'))
+  }
+
+  return { command, sessionCommand, attachToTarget, waitForPageLoad, resetPageLoad, pageLoadTimeoutMs, commandTimeoutMs }
 }
 
 export async function pollForMeasurement(read, {
