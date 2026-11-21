@@ -317,7 +317,10 @@ export function createDevToolsClient(socket, {
 } = {}) {
   const pending = new Map()
   const pageLoads = new Map()
-  const exceptions = []
+  // Uncaught page exceptions are kept PER SESSION: one browser connection serves
+  // every case, so a global bag would let an earlier page's error be reported
+  // against a later one.
+  const exceptions = new Map()
   let commandId = 0
   let connectionError = null
 
@@ -377,11 +380,14 @@ export function createDevToolsClient(socket, {
       settleWaiter(waiter, waiter?.resolve)
     } else if (message.method === 'Runtime.exceptionThrown') {
       // A page that throws before publishing its measurement would otherwise
-      // time out with no explanation. Keep the first few uncaught exceptions so
-      // the timeout can name the real failure.
+      // time out with no explanation. Keep the first few uncaught exceptions
+      // for the session that threw them.
       const details = message.params?.exceptionDetails
       const text = details?.exception?.description || details?.text || 'uncaught exception'
-      if (exceptions.length < 5) exceptions.push(String(text).split('\n')[0].slice(0, 500))
+      const key = message.sessionId ?? null
+      const list = exceptions.get(key) || []
+      if (list.length < 5) list.push(String(text).split('\n')[0].slice(0, 500))
+      exceptions.set(key, list)
     }
   })
   socket.addEventListener('close', () => {
@@ -457,11 +463,21 @@ export function createDevToolsClient(socket, {
     settleWaiter(waiter, waiter?.reject, new Error('Page-load wait was reset before it settled'))
   }
 
-  const takeExceptions = () => exceptions.splice(0, exceptions.length)
+  const takeExceptions = (sessionId = null) => {
+    const key = sessionId ?? null
+    const list = exceptions.get(key) || []
+    exceptions.delete(key)
+    return list
+  }
+  // Released pages take their exceptions with them, so a later case can never
+  // be told about an earlier page's error.
+  const dropExceptions = (sessionId = null) => {
+    exceptions.delete(sessionId ?? null)
+  }
 
   return {
     command, sessionCommand, attachToTarget, waitForPageLoad, resetPageLoad,
-    takeExceptions, pageLoadTimeoutMs, commandTimeoutMs,
+    takeExceptions, dropExceptions, pageLoadTimeoutMs, commandTimeoutMs,
   }
 }
 
@@ -610,6 +626,7 @@ export async function releaseCase(client, handles, commandTimeoutMs = client.com
 
   if (handles.sessionId) {
     await attempt('Target.detachFromTarget', { sessionId: handles.sessionId })
+    client.dropExceptions?.(handles.sessionId)
     handles.sessionId = null
   }
   if (handles.targetId) {

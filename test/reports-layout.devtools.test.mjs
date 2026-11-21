@@ -123,6 +123,27 @@ test('resetting a session re-arms its page-load wait', async () => {
   await assert.rejects(client.waitForPageLoad('SESSION-A', 20), /page load timed out after 20ms/)
 })
 
+test('page exceptions are kept per session, so a case never reports another page', async () => {
+  const socket = new FakeSocket()
+  const client = createDevToolsClient(socket, { commandTimeoutMs: 1000 })
+  const throwIn = (sessionId, text) => socket.receive({
+    method: 'Runtime.exceptionThrown', sessionId,
+    params: { exceptionDetails: { exception: { description: text } } },
+  })
+
+  throwIn('SESSION-A', 'TypeError: A\n  at a.js:1')
+  throwIn('SESSION-B', 'ReferenceError: B')
+
+  assert.deepEqual(client.takeExceptions('SESSION-B'), ['ReferenceError: B'])
+  assert.deepEqual(client.takeExceptions('SESSION-A'), ['TypeError: A'])
+  assert.deepEqual(client.takeExceptions('SESSION-A'), [], 'taking them clears that session only')
+
+  throwIn('SESSION-A', 'TypeError: A again')
+  client.dropExceptions('SESSION-A')
+  assert.deepEqual(client.takeExceptions('SESSION-A'), [], 'a released page takes its exceptions with it')
+  assert.deepEqual(client.takeExceptions('SESSION-B'), [])
+})
+
 test('attaching to a target flattens the session and reports its identifier', async () => {
   const socket = new FakeSocket()
   const client = createDevToolsClient(socket, { commandTimeoutMs: 1000 })

@@ -34,8 +34,14 @@ class FakeBrowser {
     this.fail = fail
     this.box = box
     this.navigateErrorText = navigateErrorText
-    this.exceptions = []
+    this.exceptions = new Map()
     this.loads = 0
+  }
+
+  addException(sessionId, text) {
+    const list = this.exceptions.get(sessionId) || []
+    list.push(text)
+    this.exceptions.set(sessionId, list)
   }
 
   // The case currently navigated, so a default payload always answers for the
@@ -92,8 +98,15 @@ class FakeBrowser {
     return Promise.resolve()
   }
 
-  takeExceptions() {
-    return this.exceptions.splice(0, this.exceptions.length)
+  takeExceptions(sessionId = null) {
+    const key = sessionId ?? null
+    const list = this.exceptions.get(key) || []
+    this.exceptions.delete(key)
+    return list
+  }
+
+  dropExceptions(sessionId = null) {
+    this.exceptions.delete(sessionId ?? null)
   }
 
   methods() {
@@ -241,12 +254,31 @@ test('a browser crash mid-run fails the case and still releases the context', as
 
 test('an uncaught page exception is named when the measurement times out', async () => {
   const browser = new FakeBrowser({ payload: '' })
-  browser.exceptions.push('TypeError: Cannot read properties of null (reading querySelectorAll)')
+  browser.addException('session-for-tgt-1', 'TypeError: Cannot read properties of null (reading querySelectorAll)')
   await assert.rejects(
     measureNewsCase(browser, { origin: ORIGIN, id: CASE, width: 1200, timeoutMs: 30 }),
     error => {
       assert.match(error.message, /Browser exceptions:/)
       assert.match(error.message, /Cannot read properties of null/)
+      return true
+    },
+  )
+})
+
+test('a released page takes its exceptions with it', async () => {
+  // One connection serves every case, so an earlier page's error must not be
+  // reported against a later one.
+  const browser = new FakeBrowser()
+  browser.addException('session-for-tgt-1', 'TypeError: from an earlier page')
+  await measureNewsCase(browser, { origin: ORIGIN, id: 'realistic__all__380__dark__en', width: 380 })
+  assert.equal(browser.exceptions.size, 0, 'the released session’s exceptions are discarded')
+
+  browser.payload = ''
+  await assert.rejects(
+    measureNewsCase(browser, { origin: ORIGIN, id: CASE, width: 1200, timeoutMs: 30 }),
+    error => {
+      assert.doesNotMatch(error.message, /Browser exceptions:/,
+        'a later timeout names no earlier page’s error')
       return true
     },
   )
@@ -290,6 +322,31 @@ test('screenshots are opt-in, captured from the measured page and named determin
     assert.deepEqual(capture.params.clip, { x: 0, y: 0, width: 380, height: 900, scale: 1 })
     assert.equal(capture.params.format, 'png')
     assert.equal(capture.params.captureBeyondViewport, true)
+  } finally {
+    rmSync(work, { recursive: true, force: true })
+  }
+})
+
+test('a probe case is screenshotted from a pristine load, not the probed page', async () => {
+  const work = mkdtempSync(join(tmpdir(), 'wm-news-shot-probe-'))
+  try {
+    const path = join(work, newsShotName(CASE))
+    const browser = new FakeBrowser()
+    await measureNewsCase(browser, {
+      origin: ORIGIN, id: CASE, width: 1200, probe: '1', screenshotPath: path,
+    })
+
+    // The probed measurement keeps its probe, and the screenshot comes from a
+    // second, un-probed navigation: the probe expands pagination and changes
+    // filters, so the measured layout is only reproducible without it.
+    const navigations = browser.navigations()
+    assert.equal(navigations.length, 2)
+    assert.equal(navigations[0], `${ORIGIN}?case=${CASE}&probe=1`)
+    assert.equal(navigations[1], `${ORIGIN}?case=${CASE}`)
+    assert.equal(browser.calls.filter(call => call.method === 'Target.createBrowserContext').length, 2,
+      'the pristine capture gets its own context')
+    assert.ok(existsSync(path))
+    assert.equal(readFileSync(path, 'utf8'), 'png-bytes')
   } finally {
     rmSync(work, { recursive: true, force: true })
   }

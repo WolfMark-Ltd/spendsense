@@ -137,6 +137,21 @@ async function readPayload(page, { id, timeoutMs, label }) {
   return measurement
 }
 
+/**
+ * Run `fn` against the case's page, attaching that page's own uncaught
+ * exceptions to a failure. Exceptions are read per session, so one case can
+ * never be told about an earlier page's error.
+ */
+async function attempt(client, page, fn) {
+  try {
+    return await fn()
+  } catch (error) {
+    const exceptions = client.takeExceptions?.(page.sessionId) || []
+    if (exceptions.length) error.message += `\nBrowser exceptions:\n${exceptions.join('\n')}`
+    throw error
+  }
+}
+
 /** Element box of the case container, in CSS pixels from the document origin. */
 const CASE_BOX_EXPRESSION = id => `(() => {
   const el = document.getElementById(${JSON.stringify(id)});
@@ -167,9 +182,11 @@ async function captureCaseScreenshot(page, { id, path }) {
 /**
  * Measure one case in its own browser context and page.
  *
- * `screenshotPath` is opt-in: the capture happens on the measured page, before
- * its context is released, so the intended viewport and theme are what lands
- * on disk.
+ * `screenshotPath` is opt-in and comes from the state the measurement recorded.
+ * A case that also ran an interaction probe is captured from a **pristine load**
+ * of the same case: the probe expands pagination and changes filters on the
+ * measured page, so capturing it afterwards would show a different layout than
+ * the assertions checked (and than the old separate `?case=` screenshot run).
  */
 export async function measureNewsCase(client, {
   origin, id, width, probe = null, model, screenshotPath,
@@ -177,25 +194,39 @@ export async function measureNewsCase(client, {
   height = NEWS_VIEWPORT_HEIGHT,
 } = {}) {
   const url = newsCaseUrl(origin, id, { probe, model })
+  const captureWhileMeasured = Boolean(screenshotPath) && !probe
+
   const measurement = await withIsolatedPage(client, {
     url, width, height,
     subject: `Model News case ${id}`,
     releaseLabel: 'Model News',
-    run: async page => {
-      let result
-      try {
-        result = await readPayload(page, { id, timeoutMs, label: `Model News layout measurement for ${id}` })
-      } catch (error) {
-        // A page that throws before publishing would otherwise report only a
-        // timeout; name the browser exception instead.
-        const exceptions = client.takeExceptions?.() || []
-        if (exceptions.length) error.message += `\nBrowser exceptions:\n${exceptions.join('\n')}`
-        throw error
-      }
-      if (screenshotPath) await captureCaseScreenshot(page, { id, path: screenshotPath })
+    run: page => attempt(client, page, async () => {
+      const result = await readPayload(page, {
+        id, timeoutMs, label: `Model News layout measurement for ${id}`,
+      })
+      if (captureWhileMeasured) await captureCaseScreenshot(page, { id, path: screenshotPath })
       return result
-    },
+    }),
   })
+
+  if (screenshotPath && probe) {
+    await withIsolatedPage(client, {
+      url: newsCaseUrl(origin, id), width, height,
+      subject: `Model News screenshot ${id}`,
+      releaseLabel: 'Model News screenshot',
+      run: page => attempt(client, page, async () => {
+        const pristine = await readPayload(page, {
+          id, timeoutMs, label: `Model News screenshot load for ${id}`,
+        })
+        if (pristine.readiness && pristine.readiness.ready !== true) {
+          throw new Error(`Model News screenshot ${id} did not reach readiness: `
+            + JSON.stringify(pristine.readiness))
+        }
+        await captureCaseScreenshot(page, { id, path: screenshotPath })
+      }),
+    })
+  }
+
   return measurement
 }
 

@@ -961,16 +961,24 @@ async function measureCase(c) {
   // Bounded readiness gate. The page resolves its query and paints on React's
   // own schedule, so a fixed wait measures whatever happens to be on screen:
   // an early read has produced empty contrast counts and '' copy on unchanged
-  // revisions. Require the structure every assertion then measures — the
-  // controls, a list or state region, and at least one rendered card whenever
-  // the fixture carries items — and REPORT a page that never got there rather
-  // than measuring it as if it had. Nothing here weakens a check.
+  // revisions. Require the FINAL structure every assertion then measures and
+  // REPORT a page that never got there rather than measuring it as if it had.
+  // Nothing here weakens a check.
+  //
+  // The pre-query page is not a fixture state: NewsPage renders the controls
+  // (and, with live updates off, the product section) while the query is still
+  // pending, so a status note means "still loading" whatever the fixture is.
+  // A case that carries items must show the rendered list and at least one
+  // card; a case that carries none must show its final empty or error state.
   const ready = () => {
     if (!pane.querySelector('.wm-news-controls')) return false
-    if (!(pane.querySelector('.wm-news-list') || pane.querySelector('.wm-empty')
-      || pane.querySelector('.wm-product-section'))) return false
-    if (items.length && !pane.querySelector('.wm-news-card, [data-news-group]')) return false
-    return true
+    if (pane.querySelector('.wm-note[role="status"]')) return false
+    if (items.length) {
+      return !!(pane.querySelector('.wm-news-list')
+        && pane.querySelector('.wm-news-card, [data-news-group]'))
+    }
+    return !!(pane.querySelector('.wm-empty')
+      || pane.querySelector('.wm-product-section [role="alert"]'))
   }
   let waitedMs = 0
   while (waitedMs < READY_TIMEOUT_MS && !ready()) {

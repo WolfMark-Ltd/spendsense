@@ -107,11 +107,15 @@ and the same pre-probe page state the separate run used.
 
 The page no longer waits a fixed 900 ms before measuring. It publishes as soon
 as the browser reports the document loaded and then runs a bounded readiness
-poll of its own:
+poll of its own for the fixture's **final** state:
 
 - the controls row exists;
-- a list, an empty region or a state section exists;
-- when the fixture carries items, at least one card or model group has rendered.
+- the pre-query page is explicitly rejected: its loading note
+  (`.wm-note[role="status"]`) means the query has not resolved, whichever
+  fixture is being rendered;
+- when the fixture carries items, the rendered list exists and contains at least
+  one card or model group;
+- when it carries none, the final empty region or error alert is present.
 
 The result records `readiness: { ready, waitedMs, expectedItems }`, and every
 case asserts `ready === true`. A page that never paints therefore fails by name
@@ -131,7 +135,9 @@ fails.
 - A missing or malformed measurement fails with the case name.
 - A payload that does not describe exactly the requested case fails.
 - A navigation, CDP or viewport error is reported with the affected case.
-- An uncaught page exception is attached to the timeout it caused.
+- An uncaught page exception is attached to the timeout it caused, and
+  exceptions are stored **per DevTools session** and discarded when that page is
+  released, so one case never reports an earlier page's error.
 - Every path releases the context, and reports a release failure instead of
   swallowing it.
 - There is no relaunch path: the suite never restarts Chromium, and the
@@ -150,13 +156,18 @@ reports teardown errors as an `AggregateError` rather than hiding them.
 ## 9. Screenshots
 
 `NEWS_LAYOUT_SHOTS` remains opt-in and must resolve outside the repository
-(`shotsOutsideRepo`, unchanged). The capture now runs on the **same isolated
-page** that produced the measurement, through `Page.captureScreenshot` with a
-clip of the case container, so one screenshot costs no second browser process.
-Names stay deterministic and scenario-scoped:
+(`shotsOutsideRepo`, unchanged). The capture runs through
+`Page.captureScreenshot` with a clip of the case container, so it costs no
+second browser process. A case that also ran an interaction probe is captured
+from a **pristine load** of the same case in its own context: the probe expands
+pagination and changes filters, so capturing the probed page would show a
+different layout from the one measured (and from what the old separate `?case=`
+screenshot run captured). Names stay deterministic and scenario-scoped:
 `news-<fixture>-<scope>-<w>-<theme>-<locale>.png`. The baseline test asserts the
-file exists and starts with the PNG signature, and a browserless test proves the
-capture is skipped entirely when no path is requested.
+file exists and starts with the PNG signature; browserless tests prove the
+capture is skipped when no path is requested, that a probe case is captured from
+the un-probed load, and that an unrendered case box fails instead of writing an
+empty file.
 
 ## 10. Regression coverage
 
@@ -171,9 +182,13 @@ doubles):
 - missing and malformed measurements;
 - CDP and navigation failures reported per scenario;
 - a crash mid-run still releases the context;
-- page exceptions surfaced on timeout;
+- page exceptions surfaced on timeout, scoped to their own session;
 - the isolation negative control;
-- screenshot naming, capture and the empty-box failure.
+- screenshot naming, capture, the pristine probe capture and the empty-box
+  failure.
+
+Plus one transport regression in `reports-layout.devtools.test.mjs` for
+per-session exception bookkeeping.
 
 Existing coverage kept: `news-layout.harness.test.mjs` still proves the
 screenshot path containment and that a mandatory candidate run fails, never
@@ -182,24 +197,47 @@ The Reports process-ownership controls are untouched.
 
 ## 11. Measurements
 
-Recorded from hosted GitHub Actions runs (`node-tests.sh browser`) at the final
-head. Placeholder — filled after the first CI run of this branch.
+Measured on GitHub-hosted `ubuntu-latest` runners via `workflow_dispatch`, one
+run of `main` (`069d752`, the old lifecycle) and two runs of this branch. File
+timings are the runner's own log intervals between per-file completion lines;
+the job figure is the `chromium` job's start-to-finish.
 
-| Metric | Before (`069d752`) | After |
+| Metric | Baseline (`main`, 20 launches) | This branch (1 launch) |
 | --- | ---: | ---: |
 | Model News Chromium root launches | 20 | 1 |
 | Model News Node test cases | 7 | 7 |
 | Layout matrix combinations | 24 | 24 |
-| `news-layout.test.mjs` duration | 60.0 s (documented PR #83 run) | measured below |
-| Browserless cases | 808 across 28 files | 822 across 29 files (+14) |
-| Process leftovers | none observed | asserted zero owned processes |
+| Page executions (cases + probes + isolation control) | 20 | 32 |
+| `news-layout.test.mjs` wall clock | 19.8 s | 21.3 s, 22.6 s |
+| Whole browser suite span | 88.1 s | 94.3 s |
+| `chromium` job total | 109 s | 109 s, 112 s |
+| Browserless cases | 808 across 28 files | 825 across 29 files (+17) |
+
+**Execution time did not improve, and this PR does not claim it did.** The old
+20 launches amortised up to eight matrix cases per page (chunked grid runs) and
+used `--virtual-time-budget` to collapse the page's own timers. The new design
+runs one case per page — 32 page executions including probes and the isolation
+control — with real timers, so the work per case is slightly higher even though
+the process churn is much lower. The difference (about +2 s on one file) is
+within run-to-run contention noise and does not move the job total beyond it.
+
+CPU time and peak RSS of the browser tree are not exposed by the hosted runner,
+so no claim is made about them. Peak *owned process count* is sampled once per
+case and printed as a TAP diagnostic at the end of the matrix run; the per-file
+runner only prints a passing file's summary, so it is visible when the suite is
+run directly (`node --test test/news-layout.test.mjs`). One long-lived browser
+keeps zygote, GPU and network processes resident, so the peak process count is
+expected to be similar to a single cold start's, not lower.
 
 ## 12. Risks and limitations
 
+- **Wall clock is unchanged; launches are not.** The suite is faster to reason
+  about and cheaper in process churn, not measurably faster in wall clock. A
+  future change that renders several cases per browser context could cut page
+  executions, but that is test-state reuse and was deliberately excluded.
 - **Chromium is still Chromium.** One long-lived browser keeps its zygote, GPU
   and network processes resident, so the peak *process count* need not fall even
-  though launches fall by 95%. The suite reports its peak owned-process count
-  per run rather than claiming a reduction it did not measure.
+  though launches fall by 95%.
 - **Sequential by design.** Cases run one at a time. Parallel contexts would cut
   wall clock further but make contended-runner timing and failure attribution
   worse; that is a separate decision.
