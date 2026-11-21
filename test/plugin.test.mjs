@@ -92,7 +92,10 @@ test('readUsage: hit% present — gap split into reads + writes, input not reduc
 
 test('readUsage: no hit% — gap remains an uncertain split', () => {
   const u = T.readUsage({ input: 100, prompt: 150, output: 1 })
-  assert.deepEqual([u.input, u.cacheRead, u.cacheWrite, u.cacheEstimated], [100, 0, 50, true])
+  assert.deepEqual([u.input, u.cacheRead, u.cacheWrite, u.cacheUnknown, u.cacheEstimated],
+    [100, 0, 0, 50, false])
+  assert.equal(u.cacheReadEvidence, 'unknown')
+  assert.equal(u.cacheWriteEvidence, 'unknown')
 })
 
 test('readUsage: raw cache fields win and are exact', () => {
@@ -102,7 +105,7 @@ test('readUsage: raw cache fields win and are exact', () => {
 
 test('readUsage: input fell back to prompt — split by hit%', () => {
   const u = T.readUsage({ input: 200, prompt: 200, cache_hit_pct: 50 })
-  assert.deepEqual([u.input, u.cacheRead], [100, 100])
+  assert.deepEqual([u.input, u.cacheRead, u.cacheWrite, u.cacheUnknown], [0, 100, 0, 100])
   assert.equal(u.cacheEstimated, true)
 })
 
@@ -155,7 +158,8 @@ test('an ambiguous cold start stays in totals without becoming a confirmed miss'
   const opts = { now: NOW, sessionId: 'cold-start', storedId: 'conv', provider: 'p' }
   led = T.applyUsage(led, { ...opts, usage: { model: 'm', input: 100, prompt: 100, output: 10, calls: 1 } })
   assert.equal(T.hitPctOf(led.sessions.conv), null)
-  assert.equal(T.cacheCoverage(led.sessions.conv), 0)
+  assert.equal(T.cacheCoverage(led.sessions.conv), null,
+    'an ambiguous split does not become measured 0% coverage')
   led = T.applyUsage(led, { ...opts, now: NOW + 1, usage: { model: 'm', input: 200, prompt: 300, output: 20, cache_hit_pct: 33, calls: 2 } })
   led = T.applyUsage(led, { ...opts, now: NOW + 2, usage: { model: 'm', input: 250, prompt: 400, output: 30, cache_hit_pct: 38, calls: 3 } })
   assert.equal(led.sessions.conv.calls, 3)
@@ -198,7 +202,10 @@ test('unknown-model first frame remains separate and keeps its tokens', () => {
 test('resolveRates: own provider wins over a foreign row with the same model', () => {
   const r = T.resolveRates({ model: 'claude-opus-5', provider: 'github-copilot', payload: copilotPayload({ input: '$5', output: '$25', cache: '$0.5' }) })
   assert.equal(r.origin, 'live')
-  assert.deepEqual(r.rates, { input: 5, output: 25, cache: 0.5, write: null, inputKnown: false, outputKnown: true, cacheKnown: true, usagePricingVersion: 2, usageTierKnown: false, usageInputKnown: true, usageOutputKnown: true, usageCacheKnown: true, usageWriteKnown: false, usagePriceSource: 'live_catalogue' })
+  assert.deepEqual(r.rates, { input: 5, output: 25, cache: 0.5, write: null, inputKnown: false,
+    outputKnown: true, cacheKnown: true, writeKnown: false, hasTiers: false, tierDetailsKnown: true,
+    tiers: [], cacheWriteRates: [], usagePricingVersion: 2, usageTierKnown: false, usageInputKnown: true,
+    usageOutputKnown: true, usageCacheKnown: true, usageWriteKnown: false, usagePriceSource: 'live_catalogue' })
 })
 
 test('resolveRates: empty own catalog -> bundled table of the same provider, not nous', () => {
@@ -282,7 +289,7 @@ test('applyUsage: rounded cache percentage changes cannot replay cumulative prom
     model: 'm', input: 1003, prompt: 1003, output: 0, calls: 1, cache_hit_pct: 51
   } })
   const session = led.sessions.conversation
-  assert.equal(session.input + session.cacheRead + session.cacheWrite, 1003)
+  assert.equal(session.input + session.cacheRead + session.cacheWrite + session.cacheUnknown, 1003)
   assert.equal(session.cacheRead, 503)
   assert.equal(session.calls, 1)
   assert.equal(led.snapshots.rounded.counterPrompt, 1003)
@@ -321,10 +328,12 @@ test('applyUsage: existing v2 snapshots continue from stored totals without repl
   const updated = T.applyUsage(ledger, { ...args, now: NOW + 1, usage: {
     model: 'm', input: 1003, prompt: 1003, output: 12, calls: 3, cache_hit_pct: 51
   } })
-  assert.equal(updated.sessions.conversation.input + updated.sessions.conversation.cacheRead + updated.sessions.conversation.cacheWrite, 1003)
+  assert.equal(updated.sessions.conversation.input + updated.sessions.conversation.cacheRead +
+    updated.sessions.conversation.cacheWrite + updated.sessions.conversation.cacheUnknown, 1003)
   assert.equal(updated.sessions.conversation.output, before.output + 2)
   assert.equal(updated.sessions.conversation.calls, before.calls + 1)
-  assert.equal(ledger.sessions.conversation.input + ledger.sessions.conversation.cacheRead + ledger.sessions.conversation.cacheWrite, 1000)
+  assert.equal(ledger.sessions.conversation.input + ledger.sessions.conversation.cacheRead +
+    ledger.sessions.conversation.cacheWrite + ledger.sessions.conversation.cacheUnknown, 1000)
 })
 
 test('applyUsage: input-to-prompt counter switch includes stored cache counters', () => {
@@ -336,7 +345,7 @@ test('applyUsage: input-to-prompt counter switch includes stored cache counters'
       const args = { now: NOW, payload, provider: 'github-copilot', sessionId, storedId }
       let led = T.applyUsage(T.emptyLedger(), { ...args, usage: {
         model: 'claude-opus-5', input: 100, output: 10, calls: 3,
-        cache_read: cacheRead, cache_write: cacheWrite
+        cache_read: cacheRead, cache_write: cacheWrite, cache_provenance: 'exact'
       } })
 
       if (legacy) {
@@ -350,7 +359,7 @@ test('applyUsage: input-to-prompt counter switch includes stored cache counters'
 
       led = T.applyUsage(led, { ...args, now: NOW + 1, usage: {
         model: 'claude-opus-5', input: 130, prompt: 160, output: 15, calls: 4,
-        cache_read: cacheRead ? 25 : 5, cache_write: cacheWrite || 5
+        cache_read: cacheRead ? 25 : 5, cache_write: cacheWrite || 5, cache_provenance: 'exact'
       } })
 
       const session = led.sessions[storedId]
@@ -596,7 +605,7 @@ test('CSV keeps gross cache-read savings and adds a separate signed net column',
   assert.equal(unknownRow[15], '', 'unknown coverage has no net value')
 })
 
-test('CSV appends call-coverage evidence without moving the original 16 columns', () => {
+test('CSV appends cache provenance without moving historical columns', () => {
   const fields = (model, coverage) => ({
     input: 100, output: 0, cacheRead: 0, cacheWrite: 0, calls: 1, cost: 0.01,
     legacy: false, model, profile: 'work', provider: 'p', pricedTokens: 100, unpricedTokens: 0,
@@ -612,12 +621,28 @@ test('CSV appends call-coverage evidence without moving the original 16 columns'
     'date', 'profile', 'provider', 'model', 'input', 'output', 'cache_read', 'cache_write', 'calls',
     'cost_usd', 'cost_basis', 'priced_tokens', 'unpriced_tokens', 'cache_saved_usd', 'cache_estimated', 'net_cache_savings_usd'
   ])
-  assert.deepEqual(header.slice(16), ['unpriced_calls', 'missing_usage_calls', 'coverage_unknown'])
-  assert.equal(header.length, 19)
+  assert.deepEqual(header.slice(16), ['unpriced_calls', 'missing_usage_calls', 'coverage_unknown',
+    'cache_read_evidence', 'cache_write_evidence', 'cache_unknown_prompt_tokens', 'cache_savings_basis',
+    'cache_savings_min_usd', 'cache_savings_max_usd', 'cache_population', 'cache_valuation_source'])
+  assert.equal(header.length, 27)
   const byModel = Object.fromEntries(rows.map(row => [row[3], row]))
-  assert.deepEqual(byModel.complete.slice(16), ['0', '0', 'no'])
-  assert.deepEqual(byModel.gap.slice(16), ['0', '1', 'no'])
-  assert.deepEqual(byModel.legacy.slice(16), ['0', '0', 'yes'])
+  assert.deepEqual(byModel.complete.slice(16), ['0', '0', 'no', 'unknown', 'unknown', '0',
+    'unavailable', '', '', 'desktop_local_ledger_unclassified', 'unavailable'])
+  assert.equal(byModel.complete[6], '', 'unknown reads export blank, not measured zero')
+  assert.equal(byModel.complete[7], '', 'unknown writes export blank, not measured zero')
+  assert.deepEqual(byModel.gap.slice(16), ['0', '1', 'no', 'unknown', 'unknown', '0',
+    'unavailable', '', '', 'desktop_local_ledger_unclassified', 'unavailable'])
+  assert.deepEqual(byModel.legacy.slice(16), ['0', '0', 'yes', 'unknown', 'unknown', '0',
+    'unavailable', '', '', 'desktop_local_ledger_unclassified', 'unavailable'])
+
+  const reported = fields('reported', { cacheReadEvidence: 'reported', cacheWriteEvidence: 'reported',
+    cacheUnknown: 25, netSavings: -.01, netSavingsPrompt: 75, cacheCoveredPrompt: 75 })
+  const reportedLedger = { days: { '2026-10-21': { reported } } }
+  const row = T.ledgerCsv(reportedLedger).trim().split('\r\n')[1].split(',')
+  assert.equal(row[15], '', 'the historical value column remains limited to complete coverage')
+  assert.deepEqual(row.slice(19, 27), ['reported', 'reported', '25', 'partial', '-0.01', '-0.01',
+    'desktop_local_ledger_unclassified', 'desktop_local_estimate'],
+  'the additive fields carry the signed partial subtotal and its scope')
 })
 
 test('daysAgoKey is DST-safe local calendar math', () => {
@@ -1063,7 +1088,10 @@ test('vendor-prefixed and bare model slugs resolve to the same route rates', () 
   ] }
   const live = T.resolveRates({ model: 'deepseek-v4.1-flash', provider: 'commandcode', payload })
   assert.equal(live.origin, 'live')
-  assert.deepEqual(live.rates, { input: 0.15, output: 0.6, cache: 0.003, write: null, inputKnown: false, outputKnown: true, cacheKnown: true, usagePricingVersion: 2, usageTierKnown: false, usageInputKnown: true, usageOutputKnown: true, usageCacheKnown: true, usageWriteKnown: false, usagePriceSource: 'live_catalogue' })
+  assert.deepEqual(live.rates, { input: 0.15, output: 0.6, cache: 0.003, write: null, inputKnown: false,
+    outputKnown: true, cacheKnown: true, writeKnown: false, hasTiers: false, tierDetailsKnown: true,
+    tiers: [], cacheWriteRates: [], usagePricingVersion: 2, usageTierKnown: false, usageInputKnown: true,
+    usageOutputKnown: true, usageCacheKnown: true, usageWriteKnown: false, usagePriceSource: 'live_catalogue' })
   assert.equal(T.liveProvider(payload, 'deepseek-v4.1-flash'), 'commandcode')
 })
 test('a corrected provider uses its own exact rates, not a live foreign row', () => {

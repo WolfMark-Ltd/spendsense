@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 // into force-exit only for React/jsdom harnesses with lingering handles.
 const suites = {
   browserless: [
-    ['analytics', 49], ['budgets', 29, true], ['cache-savings', 18],
+    ['analytics', 49], ['budgets', 29, true], ['cache-savings', 34],
     ['compatibility', 16], ['dashboard-entry', 1], ['digest', 2],
     ['digest-render', 24, true], ['economics', 28], ['economics-render', 51, true],
     ['membership', 38], ['membership-scope', 99, true], ['memberships-reading', 6, true],
@@ -15,7 +15,7 @@ const suites = {
     ['news-layout.harness', 4],
     ['news-render', 60, true], ['node-runner', 5], ['plugin', 65], ['recount', 16],
     ['reports-layout.chromium', 17], ['reports-layout.devtools', 11],
-    ['sidebar', 39, true], ['ui-labels', 48],
+    ['sidebar', 41, true], ['ui-labels', 49],
     ['ux-primitives', 32, true], ['weather', 11], ['weather-render', 9, true],
     ['wp14-fixes', 9],
   ],

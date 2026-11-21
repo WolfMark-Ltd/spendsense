@@ -34,11 +34,11 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.17'
+const PLUGIN_VERSION = '0.6.18'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
-const DESKTOP_CONTRACT = 3
+const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
-const REQUIRED_BACKEND_CONTRACT = 3
+const REQUIRED_BACKEND_CONTRACT = 4
 const LEDGER_KEY = 'ledger.v2'
 /** Pre-1.0 ledger. Migrated on first load and left untouched as a backup. */
 const LEGACY_LEDGER_KEY = 'ledger.v1'
@@ -52,6 +52,8 @@ const MAX_SNAPSHOTS = 2000
 const MAX_SESSIONS = 1000
 const CATALOG_STALE_MS = 10 * 60 * 1000
 const M = 1_000_000
+const CACHE_HIT_PCT_ROUNDING_TOLERANCE = 0.005
+const CACHE_READ_ROUNDING_TOKEN_TOLERANCE = 0.5
 const LEDGER_ROUTE = '/spend-sense'
 /** "All Hermes" backend windows. The API caps at 365 days. */
 const RANGE_DAYS = { today: 1, week: 7, month: 30, all: 365 }
@@ -117,7 +119,10 @@ function num(v) {
 }
 
 function tokensOf(b) {
-  return num(b.input) + num(b.output) + num(b.cacheRead) + num(b.cacheWrite)
+  const streams = num(b.input) + num(b.cacheRead) + num(b.cacheWrite) + num(b.cacheUnknown)
+  const prompt = typeof b.prompt === 'number' && Number.isFinite(b.prompt) && b.prompt >= 0
+    ? b.prompt : null
+  return (prompt != null && (prompt > 0 || streams === 0) ? prompt : streams) + num(b.output)
 }
 
 function validRates(r) {
@@ -188,6 +193,29 @@ function usagePriceEvidence(input, output, cache, write, flat, source) {
   return { usagePricingVersion: 2, usageTierKnown: flat === true,
     usageInputKnown: known(input), usageOutputKnown: known(output),
     usageCacheKnown: known(cache), usageWriteKnown: known(write), usagePriceSource: source }
+}
+
+function cacheWriteRates(entry) {
+  const options = Array.isArray(entry?.cache_write_rates) ? entry.cache_write_rates : []
+  return options.map(option => ({ retention: String(option?.retention || '').trim(), rate: parseRate(option?.rate) }))
+    .filter(option => option.retention && option.rate != null)
+}
+
+function tierRates(entry) {
+  const tiers = Array.isArray(entry?.tiers) ? entry.tiers.slice() : []
+  if (!tiers.length && entry?.context_over_200k && typeof entry.context_over_200k === 'object') {
+    tiers.push({ threshold: 200_000, ...entry.context_over_200k })
+  }
+  return tiers.map(tier => ({
+    threshold: parseRate(tier?.threshold ?? tier?.tier?.size),
+    inclusive: typeof tier?.inclusive === 'boolean' ? tier.inclusive : null,
+    input: parseRate(tier?.input),
+    output: parseRate(tier?.output),
+    cache: parseRate(tier?.cache_read ?? tier?.cache),
+    write: parseRate(tier?.cache_write ?? tier?.cacheWrite),
+    cacheWriteRates: cacheWriteRates(tier)
+  })).filter(tier => Number.isFinite(tier.threshold) && tier.threshold > 0)
+    .sort((a, b) => a.threshold - b.threshold)
 }
 
 function tableRates(table, names) {
@@ -284,9 +312,14 @@ function toRates(entry) {
   if (rIn == null && rOut == null) return null
   const input = rIn ?? 0, output = rOut ?? 0
   const read = parseRate(entry.cache), write = parseRate(entry.cache_write ?? entry.cacheWrite)
-  const flat = Array.isArray(entry.tiers) && entry.tiers.length === 0 && !entry.context_over_200k
+  const rawTiers = Array.isArray(entry.tiers) ? entry.tiers : []
+  const tiers = tierRates(entry)
+  const hasTiers = entry.has_tiers === true || rawTiers.length > 0 || Boolean(entry.context_over_200k)
+  const flat = !hasTiers && (entry.has_tiers === false || Array.isArray(entry.tiers) && rawTiers.length === 0)
   return { input, output, cache: read ?? input, write,
     inputKnown: rIn != null && flat, outputKnown: rOut != null, cacheKnown: read != null,
+    writeKnown: write != null, hasTiers, tierDetailsKnown: !hasTiers || tiers.length > 0,
+    tiers, cacheWriteRates: cacheWriteRates(entry),
     ...usagePriceEvidence(rIn, rOut, read, write, flat, 'live_catalogue') }
 }
 
@@ -321,6 +354,10 @@ async function ensureBackendRate(provider, model) {
     if (!result?.rate) throw new Error('unpriced')
     const entry = { at: Date.now(), rates: { input: result.rate.input, output: result.rate.output, cache: result.rate.cache_read ?? result.rate.input, write: result.rate.cache_write,
       inputKnown: result.rate.input != null && result.rate.has_tiers === false, outputKnown: result.rate.output != null, cacheKnown: result.rate.cache_read != null,
+      writeKnown: result.rate.cache_write != null,
+      hasTiers: result.rate.has_tiers === true,
+      tierDetailsKnown: result.rate.has_tiers !== true || Array.isArray(result.rate.tiers) && result.rate.tiers.length > 0,
+      tiers: tierRates(result.rate), cacheWriteRates: cacheWriteRates(result.rate),
       ...usagePriceEvidence(result.rate.input, result.rate.output,
         (result.rate.provisional || []).includes('cache_read') ? null : result.rate.cache_read,
         (result.rate.provisional || []).includes('cache_write') ? null : result.rate.cache_write,
@@ -402,41 +439,113 @@ function grossCacheReadSavings(cacheRead, rates) {
   return rates ? num(cacheRead) * Math.max(0, rates.input - rates.cache) / M : null
 }
 
-/**
- * What cache reads saved versus paying the full input rate for them.
- *
- * `derivedWrite` marks a cache-write figure the pane reconstructed from the
- * gateway's rounded hit percentage rather than read from a provider counter.
- * Such a write often has no published price (commandcode, xai), and voiding the
- * whole increment blanked every conversation on those routes, so the residual
- * is valued at the input rate — the convention `costOf` already uses.
- *
- * The direction of that substitution matters. It omits any write premium, so if
- * the route charges one the saving is OVERSTATED by write x (write rate - input
- * rate); a route that charged less than input for writes would be understated.
- * The figure is exact only against the card the pane displays, which prices
- * writes at the input rate too — not against an unpublished premium. This is
- * not a general guarantee that a missing write price cannot overstate savings;
- * it is warranted here because the affected routes report no cache writes at
- * all. A provider-reported write still needs its published write price.
- */
-function cacheSavings(cacheRead, rates, cacheWrite = 0, derivedWrite = false) {
-  const writeRate = Number.isFinite(rates?.write) ? rates.write
-    : derivedWrite && Number.isFinite(rates?.input) ? rates.input : null
-  if (!rates || rates.inputKnown !== true || rates.outputKnown !== true ||
-      !Number.isFinite(rates.input) || !Number.isFinite(rates.output) ||
-      (num(cacheRead) && (rates.cacheKnown !== true || !Number.isFinite(rates.cache))) ||
-      (num(cacheWrite) && writeRate == null)) return null
-  const readSavings = num(cacheRead) ? num(cacheRead) * (rates.input - rates.cache) : 0
-  const writeSavings = num(cacheWrite) ? num(cacheWrite) * (rates.input - writeRate) : 0
-  return (readSavings + writeSavings) / M
+function cacheSavingsBounds(cacheRead, rates, cacheWrite = 0,
+  { derivedWrite = false, contextPrompt = null, counterUncertaintyTokens = 0,
+    cacheCounterUncertainty = null } = {}) {
+  if (!rates) return null
+  const read = num(cacheRead), write = num(cacheWrite)
+  const tiers = Array.isArray(rates.tiers) ? rates.tiers : []
+  const hasTiers = rates.hasTiers === true || tiers.length > 0
+  if (hasTiers && rates.tierDetailsKnown !== true && !tiers.length) return null
+  if (!hasTiers && rates.inputKnown !== true) return null
+
+  const base = {
+    input: rates.input,
+    output: rates.output,
+    cache: rates.cache,
+    cacheKnown: rates.cacheKnown === true,
+    write: rates.write,
+    writeKnown: rates.writeKnown === true || Number.isFinite(rates.write),
+    cacheWriteRates: Array.isArray(rates.cacheWriteRates) ? rates.cacheWriteRates : []
+  }
+  const applyTier = tier => ({
+    input: tier.input ?? base.input,
+    output: tier.output ?? base.output,
+    cache: tier.cache ?? base.cache,
+    cacheKnown: tier.cache != null || base.cacheKnown,
+    write: tier.write ?? base.write,
+    writeKnown: tier.write != null || base.writeKnown,
+    cacheWriteRates: tier.cacheWriteRates?.length ? tier.cacheWriteRates : base.cacheWriteRates,
+    cacheWriteRetentionUnknown: !tier.cacheWriteRates?.length && tier.write != null && base.cacheWriteRates.length > 1
+  })
+  let candidates = hasTiers ? [base, ...tiers.map(applyTier)] : [base]
+  if (Number.isFinite(contextPrompt) && contextPrompt >= 0 && hasTiers) {
+    const applicable = row => row.inclusive === true
+      ? contextPrompt >= row.threshold
+      : contextPrompt > row.threshold
+    const unknownBoundary = tiers.filter(row => row.inclusive == null && contextPrompt === row.threshold)
+    if (unknownBoundary.length) {
+      const threshold = unknownBoundary.at(-1).threshold
+      const before = tiers.filter(row => row.threshold < threshold && applicable(row)).at(-1)
+      candidates = [before ? applyTier(before) : base, applyTier(unknownBoundary.at(-1))]
+    } else {
+      const tier = tiers.filter(applicable).at(-1)
+      candidates = [tier ? applyTier(tier) : base]
+    }
+  }
+
+  if (!candidates.length || candidates.some(row => !Number.isFinite(row.input) ||
+      rates.outputKnown !== true || !Number.isFinite(row.output))) return null
+  if (read && candidates.some(row => !row.cacheKnown || !Number.isFinite(row.cache))) return null
+
+  const readCoefficients = read ? candidates.map(row => row.input - row.cache) : [0]
+  const freshReadUncertainty = Math.max(0, Number(cacheCounterUncertainty?.freshReadTokens) || 0)
+  const splitReadWriteUncertainty = Math.max(0, Number(cacheCounterUncertainty?.readWriteTokens) || 0)
+  const anySplitUncertainty = Math.max(0, Number(cacheCounterUncertainty?.anyTokens) || 0)
+  let writeCoefficients = [0]
+  if (write || splitReadWriteUncertainty || (anySplitUncertainty && hasTiers)) {
+    if (candidates.some(row => row.cacheWriteRetentionUnknown)) return null
+    const optionsFor = row => {
+      if (row.cacheWriteRates.length) return row.cacheWriteRates.map(option => option.rate)
+      if (row.writeKnown && Number.isFinite(row.write)) return [row.write]
+      return []
+    }
+    const options = candidates.map(optionsFor)
+    if (options.some(rowOptions => !rowOptions.length)) return null
+    writeCoefficients = candidates.flatMap((row, index) =>
+      options[index].map(rate => row.input - rate))
+    if (!writeCoefficients.length) return null
+  }
+
+  let min = (read * Math.min(...readCoefficients) + write * Math.min(...writeCoefficients)) / M
+  let max = (read * Math.max(...readCoefficients) + write * Math.max(...writeCoefficients)) / M
+  const uncertain = Math.max(0, Number(counterUncertaintyTokens) || 0)
+  if (uncertain) {
+    const possible = [0, ...readCoefficients, ...writeCoefficients]
+    const spread = Math.max(...possible) - Math.min(...possible)
+    min -= uncertain * spread / M
+    max += uncertain * spread / M
+  }
+  if (freshReadUncertainty) {
+    const sensitivity = Math.max(0, ...readCoefficients.map(value => Math.abs(value)))
+    min -= freshReadUncertainty * sensitivity / M
+    max += freshReadUncertainty * sensitivity / M
+  }
+  if (splitReadWriteUncertainty) {
+    const sensitivity = Math.max(0, ...readCoefficients.flatMap(readRate =>
+      writeCoefficients.map(writeRate => Math.abs(readRate - writeRate))))
+    min -= splitReadWriteUncertainty * sensitivity / M
+    max += splitReadWriteUncertainty * sensitivity / M
+  }
+  if (anySplitUncertainty) {
+    const possible = [0, ...readCoefficients, ...writeCoefficients]
+    const spread = Math.max(...possible) - Math.min(...possible)
+    min -= anySplitUncertainty * spread / M
+    max += anySplitUncertainty * spread / M
+  }
+  if (Math.abs(max - min) < 1e-15) max = min
+  return { min, max, exact: min === max }
 }
 
-/** True when a bucket's cache-write figure was reconstructed, never reported. */
+function cacheSavings(cacheRead, rates, cacheWrite = 0, derivedWrite = false) {
+  const result = cacheSavingsBounds(cacheRead, rates, cacheWrite, { derivedWrite })
+  return result?.exact ? result.min : null
+}
+
 function derivedWrites(bucket) {
   const b = bucket || {}
-  if (!num(b.cacheWrite)) return false
   if (b.cacheSource) return b.cacheSource === 'estimated'
+  if (!num(b.cacheWrite)) return false
   // Stored buckets keep no source: only an all-estimated bucket's writes are
   // derived. Any exactly-counted prompt token means a provider counter exists.
   return b.cacheEstimated === true && !num(b.cacheExactPrompt)
@@ -445,7 +554,13 @@ function derivedWrites(bucket) {
 /** Strict single-bucket net value; unknown read/write prices stay unknown. */
 function liveSavings(bucket, rates) {
   if (!bucket || !rates) return null
-  return cacheSavings(bucket.cacheRead, rates, bucket.cacheWrite, derivedWrites(bucket))
+  if (bucket.cacheReadEvidence === 'unknown' || bucket.cacheWriteEvidence === 'unknown') return null
+  const prompt = num(bucket.input) + num(bucket.cacheRead) + num(bucket.cacheWrite)
+  const contextPrompt = num(bucket.calls) === 1 ? prompt : null
+  const result = cacheSavingsBounds(bucket.cacheRead, rates, bucket.cacheWrite,
+    { derivedWrite: derivedWrites(bucket), contextPrompt,
+      cacheCounterUncertainty: cacheCounterUncertaintyFor(bucket) })
+  return result?.exact ? result.min : null
 }
 
 /**
@@ -455,11 +570,29 @@ function liveSavings(bucket, rates) {
  */
 function savingsGapReason(bucket, rates) {
   const b = bucket || {}
-  if (!num(b.cacheRead) && !num(b.cacheWrite)) return 'no_cache'
+  if (!num(b.cacheRead) && !num(b.cacheWrite)) {
+    return b.cacheReadEvidence === 'unknown' || b.cacheWriteEvidence === 'unknown'
+      ? 'cache_evidence_unknown' : 'no_cache'
+  }
   if (!rates) return 'no_rate'
-  if (rates.inputKnown !== true) return 'tiered'
+  const tiers = Array.isArray(rates.tiers) ? rates.tiers : []
+  const hasTiers = rates.hasTiers === true || tiers.length > 0
+  if (hasTiers && rates.tierDetailsKnown !== true && !tiers.length) return 'context_tier_unknown'
+  if (!hasTiers && rates.inputKnown !== true) return 'context_tier_unknown'
   if (num(b.cacheRead) && (rates.cacheKnown !== true || !Number.isFinite(rates.cache))) return 'no_cache_rate'
-  if (num(b.cacheWrite) && !Number.isFinite(rates.write) && !derivedWrites(b)) return 'no_write_rate'
+  if (b.cacheWriteEvidence === 'unknown' || b.cacheReadEvidence === 'unknown') return 'cache_evidence_unknown'
+  const derivedSplitMayWrite = b.cacheSource === 'estimated' && b.cacheSplitMode === 'read_write'
+  if (num(b.cacheWrite) || derivedSplitMayWrite) {
+    const candidates = [null, ...tiers]
+    const missingWrite = candidates.some(tier => {
+      const tierOptions = tier?.cacheWriteRates || []
+      const options = tierOptions.length ? tierOptions : rates.cacheWriteRates || []
+      const write = tier?.write ?? rates.write
+      const retentionUnknown = !!tier && !tierOptions.length && tier.write != null && (rates.cacheWriteRates || []).length > 1
+      return retentionUnknown || (!options.length && !Number.isFinite(write))
+    })
+    if (missingWrite) return 'no_write_rate'
+  }
   // Prices are known, so what is missing is the split itself.
   return 'split_unknown'
 }
@@ -475,21 +608,36 @@ function savingsState(bucket, rates) {
   const b = bucket || {}
   // `summarize` totals carry `prompt` directly; a ledger bucket carries the
   // three streams it is made of.
-  const prompt = num(b.prompt) || num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
-  const covered = num(b.netSavingsPrompt)
+  const prompt = num(b.prompt) || num(b.input) + num(b.cacheRead) + num(b.cacheWrite) + num(b.cacheUnknown)
   // `num` clamps at zero because it guards token counts; a net saving is
   // signed, and a cache-write premium can exceed the read discount. Keep the
   // sign (Greptile P1) and keep an absent value absent.
-  const amount = finiteValue(b.netSavings)
-  const value = covered > 0 && amount != null ? amount : null
+  let amount = finiteValue(b.netSavings)
+  let exactCovered = amount == null ? 0 : num(b.netSavingsPrompt)
+  let rangeCovered = num(b.netSavingsRangePrompt)
+  let min = finiteValue(b.netSavingsMin)
+  let max = finiteValue(b.netSavingsMax)
+
+  const covered = exactCovered + rangeCovered
+  const rangedMin = (exactCovered && amount != null ? amount : 0) +
+    (rangeCovered && min != null ? min : 0)
+  const rangedMax = (exactCovered && amount != null ? amount : 0) +
+    (rangeCovered && max != null ? max : 0)
+  const validRange = rangeCovered > 0 && min != null && max != null
+  const range = validRange && rangedMin !== rangedMax ? { min: rangedMin, max: rangedMax } : null
+  const value = range ? null : covered > 0
+    ? (rangeCovered && min != null ? rangedMin : amount)
+    : null
   const coverage = prompt ? Math.min(1, covered / prompt) : null
   return {
     value,
+    range,
     prompt,
     covered,
     coverage,
-    partial: value != null && coverage != null && coverage < 1,
-    reason: value == null ? savingsGapReason(b, rates) : null
+    partial: covered > 0 && coverage != null && coverage < 1,
+    estimated: b.cacheEstimated === true || !!range,
+    reason: value == null && !range ? savingsGapReason(b, rates) : null
   }
 }
 
@@ -516,57 +664,76 @@ function readUsage(u) {
   const prompt = num(u.prompt)
   const rawHit = Number(u.cache_hit_pct)
   const hitPct = u.cache_hit_pct != null && Number.isFinite(rawHit) ? Math.max(0, Math.min(100, rawHit)) : null
-  const base = { calls: num(u.calls), output: num(u.output) }
+  const base = { calls: num(u.calls), output: num(u.output), prompt: prompt || null, cacheUnknown: 0 }
   const positiveRaw = num(u.cache_read) > 0 || num(u.cache_write) > 0
-  const exactRaw = u.cache_read != null && u.cache_write != null &&
-    (positiveRaw || u.cache_provenance === 'exact')
+  const readReported = u.cache_read != null && (num(u.cache_read) > 0 || u.cache_read_reported === true || u.cache_provenance === 'exact')
+  const writeReported = u.cache_write != null && (num(u.cache_write) > 0 || u.cache_write_reported === true || u.cache_provenance === 'exact')
+  const exactRaw = readReported && writeReported && (positiveRaw || u.cache_provenance === 'exact' ||
+    u.cache_read_reported === true || u.cache_write_reported === true)
 
   const hasRaw = u.cache_read != null || u.cache_write != null
   if (hasRaw) {
-    const cacheRead = num(u.cache_read)
-    const cacheWrite = num(u.cache_write)
-    const cached = cacheRead + cacheWrite
-    // `input` carries the whole prompt when the provider had no split.
-    const fresh = prompt && input === prompt && input >= cached ? input - cached : input
-    return { ...base, cacheSource: exactRaw ? 'exact' : 'unknown', cacheEstimated: false, cacheRead, cacheWrite, input: fresh }
+    const cacheRead = u.cache_read == null ? 0 : num(u.cache_read)
+    const cacheWrite = u.cache_write == null ? 0 : num(u.cache_write)
+    const cached = num(cacheRead) + num(cacheWrite)
+    const combinedPrompt = prompt > 0 && input === prompt
+    const fresh = combinedPrompt ? exactRaw && input >= cached ? input - cached : 0 : input
+    const residual = prompt > input ? Math.max(0, prompt - input - cached)
+      : combinedPrompt && !exactRaw ? Math.max(0, prompt - cached) : 0
+    return { ...base, cacheSource: exactRaw ? 'exact' : 'unknown', cacheEstimated: false,
+      cacheRead, cacheWrite, cacheReadEvidence: readReported ? 'reported' : 'unknown',
+      cacheWriteEvidence: writeReported ? 'reported' : 'unknown', input: fresh, cacheUnknown: residual }
   }
 
   if (prompt > input) {
     const gap = prompt - input
-    if (hitPct == null) return { ...base, cacheSource: 'unknown', cacheEstimated: true, cacheRead: 0, cacheWrite: gap, input }
+    if (hitPct == null) return { ...base, cacheSource: 'unknown', cacheEstimated: false,
+      cacheRead: 0, cacheWrite: 0, cacheReadEvidence: 'unknown', cacheWriteEvidence: 'unknown', input,
+      cacheUnknown: gap }
     const cacheRead = Math.min(gap, Math.round((prompt * hitPct) / 100))
-    return { ...base, cacheSource: 'estimated', cacheEstimated: true, cacheRead, cacheWrite: gap - cacheRead, input }
+    return { ...base, cacheSource: 'estimated', cacheEstimated: true, cacheSplitMode: 'read_write',
+      cacheRead, cacheWrite: gap - cacheRead, cacheReadEvidence: 'estimated',
+      cacheWriteEvidence: 'derived', input, cacheUnknown: 0 }
   }
 
   if (prompt && hitPct != null && hitPct > 0) {
     const cacheRead = Math.min(prompt, Math.round((prompt * hitPct) / 100))
-    return { ...base, cacheSource: 'estimated', cacheEstimated: true, cacheRead, cacheWrite: 0, input: prompt - cacheRead }
+    return { ...base, cacheSource: 'unknown', cacheEstimated: true, cacheSplitMode: 'fresh_read',
+      cacheRead, cacheWrite: 0, cacheReadEvidence: 'estimated', cacheWriteEvidence: 'unknown',
+      input: 0, cacheUnknown: Math.max(0, prompt - cacheRead) }
   }
 
-  return { ...base, cacheSource: 'unknown', cacheEstimated: hitPct != null && !prompt, cacheRead: 0, cacheWrite: 0, input }
+  return { ...base, cacheSource: 'unknown', cacheEstimated: false,
+    cacheRead: 0, cacheWrite: 0, cacheReadEvidence: 'unknown', cacheWriteEvidence: 'unknown', input,
+    cacheUnknown: Math.max(0, prompt - input) }
 }
 
 /** Prompt-cache hit rate of a bucket, in percent (null without prompt tokens). */
 function hitPctOf(b) {
   if (!b) return null
   if (b.cacheSource) {
-    const prompt = num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
-    return b.cacheSource !== 'unknown' && prompt ? num(b.cacheRead) / prompt * 100 : null
+    const prompt = typeof b.prompt === 'number' && Number.isFinite(b.prompt) && b.prompt > 0
+      ? b.prompt : num(b.input) + num(b.cacheRead) + num(b.cacheWrite) + num(b.cacheUnknown)
+    const readKnown = ['reported', 'estimated', 'partial'].includes(b.cacheReadEvidence)
+    return prompt && (b.cacheSource !== 'unknown' || readKnown) ? num(b.cacheRead) / prompt * 100 : null
   }
   return num(b.cacheCoveredPrompt) ? num(b.cacheCoveredRead) / num(b.cacheCoveredPrompt) * 100 : null
 }
 
 function cacheCoverage(b) {
   if (!b) return null
-  const prompt = num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
+  const prompt = typeof b.prompt === 'number' && Number.isFinite(b.prompt) && b.prompt > 0
+    ? b.prompt : num(b.input) + num(b.cacheRead) + num(b.cacheWrite) + num(b.cacheUnknown)
   if (!prompt) return null
-  if (b.cacheSource) return b.cacheSource === 'unknown' ? 0 : 1
+  if (b.cacheSource) return b.cacheSource === 'unknown' ? null : 1
+  if (!num(b.cacheCoveredPrompt)) return null
   return Math.min(1, num(b.cacheCoveredPrompt) / prompt)
 }
 
 function cacheCoverageDetail(b, t) {
   if (!b) return ''
-  const prompt = num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
+  const prompt = typeof b.prompt === 'number' && Number.isFinite(b.prompt) && b.prompt > 0
+    ? b.prompt : num(b.input) + num(b.cacheRead) + num(b.cacheWrite) + num(b.cacheUnknown)
   if (!prompt) return ''
   const exact = b.cacheSource === 'exact' ? prompt : num(b.cacheExactPrompt)
   const estimated = b.cacheSource === 'estimated' ? prompt : num(b.cacheEstimatedPrompt)
@@ -603,14 +770,20 @@ function bucketKey(profile, provider, model, legacy) {
 function newBucket({ legacy = false, model, profile = '', provider = '' }) {
   return {
     cacheEstimated: false,
+    cacheUnknown: 0,
     cacheCoveredPrompt: 0,
     cacheCoveredRead: 0,
     cacheExactPrompt: 0,
     cacheEstimatedPrompt: 0,
     netSavings: 0,
     netSavingsPrompt: 0,
+    netSavingsMin: 0,
+    netSavingsMax: 0,
+    netSavingsRangePrompt: 0,
     cacheRead: 0,
+    cacheReadEvidence: null,
     cacheWrite: 0,
+    cacheWriteEvidence: null,
     calls: 0,
     cost: 0,
     input: 0,
@@ -688,9 +861,9 @@ function normalizeV2(raw) {
         typeof value.profile !== 'string' || typeof value.provider !== 'string' || typeof value.legacy !== 'boolean' ||
         !record(value.sources)) return false
     if (!Object.values(value.sources).every(nonNegative)) return false
-    const optionalCounters = ['pricedTokens', 'unpricedTokens', 'unpricedCalls', 'missingUsageCalls',
+    const optionalCounters = ['pricedTokens', 'unpricedTokens', 'unpricedCalls', 'missingUsageCalls', 'cacheUnknown',
       'cacheCoveredPrompt', 'cacheCoveredRead', 'cacheExactPrompt', 'cacheEstimatedPrompt',
-      'netSavingsPrompt', 'firstAt', 'lastAt']
+      'netSavingsPrompt', 'netSavingsRangePrompt', 'firstAt', 'lastAt']
     for (const field of optionalCounters) if (has(value, field) && !nonNegative(value[field])) return false
     for (const field of ['usageValueCost', 'usageValuePriced', 'usageValueMissing', 'usageValueCallsTracked',
       'usageValueMissingCalls']) if (has(value, field) && !nonNegative(value[field])) return false
@@ -699,9 +872,13 @@ function normalizeV2(raw) {
     if (has(value, 'foreignSlug') && typeof value.foreignSlug !== 'string') return false
     if (has(value, 'saved') && !nonNegative(value.saved)) return false
     if (has(value, 'netSavings') && !finite(value.netSavings)) return false
+    for (const field of ['netSavingsMin', 'netSavingsMax']) if (has(value, field) && !finite(value[field])) return false
     if (has(value, 'cacheEstimated') && typeof value.cacheEstimated !== 'boolean') return false
     if (has(value, 'coverageUnknown') && typeof value.coverageUnknown !== 'boolean') return false
     if (has(value, 'cacheSource') && !['unknown', 'exact', 'estimated'].includes(value.cacheSource)) return false
+    for (const field of ['cacheReadEvidence', 'cacheWriteEvidence']) {
+      if (has(value, field) && value[field] !== null && !['reported', 'partial', 'unknown', 'derived', 'estimated'].includes(value[field])) return false
+    }
     return !session || nonNegative(value.firstAt) && nonNegative(value.lastAt)
   }
   const validBuckets = (map, session = false) => record(map) &&
@@ -746,6 +923,10 @@ function normalizeV2(raw) {
         snapshot.counterPromptSource !== null && !['input', 'prompt'].includes(snapshot.counterPromptSource)) return false
     if (has(snapshot, 'cacheEstimated') && typeof snapshot.cacheEstimated !== 'boolean') return false
     if (has(snapshot, 'cacheSource') && !['unknown', 'exact', 'estimated'].includes(snapshot.cacheSource)) return false
+    if (has(snapshot, 'cacheUnknown') && !nonNegative(snapshot.cacheUnknown)) return false
+    for (const field of ['cacheReadEvidence', 'cacheWriteEvidence']) {
+      if (has(snapshot, field) && snapshot[field] !== null && !['reported', 'partial', 'unknown', 'derived', 'estimated'].includes(snapshot[field])) return false
+    }
     return !has(snapshot, 'guardrail') || validGuardrail(snapshot.guardrail)
   })
 
@@ -866,8 +1047,16 @@ function pruneSessions(sessions, now) {
 }
 
 function changeCacheKnown(cur, init, delta) {
-  return cur.cacheSource !== 'unknown' && init.cacheDeltaKnown === true &&
+  return cur.cacheSource !== 'unknown' && cur.cacheReadEvidence !== 'unknown' && cur.cacheWriteEvidence !== 'unknown' &&
+    init.cacheDeltaKnown === true &&
     num(delta.input) + num(delta.cacheRead) + num(delta.cacheWrite) > 0
+}
+
+function mergeCacheEvidence(current, next) {
+  if (!next) return current || 'unknown'
+  if (!current) return next
+  if (current === next || current === 'partial') return current
+  return 'partial'
 }
 
 /** Add one priced delta to a bucket (copy-on-write). */
@@ -878,7 +1067,12 @@ function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolv
     unpricedTokens: num(prevBucket.unpricedTokens),
     unpricedCalls: num(prevBucket.unpricedCalls),
     missingUsageCalls: num(prevBucket.missingUsageCalls),
+    cacheUnknown: num(prevBucket.cacheUnknown),
     saved: num(prevBucket.saved),
+    netSavingsPrompt: num(prevBucket.netSavingsPrompt),
+    netSavingsRangePrompt: num(prevBucket.netSavingsRangePrompt),
+    netSavingsMin: Number.isFinite(prevBucket.netSavingsMin) ? prevBucket.netSavingsMin : 0,
+    netSavingsMax: Number.isFinite(prevBucket.netSavingsMax) ? prevBucket.netSavingsMax : 0,
     sources: { ...prevBucket.sources }
   } : newBucket(init)
   if (prevBucket && coverageUnknown(prevBucket)) b.coverageUnknown = true
@@ -887,25 +1081,40 @@ function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolv
   b.output += delta.output
   b.cacheRead += delta.cacheRead
   b.cacheWrite += delta.cacheWrite
+  b.cacheUnknown += num(delta.cacheUnknown)
+  b.cacheReadEvidence = mergeCacheEvidence(b.cacheReadEvidence, cur.cacheReadEvidence)
+  b.cacheWriteEvidence = mergeCacheEvidence(b.cacheWriteEvidence, cur.cacheWriteEvidence)
   b.calls += delta.calls
   b.missingUsageCalls = num(b.missingUsageCalls) + num(usageEvidence.missingCalls)
   const prompt = num(delta.input) + num(delta.cacheRead) + num(delta.cacheWrite)
+  if (num(delta.cacheUnknown)) b.coverageUnknown = true
   if (changeCacheKnown(cur, init, delta)) {
     b.cacheCoveredPrompt = num(b.cacheCoveredPrompt) + prompt
     b.cacheCoveredRead = num(b.cacheCoveredRead) + num(delta.cacheRead)
     if (cur.cacheSource === 'exact') b.cacheExactPrompt = num(b.cacheExactPrompt) + prompt
     if (cur.cacheSource === 'estimated') b.cacheEstimatedPrompt = num(b.cacheEstimatedPrompt) + prompt
-    const net = cacheSavings(delta.cacheRead, resolved.rates, delta.cacheWrite, cur.cacheSource === 'estimated')
-    if (net != null) {
-      b.netSavings = (Number.isFinite(b.netSavings) ? b.netSavings : 0) + net
+    const promptContext = num(delta.input) + num(delta.cacheRead) + num(delta.cacheWrite)
+    const bounds = cacheSavingsBounds(delta.cacheRead, resolved.rates, delta.cacheWrite, {
+      derivedWrite: cur.cacheSource === 'estimated',
+      contextPrompt: num(delta.calls) === 1 ? promptContext : null,
+      cacheCounterUncertainty: usageEvidence.cacheCounterUncertainty
+    })
+    if (bounds?.exact) {
+      b.netSavings = (Number.isFinite(b.netSavings) ? b.netSavings : 0) + bounds.min
       b.netSavingsPrompt = num(b.netSavingsPrompt) + prompt
+    } else if (bounds) {
+      b.netSavingsMin = (Number.isFinite(b.netSavingsMin) ? b.netSavingsMin : 0) + bounds.min
+      b.netSavingsMax = (Number.isFinite(b.netSavingsMax) ? b.netSavingsMax : 0) + bounds.max
+      b.netSavingsRangePrompt = num(b.netSavingsRangePrompt) + prompt
     }
   }
   if (cur.cacheEstimated && (num(delta.cacheRead) || num(delta.cacheWrite) || changeCacheKnown(cur, init, delta))) b.cacheEstimated = true
   if (costDelta != null) {
     b.cost += costDelta
-    b.pricedTokens += deltaTokens
-    b.sources[source] = num(b.sources[source]) + deltaTokens
+    const pricedDeltaTokens = source === 'gateway' ? deltaTokens : Math.max(0, deltaTokens - num(delta.cacheUnknown))
+    b.pricedTokens += pricedDeltaTokens
+    b.unpricedTokens += source === 'gateway' ? 0 : num(delta.cacheUnknown)
+    b.sources[source] = num(b.sources[source]) + pricedDeltaTokens
     if (source === 'foreign' && resolved.foreignSlug) b.foreignSlug = resolved.foreignSlug
   } else {
     b.unpricedTokens += deltaTokens
@@ -935,14 +1144,33 @@ function promptCounterOf(usage) {
   return input == null ? { value: null, source: null } : { value: input, source: 'input' }
 }
 
+function cacheCounterRoundingUncertainty(snapshot) {
+  if (snapshot?.cacheSource !== 'estimated') return null
+  const prompt = num(snapshot.input) + num(snapshot.cacheRead) + num(snapshot.cacheWrite)
+  if (!prompt) return null
+  return {
+    mode: snapshot.cacheSplitMode || 'any',
+    tokens: prompt * CACHE_HIT_PCT_ROUNDING_TOLERANCE + CACHE_READ_ROUNDING_TOKEN_TOLERANCE
+  }
+}
+
+function cacheCounterUncertaintyFor(...snapshots) {
+  return snapshots.map(cacheCounterRoundingUncertainty).filter(Boolean).reduce((total, item) => {
+    const key = item.mode === 'fresh_read' ? 'freshReadTokens'
+      : item.mode === 'read_write' ? 'readWriteTokens' : 'anyTokens'
+    total[key] += item.tokens
+    return total
+  }, { freshReadTokens: 0, readWriteTokens: 0, anyTokens: 0 })
+}
+
 function previousPromptCounter(prev, source) {
   if (cumulativeCounter(prev.counterPrompt) != null && prev.counterPromptSource === source) return prev.counterPrompt
   if (source === 'prompt') {
     if (prev.counterPromptSource === 'input' && cumulativeCounter(prev.counterInput) != null) {
-      return prev.counterInput + num(prev.cacheRead) + num(prev.cacheWrite)
+      return prev.counterInput + num(prev.cacheRead) + num(prev.cacheWrite) + num(prev.cacheUnknown)
     }
     if (cumulativeCounter(prev.counterPrompt) != null) return null
-    return num(prev.input) + num(prev.cacheRead) + num(prev.cacheWrite)
+    return num(prev.input) + num(prev.cacheRead) + num(prev.cacheWrite) + num(prev.cacheUnknown)
   }
   if (source === 'input' && cumulativeCounter(prev.counterInput) != null) return prev.counterInput
   if (cumulativeCounter(prev.counterPrompt) != null) return null
@@ -977,14 +1205,15 @@ function promptDeltaBuckets(cur, prev, promptDelta = null, freshDelta = null) {
   const delta = {
     input: Math.max(0, cur.input - num(prev.input)),
     cacheRead: Math.max(0, cur.cacheRead - num(prev.cacheRead)),
-    cacheWrite: Math.max(0, cur.cacheWrite - num(prev.cacheWrite))
+    cacheWrite: Math.max(0, cur.cacheWrite - num(prev.cacheWrite)),
+    cacheUnknown: Math.max(0, num(cur.cacheUnknown) - num(prev.cacheUnknown))
   }
   if (promptDelta == null) return delta
   if (freshDelta == null) {
-    delta.input += fitBucketDelta(delta, ['input', 'cacheRead', 'cacheWrite'], promptDelta)
+    delta.cacheUnknown = fitBucketDelta(delta, ['input', 'cacheRead', 'cacheWrite'], promptDelta)
   } else {
     delta.input = Math.min(promptDelta, Math.max(0, freshDelta))
-    delta.cacheWrite += fitBucketDelta(delta, ['cacheRead', 'cacheWrite'], promptDelta - delta.input)
+    delta.cacheUnknown = fitBucketDelta(delta, ['cacheRead', 'cacheWrite'], promptDelta - delta.input)
   }
   return delta
 }
@@ -1048,8 +1277,12 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
       cur.input = num(prev.input)
       cur.cacheRead = num(prev.cacheRead)
       cur.cacheWrite = num(prev.cacheWrite)
+      cur.cacheUnknown = num(prev.cacheUnknown)
+      cur.prompt = prev.prompt ?? null
       cur.cacheEstimated = Boolean(prev.cacheEstimated)
       cur.cacheSource = prev.cacheSource || 'unknown'
+      cur.cacheReadEvidence = prev.cacheReadEvidence || 'unknown'
+      cur.cacheWriteEvidence = prev.cacheWriteEvidence || 'unknown'
     }
     if (rawOutput == null) cur.output = num(prev.output)
   }
@@ -1092,7 +1325,9 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
   const pendingUsageRef = delta.calls > 0
     ? pendingUsageCall != null ? { day, bucketKey: key, sessionId: storedId || null } : null
     : resolvedCall ? null : priorGuardrail?.pendingUsageRef ?? null
-  const usageEvidence = { missingCalls, resolvedCalls: resolvedCall ? 1 : 0, coalesced: delta.calls > 1 }
+  const cacheCounterUncertainty = cacheCounterUncertaintyFor(cur, !restarted ? prev : null)
+  const usageEvidence = { missingCalls, resolvedCalls: resolvedCall ? 1 : 0, coalesced: delta.calls > 1,
+    cacheCounterUncertainty }
   // Metadata-only completion must settle even when the final output is zero.
   if (!deltaTokens && !delta.calls && !resolvedCall) return led
 
@@ -1195,10 +1430,15 @@ function summarize(led, filter, priceLegacy) {
       if (!isObj(b)) continue
       const r = rows[key] || (rows[key] = { ...newBucket(b), cost: null })
       if (coverageUnknown(b)) r.coverageUnknown = true
-      for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'calls', 'pricedTokens', 'unpricedTokens', 'unpricedCalls', 'missingUsageCalls', 'saved', 'cacheCoveredPrompt', 'cacheCoveredRead', 'cacheExactPrompt', 'cacheEstimatedPrompt', 'netSavingsPrompt']) {
+      for (const f of ['input', 'output', 'cacheRead', 'cacheWrite', 'cacheUnknown', 'calls', 'pricedTokens', 'unpricedTokens', 'unpricedCalls', 'missingUsageCalls', 'saved', 'cacheCoveredPrompt', 'cacheCoveredRead', 'cacheExactPrompt', 'cacheEstimatedPrompt', 'netSavingsPrompt', 'netSavingsRangePrompt']) {
         r[f] = num(r[f]) + num(b[f])
       }
+      const evidence = localCacheEvidence(b)
+      r.cacheReadEvidence = mergeCacheEvidence(r.cacheReadEvidence, evidence.read)
+      r.cacheWriteEvidence = mergeCacheEvidence(r.cacheWriteEvidence, evidence.write)
       if (Number.isFinite(b.netSavings)) r.netSavings += b.netSavings
+      if (Number.isFinite(b.netSavingsMin)) r.netSavingsMin += b.netSavingsMin
+      if (Number.isFinite(b.netSavingsMax)) r.netSavingsMax += b.netSavingsMax
       if (!b.legacy && typeof b.cost === 'number' && Number.isFinite(b.cost)) {
         r.cost = (r.cost ?? 0) + b.cost
       }
@@ -1219,10 +1459,16 @@ function summarize(led, filter, priceLegacy) {
     saved: 0,
     cacheCoveredPrompt: 0,
     cacheCoveredRead: 0,
+    cacheUnknown: 0,
+    cacheReadEvidence: null,
+    cacheWriteEvidence: null,
     cacheExactPrompt: 0,
     cacheEstimatedPrompt: 0,
     netSavings: 0,
     netSavingsPrompt: 0,
+    netSavingsMin: 0,
+    netSavingsMax: 0,
+    netSavingsRangePrompt: 0,
     unpricedTokens: 0,
     unpricedCalls: 0,
     missingUsageCalls: 0,
@@ -1254,8 +1500,14 @@ function summarize(led, filter, priceLegacy) {
     totals.cacheEstimatedPrompt += num(r.cacheEstimatedPrompt)
     totals.netSavings += r.netSavings
     totals.netSavingsPrompt += num(r.netSavingsPrompt)
+    totals.netSavingsMin += Number.isFinite(r.netSavingsMin) ? r.netSavingsMin : 0
+    totals.netSavingsMax += Number.isFinite(r.netSavingsMax) ? r.netSavingsMax : 0
+    totals.netSavingsRangePrompt += num(r.netSavingsRangePrompt)
     totals.read += num(r.cacheRead)
-    totals.prompt += num(r.input) + num(r.cacheRead) + num(r.cacheWrite)
+    totals.cacheUnknown += num(r.cacheUnknown)
+    totals.cacheReadEvidence = mergeCacheEvidence(totals.cacheReadEvidence, r.cacheReadEvidence || 'unknown')
+    totals.cacheWriteEvidence = mergeCacheEvidence(totals.cacheWriteEvidence, r.cacheWriteEvidence || 'unknown')
+    totals.prompt += num(r.input) + num(r.cacheRead) + num(r.cacheWrite) + num(r.cacheUnknown)
     totals.unpricedTokens += num(r.unpricedTokens)
     totals.unpricedCalls += num(r.unpricedCalls)
     totals.missingUsageCalls += num(r.missingUsageCalls)
@@ -1303,7 +1555,9 @@ function csvCell(v) {
 const CSV_COLUMNS = [
   'date', 'profile', 'provider', 'model', 'input', 'output', 'cache_read', 'cache_write', 'calls',
   'cost_usd', 'cost_basis', 'priced_tokens', 'unpriced_tokens', 'cache_saved_usd', 'cache_estimated', 'net_cache_savings_usd',
-  'unpriced_calls', 'missing_usage_calls', 'coverage_unknown'
+  'unpriced_calls', 'missing_usage_calls', 'coverage_unknown', 'cache_read_evidence', 'cache_write_evidence',
+  'cache_unknown_prompt_tokens', 'cache_savings_basis', 'cache_savings_min_usd', 'cache_savings_max_usd',
+  'cache_population', 'cache_valuation_source'
 ]
 
 function costBasis(b) {
@@ -1317,15 +1571,29 @@ function ledgerCsv(led) {
   for (const date of Object.keys(led.days).sort()) {
     const buckets = Object.values(led.days[date] || {}).sort((a, b) => String(a.model).localeCompare(String(b.model)))
     for (const b of buckets) {
+      const evidence = localCacheEvidence(b)
+      const savingsStateValue = savingsState(b, null)
+      const savingsBasis = savingsStateValue.range ? 'range'
+        : savingsStateValue.value == null ? 'unavailable'
+          : savingsStateValue.partial ? 'partial'
+            : savingsStateValue.estimated ? 'estimated' : 'exact'
+      const savingsMin = savingsStateValue.range?.min ?? savingsStateValue.value
+      const savingsMax = savingsStateValue.range?.max ?? savingsStateValue.value
       lines.push(
         [
-          date, b.profile || '', b.provider || '', b.model, num(b.input), num(b.output), num(b.cacheRead),
-          num(b.cacheWrite), num(b.calls), b.legacy || !num(b.pricedTokens) ? '' : Number(num(b.cost).toFixed(6)),
+          date, b.profile || '', b.provider || '', b.model, num(b.input), num(b.output),
+          evidence.read === 'unknown' ? '' : num(b.cacheRead),
+          evidence.write === 'unknown' ? '' : num(b.cacheWrite), num(b.calls),
+          b.legacy || !num(b.pricedTokens) ? '' : Number(num(b.cost).toFixed(6)),
           costBasis(b), num(b.pricedTokens), num(b.unpricedTokens),
           b.legacy ? '' : Number(num(b.saved).toFixed(6)), b.cacheEstimated ? 'yes' : 'no',
-          num(b.netSavingsPrompt) && num(b.netSavingsPrompt) === num(b.input) + num(b.cacheRead) + num(b.cacheWrite)
-            ? Number(b.netSavings.toFixed(6)) : '',
-          num(b.unpricedCalls), num(b.missingUsageCalls), coverageUnknown(b) ? 'yes' : 'no'
+          !savingsStateValue.range && !savingsStateValue.partial && savingsStateValue.value != null
+            ? Number(savingsStateValue.value.toFixed(6)) : '',
+          num(b.unpricedCalls), num(b.missingUsageCalls), coverageUnknown(b) ? 'yes' : 'no',
+          evidence.read, evidence.write, num(b.cacheUnknown), savingsBasis,
+          savingsMin == null || b.legacy ? '' : Number(savingsMin.toFixed(6)),
+          savingsMax == null || b.legacy ? '' : Number(savingsMax.toFixed(6)),
+          'desktop_local_ledger_unclassified', savingsBasis === 'unavailable' ? 'unavailable' : 'desktop_local_estimate'
         ]
           .map(csvCell)
           .join(',')
@@ -1708,6 +1976,166 @@ function catalogQuery(sessionId, model, allowRefresh = $automaticModelOptions.ge
   }
 }
 
+function focusedSessionNow() {
+  try { return host.state.focusedSessionId.get() || null } catch { return null }
+}
+
+/** Contract-4 main-population summary for one exact Hermes runtime session. */
+function sessionSummaryQuery(identity, sessionId) {
+  const sid = String(sessionId || '')
+  return {
+    queryKey: [ID, 'session-summary', identity, sid, 'main'],
+    retry: false,
+    staleTime: 2500,
+    refetchInterval: 5000,
+    queryFn: async () => {
+      if (!sid || typeof rest !== 'function') throw new Error('Session summary unavailable.')
+      if (!membershipIdentityCurrent(identity) || String(focusedSessionNow() || '') !== sid) {
+        throw new Error('Stale session summary request.')
+      }
+      const payload = await rest(`/session/summary?session_id=${encodeURIComponent(sid)}&population=main`)
+      if (!membershipIdentityCurrent(identity) || String(focusedSessionNow() || '') !== sid) {
+        throw new Error('Stale session summary response.')
+      }
+      return { identity, sessionId: sid, payload }
+    }
+  }
+}
+
+/** Validate the scope and normalize only the contract-4 valuation fields.
+ *  In particular, a refused response's alternate all-calls block is ignored. */
+function sessionSavingsState(envelope, expectedSessionId, expectedIdentity) {
+  const sid = String(expectedSessionId || '')
+  if (!sid) return { available: false, reason: 'summary_unavailable' }
+  if (!envelope || envelope.identity !== expectedIdentity || envelope.sessionId !== sid) {
+    return { available: false, reason: 'summary_stale' }
+  }
+  const summary = envelope.payload
+  if (!summary || summary.ok !== true || String(summary.session_id || '') !== sid) {
+    return { available: false, reason: 'summary_stale' }
+  }
+  const population = summary.population
+  if (!population || population.requested !== 'main') {
+    return { available: false, reason: 'population_not_proven' }
+  }
+  if (population.satisfied !== true || population.separable !== true) {
+    return { available: false, scopeProven: false, reason: 'population_not_proven' }
+  }
+  const totals = summary.totals
+  const valuation = summary.valuation
+  if (!totals || !Number.isSafeInteger(totals.calls) || totals.calls < 0) {
+    return { available: false, reason: 'summary_unavailable' }
+  }
+  const stateName = value => ['reported', 'partial', 'unknown', 'derived', 'estimated'].includes(value) ? value : 'unknown'
+  const evidence = { read: stateName(totals.cache_read_state), write: stateName(totals.cache_write_state) }
+  const scope = { scopeProven: true, totals, valuation, population: 'main', evidence,
+    totalCalls: totals.calls }
+  if (totals.calls === 0) return { ...scope, available: false, empty: true, reason: 'summary_no_calls' }
+  if (!valuation || typeof valuation !== 'object') {
+    return { ...scope, available: false, reason: 'summary_unavailable' }
+  }
+
+  const reason = valuation.savings_bound_reason || ''
+  const gaps = valuation.gap_reasons && typeof valuation.gap_reasons === 'object'
+    ? valuation.gap_reasons : {}
+  const missingCalls = key => Number(gaps[key]) > 0
+  const unavailableReason = reason === 'context_tier_unknown' || reason === 'tier' ||
+      missingCalls('tier_rate_unavailable')
+    ? 'context_tier_unknown'
+    : missingCalls('missing_cache_read_rate') || missingCalls('read_rate_missing') ? 'no_cache_rate'
+      : missingCalls('missing_cache_write_rate') || missingCalls('write_rate_missing') ? 'no_write_rate'
+        : missingCalls('price_evidence_missing') || missingCalls('provider_price_catalogue_missing') ||
+          missingCalls('provider_unidentified') || missingCalls('model_unidentified') || missingCalls('missing_base_rate') ? 'unpriced_route'
+          : valuation.savings_basis == null && (evidence.read === 'unknown' || evidence.write === 'unknown')
+            ? 'cache_evidence_unknown' : 'summary_unavailable'
+
+  const coveredCalls = Number.isSafeInteger(valuation.covered_calls) ? valuation.covered_calls : 0
+  const savings = finiteValue(valuation.savings_usd)
+  const high = finiteValue(valuation.savings_usd_high)
+  const basis = valuation.savings_basis
+  const coverage = finiteValue(valuation.coverage)
+  const excludedCalls = Number.isSafeInteger(valuation.excluded_calls)
+    ? Math.max(0, valuation.excluded_calls) : Math.max(0, totals.calls - coveredCalls)
+  const common = { ...scope, available: false, basis, coveredCalls, excludedCalls, coverage, reason: unavailableReason }
+  if (!coveredCalls || savings == null || basis === 'indeterminate' || reason === 'context_tier_unknown') return common
+
+  const partial = valuation.excluded_calls > 0 || coveredCalls < totals.calls ||
+    (coverage != null && coverage < 1) || Object.values(gaps).some(value => Number(value) > 0)
+  if (basis === 'exact') return { ...common, available: true, kind: 'value', value: savings, high: null, partial, reason: null }
+  if (basis === 'range' && high != null && high >= savings) {
+    return { ...common, available: true, kind: 'range', value: null,
+      range: { min: savings, max: high }, partial, reason: null }
+  }
+  if (basis === 'upper_bound') return { ...common, available: true, kind: 'upper', value: savings, high: null, partial, reason: null }
+  if (basis === 'lower_bound') return { ...common, available: true, kind: 'lower', value: savings, high: null, partial, reason: null }
+  return common
+}
+
+function backendSummaryBucket(state) {
+  if (!state?.scopeProven) return null
+  const totals = state.totals
+  const readKnown = state.evidence.read !== 'unknown'
+  const writeKnown = state.evidence.write !== 'unknown'
+  const input = finiteValue(totals.input_tokens)
+  const cacheRead = readKnown ? finiteValue(totals.cache_read_tokens) : null
+  const cacheWrite = writeKnown ? finiteValue(totals.cache_write_tokens) : null
+  const prompt = finiteValue(totals.prompt_tokens)
+  const unknownPrompt = prompt == null ? 0 : Math.max(0,
+    prompt - (input || 0) - (cacheRead || 0) - (cacheWrite || 0))
+  const valuation = state.valuation || {}
+  return {
+    calls: totals.calls,
+    input,
+    output: finiteValue(totals.output_tokens),
+    cacheRead,
+    cacheWrite,
+    prompt,
+    cacheUnknown: unknownPrompt,
+    cacheSource: state.evidence.read === 'reported' && state.evidence.write === 'reported' ? 'exact' : 'unknown',
+    cacheEstimated: ['derived', 'estimated', 'partial'].includes(state.evidence.read) ||
+      ['derived', 'estimated', 'partial'].includes(state.evidence.write),
+    cacheReadEvidence: state.evidence.read,
+    cacheWriteEvidence: state.evidence.write,
+    unpricedTokens: num(totals.unpriced_tokens),
+    unpricedCalls: num(valuation.excluded_calls),
+    missingUsageCalls: 0,
+    coverageUnknown: Number(valuation.covered_calls) < num(totals.calls)
+  }
+}
+
+function localCacheEvidence(bucket) {
+  if (bucket?.cacheReadEvidence || bucket?.cacheWriteEvidence) {
+    return {
+      read: bucket.cacheReadEvidence || 'unknown',
+      write: bucket.cacheWriteEvidence || 'unknown'
+    }
+  }
+  const exact = num(bucket?.cacheExactPrompt)
+  const estimated = num(bucket?.cacheEstimatedPrompt)
+  const mixed = exact > 0 && estimated > 0
+  const writes = num(bucket?.cacheWrite)
+  if (!exact && !estimated && bucket?.cacheSource === 'exact') {
+    return { read: 'reported', write: 'reported' }
+  }
+  if (!exact && !estimated && bucket?.cacheSource === 'estimated') {
+    return { read: 'estimated', write: writes > 0 ? 'derived' : 'unknown' }
+  }
+  if (!exact && !estimated && bucket?.cacheEstimated === true) {
+    return { read: num(bucket?.cacheRead) > 0 ? 'estimated' : 'unknown',
+      write: writes > 0 ? 'derived' : 'unknown' }
+  }
+  return {
+    read: mixed ? 'partial' : estimated > 0 ? 'estimated' : exact > 0 ? 'reported' : 'unknown',
+    write: mixed ? 'partial' : estimated > 0 ? writes > 0 ? 'derived' : 'unknown' : exact > 0 ? 'reported' : 'unknown'
+  }
+}
+
+function cacheEvidenceIncomplete(bucket) {
+  const evidence = localCacheEvidence(bucket)
+  return num(bucket?.cacheUnknown) > 0 || ['unknown', 'partial'].includes(evidence.read) ||
+    ['unknown', 'partial'].includes(evidence.write)
+}
+
 /** The session's model.options payload (cached; stale data beats none on error). */
 async function getCatalog(sessionId, model) {
   const q = catalogQuery(sessionId, model)
@@ -1897,6 +2325,9 @@ function useLive() {
   const stateModel = useValue(host.state.model)
   const led = useValue($ledger)
   const allowRefresh = useValue($automaticModelOptions)
+  const identity = useValue($membershipIdentity)
+  const summaryRead = useQuery({ ...sessionSummaryQuery(identity, sessionId),
+    enabled: !!sessionId && membershipIdentityCurrent(identity) })
   // After a restart the host seeds the focused session with an all-zero usage
   // object; treat that as "nothing yet" so the UI falls back to the ledger.
   // Cache-only frames are valid usage too: normalisation splits them into
@@ -1924,10 +2355,61 @@ function useLive() {
   const resolved = resolveRates({ model, payload, provider, remembered: led.rates })
   const bucket = usage ? readUsage(usage) : null
   const computed = costOf(bucket, resolved.rates)
-  const backendCost =
-    usage && typeof usage.cost_usd === 'number' && usage.cost_usd > 0 ? usage.cost_usd : null
+  const backendCost = usage && typeof usage.cost_usd === 'number' && Number.isFinite(usage.cost_usd)
+    ? usage.cost_usd : null
 
   const hist = storedId && led.sessions ? led.sessions[storedId] : null
+  const summaryState = sessionSavingsState(summaryRead.data, sessionId, identity)
+  const summaryBucket = backendSummaryBucket(summaryState)
+  if (summaryState.scopeProven && summaryBucket) {
+    const valuation = summaryState.valuation || {}
+    const savings = summaryState.available ? summaryState : null
+    const apiValue = finiteValue(valuation.api_equivalent_usd)
+    const summaryModel = summaryRead.data?.payload?.model || ''
+    const summaryProvider = summaryRead.data?.payload?.provider || null
+    return {
+      bucket: summaryBucket,
+      guardrailValue: null,
+      cacheHitPct: finiteValue(valuation.cache_hit_rate) == null
+        ? null : finiteValue(valuation.cache_hit_rate) * 100,
+      cost: apiValue,
+      costSource: apiValue == null ? 'none' : 'backend_summary',
+      costBasis: valuation.api_equivalent_basis || null,
+      costPartial: valuation.api_equivalent_basis !== 'exact',
+      foreignSlug: null,
+      fromHistory: true,
+      model: summaryModel,
+      partial: !savings || savings.partial || Number(valuation.excluded_calls) > 0 ||
+        valuation.api_equivalent_basis !== 'exact',
+      pricingError: error ? String(error.message || error) : null,
+      pricingLoading: isLoading,
+      provider: summaryProvider,
+      providerUnknown: !summaryProvider,
+      rates: resolved.rates,
+      saved: savings?.kind === 'value' ? savings.value : null,
+      savedRange: savings?.kind === 'range' ? savings.range : null,
+      savedBound: savings && ['upper', 'lower'].includes(savings.kind)
+        ? { kind: savings.kind, value: savings.value } : null,
+      savedEstimated: false,
+      savedCoverage: savings?.coverage ?? null,
+      savedPartial: savings?.partial ?? false,
+      excludedCalls: savings?.excludedCalls ?? 0,
+      savedReason: savings?.reason || (summaryState.available ? null : summaryState.reason),
+      savedSource: 'backend_summary',
+      savedPopulation: 'main',
+      savedEvidence: summaryState.evidence,
+      savedBasis: savings?.basis || null,
+      cacheCoverage: summaryState.evidence.read === 'reported' && summaryState.evidence.write === 'reported'
+        ? 1 : null,
+      sinceAt: null,
+      usage,
+      population: 'main',
+      evidence: summaryState.evidence,
+      apiEquivalent: true,
+      cacheHitRateBasis: valuation.cache_hit_rate_basis || null
+    }
+  }
+
   if (liveScope(hist) === 'conversation') {
     const kinds = Object.keys(hist.sources || {}).filter(k => num(hist.sources[k]))
     const histSource = !hist.pricedTokens ? 'none' : kinds.length === 1 ? kinds[0] : 'mixed'
@@ -1937,8 +2419,9 @@ function useLive() {
     // total: print it with its coverage instead of hiding it because one
     // increment (every conversation's cold start) had no cache evidence.
     const savings = savingsState(hist, histRates.rates)
+    const evidence = localCacheEvidence(hist)
     return {
-      bucket: hist,
+      bucket: { ...hist, ...evidence },
       guardrailValue: hist,
       cacheHitPct: hitPctOf(hist),
       cost: hist.pricedTokens ? hist.cost : null,
@@ -1950,7 +2433,9 @@ function useLive() {
       fromHistory: true,
       model: (usage && usage.model) || histModel,
       partial: num(hist.unpricedTokens) > 0 || num(hist.unpricedCalls) > 0 ||
-        num(hist.missingUsageCalls) > 0 || coverageUnknown(hist),
+        num(hist.missingUsageCalls) > 0 || coverageUnknown(hist) || cacheEvidenceIncomplete(hist),
+      costPartial: num(hist.unpricedTokens) > 0 || num(hist.unpricedCalls) > 0 ||
+        num(hist.missingUsageCalls) > 0 || coverageUnknown(hist) || cacheEvidenceIncomplete(hist),
       pricingError: error ? String(error.message || error) : null,
       pricingLoading: isLoading,
       // While a run is live, the current route is the live one or unknown;
@@ -1959,18 +2444,34 @@ function useLive() {
       providerUnknown: !(provider || (!usage && hist.provider)),
       rates: histRates.rates,
       saved: savings.value,
+      savedRange: savings.range,
+      savedBound: null,
+      savedEstimated: true,
       savedCoverage: savings.coverage,
       savedPartial: savings.partial,
       savedReason: savings.reason,
+      savedSource: 'local_conversation_estimate',
+      savedPopulation: 'unverified',
+      savedEvidence: evidence,
+      savedBasis: savings.range ? 'range' : savings.value == null ? null : 'local_estimate',
       cacheCoverage: cacheCoverage(hist),
       sinceAt: hist.firstAt,
+      population: 'local_conversation',
+      evidence,
+      apiEquivalent: true,
       usage
     }
   }
 
-  const runState = bucket?.cacheSource !== 'unknown' && num(bucket?.calls) === 1
-    ? liveSavings(bucket, resolved.rates)
+  const promptContext = num(bucket?.input) + num(bucket?.cacheRead) + num(bucket?.cacheWrite)
+  const runBounds = bucket?.cacheSource !== 'unknown' && bucket?.cacheReadEvidence !== 'unknown' &&
+    bucket?.cacheWriteEvidence !== 'unknown' && num(bucket?.calls) === 1 && resolved.rates
+    ? cacheSavingsBounds(bucket.cacheRead, resolved.rates, bucket.cacheWrite, {
+      derivedWrite: derivedWrites(bucket), contextPrompt: promptContext,
+      cacheCounterUncertainty: cacheCounterUncertaintyFor(bucket)
+    })
     : null
+  const runState = runBounds?.exact ? runBounds.min : null
   return {
     bucket,
     guardrailValue: led.snapshots[String(sessionId)]?.guardrail || null,
@@ -1986,12 +2487,24 @@ function useLive() {
     rates: resolved.rates,
     // A cumulative run can span models; one current price cannot value it.
     saved: runState,
-    savedCoverage: runState != null ? 1 : null,
+    savedRange: runBounds && !runBounds.exact ? { min: runBounds.min, max: runBounds.max } : null,
+    savedBound: null,
+    savedEstimated: true,
+    savedCoverage: runBounds ? 1 : null,
     savedPartial: false,
-    savedReason: runState != null ? null
+    savedReason: runBounds ? null
       : bucket && num(bucket.calls) > 1 && bucket.cacheSource !== 'unknown' ? 'cumulative_run'
         : savingsGapReason(bucket, resolved.rates),
+    partial: cacheEvidenceIncomplete(bucket),
+    costPartial: cacheEvidenceIncomplete(bucket),
+    savedSource: 'local_run_estimate',
+    savedPopulation: 'unverified',
+    savedEvidence: bucket ? { read: bucket.cacheReadEvidence, write: bucket.cacheWriteEvidence } : null,
+    savedBasis: runBounds ? 'local_estimate' : null,
     cacheCoverage: cacheCoverage(bucket),
+    population: 'focused_run',
+    evidence: bucket ? { read: bucket.cacheReadEvidence, write: bucket.cacheWriteEvidence } : null,
+    apiEquivalent: true,
     usage
   }
 }
@@ -2056,16 +2569,31 @@ function scopeTotalsTitle(t, fromHistory) {
  *  exactly; only derived cache fields carry the ≈ marker and a `derived` tag,
  *  because a reconstructed cache-write is not provider-confirmed usage. */
 function tokenRows(t, b, hasContext, u) {
-  const approx = b.cacheEstimated ? '≈' : ''
-  const derived = b.cacheEstimated ? t('derivedMark') : ''
+  const evidence = localCacheEvidence(b)
+  const stateLabel = (direction, state) => t(`tokenEvidence_${state || 'unknown'}`)
+  const tokenValue = (value, state) => value == null || state === 'unknown' ? t('unknown')
+    : `${['partial', 'derived', 'estimated'].includes(state) ? '≈' : ''}${fmtTokens(value)}`
+  const prompt = typeof b.prompt === 'number' && Number.isFinite(b.prompt) && b.prompt >= 0
+    ? b.prompt : null
+  const knownPrompt = num(b.input) + (evidence.read === 'unknown' ? 0 : num(b.cacheRead)) +
+    (evidence.write === 'unknown' ? 0 : num(b.cacheWrite))
+  const unclassifiedPrompt = Math.max(num(b.cacheUnknown), prompt == null ? 0 : prompt - knownPrompt)
+  const evidenceStates = [evidence.read, evidence.write]
+  const cacheEvidenceNote = evidenceStates.includes('partial') ? t('inclPartialCache')
+    : evidenceStates.includes('derived') ? t('inclDerived')
+      : evidenceStates.includes('estimated') ? t('inclEstimatedCache') : ''
+  const cacheEstimated = evidenceStates.some(state => ['estimated', 'derived', 'partial'].includes(state))
   const rows = [
     { key: 'i', label: t('input'), value: fmtTokens(b.input) },
     { key: 'o', label: t('output'), value: fmtTokens(b.output) },
-    b.cacheRead ? { key: 'cr', dim: true, label: t('cacheRead') + derived, value: `${approx}${fmtTokens(b.cacheRead)}` } : null,
-    b.cacheWrite ? { key: 'cw', dim: true, label: t('cacheWrite') + derived, value: `${approx}${fmtTokens(b.cacheWrite)}` } : null,
-    // The total includes the derived cache, so it is an estimate too — mark it
-    // rather than letting an exact-looking figure carry an estimated component.
-    { key: 'tt', label: t('total') + (b.cacheEstimated ? t('inclDerived') : ''), value: `${approx}${fmtTokens(tokensOf(b))}` },
+    { key: 'cr', dim: true, label: `${t('cacheRead')} · ${stateLabel('read', evidence.read)}`,
+      value: tokenValue(b.cacheRead, evidence.read) },
+    { key: 'cw', dim: true, label: `${t('cacheWrite')} · ${stateLabel('write', evidence.write)}`,
+      value: tokenValue(b.cacheWrite, evidence.write) },
+    unclassifiedPrompt ? { key: 'cu', dim: true, label: t('unclassifiedPromptTokens'),
+      value: `≈${fmtTokens(unclassifiedPrompt)}` } : null,
+    { key: 'tt', label: t('total') + (unclassifiedPrompt ? t('inclUnknownPrompt') : cacheEvidenceNote),
+      value: `${cacheEstimated || b.cacheEstimated || unclassifiedPrompt ? '≈' : ''}${fmtTokens(tokensOf(b))}` },
     { key: 'c', dim: true, label: t('calls'), value: String(b.calls ?? 0) }
   ]
   if (hasContext) {
@@ -2107,6 +2635,16 @@ function Chip() {
   const open = openLedger
   const todayText = desktopTodayText(today, t)
   const todayTooltip = t('todayStatusNote')
+  const savedText = savedDisplay(t, live)
+  const costApprox = live.costSource === 'backend_summary'
+    ? live.costBasis !== 'exact' ? '≈' : ''
+    : ['local_conversation_estimate', 'local_run_estimate'].includes(live.savedSource) && live.costSource !== 'gateway' ? '≈' : ''
+  const savedScopeNote = live.savedSource === 'backend_summary' ? t('sessionSavingsSourceNote')
+    : live.savedSource === 'local_conversation_estimate' ? t('localEstimateScopeNote')
+      : live.savedSource === 'local_run_estimate' ? t('costLocalRunNote') : ''
+  const liveScopeLabel = live.savedSource === 'backend_summary' ? t('scopeMainCalls')
+    : live.savedSource === 'local_conversation_estimate' ? t('scopeLocalConversationEstimate')
+      : live.fromHistory ? t('scopeConversation') : t('scopeRun')
 
   if (!live.bucket) {
     return jsx(Tip, {
@@ -2125,14 +2663,14 @@ function Chip() {
 
   const warn = live.costSource === 'foreign' || live.costSource === 'none'
   return jsx(Tip, {
-    label: (guard ? budgetTooltip(guard, t) + (budgetRead.error ? ' · ' + t('budgetStale') : '') + ' · ' + t(live.fromHistory ? 'scopeConversation' : 'scopeRun') + '\n' : '') + t(
+    label: (guard ? budgetTooltip(guard, t) + (budgetRead.error ? ' · ' + t('budgetStale') : '') + ' · ' : '') + liveScopeLabel + '\n' + t(
       'chipTip',
       live.model || '—',
       guard?.spend != null ? t('budgetEstimated') : sourceLabel(t, live.costSource, live.foreignSlug, live.providerUnknown),
       desktopTodayAmount(today, t),
       live.cacheHitPct != null ? `${live.bucket?.cacheEstimated ? '≈' : ''}${Math.round(live.cacheHitPct)}%` : '—',
-      live.saved != null ? `${live.bucket && live.bucket.cacheEstimated ? '≈' : ''}${fmtUsd(live.saved)}` : '—'
-    ) + [todayTooltip, monthlyTooltip].filter(Boolean).map(value => '\n' + value).join(''),
+      savedText
+    ) + [savedScopeNote, todayTooltip, monthlyTooltip].filter(Boolean).map(value => '\n' + value).join(''),
     children: jsxs('button', {
       className: cn(
         'inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] transition-colors',
@@ -2149,7 +2687,7 @@ function Chip() {
           style: { color: budgetColour(guard?.level) },
           'aria-label': guard ? budgetTooltip(guard, t) : undefined,
           role: guard ? 'img' : undefined,
-          children: guard?.spend != null ? `≈${fmtUsd(guard.spend)}${guard.partial ? '+' : ''}` : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${fmtUsd(live.cost)}`
+          children: guard?.spend != null ? `≈${fmtUsd(guard.spend)}${guard.partial ? '+' : ''}` : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${costApprox}${fmtUsd(live.cost)}${live.costPartial ? '+' : ''}`
         }),
         live.cacheHitPct != null
           ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ⚡${live.bucket?.cacheEstimated ? '≈' : ''}${Math.round(live.cacheHitPct)}%` })
@@ -2181,11 +2719,15 @@ function compositionShares(bucket) {
   const fresh = num(bucket?.input)
   const read = num(bucket?.cacheRead)
   const write = num(bucket?.cacheWrite)
-  const prompt = fresh + read + write
+  const knownPrompt = fresh + read + write
+  const unknown = num(bucket?.cacheUnknown)
+  const prompt = typeof bucket?.prompt === 'number' && Number.isFinite(bucket.prompt) && bucket.prompt > knownPrompt
+    ? bucket.prompt : knownPrompt + unknown
+  const unclassified = Math.max(unknown, prompt - knownPrompt)
   const frac = value => (prompt > 0 ? value / prompt : 0)
   return {
-    fresh, read, write, prompt, output: num(bucket?.output),
-    freshFrac: frac(fresh), readFrac: frac(read), writeFrac: frac(write)
+    fresh, read, write, unknown: unclassified, prompt, output: num(bucket?.output),
+    freshFrac: frac(fresh), readFrac: frac(read), writeFrac: frac(write), unknownFrac: frac(unclassified)
   }
 }
 
@@ -2205,9 +2747,23 @@ function snapshotLive(live) {
     providerUnknown: live.providerUnknown,
     rates: live.rates,
     saved: live.saved,
+    savedRange: live.savedRange,
+    savedBound: live.savedBound,
+    savedEstimated: live.savedEstimated,
     savedCoverage: live.savedCoverage,
     savedPartial: live.savedPartial,
+    excludedCalls: live.excludedCalls,
     savedReason: live.savedReason,
+    savedSource: live.savedSource,
+    savedPopulation: live.savedPopulation,
+    savedEvidence: live.savedEvidence,
+    savedBasis: live.savedBasis,
+    population: live.population,
+    evidence: live.evidence,
+    costBasis: live.costBasis,
+    costPartial: live.costPartial,
+    apiEquivalent: live.apiEquivalent,
+    cacheHitRateBasis: live.cacheHitRateBasis,
     sinceAt: live.sinceAt
   }
 }
@@ -2221,7 +2777,7 @@ function snapshotLive(live) {
  * reading, so it never refreshes the retained snapshot.
  */
 function mergeStableLive(prev, live, key) {
-  const cur = live && live.bucket && live.usage ? snapshotLive(live) : null
+  const cur = live && live.bucket && (live.usage || live.savedSource === 'backend_summary') ? snapshotLive(live) : null
   if (!key || !prev || prev.key !== key) {
     return { view: live, stale: false, cache: cur ? { key, snapshot: cur } : null }
   }
@@ -2421,6 +2977,10 @@ function modelDisplayName(model) {
 function MeterHeader({ presence, t, view }) {
   const stateLabel = presence === 'live' ? t('meterLive')
     : presence === 'updating' ? t('meterUpdating') : t('meterRecorded')
+  const scopeLabel = view.savedSource === 'backend_summary' ? t('scopeMainCalls')
+    : view.savedSource === 'local_conversation_estimate' ? t('scopeLocalConversationEstimate')
+      : view.savedSource === 'local_run_estimate' ? t('scopeLocalRunEstimate')
+        : view.fromHistory ? t('scopeConversation') : t('scopeRun')
   return jsxs('header', { className: 'wm-meter-head', children: [
     jsxs('div', { className: 'wm-meter-brandrow', children: [
       jsx('span', { className: 'wm-meter-mark', children: jsx(BrandMark, { size: 18, id: 'pane' }) }, 'mark'),
@@ -2432,7 +2992,7 @@ function MeterHeader({ presence, t, view }) {
         jsx('span', { children: stateLabel }, 'label')
       ] }, 'presence'),
       jsx('span', { className: 'wm-scope-chip',
-        children: view.fromHistory ? t('scopeConversation') : t('scopeRun') }, 'scope')
+        children: scopeLabel }, 'scope')
     ] }, 'status'),
     jsxs('div', { className: 'wm-meter-modelrow', children: [
       jsxs('div', { className: 'wm-model-name-row', children: [
@@ -2454,10 +3014,14 @@ function MeterHeader({ presence, t, view }) {
 function CostKpi({ t, view }) {
   const warn = view.costSource === 'foreign' || view.costSource === 'none'
   const unknownCoverage = coverageUnknown(view.bucket)
+  const costApprox = view.costSource === 'backend_summary'
+    ? view.costBasis !== 'exact'
+    : ['local_conversation_estimate', 'local_run_estimate'].includes(view.savedSource) && view.costSource !== 'gateway'
+  const cacheEvidenceGap = cacheEvidenceIncomplete(view.bucket)
   return jsxs('section', { className: 'wm-card', 'aria-label': t('cost'), children: [
     jsx('div', {
       className: cn('wm-kpi-figure', warn && 'wm-warn'),
-      children: view.cost == null ? '—' : fmtUsd(view.cost)
+      children: view.cost == null ? '—' : `${costApprox || view.costPartial ? '≈' : ''}${fmtUsd(view.cost)}${view.costPartial ? '+' : ''}`
     }, 'figure'),
     jsxs('div', { className: 'wm-kpi-source', children: [
       jsx('span', { children: t('apiEquivalent') }, 'label'),
@@ -2467,11 +3031,20 @@ function CostKpi({ t, view }) {
         text: `${sourceLabel(t, view.costSource, view.foreignSlug, view.providerUnknown)} — ${t('costSourceInfo')}`
       }, 'info')
     ] }, 'source'),
+    view.savedSource === 'backend_summary'
+      ? jsx('div', { className: 'wm-kpi-since', children: t('sessionEvidenceNote',
+        t('scopeMainCalls'), t(`tokenEvidence_${view.evidence?.read || 'unknown'}`),
+        t(`tokenEvidence_${view.evidence?.write || 'unknown'}`), view.costBasis || 'unknown') }, 'basis')
+      : view.savedSource === 'local_conversation_estimate'
+        ? jsx('div', { className: 'wm-kpi-since', children: t('localEstimateScopeNote') }, 'basis')
+        : view.savedSource === 'local_run_estimate'
+          ? jsx('div', { className: 'wm-kpi-since', children: t('costLocalRunNote') }, 'basis')
+        : null,
     jsxs('div', { className: 'wm-kpi-metrics', children: [
       jsxs('div', { className: 'wm-metric', children: [
         jsx('span', { className: 'wm-metric-label', children: t('totalTokens') }, 'l'),
         jsx('span', { className: 'wm-metric-value',
-          children: `${view.bucket?.cacheEstimated ? '≈' : ''}${fmtTokens(tokensOf(view.bucket))}` }, 'v')
+          children: `${view.bucket?.cacheEstimated || num(view.bucket?.cacheUnknown) ? '≈' : ''}${fmtTokens(tokensOf(view.bucket))}` }, 'v')
       ] }, 'tokens'),
       jsxs('div', { className: 'wm-metric', children: [
         jsx('span', { className: 'wm-metric-label', children: t('calls') }, 'l'),
@@ -2487,14 +3060,16 @@ function CostKpi({ t, view }) {
             num(view.bucket.unpricedTokens) ? t('partialShort', fmtTokens(view.bucket.unpricedTokens)) : null,
             num(view.bucket.unpricedCalls) ? t('partialCallsShort', fmtTokens(view.bucket.unpricedCalls)) : null,
             num(view.bucket.missingUsageCalls) ? t('missingUsageCallsShort', fmtTokens(view.bucket.missingUsageCalls)) : null,
-            unknownCoverage ? t('coverageUnknownShort') : null
+            unknownCoverage ? t('coverageUnknownShort') : null,
+            cacheEvidenceGap ? t('partialCacheEvidence') : null
           ].filter(Boolean).join(' · ')}` }, 'chip'),
           jsx(InfoTip, { id: 'partial', label: t('infoLabel'),
             text: [
               num(view.bucket.unpricedTokens) ? t('unpricedNote', fmtTokens(view.bucket.unpricedTokens)) : null,
               num(view.bucket.unpricedCalls) ? t('unpricedCallsNote', fmtTokens(view.bucket.unpricedCalls)) : null,
               num(view.bucket.missingUsageCalls) ? t('missingUsageCallsNote', fmtTokens(view.bucket.missingUsageCalls)) : null,
-              unknownCoverage ? t('coverageUnknownNote') : null
+              unknownCoverage ? t('coverageUnknownNote') : null,
+              cacheEvidenceGap ? t('partialCacheEvidence') : null
             ].filter(Boolean).join(' ') }, 'info')
         ] }, 'partial')
       : null
@@ -2523,20 +3098,23 @@ function TokenComposition({ t, view }) {
     jsxs('div', {
       className: 'wm-mix-bar',
       role: 'img',
-      'aria-label': `${t('promptMix')}: ${t('cacheFresh')} ${pct(shares.freshFrac)}, ${t('cacheRead')} ${pct(shares.readFrac)}, ${t('cacheWrite')} ${pct(shares.writeFrac)}`,
+      'aria-label': `${t('promptMix')}: ${t('cacheFresh')} ${pct(shares.freshFrac)}, ${t('cacheRead')} ${pct(shares.readFrac)}, ${t('cacheWrite')} ${pct(shares.writeFrac)}, ${t('unclassifiedPromptTokens')} ${pct(shares.unknownFrac)}`,
       children: [
         jsx('div', { className: 'wm-mix-fill', 'data-part': 'fresh',
           style: { width: pct(shares.freshFrac) } }, 'fresh'),
         jsx('div', { className: 'wm-mix-fill', 'data-part': 'read',
           style: { width: pct(shares.readFrac) } }, 'read'),
         jsx('div', { className: 'wm-mix-fill', 'data-part': 'write',
-          style: { width: pct(shares.writeFrac) } }, 'write')
+          style: { width: pct(shares.writeFrac) } }, 'write'),
+        jsx('div', { className: 'wm-mix-fill', 'data-part': 'unknown',
+          style: { width: pct(shares.unknownFrac) } }, 'unknown')
       ]
     }),
     jsxs('div', { className: 'wm-legend', children: [
       legend('i', t('cacheFresh'), 'fresh'),
       legend('cr', byKey.cr ? byKey.cr.label : t('cacheRead'), 'read'),
-      legend('cw', byKey.cw ? byKey.cw.label : t('cacheWrite'), 'write')
+      legend('cw', byKey.cw ? byKey.cw.label : t('cacheWrite'), 'write'),
+      shares.unknownFrac ? legend('cu', t('unclassifiedPromptTokens'), 'unknown') : null
     ] }, 'legend'),
     jsxs('div', { className: 'wm-legend wm-legend-separate', children: [
       jsxs('div', { className: 'wm-legend-item', children: [
@@ -2557,11 +3135,19 @@ function TokenComposition({ t, view }) {
 const SAVED_REASON_KEYS = {
   no_rate: 'savedReasonNoRate',
   tiered: 'savedReasonTiered',
+  context_tier_unknown: 'savedReasonTierUnknown',
   no_cache_rate: 'savedReasonNoCacheRate',
   no_write_rate: 'savedReasonNoWriteRate',
   split_unknown: 'savedReasonSplitUnknown',
+  cache_evidence_unknown: 'savedReasonCacheEvidenceUnknown',
   no_cache: 'savedReasonNoCache',
-  cumulative_run: 'savedReasonCumulativeRun'
+  cumulative_run: 'savedReasonCumulativeRun',
+  unpriced_route: 'savedReasonUnpricedRoute',
+  population_not_proven: 'savedReasonPopulationNotProven',
+  summary_no_calls: 'savedReasonNoCalls',
+  summary_stale: 'savedReasonSummaryUnavailable',
+  summary_unavailable: 'savedReasonSummaryUnavailable',
+  local_history_unavailable: 'savedReasonLocalHistoryUnavailable'
 }
 
 /** Coverage share as a whole percentage that never claims completeness. */
@@ -2574,15 +3160,57 @@ function savedCoveragePct(view) {
 /** The line under the gauge: exact, estimated, the coverage behind a partial
  *  figure, or the reason none could be established. */
 function savedNote(t, view, estimated) {
+  const qualification = view.savedSource === 'backend_summary' ? t('savedBackendNote',
+    t(`tokenEvidence_${view.savedEvidence?.read || 'unknown'}`),
+    t(`tokenEvidence_${view.savedEvidence?.write || 'unknown'}`),
+    t(view.cacheHitRateBasis === 'all_calls' ? 'cacheRateAllCalls' : 'cacheRateReportedCalls'))
+    : view.savedSource === 'local_conversation_estimate' ? t('savedLocalConversationNote',
+      t(`tokenEvidence_${view.savedEvidence?.read || 'unknown'}`),
+      t(`tokenEvidence_${view.savedEvidence?.write || 'unknown'}`))
+      : view.savedSource === 'local_run_estimate' ? t('savedLocalRunNote',
+        t(`tokenEvidence_${view.savedEvidence?.read || 'unknown'}`),
+        t(`tokenEvidence_${view.savedEvidence?.write || 'unknown'}`)) : null
+  const append = text => [text, qualification].filter(Boolean).join(' · ')
+  if (view.savedRange) {
+    const notes = [t('savedRangeNote')]
+    if (view.savedPartial) {
+      const covered = savedCoveragePct(view)
+      if (covered != null) notes.push(t('savedPartialNote', covered))
+      if (view.excludedCalls > 0) notes.push(t('savedPartialCallsNote', view.excludedCalls))
+    }
+    return append(notes.join(' · '))
+  }
+  if (view.savedBound) {
+    const notes = [t(view.savedBound.kind === 'upper' ? 'savedUpperBoundNote' : 'savedLowerBoundNote')]
+    if (view.savedPartial && view.excludedCalls > 0) notes.push(t('savedPartialCallsNote', view.excludedCalls))
+    return append(notes.join(' · '))
+  }
   if (view.saved != null) {
     if (view.savedPartial) {
       const covered = savedCoveragePct(view)
-      return covered == null ? `≈ ${t('estimatedLabel')}` : t('savedPartialNote', covered)
+      const notes = [covered == null ? `≈ ${t('estimatedLabel')}` : t('savedPartialNote', covered)]
+      if (view.excludedCalls > 0) notes.push(t('savedPartialCallsNote', view.excludedCalls))
+      return append(notes.join(' · '))
     }
-    return estimated ? `≈ ${t('estimatedLabel')}` : t('exactLabel')
+    return append(estimated ? `≈ ${t('estimatedLabel')}` : t('exactLabel'))
   }
-  if (!view.savedReason) return null
-  return `${t('savedNotEstablished')} · ${t(SAVED_REASON_KEYS[view.savedReason] || 'savedReasonSplitUnknown')}`
+  if (!view.savedReason) return qualification
+  return append(`${t('savedNotEstablished')} · ${t(SAVED_REASON_KEYS[view.savedReason] || 'savedReasonSplitUnknown')}`)
+}
+
+function savedDisplay(t, view) {
+  const range = view.savedRange || view.range
+  if (range) {
+    return `≈${t('savedRangeValue', fmtUsd(range.min), fmtUsd(range.max))}`
+  }
+  const bound = view.savedBound || view.bound
+  if (bound) {
+    const prefix = bound.kind === 'upper' ? '≤' : '≥'
+    return `${view.savedPartial || view.savedEstimated ? '≈' : ''}${prefix}${fmtUsd(bound.value)}`
+  }
+  const saved = finiteValue(view.saved) ?? finiteValue(view.value)
+  if (saved == null) return '—'
+  return `${view.savedPartial || view.savedEstimated || view.estimated ? '≈' : ''}${fmtUsd(saved)}`
 }
 
 const RING_R = 26
@@ -2592,10 +3220,12 @@ const RING_C = 2 * Math.PI * RING_R
 function CacheGauge({ t, view }) {
   const b = view.bucket || {}
   const pct = view.cacheHitPct == null ? null : Math.max(0, Math.min(100, view.cacheHitPct))
-  const approx = b.cacheEstimated ? '≈' : ''
-  const estimated = !!b.cacheEstimated
+  const estimated = !!(view.savedEstimated || b.cacheEstimated)
   const hitLabel = pct == null ? '—' : `${Math.round(pct)}%`
   const note = savedNote(t, view, estimated)
+  const coverageScope = view.population === 'main' ? t('coverageScopeMainCalls')
+    : view.savedSource === 'local_conversation_estimate' ? t('coverageScopeLocalConversation')
+      : view.fromHistory ? t('coverageScopeConversation') : t('coverageScopeRun')
   const arc = pct == null ? 0 : (pct / 100) * RING_C
   return jsxs('section', { className: 'wm-card', 'aria-label': t('cacheTitle'), children: [
     jsxs('div', { className: 'wm-card-title', children: [
@@ -2631,7 +3261,7 @@ function CacheGauge({ t, view }) {
             jsx(InfoTip, {
               id: 'cache-coverage', label: t('coverageHelpLabel'),
               text: t('cacheCoverageHelp',
-                view.fromHistory ? t('coverageScopeConversation') : t('coverageScopeRun'),
+                coverageScope,
                 view.fromHistory && view.sinceAt ? fmtDate(view.sinceAt) : null)
             }, 'info')
           ] }, 'l'),
@@ -2644,7 +3274,7 @@ function CacheGauge({ t, view }) {
             jsx(InfoTip, { id: 'savings-method', label: t('infoLabel'), text: t('savingsInfo'), wide: true, dir: 'up' }, 'info')
           ] }, 'l'),
           jsx('span', { className: 'wm-metric-value',
-            children: view.saved == null ? '—' : `${view.savedPartial ? '≈' : approx}${fmtUsd(view.saved)}` }, 'v')
+            children: savedDisplay(t, view) }, 'v')
         ] }, 'saved'),
         note == null ? null : jsx('div', { className: 'wm-gauge-note', children: note }, 'marker')
       ].filter(Boolean) }, 'stats')
@@ -2662,7 +3292,10 @@ function RatesPanel({ t, view }) {
     { key: 'cache', label: t('cacheRead'), value: fmtRate(rates?.cache) }
   ]
   if (rates && rates.write != null) {
-    cells.push({ key: 'write', label: t('cacheWrite'), value: fmtRate(rates.write) })
+    const options = Array.isArray(rates.cacheWriteRates) ? rates.cacheWriteRates : []
+    cells.push({ key: 'write', label: t('cacheWrite'), value: options.length
+      ? options.map(option => `${option.retention} ${fmtRate(option.rate)}`).join(' · ')
+      : fmtRate(rates.write) })
   }
   return jsxs('section', { className: 'wm-card', 'aria-label': t('rates'), children: [
     jsxs('div', { className: 'wm-rates-head', children: [
@@ -2726,6 +3359,7 @@ function rangeNotes(t, totals, storageError) {
   if (totals.legacyTokens) notes.push(jsx(Note, { children: t('legacyNote', fmtTokens(totals.legacyTokens)) }, 'lg'))
   if (totals.cacheCoverage != null) notes.push(jsx(Note, { children: t('cacheCoverageRange', Math.round(totals.cacheCoverage * 100)) }, 'cc'))
   if (totals.cacheEstimated) notes.push(jsx(Note, { children: t('cacheEstNote') }, 'ce'))
+  if (num(totals.netSavingsRangePrompt)) notes.push(jsx(Note, { children: t('savedRangeNote') }, 'sr'))
   return notes
 }
 
@@ -2826,6 +3460,7 @@ const METER_CSS = [
   '.wm-mix-fill[data-part="fresh"],.wm-swatch[data-part="fresh"]{background:var(--ui-accent)}',
   '.wm-mix-fill[data-part="read"],.wm-swatch[data-part="read"]{background:var(--ui-success)}',
   '.wm-mix-fill[data-part="write"],.wm-swatch[data-part="write"]{background:var(--ui-warning,var(--ui-text-secondary))}',
+  '.wm-mix-fill[data-part="unknown"],.wm-swatch[data-part="unknown"]{background:var(--ui-fill-tertiary,var(--ui-text-quaternary))}',
   '.wm-legend{display:flex;flex-direction:column;gap:3px}',
   '.wm-legend-item{display:flex;align-items:baseline;gap:7px;font-size:12px;min-width:0}',
   '.wm-swatch{width:8px;height:8px;border-radius:2px;flex-shrink:0;align-self:center}',
@@ -2904,7 +3539,7 @@ function Meter() {
           jsx(CostKpi, { t, view }, 'cost'),
           jsx(TokenComposition, { t, view }, 'mix'),
           jsx(CacheGauge, { t, view }, 'cache'),
-          jsx(RatesPanel, { t, view }, 'rates'),
+          view.savedSource === 'backend_summary' ? null : jsx(RatesPanel, { t, view }, 'rates'),
           jsx('button', { type: 'button', className: 'wm-open-ledger',
             onClick: openLedger, children: t('openLedger') }, 'open')
         ] }, 'body'),
@@ -3706,6 +4341,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
     jsxs('div',{className:'wm-topactions',children:[jsx('span',{className:'wm-badge',children:t('usageNerdMode')}),jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')})]})]})
   const content = jsxs('div',{className:'wm-shell wm-usage',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
+      totals ? jsx('p',{className:'wm-subtle',children:t('usagePopulationEvidenceNote')}) : null,
       query.error?jsxs('div',{id:'wm-usage-load-error',className:'wm-alert',role:'alert',tabIndex:-1,children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
     totals?jsxs('div',{className:'wm-stats',children:[
@@ -4595,7 +5231,7 @@ function usageValueDelta(previous, delta, resolved, scope = membershipScopeNow()
     (!num(delta.input) || rates.usageInputKnown === true && known(rates.input)) &&
     (!num(delta.output) || rates.usageOutputKnown === true && known(rates.output)) &&
     (!num(delta.cacheRead) || rates.usageCacheKnown === true && known(rates.cache)) &&
-    (!num(delta.cacheWrite) || rates.usageWriteKnown === true && known(rates.write))
+    (!num(delta.cacheWrite) || rates.usageWriteKnown === true && known(rates.write)) && !num(delta.cacheUnknown)
   const priced = exact && covered ? costOf(delta, { input: rates.input ?? 0, output: rates.output ?? 0,
     cache: rates.cache ?? 0, write: rates.write ?? 0 }) : null
   const value = priced && Number.isFinite(priced.total) && priced.total >= 0 ? priced.total : null
@@ -4603,7 +5239,8 @@ function usageValueDelta(previous, delta, resolved, scope = membershipScopeNow()
   return {
     usageValueVersion: 2, usageValueScope: scope,
     usageValueCost: (trusted ? num(previous.usageValueCost) : 0) + (value ?? 0),
-    usageValuePriced: (trusted ? num(previous.usageValuePriced) : 0) + (value != null ? tokensOf(delta) : 0),
+    usageValuePriced: (trusted ? num(previous.usageValuePriced) : 0) +
+      (value != null ? Math.max(0, tokensOf(delta) - num(delta.cacheUnknown)) : 0),
     usageValueMissing: num(oldMissing) + (value == null ? tokensOf(delta) : 0),
     usageValueCallsTracked: (trusted ? num(previous.usageValueCallsTracked) : 0) + num(delta.calls),
     usageValueMissingCalls: Math.max(0, oldMissingCalls + missingCalls - num(evidence.resolvedCalls))
@@ -5198,7 +5835,7 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   return jsxs('section', { className: 'wm-product-section wm-cost-overview', 'aria-label': t('costsOverviewTitle'), children: [
     jsx('h2', { children: t('costsOverviewTitle') }),
     jsx('p', { children: t('costsOverviewIntro') }),
-    summaryReady && (apiPartial || cachePartial)
+    summaryReady
       ? jsx('p', { className: 'wm-cost-evidence-scope', children: t('costsEvidenceScope') }) : null,
     summaryLoading ? jsx('p', { className: 'wm-subtle', children: t('costsEvidenceLoading') }) : null,
     jsxs('div', { className: 'wm-cost-summary-grid', children: [
@@ -9708,6 +10345,7 @@ const REPORTS_CSS = `
 .wm-digest-meta{display:grid;gap:3px;margin:0}
 .wm-digest-period{font-size:14px;font-weight:600;margin:0;overflow-wrap:anywhere}
 .wm-digest-generated{font-size:11.5px;color:var(--ui-text-secondary);margin:0}
+.wm-digest-evidence{font-size:11.5px;line-height:1.4;color:var(--ui-text-secondary);margin:0;overflow-wrap:anywhere}
 .wm-digest-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .wm-digest-stat{display:grid;align-content:start;gap:4px;padding:10px 11px;min-width:0;
   border:1px solid var(--ui-stroke-secondary);border-radius:7px;background:var(--ui-fill-primary)}
@@ -9853,6 +10491,7 @@ function DigestPreview({ report }) {
         jsx('p', { className: 'wm-digest-period', children: report?.period?.label || '' }),
         jsx('p', { className: 'wm-digest-generated', children: fmtDay(report?.generated_at) }),
       ] }),
+      jsx('p', { className: 'wm-digest-evidence', children: t('rpEvidenceNote') }),
       summary.length ? jsxs('div', { className: 'wm-digest-summary', children: summary.map((line, index) =>
         jsxs('div', { className: 'wm-digest-stat', children: [
           jsx('span', { children: line.label }),
@@ -13500,7 +14139,10 @@ function LedgerPage() {
 
   const cells = r => {
     const pct = hitPctOf(r)
+    const evidence = localCacheEvidence(r)
     const approx = r.cacheEstimated ? '≈' : ''
+    const readDisplay = evidence.read === 'unknown' ? '—'
+      : `${['partial', 'estimated', 'derived'].includes(evidence.read) ? '≈' : ''}${fmtTokens(r.cacheRead)}`
     const warn = r.legacy ? r.legacyOrigin === 'foreign' : num(r.sources.foreign) || r.unpricedTokens
     // Coverage travels with the measured value; a measured figure does not
     // depend on the card, so the row can state its share of prompt tokens.
@@ -13512,20 +14154,22 @@ function LedgerPage() {
           jsx('div', { children: r.model }),
           jsx('div', {
             className: 'text-[0.625rem] text-(--ui-text-quaternary)',
-            children: [r.profile, r.provider || (r.legacy ? null : t('providerUnknown'))].filter(Boolean).join(' · ') || null
+            children: [r.profile, r.provider || (r.legacy ? null : t('providerUnknown')),
+              t('cacheEvidenceSummary',
+                t(`tokenEvidence_${evidence.read}`), t(`tokenEvidence_${evidence.write}`), fmtTokens(r.cacheUnknown))]
+              .filter(Boolean).join(' · ') || null
           })
         ]
       }),
       jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums', children: `${approx}${fmtTokens(r.input)}` }),
       jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums', children: fmtTokens(r.output) }),
-      jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums text-(--ui-text-tertiary)', children: `${approx}${fmtTokens(r.cacheRead)}` }),
+      jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums text-(--ui-text-tertiary)', children: readDisplay }),
       jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums text-(--ui-text-tertiary)', children: String(r.calls) }),
       jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums', children: pct == null ? '—' : `${approx}${Math.round(pct)}%` }),
       jsx('td', { className: 'py-1.5 pr-3 text-right tabular-nums text-(--ui-accent)',
-        title: savedState.partial
+        title: savedState.range ? t('savedRangeNote') : savedState.partial
           ? t('savedPartialNote', Math.min(99, Math.round(savedState.coverage * 100))) : undefined,
-        children: savedState.value == null ? '—'
-          : `${savedState.partial ? '≈' : approx}${fmtUsd(savedState.value)}` }),
+        children: savedDisplay(t, { ...savedState, savedEstimated: r.cacheEstimated }) }),
       jsxs('td', {
         className: 'py-1.5 text-right tabular-nums',
         children: [
@@ -13585,6 +14229,7 @@ function LedgerPage() {
         className: 'text-xs text-(--ui-text-tertiary)',
         children: led.since ? t('coverage', led.since, dayCount, KEEP_DAYS) : t('coverageNone')
       }),
+      jsx('p', { className: 'text-xs text-(--ui-text-quaternary)', children: t('localLedgerScopeNote') }),
       totals.hitPct != null
         ? jsxs('div', {
             className: 'flex flex-col gap-1.5',
@@ -13594,7 +14239,7 @@ function LedgerPage() {
                 children: [
                   jsx('span', { children: `${t('hitRate')} ${totals.cacheEstimated ? '≈' : ''}${Math.round(totals.hitPct)}%` }),
                   jsx('span', { children:
-                    `${t('savedTotal')} ${totals.cacheEstimated || totalSaved.partial ? '≈' : ''}${fmtUsd(totalSaved.value)}`
+                    `${t('savedTotal')} ${savedDisplay(t, totalSaved)}`
                     + (totalSaved.partial
                       ? ` · ${t('savedPartialShort', Math.min(99, Math.round(totalSaved.coverage * 100)))}`
                       : '') })
@@ -13699,6 +14344,7 @@ const I18N = {
     cost: 'Cost',
     coverage: (since, n, keep) => `Recorded since ${since} · ${n} day(s) with usage · daily totals kept ${keep} days`,
     coverageNone: 'Nothing recorded yet.',
+    localLedgerScopeNote: 'This local ledger is an unclassified Desktop record of observed usage. Its API-equivalent estimates and cache savings are not provider charges or subscription savings.',
     csvCopied: 'Download unavailable — CSV copied to the clipboard instead.',
     disclaimer:
       'Estimates. Costs are settled when usage is recorded, from the serving provider’s catalog $/Mtok (or the bundled models.dev table), not a billing API; subscription routes (Copilot, Nous credits) bill differently. The ledger is stored locally and only records usage seen while the plugin was running.',
@@ -13731,12 +14377,12 @@ const I18N = {
     sinceDate: d => `since ${d}`,
     promptMix: 'Prompt mix',
     cacheFresh: 'Fresh input',
-    cacheMethodInfo: 'Hit rate is cache-read tokens over covered prompt tokens (fresh input, reads and writes), weighted across calls. Hit rates based on cache splits reconstructed by Hermes are estimates.',
+    cacheMethodInfo: 'Hit rate is cache-read tokens over prompt tokens with reported cache evidence, weighted across calls. Estimated or derived counters are labelled; missing reads or writes remain unknown and are never treated as measured zero.',
     exactLabel: 'exact',
     estimatedLabel: 'estimated',
     infoLabel: 'More information',
     coverageLabel: 'Coverage',
-    savingsInfo: 'Theoretical API-equivalent saving versus pricing the same covered prompt tokens at uncached input rates. Cache writes can cost more or less than the input rate, so this is an estimate, not a credit, refund or billed charge. Rates are the catalogue card for the route; a peak/off-peak window may price the same calls differently.',
+    savingsInfo: 'Theoretical API-equivalent value versus pricing the same covered prompt tokens at uncached input rates. Context tiers are applied only when request size is known; otherwise the range spans possible tiers. Cache writes can cost more or less than the input rate; published premiums and retention options are included. Rounded derived cache splits widen the estimate. This is not a credit, refund or billed charge, nor actual subscription savings. Route pricing or peak/off-peak rates may differ.',
     partialShort: n => `${n} unpriced`,
     partialCallsShort: n => `${n} calls lacked a price`,
     missingUsageCallsShort: n => `${n} calls lack usage data`,
@@ -14702,11 +15348,52 @@ const I18N = {
     saved: 'Net savings',
     savedTotal: 'Theoretical net cache savings',
     savedGauge: 'Theoretical net savings',
+    tokenEvidence_reported: 'reported',
+    tokenEvidence_partial: 'partial evidence',
+    tokenEvidence_unknown: 'unknown',
+    tokenEvidence_derived: 'derived',
+    tokenEvidence_estimated: 'estimated',
+    cacheEvidenceSummary: (read, write, unknown) => `cache read ${read} · cache write ${write} · unclassified prompt ${unknown}`,
+    unclassifiedPromptTokens: 'unclassified prompt',
+    inclUnknownPrompt: ' · incl. unclassified prompt',
+    inclEstimatedCache: ' · incl. estimated cache',
+    inclPartialCache: ' · incl. partial cache evidence',
+    scopeMainCalls: 'main calls',
+    scopeLocalConversationEstimate: 'local conversation estimate',
+    scopeLocalRunEstimate: 'focused run estimate',
+    coverageScopeMainCalls: 'main calls in this focused session',
+    coverageScopeLocalConversation: 'this locally recorded conversation; population unverified',
+    cacheRateAllCalls: 'all calls',
+    cacheRateReportedCalls: 'calls with reported cache evidence',
+    sessionEvidenceNote: (scope, read, write, basis) =>
+      `${scope} · cache read ${read} · cache write ${write} · API-equivalent basis ${basis}`,
+    sessionSavingsSourceNote: 'Theoretical API-equivalent estimate from backend main-population calls; not billed or subscription savings.',
+    localEstimateScopeNote: 'Fallback estimate uses this focused Desktop conversation only. Main/auxiliary population is unverified; no all-session totals are used.',
+    savedBackendNote: (read, write, rateScope) =>
+      `Backend main-call valuation · read evidence ${read} · write evidence ${write} · cache-hit denominator ${rateScope}. Theoretical API-equivalent value, not billed or subscription savings.`,
+    savedLocalConversationNote: (read, write) =>
+      `Local conversation estimate · read evidence ${read} · write evidence ${write}. Population is unverified; not an all-session total or actual savings.`,
+    savedLocalRunNote: (read, write) =>
+      `Focused run estimate · read evidence ${read} · write evidence ${write}. Population is unverified; not an all-session total or actual savings.`,
+    costLocalRunNote: 'Focused run API-equivalent estimate. The population is not classified as main or auxiliary; this is not a provider charge or subscription saving.',
+    partialCacheEvidence: 'Cache read/write evidence is unknown or partial; this figure may exclude or estimate those tokens.',
+    savedUpperBoundNote: 'Qualified upper bound; the sign is preserved.',
+    savedLowerBoundNote: 'Qualified lower bound; the sign is preserved.',
+    savedReasonTierUnknown: 'request context tier is unknown',
+    savedReasonCacheEvidenceUnknown: 'cache read/write evidence is unknown or incomplete',
+    savedReasonUnpricedRoute: 'one or more routes have no usable published price',
+    savedReasonPopulationNotProven: 'main-call population could not be proven',
+    savedReasonNoCalls: 'no main-population calls were recorded',
+    savedReasonSummaryUnavailable: 'main-population summary is unavailable',
+    savedReasonLocalHistoryUnavailable: 'local conversation history is unavailable',
+    savedRangeValue: (min, max) => `${min} to ${max}`,
+    savedRangeNote: 'Range covers possible request context tiers and cache-write retention; derived cache splits include rounding uncertainty.',
+    savedPartialCallsNote: n => `${n} call(s) excluded from this subtotal`,
     savedPartialNote: n => `covers ${n}% of prompt tokens`,
     savedPartialShort: n => `covers ${n}%`,
     savedNotEstablished: 'not established',
     savedReasonNoRate: 'no rate for this route',
-    savedReasonTiered: 'tiered pricing not modelled',
+    savedReasonTiered: 'tier pricing details unavailable',
     savedReasonNoCacheRate: 'no cache-read price',
     savedReasonNoWriteRate: 'cache-write price missing',
     savedReasonSplitUnknown: 'cache split not reported',
@@ -14714,6 +15401,7 @@ const I18N = {
     savedReasonCumulativeRun: 'the live run may span models',
     sessionTokens: 'This session',
     src_backend: 'Hermes backend estimate',
+    src_backend_summary: 'Hermes main-call API-equivalent summary',
     src_bundled: 'estimated from models.dev rates',
     src_foreign: slug => `⚠ rates borrowed from ${slug} — may not match your route`,
     src_fallback: slug => `estimate at ${slug} rates — no exact rate for this route`,
@@ -14763,7 +15451,7 @@ const I18N = {
     costsSubtitle: 'Active profile · estimates, provider reports and plan limits stay separate.',
     costsOverviewTitle: 'Financial evidence',
     costsOverviewIntro: 'Values keep their source and scope. Unknown is not zero; provider-reported use is not a payment.',
-    costsEvidenceScope: 'Figures show what Hermes recorded and priced: unpriced usage is excluded from subtotals, never counted as zero. Details sit with each figure.',
+    costsEvidenceScope: 'Figures use timestamped backend calls in the selected report window. Main/auxiliary population depends on recorded call classification; unclassified calls are not assumed to be main. Unpriced use and unknown cache evidence stay out of priced subtotals; the API-equivalent basis is not a provider charge or subscription saving.',
     costsEvidenceDetails: 'Evidence sources and calculation details',
     costsEvidenceUnavailable: 'Evidence could not be read',
     costsBasisLabel: 'Basis',
@@ -14793,7 +15481,7 @@ const I18N = {
     costsCacheNegative: 'Negative savings means the estimated cached API-equivalent cost exceeded the uncached equivalent at these rates.',
     costsCacheZero: 'No modeled price difference; the API-equivalent value is zero.',
     costsCachePositive: 'Estimated API-equivalent value difference; not cash saved.',
-    costsCacheSource: 'Calculated from captured usage and rate evidence in the backend report. Not a charge.',
+    costsCacheSource: 'Theoretical API-equivalent calculation from timestamped backend calls and published rate evidence. Population follows recorded call classification; unclassified calls are not assumed to be main. Not a provider charge or subscription saving.',
     costsCacheValues: (uncached, cached) => `Uncached API-equivalent ${uncached}; cached API-equivalent ${cached}.`,
     costsCacheTokens: (covered, total) => `Tokens with cache rate evidence: ${covered} of ${total}.`,
     costsCacheCalls: (covered, excluded) => `Calls with cache rate evidence: ${covered}; calls without complete cache rates: ${excluded}.`,
@@ -15305,8 +15993,10 @@ const I18N = {
     usageEmptyClear: 'Clear empty scope',
     usageNoData: 'Usage data is not available for this profile yet.',
     usageRecordingLine: (since, last) => `Recording since ${since} · latest ${last}. Only timestamped captured calls enter this period.`,
+    usagePopulationEvidenceNote: 'Usage totals cover timestamped backend call rows in the selected filters. Main/auxiliary scope is available only where call classification was recorded; unclassified calls are not assumed to be main. API-equivalent value and cache savings use backend pricing evidence, not provider charges.',
+    rpEvidenceNote: 'Report totals cover timestamped captured backend calls in this period. Population depends on recorded call classification; unknown cache evidence and unpriced routes remain disclosed in Coverage and Methodology. API-equivalent valuation is not a provider charge or subscription saving.',
     usageRecordingPending: 'not yet available',
-    usageCacheFormula: 'Cache hit = read tokens ÷ (fresh input + read + write tokens), weighted on calls with known cache activity. Legacy zero-cache rows are ambiguous and excluded from the known denominator.',
+    usageCacheFormula: 'Cache hit = reported read tokens ÷ prompt tokens with reported cache evidence, weighted across calls. Estimated or derived counters are labelled; missing reads or writes remain unknown and are excluded from that denominator. Legacy zero-cache rows are ambiguous.',
     usageMethodologyTitle: 'Methodology & coverage details',
     usageBaselineSummaryTitle: 'Historical baseline & reconciliation — separate cumulative estimate',
   },
@@ -15373,6 +16063,7 @@ const I18N = {
     cost: '花费',
     coverage: (since, n, keep) => `自 ${since} 起记录 · 有用量的天数 ${n} · 按日汇总保留 ${keep} 天`,
     coverageNone: '尚无记录。',
+    localLedgerScopeNote: '此本地账本记录了 Desktop 观察到的用量，但未按主／辅助调用分类。API 等值估算和缓存节省不是供应商费用或订阅节省。',
     csvCopied: '无法下载，已改为把 CSV 复制到剪贴板。',
     disclaimer:
       '仅为估算。金额在记录用量时按实际承载线路的目录单价（或内置 models.dev 价格表）结算，并非账单接口；订阅制线路（Copilot、Nous 额度等）的实际计费不同。账本保存在本地，且只记录插件运行期间观察到的用量。',
@@ -15405,12 +16096,12 @@ const I18N = {
     sinceDate: d => `自 ${d} 起`,
     promptMix: '提示词构成',
     cacheFresh: '新增输入',
-    cacheMethodInfo: '命中率 = 缓存读取 ÷ 有缓存数据的提示词（新增输入、读取、写入），按调用加权。基于 Hermes 推算的缓存拆分计算的命中率为估算值。',
+    cacheMethodInfo: '命中率 = 已报告的缓存读取 ÷ 有缓存证据的提示词，按调用加权。估算或推算的计数会明确标注；缺失的读取或写入保持未知，不按已测得的零处理。',
     exactLabel: '精确',
     estimatedLabel: '估算',
     infoLabel: '更多信息',
     coverageLabel: '覆盖率',
-    savingsInfo: '与按未缓存输入价计算同一批已覆盖提示令牌的理论差值（API 等价估算）。缓存写入可能高于或低于输入价，此为估算，不是抵扣、退款或实际账单。费率取该线路的目录卡；峰谷时段可能对同一批调用给出不同价格。',
+    savingsInfo: '将同一批已覆盖提示令牌按未缓存输入价计费后得到的理论 API 等值。仅在请求大小已知时应用上下文阶梯价；否则范围涵盖可能的阶梯。计算包含缓存写入溢价和已发布的保留时长选项。由四舍五入命中率推算的缓存拆分会扩大估算范围。这不是实际账单或订阅节省；线路价或峰谷价可能不同。',
     partialShort: n => `${n} 未定价`,
     partialCallsShort: n => `${n} 次调用缺少价格`,
     missingUsageCallsShort: n => `${n} 次调用缺少用量数据`,
@@ -16303,11 +16994,52 @@ const I18N = {
     saved: '净节省',
     savedTotal: '理论缓存净节省',
     savedGauge: '理论净节省',
+    tokenEvidence_reported: '已报告',
+    tokenEvidence_partial: '部分证据',
+    tokenEvidence_unknown: '未知',
+    tokenEvidence_derived: '推导值',
+    tokenEvidence_estimated: '估算值',
+    cacheEvidenceSummary: (read, write, unknown) => `缓存读取 ${read} · 缓存写入 ${write} · 未分类提示词 ${unknown}`,
+    unclassifiedPromptTokens: '未分类提示词',
+    inclUnknownPrompt: ' · 含未分类提示词',
+    inclEstimatedCache: ' · 含估算缓存',
+    inclPartialCache: ' · 含部分缓存证据',
+    scopeMainCalls: '主调用',
+    scopeLocalConversationEstimate: '本地对话估算',
+    scopeLocalRunEstimate: '当前运行估算',
+    coverageScopeMainCalls: '此焦点会话中的主调用',
+    coverageScopeLocalConversation: '本地记录的此对话；总体分类未验证',
+    cacheRateAllCalls: '全部调用',
+    cacheRateReportedCalls: '有缓存证据的调用',
+    sessionEvidenceNote: (scope, read, write, basis) =>
+      `${scope} · 缓存读取 ${read} · 缓存写入 ${write} · API 等值依据 ${basis}`,
+    sessionSavingsSourceNote: '根据后端主调用总体计算的理论 API 等值估算；不是账单费用或订阅节省。',
+    localEstimateScopeNote: '后备估算仅使用此 Desktop 当前聚焦的对话。主／辅助调用总体未验证；不会使用所有会话合计。',
+    savedBackendNote: (read, write, rateScope) =>
+      `后端主调用估值 · 读取证据 ${read} · 写入证据 ${write} · 缓存命中分母 ${rateScope}。理论 API 等值，不是账单费用或订阅节省。`,
+    savedLocalConversationNote: (read, write) =>
+      `本地对话估算 · 读取证据 ${read} · 写入证据 ${write}。总体未验证；不是所有会话合计或实际节省。`,
+    savedLocalRunNote: (read, write) =>
+      `当前运行估算 · 读取证据 ${read} · 写入证据 ${write}。总体未验证；不是所有会话合计或实际节省。`,
+    costLocalRunNote: '当前运行的 API 等值估算。总体未按主调用或辅助调用分类；这不是供应商费用或订阅节省。',
+    partialCacheEvidence: '缓存读取／写入证据未知或部分缺失；此数值可能未包含这些令牌，或使用了估算值。',
+    savedUpperBoundNote: '合格上界；保留正负号。',
+    savedLowerBoundNote: '合格下界；保留正负号。',
+    savedReasonTierUnknown: '请求上下文阶梯未知',
+    savedReasonCacheEvidenceUnknown: '缓存读取／写入证据未知或不完整',
+    savedReasonUnpricedRoute: '至少一条线路没有可用公开价格',
+    savedReasonPopulationNotProven: '无法证明主调用总体',
+    savedReasonNoCalls: '没有记录到主调用',
+    savedReasonSummaryUnavailable: '主调用汇总不可用',
+    savedReasonLocalHistoryUnavailable: '本地对话历史不可用',
+    savedRangeValue: (min, max) => `${min} 至 ${max}`,
+    savedRangeNote: '范围涵盖可能的请求上下文阶梯和缓存写入保留时长；推算的缓存拆分已计入四舍五入误差。',
+    savedPartialCallsNote: n => `${n} 次调用未计入此小计`,
     savedPartialNote: n => `覆盖 ${n}% 的提示令牌`,
     savedPartialShort: n => `覆盖 ${n}%`,
     savedNotEstablished: '无法确定',
     savedReasonNoRate: '该线路无费率',
-    savedReasonTiered: '未建模阶梯价格',
+    savedReasonTiered: '阶梯价格详情不可用',
     savedReasonNoCacheRate: '缺少缓存读取价格',
     savedReasonNoWriteRate: '缺少缓存写入价格',
     savedReasonSplitUnknown: '未报告缓存拆分',
@@ -16323,6 +17055,7 @@ const I18N = {
       '费率来自 WolfMark 目录卡，而非供应商账单。Hermes 自身可能采用不同路线或峰谷费率，因此估算可能不同。',
     sessionTokens: '本次会话',
     src_backend: 'WolfMark 后端估算',
+    src_backend_summary: 'Hermes 主调用 API 等值汇总',
     src_bundled: '按 models.dev 单价估算',
     src_foreign: slug => `⚠ 借用了 ${slug} 的价格，可能与你的线路不符`,
     src_gateway: '来自网关',
@@ -16431,7 +17164,7 @@ const I18N = {
     costsSubtitle: '当前活动配置 · 估算、供应商上报值和方案限额分别显示。',
     costsOverviewTitle: '财务证据',
     costsOverviewIntro: '数值保留来源和范围。未知不等于零；供应商上报用量不是付款。',
-    costsEvidenceScope: '数值仅反映 Hermes 已记录并已定价的用量：未定价用量不计入小计，也不按零计算。详情见各数值处。',
+    costsEvidenceScope: '数值使用所选报告窗口内带时间戳的后端调用。主／辅助总体取决于已记录的调用分类；未分类调用不会被假设为主调用。未定价用量与未知缓存证据不计入已定价小计；API 等值依据不是供应商费用或订阅节省。',
     costsEvidenceDetails: '证据来源与计算详情',
     costsEvidenceUnavailable: '无法读取证据',
     costsBasisLabel: '依据',
@@ -16461,7 +17194,7 @@ const I18N = {
     costsCacheNegative: '负节省值表示按这些费率估算，缓存用量的 API 等值成本高于未缓存等值。',
     costsCacheZero: '模型计算的价格差为零。',
     costsCachePositive: 'API 等值估算差额；不是节省的现金。',
-    costsCacheSource: '根据后端报告中的已记录用量与费率证据计算，不是费用。',
+    costsCacheSource: '根据带时间戳的后端调用和公开费率证据计算的理论 API 等值。总体范围取决于已记录的调用分类；不会把未分类调用视为主调用。不是供应商费用或订阅节省。',
     costsCacheValues: (uncached, cached) => `未缓存 API 等值 ${uncached}；缓存 API 等值 ${cached}。`,
     costsCacheTokens: (covered, total) => `具有缓存费率证据的令牌：${covered} / ${total}。`,
     costsCacheCalls: (covered, excluded) => `具有缓存费率证据的调用：${covered}；费率不完整的调用：${excluded}。`,
@@ -16973,8 +17706,10 @@ const I18N = {
     usageEmptyClear: '清除空范围',
     usageNoData: '此配置文件暂无用量数据。',
     usageRecordingLine: (since, last) => `记录始于 ${since} · 最新 ${last}。仅带时间戳的已捕获调用计入本期。`,
+    usagePopulationEvidenceNote: '用量合计涵盖所选筛选条件下带时间戳的后端调用记录。只有记录了调用分类时才能区分主调用与辅助调用；未分类调用不会被假设为主调用。API 等值和缓存节省使用后端价格证据，不是供应商费用。',
+    rpEvidenceNote: '报告合计涵盖此期间带时间戳的后端调用记录。总体范围取决于已记录的调用分类；覆盖率和方法说明会披露未知缓存证据和未定价线路。API 等值估价不是供应商费用或订阅节省。',
     usageRecordingPending: '暂不可用',
-    usageCacheFormula: '缓存命中 = 读取令牌 ÷（新鲜输入 + 读取 + 写入令牌），按已知缓存活动的调用加权。旧零缓存行含义不明，从已知分母中排除。',
+    usageCacheFormula: '缓存命中 = 已报告的读取令牌 ÷ 具有已报告缓存证据的提示令牌，按调用加权。估算或推算的计数会明确标注；缺失的读取或写入保持未知，并从分母中排除。旧零缓存行含义不明。',
     usageMethodologyTitle: '方法与覆盖详情',
     usageBaselineSummaryTitle: '历史基线与对账——独立累计估算',
   }
@@ -17189,15 +17924,16 @@ export const __test = {
   readStoredLedger,
   ledgerDiagnosticText,
   saveLedger,
-  readUsage, cacheCoverage, cacheCoverageDetail, cacheCoverageLine,
+  readUsage, cacheCoverage, cacheCoverageDetail, cacheCoverageLine, localCacheEvidence,
   resolveRates,
   summarize,
+  sessionSummaryQuery, sessionSavingsState, backendSummaryBucket,
   Meter, MeterHeader, CostKpi, TokenComposition, CacheGauge, RatesPanel, MeterEmpty, InfoTip, infoTipPlacement, LedgerSafetyNotice,
   useStableLive, mergeStableLive, stableLive, resetStableLive, meterPresence, compositionShares,
   $ratesOpen, $infoOpen, METER_CSS, RING_R, RING_C,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
-  fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, liveSavings, costOf,
-  savingsState, savingsGapReason, derivedWrites, savedNote, savedCoveragePct, SAVED_REASON_KEYS,
+  fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, cacheSavingsBounds, liveSavings, costOf,
+  savingsState, savingsGapReason, derivedWrites, savedNote, savedDisplay, savedCoveragePct, SAVED_REASON_KEYS,
   modelDisplayName,
   $ledger, $ledgerReadError, $ledgerLoadDiagnostics
 }

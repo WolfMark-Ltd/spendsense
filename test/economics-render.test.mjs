@@ -409,11 +409,11 @@ test('Costs labels API-equivalent subtotals as partial and discloses exact cover
   }
 })
 
-test('Costs states priced-subtotal scope once globally instead of repeating Partial pills on evidence cards', async () => {
+test('Costs states population and valuation scope once globally instead of repeating Partial pills on evidence cards', async () => {
   for (const [language, scope, neverZero, partialPill, pricedNote, unknownTag, savedTag] of [
-    ['en', 'what Hermes recorded and priced', 'never counted as zero', 'Partial',
+    ['en', 'timestamped backend calls', 'not a provider charge or subscription saving', 'Partial',
       'Priced subtotal', 'Unknown', 'Saved'],
-    ['zh', '已记录并已定价', '不按零计算', '部分',
+    ['zh', '所选报告窗口内带时间戳的后端调用', '不是供应商费用或订阅节省', '部分',
       '已定价小计', '未知', '已保存'],
   ]) {
     const { container } = await renderCostsSummary({
@@ -447,7 +447,7 @@ test('Costs states priced-subtotal scope once globally instead of repeating Part
   }
 })
 
-test('Costs omits the global scope line when every evidence card is fully priced', async () => {
+test('Costs keeps population and valuation scope visible when every evidence card is fully priced', async () => {
   for (const language of ['en', 'zh']) {
     const { container } = await renderCostsSummary({
       billing: { evidence: {
@@ -464,7 +464,9 @@ test('Costs omits the global scope line when every evidence card is fully priced
           fee: { effective: { amount: 20, currency: 'USD', period: 'month' } }, plan: null },
       ],
     }, language)
-    assert.equal(container.querySelectorAll('.wm-cost-evidence-scope').length, 0)
+    assert.equal(container.querySelectorAll('.wm-cost-evidence-scope').length, 1)
+    assert.match(container.querySelector('.wm-cost-evidence-scope').textContent,
+      language === 'zh' ? /未分类调用不会被假设为主调用/ : /unclassified calls are not assumed to be main/)
     assert.match(container.querySelector('[data-cost-kind="api"]').textContent,
       language === 'zh' ? /已完整定价/ : /Fully priced/)
     assert.match(container.querySelector('[data-cost-kind="cache"]').textContent,

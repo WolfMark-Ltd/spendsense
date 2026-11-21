@@ -172,7 +172,7 @@ test('live usage renders all five sections with labelled values', async () => {
   assert.equal(cards.length, 4, 'cost, composition, gauge and rates cards render')
   const figure = container.querySelector('.wm-kpi-figure')
   assert.ok(figure && figure.textContent !== '—', `cost figure renders: ${figure?.textContent}`)
-  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun',
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalRunEstimate',
     'the run is the fallback before a conversation record exists')
   assert.match(container.textContent, /apiEquivalent/)
   assert.match(container.textContent, /promptMix/)
@@ -237,17 +237,17 @@ test('a recorded conversation stays selected when the current run has larger tot
   await flush()
   const before = sectionsOf(container)
   const figureBefore = container.querySelector('.wm-kpi-figure').textContent
-  assert.equal(figureBefore, '$0.0010')
+  assert.equal(figureBefore, '≈$0.0010+', 'local API-equivalent cost is qualified when coverage metadata is absent')
   assert.deepEqual([...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
     .map(el => el.textContent), ['350', '1'])
-  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeConversation')
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
   assert.ok(container.querySelector('.wm-kpi-since'), 'conversation period remains visible')
   const savedBefore = container.querySelector('[data-kind="saved"] .wm-metric-value').textContent
-  assert.equal(savedBefore, '$0.0001')
+  assert.equal(savedBefore, '≈$0.0001')
 
   host.state.focusedUsage.set(liveUsage({ input: 2400, calls: 3 }))
   await flush()
-  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeConversation')
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
   assert.equal(container.querySelector('.wm-kpi-figure').textContent, figureBefore)
   assert.deepEqual([...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
     .map(el => el.textContent), ['350', '1'])
@@ -263,7 +263,7 @@ test('a recorded conversation stays selected when the current run has larger tot
     'the conversation figure remains stable during a stream gap')
   assert.match(container.textContent, /meterUpdating/, 'the retained reading is stale')
   assert.ok(container.querySelector('.wm-meter-sections.wm-stale'), 'stale readings are dimmed')
-  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeConversation')
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
   assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, savedBefore)
   assert.ok(container.querySelector('.wm-kpi-since'), 'conversation period survives the gap')
 
@@ -272,7 +272,7 @@ test('a recorded conversation stays selected when the current run has larger tot
   assertSameCards(sectionsOf(container).cards, before.cards, 'cards survive the round trip')
   assert.doesNotMatch(container.textContent, /meterUpdating/)
   assert.match(container.textContent, /meterLive/)
-  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeConversation')
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
   assert.equal(container.querySelector('.wm-kpi-figure').textContent, figureBefore)
   assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, savedBefore)
   assert.ok(container.querySelector('.wm-kpi-since'), 'conversation period survives the round trip')
@@ -321,9 +321,9 @@ test('recorded conversation totals render exactly with recorded presence', async
   T.$ledger.set(ledger)
   const container = await renderMeter()
   await flush()
-  assert.equal(container.querySelector('.wm-kpi-figure').textContent, '$1.23')
+  assert.equal(container.querySelector('.wm-kpi-figure').textContent, '≈$1.23+')
   assert.match(container.textContent, /meterRecorded/)
-  assert.match(container.textContent, /scopeConversation/)
+  assert.match(container.textContent, /scopeLocalConversationEstimate/)
   const metrics = [...container.querySelectorAll('.wm-metric-value')].map(el => el.textContent)
   assert.ok(metrics.includes('1.39M'), `total tokens: ${metrics}`)
   assert.ok(metrics.includes('57'), `calls: ${metrics}`)
@@ -332,8 +332,8 @@ test('recorded conversation totals render exactly with recorded presence', async
   const expected = (1000000 / 1328500) * T.RING_C
   const dash = ring.querySelector('.wm-ring-value').getAttribute('stroke-dasharray')
   assert.ok(Math.abs(parseFloat(dash) - expected) < 1e-6, `ring arc ${dash} matches 75.27%`)
-  assert.match(container.textContent, /exactLabel/)
-  assert.doesNotMatch(container.textContent, /≈/)
+  assert.match(container.textContent, /estimatedLabel/)
+  assert.match(container.textContent, /≈/)
   // Compact gauge metrics: coverage beside the ring, savings beneath it.
   const stats = container.querySelector('.wm-gauge-stats').textContent
   assert.match(stats, /coverageLabel/)
@@ -369,12 +369,13 @@ test('a cache coverage change redraws the gauge in place', async () => {
   const estMetrics = [...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
     .map(el => el.textContent)
   assert.ok(estMetrics[0].startsWith('≈'), `reconstructed totals carry ≈: ${estMetrics}`)
-  // A reconstructed split is priced from the fallback card, so the saving is
-  // shown — marked estimated, never exact.
+  // Rounded hit percentages cannot recover measured writes, and this route
+  // publishes no write price, so net savings are unavailable.
   const estimatedNotes = [...container.querySelectorAll('.wm-gauge-stats .wm-gauge-note')].map(el => el.textContent)
   assert.equal(estimatedNotes.length, 1)
-  assert.match(estimatedNotes[0], /estimatedLabel/)
-  assert.doesNotMatch(estimatedNotes[0], /exactLabel/)
+  assert.match(estimatedNotes[0], /savedNotEstablished/)
+  assert.match(estimatedNotes[0], /savedReasonNoWriteRate/)
+  assert.doesNotMatch(estimatedNotes[0], /exactLabel|estimatedLabel/)
 
   // A route the catalogue cannot price has no figure at all; the note names
   // the reason instead of leaving a bare dash.
@@ -436,7 +437,7 @@ test('a net cache loss renders as a signed figure, not $0.00', async () => {
   const stats = container.querySelector('.wm-gauge-stats')
   assert.match(stats.textContent, /−\$1\.25/, `signed saving: ${stats.textContent}`)
   assert.doesNotMatch(stats.textContent, /\$0\.00/, 'a loss never renders as zero')
-  assert.match(stats.textContent, /exactLabel/, 'full coverage stays exact')
+  assert.match(stats.textContent, /estimatedLabel/, 'local conversation values are qualified')
 })
 
 test('a measured zero is displayed as zero with full coverage', async () => {
@@ -455,9 +456,84 @@ test('a measured zero is displayed as zero with full coverage', async () => {
   const container = await renderMeter()
   await flush()
   const saved = container.querySelector('[data-kind="saved"] .wm-metric-value')
-  assert.equal(saved.textContent, '$0.00')
-  assert.match(container.querySelector('.wm-gauge-stats').textContent, /exactLabel/)
+  assert.equal(saved.textContent, '≈$0.00')
+  assert.match(container.querySelector('.wm-gauge-stats').textContent, /estimatedLabel/)
   assert.doesNotMatch(container.querySelector('.wm-gauge-stats').textContent, /savedNotEstablished/)
+})
+
+test('a proven main summary renders its signed zero with population and evidence labels', async () => {
+  resetHost()
+  const requests = []
+  const originalRest = T.getRest()
+  T.setRest(async path => {
+    requests.push(path)
+    if (path.startsWith('/session/summary?')) return {
+      ok: true, session_id: 'summary-session', model: 'gpt-6.2-sol', provider: 'openai',
+      population: { requested: 'main', satisfied: true, separable: true },
+      totals: { calls: 1, input_tokens: 100, output_tokens: 10, prompt_tokens: 200,
+        cache_read_tokens: 100, cache_write_tokens: 0,
+        cache_read_state: 'reported', cache_write_state: 'reported', unpriced_tokens: 0 },
+      valuation: { api_equivalent_usd: .001, api_equivalent_basis: 'exact',
+        savings_usd: 0, savings_usd_high: null, savings_basis: 'exact', coverage: 1,
+        covered_calls: 1, excluded_calls: 0, cache_hit_rate: 0, cache_hit_rate_basis: 'all_calls' }
+    }
+    return { rate: null }
+  })
+  host.state.focusedSessionId.set('summary-session')
+  const container = await renderMeter()
+  await flush()
+  try {
+    assert.ok(requests.some(path => path.startsWith('/session/summary?') &&
+      path.includes('session_id=summary-session') && path.includes('population=main')),
+    `main summary request: ${requests}`)
+    assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeMainCalls')
+    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '$0.00')
+    assert.match(container.querySelector('.wm-kpi-figure').textContent, /\$0\.0010/)
+    assert.match(container.querySelector('.wm-kpi-since').textContent, /sessionEvidenceNote/)
+    assert.equal(container.querySelector('.wm-rates-toggle'), null,
+      'a multi-route main summary does not present a single-route Rates panel')
+    assert.equal(container.querySelector('.wm-ring').getAttribute('aria-label'), 'weightedCacheHit: 0%',
+      'the zero hit rate is exposed to assistive technology')
+  } finally {
+    T.restoreRest(originalRest)
+  }
+})
+
+test('a refused main summary falls back to the focused local conversation only', async () => {
+  resetHost()
+  const requests = []
+  const originalRest = T.getRest()
+  T.setRest(async path => {
+    requests.push(path)
+    if (path.startsWith('/session/summary?')) return {
+      ok: true, session_id: 'refused-session', model: 'gpt-4o', provider: 'openai',
+      population: { requested: 'main', satisfied: false, separable: false,
+        reason: 'population_not_recorded' }, totals: null, valuation: null,
+      alternate: { scope: 'all_calls', valuation: { savings_usd: 999999, savings_basis: 'exact' } }
+    }
+    return { rate: null }
+  })
+  host.state.focusedSessionId.set('refused-session')
+  host.state.focusedStoredSessionId.set('refused-conversation')
+  const ledger = T.emptyLedger()
+  ledger.sessions['refused-conversation'] = histBucket({
+    input: 100, output: 10, cacheRead: 200, cacheWrite: 1000, calls: 1,
+    netSavingsPrompt: 1300, netSavings: -.5, cacheSource: 'exact', cacheExactPrompt: 1300,
+    cacheReadEvidence: 'reported', cacheWriteEvidence: 'reported'
+  })
+  T.$ledger.set(ledger)
+  const container = await renderMeter()
+  await flush()
+  try {
+    assert.ok(requests.some(path => path.startsWith('/session/summary?') && path.includes('population=main')))
+    assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
+    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '≈−$0.500')
+    assert.match(container.querySelector('.wm-kpi-since').textContent, /localEstimateScopeNote/)
+    assert.doesNotMatch(container.textContent, /999999/,
+      'the refused response alternate all-calls block is never rendered')
+  } finally {
+    T.restoreRest(originalRest)
+  }
 })
 
 test('a cache-only frame renders as valid live usage', async () => {
@@ -476,7 +552,7 @@ test('a cache-only frame renders as valid live usage', async () => {
   const ring = container.querySelector('.wm-ring')
   assert.match(ring.getAttribute('aria-label'), /98%/)
   // Session identity: this run's scope, not the conversation fallback.
-  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun')
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalRunEstimate')
   // A refresh keeps every section standing.
   const before = sectionsOf(container)
   host.state.focusedUsage.set(liveUsage({ input: 0, output: 0, calls: 0, cache_read: 5000 }))
@@ -484,7 +560,7 @@ test('a cache-only frame renders as valid live usage', async () => {
   const after = sectionsOf(container)
   assert.equal(after.head, before.head)
   assertSameCards(after.cards, before.cards, 'cards survive the refresh')
-  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun')
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalRunEstimate')
 })
 
 test('a calls-only frame still renders without token data', async () => {
@@ -498,9 +574,12 @@ test('a calls-only frame still renders without token data', async () => {
     .map(el => el.textContent)
   assert.equal(metrics[0], '0', `no tokens yet: ${metrics}`)
   assert.equal(metrics[1], '3', `calls counted: ${metrics}`)
-  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeRun')
+  assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalRunEstimate')
   const ring = container.querySelector('.wm-ring')
   assert.match(ring.getAttribute('aria-label'), /—/, 'no prompt means no hit rate')
+  assert.match(container.querySelector('.wm-kpi-figure').textContent, /^≈.*\+$/,
+    'a zero-priced subtotal with unknown cache counters is qualified and marked incomplete')
+  assert.match(container.querySelector('.wm-partial-chip').textContent, /partialCacheEvidence/)
   const method = container.querySelector('[aria-controls="wm-info-cache-method"]')
   await React.act(async () => {
     method.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
@@ -868,7 +947,7 @@ test('the composition bar labels every part with its share', async () => {
   assert.match(bar.getAttribute('aria-label'), /20%/)
   assert.match(bar.getAttribute('aria-label'), /60%/)
   const fills = [...bar.querySelectorAll('.wm-mix-fill')].map(el => el.style.width)
-  assert.deepEqual(fills, ['20%', '60%', '20%'])
+  assert.deepEqual(fills, ['20%', '60%', '20%', '0%'])
 })
 
 // --- WP13: compact sidebar ------------------------------------------------------
