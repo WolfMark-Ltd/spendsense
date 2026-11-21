@@ -602,11 +602,14 @@ async function openCase(client, handles, {
     },
     // A second navigation on the same page and context: used by the isolation
     // negative control, which must observe state a fresh context would not.
+    // Both awaits are joined so a failed navigation cannot leave the page-load
+    // wait to reject unobserved when the socket closes.
     async navigate(nextUrl) {
       client.resetPageLoad(sessionId)
-      const nextLoad = client.waitForPageLoad(sessionId, pageLoadTimeoutMs)
-      const result = await client.sessionCommand(sessionId, 'Page.navigate', { url: nextUrl }, commandTimeoutMs)
-      await nextLoad
+      const [result] = await Promise.all([
+        client.sessionCommand(sessionId, 'Page.navigate', { url: nextUrl }, commandTimeoutMs),
+        client.waitForPageLoad(sessionId, pageLoadTimeoutMs),
+      ])
       if (result?.errorText) throw new Error(`${subject} navigation failed: ${result.errorText}`)
     },
   }

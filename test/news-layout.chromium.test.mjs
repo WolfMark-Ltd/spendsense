@@ -345,6 +345,9 @@ test('a probe case is screenshotted from a pristine load, not the probed page', 
     assert.equal(navigations[1], `${ORIGIN}?case=${CASE}`)
     assert.equal(browser.calls.filter(call => call.method === 'Target.createBrowserContext').length, 2,
       'the pristine capture gets its own context')
+    const capture = browser.calls.find(call => call.method === 'Page.captureScreenshot')
+    assert.equal(capture?.sessionId, 'session-for-tgt-2',
+      'the screenshot is captured from the pristine session, not the probed one')
     assert.ok(existsSync(path))
     assert.equal(readFileSync(path, 'utf8'), 'png-bytes')
   } finally {

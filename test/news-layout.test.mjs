@@ -119,15 +119,28 @@ async function suite() {
     }
     return SUITE
   } catch (error) {
-    // Startup is a failure path too: nothing this function opened may survive.
-    if (socket) { try { socket.close() } catch { /* already closed */ } }
-    if (browser) {
-      await stopChromium({
-        child: browser.child, exited: browser.exited, group: browser.group, stderr: browser.stderr,
-      }).catch(() => {})
+    // Startup is a failure path too: nothing this function opened may survive,
+    // and a teardown that fails here must be reported, not swallowed.
+    const cleanupErrors = []
+    if (socket) {
+      try { socket.close() } catch (closeError) { cleanupErrors.push(closeError) }
     }
-    if (server) await new Promise(resolve => server.close(resolve))
-    rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    if (browser) {
+      try {
+        await stopChromium({
+          child: browser.child, exited: browser.exited, group: browser.group, stderr: browser.stderr,
+        })
+      } catch (stopError) { cleanupErrors.push(stopError) }
+    }
+    if (server) {
+      try { await new Promise(resolve => server.close(resolve)) } catch (closeError) { cleanupErrors.push(closeError) }
+    }
+    try {
+      rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    } catch (removeError) { cleanupErrors.push(removeError) }
+    if (cleanupErrors.length) {
+      error.message += ` (and startup cleanup failed: ${cleanupErrors.map(entry => entry.message).join('; ')})`
+    }
     throw error
   }
 }

@@ -986,6 +986,13 @@ async function measureCase(c) {
     waitedMs += 25
   }
   const readiness = { ready: ready(), waitedMs, expectedItems: items.length }
+  // A page that missed its readiness deadline is not measured: publishing
+  // numbers from a page known to be incomplete is how an empty layout passes a
+  // set of assertions about nothing.
+  if (!readiness.ready) {
+    throw new Error(`the Model News page reached no final state within ${READY_TIMEOUT_MS}ms: `
+      + JSON.stringify(readiness))
+  }
   expandHidden(pane)
   await tick()
   const text = paneText(pane)
