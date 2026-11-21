@@ -36,7 +36,7 @@ test('NEWS_LAYOUT_SHOTS containment accepts directories outside the repository',
   // A safe sibling directory: relative(ROOT, sibling) starts with "..", so it
   // is outside even when its name shares the repo root's prefix — a plain
   // startsWith(ROOT) check would falsely reject the prefix sibling.
-  shotsOutsideRepo(`${ROOT}-sibling-shots`)
+  shotsOutsideRepo(join(ROOT, '..', `${basename(ROOT)}-sibling-shots`))
   shotsOutsideRepo(join(ROOT, '..', 'wp11-review-sibling-shots'))
   shotsOutsideRepo(join(ROOT, '..', 'elsewhere-shots'))
   // A repo-relative string that resolves outside the repo is fine.

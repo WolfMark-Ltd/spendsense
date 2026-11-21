@@ -236,8 +236,9 @@ python3 -m venv .venv
 
 With [uv](https://docs.astral.sh/uv/) instead: `uv venv .venv && uv pip install --python .venv/bin/python fastapi httpx`, then run the tests as above.
 
-Install the development-only UI dependencies with `npm ci --prefix test/harness`.
-With Node 22 or later, run the browserless JavaScript checks during development:
+Use Node.js 22.13 or later on the 22.x line, or Node.js 24 or later. Install the
+UI test dependencies with `npm ci --prefix test/harness`, then run the browserless
+JavaScript checks during development:
 
 ```bash
 bash scripts/node-tests.sh browserless

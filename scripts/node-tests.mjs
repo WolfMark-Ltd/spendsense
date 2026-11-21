@@ -49,6 +49,13 @@ export function checkResult({ error, status, signal, stdout }, expected) {
 
 function main([mode = 'browserless', ...args]) {
   if (!Object.hasOwn(suites, mode) || args.length) throw new Error('usage: node-tests.sh [browserless|browser]')
+  // The isolation flag arrived in 22.8; the locked jsdom requires 22.13 on Node 22.
+  const [major, minor] = process.versions.node.split('.').map(Number)
+  if (!(major === 22 && minor >= 13) && major < 24) {
+    throw new Error(`Node.js 22.13+ on the 22.x line, or 24+, is required (found ${process.version})`)
+  }
+  const isolationFlag = process.allowedNodeEnvironmentFlags.has('--test-isolation')
+    ? '--test-isolation=none' : '--experimental-test-isolation=none'
   const declared = Object.values(suites).flat().map(([name]) => fileName(name)).sort()
   // Discovery is a consistency check, not a selection mechanism.
   const actual = readdirSync(new URL('../test/', import.meta.url)).filter(name => name.endsWith('.test.mjs')).sort()
@@ -62,12 +69,10 @@ function main([mode = 'browserless', ...args]) {
 
   let passed = 0
   for (const [name, expected, forceExit] of suites[mode]) {
-    const flags = process.allowedNodeEnvironmentFlags.has('--test-isolation')
-      ? ['--test-isolation=none'] : ['--experimental-test-isolation=none']
     // Each file already gets its own OS process. Do not nest Node's isolated
     // runner, whose force-exit path can truncate the worker report pipe.
     const result = spawnSync(process.execPath, [
-      '--test', ...flags, ...(forceExit ? ['--test-force-exit'] : []),
+      '--test', isolationFlag, ...(forceExit ? ['--test-force-exit'] : []),
       '--test-reporter=tap', `test/${fileName(name)}`,
     ], { cwd: root, encoding: 'utf8', timeout: 300_000, maxBuffer: 16 * 1024 * 1024 })
     try {
