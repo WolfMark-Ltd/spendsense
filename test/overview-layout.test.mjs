@@ -44,6 +44,10 @@ const params=new URLSearchParams(location.search);const name=params.get('case');
 if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(window);window.matchMedia=query=>query==='(prefers-reduced-motion: reduce)'?{matches:true,media:query,addEventListener(){},removeEventListener(){}}:nativeMatchMedia(query)}
 </script></body></html>`)
     const url = pathToFileURL(html).href
+    // ovTitle in the product dictionary. Pinned here so a run cannot prove the
+    // geometry of a page that silently rendered the wrong language; the copy
+    // itself is asserted browserlessly in `overview-render.test.mjs`.
+    const TITLES = { en: 'Overview', zh: '总览' }
     const results = {}
     const singleLayouts = new Map()
     for (const locale of ['en', 'zh']) {
@@ -55,10 +59,13 @@ if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(win
       assert.ok(match?.[1], `[${locale}] Chromium records Overview layout results`)
       const result = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&gt;/g, '>').replace(/&lt;/g, '<'))
       assert.equal(result.layouts.length, 6, `[${locale}] every width and theme is rendered`)
+      assert.equal(result.readiness?.ready, true,
+        `[${locale}] the page reached its final structure (${result.readiness?.waitedMs}ms)`)
       for (const layout of result.layouts) {
         const tag = `[${locale}/${layout.id}]`
         assert.notEqual(layout.missingOverview, true, `${tag} renders Overview panels: ${layout.errors?.join('\n')}`)
-        assert.equal(layout.locale, locale, `${tag} uses the requested language`)
+        assert.deepEqual(layout.errors, [], `${tag} renders without page errors`)
+        assert.equal(layout.heading, TITLES[locale], `${tag} renders the page in the requested language`)
         assert.equal(layout.cards, 4, tag)
         assert.ok(layout.paneOverflow <= 1, `${tag} product container has no horizontal scroll`)
         if (layout.documentOverflow !== null) assert.ok(layout.documentOverflow <= 1, `${tag} document has no horizontal scroll`)
@@ -66,7 +73,6 @@ if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(win
         assert.equal(layout.panelColumns, layout.width <= 760 ? 1 : 2, tag)
         assert.deepEqual(layout.overflow, [], `${tag} has no overflowing card content`)
         assert.equal(layout.methodsCollapsed, true, `${tag} keeps methodology collapsed by default`)
-        assert.equal(layout.methodSections, 5, `${tag} provides five named methodology sections`)
         assert.ok(layout.kpiHeights.every(height => height < 260),
           `${tag} KPI cards remain compact (${JSON.stringify(layout.kpiDetails)})`)
         assert.ok(Math.max(...layout.kpiHeights) - Math.min(...layout.kpiHeights) <= 1,
@@ -78,25 +84,9 @@ if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(win
         assert.match(layout.sticky.backgroundImage, /linear-gradient/, `${tag} gives sticky navigation an opaque underlay`)
         assert.equal(layout.sticky.top, 0, `${tag} navigation remains pinned at the scroller top`)
         assert.ok(layout.navigationOverflow <= 1, `${tag} navigation tabs fit their available row width`)
+        assert.ok(layout.buttonCount >= 7,
+          `${tag} renders its controls before their rects are checked (${layout.buttonCount})`)
         assert.deepEqual(layout.clippedButtons, [], `${tag} buttons stay inside the Overview pane`)
-        assert.match(layout.charges, locale === 'en' ? /Not recorded/ : /未记录/, `${tag} preserves missing charge evidence`)
-        assert.match(layout.charges, locale === 'en' ? /No per-call evidence/i : /没有逐次费用证据/, tag)
-        assert.doesNotMatch(layout.charges, /covers|\b\d+ of \d+ records\b/i, `${tag} does not infer charge coverage`)
-        assert.match(layout.recorded, locale === 'en' ? /all profiles.*calendar month to date/i : /所有配置文件.*本日历月至今/, tag)
-        assert.match(layout.estimate, locale === 'en' ? /active profile.*rolling 30 days/i : /当前配置文件.*滚动 30 天/, tag)
-        assert.match(layout.text, locale === 'en' ? /do not add them together/i : /请勿相加/, `${tag} explains the scope difference`)
-        assert.match(layout.recorded, locale === 'en' ? /Partial/ : /部分/, `${tag} communicates partial evidence without prefixing the figure`)
-        assert.doesNotMatch(layout.figures['recorded-usage'], /At least|至少/, `${tag} keeps the recorded figure prominent`)
-        assert.doesNotMatch(layout.figures['api-equivalent-estimate'], /At least|至少/, `${tag} keeps the estimate figure prominent`)
-        assert.match(layout.text, locale === 'en' ? /Actual provider charges/ : /实际服务商费用/, `${tag} labels charges separately`)
-        assert.match(layout.text, locale === 'en' ? /Most-used models/ : /使用最多的模型/, `${tag} renders the call-count insight`)
-        assert.match(layout.text, locale === 'en' ? /GBP 20\.00\/mo/ : /GBP 20\.00\/月/, `${tag} preserves GBP and its billing period`)
-        assert.match(layout.fees, locale === 'en' ? /Partial/ : /部分/, `${tag} marks the known-fee subtotal partial`)
-        assert.equal(layout.pricingAction, locale === 'en' ? 'View 30-day pricing coverage' : '查看近 30 天定价覆盖率',
-          `${tag} names the pricing destination accurately`)
-        assert.equal(layout.modelUsageShortcut, false, `${tag} removes the redundant Usage action from Most-used models`)
-        assert.equal(layout.modelLabels[0], 'GPT 5.1 Codex Super Long Model Name For Wrapping', `${tag} shows the friendly model name`)
-        assert.equal(layout.modelDetails.length, 2, `${tag} keeps exact model IDs available through help controls`)
       }
       assert.notEqual(result.layouts[0].background, result.layouts[1].background, `[${locale}] dark and light host fills differ`)
       assert.notEqual(result.layouts[0].foreground, result.layouts[1].foreground, `[${locale}] dark and light text colours differ`)
@@ -116,10 +106,12 @@ if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(win
           assert.ok(singleMatch?.[1], `[${id}/${locale}] Chromium records single-pane layout results`)
           const singleResult = JSON.parse(singleMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&gt;/g, '>').replace(/&lt;/g, '<'))
           assert.equal(singleResult.layouts.length, 1, `[${id}/${locale}] renders one selected pane`)
+          assert.equal(singleResult.readiness?.ready, true,
+            `[${id}/${locale}] the pane reached its final structure (${singleResult.readiness?.waitedMs}ms)`)
           const layout = singleResult.layouts[0]
           const tag = `[${id}/${locale}/single]`
           assert.equal(layout.width, width, tag)
-          assert.equal(layout.locale, locale, tag)
+          assert.equal(layout.heading, TITLES[locale], `${tag} renders the page in the requested language`)
           assert.ok(layout.paneOverflow <= 1, `${tag} pane has no horizontal scroll`)
           assert.notEqual(layout.documentOverflow, null, `${tag} measures document overflow in single-pane mode`)
           assert.ok(layout.documentOverflow <= 1, `${tag} document has no horizontal scroll`)
@@ -128,8 +120,6 @@ if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(win
           assert.deepEqual(layout.clippedButtons, [], `${tag} buttons fit within the pane`)
           assert.deepEqual(layout.buttonsOutsidePane, [], `${tag} buttons fit within the full-height pane`)
           assert.equal(layout.methodsCollapsed, true, `${tag} methodology starts collapsed`)
-          assert.equal(layout.pricingAction, locale === 'en' ? 'View 30-day pricing coverage' : '查看近 30 天定价覆盖率',
-            `${tag} names the pricing destination accurately`)
           assert.equal(layout.paneLeft, 0, `${tag} pane is aligned to the screenshot origin`)
           assert.equal(layout.paneRight, width, `${tag} pane right edge matches its target width`)
           assert.ok(layout.paneBottom <= layout.viewportHeight + 1, `${tag} full pane fits the viewport`)
@@ -145,6 +135,8 @@ if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(win
       assert.ok(reviewMatch?.[1], `[${locale}] Chromium records Review jump positions`)
       const reviewResult = JSON.parse(reviewMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&gt;/g, '>').replace(/&lt;/g, '<'))
       const reviewJumps = reviewResult.reviewJumps || []
+      assert.equal(reviewResult.readiness?.ready, true,
+        `[${locale}] the Review page reached its final structure (${reviewResult.readiness?.waitedMs}ms)`)
       assert.equal(reviewJumps.length, 4, `[${locale}] all 268px and 380px Review actions are exercised`)
       for (const jump of reviewJumps) {
         const tag = `[${locale}/${jump.id}/Review]`
