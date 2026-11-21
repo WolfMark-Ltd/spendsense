@@ -40,7 +40,13 @@ class ProvenanceContractTests(unittest.TestCase):
             "fixture", "test", "2026-11-21", "1")
 
     def tearDown(self):
-        # Release the module-level writer so Windows can delete the temp dir.
+        # Close and release the module-level writer so Windows can delete the
+        # temp dir; a surviving connection keeps usage.db locked.
+        if store._WRITER is not None:
+            try:
+                store._WRITER.close()
+            except Exception:  # noqa: BLE001 - cleanup must not mask the test result
+                pass
         store._WRITER = None
         store._WRITER_PATH = None
 
