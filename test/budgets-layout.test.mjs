@@ -24,27 +24,32 @@ test('budget editor and forecast fit narrow/wide light/dark containers, with key
     writeFileSync(entry, `
 import React from 'react'
 import {createRoot} from 'react-dom/client'
+import {flushSync} from 'react-dom'
 import {__test as T} from '${root}/desktop/plugin.js'
 import {calls} from '@hermes/plugin-sdk'
 globalThis.__budgetT = (key, ...args) => typeof T.I18N.en[key] === 'function' ? T.I18N.en[key](...args) : T.I18N.en[key] || key
 const b = { id:'monthly', label:'Monthly catalogue value', amount:100, currency:'USD', enabled:true, scope:'total', measurement:'api_equivalent', thresholds:[50,80,100], timezone:'Europe/London', cycle_day:1, model:'', provider:'' }
 globalThis.__budgetReport = { ok:true, rev:'fixture', budgets:[b], statuses:[{id:b.id, budget:b, spend:80, percentage:80, complete:true, level:'warning', budget_rev:'fixture', cycle:{id:'cycle', start:'2026-11-01', end:'2026-12-01'}, coverage:{calls:40, measured_calls:40}, forecast:{available:true, projected:125, days_remaining:12, breach_date:'2026-11-25', burn_7:4, burn_30:3, trend:'accelerating', samples:{'30':{calls:40,active_days:8}}}}] }
 T.$budgetDraft.set({...T.newBudgetDraft('local|test#1','fixture'), label:'Route usage-value limit', amount:100, scope:'model_route', provider:'invented-provider', model:'invented-model'})
-for(const id of ['narrow-dark','wide-dark','narrow-light','wide-light']) {
-  const el = document.getElementById(id)
-  createRoot(el).render(<div className="wm-analytics wm-product"><style>{T.ANALYTICS_CSS+T.PRODUCT_CSS}</style><main className="wm-shell"><T.BudgetPanel manage forecasts /></main></div>)
-}
-setTimeout(() => {
-  const out = {calls:calls.length, layouts:[]}
-  for(const id of ['narrow-dark','wide-dark','narrow-light','wide-light']) {
-    const el=document.getElementById(id), rect=el.getBoundingClientRect()
-    const form=el.querySelector('form'), progress=el.querySelector('progress'), info=el.querySelector('.wm-info-btn')
-    const outside=[...el.querySelectorAll('input,select,button,progress,article')].filter(x=>{const r=x.getBoundingClientRect();return r.left < rect.left-1 || r.right > rect.right+1})
-    out.layouts.push({id, overflow:outside.map(x=>x.tagName), form:!!form, progress:!!progress, progressLabel:progress?.getAttribute('aria-label'), text:el.textContent})
-    info?.focus()
+const ids = ['narrow-dark','wide-dark','narrow-light','wide-light']
+// Commit every fixture before taking geometry measurements. Chromium virtual
+// time can otherwise fire a fixed timer while React still has pending roots.
+flushSync(() => {
+  for(const id of ids) {
+    const el = document.getElementById(id)
+    createRoot(el).render(<div className="wm-analytics wm-product"><style>{T.ANALYTICS_CSS+T.PRODUCT_CSS}</style><main className="wm-shell"><T.BudgetPanel manage forecasts /></main></div>)
   }
-  setTimeout(()=>{out.tooltip=!!document.querySelector('[role=tooltip]');document.getElementById('result').textContent=JSON.stringify(out)},100)
-},500)
+})
+const out = {calls:calls.length, layouts:[]}
+for(const id of ids) {
+  const el=document.getElementById(id), rect=el.getBoundingClientRect()
+  const form=el.querySelector('form'), progress=el.querySelector('progress')
+  const outside=[...el.querySelectorAll('input,select,button,progress,article')].filter(x=>{const r=x.getBoundingClientRect();return r.left < rect.left-1 || r.right > rect.right+1})
+  out.layouts.push({id, overflow:outside.map(x=>x.tagName), form:!!form, progress:!!progress, progressLabel:progress?.getAttribute('aria-label'), text:el.textContent})
+}
+flushSync(() => document.getElementById('wide-light').querySelector('.wm-info-btn')?.focus())
+out.tooltip=!!document.querySelector('[role=tooltip]')
+document.getElementById('result').textContent=JSON.stringify(out)
 `)
     const esbuild = (await import(pathToFileURL(join(modules, 'esbuild/lib/main.js')))).default
     await esbuild.build({ entryPoints: [entry], bundle: true, platform: 'browser', format: 'iife', outfile: join(dir, 'page.js'),
