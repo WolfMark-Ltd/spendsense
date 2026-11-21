@@ -601,6 +601,17 @@ def _effective_rate(rate: Rate, avg_prompt: float) -> tuple[Rate, bool]:
     )
 
 
+def reaches_unapplied_tier(rate: Rate, prompt_tokens: float) -> bool:
+    """True when more tokens in the same request could enter a higher band.
+
+    A tier applies at its threshold when inclusive, or just above it when not,
+    so any threshold strictly greater than the recorded prompt is reachable by
+    an unrecorded counter. A threshold at or below the prompt is already the
+    applicable band.
+    """
+    return any(tier.threshold > prompt_tokens for tier in rate.tiers)
+
+
 def _amount(rate: Rate, input_tokens: int, output_tokens: int,
             cache_read_tokens: int, cache_write_tokens: int) -> tuple[float, float]:
     """Return (USD, cache savings) at one rate row."""

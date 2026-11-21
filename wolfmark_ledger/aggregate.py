@@ -649,15 +649,19 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         cost_high = base_usd + cache_write * (write_options[-1] - scalar_write) / 1_000_000
     # An unproven counter whose price is positive can only add cost, so the
     # priced amount is a lower bound; an unknown price cannot be bounded at all.
+    # Price completeness is a separate question from provenance: a positive
+    # counter charged at a fallback (or no) rate is not an established amount,
+    # while an explicit zero never needs a price for the bucket it did not use.
     cost_bounds: set[str] = set()
     cost_causes: set[str] = set()
-    if not write_known and (write_rate is None or write_defaulted):
+    write_price_missing = write_rate is None or write_defaulted
+    if write_price_missing and (not write_known or cache_write > 0):
         cost_bounds.add("incomplete")
         cost_causes.add("write")
     elif not write_known and float(write_rate or 0) > 0:
         cost_bounds.add("lower")
         cost_causes.add("write")
-    if not read_known and read_rate is None:
+    if read_rate is None and (not read_known or cache_read > 0):
         cost_bounds.add("incomplete")
         cost_causes.add("read")
     elif not read_known and float(read_rate or 0) > 0:

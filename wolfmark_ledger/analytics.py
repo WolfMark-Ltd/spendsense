@@ -13,7 +13,8 @@ from typing import Any
 from . import billing, store
 from .aggregate import Acc, _event_result, _iso, _local_window, route_billing_status
 from .db import default_db_path
-from .pricing import Catalogue, Rate, _effective_rate, load_catalogue
+from .pricing import (Catalogue, Rate, _effective_rate, load_catalogue,
+                      reaches_unapplied_tier)
 
 SCOPES = ("direct", "subagent", "auxiliary", "unattributed")
 _MAX_ANCESTRY = 32
@@ -70,6 +71,16 @@ class _MetricProvenance:
         return "unknown", "mixed"
 
 
+def _indeterminate_reason(causes: dict[str, set[str]]) -> str:
+    """Why a savings bound could not be established at all."""
+    drivers = causes.get("indeterminate", set())
+    if "tier" in drivers:
+        return "context_tier_unknown"
+    if drivers == {"read"}:
+        return "read_rate_missing"
+    return "write_rate_missing"
+
+
 def _savings_basis(bounds: set[str], premiums: set[float],
                    causes: dict[str, set[str]], covered: int
                    ) -> tuple[str | None, str | None, float | None]:
@@ -84,7 +95,7 @@ def _savings_basis(bounds: set[str], premiums: set[float],
     if not bounds:
         return "exact", None, None
     if "indeterminate" in bounds:
-        return "indeterminate", "write_rate_missing", None
+        return "indeterminate", _indeterminate_reason(causes), None
     premium = next(iter(premiums)) if len(premiums) == 1 else None
     if bounds == {"upper"}:
         reason = "write_not_reported" if "write" in causes.get("upper", set()) \
@@ -202,11 +213,17 @@ def _call_economics(row: dict[str, Any], book: Catalogue, *,
         options = write_options or ([scalar_write] if scalar_write is not None else [])
         premiums = {round(value - float(rate.input), 6) for value in options}
         premium = next(iter(premiums)) if len(premiums) == 1 else None
+    directions = _savings_directions(rate, read_known=read_known,
+                                     write_known=write_known)
+    if not (read_known and write_known) and reaches_unapplied_tier(rate, prompt):
+        # The unrecorded counter can add tokens, and entering a higher band
+        # reprices the whole request, so a direction taken at the recorded band
+        # is not a defensible bound on the true value.
+        directions = [("indeterminate", "tier")]
     return {"uncached": uncached, "cached": cached,
             "savings_low": low, "savings_high": high,
             "retention_range": retention_range,
-            "savings": _savings_directions(rate, read_known=read_known,
-                                           write_known=write_known),
+            "savings": directions,
             "premium": premium}, ""
 
 
@@ -313,7 +330,8 @@ class _AnalyticsAcc:
             # affects savings is proven. An unproven counter widens one side,
             # so that endpoint must not be published as a bound.
             if "indeterminate" in self.bounds:
-                savings_basis, savings_reason, savings_usd = "indeterminate", "write_rate_missing", None
+                savings_basis, savings_reason, savings_usd = (
+                    "indeterminate", _indeterminate_reason(self.bound_causes), None)
             elif {"upper", "lower"} <= self.bounds:
                 savings_basis, savings_reason, savings_usd = (
                     "indeterminate", "mixed_read_write_evidence", None)
@@ -328,7 +346,7 @@ class _AnalyticsAcc:
                 savings_usd_high = high
         else:
             savings_basis, savings_reason = basis, bound_reason
-            if savings_basis is None:
+            if savings_basis is None or savings_reason == "context_tier_unknown":
                 savings_usd = None
         if base["unpriced_tokens"]:
             api_basis, api_reason, api_high = "incomplete", "unpriced_tokens", None
@@ -705,7 +723,7 @@ def build_analytics_report(
             "Calls with provider errors or missing usage keep their tokens but are unpriced.",
             "Cache provenance is three-state: a reported flag wins, and only a null flag falls back to a positive value. Calls with no proven cache field are excluded from economics; the prompt-only cache-hit denominator counts calls with a proven read; cache_coverage is that count / all calls; cache_prompt_coverage uses prompt tokens. A null write with a zero value is unreported, never a measured zero.",
             "List USD preserves the existing accounting fallback for absent cache rates; strict economics excludes calls requiring those missing prices instead of treating the fallback as savings.",
-            "Economics compares hypothetical uncached and cached list costs for the same covered calls, including output and cache-write premiums; savings may be negative. Coverage is covered tokens / all selected tokens. The savings basis follows the card's signed write premium, so an unreported write counter can make the value an upper bound, a lower bound, exact, or indeterminate.",
+            "Economics compares hypothetical uncached and cached list costs for the same covered calls, including output and cache-write premiums; savings may be negative. Coverage is covered tokens / all selected tokens. The savings basis follows the card's signed write premium, so an unreported write counter can make the value an upper bound, a lower bound, exact, or indeterminate. An unreported counter that could still enter a higher context tier makes the bound indeterminate, because crossing the threshold reprices the whole request.",
             "Billing mix is the latest route/model classification, not a per-call invoice. Only included routes have known $0 marginal billing.",
             "Previous totals cover the equal-length window immediately before this one under the same filters, for comparison only; deltas are omitted when that window has no recorded calls and it may predate recording.",
             *[f"Economics excluded {count} calls: {reason}."

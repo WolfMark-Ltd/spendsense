@@ -25,6 +25,7 @@ DISCOUNT2 = Rate(2, 10, .1, 1.5)        # a different discount
 AT_INPUT = Rate(2, 10, .1, 2.0)         # write priced at input
 FREE_WRITE = Rate(2, 10, .1, 0.0)       # writes recorded but never charged
 NO_WRITE_PRICE = Rate(2, 10, .1, None)  # write price unknown
+NO_READ_PRICE = Rate(2, 10, None, 2.5)  # cached-read price unknown
 TIER_SUPPLIES_WRITE = Rate(2, 10, .1, None,
                            tiers=(Tier(100, 1, 5, .05, 1.5),))
 RETENTION = Rate(2, 10, .1, 2.5,
@@ -35,6 +36,8 @@ NAMED_TIER = Rate(2, 10, .1, 2.5, tiers=(
     Tier(100, None, None, None, None,
          cache_write_rates=(("30m", 1.0), ("12h", 2.0))),))
 TIERED = Rate(2, 10, .1, 2.5, tiers=(Tier(272000, 4, 15, .2, 5),))
+INCLUSIVE = Rate(2, 10, .1, 2.5,
+                 tiers=(Tier(100, 4, 15, .2, 5, inclusive=True),))
 
 
 class ProvenanceContractTests(unittest.TestCase):
@@ -47,7 +50,9 @@ class ProvenanceContractTests(unittest.TestCase):
             {"premium": {"m": PREMIUM}, "discount": {"m": DISCOUNT},
              "discount2": {"m": DISCOUNT2},
              "atinput": {"m": AT_INPUT}, "noprice": {"m": NO_WRITE_PRICE},
+             "noread": {"m": NO_READ_PRICE},
              "freewrite": {"m": FREE_WRITE}, "tiered": {"m": TIERED},
+             "inclusive": {"m": INCLUSIVE},
              "tierwrite": {"m": TIER_SUPPLIES_WRITE},
              "retention": {"m": RETENTION}, "inverted": {"m": INVERTED},
              "namedtier": {"m": NAMED_TIER}},
@@ -287,6 +292,69 @@ class ProvenanceContractTests(unittest.TestCase):
         self.assertEqual(out["valuation"]["api_equivalent_bound_reason"],
                          "read_not_reported")
         self.assertIsNone(out["valuation"]["api_equivalent_usd_high"])
+
+    def test_unreported_reads_without_a_price_name_the_read_counter(self):
+        self.create_events([{"provider": "noread", "input_tokens": 1_000,
+                             "cache_write_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "indeterminate")
+        self.assertEqual(valuation["savings_bound_reason"], "read_rate_missing")
+
+    def test_positive_reported_read_without_a_price_is_not_exact(self):
+        self.create_events([{"provider": "noread", "cache_read_tokens": 1_000,
+                             "cache_read_reported": 1, "cache_write_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["api_equivalent_basis"], "incomplete")
+        self.assertEqual(valuation["api_equivalent_bound_reason"], "read_rate_missing")
+        self.assertIsNone(valuation["api_equivalent_usd_high"])
+
+    def test_positive_reported_write_without_a_price_is_not_exact(self):
+        self.create_events([{"provider": "noprice", "cache_write_tokens": 5_000,
+                             "cache_read_reported": 1, "cache_write_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["api_equivalent_basis"], "incomplete")
+        self.assertEqual(valuation["api_equivalent_bound_reason"], "write_rate_missing")
+
+    def test_explicit_zero_counters_do_not_require_a_price(self):
+        self.create_events([{"provider": "noprice", "input_tokens": 1_000,
+                             "cache_read_reported": 1, "cache_write_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["api_equivalent_basis"], "exact")
+        self.assertAlmostEqual(valuation["api_equivalent_usd"], 0.002, places=6)
+
+    def test_unreported_writes_near_a_context_tier_are_indeterminate(self):
+        self.create_events([{"provider": "tiered", "input_tokens": 271_999,
+                             "cache_read_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "indeterminate")
+        self.assertEqual(valuation["savings_bound_reason"], "context_tier_unknown")
+        self.assertIsNone(valuation["savings_usd"])
+
+    def test_unreported_writes_above_every_tier_keep_the_direction(self):
+        self.create_events([{"provider": "tiered", "input_tokens": 272_001,
+                             "cache_read_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "upper_bound")
+        self.assertEqual(valuation["savings_bound_reason"], "write_not_reported")
+        self.assertAlmostEqual(valuation["savings_usd"], 0.0, places=6)
+
+    def test_inclusive_tier_is_reachable_up_to_its_threshold(self):
+        self.create_events([{"provider": "inclusive", "input_tokens": 99,
+                             "cache_read_reported": 1}])
+        self.assertEqual(self.summary(session_id="s1")["valuation"]["savings_basis"],
+                         "indeterminate")
+        os.remove(self.events)
+        self.create_events([{"provider": "inclusive", "input_tokens": 100,
+                             "cache_read_reported": 1}])
+        self.assertEqual(self.summary(session_id="s1")["valuation"]["savings_basis"],
+                         "upper_bound")
+
+    def test_known_counters_ignore_tier_reachability(self):
+        self.create_events([{"provider": "tiered", "input_tokens": 271_999,
+                             "cache_read_reported": 1, "cache_write_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "exact")
+        self.assertAlmostEqual(valuation["savings_usd"], 0.0, places=6)
 
     def test_retention_range_with_unproven_read_is_one_sided(self):
         self.create_events([{"provider": "retention", "cache_write_tokens": 100_000,
@@ -554,7 +622,9 @@ class OfficialRateRowTests(unittest.TestCase):
         self.assertEqual(valuation["retention_unknown_calls"], 0)
 
     def test_unreported_writes_stay_directional_without_a_range(self):
-        self.create_events([{"input_tokens": 1_000, "cache_read_tokens": 9_000}])
+        # Above every published band, so an unrecorded write cannot change the
+        # applicable tier; the direction is defensible and stays one-sided.
+        self.create_events([{"input_tokens": 300_000, "cache_read_tokens": 9_000}])
         valuation = self.summary(session_id="sol")["valuation"]
         self.assertEqual(valuation["savings_basis"], "upper_bound")
         self.assertIsNone(valuation["savings_usd_high"],
@@ -564,7 +634,7 @@ class OfficialRateRowTests(unittest.TestCase):
 
     def test_negative_savings_are_not_clamped(self):
         self.create_events([{"cache_write_tokens": 100_000,
-                             "cache_write_reported": 1}])
+                             "cache_write_reported": 1, "cache_read_reported": 1}])
         self.assertLess(self.summary(session_id="sol")["valuation"]["savings_usd"], 0)
 
     def test_partial_pricing_leaves_the_total_incomplete(self):
