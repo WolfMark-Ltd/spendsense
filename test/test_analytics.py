@@ -314,7 +314,7 @@ class AnalyticsTests(unittest.TestCase):
                         next(b for b in report["trend"]["buckets"] if b["calls"])]:
             self.assertEqual(grouped["cache_hit_rate"], totals["cache_hit_rate"])
             self.assertEqual(grouped["cache_known_calls"], 2)
-        self.assertTrue(any("all-zero" in note.lower() and "unknown" in note.lower()
+        self.assertTrue(any("three-state" in note.lower() and "unreported" in note.lower()
                             for note in report["notes"]))
 
     def test_cache_scope_uses_weighted_prompt_totals_and_keeps_ambiguous_calls(self):

@@ -42,6 +42,16 @@ def _int(value: Any) -> int:
         return 0
 
 
+def _tri(value: Any) -> Optional[bool]:
+    """A stored presence flag: True/False, or None when it was never recorded."""
+    if value is None or value == "":
+        return None
+    try:
+        return bool(int(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def _iso(epoch: Optional[float]) -> str:
     if not epoch:
         return ""
@@ -270,6 +280,8 @@ def _row_result(row: dict[str, Any], catalogue: Catalogue, mode: str) -> dict[st
             "cache_read_defaulted": priced.cache_read_defaulted,
             "cache_write_defaulted": priced.cache_write_defaulted,
             "cache_savings_usd": priced.cache_savings,
+            "cache_savings_kind": "gross_read_discount",
+            "gross_cache_read_savings_usd": priced.cache_savings,
         }
         if list_usd is None:
             miss = priced.reason
@@ -559,6 +571,9 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     output_tokens = _int(row.get("output_tokens"))
     cache_read = _int(row.get("cache_read_tokens"))
     cache_write = _int(row.get("cache_write_tokens"))
+    cache_read_reported = _tri(row.get("cache_read_reported"))
+    cache_write_reported = _tri(row.get("cache_write_reported"))
+    call_class = str(row.get("call_class") or "").strip() or None
     reasoning = _int(row.get("reasoning_tokens"))
     tokens = input_tokens + output_tokens + cache_read + cache_write
 
@@ -612,6 +627,9 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         "_output": output_tokens,
         "_cache_read": cache_read,
         "_cache_write": cache_write,
+        "_cache_read_reported": cache_read_reported,
+        "_cache_write_reported": cache_write_reported,
+        "_call_class": call_class,
         "_reasoning": reasoning,
         "_calls": 1,
         "_tokens": tokens,
