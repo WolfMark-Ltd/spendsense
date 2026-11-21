@@ -444,6 +444,22 @@ class DiscoveryContract(TempStore):
         self.assertEqual(sorted(slots["commandcode"]["route_slugs"]), ["commandcode", "commandcode-chat"])
         self.assertNotIn("photon", slots)
 
+    def test_emptied_pool_entries_are_not_configured_providers(self):
+        # F138: a pool key left behind with no credentials (logout/removal
+        # residue, which `hermes auth list` no longer shows) must not count
+        # as a configured family — otherwise For You shows that provider's
+        # updates although nothing is configured in this profile.
+        (self.home / "auth.json").write_text(json.dumps({
+            "credential_pool": {
+                "openai-codex": [{"label": "device_code"}],
+                "copilot": [],
+                "huggingface": {},
+            }
+        }))
+        slots = discovery.credential_slots(self.home)
+        self.assertEqual(set(slots), {"openai-codex"})
+        self.assertEqual(slots["openai-codex"]["slots"], 1)
+
     def test_discovery_never_carries_a_credential_value(self):
         (self.home / "auth.json").write_text(json.dumps({
             "credential_pool": {"openai-codex": [{"label": "device_code", "account": "acct-123",

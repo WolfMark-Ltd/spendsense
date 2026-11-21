@@ -1028,6 +1028,8 @@ def _sanitise_entry(raw: Any, depth: int = 0) -> Optional[dict[str, Any]]:
         value = raw.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             entry[key] = value
+    if isinstance(raw.get("personal"), bool):
+        entry["personal"] = raw["personal"]
     for key, limit in (("headline_params", 16), ("magnitude", 8), ("rate_change", 8)):
         mapped = _scalar_map(raw.get(key), limit)
         if mapped:

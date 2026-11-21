@@ -412,6 +412,29 @@ class BuildFeedTests(unittest.TestCase):
         self.assertEqual(len([i for i in ids if i.startswith("sub-")]), 3)
         self.assertEqual(doc.get("truncated"), {"model_items_dropped": 8})
 
+    def test_truncation_prefers_native_providers(self):
+        # F138: an unsupported flood cannot displace eligible updates at the
+        # cap — native listings and native price changes are kept first.
+        feed = feed_module()
+        previous = models([("acme", "seed", {"input": 1.0, "output": 1.0}),
+                           ("openai", "m", {"input": 1.0, "output": 1.0})])
+        rows = [("acme", "seed", {"input": 1.0, "output": 1.0}),
+                ("openai", "m", {"input": 2.0, "output": 1.0})]
+        native = ["anthropic", "google", "moonshotai", "openrouter"]
+        rows += [(name, "m", {"input": 1.0, "output": 1.0}) for name in native]
+        rows += [(f"prov-{n:03d}", "m", {"input": 1.0, "output": 1.0})
+                 for n in range(205)]
+        doc, problems = feed.build_feed(models(rows), previous,
+                                        {"announcements": []},
+                                        observed_at=self.OBSERVED)
+        self.assertEqual(problems, [])
+        self.assertEqual(len(doc["items"]), feed.FEED_MAX_ITEMS)
+        kept = {(item["provider"], item["model"]) for item in doc["items"]}
+        self.assertIn(("openai", "m"), kept)
+        for name in native:
+            self.assertIn((name, ""), kept)
+        self.assertEqual(doc.get("truncated"), {"model_items_dropped": 10})
+
 
 class SampleFixtureTests(unittest.TestCase):
     def test_sample_fixture_validates(self):

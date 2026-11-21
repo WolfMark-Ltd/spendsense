@@ -169,13 +169,21 @@ class RelevanceTests(MonitoringTestCase):
         self.assertTrue(match["relevant"])
         self.assertEqual(match["reasons"], ["configured_provider"])
 
-    def test_used_model_matches_with_provider_reason(self):
+    def test_used_signals_need_configured_provider(self):
+        # F138: usage alone never qualifies a now-unconfigured provider; on a
+        # configured provider the used matches still annotate the item.
+        signals = {"used_providers": ["acme"],
+                   "used_models": [{"provider": "acme", "model": "beta"}]}
+        self.assertEqual(
+            monitoring.match_relevance({"provider": "acme", "model": "Beta"},
+                                       signals),
+            {"relevant": False, "reasons": []})
         match = monitoring.match_relevance(
             {"provider": "acme", "model": "Beta"},
-            {"used_providers": ["acme"],
-             "used_models": [{"provider": "acme", "model": "beta"}]})
+            {**signals, "configured_families": ["acme"]})
         self.assertTrue(match["relevant"])
-        self.assertEqual(match["reasons"], ["used_provider", "used_model"])
+        self.assertEqual(match["reasons"],
+                         ["configured_provider", "used_provider", "used_model"])
 
     def test_selected_plan_family_matches(self):
         match = monitoring.match_relevance(
@@ -183,12 +191,20 @@ class RelevanceTests(MonitoringTestCase):
         self.assertTrue(match["relevant"])
         self.assertEqual(match["reasons"], ["selected_plan_family"])
 
-    def test_routed_usage_matches_through_route_alias(self):
+    def test_routed_signals_match_through_route_alias_when_configured(self):
+        # F138: the alias applies to configured and used matching alike, but
+        # only configuration (or a selected plan) qualifies the item.
+        signals = {"used_providers": ["openai-codex"]}
+        self.assertEqual(
+            monitoring.match_relevance({"provider": "openai", "model": ""},
+                                       signals),
+            {"relevant": False, "reasons": []})
         match = monitoring.match_relevance(
             {"provider": "openai", "model": ""},
-            {"used_providers": ["openai-codex"]})
+            {**signals, "configured_families": ["openai-codex"]})
         self.assertTrue(match["relevant"])
-        self.assertEqual(match["reasons"], ["used_provider"])
+        self.assertEqual(match["reasons"],
+                         ["configured_provider", "used_provider"])
 
     def test_configured_family_matches_through_route_alias(self):
         match = monitoring.match_relevance(
@@ -214,11 +230,13 @@ class RelevanceTests(MonitoringTestCase):
     def test_personalise_items_annotates_copies(self):
         items = [{"id": "1", "provider": "acme", "model": "beta"}]
         personalised = monitoring.personalise_items(
-            items, {"used_providers": ["acme"],
+            items, {"configured_families": ["acme"],
+                    "used_providers": ["acme"],
                     "used_models": [{"provider": "acme", "model": "beta"}]})
         self.assertNotIn("relevance", items[0])
         self.assertEqual(personalised[0]["relevance"],
-                         {"relevant": True, "reasons": ["used_provider", "used_model"]})
+                         {"relevant": True, "reasons": ["configured_provider",
+                                                        "used_provider", "used_model"]})
 
 
 class EmptyStateTests(MonitoringTestCase):

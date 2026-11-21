@@ -326,6 +326,281 @@ class PlanCatalogueTests(NewsTestCase):
         self.assertEqual(len(items), 1)
         self.assertIn("fee", items[0]["summary"])
 
+    def plan_with_terms(self, plan_id, entitlements, amount=10.0, **extra):
+        plan = {"id": plan_id, "provider_family": "demo",
+                "name": f"demo {plan_id}",
+                "price": {"amount": amount, "currency": "USD",
+                          "period": "month"},
+                "entitlements": entitlements,
+                "verification": {"source_id": "demo-source"}}
+        plan.update(extra)
+        return plan
+
+    def test_verification_only_touch_emits_no_news(self):
+        # F139: re-verifying a plan (checked_at/notes) changes no allowance,
+        # price or feature, so it must not mint a subscription update.
+        news = news_module()
+        catalogue_path = (Path(__file__).resolve().parents[1]
+                          / "catalogue" / "plans.json")
+        raw = json.loads(catalogue_path.read_text(encoding="utf-8-sig"))
+        before = mem.load_plan_catalogue(raw)
+        touched = json.loads(json.dumps(raw))
+        target = next(p for p in touched["plans"]
+                      if p["id"] == "alibaba-coding-plan.standard")
+        target["entitlements"]["verification"]["checked_at"] = "2026-11-20"
+        target["entitlements"]["verification"]["notes"] = "reworded notes"
+        after = mem.load_plan_catalogue(touched)
+        old_table = news._plans_table(before)
+        new_table = news._plans_table(after)
+        self.assertNotEqual(old_table["alibaba-coding-plan.standard"]["terms"],
+                            new_table["alibaba-coding-plan.standard"]["terms"])
+        items, _ = news.diff_snapshots(
+            {"providers": {}, "plans": old_table},
+            {"providers": {}, "plans": new_table},
+            observed_at="2026-11-20T00:00:00Z", plans_doc=after)
+        self.assertEqual(items, [])
+
+    def test_repeated_metadata_touches_mint_no_updates(self):
+        # F139: equivalent metadata-only touches repeat as nothing at all.
+        news = news_module()
+        first = {"windows": [{"id": "w", "limit": "percent"}],
+                 "verification": {"checked_at": "2026-11-01"}}
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc(
+                               [self.plan_with_terms("demo.basic", first)]),
+                           now=NOW)
+        for day in ("2026-11-02", "2026-11-03"):
+            terms = {"windows": [{"id": "w", "limit": "percent"}],
+                     "verification": {"checked_at": day}}
+            result = news.refresh_local(
+                data_dir=self.data, catalogue=book([]), now=NOW + 10,
+                plans_doc=plans_doc([self.plan_with_terms("demo.basic",
+                                                           terms)]))
+            self.assertEqual(result["items"], [])
+
+    def test_window_prose_reword_emits_no_news(self):
+        # F139: label/detail prose is display text; the structural allowance
+        # beneath it is unchanged.
+        news = news_module()
+        old = {"windows": [{"id": "w", "limit": "percent",
+                            "label": "Current week", "detail": "Weekly cap."}]}
+        new = {"windows": [{"id": "w", "limit": "percent",
+                            "label": "This week", "detail": "Cap each week."}]}
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc(
+                               [self.plan_with_terms("demo.basic", old)]),
+                           now=NOW)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([self.plan_with_terms("demo.basic", new)]))
+        self.assertEqual(result["items"], [])
+
+    def test_price_representation_only_change_emits_no_news(self):
+        # F139: 10 vs 10.0 is one fee in two spellings, not a fee change.
+        news = news_module()
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc([plan("demo.basic", amount=10)]),
+                           now=NOW)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([plan("demo.basic", amount=10.0)]))
+        self.assertEqual(result["items"], [])
+
+    def test_window_limit_change_reports_field_with_before_after(self):
+        # F139: fee unchanged, so the summary names the changed field and
+        # both values instead of a generic allowances note.
+        news = news_module()
+        old = {"windows": [{"id": "current-week", "limit": "percent"}]}
+        new = {"windows": [{"id": "current-week", "limit": "credit_value_usd",
+                            "amount": 20.0, "currency": "USD"}]}
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc(
+                               [self.plan_with_terms("demo.basic", old)]),
+                           now=NOW)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([self.plan_with_terms("demo.basic", new)]))
+        self.assertEqual(len(result["items"]), 1)
+        item = result["items"][0]
+        self.assertEqual(item["category"], "subscription")
+        self.assertIn("'current-week' limit", item["summary"])
+        self.assertIn("percent → credit_value_usd", item["summary"])
+        params = item["summary_params"]
+        self.assertFalse(params["fee_changed"])
+        self.assertTrue(params["terms_changed"])
+        limit = next(change for change in params["field_changes"]
+                     if change["label"] == "'current-week' limit")
+        self.assertEqual(limit["kind"], "changed")
+        self.assertEqual(limit["field"], "allowance")
+        self.assertEqual(limit["before"], "percent")
+        self.assertEqual(limit["after"], "credit_value_usd")
+
+    def test_window_added_and_removed_name_the_window(self):
+        news = news_module()
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc([plan("demo.basic",
+                                                     windows=("a",))]),
+                           now=NOW)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([plan("demo.basic", windows=("a", "b"))]))
+        self.assertEqual(len(result["items"]), 1)
+        added = result["items"][0]["summary_params"]["field_changes"]
+        self.assertEqual(len(added), 1)
+        self.assertEqual(added[0]["kind"], "added")
+        self.assertEqual(added[0]["label"], "'b'")
+        self.assertIn("allowance window 'b' added",
+                      result["items"][0]["summary"])
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 20,
+            plans_doc=plans_doc([plan("demo.basic", windows=("a",))]))
+        self.assertEqual(len(result["items"]), 2)
+        removed = result["items"][0]["summary_params"]["field_changes"]
+        self.assertEqual(removed[0]["kind"], "removed")
+        self.assertEqual(removed[0]["label"], "'b'")
+
+    def test_model_availability_change_is_reported(self):
+        news = news_module()
+        old = {"models": {}}
+        new = {"models": {"opus": {"scope": "model", "window": "opus-week"}}}
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc(
+                               [self.plan_with_terms("demo.basic", old)]),
+                           now=NOW)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([self.plan_with_terms("demo.basic", new)]))
+        self.assertEqual(len(result["items"]), 1)
+        (change,) = result["items"][0]["summary_params"]["field_changes"]
+        self.assertEqual((change["kind"], change["field"]), ("added", "model"))
+        self.assertIn("model availability 'opus' added",
+                      result["items"][0]["summary"])
+
+    def test_reset_policy_change_carries_before_after(self):
+        news = news_module()
+        old = {"reset_policy": {"type": "rolling_windows"}}
+        new = {"reset_policy": {"type": "calendar_month"}}
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc(
+                               [self.plan_with_terms("demo.basic", old)]),
+                           now=NOW)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([self.plan_with_terms("demo.basic", new)]))
+        self.assertEqual(len(result["items"]), 1)
+        (change,) = result["items"][0]["summary_params"]["field_changes"]
+        self.assertEqual(change["field"], "reset_policy")
+        self.assertEqual(change["before"], "rolling_windows")
+        self.assertEqual(change["after"], "calendar_month")
+
+    def test_profile_change_is_reported_when_both_sides_carry_it(self):
+        news = news_module()
+        old = self.plan_with_terms("demo.basic", {},
+                                   billing_arrangement="recurring_subscription",
+                                   kind="subscription")
+        new = self.plan_with_terms("demo.basic", {},
+                                   billing_arrangement="prepaid_metered_wallet",
+                                   kind="subscription")
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc([old]), now=NOW)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([new]))
+        self.assertEqual(len(result["items"]), 1)
+        (change,) = result["items"][0]["summary_params"]["field_changes"]
+        self.assertEqual((change["field"], change["label"]),
+                         ("profile", "billing arrangement"))
+        self.assertIn("billing arrangement", result["items"][0]["summary"])
+
+    def test_consecutive_profile_only_changes_each_reported(self):
+        # Review: profile values join the event identity, so successive
+        # profile-only transitions cannot collapse onto one id and lose
+        # the later update to the retry guard.
+        news = news_module()
+        terms = {"windows": ["monthly-credits"]}
+        news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW,
+            plans_doc=plans_doc([self.plan_with_terms(
+                "demo.basic", terms, kind="subscription",
+                billing_arrangement="recurring_subscription",
+                seat_pricing={"usual_minimum": 1})]))
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([self.plan_with_terms(
+                "demo.basic", terms, kind="subscription",
+                billing_arrangement="recurring_subscription",
+                seat_pricing={"usual_minimum": 2})]))
+        self.assertEqual(len(result["items"]), 1)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 20,
+            plans_doc=plans_doc([self.plan_with_terms(
+                "demo.basic", terms, kind="subscription",
+                billing_arrangement="recurring_subscription",
+                seat_pricing={"usual_minimum": 3})]))
+        self.assertEqual(len(result["items"]), 2)
+        self.assertEqual(len({item["id"] for item in result["items"]}), 2)
+
+    def test_duplicate_window_ids_report_values_not_vacuous_count(self):
+        # Review: unpairable ids with matching counts must show the structural
+        # before/after values, never a vacuous N → N.
+        news = news_module()
+        old = {"windows": [{"id": "w", "amount": 1}, {"id": "w", "amount": 2}]}
+        new = {"windows": [{"id": "w", "amount": 1}, {"id": "w", "amount": 3}]}
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc(
+                               [self.plan_with_terms("demo.basic", old)]),
+                           now=NOW)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([self.plan_with_terms("demo.basic", new)]))
+        self.assertEqual(len(result["items"]), 1)
+        (change,) = result["items"][0]["summary_params"]["field_changes"]
+        self.assertEqual(change["field"], "allowance")
+        self.assertIn('"amount": 2', change["before"])
+        self.assertIn('"amount": 3', change["after"])
+        self.assertNotIn("2 → 2", result["items"][0]["summary"])
+
+    def test_id_less_windows_fall_back_to_an_honest_count(self):
+        news = news_module()
+        old = {"windows": [{"limit": "percent"}]}
+        new = {"windows": [{"limit": "percent"}, {"limit": "requests"}]}
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc(
+                               [self.plan_with_terms("demo.basic", old)]),
+                           now=NOW)
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([self.plan_with_terms("demo.basic", new)]))
+        self.assertEqual(len(result["items"]), 1)
+        (change,) = result["items"][0]["summary_params"]["field_changes"]
+        self.assertEqual((change["before"], change["after"]), ("1", "2"))
+        self.assertIn("allowance window count: 1 → 2",
+                      result["items"][0]["summary"])
+        self.assertNotIn("window window", result["items"][0]["summary"])
+
+    def test_profile_skipped_when_snapshot_predates_the_keys(self):
+        # F139: pre-upgrade snapshots lack profile keys; the upgrade refresh
+        # must not report their appearance as news.
+        news = news_module()
+        news.refresh_local(data_dir=self.data, catalogue=book([]),
+                           plans_doc=plans_doc([plan("demo.basic")]), now=NOW)
+        target = news.snapshot_path(self.data)
+        snapshot = json.loads(target.read_text(encoding="utf-8"))
+        for row in snapshot["plans"].values():
+            for key in ("kind", "billing_arrangement", "seat_pricing",
+                        "access", "model_restrictions"):
+                row.pop(key, None)
+        target.write_text(json.dumps(snapshot), encoding="utf-8")
+        richer = self.plan_with_terms(
+            "demo.basic", {"windows": ["monthly-credits"]},
+            kind="subscription", billing_arrangement="recurring_subscription",
+            seat_pricing={"prices": {"month": {"amount": 25.0}}},
+            access={"cli": True}, model_restrictions=["m"])
+        result = news.refresh_local(
+            data_dir=self.data, catalogue=book([]), now=NOW + 10,
+            plans_doc=plans_doc([richer]))
+        self.assertEqual(result["items"], [])
+
 
 # ------------------------------------------------------------------ settings
 
@@ -429,6 +704,34 @@ class FeedValidationTests(NewsTestCase):
         self.assertIn("c-204", kept)
         self.assertNotIn("c-000", kept)
 
+    def test_truncation_prefers_subscriptions_and_preferred_providers(self):
+        # F138: at the cap, subscriptions and eligible providers survive
+        # ahead of the unsupported long tail, however new it is.
+        news = news_module()
+        subs = [feed_item(f"s-{n}", category="subscription", provider="demo",
+                          model="", previous=None, current=None,
+                          observed_at="2026-01-01T00:00:00+00:00")
+                for n in range(5)]
+        native = [feed_item(f"n-{n}", provider="openai",
+                            observed_at="2026-02-01T00:00:00+00:00")
+                  for n in range(5)]
+        rest = [feed_item(f"u-{n:03d}", provider="uberllm",
+                          observed_at=f"2026-03-{(n % 27) + 1:02d}"
+                                      f"T{n % 24:02d}:00:00+00:00")
+                for n in range(news.FEED_MAX_ITEMS)]
+        feed, problems = news.validate_feed(
+            feed_doc(subs + native + rest),
+            prefer=set(news.NATIVE_FEED_PROVIDERS))
+        self.assertIsNotNone(feed)
+        kept = {item["id"] for item in feed["items"]}
+        self.assertEqual(len(kept), news.FEED_MAX_ITEMS)
+        for n in range(5):
+            self.assertIn(f"s-{n}", kept)
+            self.assertIn(f"n-{n}", kept)
+        self.assertTrue(any("truncated" in problem for problem in problems))
+        stamps = [item["observed_at"] for item in feed["items"]]
+        self.assertEqual(stamps, sorted(stamps, reverse=True))
+
     def test_non_finite_feed_rates_rejected(self):
         news = news_module()
         bad = feed_item("bad-inf", current={"input": float("inf"), "output": 1.0,
@@ -486,6 +789,30 @@ class CentralFetchTests(NewsTestCase):
             self.assertNotIn(banned, joined)
         self.assertEqual(set(seen["headers"]), {"accept", "user-agent"})
 
+    def test_fetch_prefers_configured_custom_providers_at_cap(self):
+        # F138: intake keeps this profile's eligible updates when the cap
+        # binds, even when the unsupported flood is newer.
+        news = news_module()
+        news.save_settings(True, news.settings_path(self.data))
+        self.write_auth({"groq": [{"token": "secret"}]})
+        groq = [feed_item(f"g-{n}", provider="groq",
+                          observed_at="2026-01-01T00:00:00+00:00")
+                for n in range(5)]
+        rest = [feed_item(f"u-{n:03d}", provider="uberllm",
+                          observed_at=f"2026-03-{(n % 27) + 1:02d}"
+                                      f"T{n % 24:02d}:00:00+00:00")
+                for n in range(news.FEED_MAX_ITEMS + 5)]
+        with mock.patch.object(news, "urlopen",
+                               return_value=self.fake_response(
+                                   feed_doc(groq + rest))):
+            result = news.fetch_central(data_dir=self.data, home=self.home,
+                                        now=NOW)
+        self.assertEqual(result["state"], "ok")
+        kept = {item["id"] for item in result["feed"]["items"]}
+        self.assertEqual(len(kept), news.FEED_MAX_ITEMS)
+        for n in range(5):
+            self.assertIn(f"g-{n}", kept)
+
     def test_successful_fetch_cached(self):
         news = news_module()
         news.save_settings(True, news.settings_path(self.data))
@@ -537,10 +864,15 @@ class CentralFetchTests(NewsTestCase):
 
 class RankingTests(NewsTestCase):
     def test_for_you_prefers_configured_providers_and_used_models(self):
+        # F138: usage annotates a configured provider, but usage alone never
+        # qualifies a now-unconfigured one — evidence without membership.
         news = news_module()
-        self.write_auth({"commandcode": [{"token": "secret"}]})
+        self.write_auth({"commandcode": [{"token": "secret"}],
+                         "openrouter": [{"token": "secret"}]})
         self.create_events([
             {"provider": "openrouter", "model": "acme/alpha",
+             "input_tokens": 100, "output_tokens": 50},
+            {"provider": "uberllm", "model": "beta",
              "input_tokens": 100, "output_tokens": 50},
         ])
         items = [
@@ -553,6 +885,9 @@ class RankingTests(NewsTestCase):
             {"id": "c", "origin": "local", "category": "new_model",
              "provider": "stranger", "model": "zzz",
              "observed_at": "2026-11-02T00:00:00+00:00"},
+            {"id": "d", "origin": "local", "category": "price_reduction",
+             "provider": "uberllm", "model": "beta",
+             "observed_at": "2026-11-02T00:00:00+00:00"},
         ]
         evidence = news.usage_summary(self.events, days=90, now=NOW)
         ranked = news.rank_items(items, usage=evidence,
@@ -564,6 +899,9 @@ class RankingTests(NewsTestCase):
         self.assertEqual(by_id["b"]["related_routes"], ["openrouter"])
         self.assertFalse(by_id["c"]["for_you"])
         self.assertEqual(by_id["c"]["related_routes"], [])
+        self.assertFalse(by_id["d"]["for_you"])
+        self.assertEqual(by_id["d"]["related_routes"], ["uberllm"])
+        self.assertTrue(by_id["d"]["last_used_at"])
 
     def test_ranking_without_usage_or_credentials_marks_nothing(self):
         news = news_module()
@@ -573,6 +911,24 @@ class RankingTests(NewsTestCase):
               "observed_at": "2026-11-02T00:00:00+00:00"}],
             usage={}, tokens=set())
         self.assertFalse(ranked[0]["for_you"])
+
+    def test_emptied_credential_slot_marks_nothing_for_you(self):
+        # F138: an emptied pool entry is residue, not a configured provider.
+        news = news_module()
+        self.write_auth({"copilot": [], "huggingface": [{"token": "secret"}]})
+        ranked = news.rank_items(
+            [{"id": "a", "origin": "local", "category": "new_model",
+              "provider": "github-copilot", "model": "copilot-x",
+              "observed_at": "2026-11-02T00:00:00+00:00"},
+             {"id": "b", "origin": "local", "category": "new_model",
+              "provider": "huggingface", "model": "acme/alpha",
+              "observed_at": "2026-11-02T00:00:00+00:00"}],
+            usage={}, tokens=news.configured_tokens(self.home))
+        by_id = {item["id"]: item for item in ranked}
+        self.assertFalse(by_id["a"]["for_you"])
+        self.assertFalse(by_id["a"]["configured_provider"])
+        self.assertTrue(by_id["b"]["for_you"])
+        self.assertTrue(by_id["b"]["configured_provider"])
 
 
 # ------------------------------------------------------------------ impact
@@ -727,6 +1083,111 @@ class PayloadTests(NewsTestCase):
         opener.assert_not_called()
         self.assertTrue(payload["local"]["baseline"])
         self.assertEqual(payload["central"]["state"], "disabled")
+
+
+# ------------------------------------------------------------------ eligibility
+
+class EligibilityTests(NewsTestCase):
+    """F138: All Updates shows Hermes-native providers and subscription
+    items — nothing else. For You is scoped by configuration instead, so a
+    configured custom route can be personal without being native."""
+
+    def test_native_providers_need_no_configuration(self):
+        news = news_module()
+        for provider in ("openai", "anthropic", "google", "google-vertex",
+                         "amazon-bedrock", "azure", "moonshotai", "zai",
+                         "z-ai", "minimax", "deepseek", "xai", "alibaba",
+                         "openrouter", "nous", "huggingface", "github-copilot",
+                         "commandcode", "opencode", "opencode-go",
+                         "opencode-zen", "kilocode", "ollama-cloud", "arcee",
+                         "lmstudio", "nvidia", "xiaomi", "stepfun"):
+            self.assertTrue(news.provider_eligible(provider), provider)
+
+    def test_router_identity_stays_distinct_from_direct_providers(self):
+        # A model available through OpenRouter belongs under OpenRouter: the
+        # router spelling never normalises to a direct provider, and a
+        # non-native vendor is not eligible by association with it.
+        news = news_module()
+        self.assertEqual(news._provider_keys("openrouter"), {"openrouter"})
+        self.assertTrue(news.provider_eligible("openrouter"))
+        self.assertTrue(news.item_eligible(
+            {"category": "price_reduction", "provider": "openrouter",
+             "model": "acme/alpha"}))
+        self.assertFalse(news.provider_eligible("acme"))
+
+    def test_unsupported_providers_excluded_even_when_configured(self):
+        # A configured custom/plugin route does not satisfy the native-only
+        # All Updates rule; it surfaces in For You instead.
+        news = news_module()
+        self.assertFalse(news.provider_eligible("uberllm"))
+        self.assertFalse(news.provider_eligible("groq"))
+        self.assertFalse(news.item_eligible(
+            {"category": "new_model", "provider": "uberllm", "model": "x"}))
+        self.assertFalse(news.item_eligible(
+            {"category": "new_model", "provider": "groq", "model": "x"}))
+
+    def test_alias_spellings_resolve_to_the_same_eligibility(self):
+        news = news_module()
+        # Config-side and curated spellings canonicalise onto feed spellings.
+        self.assertTrue(news.provider_eligible("openai-codex"))
+        self.assertTrue(news.provider_eligible("github-copilot"))
+        self.assertTrue(news.provider_eligible("openai"))
+
+    def test_subscription_items_are_always_eligible(self):
+        news = news_module()
+        self.assertTrue(news.item_eligible(
+            {"category": "subscription", "provider": "cline-pass",
+             "model": ""}))
+        self.assertFalse(news.item_eligible(
+            {"category": "new_model", "provider": "cline-pass",
+             "model": "x"}))
+
+    def test_payload_flags_eligibility_and_reports_excluded(self):
+        news = news_module()
+        news.refresh_local(
+            data_dir=self.data,
+            catalogue=book([("openai", "alpha", Rate(3.0, 15.0)),
+                            ("uberllm", "beta", Rate(3.0, 15.0))]),
+            plans_doc=plans_doc([]), now=NOW)
+        news.refresh_local(
+            data_dir=self.data,
+            catalogue=book([("openai", "alpha", Rate(2.0, 10.0)),
+                            ("uberllm", "beta", Rate(2.0, 10.0))]),
+            plans_doc=plans_doc([]), now=NOW + 10)
+        payload = news.news_payload(data_dir=self.data, event_db=self.events,
+                                    home=self.home, now=NOW + 10)
+        # The payload keeps every event; scopes filter on the flag.
+        by_provider = {item["provider"]: item
+                       for item in payload["local"]["items"]}
+        self.assertEqual(sorted(by_provider), ["openai", "uberllm"])
+        self.assertTrue(by_provider["openai"]["eligible"])
+        self.assertFalse(by_provider["uberllm"]["eligible"])
+        self.assertEqual(payload["unsupported_excluded"]["local"], 1)
+        self.assertEqual(payload["unsupported_excluded"]["central"], 0)
+        self.assertEqual(payload["unsupported_excluded"]["providers"],
+                         ["uberllm"])
+
+    def test_payload_configured_custom_is_personal_but_not_native(self):
+        # F138: a configured custom route is For You material (configured)
+        # without qualifying for All Updates (not native).
+        news = news_module()
+        self.write_auth({"groq": [{"token": "secret"}]})
+        news.refresh_local(
+            data_dir=self.data,
+            catalogue=book([("groq", "alpha", Rate(3.0, 15.0))]),
+            plans_doc=plans_doc([]), now=NOW)
+        news.refresh_local(
+            data_dir=self.data,
+            catalogue=book([("groq", "alpha", Rate(2.0, 10.0))]),
+            plans_doc=plans_doc([]), now=NOW + 10)
+        payload = news.news_payload(data_dir=self.data, event_db=self.events,
+                                    home=self.home, now=NOW + 10)
+        self.assertEqual(len(payload["local"]["items"]), 1)
+        item = payload["local"]["items"][0]
+        self.assertFalse(item["eligible"])
+        self.assertTrue(item["for_you"])
+        self.assertEqual(payload["unsupported_excluded"]["local"], 1)
+        self.assertEqual(payload["for_you_count"], 1)
 
 
 class CodesTests(NewsTestCase):

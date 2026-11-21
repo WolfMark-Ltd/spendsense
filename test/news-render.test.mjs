@@ -978,6 +978,192 @@ test('NewsPage carries the scope, category, search, days, count and paging hooks
   }
 })
 
+/** Render the settled full NewsPage over an explicit item list. */
+const renderNewsPageItems = async (items, scope = 'all', briefing = null) => {
+  const payload = {
+    ok: true,
+    local: {
+      baseline: false, snapshot_at: '2026-11-01T00:00:00Z', removed_model_count: 0,
+      items,
+    },
+    central: { items: [], ...(briefing ? { briefing } : {}) },
+    impacts: {},
+    settings: { live_updates: false },
+    signals: { configured_families: ['acme'] },
+  }
+  T.setRest(async path => path === '/news/refresh' ? payload : { ok: true })
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => { T.$newsScope.set(scope) })
+  await React.act(async () => { T.$newsCategory.set('all') })
+  await React.act(async () => { T.$newsSearch.set('') })
+  await React.act(async () => { T.$newsDays.set(null) })
+  await React.act(async () => { T.$newsShown.set(T.NEWS_PAGE_SIZE) })
+  await React.act(async () => { T.$newsShowAll.set(false) })
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  await React.act(async () => {
+    root.render(React.createElement(QueryClientProvider, { client: queryClient },
+      React.createElement(T.NewsPage)))
+  })
+  await React.act(async () => {
+    for (let i = 0; i < 6; i += 1) await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  return container
+}
+
+const eligibilityItem = (id, model, eligible, relevant) => ({
+  id, origin: 'local', category: 'price_reduction',
+  provider: 'Acme', model,
+  summary_code: '', summary_params: null, summary: `${model} changed.`,
+  previous: { input: 5.0, output: 25.0, cache_read: null, cache_write: null },
+  current: { input: 4.0, output: 25.0, cache_read: null, cache_write: null },
+  has_tiers: false, observed_at: '2026-11-03T00:00:00Z', effective_at: '',
+  source_url: '', provenance: '', confidence: 'observed',
+  eligible, relevance: { relevant, reasons: relevant ? ['configured_provider'] : [] },
+})
+
+test('NewsPage scopes differ: All Updates is native-only, For You is personal', async () => {
+  // F138: All Updates shows eligible providers only, with a note naming the
+  // held-back count. For You shows relevant items instead, so a configured
+  // custom route surfaces there without qualifying for All Updates.
+  const items = [
+    eligibilityItem('keep-1', 'acme/keep-1', true, true),
+    eligibilityItem('keep-2', 'acme/keep-2', true, false),
+    eligibilityItem('held-1', 'acme/held-1', false, true),
+    eligibilityItem('held-2', 'acme/held-2', false, false),
+  ]
+  const container = await renderNewsPageItems(items, 'all')
+  const models = [...container.querySelectorAll('[data-news-group]')]
+    .map(el => el.getAttribute('data-news-group')).sort()
+  assert.deepEqual(models, ['acme/keep-1', 'acme/keep-2'])
+  const note = container.querySelector('[data-news-archive-note="eligibility"]')
+  assert.ok(note, 'the held-back count is named beside the archive')
+  assert.match(note.textContent, /2/)
+  const scope = container.querySelector('[data-news-scope]')
+  const forYou = [...scope.querySelectorAll('button')].find(b => b.getAttribute('value') === 'foryou')
+  await React.act(async () => { forYou.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+  assert.deepEqual([...container.querySelectorAll('[data-news-group]')]
+    .map(el => el.getAttribute('data-news-group')).sort(),
+    ['acme/held-1', 'acme/keep-1'])
+  assert.equal(container.querySelector('[data-news-archive-note="eligibility"]'), null,
+    'For You needs no archive note')
+})
+
+test('NewsPage explains an archive held back entirely by eligibility', async () => {
+  // F138: nothing eligible to show is an eligibility empty state, not an
+  // "unchanged" claim and not a window note over zero events.
+  const items = [eligibilityItem('held-1', 'acme/held-1', false, false)]
+  const container = await renderNewsPageItems(items, 'all')
+  assert.equal(container.querySelectorAll('[data-news-group]').length, 0)
+  assert.equal(container.querySelector('[data-news-archive-note="window"]'), null)
+  const empty = container.querySelector('.wm-empty')
+  assert.ok(empty, 'the empty state renders')
+  assert.match(empty.textContent, /does not support/)
+})
+
+const briefingEntry = (headline, personal) => ({
+  event_type: 'price_reduction', headline_code: 'news_head_single_rate',
+  headline_params: { provider: 'acme', model: 'm', rate: 'news_rate_input' },
+  headline, provider: 'acme', model: 'm', observed_at: '2026-11-09T00:00:00Z',
+  ...(personal === undefined ? {} : { personal }),
+})
+
+test('NewsPage shows personal published headlines only', async () => {
+  // F138: a published briefing renders its personal entries; non-personal
+  // entries never reach For You.
+  const items = [eligibilityItem('keep-1', 'acme/keep-1', true, true)]
+  const flagged = { version: 1, generated_at: '2026-11-10T00:00:00Z',
+    sections: [{ id: 'biggest_reductions', total: 2, entries: [
+      briefingEntry('Published personal decoy', true),
+      briefingEntry('Published stranger decoy', false),
+    ] }], counts: {}, unsupported: [] }
+  const container = await renderNewsPageItems(items, 'foryou', flagged)
+  const stories = [...container.querySelectorAll('[data-news-story]')]
+    .map(el => el.textContent)
+  assert.ok(stories.some(text => text.includes('Published personal decoy')),
+    'the personal published story renders')
+  assert.ok(!stories.some(text => text.includes('Published stranger decoy')),
+    'the non-personal published story does not')
+})
+
+test('NewsPage falls back locally when a briefing cannot be filtered', async () => {
+  // F138: entries without personal flags cannot be filtered reliably, so
+  // the local briefing answers from the personal event instead.
+  const items = [eligibilityItem('keep-1', 'acme/keep-1', true, true)]
+  const unflagged = { version: 1, generated_at: '2026-11-10T00:00:00Z',
+    sections: [{ id: 'biggest_reductions', total: 1, entries: [
+      briefingEntry('Published unflagged decoy'),
+    ] }], counts: {}, unsupported: [] }
+  const container = await renderNewsPageItems(items, 'foryou', unflagged)
+  const stories = [...container.querySelectorAll('[data-news-story]')]
+    .map(el => el.textContent)
+  assert.ok(!stories.some(text => text.includes('Published unflagged decoy')),
+    'an unfilterable briefing never renders')
+  assert.ok(stories.some(text => text.includes('acme/keep-1')),
+    'the local briefing answers from the personal event')
+})
+
+test('NewsPage withholds the archive jump when All Updates cannot show the event', async () => {
+  // A personal-but-ineligible story keeps its inline Details evidence but
+  // offers no "Open in All Updates": the archive list cannot contain it.
+  const items = [eligibilityItem('held-1', 'acme/held-1', false, true)]
+  const briefing = { version: 1, generated_at: '2026-11-10T00:00:00Z',
+    sections: [{ id: 'biggest_reductions', total: 1, entries: [{
+      ...briefingEntry('Held story decoy', true), event_ids: ['held-1'],
+    }] }], counts: {}, unsupported: [] }
+  const container = await renderNewsPageItems(items, 'foryou', briefing)
+  const stories = [...container.querySelectorAll('[data-news-story]')]
+  assert.equal(stories.length, 1, 'the personal story renders')
+  assert.ok(stories[0].textContent.includes('Held story decoy'))
+  assert.equal(stories[0].querySelector('[data-news-story-archive]'), null,
+    'no archive jump for an event All Updates cannot show')
+  assert.ok(stories[0].querySelector('[data-news-story-details]'),
+    'inline Details evidence stays available')
+})
+
+test('NewsPage keeps the archive jump when All Updates can show the event', async () => {
+  const container = await renderNewsPageItems(
+    [eligibilityItem('keep-1', 'acme/keep-1', true, true)], 'foryou',
+    { version: 1, generated_at: '2026-11-10T00:00:00Z',
+      sections: [{ id: 'biggest_reductions', total: 1, entries: [{
+        ...briefingEntry('Kept story decoy', true), event_ids: ['keep-1'],
+      }] }], counts: {}, unsupported: [] })
+  assert.ok(container.querySelector('[data-news-story-archive]'),
+    'an event All Updates can show keeps its archive jump')
+})
+
+test('NewsPage scope split renders in Chinese', async () => {
+  // F138 EN/ZH: the same scope split under the Chinese catalogue — All
+  // Updates holds back ineligible providers with a localised note, For You
+  // keeps the relevant custom route.
+  const previous = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const entry = T.I18N.zh[key]
+    return typeof entry === 'function' ? entry(...args) : entry ?? key
+  }
+  try {
+    const items = [
+      eligibilityItem('keep-1', 'acme/keep-1', true, true),
+      eligibilityItem('held-1', 'acme/held-1', false, true),
+    ]
+    const container = await renderNewsPageItems(items, 'all')
+    assert.deepEqual([...container.querySelectorAll('[data-news-group]')]
+      .map(el => el.getAttribute('data-news-group')), ['acme/keep-1'])
+    const note = container.querySelector('[data-news-archive-note="eligibility"]')
+    assert.ok(note && note.textContent.includes('已隐藏'))
+    const scope = container.querySelector('[data-news-scope]')
+    const forYou = [...scope.querySelectorAll('button')].find(b => b.getAttribute('value') === 'foryou')
+    await React.act(async () => { forYou.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    assert.deepEqual([...container.querySelectorAll('[data-news-group]')]
+      .map(el => el.getAttribute('data-news-group')).sort(),
+      ['acme/held-1', 'acme/keep-1'])
+  } finally {
+    i18nBackend.t = previous
+  }
+})
+
 /** A paginated NewsPage payload: `count` relevant model events. */
 const newsPagePayload = count => ({
   ok: true,

@@ -369,10 +369,12 @@ test('a published briefing whose sections all fail validation falls back locally
   const chosen = S.newsBriefingFor({ fetched_at: GENERATED_AT, briefing: broken }, ITEMS)
   assert.equal(chosen.source, 'local')
   assert.ok(chosen.sections.length > 0, 'the local headlines still render')
-  // A recognised section that is legitimately empty is the publisher's answer
-  // and is kept as published.
+  // F138: a published briefing with no personal entry also falls back —
+  // recognised-but-empty no longer wins on its own.
   const quiet = { version: 1, sections: [{ id: 'biggest_reductions', total: 0, entries: [] }] }
-  assert.equal(S.newsBriefingFor({ briefing: quiet }, ITEMS).source, 'published')
+  const fallback = S.newsBriefingFor({ fetched_at: GENERATED_AT, briefing: quiet }, ITEMS)
+  assert.equal(fallback.source, 'local')
+  assert.ok(fallback.sections.length > 0, 'the local headlines still render')
 })
 
 test('a published evidence link is only kept when it is an http(s) URL', () => {
@@ -433,13 +435,18 @@ test('a published briefing wins; a malformed one is ignored, never fatal', () =>
       headline: 'Published headline', provider: 'alpha', model: 'glm-5.3-flash',
       headline_params: { provider: 'alpha', model: 'glm-5.3-flash',
         rate: 'news_rate_input', pct: -50, before: '$1', after: '$0.5', direction: 'down' },
-      event_ids: ['md-a'],
+      event_ids: ['md-a'], personal: true,
     }] }],
     counts: { events: 1 }, unsupported: [],
   }
   const chosen = S.newsBriefingFor({ fetched_at: GENERATED_AT, briefing: published }, ITEMS)
   assert.equal(chosen.source, 'published')
   assert.equal(chosen.sections[0].entries[0].headline, 'Published headline')
+  // F138: without personal flags the published document cannot be filtered
+  // reliably, so the local briefing wins instead of unrelated headlines.
+  const unflagged = structuredClone(published)
+  delete unflagged.sections[0].entries[0].personal
+  assert.equal(S.newsBriefingFor({ fetched_at: GENERATED_AT, briefing: unflagged }, ITEMS).source, 'local')
   for (const broken of [null, {}, { version: 2, sections: [] }, { version: 1, sections: 'x' }]) {
     const fallback = S.newsBriefingFor({ fetched_at: GENERATED_AT, briefing: broken }, ITEMS)
     assert.equal(fallback.source, 'local')
@@ -451,6 +458,34 @@ test('a published briefing wins; a malformed one is ignored, never fatal', () =>
     sections: [{ id: 'biggest_reductions', entries: [{ headline: '', provider: 'alpha' }, null] }],
   })
   assert.deepEqual(partial.sections[0].entries, [])
+})
+
+test('a published briefing shows personal headlines only', () => {
+  // F138: non-personal entries drop out of recognised sections; counts and
+  // unrecognised sections still describe the publication. A document with
+  // nothing personal, or an entry without a flag, is unusable and falls
+  // back to the local briefing.
+  const entry = (headline, personal) => ({ headline, provider: 'acme', personal })
+  const briefing = {
+    version: 1,
+    sections: [
+      { id: 'biggest_reductions', total: 2, entries: [entry('mine', true), entry('theirs', false)] },
+      { id: 'future_section', total: 1, entries: [entry('future', false)] },
+    ],
+    counts: { events: 3 },
+  }
+  const filtered = S.newsFilterBriefingPersonal(briefing)
+  assert.deepEqual(filtered.sections[0].entries.map(row => row.headline), ['mine'])
+  assert.equal(filtered.sections[0].total, 2, 'totals still describe the publication')
+  assert.equal(filtered.sections[1].entries.length, 1, 'unrecognised sections pass through')
+  assert.deepEqual(filtered.counts, { events: 3 })
+  const nonePersonal = S.newsFilterBriefingPersonal({ version: 1,
+    sections: [{ id: 'biggest_reductions', total: 1, entries: [entry('theirs', false)] }] })
+  assert.equal(nonePersonal, null)
+  const unflagged = S.newsFilterBriefingPersonal({ version: 1,
+    sections: [{ id: 'biggest_reductions', total: 1,
+      entries: [{ headline: 'mine', provider: 'acme' }] }] })
+  assert.equal(unflagged, null)
 })
 
 test('a category filter keeps only the sections it can honestly describe', () => {
@@ -737,12 +772,14 @@ test('a published briefing needs at least one section this client renders', () =
   assert.ok(local.sections.some(section => section.id === 'biggest_reductions'
     && section.entries.length), 'the archive still produces local headlines')
 
-  // A recognised section that is legitimately empty stays authoritative.
+  // F138: a recognised section with no personal entry no longer wins on
+  // its own — the local briefing answers instead.
   const recognisedEmpty = {
     fetched_at: '2026-11-10T00:00:00Z',
     briefing: { version: 1, sections: [{ id: 'removals', total: 0, entries: [] }] },
   }
-  const kept = S.newsBriefingFor(recognisedEmpty, items)
-  assert.equal(kept.source, 'published')
-  assert.deepEqual(kept.sections.map(section => section.id), ['removals'])
+  const fallback = S.newsBriefingFor(recognisedEmpty, items)
+  assert.equal(fallback.source, 'local')
+  assert.ok(fallback.sections.some(section => section.id === 'biggest_reductions'
+    && section.entries.length), 'the archive still produces local headlines')
 })
