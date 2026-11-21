@@ -70,9 +70,15 @@ class _MetricProvenance:
         return "unknown", "mixed"
 
 
-def _savings_basis(bounds: set[str], premiums: set[float], covered: int
+def _savings_basis(bounds: set[str], premiums: set[float],
+                   causes: dict[str, set[str]], covered: int
                    ) -> tuple[str | None, str | None, float | None]:
-    """Aggregate the card-signed bounds of the covered calls with an unproven write term."""
+    """Aggregate the card-signed bounds of the covered calls.
+
+    The reason is read from *which counter* is unproven, not from whether the
+    premiums happen to match: two calls with unknown writes on different
+    discount cards produce no single premium but are still write-driven.
+    """
     if not covered:
         return None, None, None
     if not bounds:
@@ -81,43 +87,51 @@ def _savings_basis(bounds: set[str], premiums: set[float], covered: int
         return "indeterminate", "write_rate_missing", None
     premium = next(iter(premiums)) if len(premiums) == 1 else None
     if bounds == {"upper"}:
-        return "upper_bound", "write_not_reported", premium
+        reason = "write_not_reported" if "write" in causes.get("upper", set()) \
+            else "read_not_reported"
+        return "upper_bound", reason, premium
     if bounds == {"lower"}:
-        return "lower_bound", ("write_not_reported" if premium is not None
-                               else "read_not_reported"), premium
+        drivers = causes.get("lower", set())
+        if drivers == {"write"}:
+            reason = "write_not_reported"
+        elif drivers == {"read"}:
+            reason = "read_not_reported"
+        else:
+            reason = "read_and_write_not_reported"
+        return "lower_bound", reason, premium
     return "indeterminate", "mixed_read_write_evidence", None
 
 
 def _savings_directions(rate: Rate, *, read_known: bool, write_known: bool
-                        ) -> set[str]:
-    """How unproven cache terms could move net savings, per this card.
+                        ) -> list[tuple[str, str]]:
+    """How unproven cache terms could move net savings, and which counter does it.
 
     Unknown writes add ``write_rate − input_rate`` per unreported write; unknown
     reads add ``input_rate − cache_read_rate`` per unreported read. A direction
     of ``lower`` means the figure can only rise once the counter is known.
     """
-    directions: set[str] = set()
+    directions: list[tuple[str, str]] = []
     input_rate = rate.input
     if input_rate is None:
-        return {"indeterminate"}
+        return [("indeterminate", "write")]
     if not write_known:
         write_rate = rate.cache_write
         if write_rate is None:
-            return {"indeterminate"}
+            return [("indeterminate", "write")]
         premium = float(write_rate) - float(input_rate)
         if premium > 0:
-            directions.add("upper")
+            directions.append(("upper", "write"))
         elif premium < 0:
-            directions.add("lower")
+            directions.append(("lower", "write"))
     if not read_known:
         read_rate = rate.cache_read
         if read_rate is None:
-            return {"indeterminate"}
+            return [("indeterminate", "read")]
         discount = float(input_rate) - float(read_rate)
         if discount < 0:
-            directions.add("upper")
+            directions.append(("upper", "read"))
         elif discount > 0:
-            directions.add("lower")
+            directions.append(("lower", "read"))
     return directions
 
 
@@ -192,6 +206,7 @@ class _AnalyticsAcc:
         self.read_prov = _MetricProvenance()
         self.write_prov = _MetricProvenance()
         self.bounds: set[str] = set()
+        self.bound_causes: dict[str, set[str]] = {}
         self.cost_bounds: set[str] = set()
         self.premiums: set[float] = set()
         self.economics_gaps: Counter[str] = Counter()
@@ -219,7 +234,9 @@ class _AnalyticsAcc:
             self.cached_usd += economics["cached"]
             self.covered_tokens += row["_tokens"]
             self.covered_calls += 1
-            self.bounds.update(economics["savings"])
+            for direction, cause in economics["savings"]:
+                self.bounds.add(direction)
+                self.bound_causes.setdefault(direction, set()).add(cause)
             if economics["premium"] is not None:
                 self.premiums.add(economics["premium"])
         # Cost completeness covers every priced call, including those excluded
@@ -245,7 +262,7 @@ class _AnalyticsAcc:
         read_state, read_reason = self.read_prov.state(self.known_read_tokens)
         write_state, write_reason = self.write_prov.state(self.known_write_tokens)
         savings_basis, bound_reason, premium = _savings_basis(
-            self.bounds, self.premiums, self.covered_calls)
+            self.bounds, self.premiums, self.bound_causes, self.covered_calls)
         if base["unpriced_tokens"]:
             api_basis, api_reason = "incomplete", "unpriced_tokens"
         elif "incomplete" in self.cost_bounds:

@@ -21,9 +21,12 @@ NOW = datetime(2026, 11, 21, 12, tzinfo=timezone.utc).timestamp()
 
 PREMIUM = Rate(2, 10, .1, 2.5)          # write costs more than input
 DISCOUNT = Rate(2, 10, .1, 1.0)         # write costs less than input
+DISCOUNT2 = Rate(2, 10, .1, 1.5)        # a different discount
 AT_INPUT = Rate(2, 10, .1, 2.0)         # write priced at input
 FREE_WRITE = Rate(2, 10, .1, 0.0)       # writes recorded but never charged
 NO_WRITE_PRICE = Rate(2, 10, .1, None)  # write price unknown
+TIER_SUPPLIES_WRITE = Rate(2, 10, .1, None,
+                           tiers=(Tier(100, 1, 5, .05, 1.5),))
 TIERED = Rate(2, 10, .1, 2.5, tiers=(Tier(272000, 4, 15, .2, 5),))
 
 
@@ -35,8 +38,10 @@ class ProvenanceContractTests(unittest.TestCase):
         self.state = Path(self.scratch.name) / "state.db"
         self.book = Catalogue(
             {"premium": {"m": PREMIUM}, "discount": {"m": DISCOUNT},
+             "discount2": {"m": DISCOUNT2},
              "atinput": {"m": AT_INPUT}, "noprice": {"m": NO_WRITE_PRICE},
-             "freewrite": {"m": FREE_WRITE}, "tiered": {"m": TIERED}},
+             "freewrite": {"m": FREE_WRITE}, "tiered": {"m": TIERED},
+             "tierwrite": {"m": TIER_SUPPLIES_WRITE}},
             "fixture", "test", "2026-11-21", "1")
 
     def tearDown(self):
@@ -239,6 +244,29 @@ class ProvenanceContractTests(unittest.TestCase):
         valuation = self.summary(session_id="s1")["valuation"]
         self.assertEqual(valuation["api_equivalent_basis"], "exact")
         self.assertEqual(valuation["savings_basis"], "lower_bound")
+
+    def test_mixed_discount_cards_stay_write_driven(self):
+        # Two unknown-write calls on different discount cards give no single
+        # premium, but the cause is still the missing write counter.
+        self.create_events([
+            {"provider": "discount", "input_tokens": 1_000,
+             "cache_read_tokens": 9_000, "output_tokens": 100},
+            {"provider": "discount2", "input_tokens": 1_000,
+             "cache_read_tokens": 9_000, "output_tokens": 100},
+        ])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "lower_bound")
+        self.assertEqual(valuation["savings_bound_reason"], "write_not_reported")
+        self.assertIsNone(valuation["write_premium_usd_per_mtok"])
+
+    def test_tier_supplied_write_price_is_not_defaulted(self):
+        # The base card has no write price; the crossed tier publishes one, so
+        # a reported write is fully priced and the cost is exact.
+        self.create_events([{"provider": "tierwrite", "input_tokens": 1_000,
+                             "output_tokens": 100, "cache_write_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["api_equivalent_basis"], "exact")
+        self.assertIsNone(valuation["api_equivalent_bound_reason"])
 
     def test_unknown_read_with_proven_write_is_a_lower_bound(self):
         self.create_events([{"input_tokens": 1_000, "cache_read_tokens": 0,

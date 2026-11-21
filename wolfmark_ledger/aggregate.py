@@ -634,7 +634,7 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     tier_applied = bool(priced and priced.tier_possible and list_usd is not None)
     write_known = _reported(cache_write_reported, cache_write)
     write_rate = effective_rate.cache_write if effective_rate is not None else None
-    write_defaulted = bool(priced and priced.cache_write_defaulted)
+    write_defaulted = bool(effective and effective.cache_write_defaulted)
     if effective_usd is None:
         cost_bound = None
     elif write_known and not write_defaulted:
