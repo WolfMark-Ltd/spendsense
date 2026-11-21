@@ -39,6 +39,11 @@ class ProvenanceContractTests(unittest.TestCase):
              "freewrite": {"m": FREE_WRITE}, "tiered": {"m": TIERED}},
             "fixture", "test", "2026-11-21", "1")
 
+    def tearDown(self):
+        # Release the module-level writer so Windows can delete the temp dir.
+        store._WRITER = None
+        store._WRITER_PATH = None
+
     # -- fixtures ---------------------------------------------------------
     def create_events(self, rows=()):
         with closing(sqlite3.connect(self.events)) as conn, conn:
