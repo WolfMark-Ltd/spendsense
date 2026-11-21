@@ -75,10 +75,9 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
       for (const width of result.geometry.attnButtonWidths) {
         assert.ok(width >= 200, `attention actions go full-width in the pane (got ${width}px)`)
       }
-      assert.equal(result.geometry.cssSeg, true, 'the segmented styles ship in MEMBERSHIP_CSS')
-      assert.equal(result.geometry.cssFlash, true, 'the highlight style ships in MEMBERSHIP_CSS')
-      assert.equal(result.geometry.cssReducedMotion, true,
-        'reduced-motion keeps a static highlight instead of the pulse')
+      // The segmented, highlight and reduced-motion CSS contracts are asserted
+      // browserlessly (memberships-reading.test.mjs); what stays here is the
+      // geometry that depends on them.
       // Attention navigation lands on the right visible control.
       const arrangement = result.steps.arrangement
       assert.equal(arrangement.expanded, true, 'arrangement target expands its account')

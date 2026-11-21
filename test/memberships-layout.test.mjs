@@ -69,8 +69,9 @@ body{margin:0;background:#0a0b0f;font:400 13px/1.5 system-ui,sans-serif}
       assert.ok(narrow.overflow.every(px => px <= 1),
         `fee values do not overflow their cells (${JSON.stringify(narrow.overflow)})`)
       assert.ok(narrow.paneOverflow <= 1, `the 380px pane has no horizontal overflow (${narrow.paneOverflow}px)`)
-      assert.deepEqual(narrow.readingStates, ['reported', 'unreported'],
-        'provider readings and missing readings remain distinct in the account summaries')
+      // The reading states these two accounts carry are asserted over the full
+      // matrix browserlessly (memberships-reading.test.mjs); the strip's own
+      // data is proven by hasLongFee/hasMixedCurrencies above.
       const flow = result.narrowExhaustion
       assert.ok(flow, 'the narrow-pane exhaustion flow ran')
       assert.equal(flow.formOpened, true, 'Mark exhausted opens the form at 380px')

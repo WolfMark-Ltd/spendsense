@@ -117,18 +117,10 @@ if (!chrome) {
         assert.equal(result.flow.groupOpenAfterCancel, true, `${locale}: Cancel keeps the group open`)
         assert.ok(result.flow.editHeight > 0, `${locale}: the opener stays laid out after Cancel`)
         assert.equal(result.flow.focusReturned, true, `${locale}: Cancel returns focus to the opener`)
-        // The chevron turns only for an open group; a closed group's rule
-        // states no rotation at all.
-        const openRule = '.wm-group[open] > summary::before{transform:rotate(90deg)}'
-        const closedStart = '.wm-group > summary::before{content:"\u203A"'
-        assert.ok(result.css.includes(openRule),
-          `${locale}: the chevron rotates for an open group only`)
-        assert.ok(result.css.includes(closedStart),
-          `${locale}: the closed chevron rule is the unscoped one`)
-        const closedRule = result.css.slice(result.css.indexOf(closedStart),
-          result.css.indexOf('}', result.css.indexOf(closedStart)) + 1)
-        assert.ok(!closedRule.includes('rotate'),
-          `${locale}: a closed group does not inherit the open rotation`)
+        // The chevron's closed-state rule is a stylesheet string, asserted
+        // browserlessly (memberships-reading.test.mjs); the open state is
+        // measured above from the computed transform, which is the part a
+        // browser has to prove.
         assert.equal(result.hostCalls, 0, `${locale}: no host/gateway calls were made`)
       }
     } finally {
