@@ -3164,9 +3164,7 @@ function savedNote(t, view, estimated) {
     t(`tokenEvidence_${view.savedEvidence?.read || 'unknown'}`),
     t(`tokenEvidence_${view.savedEvidence?.write || 'unknown'}`),
     t(view.cacheHitRateBasis === 'all_calls' ? 'cacheRateAllCalls' : 'cacheRateReportedCalls'))
-    : view.savedSource === 'local_conversation_estimate' ? t('savedLocalConversationNote',
-      t(`tokenEvidence_${view.savedEvidence?.read || 'unknown'}`),
-      t(`tokenEvidence_${view.savedEvidence?.write || 'unknown'}`))
+    : view.savedSource === 'local_conversation_estimate' ? null
       : view.savedSource === 'local_run_estimate' ? t('savedLocalRunNote',
         t(`tokenEvidence_${view.savedEvidence?.read || 'unknown'}`),
         t(`tokenEvidence_${view.savedEvidence?.write || 'unknown'}`)) : null
@@ -15368,14 +15366,11 @@ const I18N = {
     sessionEvidenceNote: (scope, read, write, basis) =>
       `${scope} · cache read ${read} · cache write ${write} · API-equivalent basis ${basis}`,
     sessionSavingsSourceNote: 'Theoretical API-equivalent estimate from backend main-population calls; not billed or subscription savings.',
-    localEstimateScopeNote: 'Fallback estimate uses this focused Desktop conversation only. Main/auxiliary population is unverified; no all-session totals are used.',
+    localEstimateScopeNote: 'Population unverified; this conversation only.',
     savedBackendNote: (read, write, rateScope) =>
       `Backend main-call valuation · read evidence ${read} · write evidence ${write} · cache-hit denominator ${rateScope}. Theoretical API-equivalent value, not billed or subscription savings.`,
-    savedLocalConversationNote: (read, write) =>
-      `Local conversation estimate · read evidence ${read} · write evidence ${write}. Population is unverified; not an all-session total or actual savings.`,
-    savedLocalRunNote: (read, write) =>
-      `Focused run estimate · read evidence ${read} · write evidence ${write}. Population is unverified; not an all-session total or actual savings.`,
-    costLocalRunNote: 'Focused run API-equivalent estimate. The population is not classified as main or auxiliary; this is not a provider charge or subscription saving.',
+    savedLocalRunNote: () => 'Run population unverified.',
+    costLocalRunNote: 'Focused run estimate · population unverified · not a provider charge or subscription saving.',
     partialCacheEvidence: 'Cache read/write evidence is unknown or partial; this figure may exclude or estimate those tokens.',
     savedUpperBoundNote: 'Qualified upper bound; the sign is preserved.',
     savedLowerBoundNote: 'Qualified lower bound; the sign is preserved.',
@@ -17008,20 +17003,17 @@ const I18N = {
     scopeLocalConversationEstimate: '本地对话估算',
     scopeLocalRunEstimate: '当前运行估算',
     coverageScopeMainCalls: '此焦点会话中的主调用',
-    coverageScopeLocalConversation: '本地记录的此对话；总体分类未验证',
+    coverageScopeLocalConversation: '总体分类尚未验证的本地记录对话',
     cacheRateAllCalls: '全部调用',
     cacheRateReportedCalls: '有缓存证据的调用',
     sessionEvidenceNote: (scope, read, write, basis) =>
       `${scope} · 缓存读取 ${read} · 缓存写入 ${write} · API 等值依据 ${basis}`,
     sessionSavingsSourceNote: '根据后端主调用总体计算的理论 API 等值估算；不是账单费用或订阅节省。',
-    localEstimateScopeNote: '后备估算仅使用此 Desktop 当前聚焦的对话。主／辅助调用总体未验证；不会使用所有会话合计。',
+    localEstimateScopeNote: '主／辅助总体未验证；仅此对话。',
     savedBackendNote: (read, write, rateScope) =>
       `后端主调用估值 · 读取证据 ${read} · 写入证据 ${write} · 缓存命中分母 ${rateScope}。理论 API 等值，不是账单费用或订阅节省。`,
-    savedLocalConversationNote: (read, write) =>
-      `本地对话估算 · 读取证据 ${read} · 写入证据 ${write}。总体未验证；不是所有会话合计或实际节省。`,
-    savedLocalRunNote: (read, write) =>
-      `当前运行估算 · 读取证据 ${read} · 写入证据 ${write}。总体未验证；不是所有会话合计或实际节省。`,
-    costLocalRunNote: '当前运行的 API 等值估算。总体未按主调用或辅助调用分类；这不是供应商费用或订阅节省。',
+    savedLocalRunNote: () => '本轮主／辅助总体未验证。',
+    costLocalRunNote: '当前运行估算 · 主／辅助总体未验证 · 不是供应商费用或订阅节省。',
     partialCacheEvidence: '缓存读取／写入证据未知或部分缺失；此数值可能未包含这些令牌，或使用了估算值。',
     savedUpperBoundNote: '合格上界；保留正负号。',
     savedLowerBoundNote: '合格下界；保留正负号。',
