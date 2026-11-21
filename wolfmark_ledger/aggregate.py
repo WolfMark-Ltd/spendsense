@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from . import store
 from .db import default_db_path, fetch_usage_rows
-from .pricing import PROVIDER_ALIASES, Catalogue, load_catalogue, price
+from .pricing import PROVIDER_ALIASES, Catalogue, _effective_rate, load_catalogue, price
 
 
 BASIS_MODES = ("billed", "list", "hybrid")
@@ -556,6 +556,13 @@ def _billing_class(statuses: dict[str, dict], provider: str, model: str) -> str:
     return statuses.get("exact", {}).get((provider, model)) or "unknown"
 
 
+def _reported(flag: Any, value: Any) -> bool:
+    """Tri-state presence: an explicit flag wins; otherwise a positive value proves itself."""
+    if flag is not None:
+        return bool(int(flag))
+    return bool(int(value or 0))
+
+
 def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
                   statuses: dict[str, dict], *, allow_third_party: bool = False,
                   allow_approximate: bool = False, at: float | None = None) -> dict[str, Any]:
@@ -594,6 +601,18 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     # Each event is one call, so the tiered amount is exact; use the
     # upper branch of price(), not the conservative cumulative base.
     list_usd = priced.usd_upper if priced and not failure and not missing else None
+    # The amount at the call's own effective band, independent of whether that
+    # band raises or lowers the price. The ledger keeps the conservative upper
+    # figure for compatibility; session valuation uses this one.
+    prompt = input_tokens + cache_read + cache_write
+    effective_rate, tier_selected = (
+        _effective_rate(lookup.rate, prompt) if lookup else (None, False))
+    effective = (
+        price(effective_rate, input_tokens=input_tokens, output_tokens=output_tokens,
+              cache_read_tokens=cache_read, cache_write_tokens=cache_write, calls=1)
+        if effective_rate is not None else None)
+    effective_usd = (effective.usd_upper
+                     if effective and not failure and not missing else None)
     if priced and list_usd is None:
         miss = priced.reason
     elif not lookup:
@@ -613,6 +632,19 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         basis_usd = list_usd
     basis_kind = ("billed" if mode == "billed" else "list") if basis_usd is not None else "unpriced"
     tier_applied = bool(priced and priced.tier_possible and list_usd is not None)
+    write_known = _reported(cache_write_reported, cache_write)
+    write_rate = effective_rate.cache_write if effective_rate is not None else None
+    write_defaulted = bool(priced and priced.cache_write_defaulted)
+    if effective_usd is None:
+        cost_bound = None
+    elif write_known and not write_defaulted:
+        cost_bound = "exact"
+    elif write_rate is None or write_defaulted:
+        cost_bound = "incomplete"
+    elif float(write_rate) > 0:
+        cost_bound = "lower"
+    else:
+        cost_bound = "exact"
 
     return {
         "_session_id": str(row.get("session_id") or ""),
@@ -634,6 +666,9 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         "_calls": 1,
         "_tokens": tokens,
         "_tier_applied": tier_applied,
+        "_tier_selected": bool(tier_selected),
+        "_cost_bound": cost_bound,
+        "effective_usd": effective_usd,
         "_failure": failure,
         "_missing": missing,
         "_billing_class": billing_class,

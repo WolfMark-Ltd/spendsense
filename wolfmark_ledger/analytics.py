@@ -13,7 +13,7 @@ from typing import Any
 from . import billing, store
 from .aggregate import Acc, _event_result, _iso, _local_window, route_billing_status
 from .db import default_db_path
-from .pricing import Catalogue, _effective_rate, load_catalogue
+from .pricing import Catalogue, Rate, _effective_rate, load_catalogue
 
 SCOPES = ("direct", "subagent", "auxiliary", "unattributed")
 _MAX_ANCESTRY = 32
@@ -83,8 +83,42 @@ def _savings_basis(bounds: set[str], premiums: set[float], covered: int
     if bounds == {"upper"}:
         return "upper_bound", "write_not_reported", premium
     if bounds == {"lower"}:
-        return "lower_bound", "write_not_reported", premium
-    return "indeterminate", "mixed_signs", None
+        return "lower_bound", ("write_not_reported" if premium is not None
+                               else "read_not_reported"), premium
+    return "indeterminate", "mixed_read_write_evidence", None
+
+
+def _savings_directions(rate: Rate, *, read_known: bool, write_known: bool
+                        ) -> set[str]:
+    """How unproven cache terms could move net savings, per this card.
+
+    Unknown writes add ``write_rate − input_rate`` per unreported write; unknown
+    reads add ``input_rate − cache_read_rate`` per unreported read. A direction
+    of ``lower`` means the figure can only rise once the counter is known.
+    """
+    directions: set[str] = set()
+    input_rate = rate.input
+    if input_rate is None:
+        return {"indeterminate"}
+    if not write_known:
+        write_rate = rate.cache_write
+        if write_rate is None:
+            return {"indeterminate"}
+        premium = float(write_rate) - float(input_rate)
+        if premium > 0:
+            directions.add("upper")
+        elif premium < 0:
+            directions.add("lower")
+    if not read_known:
+        read_rate = rate.cache_read
+        if read_rate is None:
+            return {"indeterminate"}
+        discount = float(input_rate) - float(read_rate)
+        if discount < 0:
+            directions.add("upper")
+        elif discount > 0:
+            directions.add("lower")
+    return directions
 
 
 def _call_economics(row: dict[str, Any], book: Catalogue, *,
@@ -94,11 +128,11 @@ def _call_economics(row: dict[str, Any], book: Catalogue, *,
     """Strict comparison on the same complete, known-cache call population.
 
     Returns ``(economics, "")`` where ``economics`` carries the counterfactual,
-    how the unobserved write term affects *savings* (``savings_bound``:
-    ``exact``/``upper``/``lower``/``indeterminate``), the signed premium, and
-    how it affects *cost* (``cost_bound``: ``exact``/``lower``/``incomplete``).
-    The two bounds are different questions: a write priced at input leaves
-    savings exact but can still raise the API-equivalent cost.
+    the set of directions in which unproven read/write terms could move net
+    savings (``savings``), and the signed write premium when writes are
+    unproven on a priced card. Cost completeness is a separate per-call fact
+    (``_cost_bound``), because calls excluded from this comparison still
+    contribute to the API-equivalent total.
     """
     if row["_failure"]:
         return None, "call_failed"
@@ -131,17 +165,13 @@ def _call_economics(row: dict[str, Any], book: Catalogue, *,
     cached = (row["_input"] * rate.input + row["_output"] * rate.output
               + row["_cache_read"] * (rate.cache_read or 0)
               + row["_cache_write"] * (rate.cache_write or 0)) / 1_000_000
-    if write_known:
-        savings_bound, premium, cost_bound = "exact", None, "exact"
-    elif rate.cache_write is None:
-        savings_bound, premium, cost_bound = "indeterminate", None, "incomplete"
-    else:
+    premium = None
+    if not write_known and rate.cache_write is not None:
         premium = round(float(rate.cache_write) - float(rate.input), 6)
-        savings_bound = "upper" if premium > 0 else "lower" if premium < 0 else "exact"
-        cost_bound = "lower" if float(rate.cache_write) > 0 else "exact"
     return {"uncached": uncached, "cached": cached,
-            "savings_bound": savings_bound, "premium": premium,
-            "cost_bound": cost_bound}, ""
+            "savings": _savings_directions(rate, read_known=read_known,
+                                           write_known=write_known),
+            "premium": premium}, ""
 
 
 class _AnalyticsAcc:
@@ -172,7 +202,7 @@ class _AnalyticsAcc:
         if row["list_usd"] is not None and (pricing.get("cache_read_defaulted") or pricing.get("cache_write_defaulted")):
             self.fallback_calls += 1
         prompt = row["_input"] + row["_cache_read"] + row["_cache_write"]
-        if row.get("_tier_applied"):
+        if row.get("_tier_selected"):
             self.tiered_calls += 1
         # Provenance covers every recorded call, not only the priced ones: a
         # call excluded from economics still proves (or fails to prove) that its
@@ -189,12 +219,13 @@ class _AnalyticsAcc:
             self.cached_usd += economics["cached"]
             self.covered_tokens += row["_tokens"]
             self.covered_calls += 1
-            if economics["savings_bound"] != "exact":
-                self.bounds.add(economics["savings_bound"])
-            if economics["cost_bound"] != "exact":
-                self.cost_bounds.add(economics["cost_bound"])
+            self.bounds.update(economics["savings"])
             if economics["premium"] is not None:
                 self.premiums.add(economics["premium"])
+        # Cost completeness covers every priced call, including those excluded
+        # from the savings comparison above.
+        if row.get("list_usd") is not None and row.get("_cost_bound") not in (None, "exact"):
+            self.cost_bounds.add(row["_cost_bound"])
         if row.get("list_usd") is None:
             self.pricing_gaps[row.get("pricing_miss") or "price_evidence_missing"] += 1
         self.total_prompt_tokens += prompt
@@ -203,7 +234,9 @@ class _AnalyticsAcc:
             self.cache_known_calls += 1
             self.known_prompt_tokens += prompt
             self.known_read_tokens += row["_cache_read"]
-        self.accounting.add(row, row["list_usd"], row["list_usd_upper"],
+        value_usd = row.get("effective_usd")
+        self.accounting.add(row, value_usd if value_usd is not None else row["list_usd"],
+                            row["list_usd_upper"],
                             row["billed_usd"], row["billed_kind"],
                             row["basis_usd"], row["basis_kind"])
 
@@ -223,7 +256,8 @@ class _AnalyticsAcc:
             api_basis, api_reason = "exact", None
         hit_rate = (round(self.known_read_tokens / self.known_prompt_tokens, 6)
                     if self.known_prompt_tokens else None)
-        every_call_proven = (read_state == "reported" and self.read_prov.total == base["calls"])
+        every_call_proven = (read_state == "reported"
+                             and self.cache_known_calls == base["calls"])
         return {**{key: base[key] for key in _TOTAL_FIELDS},
                 "pricing_provenance": base.get("pricing_provenance", "unpriced"),
                 "pricing_mix": base.get("pricing_mix", {}),
@@ -640,7 +674,8 @@ def build_session_summary(
     counts = {
         "main_calls": sum(1 for c in classes if c == "main") if separable else None,
         "auxiliary_calls": sum(1 for c in classes if c == "auxiliary") if separable else None,
-        "unclassified_calls": 0 if separable else len(rows),
+        "unclassified_calls": (0 if separable else
+                               sum(1 for c in classes if c not in ("main", "auxiliary"))),
     }
     refused = population != "all" and not separable
 

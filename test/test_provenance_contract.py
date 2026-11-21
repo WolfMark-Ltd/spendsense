@@ -240,6 +240,36 @@ class ProvenanceContractTests(unittest.TestCase):
         self.assertEqual(valuation["api_equivalent_basis"], "exact")
         self.assertEqual(valuation["savings_basis"], "lower_bound")
 
+    def test_unknown_read_with_proven_write_is_a_lower_bound(self):
+        self.create_events([{"input_tokens": 1_000, "cache_read_tokens": 0,
+                             "cache_write_tokens": 500, "cache_write_reported": 1,
+                             "output_tokens": 100}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "lower_bound")
+        self.assertEqual(valuation["savings_bound_reason"], "read_not_reported")
+
+    def test_excluded_call_still_qualifies_the_cost(self):
+        # All-zero legacy cache row: excluded from savings, but its unpriced
+        # write term still means the API-equivalent total is a lower bound.
+        self.create_events([{"input_tokens": 1_000, "output_tokens": 100},
+                            {"input_tokens": 1_000, "cache_read_tokens": 9_000,
+                             "output_tokens": 100}])
+        out = self.summary(session_id="s1")
+        self.assertEqual(out["valuation"]["covered_calls"], 1)
+        self.assertEqual(out["valuation"]["api_equivalent_basis"], "lower_bound")
+        self.assertEqual(out["valuation"]["api_equivalent_bound_reason"],
+                         "write_not_reported")
+
+    def test_decreasing_tier_uses_the_effective_price(self):
+        cheap = Rate(2, 10, .1, 2.5, tiers=(Tier(100, 1, 5, .05, 1.25),))
+        self.book = Catalogue({"cheap": {"m": cheap}}, "fixture", "test", "2026-11-21", "1")
+        self.create_events([{"provider": "cheap", "input_tokens": 1_000,
+                             "output_tokens": 0}])
+        out = self.summary(session_id="s1")
+        self.assertEqual(out["provenance"]["tiers"]["applied"], {"base": 0, "tiered": 1})
+        self.assertAlmostEqual(out["valuation"]["api_equivalent_usd"], 1_000 * 1 / 1e6,
+                               places=9)
+
     def test_api_equivalent_is_exact_when_writes_reported(self):
         self.create_events([{"input_tokens": 1_000, "cache_read_tokens": 9_000,
                              "output_tokens": 100, "cache_write_reported": 1}])
