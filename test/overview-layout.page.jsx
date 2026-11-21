@@ -1,67 +1,19 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import plugin, { __test as T } from '../desktop/plugin.js'
+import {
+  overviewLedgerDays, overviewTransport,
+} from './overview-fixtures.mjs'
 
+// The payload is defined once in `overview-fixtures.mjs` so the browser and the
+// browserless Overview suite render the same synthetic accounts and analytics.
 const locale = globalThis.__overviewLocale || 'en'
 globalThis.__overviewI18n = Object.fromEntries(Object.entries(T.I18N[locale] || T.I18N.en).map(([key, value]) => [
   key, typeof value === 'function' ? (...args) => value(...args) : value,
 ]))
 
-const accounts = [
-  {
-    id: 'synthetic-anthropic', family: 'anthropic', label: 'Synthetic Claude account',
-    billing_arrangement: 'subscription', effective_arrangement: 'subscription',
-    plan_id: 'synthetic-plan', plan: { name: 'Synthetic plan' },
-    fee: { basis: 'declared', effective: { amount: 20, currency: 'GBP', period: 'month' } },
-    quota: { windows: [] }, manual_exhaustions: [], fee_overrides: [],
-    plan_choices: [], excluded_plans: [], rev: 'fixture',
-  },
-  {
-    id: 'synthetic-openai', family: 'openai-codex', label: 'Synthetic OpenAI account',
-    billing_arrangement: 'subscription', effective_arrangement: 'subscription',
-    plan_id: null, plan: null,
-    fee: { basis: 'no_plan', effective: { amount: null } },
-    quota: { windows: [] }, manual_exhaustions: [], fee_overrides: [],
-    plan_choices: [], excluded_plans: [], rev: 'fixture',
-  },
-]
-
-const today = new Date()
-const day = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-
 plugin.register({
-  rest: async path => {
-    if (path === '/analytics?days=30') return {
-      ok: true,
-      totals: { list_usd: 12.34, billed_usd: null, billed_complete: false,
-        billing_mix: { actual: 1, estimated: 1, included: 0, unknown: 2 },
-        calls: 24, unpriced_tokens: 1500 },
-      by_model: [
-        { provider: 'openai-codex', model: 'openai/gpt-5.1-codex-super-long-model-name-for-wrapping', calls: 15 },
-        { provider: 'anthropic', model: 'anthropic/claude-opus-4-6', calls: 9 },
-      ],
-    }
-    if (path === '/membership/accounts') return { ok: true, accounts, store: { loaded: true, error: '' }, notes: [] }
-    if (path === '/allowance/weather') return { ok: true, accounts: [] }
-    if (path === '/economics/summary?days=30&trend_months=6') return {
-      ok: true, window_days: 30, headline: { status: 'partial', difference_usd: 999 }, accounts: [],
-    }
-    if (path === '/budgets/status') return {
-      ok: true, rev: 'fixture', budgets: [{
-        id: 'synthetic-budget', label: 'Synthetic API-equivalent limit', amount: 100,
-        currency: 'USD', enabled: true, scope: 'total', measurement: 'api_equivalent',
-        thresholds: [50, 80, 100], timezone: 'Europe/London', cycle_day: 1,
-      }], statuses: [{
-        id: 'synthetic-budget', budget: {
-          id: 'synthetic-budget', label: 'Synthetic API-equivalent limit', amount: 100,
-          currency: 'USD', enabled: true, scope: 'total', measurement: 'api_equivalent',
-          thresholds: [50, 80, 100], timezone: 'Europe/London', cycle_day: 1,
-        }, spend: 46, percentage: 46, complete: true, level: 'normal',
-        budget_rev: 'fixture', cycle: { id: 'fixture-cycle', start: '2026-11-01', end: '2026-12-01' },
-      }],
-    }
-    return { ok: true }
-  },
+  rest: overviewTransport({ requiredContract: T.REQUIRED_BACKEND_CONTRACT }),
   storage: { get: (_key, fallback) => fallback, set() {}, delete() {} },
   register() {}, registerMany() {}, onDispose() {}, onEvent: () => () => {},
   setTimeout: fn => { const timer = setTimeout(fn, 0); return () => clearTimeout(timer) },
@@ -69,9 +21,10 @@ plugin.register({
   os: {}, pet: null, i18n: { register() {}, t: key => key },
 })
 
-T.$ledger.set({
-  ...T.emptyLedger(),
-  days: { [day]: { synthetic: { cost: 0.42, pricedTokens: 24000, unpricedTokens: 350 } } },
+T.$ledger.set({ ...T.emptyLedger(), days: overviewLedgerDays() })
+
+window.addEventListener('error', event => {
+  (window.__overviewErrors = window.__overviewErrors || []).push(String(event.message))
 })
 
 const selected = new URLSearchParams(location.search).get('case')
@@ -93,14 +46,44 @@ for (const id of cases) {
   createRoot(container).render(React.createElement(T.OverviewPage))
 }
 
-setTimeout(() => {
-  const output = { layouts: [] }
+const tick = (ms = 25) => new Promise(resolve => setTimeout(resolve, ms))
+
+/** Bounded readiness ceiling, in milliseconds of page time. */
+const READY_TIMEOUT_MS = 4000
+
+/**
+ * The final structure every assertion below measures.
+ *
+ * A fixed wait measures whatever happens to be on screen, and an early read has
+ * produced a whole case with no Overview panels on an unchanged revision. The
+ * pre-query page is not a fixture state either, so the gate also requires the
+ * 30-day analytics query to have resolved (the ranking only renders from it).
+ */
+const structurallyReady = () => cases.every(id => {
+  const pane = document.getElementById(id)
+  const summary = pane?.querySelector('.wm-product-summary')
+  return !!summary && !!pane.querySelector('.wm-overview-panels')
+    && summary.querySelectorAll('.wm-kpi').length === 4
+    && !!pane.querySelector('.wm-overview-model-row')
+})
+
+const run = async () => {
+  let waitedMs = 0
+  while (waitedMs < READY_TIMEOUT_MS && !structurallyReady()) {
+    await tick(50)
+    waitedMs += 50
+  }
+  // A case that missed the deadline is published as missing rather than
+  // measured, so a page that never painted fails by name instead of passing a
+  // set of assertions about nothing.
+  const readiness = { ready: structurallyReady(), waitedMs }
+  const output = { layouts: [], readiness }
   for (const id of cases) {
     const pane = document.getElementById(id)
     const summary = pane.querySelector('.wm-product-summary')
     const panels = pane.querySelector('.wm-overview-panels')
     if (!summary || !panels) {
-      output.layouts.push({ id, missingOverview: true, errors: window.__overviewErrors || [] })
+      output.layouts.push({ id, missingOverview: true, readiness, errors: window.__overviewErrors || [] })
       continue
     }
     const columns = element => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length
@@ -124,6 +107,9 @@ setTimeout(() => {
         const rect = button.getBoundingClientRect()
         return rect.left < paneBounds.left - 1 || rect.right > paneBounds.right + 1
       }).map(button => button.getAttribute('aria-label') || button.textContent.trim()),
+      // Nothing checks a rect against an empty list, so the count is published:
+      // an empty `clippedButtons` only means something when buttons exist.
+      buttonCount: buttons.length,
       buttonsOutsidePane: buttons.filter(button => {
         const rect = button.getBoundingClientRect()
         return rect.left < paneBounds.left - 1 || rect.right > paneBounds.right + 1
@@ -132,19 +118,12 @@ setTimeout(() => {
       documentOverflow: selected ? document.documentElement.scrollWidth - document.documentElement.clientWidth : null,
       summaryColumns: columns(summary), panelColumns: columns(panels),
       cards: summary.querySelectorAll('.wm-kpi').length,
+      // The page title is the locale guard: it proves the run rendered the
+      // language its per-locale assertions assume.
+      heading: pane.querySelector('.wm-product-heading h1')?.textContent || '',
       kpiWidths: [...summary.querySelectorAll('.wm-kpi')].map(el => Math.round(el.getBoundingClientRect().width)),
-      locale,
-      charges: pane.querySelector('[data-kpi="actual-charges"]').textContent,
-      recorded: pane.querySelector('[data-kpi="recorded-usage"]').textContent,
-      estimate: pane.querySelector('[data-kpi="api-equivalent-estimate"]').textContent,
-      fees: pane.querySelector('[data-kpi="saved-fees"]').textContent,
-      figures: Object.fromEntries([...summary.querySelectorAll('.wm-kpi')].map(el => [el.dataset.kpi, el.querySelector('.wm-kpi-figure')?.textContent || ''])),
-      pricingAction: pane.querySelector('.wm-attention-rows li:last-child button')?.textContent.trim() || '',
-      modelUsageShortcut: [...pane.querySelectorAll('.wm-overview-models button')].some(button => /Open Usage|打开用量/.test(button.textContent)),
+      errors: window.__overviewErrors || [],
       methodsCollapsed: !pane.querySelector('details.wm-method').open,
-      methodSections: pane.querySelectorAll('.wm-method-grid h3').length,
-      modelLabels: [...pane.querySelectorAll('.wm-overview-model-name strong')].map(el => el.textContent),
-      modelDetails: [...pane.querySelectorAll('.wm-overview-model-name .wm-info-btn')].map(el => el.getAttribute('aria-label')),
       kpiHeights: [...summary.querySelectorAll('.wm-kpi')].map(el => Math.round(el.getBoundingClientRect().height)),
       kpiDetails: [...summary.querySelectorAll('.wm-kpi')].map(card => ({
         name: card.dataset.kpi, width: card.clientWidth, height: card.clientHeight,
@@ -153,7 +132,6 @@ setTimeout(() => {
           scrollWidth: child.scrollWidth, text: child.textContent.slice(0, 100) }))
       })),
       overflow: overflow.filter(item => item.excess > 1),
-      text: pane.querySelector('.wm-shell')?.textContent || pane.textContent,
       background: getComputedStyle(pane).backgroundColor,
       foreground: getComputedStyle(pane).color,
       sticky: (() => {
@@ -202,4 +180,6 @@ setTimeout(() => {
     }
   }
   document.getElementById('overview-layout-result').textContent = JSON.stringify(output)
-}, 900)
+}
+
+run()

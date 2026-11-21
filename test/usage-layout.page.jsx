@@ -2,75 +2,12 @@ import React from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import plugin, { __test as T } from '../desktop/plugin.js'
+import { USAGE_FILTERS, usageTransport } from './usage-fixtures.mjs'
 
-// Clearly synthetic fixture: invented providers/models, round-ish figures,
-// plus unpriced/unknown/partial states so every honesty path renders.
-const row = (i = 0) => ({
-  tokens: 120000 - i * 1500, calls: 140 - i, input_tokens: 24000, output_tokens: 12000,
-  cache_read_tokens: 72000 - i * 1500, cache_write_tokens: 12000,
-  list_usd: i === 27 ? null : 9.6 - i * 0.2,
-  priced_tokens: i === 27 ? 0 : 120000 - i * 1500, unpriced_tokens: i === 27 ? 92000 : 150 * i,
-  unpriced_calls: i % 9 === 0 ? 2 : 0, fallback_calls: i % 7 === 0 ? 1 : 0,
-  cache_hit_rate: i === 27 ? null : 0.62 - i * 0.008,
-  cache_known_calls: 90 - i, cache_unknown_calls: 12,
-  billing_mix: i % 3 === 0 ? { api: 40 } : {},
-  economics: { uncached_usd: 12 - i * 0.2, cached_usd: 8 - i * 0.2, savings_usd: i === 5 ? -0.4 : 3.2 - i * 0.06, coverage: 0.82, covered_tokens: 98000, covered_calls: 96, excluded_calls: 8 },
-})
-const byModel = Array.from({ length: 30 }, (_, i) => ({
-  model: i === 0 ? 'synthetic-very-long-model-name-for-narrow-width-wrapping-checks' : `synthetic-model-${i}`,
-  provider: i === 13 ? '' : `synthetic-provider-${i % 3}`,
-  ...row(i),
-}))
-const totals = {
-  ...row(0), tokens: 3141592, calls: 1234, input_tokens: 640000, output_tokens: 320000,
-  cache_read_tokens: 1900000, cache_write_tokens: 281592, list_usd: 82.4,
-  priced_tokens: 3014592, unpriced_tokens: 127000, unpriced_calls: 6,
-  cache_hit_rate: 0.61, cache_prompt_coverage: 0.66,
-  billed_usd: 18.2, billed_complete: false, billing_mix: { api: 900, included: 300 },
-}
-const fixture = {
-  ok: true,
-  window: { since: '2026-11-04T00:00:00Z', until: '2026-11-11T00:00:00Z', days: 7, timezone: 'Europe/London', since_local: '2026-11-04T00:00:00+00:00', until_local: '2026-11-11T00:00:00+00:00' },
-  totals,
-  economics: totals.economics,
-  pricing_coverage: { coverage: 0.96 },
-  previous: { comparable: true, deltas: { list_usd: 0.125, tokens: -0.042 } },
-  options: {
-    models: byModel.map(r => ({ model: r.model, provider: r.provider })),
-    providers: ['synthetic-provider-0', 'synthetic-provider-1', 'synthetic-provider-2'],
-    surfaces: ['cli', 'telegram'],
-    tasks: ['main', 'aux'],
-    operations: [
-      { parent: 'synthetic nightly research sweep over many sources', subagent_calls: 42 },
-      { parent: 'synthetic release triage', subagent_calls: 9 },
-    ],
-  },
-  by_model: byModel,
-  by_route: ['synthetic-provider-0', 'synthetic-provider-1', 'synthetic-provider-2'].map((provider, i) => ({ provider, ...row(i * 4) })),
-  by_scope: [
-    { scope: 'direct', ...row(1) },
-    { scope: 'subagent', ...row(3) },
-    { scope: 'auxiliary', ...row(6) },
-  ],
-  attribution: { child_sessions: 37, unattributed_calls: 5 },
-  trend: {
-    granularity: 'day',
-    buckets: Array.from({ length: 7 }, (_, i) => ({
-      ts: `2026-11-${String(i + 4).padStart(2, '0')}T00:00:00Z`, ts_local: `2026-11-${String(i + 4).padStart(2, '0')}T00:00:00+00:00`,
-      input_usd: 1.1, output_usd: 0.9, cache_read_usd: 0.2, cache_write_usd: 0.1,
-      ...row(i),
-    })),
-  },
-  recording: { since: '2026-10-01T00:00:00Z', last: '2026-11-10T18:00:00Z', calls: 1234 },
-  notes: ['Recorded calls only. Synthetic fixture note.'],
-  note_codes: [],
-}
-
+// The payload lives in `usage-fixtures.mjs` so the browser and the browserless
+// Usage suite render one synthetic dataset, not two that can drift.
 plugin.register({
-  rest: async path => {
-    if (String(path).startsWith('/analytics?')) return fixture
-    return { ok: true }
-  },
+  rest: usageTransport({ requiredContract: T.REQUIRED_BACKEND_CONTRACT }),
   storage: { get: (_key, fallback) => fallback, set() {}, delete() {} },
   register() {}, registerMany() {}, onDispose() {}, onEvent: () => () => {},
   setTimeout: fn => { const timer = setTimeout(fn, 0); return () => clearTimeout(timer) },
@@ -86,7 +23,7 @@ globalThis.__usageLocale = params.get('locale') || 'en'
 // long model name) so chips render, and a selected trend point so the exact
 // chart detail renders. The scope matches the stub host identity.
 const usageScope = T.analyticsScope('test', 'connected', 'local')
-T.$analytics.set({ [usageScope]: { ...T.analyticsInitialState(), trendIndex: 0, filters: { model: 'synthetic-very-long-model-name-for-narrow-width-wrapping-checks', provider: '', surface: 'telegram', task: '', parent: '', scope: 'subagent' } } })
+T.$analytics.set({ [usageScope]: { ...T.analyticsInitialState(), trendIndex: 0, filters: { ...USAGE_FILTERS } } })
 
 const ALL = ['narrow-dark', 'wide-dark', 'narrow-light', 'wide-light']
 const selected = params.get('case')
@@ -204,7 +141,27 @@ function chartPaint(pane, selector, property) {
 }
 
 async function measure() {
-  await tick(1200)
+  // Bounded readiness gate. A fixed wait measures whatever happens to be on
+  // screen: an early read has produced empty contrast counts and '' copy on
+  // unchanged revisions. Require the final structure every assertion below
+  // measures; a page that missed the deadline is reported, so the failure names
+  // the page rather than one downstream number.
+  const READY_TIMEOUT_MS = 6000
+  const structurallyReady = () => cases.every(id => {
+    const pane = document.getElementById(id)
+    if (!pane?.querySelector('.wm-shell')) return false
+    return pane.querySelectorAll('section.wm-panel').length === 7
+      && pane.querySelectorAll('.wm-stat').length === 5
+      && pane.querySelectorAll('.wm-scopechips button').length === 3
+      && pane.querySelectorAll('[data-trend-point]').length > 0
+      && pane.querySelectorAll('.wm-tablewrap thead th').length === 7
+  })
+  let waitedMs = 0
+  while (waitedMs < READY_TIMEOUT_MS && !structurallyReady()) {
+    await tick(50)
+    waitedMs += 50
+  }
+  const readiness = { ready: structurallyReady(), waitedMs }
   // The committed test opens every Advanced disclosure (?open=filters) so
   // the hidden filters get real layout and the overlap/overflow checks below
   // cover the advanced row too.
@@ -217,7 +174,7 @@ async function measure() {
     if (wrap) wrap.scrollLeft = 260
     await tick(300)
   }
-  const output = { layouts: [], errors: window.__usageErrors || [], queryErrors: globalThis.__usageQueryErrors || [] }
+  const output = { layouts: [], readiness, errors: window.__usageErrors || [], queryErrors: globalThis.__usageQueryErrors || [] }
   const cacheReadPaint = (pane, tag, prop) => {
     const segment = pane.querySelectorAll(`svg[data-chart="composition"] ${tag}[role="button"]`)[2]
     return segment ? getComputedStyle(segment)[prop] : null
@@ -264,16 +221,16 @@ async function measure() {
       mainScrollDelta: Math.max(0, pane.scrollHeight - pane.clientHeight),
       usageScrollDelta: Math.max(0, usageRoot.scrollHeight - usageRoot.clientHeight),
       usageOverflowY: getComputedStyle(usageRoot).overflowY,
+      // The page title is the locale guard: it proves this run rendered the
+      // language its per-locale assertions assume.
       headingStart: pane.querySelector('.wm-topline > div > :first-child')?.textContent,
-      numbers: [...pane.querySelectorAll('.wm-panel .wm-number')].map(el => el.textContent),
       sections: pane.querySelectorAll('section.wm-panel').length,
       stats: stats.length,
-      statGroups: [...pane.querySelectorAll('[data-kpi-group]')].map(el => el.dataset.kpiGroup),
       selects: pane.querySelectorAll('select').length,
       advancedFilters: !!advanced,
-      advancedOpen: !!advanced?.open,
-      advancedSummary: advanced?.querySelector('summary')?.textContent || '',
-      advancedSelects: advanced ? advanced.querySelectorAll('select').length : 0,
+      // The advanced row's own height: a collapsed `<details>` measures zero
+      // and every overlap/overflow assertion below would then pass on nothing.
+      advancedRowHeight: advancedRow ? Math.round(advancedRow.getBoundingClientRect().height) : 0,
       advancedRowOverlap: overlapPairs(advancedRowFilters),
       advancedRowOverflow: advancedRow && advancedRow.scrollWidth - advancedRow.clientWidth > 1 ? 1 : 0,
       stickyColumnWidth: firstCell ? firstCell.offsetWidth : 0,
@@ -300,23 +257,12 @@ async function measure() {
       chartKeySwatches: [swatch(0), swatch(1), swatch(2), swatch(3)],
       chartPalette: palette,
       trendPoints: trendPoints.length,
-      trendTitles: trendPoints.filter(el => (el.querySelector('title')?.textContent || '').length > 0).length,
-      legendTitles: legendRows.filter(el => (el.getAttribute('title') || '').length > 0).length,
       legendRows: legendRows.length,
       explorerColumns: pane.querySelectorAll('thead th').length,
       firstColumnSticky: (() => {
         const cell = pane.querySelector('tbody td:first-child')
         return cell ? getComputedStyle(cell).position : 'none'
       })(),
-      methodologyOpen: (() => {
-        // Methodology is the only disclosure that is neither the advanced
-        // filters nor the baseline; match it by exclusion so the open
-        // advanced row cannot masquerade as an open Methodology.
-        const rest = [...pane.querySelectorAll('.wm-shell details')]
-          .filter(el => !el.hasAttribute('data-filters-advanced') && !el.classList.contains('wm-baseline'))
-        return rest.length === 1 && !!rest[0].open
-      })(),
-      baselineOpen: !!pane.querySelector('details.wm-baseline')?.open,
       text: shell.textContent,
     })
   }
@@ -333,9 +279,10 @@ async function measure() {
     compositionToggle[0].click()
     await tick(100)
   }
-  // Interaction probe on the first case only: all cases share one analytics
-  // atom, so clicks here re-render every pane. Layout above is recorded first.
-  // Skipped in single-case screenshot mode so shots show the pristine state.
+  // Interaction probe on the first case only: the remainder list's scroll
+  // geometry is the part a browser alone can report. The chip and disclosure
+  // counts the probe used to record are asserted in jsdom against the real
+  // component (`usage-render.test.mjs`).
   output.interaction = selected ? null : await interactionProbe()
   // Re-read the shared error array: output initialised before the probe, and
   // the listener creates the array lazily, so the initial snapshot can miss
@@ -346,33 +293,7 @@ async function measure() {
 
 async function interactionProbe() {
   const probe = document.getElementById(cases[0])
-  const probeChips = () => [...probe.querySelectorAll('.wm-scopechips button')]
-  const probeSummary = () => probe.querySelector('[data-filters-advanced] summary')?.textContent || ''
-  const interaction = { chipsBefore: probeChips().length, summaryBefore: probeSummary() }
-  const surfaceChip = probeChips()[1]
-  if (surfaceChip) {
-    surfaceChip.click()
-    await tick(300)
-    interaction.chipsAfterSurface = probeChips().length
-    interaction.summaryAfterSurface = probeSummary()
-  }
-  const modelChip = probeChips()[0]
-  if (modelChip) {
-    modelChip.click()
-    await tick(300)
-    interaction.chipsAfterModel = probeChips().length
-  }
-  const toggle = probe.querySelector('[data-filters-advanced]')
-  if (toggle) {
-    const summary = toggle.querySelector('summary')
-    const wasOpen = toggle.open
-    summary.click()
-    await tick(200)
-    const closed = !toggle.open
-    summary.click()
-    await tick(200)
-    interaction.disclosureToggle = wasOpen && closed && toggle.open
-  }
+  const interaction = {}
   const allState = T.$analytics.get()
   const current = allState[usageScope] || T.analyticsInitialState()
   T.$analytics.set({ ...allState, [usageScope]: { ...current, otherOpen: true } })
