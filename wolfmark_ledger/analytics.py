@@ -235,6 +235,7 @@ class _AnalyticsAcc:
         self.bounds: set[str] = set()
         self.bound_causes: dict[str, set[str]] = {}
         self.cost_bounds: set[str] = set()
+        self.cost_causes: set[str] = set()
         self.premiums: set[float] = set()
         self.economics_gaps: Counter[str] = Counter()
         self.pricing_gaps: Counter[str] = Counter()
@@ -272,8 +273,10 @@ class _AnalyticsAcc:
                 self.premiums.add(economics["premium"])
         # Cost completeness covers every priced call, including those excluded
         # from the savings comparison above.
-        if row.get("list_usd") is not None and row.get("_cost_bound") not in (None, "exact"):
-            self.cost_bounds.add(row["_cost_bound"])
+        for bound in row.get("_cost_bounds") or ():
+            if bound != "exact":
+                self.cost_bounds.add(bound)
+        self.cost_causes.update(row.get("_cost_causes") or ())
         list_usd = row.get("list_usd")
         if list_usd is not None:
             self.priced_calls += 1
@@ -297,22 +300,55 @@ class _AnalyticsAcc:
         base = self.accounting.as_dict()
         read_state, read_reason = self.read_prov.state(self.known_read_tokens)
         write_state, write_reason = self.write_prov.state(self.known_write_tokens)
-        savings_basis, bound_reason, premium = _savings_basis(
+        basis, bound_reason, premium = _savings_basis(
             self.bounds, self.premiums, self.bound_causes, self.covered_calls)
-        if self.retention_calls:
-            savings_basis = "range"
-            bound_reason = ("retention_and_counter_uncertainty" if self.bounds
-                            else "retention_unknown")
+        low = round(self.savings_low_usd, 6) if self.covered_calls else None
+        high = round(self.savings_high_usd, 6) if self.covered_calls else None
+        savings_usd = low
+        savings_usd_high = None
+        if not self.covered_calls:
+            savings_basis, savings_reason = None, None
+        elif self.retention_calls:
+            # A retention range is only two-sided when every counter that
+            # affects savings is proven. An unproven counter widens one side,
+            # so that endpoint must not be published as a bound.
+            if "indeterminate" in self.bounds:
+                savings_basis, savings_reason, savings_usd = "indeterminate", "write_rate_missing", None
+            elif {"upper", "lower"} <= self.bounds:
+                savings_basis, savings_reason, savings_usd = (
+                    "indeterminate", "mixed_read_write_evidence", None)
+            elif "upper" in self.bounds:
+                savings_basis, savings_reason, savings_usd = (
+                    "upper_bound", "retention_and_counter_uncertainty", high)
+            elif "lower" in self.bounds:
+                savings_basis, savings_reason, savings_usd = (
+                    "lower_bound", "retention_and_counter_uncertainty", low)
+            else:
+                savings_basis, savings_reason = "range", "retention_unknown"
+                savings_usd_high = high
+        else:
+            savings_basis, savings_reason = basis, bound_reason
+            if savings_basis is None:
+                savings_usd = None
         if base["unpriced_tokens"]:
-            api_basis, api_reason = "incomplete", "unpriced_tokens"
+            api_basis, api_reason, api_high = "incomplete", "unpriced_tokens", None
         elif "incomplete" in self.cost_bounds:
-            api_basis, api_reason = "incomplete", "write_rate_missing"
+            api_basis = "incomplete"
+            api_reason = ("write_rate_missing" if "write" in self.cost_causes
+                          else "read_rate_missing")
+            api_high = None
+        elif "lower" in self.cost_bounds:
+            api_basis = "lower_bound"
+            api_reason = ("read_and_write_not_reported"
+                          if {"read", "write"} <= self.cost_causes
+                          else "read_not_reported" if "read" in self.cost_causes
+                          else "write_not_reported")
+            api_high = None
         elif "range" in self.cost_bounds:
             api_basis, api_reason = "range", "retention_unknown"
-        elif "lower" in self.cost_bounds:
-            api_basis, api_reason = "lower_bound", "write_not_reported"
+            api_high = round(self.api_high_usd, 6)
         else:
-            api_basis, api_reason = "exact", None
+            api_basis, api_reason, api_high = "exact", None, None
         hit_rate = (round(self.known_read_tokens / self.known_prompt_tokens, 6)
                     if self.known_prompt_tokens else None)
         every_call_proven = (read_state == "reported"
@@ -340,16 +376,15 @@ class _AnalyticsAcc:
                 "economics": {
                     "uncached_usd": round(self.uncached_usd, 6) if self.covered_calls else None,
                     "cached_usd": round(self.cached_usd, 6) if self.covered_calls else None,
-                    "savings_usd": round(self.savings_low_usd, 6) if self.covered_calls else None,
-                    "savings_usd_high": round(self.savings_high_usd, 6) if self.covered_calls else None,
+                    "savings_usd": savings_usd,
+                    "savings_usd_high": savings_usd_high,
                     "savings_basis": savings_basis,
-                    "savings_bound_reason": bound_reason,
+                    "savings_bound_reason": savings_reason,
                     "retention_unknown_calls": self.retention_calls,
                     "write_premium_usd_per_mtok": premium,
                     "api_equivalent_basis": api_basis,
                     "api_equivalent_bound_reason": api_reason,
-                    "api_equivalent_usd_high": (round(self.api_high_usd, 6)
-                                                if self.priced_calls else None),
+                    "api_equivalent_usd_high": api_high,
                     "covered_tokens": self.covered_tokens,
                     "coverage": round(self.covered_tokens / base["tokens"], 6) if base["tokens"] else 0.0,
                     "covered_calls": self.covered_calls,

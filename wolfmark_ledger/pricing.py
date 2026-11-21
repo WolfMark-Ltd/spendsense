@@ -97,6 +97,9 @@ class Tier:
     cache_write: Optional[float] = None
     #: Named write-retention alternatives, e.g. (("30m", 2.5), ("12h", 5.0)).
     cache_write_rates: tuple[tuple[str, float], ...] = ()
+    #: True when the provider bills the tier AT the threshold (``>=``), as xAI
+    #: does at 200K; OpenAI bills it only above the threshold (``>``).
+    inclusive: bool = False
 
 
 @dataclass(frozen=True)
@@ -263,6 +266,15 @@ def _write_rates(value: Any) -> tuple[tuple[str, float], ...]:
     return tuple(sorted(out.items(), key=lambda pair: (_retention_minutes(pair[0]), pair[0])))
 
 
+def _flag(value: Any) -> bool:
+    """True for a JSON ``true``/1/"true"; everything else is False."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value or "").strip().lower() in ("1", "true", "yes")
+
+
 def _tier_from_dict(raw: dict[str, Any]) -> Optional[Tier]:
     if not isinstance(raw, dict):
         return None
@@ -277,6 +289,7 @@ def _tier_from_dict(raw: dict[str, Any]) -> Optional[Tier]:
         cache_read=_num(raw.get("cache_read")),
         cache_write=_num(raw.get("cache_write")),
         cache_write_rates=_write_rates(raw.get("cache_write_rates")),
+        inclusive=_flag(raw.get("inclusive")),
     )
 
 
@@ -557,22 +570,30 @@ def _effective_rate(rate: Rate, avg_prompt: float) -> tuple[Rate, bool]:
     """
     if not rate.tiers or avg_prompt <= 0:
         return rate, False
-    applicable = [t for t in rate.tiers if avg_prompt > t.threshold]
+    applicable = [t for t in rate.tiers
+                  if (avg_prompt >= t.threshold if t.inclusive else avg_prompt > t.threshold)]
     if not applicable:
         return rate, False
     tier = max(applicable, key=lambda t: t.threshold)
-    # A tier that overrides the scalar write price without naming retention
-    # options cannot inherit the base card's alternatives: its write price is a
-    # different one.
-    write_options = (tier.cache_write_rates if tier.cache_write_rates
-                     else rate.cache_write_rates if tier.cache_write is None
-                     else ())
+    # A tier that names retention prices without its own scalar takes the
+    # cheapest (shortest-retention) option as its scalar, so the compatibility
+    # number is always one of the prices the tier actually publishes. A tier
+    # that overrides the scalar without alternatives cannot inherit the base
+    # card's options: its write price is a different one.
+    if tier.cache_write_rates:
+        tier_scalar = (tier.cache_write if tier.cache_write is not None
+                       else tier.cache_write_rates[0][1])
+        write_options = tier.cache_write_rates
+    elif tier.cache_write is None:
+        tier_scalar, write_options = None, rate.cache_write_rates
+    else:
+        tier_scalar, write_options = tier.cache_write, ()
     return (
         Rate(
             input=tier.input if tier.input is not None else rate.input,
             output=tier.output if tier.output is not None else rate.output,
             cache_read=tier.cache_read if tier.cache_read is not None else rate.cache_read,
-            cache_write=tier.cache_write if tier.cache_write is not None else rate.cache_write,
+            cache_write=tier_scalar if tier_scalar is not None else rate.cache_write,
             tiers=(),
             cache_write_rates=write_options,
         ),

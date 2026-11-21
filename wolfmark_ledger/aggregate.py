@@ -633,7 +633,9 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     basis_kind = ("billed" if mode == "billed" else "list") if basis_usd is not None else "unpriced"
     tier_applied = bool(priced and priced.tier_possible and list_usd is not None)
     write_known = _reported(cache_write_reported, cache_write)
+    read_known = _reported(cache_read_reported, cache_read)
     write_rate = effective_rate.cache_write if effective_rate is not None else None
+    read_rate = effective_rate.cache_read if effective_rate is not None else None
     write_defaulted = bool(effective and effective.cache_write_defaulted)
     write_options = (sorted({float(value) for _, value in effective_rate.cache_write_rates})
                      if effective_rate is not None else [])
@@ -645,18 +647,27 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         base_usd = float(effective_usd or 0.0)
         cost_low = base_usd + cache_write * (write_options[0] - scalar_write) / 1_000_000
         cost_high = base_usd + cache_write * (write_options[-1] - scalar_write) / 1_000_000
+    # An unproven counter whose price is positive can only add cost, so the
+    # priced amount is a lower bound; an unknown price cannot be bounded at all.
+    cost_bounds: set[str] = set()
+    cost_causes: set[str] = set()
+    if not write_known and (write_rate is None or write_defaulted):
+        cost_bounds.add("incomplete")
+        cost_causes.add("write")
+    elif not write_known and float(write_rate or 0) > 0:
+        cost_bounds.add("lower")
+        cost_causes.add("write")
+    if not read_known and read_rate is None:
+        cost_bounds.add("incomplete")
+        cost_causes.add("read")
+    elif not read_known and float(read_rate or 0) > 0:
+        cost_bounds.add("lower")
+        cost_causes.add("read")
+    if retention_range:
+        cost_bounds.add("range")
     if effective_usd is None:
-        cost_bound = None
-    elif retention_range:
-        cost_bound = "range"
-    elif write_known and not write_defaulted:
-        cost_bound = "exact"
-    elif write_rate is None or write_defaulted:
-        cost_bound = "incomplete"
-    elif float(write_rate) > 0:
-        cost_bound = "lower"
-    else:
-        cost_bound = "exact"
+        cost_bounds = set()
+        cost_causes = set()
 
     return {
         "_session_id": str(row.get("session_id") or ""),
@@ -679,7 +690,8 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         "_tokens": tokens,
         "_tier_applied": tier_applied,
         "_tier_selected": bool(tier_selected),
-        "_cost_bound": cost_bound,
+        "_cost_bounds": tuple(sorted(cost_bounds)),
+        "_cost_causes": tuple(sorted(cost_causes)),
         "_cost_high": cost_high,
         "_cost_low": cost_low,
         "_retention_range": retention_range,

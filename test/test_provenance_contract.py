@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from wolfmark_ledger import aggregate, analytics, collector, store
+from wolfmark_ledger import aggregate, analytics, collector, pricing, store
 from wolfmark_ledger.pricing import Catalogue, Rate, Tier, load_catalogue
 
 NOW = datetime(2026, 11, 21, 12, tzinfo=timezone.utc).timestamp()
@@ -27,6 +27,13 @@ FREE_WRITE = Rate(2, 10, .1, 0.0)       # writes recorded but never charged
 NO_WRITE_PRICE = Rate(2, 10, .1, None)  # write price unknown
 TIER_SUPPLIES_WRITE = Rate(2, 10, .1, None,
                            tiers=(Tier(100, 1, 5, .05, 1.5),))
+RETENTION = Rate(2, 10, .1, 2.5,
+                 cache_write_rates=(("30m", 2.5), ("12h", 5.0)))
+INVERTED = Rate(2, 10, 3.0, 2.5,
+                cache_write_rates=(("30m", 2.5), ("12h", 5.0)))
+NAMED_TIER = Rate(2, 10, .1, 2.5, tiers=(
+    Tier(100, None, None, None, None,
+         cache_write_rates=(("30m", 1.0), ("12h", 2.0))),))
 TIERED = Rate(2, 10, .1, 2.5, tiers=(Tier(272000, 4, 15, .2, 5),))
 
 
@@ -41,7 +48,9 @@ class ProvenanceContractTests(unittest.TestCase):
              "discount2": {"m": DISCOUNT2},
              "atinput": {"m": AT_INPUT}, "noprice": {"m": NO_WRITE_PRICE},
              "freewrite": {"m": FREE_WRITE}, "tiered": {"m": TIERED},
-             "tierwrite": {"m": TIER_SUPPLIES_WRITE}},
+             "tierwrite": {"m": TIER_SUPPLIES_WRITE},
+             "retention": {"m": RETENTION}, "inverted": {"m": INVERTED},
+             "namedtier": {"m": NAMED_TIER}},
             "fixture", "test", "2026-11-21", "1")
 
     def tearDown(self):
@@ -263,10 +272,67 @@ class ProvenanceContractTests(unittest.TestCase):
         # The base card has no write price; the crossed tier publishes one, so
         # a reported write is fully priced and the cost is exact.
         self.create_events([{"provider": "tierwrite", "input_tokens": 1_000,
-                             "output_tokens": 100, "cache_write_reported": 1}])
+                             "output_tokens": 100, "cache_write_reported": 1,
+                             "cache_read_reported": 1}])
         valuation = self.summary(session_id="s1")["valuation"]
         self.assertEqual(valuation["api_equivalent_basis"], "exact")
         self.assertIsNone(valuation["api_equivalent_bound_reason"])
+
+    def test_unproven_read_qualifies_cost(self):
+        self.create_events([{"input_tokens": 1_000, "cache_write_reported": 1}])
+        out = self.summary(session_id="s1")
+        self.assertEqual(out["valuation"]["savings_basis"], "lower_bound")
+        self.assertEqual(out["valuation"]["savings_bound_reason"], "read_not_reported")
+        self.assertEqual(out["valuation"]["api_equivalent_basis"], "lower_bound")
+        self.assertEqual(out["valuation"]["api_equivalent_bound_reason"],
+                         "read_not_reported")
+        self.assertIsNone(out["valuation"]["api_equivalent_usd_high"])
+
+    def test_retention_range_with_unproven_read_is_one_sided(self):
+        self.create_events([{"provider": "retention", "cache_write_tokens": 100_000,
+                             "cache_write_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "lower_bound")
+        self.assertEqual(valuation["savings_bound_reason"],
+                         "retention_and_counter_uncertainty")
+        self.assertAlmostEqual(valuation["savings_usd"], -0.3, places=6)
+        self.assertIsNone(valuation["savings_usd_high"])
+        self.assertIsNone(valuation["api_equivalent_usd_high"])
+
+    def test_retention_range_with_upper_read_direction_publishes_the_upper(self):
+        self.create_events([{"provider": "inverted", "cache_write_tokens": 100_000,
+                             "cache_write_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "upper_bound")
+        self.assertAlmostEqual(valuation["savings_usd"], -0.05, places=6)
+        self.assertIsNone(valuation["savings_usd_high"])
+
+    def test_mixed_range_and_lower_bound_total_is_one_sided(self):
+        self.create_events([
+            {"provider": "retention", "input_tokens": 1_000,
+             "cache_write_tokens": 100_000, "cache_write_reported": 1,
+             "cache_read_reported": 1},
+            {"provider": "discount", "input_tokens": 1_000,
+             "cache_read_tokens": 9_000},
+        ])
+        out = self.summary(session_id="s1")
+        self.assertEqual(out["valuation"]["api_equivalent_basis"], "lower_bound")
+        self.assertIsNone(out["valuation"]["api_equivalent_usd_high"])
+        self.assertEqual(out["valuation"]["savings_basis"], "lower_bound")
+        self.assertEqual(out["valuation"]["savings_bound_reason"],
+                         "retention_and_counter_uncertainty")
+
+    def test_named_only_tier_uses_one_of_its_prices(self):
+        rate, selected = pricing._effective_rate(NAMED_TIER, 1_000)
+        self.assertTrue(selected)
+        self.assertEqual(rate.cache_write, 1.0)
+        self.assertEqual(dict(rate.cache_write_rates), {"30m": 1.0, "12h": 2.0})
+        self.create_events([{"provider": "namedtier", "cache_write_tokens": 1_000,
+                             "cache_write_reported": 1, "cache_read_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "range")
+        self.assertAlmostEqual(valuation["savings_usd"], 0.0, places=9)
+        self.assertAlmostEqual(valuation["savings_usd_high"], 0.001, places=9)
 
     def test_unknown_read_with_proven_write_is_a_lower_bound(self):
         self.create_events([{"input_tokens": 1_000, "cache_read_tokens": 0,
@@ -286,7 +352,8 @@ class ProvenanceContractTests(unittest.TestCase):
         self.assertEqual(out["valuation"]["covered_calls"], 1)
         self.assertEqual(out["valuation"]["api_equivalent_basis"], "lower_bound")
         self.assertEqual(out["valuation"]["api_equivalent_bound_reason"],
-                         "write_not_reported")
+                         "read_and_write_not_reported")
+        self.assertIsNone(out["valuation"]["api_equivalent_usd_high"])
 
     def test_decreasing_tier_uses_the_effective_price(self):
         cheap = Rate(2, 10, .1, 2.5, tiers=(Tier(100, 1, 5, .05, 1.25),))
@@ -490,8 +557,8 @@ class OfficialRateRowTests(unittest.TestCase):
         self.create_events([{"input_tokens": 1_000, "cache_read_tokens": 9_000}])
         valuation = self.summary(session_id="sol")["valuation"]
         self.assertEqual(valuation["savings_basis"], "upper_bound")
-        self.assertEqual(valuation["savings_usd"], valuation["savings_usd_high"],
-                         "an unknown write count must not manufacture a range")
+        self.assertIsNone(valuation["savings_usd_high"],
+                          "an unknown write count must not manufacture a range")
         self.assertEqual(valuation["retention_unknown_calls"], 0)
         self.assertEqual(valuation["api_equivalent_basis"], "lower_bound")
 
@@ -542,6 +609,125 @@ class OfficialRateRowTests(unittest.TestCase):
                          ["30m", "12h"])
         for key in ("input", "output", "cache_read", "cache_write", "provenance"):
             self.assertIn(key, rate)
+
+
+class CrossProviderPricingTests(unittest.TestCase):
+    """Official OpenAI, Anthropic and xAI rows; Gemini's unsupported storage."""
+
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR"))
+        self.addCleanup(self.scratch.cleanup)
+        self.events = Path(self.scratch.name) / "usage.db"
+        self.state = Path(self.scratch.name) / "state.db"
+        self.book = load_catalogue()
+        self.addCleanup(OfficialRateRowTests._release_writer)
+
+    def create_events(self, rows):
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.executescript(store._SCHEMA)
+            for index, row in enumerate(rows):
+                values = {"event_id": f"cross-{index}", "ts": NOW - 60,
+                          "session_id": "cross", "outcome": "ok",
+                          "recorded_at": NOW, **row}
+                columns = list(values)
+                conn.execute(f"INSERT INTO calls ({','.join(columns)}) VALUES "
+                             f"({','.join('?' for _ in columns)})", list(values.values()))
+
+    def summary(self, **kwargs):
+        return analytics.build_session_summary(
+            self.events, state_db_path=self.state, catalogue=self.book,
+            now=NOW, **kwargs)
+
+    def test_openai_astra_rows_parse_tiers_and_retentions(self):
+        astra = self.book.lookup("openai", "gpt-6.2-astra")
+        assert astra is not None
+        self.assertEqual((astra.rate.input, astra.rate.output, astra.rate.cache_read,
+                          astra.rate.cache_write), (8.0, 40.0, 0.4, 10.0))
+        self.assertEqual(dict(astra.rate.cache_write_rates), {"30m": 10.0, "12h": 20.0})
+        self.assertEqual([(t.threshold, t.input, t.output, t.cache_read, t.cache_write)
+                          for t in astra.rate.tiers], [(272000, 16.0, 60.0, 0.8, 20.0)])
+        old = self.book.lookup("openai", "gpt-6-astra")
+        assert old is not None
+        self.assertEqual(old.rate.cache_write_rates, ())
+        self.assertEqual([(t.input, t.output, t.cache_write) for t in old.rate.tiers],
+                         [(20.0, 75.0, 25.0)])
+
+    def test_astra_boundary_is_strictly_above_272k(self):
+        self.create_events([{"provider": "openai", "model": "gpt-6.2-astra",
+                             "input_tokens": 272_000}])
+        self.assertAlmostEqual(self.summary(session_id="cross")["valuation"]["api_equivalent_usd"],
+                               272_000 * 8.0 / 1e6, places=9)
+        os.remove(self.events)
+        self.create_events([{"provider": "openai", "model": "gpt-6.2-astra",
+                             "input_tokens": 272_001}])
+        self.assertAlmostEqual(self.summary(session_id="cross")["valuation"]["api_equivalent_usd"],
+                               272_001 * 16.0 / 1e6, places=9)
+
+    def test_anthropic_retention_range_and_rates(self):
+        hit = self.book.lookup("anthropic", "claude-sonnet-5")
+        assert hit is not None
+        self.assertEqual(dict(hit.rate.cache_write_rates), {"5m": 2.5, "1h": 4.0})
+        self.create_events([{"provider": "anthropic", "model": "claude-sonnet-5",
+                             "input_tokens": 1_000, "cache_write_tokens": 10_000,
+                             "cache_write_reported": 1, "cache_read_reported": 1}])
+        valuation = self.summary(session_id="cross")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "range")
+        self.assertAlmostEqual(valuation["savings_usd"], -0.02, places=6)      # 1h
+        self.assertAlmostEqual(valuation["savings_usd_high"], -0.005, places=6)  # 5m
+
+    def test_anthropic_haiku_tier_boundary(self):
+        self.create_events([{"provider": "anthropic", "model": "claude-haiku-5-5",
+                             "input_tokens": 100_000}])
+        self.assertAlmostEqual(self.summary(session_id="cross")["valuation"]["api_equivalent_usd"],
+                               100_000 * 0.1 / 1e6, places=6)
+        os.remove(self.events)
+        self.create_events([{"provider": "anthropic", "model": "claude-haiku-5-5",
+                             "input_tokens": 100_001}])
+        self.assertAlmostEqual(self.summary(session_id="cross")["valuation"]["api_equivalent_usd"],
+                               100_001 * 0.5 / 1e6, places=6)
+
+    def test_xai_tier_is_inclusive_at_200k(self):
+        self.create_events([{"provider": "xai", "model": "grok-4.7",
+                             "input_tokens": 199_999}])
+        self.assertAlmostEqual(self.summary(session_id="cross")["valuation"]["api_equivalent_usd"],
+                               199_999 * 2.0 / 1e6, places=9)
+        os.remove(self.events)
+        self.create_events([{"provider": "xai", "model": "grok-4.7",
+                             "input_tokens": 200_000}])
+        self.assertAlmostEqual(self.summary(session_id="cross")["valuation"]["api_equivalent_usd"],
+                               200_000 * 4.0 / 1e6, places=9)
+
+    def test_xai_cached_input_uses_the_long_context_rate(self):
+        self.create_events([{"provider": "xai", "model": "grok-4.7",
+                             "input_tokens": 199_000, "cache_read_tokens": 1_000}])
+        self.assertAlmostEqual(self.summary(session_id="cross")["valuation"]["api_equivalent_usd"],
+                               (199_000 * 4.0 + 1_000 * 1.0) / 1e6, places=9)
+
+    def test_gemini_reads_price_but_storage_and_writes_do_not(self):
+        self.create_events([{"provider": "google", "model": "gemini-4-argon",
+                             "input_tokens": 1_000, "cache_read_tokens": 5_000}])
+        valuation = self.summary(session_id="cross")["valuation"]
+        self.assertAlmostEqual(valuation["api_equivalent_usd"],
+                               (1_000 * 2.0 + 5_000 * 0.1) / 1e6, places=9)
+        # Gemini publishes no cache-write price, and cache storage is billed
+        # per token-hour. Neither is modelled, so the total must not be exact.
+        self.assertEqual(valuation["api_equivalent_basis"], "incomplete")
+        self.assertEqual(valuation["api_equivalent_bound_reason"], "write_rate_missing")
+
+    def test_unknown_model_fails_safe(self):
+        self.create_events([{"provider": "nobody", "model": "no-such-model",
+                             "input_tokens": 1_000}])
+        valuation = self.summary(session_id="cross")["valuation"]
+        self.assertIsNone(valuation["api_equivalent_usd"])
+        self.assertEqual(valuation["api_equivalent_basis"], "incomplete")
+
+    def test_anthropic_rates_endpoint_keeps_both_retentions(self):
+        from dashboard import plugin_api
+        payload = plugin_api.rates(provider="anthropic", model="claude-sonnet-5", at=None)
+        rate = payload["rate"]
+        self.assertEqual([item["retention"] for item in rate["cache_write_rates"]],
+                         ["5m", "1h"])
+        self.assertEqual(rate["provenance"], "official_verified")
 
 
 if __name__ == "__main__":
