@@ -602,14 +602,21 @@ def _effective_rate(rate: Rate, avg_prompt: float) -> tuple[Rate, bool]:
 
 
 def reaches_unapplied_tier(rate: Rate, prompt_tokens: float) -> bool:
-    """True when more tokens in the same request could enter a higher band.
+    """True when more tokens in the same request could enter a new band.
 
-    A tier applies at its threshold when inclusive, or just above it when not,
-    so any threshold strictly greater than the recorded prompt is reachable by
-    an unrecorded counter. A threshold at or below the prompt is already the
-    applicable band.
+    A tier applies above its threshold when exclusive, or at it when
+    inclusive. It is therefore still reachable when the recorded prompt is at
+    or below an exclusive threshold, or strictly below an inclusive one. A
+    threshold already crossed is the applicable band and is not reachable.
+
+    Pass the catalogue rate, not an ``_effective_rate`` result: the latter has
+    its ``tiers`` stripped once a band is selected.
     """
-    return any(tier.threshold > prompt_tokens for tier in rate.tiers)
+    return any(
+        tier.threshold > prompt_tokens if tier.inclusive
+        else tier.threshold >= prompt_tokens
+        for tier in rate.tiers
+    )
 
 
 def _amount(rate: Rate, input_tokens: int, output_tokens: int,

@@ -215,10 +215,11 @@ def _call_economics(row: dict[str, Any], book: Catalogue, *,
         premium = next(iter(premiums)) if len(premiums) == 1 else None
     directions = _savings_directions(rate, read_known=read_known,
                                      write_known=write_known)
-    if not (read_known and write_known) and reaches_unapplied_tier(rate, prompt):
+    if not (read_known and write_known) and reaches_unapplied_tier(lookup.rate, prompt):
         # The unrecorded counter can add tokens, and entering a higher band
         # reprices the whole request, so a direction taken at the recorded band
-        # is not a defensible bound on the true value.
+        # is not a defensible bound on the true value. Use the catalogue rate:
+        # ``rate`` has its tiers stripped once a band is selected.
         directions = [("indeterminate", "tier")]
     return {"uncached": uncached, "cached": cached,
             "savings_low": low, "savings_high": high,

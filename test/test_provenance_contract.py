@@ -38,6 +38,10 @@ NAMED_TIER = Rate(2, 10, .1, 2.5, tiers=(
 TIERED = Rate(2, 10, .1, 2.5, tiers=(Tier(272000, 4, 15, .2, 5),))
 INCLUSIVE = Rate(2, 10, .1, 2.5,
                  tiers=(Tier(100, 4, 15, .2, 5, inclusive=True),))
+MULTI_TIERED = Rate(2, 10, .1, 2.5,
+                    tiers=(Tier(100, 6, 20, .2, 5), Tier(200, 4, 15, .2, 10)))
+XAI_INCLUSIVE = Rate(2, 6, .5, 2.5,
+                     tiers=(Tier(200000, 4, 12, 1.0, 5.0, inclusive=True),))
 
 
 class ProvenanceContractTests(unittest.TestCase):
@@ -52,7 +56,8 @@ class ProvenanceContractTests(unittest.TestCase):
              "atinput": {"m": AT_INPUT}, "noprice": {"m": NO_WRITE_PRICE},
              "noread": {"m": NO_READ_PRICE},
              "freewrite": {"m": FREE_WRITE}, "tiered": {"m": TIERED},
-             "inclusive": {"m": INCLUSIVE},
+             "inclusive": {"m": INCLUSIVE}, "multitier": {"m": MULTI_TIERED},
+             "xaiincl": {"m": XAI_INCLUSIVE},
              "tierwrite": {"m": TIER_SUPPLIES_WRITE},
              "retention": {"m": RETENTION}, "inverted": {"m": INVERTED},
              "namedtier": {"m": NAMED_TIER}},
@@ -348,6 +353,46 @@ class ProvenanceContractTests(unittest.TestCase):
                              "cache_read_reported": 1}])
         self.assertEqual(self.summary(session_id="s1")["valuation"]["savings_basis"],
                          "upper_bound")
+
+    def test_reachability_uses_the_catalogue_rate_across_multiple_tiers(self):
+        # Prompt 150 crosses the 100 band, so the effective rate has its
+        # tiers stripped; the 200 band is still reachable and must be seen on
+        # the catalogue rate or the bound would be falsely directional.
+        self.create_events([{"provider": "multitier", "input_tokens": 150,
+                             "cache_read_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "indeterminate")
+        self.assertEqual(valuation["savings_bound_reason"], "context_tier_unknown")
+
+    def test_exclusive_threshold_is_reachable_at_the_boundary(self):
+        self.create_events([{"provider": "tiered", "input_tokens": 272_000,
+                             "cache_read_reported": 1}])
+        self.assertEqual(self.summary(session_id="s1")["valuation"]["savings_basis"],
+                         "indeterminate")
+        os.remove(self.events)
+        self.create_events([{"provider": "tiered", "input_tokens": 272_001,
+                             "cache_read_reported": 1}])
+        self.assertEqual(self.summary(session_id="s1")["valuation"]["savings_basis"],
+                         "upper_bound")
+
+    def test_inclusive_threshold_stops_being_reachable_once_applied(self):
+        for prompt, expected in ((199_999, "indeterminate"),
+                                 (200_000, "upper_bound"),
+                                 (200_001, "upper_bound")):
+            if self.events.exists():
+                os.remove(self.events)
+            self.create_events([{"provider": "xaiincl", "input_tokens": prompt,
+                                 "cache_read_reported": 1}])
+            self.assertEqual(
+                self.summary(session_id="s1")["valuation"]["savings_basis"],
+                expected, f"prompt {prompt}")
+
+    def test_reported_counters_at_a_reachable_boundary_stay_exact(self):
+        self.create_events([{"provider": "tiered", "input_tokens": 272_000,
+                             "cache_read_reported": 1, "cache_write_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "exact")
+        self.assertAlmostEqual(valuation["savings_usd"], 0.0, places=6)
 
     def test_known_counters_ignore_tier_reachability(self):
         self.create_events([{"provider": "tiered", "input_tokens": 271_999,
@@ -675,6 +720,7 @@ class OfficialRateRowTests(unittest.TestCase):
         self.assertEqual([item["retention"] for item in rate["cache_write_rates"]],
                          ["30m", "12h"])
         self.assertEqual(rate["tiers"][0]["threshold"], 272000)
+        self.assertFalse(rate["tiers"][0]["inclusive"])
         self.assertEqual([item["retention"] for item in rate["tiers"][0]["cache_write_rates"]],
                          ["30m", "12h"])
         for key in ("input", "output", "cache_read", "cache_write", "provenance"):
@@ -733,6 +779,27 @@ class CrossProviderPricingTests(unittest.TestCase):
         self.assertAlmostEqual(self.summary(session_id="cross")["valuation"]["api_equivalent_usd"],
                                272_001 * 16.0 / 1e6, places=9)
 
+    def test_openai_tier_boundary_is_reachable_up_to_272k(self):
+        for prompt, expected in ((271_999, "indeterminate"),
+                                 (272_000, "indeterminate"),
+                                 (272_001, "upper_bound")):
+            if self.events.exists():
+                os.remove(self.events)
+            self.create_events([{"provider": "openai", "model": "gpt-6.2-astra",
+                                 "input_tokens": prompt, "cache_read_reported": 1}])
+            valuation = self.summary(session_id="cross")["valuation"]
+            self.assertEqual(valuation["savings_basis"], expected, f"prompt {prompt}")
+            if expected == "indeterminate":
+                self.assertIsNone(valuation["savings_usd"], f"prompt {prompt}")
+
+    def test_reachability_helper_respects_both_threshold_rules(self):
+        from wolfmark_ledger.pricing import reaches_unapplied_tier
+        self.assertTrue(reaches_unapplied_tier(TIERED, 272_000))
+        self.assertFalse(reaches_unapplied_tier(TIERED, 272_001))
+        self.assertTrue(reaches_unapplied_tier(INCLUSIVE, 99))
+        self.assertFalse(reaches_unapplied_tier(INCLUSIVE, 100))
+        self.assertTrue(reaches_unapplied_tier(INCLUSIVE, 0))
+
     def test_anthropic_retention_range_and_rates(self):
         hit = self.book.lookup("anthropic", "claude-sonnet-5")
         assert hit is not None
@@ -790,6 +857,17 @@ class CrossProviderPricingTests(unittest.TestCase):
         valuation = self.summary(session_id="cross")["valuation"]
         self.assertIsNone(valuation["api_equivalent_usd"])
         self.assertEqual(valuation["api_equivalent_basis"], "incomplete")
+
+    def test_rates_expose_inclusive_for_both_threshold_rules(self):
+        from dashboard import plugin_api
+        exclusive = plugin_api.rates(provider="openai", model="gpt-6.2-astra", at=None)["rate"]
+        inclusive = plugin_api.rates(provider="xai", model="grok-4.7", at=None)["rate"]
+        self.assertIs(exclusive["tiers"][0]["inclusive"], False)
+        self.assertIs(inclusive["tiers"][0]["inclusive"], True)
+        expected_keys = {"threshold", "inclusive", "input", "output",
+                         "cache_read", "cache_write", "cache_write_rates"}
+        for tier in exclusive["tiers"] + inclusive["tiers"]:
+            self.assertEqual(set(tier), expected_keys)
 
     def test_anthropic_rates_endpoint_keeps_both_retentions(self):
         from dashboard import plugin_api
