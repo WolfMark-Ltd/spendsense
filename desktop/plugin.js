@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.15'
+const PLUGIN_VERSION = '0.6.16'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 3
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -10147,7 +10147,17 @@ function newsSummaryText(item, t) {
       : params.fee_before !== params.fee_after
     const bits = []
     if (feeChanged) bits.push(t('newsPlanFeeBit', params.fee_before, params.fee_after))
-    if (params.terms_changed) bits.push(t('newsPlanTermsChanged'))
+    // F139: changed fields with before/after values; items without them keep
+    // the legacy generic bit.
+    const fieldChanges = Array.isArray(params.field_changes) ? params.field_changes : []
+    if (fieldChanges.length) {
+      for (const change of fieldChanges) {
+        const bit = newsPlanFieldBit(change, t)
+        if (bit) bits.push(bit)
+      }
+    } else if (params.terms_changed) {
+      bits.push(t('newsPlanTermsChanged'))
+    }
     if (!bits.length) return fallback
     return t('newsSumPlanChange', params.plan, bits.join('; '))
   }
@@ -10158,6 +10168,35 @@ function newsSummaryText(item, t) {
   if (code === 'news_sum_price_change_feed' && need('model', 'provider'))
     return t('newsSumPriceChangeFeed', params.model, params.provider)
   return fallback
+}
+
+/** F139 field codes from wolfmark_ledger/news.py `_PLAN_FIELD_NAMES`. */
+const NEWS_PLAN_FIELD_KEYS = {
+  allowance: 'newsPlanFieldAllowance',
+  model: 'newsPlanFieldModel',
+  reset_policy: 'newsPlanFieldResetPolicy',
+  profile: 'newsPlanFieldProfile',
+}
+
+/**
+ * One changed plan field as a localised bit. The field category localises;
+ * the label (window id, model key, sub-field) and the before/after values
+ * are catalogue data and print as they arrived. Unknown shapes render
+ * nothing rather than a half sentence.
+ */
+function newsPlanFieldBit(change, t) {
+  if (!change || typeof change !== 'object') return ''
+  const key = NEWS_PLAN_FIELD_KEYS[change.field]
+  const field = key ? t(key) : String(change.field || '')
+  const label = String(change.label || '')
+  const head = [field, label].filter(Boolean).join(' ')
+  if (!head) return ''
+  const before = change.before == null ? '' : String(change.before)
+  const after = change.after == null ? '' : String(change.after)
+  if (change.kind === 'added') return t('newsPlanAddedBit', head, after)
+  if (change.kind === 'removed') return t('newsPlanRemovedBit', head, before)
+  if (change.kind === 'changed') return t('newsPlanChangedBit', head, before, after)
+  return ''
 }
 
 /** Localised news conditions from conditions_code; raw conditions is the fallback. */
@@ -10220,6 +10259,16 @@ function newsIsRelevant(item) {
   return !!item.for_you
 }
 
+/**
+ * F138 provider eligibility: both scopes show eligible providers only. A
+ * missing flag (an older cached payload) keeps the item rather than hiding
+ * history it cannot judge.
+ */
+function newsIsEligible(item) {
+  if (!item || typeof item !== 'object') return false
+  return item.eligible !== false
+}
+
 /** Mirror of monitoring.has_signals. An empty list is no signal (unlike JS truthiness). */
 function newsHasSignals(signals) {
   if (!signals || typeof signals !== 'object') return false
@@ -10231,7 +10280,7 @@ function newsHasSignals(signals) {
  * Mirror of monitoring.empty_state. When the backend sent no signals (an old
  * cached payload), the legacy generic texts keep the previous wording.
  */
-function newsEmptyText({ items, scope, category, baseline, signals }, t) {
+function newsEmptyText({ items, scope, category, baseline, signals, excluded = 0 }, t) {
   const list = Array.isArray(items) ? items.filter(item => item && typeof item === 'object') : []
   if (signals == null) {
     if (scope === 'foryou' && category === 'all') return t('newsEmptyForYou')
@@ -10241,6 +10290,9 @@ function newsEmptyText({ items, scope, category, baseline, signals }, t) {
   let pool = scope === 'foryou' ? list.filter(newsIsRelevant) : list.slice()
   if (category !== 'all') pool = pool.filter(item => String(item.category || '') === category)
   if (pool.length) return null
+  // F138: an empty All Updates that is only empty because unsupported
+  // providers were held back says so; "unchanged" would be a lie.
+  if (scope === 'all' && excluded > 0) return t('newsEmptyUnsupported', excluded)
   if (baseline && !list.length) return t('newsEmptyBaseline')
   if (category !== 'all') return t('newsEmptyCategory')
   if (scope === 'foryou' && list.length) {
@@ -11558,6 +11610,9 @@ function newsSanitiseBriefing(raw) {
     for (const key of ['score', 'family_event_count']) {
       if (typeof entry[key] === 'number' && Number.isFinite(entry[key])) out[key] = entry[key]
     }
+    // F138: the backend's personal flag survives sanitising so For You can
+    // show personal headlines only. Anything but a boolean is dropped.
+    if (typeof entry.personal === 'boolean') out.personal = entry.personal
     for (const [key, limit] of [['headline_params', 16], ['magnitude', 8], ['rate_change', 8]]) {
       const mapped = scalarMap(entry[key], limit)
       if (Object.keys(mapped).length) out[key] = mapped
@@ -11603,6 +11658,37 @@ function newsSanitiseBriefing(raw) {
 }
 
 /**
+ * F138: a published briefing shows personal headlines only. Entries the
+ * backend did not flag cannot be filtered reliably, so a published
+ * document is usable only when every entry in its recognised sections
+ * carries a personal flag — otherwise, or when nothing personal remains,
+ * the caller falls back to the local briefing instead of showing
+ * unrelated headlines. Whole entries keep or drop together; counts and
+ * sections still describe the publication.
+ */
+function newsFilterBriefingPersonal(briefing) {
+  if (!briefing || !Array.isArray(briefing.sections)) return null
+  let personal = 0
+  const sections = []
+  for (const section of briefing.sections) {
+    if (!section || typeof section !== 'object') continue
+    if (!NEWS_SECTION_IDS.has(section.id)) {
+      sections.push(section)
+      continue
+    }
+    const entries = Array.isArray(section.entries) ? section.entries : []
+    for (const entry of entries) {
+      if (!entry || typeof entry.personal !== 'boolean') return null
+    }
+    const kept = entries.filter(entry => entry.personal)
+    personal += kept.length
+    sections.push({ ...section, entries: kept })
+  }
+  if (!personal) return null
+  return { ...briefing, sections }
+}
+
+/**
  * The briefing the page renders: a publisher's own document when it is present
  * and valid, otherwise the same document built locally from the items it was
  * built from. `source` records which path produced it so the UI can be honest
@@ -11614,10 +11700,9 @@ function newsBriefingFor(central, items) {
   // A document whose sections are all unrecognised is not a briefing this client
   // can render: `NewsBriefing` keeps only known ids, so choosing it would blank
   // the headline surface even though the archive could build local headlines.
-  // A recognised section that is legitimately empty is still the publisher's
-  // answer and is kept.
   if (published && published.sections.some(section => NEWS_SECTION_IDS.has(section.id))) {
-    return { ...published, source: 'published', unavailable: [] }
+    const personal = newsFilterBriefingPersonal(published)
+    if (personal) return { ...personal, source: 'published', unavailable: [] }
   }
   const list = Array.isArray(items) ? items : []
   return { ...newsBuildBriefing(list, { generatedAt: String(central?.fetched_at || '') }),
@@ -11941,6 +12026,12 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
     : confidence === 'curated' ? 'newsConfidenceCurated' : 'newsConfidenceObserved'
   const headline = newsHeadlineText(entry, t)
   const observed = entry?.observed_at ? fmtDay(entry.observed_at) : ''
+  // The archive action lands on this story's own event: the first joined
+  // record. It is only offered when All Updates can actually show it — a
+  // configured custom route is personal to For You without being native,
+  // so its story keeps Details inline but offers no archive jump.
+  const archiveTarget = joined[0] || null
+  const archiveOpenable = !!archiveTarget && newsIsEligible(archiveTarget)
   // A story link must land on the event the reader clicked. Headlines ignore
   // the category and date filters, so both are cleared before the search is
   // applied; a retained category or an old window would otherwise open an
@@ -11953,7 +12044,7 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
     // The archive must open the RECORD, not just its model: a model with an
     // older cut and a newer rise would otherwise land on the newest offer and
     // leave this story's own event inside a collapsed panel.
-    const target = joined[0]
+    const target = archiveTarget
     if (target?.model || target?.provider) {
       const targetPanel = newsDetailsPanelId(connectionKey,
         { model: target.model, provider: target.provider })
@@ -11999,7 +12090,8 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
         onClick: () => newsToggleDetails(panelId), children: t('newsStoryDetails') }),
       // Without a joinable record the archive cannot contain this story (a
       // history-confirmed removal, for example), so the action is not offered.
-      records.length
+      // The same holds when the joined event is held back from All Updates.
+      archiveOpenable
         ? jsx('button', { type: 'button', className: 'wm-news-clear', 'data-news-story-archive': 'true',
             onClick: openArchive, children: t('newsStoryOpenInArchive') })
         : null,
@@ -13002,15 +13094,29 @@ function NewsPage() {
   const centralItems = current?.central?.items || []
   const central = current?.central || {}
   const liveOn = !!current?.settings?.live_updates
-  const combined = [...localItems, ...centralItems].sort((a, b) =>
+  // F138: the scopes pool differently. All Updates holds eligible providers
+  // only (native plus subscription items); For You holds relevant items
+  // (configured providers and selected plans), so a configured custom route
+  // can be personal without being native.
+  const allItems = [...localItems, ...centralItems].sort((a, b) =>
     String(b.observed_at || '').localeCompare(String(a.observed_at || '')) ||
     String(a.id || '').localeCompare(String(b.id || '')))
+  const combined = allItems.filter(newsIsEligible)
+  const forYouPool = allItems.filter(newsIsRelevant)
+  // F138: held-back events stay countable for honest notes and empty states.
+  const ineligible = [...localItems, ...centralItems]
+    .filter(item => item && typeof item === 'object' && item.eligible === false)
+  const excludedTotal = ineligible.length
+  const excludedForCategory = category === 'all' ? excludedTotal
+    : ineligible.filter(item => String(item.category || '') === category).length
   const impacts = current?.impacts || {}
   const refreshState = useValue($newsRefreshState)
   const refreshOurs = refreshState?.origin === identity
   const refreshPending = (refreshOurs && refreshState?.status === 'pending') || query.isFetching
-  const emptyText = newsEmptyText({ items: combined, scope, category,
-    baseline: !!current?.local?.baseline, signals: current?.signals ?? null }, t)
+  const emptyText = newsEmptyText({ items: scope === 'foryou' ? allItems : combined,
+    scope, category,
+    baseline: !!current?.local?.baseline, signals: current?.signals ?? null,
+    excluded: excludedForCategory }, t)
   const freshDays = newsAgeDays(central.fetched_at, Date.now())
   const centralAlert = liveOn ? newsCentralAlert(central, t) : null
 
@@ -13020,19 +13126,22 @@ function NewsPage() {
   let grouped = null
   try { grouped = newsGroupModels(combined) } catch { grouped = null }
   if (grouped && !grouped.entries.length && combined.length) grouped = null
+  let forYouGrouped = null
+  try { forYouGrouped = newsGroupModels(forYouPool) } catch { forYouGrouped = null }
+  if (forYouGrouped && !forYouGrouped.entries.length && forYouPool.length) forYouGrouped = null
   const nowMs = Date.now()
-  const relevantEntries = grouped ? newsRankForYou(grouped.entries, nowMs) : []
-  const forYouCount = grouped ? relevantEntries.length : combined.filter(newsIsRelevant).length
+  const relevantEntries = forYouGrouped ? newsRankForYou(forYouGrouped.entries, nowMs) : []
+  const forYouCount = forYouGrouped ? relevantEntries.length : forYouPool.length
   const allCount = grouped ? grouped.entries.length : combined.length
   // The category filter is semantic at offer level in both scopes; search and
   // the observed-at window apply to All Updates only.
-  const forYouEntries = grouped
+  const forYouEntries = forYouGrouped
     ? newsFilterEntries(relevantEntries, { category, nowMs }) : []
   // Initial For You page: the smallest ranked prefix through the fifth model
   // group — relevant cards ranked before that group keep their original rank
   // and stay visible, and the fifth group is never displaced. With fewer
   // than five groups, every entry shows. No reordering, no new sections.
-  const forYouPrefixCount = grouped ? (() => {
+  const forYouPrefixCount = forYouGrouped ? (() => {
     let groups = 0
     for (let index = 0; index < forYouEntries.length; index += 1) {
       if (forYouEntries[index].kind === 'group') {
@@ -13066,19 +13175,27 @@ function NewsPage() {
   // The ARCHIVE's events first: they carry the local/publish-side merge
   // (`merged_sources`), which the raw feed records do not. Resolving an id
   // against the raw list alone would show one source and silently drop the
-  // other's provenance, timestamps and tier evidence.
-  for (const entry of grouped?.entries || []) {
-    if (entry?.kind === 'group') {
-      for (const offer of entry.offers || []) {
-        for (const event of offer.events || []) registerEvent(event)
+  // other's provenance, timestamps and tier evidence. Both groupings
+  // register, so a personal headline always joins its evidence even when
+  // its event is held back from All Updates.
+  for (const grouping of [grouped, forYouGrouped]) {
+    for (const entry of grouping?.entries || []) {
+      if (entry?.kind === 'group') {
+        for (const offer of entry.offers || []) {
+          for (const event of offer.events || []) registerEvent(event)
+        }
+      } else if (entry?.item) {
+        registerEvent(entry.item)
       }
-    } else if (entry?.item) {
-      registerEvent(entry.item)
     }
   }
   // Then anything the archive did not group, so no record becomes unreachable.
   for (const item of combined) registerEvent(item)
-  const briefing = newsBriefingFor(central, newsBriefingItems(grouped, combined))
+  for (const item of forYouPool) registerEvent(item)
+  // F138: the local briefing builds from personal events, so For You
+  // headlines are personal by construction; a usable published briefing
+  // still wins, filtered to its personal entries inside newsBriefingFor.
+  const briefing = newsBriefingFor(central, newsBriefingItems(forYouGrouped, forYouPool))
   // A story link asks the archive to reveal one event. The row is marked during
   // render; this moves the reader onto it once the filtered list exists, so a
   // keyboard user is not left at the top of a 200-event archive.
@@ -13144,7 +13261,7 @@ function NewsPage() {
   }, [newsFocusTarget?.nonce, scope, shown, search, category, days, filtered.length])
   const visibleEntries = filtered.slice(0, shown)
   const remaining = Math.max(0, filtered.length - visibleEntries.length)
-  const flatVisible = newsFilter(combined, scope, category)
+  const flatVisible = newsFilter(scope === 'foryou' ? forYouPool : combined, scope, category)
   const filteredEmpty = !!grouped && scope === 'all' && grouped.entries.length > 0 && !filtered.length
   const hasFilters = search.trim() !== '' || days != null || category !== 'all'
   // Count summary: groups on For You, events under All (every offer event and
@@ -13307,6 +13424,12 @@ function NewsPage() {
       scope === 'all' && archiveTotal
         ? jsx('p', { className: 'wm-news-note', 'data-news-archive-note': 'window',
             children: t('newsArchiveNote', archiveTotal, archiveOldest, archiveNewest) })
+        : null,
+      // F138: name held-back events while the archive still shows the rest;
+      // when nothing eligible remains the empty state explains instead.
+      scope === 'all' && archiveTotal > 0 && excludedTotal > 0
+        ? jsx('p', { className: 'wm-news-note', 'data-news-archive-note': 'eligibility',
+            children: t('newsHiddenUnsupported', excludedTotal) })
         : null,
       failed && !current
         ? jsxs('div', { className: 'wm-product-section', children: [
@@ -14223,6 +14346,9 @@ const I18N = {
     newsEmptyNoChanges: 'Catalogues unchanged since the last check. New models, prices and plans will appear here.',
     newsEmptyNoMatches: 'There is news, but none of it mentions your configured providers, recorded usage or selected plans.',
     newsEmptyNoConfig: 'Nothing to personalise yet: no providers are configured, no usage is recorded, and no plans are selected.',
+    newsEmptyUnsupported: n => n === 1
+      ? 'There is 1 update, but it is from a provider this Hermes build does not support.'
+      : `There are ${n} updates, but all are from providers this Hermes build does not support.`,
     newsWhyRelevant: reasons => `For you because it ${reasons}.`,
     newsReasonUsedRecently: 'Used recently',
     newsReasonUsedBefore: 'Used before',
@@ -14261,6 +14387,13 @@ const I18N = {
     newsSumPlanChange: (plan, bits) => `${plan}: ${bits}.`,
     newsPlanFeeBit: (before, after) => `fee ${before} → ${after}`,
     newsPlanTermsChanged: 'allowances/terms changed',
+    newsPlanFieldAllowance: 'allowance window',
+    newsPlanFieldModel: 'model availability',
+    newsPlanFieldResetPolicy: 'reset policy',
+    newsPlanFieldProfile: 'plan',
+    newsPlanChangedBit: (head, before, after) => `${head}: ${before} → ${after}`,
+    newsPlanAddedBit: (head, after) => after ? `${head} added: ${after}` : `${head} added`,
+    newsPlanRemovedBit: (head, before) => before ? `${head} removed (was ${before})` : `${head} removed`,
     newsSumNewProviderFeed: (provider, count) => `${provider} newly listed on models.dev with ${count} priced model(s).`,
     newsSumNewModelFeed: (model, provider) => `${model} newly listed under ${provider} on models.dev.`,
     newsSumPriceChangeFeed: (model, provider) => `${model} (${provider}) list price changed on models.dev.`,
@@ -14377,6 +14510,9 @@ const I18N = {
       ? `The feed publishes its most recent ${total} events${oldest && newest ? ` (${oldest} to ${newest})` : ''}. Older events are not retained.`
       : '',
     newsArchiveSearchNote: 'Search covers the events the feed currently publishes; older events are not retained.',
+    newsHiddenUnsupported: n => n === 1
+      ? 'Plus 1 event from a provider this Hermes build does not support (hidden).'
+      : `Plus ${n} events from providers this Hermes build does not support (hidden).`,
     newsUnsupportedNoPlanEvents: 'No plan or membership change events are published: the feed compares the public model catalogue only, so this is a source limitation rather than a filter hiding results.',
     newsUnsupportedNoRemovals: 'Removal detection needs catalogue history the publisher does not keep, so no removal is claimed here.',
     newsConfidenceObserved: 'Observed',
@@ -15882,6 +16018,7 @@ const I18N = {
     newsEmptyNoChanges: '自上次检查以来目录没有变化。新的模型、价格和套餐会出现在这里。',
     newsEmptyNoMatches: '已有动态，但均未涉及您配置的供应商、已记录的用量或已选的套餐。',
     newsEmptyNoConfig: '暂无可个性化的内容：未配置供应商、未记录用量，也未选择套餐。',
+    newsEmptyUnsupported: n => `共有 ${n} 个事件，但全部来自此 Hermes 版本不支持的供应商。`,
     newsWhyRelevant: reasons => `与您相关：${reasons}。`,
     newsReasonUsedRecently: '最近使用过',
     newsReasonUsedBefore: '之前使用过',
@@ -15920,6 +16057,13 @@ const I18N = {
     newsSumPlanChange: (plan, bits) => `${plan}：${bits}。`,
     newsPlanFeeBit: (before, after) => `费用 ${before} → ${after}`,
     newsPlanTermsChanged: '额度/条款已变更',
+    newsPlanFieldAllowance: '额度窗口',
+    newsPlanFieldModel: '模型可用性',
+    newsPlanFieldResetPolicy: '重置规则',
+    newsPlanFieldProfile: '套餐',
+    newsPlanChangedBit: (head, before, after) => `${head}：${before} → ${after}`,
+    newsPlanAddedBit: (head, after) => after ? `${head} 新增：${after}` : `${head} 新增`,
+    newsPlanRemovedBit: (head, before) => before ? `${head} 已移除（原为 ${before}）` : `${head} 已移除`,
     newsSumNewProviderFeed: (provider, count) => `${provider} 已在 models.dev 上架，共有 ${count} 个已定价模型。`,
     newsSumNewModelFeed: (model, provider) => `${model} 已在 models.dev ${provider} 分类下上架。`,
     newsSumPriceChangeFeed: (model, provider) => `${model}（${provider}）在 models.dev 上的标价已变更。`,
@@ -16036,6 +16180,7 @@ const I18N = {
       ? `数据源仅发布最近 ${total} 个事件${oldest && newest ? `（${oldest} 至 ${newest}）` : ''}，更早的事件不会保留。`
       : '',
     newsArchiveSearchNote: '搜索范围为数据源当前发布的事件；更早的事件不会保留。',
+    newsHiddenUnsupported: n => `另有 ${n} 个事件来自此 Hermes 版本不支持的供应商，已隐藏。`,
     newsUnsupportedNoPlanEvents: '数据源不发布方案或会员变化事件：它只对比公开模型目录，因此这是来源限制，而不是筛选隐藏了结果。',
     newsUnsupportedNoRemovals: '下架检测需要发布方保留目录历史，而目前并未保留，因此此处不作下架声明。',
     newsConfidenceObserved: '已观察',
@@ -16973,8 +17118,8 @@ export const __test = {
   digestQuery, uiLocale, digestCopy, digestDownload, DigestPreview, ReportsPage,
   REPORTS_CSS, $digestDays,
   newsQuery, newsSettingsQuery, newsSaveSettings, invalidateNewsFor, newsFilter, newsCategoryLabel,
-  newsImpactText, newsReasonLabel, newsAgeDays, newsFreshLabel, newsCentralAlert, newsIsRelevant, newsHasSignals, newsRelevanceReasons, newsRelevanceText, newsEmptyText, NEWS_RELEVANCE_ORDER, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
-  newsSummaryText, newsConditionsText, newsImpactReasonText, NEWS_SUMMARY_CODES, NEWS_CONDITION_KEYS, NEWS_IMPACT_REASON_KEYS,
+  newsImpactText, newsReasonLabel, newsAgeDays, newsFreshLabel, newsCentralAlert, newsIsRelevant, newsIsEligible, newsHasSignals, newsRelevanceReasons, newsRelevanceText, newsEmptyText, NEWS_RELEVANCE_ORDER, NewsPage, NewsCard, NewsRateTable, NEWS_CSS,
+  newsSummaryText, newsConditionsText, newsImpactReasonText, NEWS_SUMMARY_CODES, NEWS_CONDITION_KEYS, NEWS_IMPACT_REASON_KEYS, NEWS_PLAN_FIELD_KEYS,
   newsGroupModels, newsFieldDelta, newsTierStatus, newsEventDeltas, newsOfferClass, newsRankGroups,
   newsItemReasons, newsGroupReasons, newsEntryMatchesSearch, newsFilterEntries, newsGroupImpactText,
   newsFmtPct, newsClassLabel, newsClearFilters, newsToggleDetails, NewsScopeTabs, NewsModelGroup,
@@ -16988,7 +17133,7 @@ export const __test = {
   newsModelFamily, newsFamilyLabel, newsPreviewSignal, newsEditorialComparison,
   newsEditorialEventType, newsEditorialSignals, newsEditorialScore, newsEditorialEntry,
   newsEditorialHeadline, newsEditorialVariant, newsEditorialGroup, newsEditorialMaterial,
-  newsBuildBriefing, newsBriefingFor, newsSanitiseBriefing, newsWithinWindow,
+  newsBuildBriefing, newsBriefingFor, newsFilterBriefingPersonal, newsSanitiseBriefing, newsWithinWindow,
   newsInstant, newsRateText, $newsFocus, $newsDetailsOpen, newsDetailsPanelId,
   newsHeadlineText, newsSectionTitle, newsSectionEntries, newsFocusGroup,
   newsBriefingForCategory, NEWS_SECTION_CATEGORY, newsBriefingItems,

@@ -235,9 +235,37 @@ test('newsEmptyText mirrors backend empty states, with a legacy fallback', () =>
   assert.equal(S.newsEmptyText({ items: newsy, scope: 'all', category: 'subscription', baseline: false, signals: null }, t), 'newsEmptyCategory()')
 })
 
+test('held-back providers stay countable in empty states', () => {
+  // F138: All Updates held back entirely by eligibility says so; For You
+  // keeps its relevance wording, which is still true.
+  const signals = { configured_families: ['openai'] }
+  assert.equal(S.newsEmptyText({ items: [], scope: 'all', category: 'all',
+    baseline: false, signals, excluded: 3 }, t), 'newsEmptyUnsupported(3)')
+  assert.equal(S.newsEmptyText({ items: [], scope: 'all', category: 'subscription',
+    baseline: false, signals, excluded: 1 }, t), 'newsEmptyUnsupported(1)')
+  const other = [{ id: 'b', category: 'price_reduction',
+    relevance: { relevant: false, reasons: [] } }]
+  assert.equal(S.newsEmptyText({ items: other, scope: 'foryou', category: 'all',
+    baseline: false, signals: {}, excluded: 3 }, t), 'newsEmptyNoConfig()')
+  assert.equal(S.newsEmptyText({ items: [], scope: 'all', category: 'all',
+    baseline: false, signals }, t), 'newsEmptyNoChanges()')
+  assert.equal(S.newsIsEligible({ eligible: true }), true)
+  assert.equal(S.newsIsEligible({ eligible: false }), false)
+  assert.equal(S.newsIsEligible({}), true, 'older payloads keep their items')
+  assert.equal(S.newsIsEligible(null), false)
+  assert.equal(enT('newsEmptyUnsupported', 2),
+    'There are 2 updates, but all are from providers this Hermes build does not support.')
+  assert.ok(zhT('newsEmptyUnsupported', 2).includes('不支持的供应商'))
+  assert.equal(enT('newsEmptyUnsupported', 1),
+    'There is 1 update, but it is from a provider this Hermes build does not support.')
+  assert.ok(enT('newsHiddenUnsupported', 2).includes('Plus 2 events'))
+  assert.ok(zhT('newsHiddenUnsupported', 2).includes('已隐藏'))
+})
+
 test('new news labels exist in English and Chinese', () => {
   const keys = ['newsEmptyBaseline', 'newsEmptyNoChanges', 'newsEmptyNoMatches',
-    'newsEmptyNoConfig', 'newsWhyRelevant', 'newsReasonConfigured',
+    'newsEmptyNoConfig', 'newsEmptyUnsupported', 'newsHiddenUnsupported',
+    'newsWhyRelevant', 'newsReasonConfigured',
     'newsReasonUsedProvider', 'newsReasonUsedRecently', 'newsReasonUsedBefore', 'newsReasonRelated',
     'newsReasonSelectedPlan']
   for (const [locale, table] of Object.entries(S.I18N)) {
@@ -325,6 +353,43 @@ test('plan changes use the fee_changed flag, never an empty clause', () => {
       fee_changed: false, terms_changed: false },
     summary: 'Plus: fee $20/mo → $20/mo.' }
   assert.equal(S.newsSummaryText(empty, enT), 'Plus: fee $20/mo → $20/mo.')
+})
+
+test('plan changes render changed fields with before/after values', () => {
+  // F139: the fee bit plus one bit per changed field; the stored English
+  // summary matches the templated rendering exactly.
+  const item = { summary_code: 'news_sum_plan_change',
+    summary_params: { plan: 'Plus', fee_before: '$20/mo', fee_after: '$20/mo',
+      fee_changed: false, terms_changed: true,
+      field_changes: [
+        { kind: 'changed', field: 'allowance', label: "'current-week' limit",
+          before: 'percent', after: 'credit_value_usd' },
+        { kind: 'added', field: 'model', label: "'opus'",
+          before: '', after: '{"scope": "model"}' },
+        { kind: 'removed', field: 'allowance', label: "'legacy'",
+          before: 'limit=percent', after: '' },
+      ] },
+    summary: "Plus: allowance window 'current-week' limit: percent → credit_value_usd; "
+      + 'model availability \'opus\' added: {"scope": "model"}; '
+      + "allowance window 'legacy' removed (was limit=percent)." }
+  assert.equal(S.newsSummaryText(item, enT), item.summary)
+  const zh = S.newsSummaryText(item, zhT)
+  assert.ok(zh.includes('额度窗口') && zh.includes('模型可用性'), zh)
+  assert.ok(zh.includes('percent → credit_value_usd'), 'values pass through')
+  assert.ok(!zh.includes('allowance window'), 'no English field names')
+  // Legacy items without field_changes keep the generic bit.
+  const legacy = { summary_code: 'news_sum_plan_change',
+    summary_params: { plan: 'Plus', fee_before: '$20/mo', fee_after: '$20/mo',
+      fee_changed: false, terms_changed: true },
+    summary: 'Plus: allowances/terms changed.' }
+  assert.equal(S.newsSummaryText(legacy, enT), 'Plus: allowances/terms changed.')
+  assert.ok(S.newsSummaryText(legacy, zhT).includes('额度/条款已变更'))
+  // Unknown change shapes render nothing rather than half a sentence.
+  const weird = { summary_code: 'news_sum_plan_change',
+    summary_params: { plan: 'Plus', fee_before: '$20/mo', fee_after: '$25/mo',
+      fee_changed: true, terms_changed: true, field_changes: [null, {}, { kind: 'frob' }] },
+    summary: 'Plus: fee $20/mo → $25/mo.' }
+  assert.equal(S.newsSummaryText(weird, enT), 'Plus: fee $20/mo → $25/mo.')
 })
 
 test('news summaries fall back to the raw summary', () => {

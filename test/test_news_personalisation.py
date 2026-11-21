@@ -70,16 +70,19 @@ class PersonalisePayloadTests(unittest.TestCase):
         self.assertFalse(out["local"]["items"][0]["relevance"]["relevant"])
 
     def test_for_you_reflects_usage_and_plans_canonically(self):
+        # F138: the route alias canonicalises configured and used matching,
+        # but only configuration (or a selected plan) qualifies the item.
         used = item("l1", "openai", "local", model="gpt-x")
         planned = item("c1", "demo", "central")
-        signals = {"configured_families": [],
+        signals = {"configured_families": ["openai-codex"],
                    "used_providers": ["openai-codex"],
                    "used_models": [{"provider": "openai-codex", "model": "gpt-x"}],
                    "plan_families": ["demo"]}
         out = monitoring.personalise_payload(
             payload([used], [planned]), signals=signals)
-        self.assertEqual(out["local"]["items"][0]["relevance"]["reasons"],
-                         ["used_provider", "used_model"])
+        self.assertEqual(out["local"]["items"][0]["relevance"],
+                         {"relevant": True, "reasons": ["configured_provider",
+                                                        "used_provider", "used_model"]})
         self.assertEqual(out["central"]["items"][0]["relevance"]["reasons"],
                          ["selected_plan_family"])
 
@@ -114,6 +117,85 @@ class PersonalisePayloadTests(unittest.TestCase):
                 payload([item("l1", "acme", "local")], []),
                 signals={"configured_families": ["acme"]})
             self.assertFalse(data.exists())
+
+    def test_briefing_entries_gain_personal_flags(self):
+        # F138: a published entry is personal when its head provider or any
+        # variant provider is configured or carries a selected plan. Usage
+        # alone never qualifies; variants and counts stay untouched.
+        doc = payload([], [])
+        doc["central"]["briefing"] = {
+            "version": 1, "generated_at": "2026-11-02T00:00:00Z",
+            "sections": [
+                {"id": "biggest_reductions", "total": 3, "entries": [
+                    {"provider": "anthropic", "model": "m",
+                     "headline": "cut", "event_ids": ["e1"]},
+                    {"provider": "openai", "model": "m",
+                     "headline": "cut", "event_ids": ["e2"]},
+                    {"provider": "uberllm", "model": "m",
+                     "headline": "group",
+                     "family_event_count": 2, "providers": ["uberllm", "anthropic"],
+                     "event_ids": ["e3", "e4"],
+                     "variants": [
+                         {"provider": "uberllm", "model": "m",
+                          "event_ids": ["e3"]},
+                         {"provider": "anthropic", "model": "m",
+                          "event_ids": ["e4"]},
+                     ]},
+                ]},
+                {"id": "subscriptions", "total": 2, "entries": [
+                    {"provider": "demo", "model": "",
+                     "headline": "plan", "event_ids": ["p1"]},
+                    {"provider": "other-family",
+                     "model": "", "headline": "plan", "event_ids": ["p2"]},
+                ]},
+            ],
+            "counts": {"events": 5}, "unsupported": [],
+        }
+        signals = {"configured_families": ["anthropic"],
+                   "used_providers": ["openai"],
+                   "used_models": [{"provider": "openai", "model": "m"}],
+                   "plan_families": ["demo"]}
+        out = monitoring.personalise_payload(doc, signals=signals)
+        sections = {section["id"]: section
+                    for section in out["central"]["briefing"]["sections"]}
+        cuts = sections["biggest_reductions"]["entries"]
+        self.assertTrue(cuts[0]["personal"])
+        self.assertFalse(cuts[1]["personal"])
+        self.assertTrue(cuts[2]["personal"])
+        self.assertEqual(cuts[2]["family_event_count"], 2)
+        self.assertEqual(len(cuts[2]["variants"]), 2)
+        plans = sections["subscriptions"]["entries"]
+        self.assertTrue(plans[0]["personal"])
+        self.assertFalse(plans[1]["personal"])
+        self.assertEqual(sections["biggest_reductions"]["total"], 3)
+        self.assertEqual(out["central"]["briefing"]["counts"], {"events": 5})
+
+    def test_briefing_flags_follow_the_active_profile(self):
+        # F138: the same published entry is personal under the profile that
+        # configures its provider and impersonal under one that does not.
+        def flagged(configured):
+            doc = payload([], [])
+            doc["central"]["briefing"] = {
+                "version": 1,
+                "sections": [{"id": "biggest_reductions", "total": 1,
+                              "entries": [{"provider": "openai", "model": "m",
+                                           "headline": "cut"}]}],
+            }
+            out = monitoring.personalise_payload(
+                doc, signals={"configured_families": configured})
+            return out["central"]["briefing"]["sections"][0]["entries"][0]["personal"]
+
+        self.assertTrue(flagged(["openai"]))
+        self.assertFalse(flagged(["anthropic"]))
+
+    def test_briefing_flagging_tolerates_missing_blocks(self):
+        out = monitoring.personalise_payload(
+            payload([], []), signals={"configured_families": ["acme"]})
+        self.assertNotIn("briefing", out["central"])
+        doc = payload([], [])
+        doc["central"]["briefing"] = {"version": 1, "sections": None}
+        out = monitoring.personalise_payload(doc, signals={})
+        self.assertIsNone(out["central"]["briefing"]["sections"])
 
 
 class ThrottledRefreshTests(unittest.TestCase):

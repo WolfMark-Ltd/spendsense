@@ -232,6 +232,7 @@ const FIXTURES = {
         observed_at: '2026-11-09T00:00:00Z', confidence: 'curated',
         provenance: 'publisher history (family head)',
         source_url: 'https://builder.example/family-head',
+        personal: true,
         family_event_count: 2, event_ids: [REALISTIC.local.items[0].id],
         variants: [
           { event_type: 'removed_from_provider', headline_code: 'news_head_removed',
@@ -265,6 +266,7 @@ const FIXTURES = {
         provider: 'acme', model: `gone-${i}`, model_family: `gone-${i}`,
         observed_at: '2026-11-09T00:00:00Z', confidence: 'curated',
         source_url: 'https://builder.example/gone', event_ids: [`ghost-${i}`],
+        personal: true,
       })) }] } },
   },
   // Page-local variant: a published briefing that reports no plan-event source
@@ -306,6 +308,7 @@ const FIXTURES = {
         provider: 'acme', model: 'pair-model', model_family: 'pair-model',
         observed_at: '2026-11-09T00:00:00Z', confidence: 'observed',
         source_url: 'https://models.dev/page-head', event_ids: ['local-page-target'],
+        personal: true,
       }] }] } },
   },
   // Page-local variant (never in the grid matrix): one model family whose
@@ -380,7 +383,7 @@ const FIXTURES = {
             headline: 'openai cuts gpt-5.6-sol input by 50% ($2.5 → $1.25 per 1M tokens)',
             provider: 'openai', model: 'gpt-5.6-sol', model_family: 'gpt-5.6-sol',
             observed_at: REALISTIC.central.fetched_at, confidence: 'observed',
-            event_ids: [REALISTIC.local.items[0].id],
+            event_ids: [REALISTIC.local.items[0].id], personal: true,
           }] },
           { id: 'removals', total: 1, entries: [{
             event_type: 'removed_from_provider',
@@ -391,7 +394,7 @@ const FIXTURES = {
             provider: 'acme', model: 'alpha', model_family: 'alpha',
             observed_at: '2026-11-09T00:00:00Z', confidence: 'observed',
             source_url: 'https://models.dev/removals/rm-acme-alpha',
-            event_ids: ['rm-acme-alpha'],
+            event_ids: ['rm-acme-alpha'], personal: true,
           }] },
         ],
         counts: { events: 2 },

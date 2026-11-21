@@ -90,6 +90,11 @@ is `price_mixed` even though its v1 category follows the input+output total.
 - **Grouping never merges.** Model families group headlines for scanning
   (`DeepSeek V4.1 Flash: 2 changes at wally`), while every variant keeps its
   exact provider and model id and its own event id.
+- **A re-verification is not a plan change.** The plan diff compares price,
+  allowance windows, model availability, reset policy and plan profile;
+  verification metadata and display prose never emit on their own, and a
+  change that leaves the fee untouched names its field with before/after
+  values instead of a generic allowances note.
 
 ## What the current publisher can and cannot support
 
@@ -171,9 +176,13 @@ operational and review burden is not.
    for them and adding one would make older clients drop the item *and* fail
    carry-forward on the next run. A UI that wants removals in All Updates needs
    either a v2 category or a category-independent renderer.
-4. **Truncation policy.** Generic provider listings are now dropped before any
-   event with a model identity when the 200-item cap binds — including listings
-   carried from an older feed that has no `event_type` yet.
+4. **Truncation policy.** When the 200-item cap binds, the least actionable
+   events go first: Hermes-native providers are kept ahead of the long tail,
+   and — within each side — generic provider listings are dropped before any
+   event with a model identity, including listings carried from an older feed
+   that has no `event_type` yet. Subscription items are never displaced by
+   model events. The same preference applies when the client re-validates a
+   fetched feed, where the configured providers join the native set.
 5. **Removal window.** 90 days, matching the feed's retention.
 6. **Size budget.** The document is held under 200 KiB, below the client's
    256 KiB cap. The editorial layer is trimmed first, then dropped; if items
@@ -255,11 +264,13 @@ calls a model or transmits usage.
   Updates" claim was wrong for briefing-only removals.
 - Treat a missing briefing as normal (byte-budget fallback) and keep the
   existing item rendering.
-- A published briefing wins only when it carries at least one section this client
-  renders. Sanitising keeps unknown section ids as data, so a version-1 document
-  made only of unrecognised ids would otherwise be chosen and then render
-  nothing, hiding local headlines the archive could still build. A recognised
-  section that is legitimately empty stays authoritative.
+- A published briefing wins only when it carries at least one personal entry
+  in a section this client renders. Sanitising keeps unknown section ids as
+  data, so a version-1 document made only of unrecognised ids would otherwise
+  be chosen and then render nothing, hiding local headlines the archive could
+  still build. Entries without personal flags, and documents with nothing
+  personal, fall back to the local briefing, which builds from the profile's
+  own relevant events.
 
 ## One scrolling surface
 
@@ -280,4 +291,14 @@ the same document carried 36 `openrouter` items, so the owner's empty
 alias defect. The UI therefore states the window it covers
 (`[data-news-archive-note]`) and repeats the limitation under a search that
 returns nothing, so a missing older event reads as a bounded archive rather
-than a broken feed.
+than a broken feed. Since 0.6.16 the scopes enforce provider eligibility
+(F138). All Updates shows Hermes-native providers plus subscription items;
+anything else is counted in the archive note, and an archive held back
+entirely says so instead of reporting "unchanged". For You is personal:
+model and provider news from currently configured providers (plus plan news
+for configured or selected-plan families), whether or not the provider is
+native — so a configured custom route surfaces in For You but never in All
+Updates. Headlines follow the same rule: a published briefing renders its
+personal entries only (flagged server-side), and the local briefing builds
+from personal events; when a published briefing cannot be filtered reliably
+the local one answers instead.

@@ -252,6 +252,29 @@ class IdentitySwitchingTests(ScenarioTestCase):
         self.assertFalse(
             monitoring.match_relevance(item, guest_signals)["relevant"])
 
+    def test_for_you_follows_the_active_profile(self):
+        # F138: the same stored news is personal under the profile that
+        # configures its provider and impersonal under one that does not.
+        # Native support alone never qualifies; unconfigured usage never does.
+        self.seed_local_news(
+            self.data,
+            book([("openai", "alpha", Rate(3.0, 15.0))]),
+            book([("openai", "alpha", Rate(2.0, 10.0))]))
+        other_home = Path(self.scratch.name) / "other-home"
+        self.write_auth({"openai": [{"id": "one"}]})
+        self.write_auth({"anthropic": [{"id": "two"}]}, home=other_home)
+        mine = news.news_payload(data_dir=self.data, event_db=self.events,
+                                 home=self.home, now=NOW)
+        theirs = news.news_payload(data_dir=self.data, event_db=self.events,
+                                   home=other_home, now=NOW)
+        self.assertTrue(mine["local"]["items"][0]["for_you"])
+        self.assertFalse(theirs["local"]["items"][0]["for_you"])
+        self.assertEqual(mine["for_you_count"], 1)
+        self.assertEqual(theirs["for_you_count"], 0)
+        # Both profiles see the native event in All Updates.
+        self.assertTrue(mine["local"]["items"][0]["eligible"])
+        self.assertTrue(theirs["local"]["items"][0]["eligible"])
+
     def test_stored_items_and_feed_cache_do_not_leak_across_identities(self):
         primary = self.identity("primary")
         guest = self.identity("guest")
@@ -293,7 +316,10 @@ class MultiProviderScenarioTests(ScenarioTestCase):
     """Mixed signals: every item carries its own correct reasons."""
 
     def test_each_item_explains_its_own_relevance(self):
-        self.write_auth({"anthropic": [{"id": "one"}]})
+        # F138: usage annotates a configured provider; it cannot qualify an
+        # unconfigured one, so openai is configured here.
+        self.write_auth({"anthropic": [{"id": "one"}],
+                         "openai": [{"id": "two"}]})
         self.create_events([{"provider": "openai-codex", "model": "gpt-x",
                              "input_tokens": 100, "output_tokens": 50}])
         self.write_store([{"id": "a1", "family": "demo",
@@ -328,7 +354,8 @@ class MultiProviderScenarioTests(ScenarioTestCase):
                           "reasons": ["configured_provider"]})
         self.assertEqual(by_id["c-openai"]["relevance"],
                          {"relevant": True,
-                          "reasons": ["used_provider", "used_model"]})
+                          "reasons": ["configured_provider", "used_provider",
+                                      "used_model"]})
         self.assertEqual(by_id["c-demo"]["relevance"],
                          {"relevant": True,
                           "reasons": ["selected_plan_family"]})

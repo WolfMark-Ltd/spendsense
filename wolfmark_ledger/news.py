@@ -26,7 +26,7 @@ import tempfile
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional
 from urllib.request import Request, urlopen
 
 from . import discovery
@@ -199,6 +199,14 @@ def _rate_entry(rate: Any) -> dict[str, Any]:
             "tiers": _tier_sig(getattr(rate, "tiers", ()))}
 
 
+#: Plan-profile fields compared alongside price and terms (F139). Snapshots
+#: written before these keys existed simply lack them, and the diff skips a
+#: profile field unless BOTH sides carry it — so the upgrade refresh reports
+#: no profile news and the next snapshot compares at full fidelity.
+_PLAN_PROFILE_FIELDS = ("kind", "billing_arrangement", "seat_pricing",
+                        "access", "model_restrictions")
+
+
 def _plans_table(doc: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     table: dict[str, dict[str, Any]] = {}
     plans = doc.get("plans") if isinstance(doc, Mapping) else None
@@ -219,6 +227,11 @@ def _plans_table(doc: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
                       "period": price.get("period")},
             "terms": json.dumps(plan.get("entitlements"), sort_keys=True, default=str),
             "source_id": str(verification.get("source_id") or ""),
+            "kind": plan.get("kind"),
+            "billing_arrangement": plan.get("billing_arrangement"),
+            "seat_pricing": plan.get("seat_pricing"),
+            "access": plan.get("access"),
+            "model_restrictions": plan.get("model_restrictions"),
         }
     return table
 
@@ -467,7 +480,9 @@ def _migrate_snapshot_plans(old_plans: Mapping[str, Any]) -> dict[str, Any]:
     and entitlement changes still compare unequal. Idempotent:
     already-normalised rows migrate to themselves. Rows that fail to
     parse or validate are kept as-is so a corrupt snapshot can never
-    break a refresh.
+    break a refresh. Profile keys are dropped: legacy rows predate
+    trustworthy profile capture, so the upgrade compare skips those fields
+    instead of reporting representation drift as news.
     """
     migrated: dict[str, Any] = {}
     for plan_id, row in old_plans.items():
@@ -481,10 +496,12 @@ def _migrate_snapshot_plans(old_plans: Mapping[str, Any]) -> dict[str, Any]:
             price = mem.normalise_price(row.get("price"), str(plan_id))
             entitlements = mem.normalise_entitlements(terms)
         except (ValueError, TypeError, mem.CatalogueError):
-            migrated[plan_id] = row
+            migrated[plan_id] = {key: value for key, value in row.items()
+                                 if key not in _PLAN_PROFILE_FIELDS}
             continue
         migrated[plan_id] = {
-            **row,
+            **{key: value for key, value in row.items()
+               if key not in _PLAN_PROFILE_FIELDS},
             "price": price,
             "terms": json.dumps(entitlements, sort_keys=True, default=str),
         }
@@ -571,6 +588,247 @@ def _raw_tiers_changed(old: Mapping[str, Any], new: Mapping[str, Any]) -> bool:
     if not isinstance(old_raw, list) or not isinstance(new_raw, list):
         return False
     return old_raw != new_raw
+
+
+def _plan_display(value: Any) -> str:
+    """Short readable rendering of one compared plan value."""
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    text = value.strip() if isinstance(value, str) \
+        else json.dumps(value, sort_keys=True, default=str)
+    if len(text) > _PLAN_VALUE_CHARS:
+        return text[:_PLAN_VALUE_CHARS - 1].rstrip() + "…"
+    return text
+
+
+def _plan_price_sig(price: Any, plan_id: str) -> dict[str, Any]:
+    """Comparable fee: normalised when valid, raw otherwise.
+
+    Normalisation folds representation-only differences (``10`` vs ``10.0``,
+    ``usd`` vs ``USD``); an invalid block falls back to its raw fields so a
+    hand-written catalogue still diffs exactly as before.
+    """
+    try:
+        return mem.normalise_price(price if isinstance(price, dict) else {},
+                                   str(plan_id))
+    except (ValueError, TypeError, mem.CatalogueError):
+        raw = price if isinstance(price, dict) else {}
+        return {"amount": raw.get("amount"), "currency": raw.get("currency"),
+                "period": raw.get("period")}
+
+
+#: Allowance-window fields that carry meaning (F139). Display prose (label,
+#: detail) and derived flags never decide a plan change on their own: every
+#: numeric allowance in the catalogue is mirrored in these structural fields.
+_PLAN_WINDOW_FIELDS = ("id", "kind", "duration_minutes", "limit", "scope",
+                       "amount", "currency")
+
+#: Changed-field display names for plan-change summaries, by field code.
+_PLAN_FIELD_NAMES = {
+    "allowance": "allowance window",
+    "model": "model availability",
+    "reset_policy": "reset policy",
+    "profile": "plan",
+}
+
+#: Profile sub-fields in a stable report order, with display names.
+_PLAN_PROFILE_LABELS = (
+    ("kind", "plan kind"),
+    ("billing_arrangement", "billing arrangement"),
+    ("seat_pricing", "seat pricing"),
+    ("access", "route access"),
+    ("model_restrictions", "model restrictions"),
+)
+
+#: Longest before/after value kept in a plan-change item. The full terms
+#: stay in the snapshot; the item carries readable evidence, not the archive.
+_PLAN_VALUE_CHARS = 200
+
+
+def _plan_window_sig(window: Any) -> dict[str, Any]:
+    """Comparable allowance window: structural fields only.
+
+    A bare string is an id-only window (the shape raw catalogues use); a
+    mapping projects its structural fields. Label and detail prose never
+    join the signature. An id-less mapping falls back to its label for
+    identity, mirroring ``normalise_windows``; the shipped catalogue has
+    zero such windows, so a label reword there can only rename identity in
+    a catalogue that drops explicit ids first. No rename inference is
+    attempted: identity follows the catalogue's own rule.
+    """
+    sig = {key: None for key in _PLAN_WINDOW_FIELDS}
+    if isinstance(window, str):
+        sig["id"] = window
+        return sig
+    if not isinstance(window, dict):
+        return sig
+    for key in _PLAN_WINDOW_FIELDS:
+        sig[key] = window.get(key)
+    if sig["id"] is not None:
+        sig["id"] = str(sig["id"])
+    if not sig["id"] and isinstance(window.get("label"), str) \
+            and window["label"].strip():
+        sig["id"] = window["label"].strip()
+    return sig
+
+
+def _plan_terms_meaningful(terms: Any) -> dict[str, Any]:
+    """Meaningful terms: allowances, model availability and reset policy.
+
+    Verification blocks are curation metadata (checked_at, notes, source):
+    re-verifying a plan must never read as a plan change. Anything
+    unparseable degrades to empty rather than failing the diff.
+    """
+    empty: dict[str, Any] = {"windows": [], "models": {}, "reset_policy": {}}
+    if isinstance(terms, str):
+        try:
+            terms = json.loads(terms)
+        except ValueError:
+            return empty
+    if not isinstance(terms, dict):
+        return empty
+    windows = terms.get("windows")
+    models = terms.get("models")
+    policy = terms.get("reset_policy")
+    return {
+        "windows": [_plan_window_sig(entry) for entry in windows]
+        if isinstance(windows, list) else [],
+        "models": dict(models) if isinstance(models, dict) else {},
+        "reset_policy": dict(policy) if isinstance(policy, dict) else {},
+    }
+
+
+def _plan_window_brief(sig: Mapping[str, Any]) -> str:
+    """Compact evidence for an added or removed window: its set fields."""
+    return ", ".join(f"{key}={_plan_display(sig[key])}"
+                     for key in _PLAN_WINDOW_FIELDS
+                     if key != "id" and sig.get(key) is not None)
+
+
+def _plan_window_changes(before: list[dict[str, Any]],
+                         after: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Added/removed windows and per-field changes within shared ids.
+
+    Windows with usable unique ids diff precisely; anything degenerate
+    (missing or duplicated ids) falls back to an honest window-count change
+    rather than guessing which row moved.
+    """
+    changes: list[dict[str, Any]] = []
+    before_ids = [window["id"] for window in before]
+    after_ids = [window["id"] for window in after]
+    if (all(before_ids) and all(after_ids)
+            and len(set(before_ids)) == len(before_ids)
+            and len(set(after_ids)) == len(after_ids)):
+        index = {window["id"]: window for window in before}
+        for window in after:
+            old = index.pop(window["id"], None)
+            if old is None:
+                changes.append({"kind": "added", "field": "allowance",
+                                "label": f"'{window['id']}'", "before": "",
+                                "after": _plan_window_brief(window)})
+                continue
+            for key in _PLAN_WINDOW_FIELDS:
+                if key == "id" or old.get(key) == window.get(key):
+                    continue
+                changes.append({"kind": "changed", "field": "allowance",
+                                "label": f"'{window['id']}' {key}",
+                                "before": _plan_display(old.get(key)),
+                                "after": _plan_display(window.get(key))})
+        for gone in index.values():
+            changes.append({"kind": "removed", "field": "allowance",
+                            "label": f"'{gone['id']}'",
+                            "before": _plan_window_brief(gone), "after": ""})
+        return changes
+    old_sigs = sorted(json.dumps(window, sort_keys=True, default=str)
+                      for window in before)
+    new_sigs = sorted(json.dumps(window, sort_keys=True, default=str)
+                      for window in after)
+    if old_sigs == new_sigs:
+        return changes
+    if len(before) != len(after):
+        changes.append({"kind": "changed", "field": "allowance",
+                        "label": "count",
+                        "before": str(len(before)), "after": str(len(after))})
+        return changes
+    # Same count, different content, unpairable ids: report the structural
+    # values themselves rather than a vacuous N → N. The windows are never
+    # paired to guess which one moved.
+    changes.append({"kind": "changed", "field": "allowance", "label": "",
+                    "before": _plan_display([json.loads(sig) for sig in old_sigs]),
+                    "after": _plan_display([json.loads(sig) for sig in new_sigs])})
+    return changes
+
+
+def _plan_mapping_changes(field: str, before: Mapping[str, Any],
+                          after: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Per-key added/removed/changed between two mappings."""
+    changes: list[dict[str, Any]] = []
+    for key in sorted(set(before) | set(after), key=str):
+        label = f"'{key}'"
+        if key not in before:
+            changes.append({"kind": "added", "field": field, "label": label,
+                            "before": "",
+                            "after": _plan_display(after[key])})
+        elif key not in after:
+            changes.append({"kind": "removed", "field": field, "label": label,
+                            "before": _plan_display(before[key]), "after": ""})
+        elif json.dumps(before[key], sort_keys=True, default=str) != json.dumps(
+                after[key], sort_keys=True, default=str):
+            changes.append({"kind": "changed", "field": field, "label": label,
+                            "before": _plan_display(before[key]),
+                            "after": _plan_display(after[key])})
+    return changes
+
+
+def _plan_field_changes(plan_id: str, before: Mapping[str, Any],
+                        after: Mapping[str, Any]) -> tuple[bool, list[dict[str, Any]]]:
+    """Meaningful fee/terms/profile comparison of one plan row.
+
+    Returns ``(fee_changed, changes)``; ``changes`` holds ``{kind, field,
+    label, before, after}`` with stable field codes from
+    :data:`_PLAN_FIELD_NAMES`. Metadata-only touches (verification blocks,
+    display prose) yield no changes at all, so they can neither emit nor —
+    through a minted id — repeat as equivalent updates.
+    """
+    fee_changed = _plan_price_sig(before.get("price"), plan_id) \
+        != _plan_price_sig(after.get("price"), plan_id)
+    meaningful_before = _plan_terms_meaningful(before.get("terms"))
+    meaningful_after = _plan_terms_meaningful(after.get("terms"))
+    changes = _plan_window_changes(meaningful_before["windows"],
+                                   meaningful_after["windows"])
+    changes += _plan_mapping_changes("model", meaningful_before["models"],
+                                     meaningful_after["models"])
+    changes += _plan_mapping_changes("reset_policy",
+                                     meaningful_before["reset_policy"],
+                                     meaningful_after["reset_policy"])
+    for key, label in _PLAN_PROFILE_LABELS:
+        if key not in before or key not in after:
+            continue  # snapshots predate trustworthy profile capture
+        old_sig = json.dumps(before[key], sort_keys=True, default=str)
+        new_sig = json.dumps(after[key], sort_keys=True, default=str)
+        if old_sig != new_sig:
+            changes.append({"kind": "changed", "field": "profile",
+                            "label": label,
+                            "before": _plan_display(before[key]),
+                            "after": _plan_display(after[key])})
+    return fee_changed, changes
+
+
+def _plan_change_bit(change: Mapping[str, Any]) -> str:
+    """English rendering of one field change, for the summary fallback."""
+    name = _PLAN_FIELD_NAMES.get(str(change.get("field") or ""), "")
+    head = f"{name} {change.get('label') or ''}".strip()
+    kind = change.get("kind")
+    before, after = str(change.get("before") or ""), str(change.get("after") or "")
+    if kind == "added":
+        return f"{head} added" + (f": {after}" if after else "")
+    if kind == "removed":
+        return f"{head} removed" + (f" (was {before})" if before else "")
+    return f"{head}: {before} → {after}"
 
 
 def _rate_change_code(old: Mapping[str, Any], new: Mapping[str, Any],
@@ -759,17 +1017,30 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
             continue
         fee_before = json.dumps(before.get("price"), sort_keys=True, default=str)
         fee_after = json.dumps(after.get("price"), sort_keys=True, default=str)
-        terms_changed = before.get("terms") != after.get("terms")
-        if fee_before == fee_after and not terms_changed:
+        terms_before, terms_after = (str(before.get("terms")),
+                                     str(after.get("terms")))
+        fee_changed, field_changes = _plan_field_changes(plan_id, before, after)
+        if not fee_changed and not field_changes:
             continue
         bits = []
-        if fee_before != fee_after:
+        if fee_changed:
             bits.append(f"fee {_fee_text(before.get('price') or {})} → {_fee_text(after.get('price') or {})}")
-        if terms_changed:
-            bits.append("allowances/terms changed")
+        bits.extend(_plan_change_bit(change) for change in field_changes)
+        id_parts = ["plan-change", str(plan_id), fee_before, fee_after,
+                    terms_before, terms_after]
+        if fee_before == fee_after and terms_before == terms_after:
+            # Profile-only transition: the legacy components cannot tell two
+            # successive profile changes apart, so the compared profile values
+            # join the identity. Mirrors the raw-only tier material for rate
+            # changes: existing ids stay byte-identical.
+            id_parts += [
+                json.dumps({key: before[key] for key in _PLAN_PROFILE_FIELDS
+                            if key in before}, sort_keys=True, default=str),
+                json.dumps({key: after[key] for key in _PLAN_PROFILE_FIELDS
+                            if key in after}, sort_keys=True, default=str),
+            ]
         items.append({
-            "id": _stable_id("plan-change", str(plan_id), fee_before, fee_after,
-                             str(before.get("terms")), str(after.get("terms"))),
+            "id": _stable_id(*id_parts),
             "origin": "local", "category": "subscription",
             "provider": str(after.get("family") or before.get("family") or ""), "model": "",
             "summary": f"{after.get('name') or plan_id}: {'; '.join(bits)}.",
@@ -777,8 +1048,9 @@ def diff_snapshots(old: Mapping[str, Any], new: Mapping[str, Any], *,
             "summary_params": {"plan": str(after.get('name') or plan_id),
                                "fee_before": _fee_text(before.get('price') or {}),
                                "fee_after": _fee_text(after.get('price') or {}),
-                               "fee_changed": fee_before != fee_after,
-                               "terms_changed": bool(terms_changed)},
+                               "fee_changed": bool(fee_changed),
+                               "terms_changed": bool(field_changes),
+                               "field_changes": field_changes},
             "previous": None, "current": None,
             "observed_at": observed_at, "effective_at": "",
             "source_url": urls.get(str(after.get("source_id") or before.get("source_id") or ""), ""),
@@ -947,8 +1219,30 @@ def _valid_text(value: Any, limit: int) -> str:
     return text[:limit]
 
 
-def validate_feed(raw: Any) -> tuple[Optional[dict[str, Any]], list[str]]:
-    """Strict schema check for a fetched central feed. Drops bad items."""
+def _preferred_first(items: list[dict[str, Any]],
+                   prefer: set[str]) -> list[dict[str, Any]]:
+    """Truncation order: subscriptions, then preferred providers, then the rest.
+
+    Each partition keeps its incoming newest-first order; the cap cuts from
+    the end, so unsupported providers can never displace eligible updates.
+    """
+    subs = [item for item in items if item["category"] == "subscription"]
+    rest = [item for item in items if item["category"] != "subscription"]
+    liked = [item for item in rest
+             if matches_preference(item["provider"], prefer)]
+    other = [item for item in rest
+             if not matches_preference(item["provider"], prefer)]
+    return [*subs, *liked, *other]
+
+
+def validate_feed(raw: Any, *,
+                  prefer: Optional[set[str]] = None) -> tuple[Optional[dict[str, Any]], list[str]]:
+    """Strict schema check for a fetched central feed. Drops bad items.
+
+    ``prefer`` is a truncation-preference set (see :func:`eligible_keys`):
+    when the cap binds, subscription items and preferred providers are kept
+    ahead of anything else. Without it the newest items win, as before.
+    """
     errors: list[str] = []
     if not isinstance(raw, dict):
         return None, ["feed is not an object"]
@@ -1064,7 +1358,11 @@ def validate_feed(raw: Any) -> tuple[Optional[dict[str, Any]], list[str]]:
         items.append(item)
     items.sort(key=lambda item: (item["observed_at"], item["provider"], item["model"]), reverse=True)
     if len(items) > FEED_MAX_ITEMS:
+        if prefer is not None:
+            items = _preferred_first(items, prefer)
         del items[FEED_MAX_ITEMS:]
+        items.sort(key=lambda item: (item["observed_at"], item["provider"], item["model"]),
+                   reverse=True)
         errors.append(f"feed truncated to {FEED_MAX_ITEMS} items")
     feed = {"version": 1, "generated_at": generated_at, "items": items}
     briefing = news_briefing.sanitise_briefing(raw.get("briefing"))
@@ -1088,6 +1386,7 @@ def load_cache(path: Optional[Path | str] = None) -> dict[str, Any]:
 
 def fetch_central(*, data_dir: Optional[Path | str] = None,
                   settings: Optional[Mapping[str, Any]] = None,
+                  home: Optional[Path | str] = None,
                   now: Optional[float] = None,
                   force: bool = False) -> dict[str, Any]:
     """Fetch the public feed when opted in, honouring the cache interval.
@@ -1096,6 +1395,8 @@ def fetch_central(*, data_dir: Optional[Path | str] = None,
     accounts, credentials, model lists, usage or tracking tokens. Any
     failure keeps the previous cache and reports the error; local news is
     unaffected. On a remote Hermes host, that host makes the request.
+    Intake prefers eligible providers at the cap, so unsupported providers
+    cannot displace this profile's updates.
     """
     import time as _time
 
@@ -1121,7 +1422,12 @@ def fetch_central(*, data_dir: Optional[Path | str] = None,
             body = response.read(FEED_MAX_BYTES + 1)
         if len(body) > FEED_MAX_BYTES:
             raise ValueError("feed exceeds the size cap")
-        feed, problems = validate_feed(json.loads(body.decode("utf-8-sig")))
+        try:
+            prefer = eligible_keys(discovery.credential_slots(home))
+        except Exception:  # noqa: BLE001 - intake still prefers native providers
+            prefer = set(NATIVE_FEED_PROVIDERS)
+        feed, problems = validate_feed(json.loads(body.decode("utf-8-sig")),
+                                       prefer=prefer)
         if feed is None:
             raise ValueError("; ".join(problems) or "invalid feed")
         payload = {"version": NEWS_VERSION, "fetched_at": _now_iso(moment),
@@ -1141,6 +1447,120 @@ def fetch_central(*, data_dir: Optional[Path | str] = None,
 
 def canonical_route_provider(route: str) -> str:
     return PROVIDER_ALIASES.get(str(route or "").strip().lower(), str(route or "").strip().lower())
+
+
+#: Feed-provider spellings Hermes itself can route to (F138). All Updates
+#: shows only these, plus subscription items (plan families, not inference
+#: providers, so the membership catalogue is never filtered). A configured
+#: custom/plugin route does not satisfy this native-only rule; it surfaces
+#: in For You instead, which is scoped by configuration rather than by
+#: native support.
+#:
+#: The inference ids mirror the installed Hermes native provider registry
+#: (``hermes_cli.auth.PROVIDER_REGISTRY`` as shipped in Hermes 0.23.3,
+#: satisfying the ``>=0.22.5`` floor: nous, openai-codex, openai-api,
+#: xai-oauth, qwen-oauth, lmstudio, gemini, zai, kimi-coding, kimi-coding-cn,
+#: stepfun, arcee, gmi, actual, minimax, minimax-oauth, anthropic, alibaba,
+#: alibaba-coding-plan, minimax-cn, deepseek, xai, nvidia, ai-gateway,
+#: opencode-zen, opencode-go, kilocode, huggingface, xiaomi,
+#: tencent-tokenhub, tencent-tokenplan, ollama-cloud, bedrock, vertex,
+#: azure-foundry), translated to the models.dev spellings the feeds carry
+#: (openai, google, moonshotai, z-ai, amazon-bedrock, google-vertex, ...).
+#: ``openrouter`` is Hermes' default route (special-cased outside the
+#: registry rows); ``github-copilot`` and ``commandcode`` are Hermes route
+#: slugs this codebase recognises with live catalogue presence. Both
+#: spellings of renamed pairs (zai/z-ai) are listed so a feed carrying
+#: either keeps working. Refresh against the installed Hermes registry
+#: when Hermes ships new native providers.
+NATIVE_FEED_PROVIDERS = frozenset({
+    # Hermes registry ids, verbatim (also cover curated notes that name
+    # the config-side spelling).
+    "nous", "openai-codex", "openai-api", "xai-oauth", "qwen-oauth",
+    "lmstudio", "gemini", "zai", "kimi-coding", "kimi-coding-cn",
+    "stepfun", "arcee", "gmi", "actual", "minimax", "minimax-oauth",
+    "anthropic", "alibaba", "alibaba-coding-plan", "minimax-cn",
+    "deepseek", "xai", "nvidia", "ai-gateway", "opencode-zen",
+    "opencode-go", "kilocode", "huggingface", "xiaomi",
+    "tencent-tokenhub", "tencent-tokenplan", "ollama-cloud", "bedrock",
+    "vertex", "azure-foundry",
+    # Models.dev spellings of the same native providers (including Hermes'
+    # own alias spellings: vercel and qwen resolve to ai-gateway and alibaba
+    # in the Hermes catalogue).
+    "openai", "google", "google-vertex", "amazon-bedrock", "azure",
+    "moonshotai", "z-ai", "qwen", "opencode", "vercel",
+    # Hermes' default route and codebase-recognised route slugs.
+    "openrouter", "github-copilot", "commandcode",
+})
+
+#: Cap on the excluded-provider names a payload reports back. The count is
+#: exact; the names are a debugging sample for the archive note.
+MAX_EXCLUDED_PROVIDERS = 20
+
+
+def _provider_keys(provider: Any) -> set[str]:
+    """Every identity a feed provider spelling can match under.
+
+    The raw spelling plus both alias normalisations the relevance matcher
+    uses (plan-family aliases and route aliases), so a curated note naming
+    ``openai-codex`` and a feed item naming ``openai`` resolve identically.
+    Router identities stay distinct: ``openrouter`` never normalises to a
+    direct provider, so an OpenRouter listing is eligible as OpenRouter and
+    cannot make direct-provider items eligible by association.
+    """
+    raw = str(provider or "").strip().lower()
+    if not raw:
+        return set()
+    return {raw,
+            mem.PLAN_FAMILY_ALIASES.get(raw, raw),
+            canonical_route_provider(raw)}
+
+
+def eligible_keys(configured: Iterable[str] = ()) -> set[str]:
+    """Truncation-preference keys: native spellings plus configured families.
+
+    Intake feeds both scopes, so the preference set is the union both need:
+    native ids for All Updates plus each configured family's own spellings,
+    so a configured custom route survives the cap for For You even though
+    it never qualifies for All Updates.
+    """
+    keys = set(NATIVE_FEED_PROVIDERS)
+    for family in configured or ():
+        keys |= _provider_keys(family)
+    return keys
+
+
+def matches_preference(provider: Any, prefer: Optional[set[str]]) -> bool:
+    """Whether a provider clears a truncation-preference set (F138)."""
+    if not prefer:
+        return False
+    return bool(_provider_keys(provider) & prefer)
+
+
+def provider_eligible(provider: Any) -> bool:
+    """Whether a feed provider may appear in All Updates.
+
+    Eligible means natively supported by Hermes
+    (:data:`NATIVE_FEED_PROVIDERS`). A configured custom/plugin route does
+    not satisfy this native-only rule; it surfaces in For You instead.
+    Matching reuses the same alias normalisations as relevance.
+    """
+    keys = _provider_keys(provider)
+    return bool(keys) and bool(keys & NATIVE_FEED_PROVIDERS)
+
+
+def item_eligible(item: Mapping[str, Any]) -> bool:
+    """Whether one news item may appear in All Updates.
+
+    Subscription items are plan-catalogue products rather than routed
+    inference providers, so their legitimacy comes from the plan rules
+    (genuine F139 changes) rather than the native-provider rule; everything
+    else must clear :func:`provider_eligible`.
+    """
+    if not isinstance(item, Mapping):
+        return False
+    if str(item.get("category") or "") == "subscription":
+        return True
+    return provider_eligible(item.get("provider"))
 
 
 def usage_summary(event_db: Optional[Path | str] = None, *, days: int = IMPACT_DAYS,
@@ -1259,14 +1679,16 @@ def rank_items(items: list[dict[str, Any]], *,
                tokens: Optional[set[str]] = None) -> list[dict[str, Any]]:
     """Annotate news with For You evidence. Never promises account access.
 
-    Model evidence is the exact (provider, model) pair: a model recorded
-    under another provider, or a shared last path segment, never sets
-    ``for_you`` or ``related_routes`` on its own. Provider-used and
-    configured-provider signals stay provider-level.
+    For You means configured: only a provider with a credential in this
+    profile qualifies. Historical usage alone never qualifies a
+    now-unconfigured provider, and a native-but-unconfigured provider does
+    not qualify either. Usage evidence (related routes, last use) still
+    annotates every item for display and impact estimates: model evidence
+    is the exact (provider, model) pair, and a model recorded under another
+    provider, or a shared last path segment, never sets evidence on its own.
     """
     usage = usage if usage is not None else {}
     tokens = tokens if tokens is not None else set()
-    used_providers = {canonical_route_provider(route) for route, _ in usage}
     ranked: list[dict[str, Any]] = []
     for item in items:
         provider = str(item.get("provider") or "").lower()
@@ -1275,12 +1697,7 @@ def rank_items(items: list[dict[str, Any]], *,
                           if canonical_route_provider(route) == provider
                           and (not model or _models_match(recorded, model))})[:5]
         configured = bool(provider) and provider in tokens
-        model_used = bool(model) and any(
-            canonical_route_provider(route) == provider and recorded == model
-            for (route, recorded) in usage)
-        for_you = bool(provider) and (
-            provider in used_providers or provider in tokens or model_used)
-        ranked.append({**item, "for_you": for_you, "configured_provider": configured,
+        ranked.append({**item, "for_you": configured, "configured_provider": configured,
                        "related_routes": related,
                        "last_used_at": _last_used_at(item, usage)})
     return ranked
@@ -1375,7 +1792,15 @@ def news_payload(*, data_dir: Optional[Path | str] = None,
                  event_db: Optional[Path | str] = None,
                  home: Optional[Path | str] = None,
                  now: Optional[float] = None) -> dict[str, Any]:
-    """Read-only combined view: stored local news plus the cached central feed."""
+    """Read-only combined view: stored local news plus the cached central feed.
+
+    Every item carries an ``eligible`` flag (F138): Hermes-native providers
+    and subscription items. All Updates filters on it; For You filters on
+    relevance instead, so a configured custom route can be personal without
+    being native. The payload keeps every event, like the stores behind it,
+    and ``unsupported_excluded`` stays honest about what All Updates holds
+    back.
+    """
     stored = load_items(items_path(data_dir))
     settings = load_settings(settings_path(data_dir))
     cached = load_cache(cache_path(data_dir))
@@ -1396,8 +1821,18 @@ def news_payload(*, data_dir: Optional[Path | str] = None,
         central_items = [item for item in cached["feed"]["items"] if isinstance(item, dict)]
     combined = rank_items([*local_items, *central_items], usage=evidence,
                           tokens=configured_tokens(home))
+    for item in combined:
+        item["eligible"] = item_eligible(item)
     combined.sort(key=lambda item: (str(item.get("observed_at") or ""), str(item.get("id") or "")),
                   reverse=True)
+    excluded_local = [item for item in combined
+                      if item.get("origin") == "local" and not item["eligible"]]
+    excluded_central = [item for item in combined
+                        if item.get("origin") == "central" and not item["eligible"]]
+    excluded_providers = sorted({str(item.get("provider") or "")
+                                 for item in (*excluded_local, *excluded_central)
+                                 if str(item.get("provider") or "").strip()}
+                                )[:MAX_EXCLUDED_PROVIDERS]
     return {
         "ok": True,
         "settings": {"live_updates": settings["live_updates"]},
@@ -1416,6 +1851,9 @@ def news_payload(*, data_dir: Optional[Path | str] = None,
                     "fetched_at": cached["fetched_at"], "error": cached["error"]},
         "for_you_count": sum(1 for item in combined if item.get("for_you")),
         "providers_configured": providers_configured,
+        "unsupported_excluded": {"local": len(excluded_local),
+                                 "central": len(excluded_central),
+                                 "providers": excluded_providers},
         "impacts": compute_impacts(combined, recent),
         "impact_window_days": IMPACT_DAYS,
     }
