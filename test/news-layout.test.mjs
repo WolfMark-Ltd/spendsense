@@ -1,21 +1,21 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { after, test } from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { connectToChromium, groupMembers, launchChromium, stopChromium } from './chromium-lifecycle.mjs'
 import { CHROME_CANDIDATES, shotsOutsideRepo } from './news-layout.harness.mjs'
+import {
+  NEWS_LAYOUT_MATRIX, NEWS_PAGE_NOW_MS, NEWS_SUITE_BUDGET_MS, buildNewsPage, measureNewsCase,
+  newsCaseId, newsIsolationControl, newsShotName, startNewsServer,
+} from './news-layout.chromium.mjs'
 import { EVIDENCE_HIST_CENTRAL_ID, EVIDENCE_HIST_LOCAL_ID } from './news-layout.scenarios.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
-const MODULES = join(ROOT, 'test/harness/node_modules')
+const PROFILE_DIRNAME = 'chromium-profile'
 
 const CHROME = CHROME_CANDIDATES.find(existsSync)
-// The committed fixtures carry fixed 2026-11 stamps and the UI measures its
-// 30-day recency window against Date.now: every generated page runs on this
-// pinned instant instead of the wall clock, so the assertions cannot expire.
-const PAGE_NOW_MS = Date.parse('2026-11-10T12:00:00Z')
 
 // Realistic-fixture identities the candidate assertions reason about, derived
 // from the committed fixture so regenerated data never desynchronises tests.
@@ -60,95 +60,158 @@ const TS_EMPTY = uniqueId(item => item.model === 'ts-empty')
 const MANDATORY = process.env.WP11_REQUIRE_CANDIDATE === '1'
   || process.env.WP11_CANDIDATE === '1'
 
+// The two candidate probes whose case is already in the layout matrix: the
+// matrix navigation asks for the probe too, so one isolated page execution
+// yields both the measurement and the candidate structure. They are the same
+// page, the same query and the same initial state the separate probe run used.
+const MATRIX_PROBE_IDS = new Set([
+  'realistic__all__1200__dark__en',
+  'realistic__foryou__1200__dark__en',
+])
 
+// --------------------------------------------------------------- browser suite
+//
+// ONE Chromium root process for the whole file. Each case below still gets a
+// fresh browser context and page, so the fixture, locale and scope of one
+// scenario cannot reach another; the browser process is the only shared thing.
+let SUITE = null
+const startedAt = Date.now()
 
-const decode = text => text
-  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'")
-  .replace(/&quot;/g, '"').replace(/&amp;/g, '&')
-
-const RESULT_DIV = /<div id="news-layout-result"[^>]*>([\s\S]*?)<\/div>/
-
-const chromeDom = (chrome, url) => {
-  let last
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      return execFileSync(chrome, [
-        '--headless', '--disable-gpu', '--no-sandbox', '--virtual-time-budget=6000', '--dump-dom', url,
-      ], { maxBuffer: 128 * 1024 * 1024, timeout: 120000 }).toString()
-    } catch (error) {
-      // Headless Chrome sometimes trips its teardown watchdog after the dump
-      // was already recorded; accept a dump that contains the result div.
-      const stdout = error?.stdout?.toString?.() || ''
-      if (RESULT_DIV.test(stdout)) return stdout
-      last = error
-    }
+function assertWithinBudget(label) {
+  const used = Date.now() - startedAt
+  if (used > NEWS_SUITE_BUDGET_MS) {
+    throw new Error(`Model News layout checks exceeded their ${NEWS_SUITE_BUDGET_MS}ms budget `
+      + `before ${label} (${used}ms used)`)
   }
-  throw last
 }
 
-const parsePayload = dom => {
-  const match = dom.match(RESULT_DIV)
-  assert.ok(match?.[1], 'Chromium records the Model News layout results')
-  return JSON.parse(decode(match[1]))
+function shotsDir() {
+  const target = process.env.NEWS_LAYOUT_SHOTS
+  if (!target) return null
+  const resolved = shotsOutsideRepo(target)
+  mkdirSync(resolved, { recursive: true })
+  return resolved
 }
 
-// Built once and shared by both tests (bundle + two grid Chrome runs).
-let HARNESS = null
-async function harness() {
-  if (HARNESS) return HARNESS
+async function suite() {
+  if (SUITE) return SUITE
+  if (!CHROME) throw new Error('No Chromium binary is available for the real Model News page')
   const work = mkdtempSync(join(tmpdir(), 'wm-news-layout-'))
+  // Safety net for a crash that never reaches the after() hook; the hook does
+  // the verified teardown on every ordinary path.
   process.on('exit', () => rmSync(work, { recursive: true, force: true }))
-  const esbuild = (await import(pathToFileURL(join(MODULES, 'esbuild/lib/main.js')).href)).default
-  const bundle = join(work, 'page.js')
-  await esbuild.build({
-    entryPoints: [join(ROOT, 'test/news-layout.page.jsx')], bundle: true,
-    format: 'iife', platform: 'browser', outfile: bundle, jsx: 'automatic',
-    alias: { '@hermes/plugin-sdk': join(ROOT, 'test/news-layout.sdk.mjs') },
-    nodePaths: [MODULES], logLevel: 'warning',
-  })
-  const html = join(work, 'page.html')
-  writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><style>
-*{box-sizing:border-box}body{margin:0;padding:10px;display:grid;grid-template-columns:380px 1200px;gap:10px;align-items:start;font:13px/1.5 system-ui,sans-serif}
-.case{background:var(--ui-fill-primary);color:var(--ui-text-primary);min-width:0}
-.case.dark{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--ui-fill-tertiary:#232633;--ui-stroke-secondary:#2b2f40;--ui-text-primary:#eef0f6;--ui-text-secondary:#b9bdd1;--ui-text-tertiary:#a9aec6;--ui-text-quaternary:#9398b0;--ui-accent:#7fa0ff;--ui-success:#2dd4bf;--ui-warning:#f5b544;--ui-error:#f26d6d}
-.case.light{--ui-fill-primary:#fff;--ui-fill-secondary:#f2f4f7;--ui-fill-tertiary:#e3e5eb;--ui-stroke-secondary:#c5cbd5;--ui-text-primary:#151823;--ui-text-secondary:#414655;--ui-text-tertiary:#555b69;--ui-text-quaternary:#626877;--ui-accent:#3157c0;--ui-success:#087f5b;--ui-warning:#9a5e00;--ui-error:#b42318}
-body[data-single]{display:block;padding:0}body[data-single="dark"]{background:#12141a}body[data-single="light"]{background:#fff}
-body[data-single] .case{margin:0}
-#news-layout-result{display:none}
-</style></head><body><div id="news-layout-cases"></div><div id="news-layout-result"></div>
-<script>Date.now = () => ${PAGE_NOW_MS}</script>
-<script src="page.js"></script></body></html>`)
-  const url = pathToFileURL(html).href
-  // One Chrome run per (fixture, scope, locale) combo, chunked so no single
-  // dump is heavy enough to trip headless teardown. A run whose total fits in
-  // one chunk is used directly.
-  const results = []
-  const combos = []
-  for (const locale of ['en', 'zh-CN'])
-    for (const scope of ['foryou', 'all'])
-      combos.push({ fixture: 'realistic', scope, locale })
-  for (const fixture of ['empty', 'partial', 'nosignals'])
-    for (const scope of ['foryou', 'all'])
-      combos.push({ fixture, scope, locale: 'en' })
-  for (const fixture of ['stale', 'error'])
-    combos.push({ fixture, scope: 'foryou', locale: 'en' })
-  for (const combo of combos) {
-    const query = `fixture=${combo.fixture}&run=${combo.scope}&locale=${encodeURIComponent(combo.locale)}`
-    const first = parsePayload(chromeDom(CHROME, `${url}?${query}&chunk=0&chunks=1`))
-    if (first.total <= 5) { results.push(...first.cases); continue }
-    const chunks = Math.ceil(first.total / 5)
-    for (let index = 0; index < chunks; index += 1) {
-      results.push(...parsePayload(chromeDom(CHROME, `${url}?${query}&chunk=${index}&chunks=${chunks}`)).cases)
+  const profileDir = join(work, PROFILE_DIRNAME)
+  let server = null
+  let browser = null
+  let socket = null
+  try {
+    mkdirSync(profileDir)
+    const page = await buildNewsPage({ work })
+    const started = await startNewsServer(page)
+    server = started.server
+    browser = await launchChromium({ binary: CHROME, profileDir })
+    const connected = await connectToChromium(browser.port)
+    socket = connected.socket
+    SUITE = {
+      work, profileDir, server, origin: started.origin, browser, socket,
+      client: connected.client, shots: shotsDir(),
+      matrix: null, probes: new Map(), closed: false,
     }
+    return SUITE
+  } catch (error) {
+    // Startup is a failure path too: nothing this function opened may survive.
+    if (socket) { try { socket.close() } catch { /* already closed */ } }
+    if (browser) {
+      await stopChromium({
+        child: browser.child, exited: browser.exited, group: browser.group, stderr: browser.stderr,
+      }).catch(() => {})
+    }
+    if (server) await new Promise(resolve => server.close(resolve))
+    rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    throw error
   }
-  HARNESS = { work, url, results }
-  return HARNESS
 }
 
-const runProbe = async (h, caseId) => {
-  const result = parsePayload(chromeDom(CHROME, `${h.url}?case=${caseId}&probe=1`)).cases[0]
-  assert.ok(result?.probe, `probe ${caseId} recorded`)
-  return result
+/**
+ * Close the one browser and prove the suite left nothing behind.
+ *
+ * Runs even when a test failed, so a broken assertion cannot leak a browser or
+ * a profile directory into the next file.
+ */
+after(async () => {
+  if (!SUITE || SUITE.closed) return
+  SUITE.closed = true
+  const errors = []
+  try { SUITE.socket.close() } catch (error) { errors.push(error) }
+  try {
+    await stopChromium({
+      child: SUITE.browser.child, exited: SUITE.browser.exited,
+      group: SUITE.browser.group, stderr: SUITE.browser.stderr,
+    })
+  } catch (error) { errors.push(error) }
+  try { await new Promise(resolve => SUITE.server.close(resolve)) } catch (error) { errors.push(error) }
+  try {
+    // One profile directory for the whole suite: that is the launch count
+    // evidence this refactor is judged on, not the elapsed time.
+    const profiles = readdirSync(SUITE.work).filter(name => name.startsWith(PROFILE_DIRNAME))
+    assert.deepEqual(profiles, [PROFILE_DIRNAME],
+      'the suite opened exactly one Chromium profile')
+    rmSync(SUITE.work, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    assert.equal(existsSync(SUITE.work), false, 'the suite removes its scratch profile')
+  } catch (error) { errors.push(error) }
+  if (errors.length) throw new AggregateError(errors, 'Model News layout suite teardown failed')
+})
+
+/** Every matrix case, each in its own browser context, collected in order. */
+async function matrixResults() {
+  const s = await suite()
+  if (s.matrix) return s.matrix
+  s.matrix = (async () => {
+    const results = []
+    // Owned-process sampling, once per case: a sampler that scans /proc
+    // continuously starves the browser it is measuring, so this reads the group
+    // only at case boundaries and reports the peak.
+    s.peakOwnedProcesses = 0
+    for (const c of NEWS_LAYOUT_MATRIX) {
+      const id = newsCaseId(c)
+      assertWithinBudget(id)
+      results.push(await measureNewsCase(s.client, {
+        origin: s.origin, id, width: c.w,
+        probe: MATRIX_PROBE_IDS.has(id) ? '1' : null,
+        screenshotPath: s.shots ? join(s.shots, newsShotName(id)) : undefined,
+      }))
+      const members = groupMembers(s.browser.child.pid)
+      if (members) s.peakOwnedProcesses = Math.max(s.peakOwnedProcesses, members.length)
+    }
+    s.matrixElapsedMs = Date.now() - startedAt
+    return results
+  })()
+  return s.matrix
+}
+
+/** One measurement; matrix cases are served from the collected results. */
+async function measurementFor(id, { probe = null, model } = {}) {
+  const s = await suite()
+  // An un-probed matrix case is already measured.
+  if (probe === null && model === undefined) {
+    const hit = (await matrixResults()).find(result => result.id === id)
+    if (!hit) throw new Error(`${id} is not a layout matrix case`)
+    return hit
+  }
+  // A merged candidate probe rides its own matrix measurement: same page, same
+  // query, same initial state as the separate run it replaces.
+  if (probe === '1' && MATRIX_PROBE_IDS.has(id)) {
+    const hit = (await matrixResults()).find(result => result.id === id)
+    assert.ok(hit?.probe, `probe ${id} recorded with its matrix measurement`)
+    return hit
+  }
+  const key = `${id}|${probe || ''}|${model === undefined ? '' : `model=${model}`}`
+  if (!s.probes.has(key)) {
+    const width = Number(id.split('__')[2]) || 380
+    assertWithinBudget(key)
+    s.probes.set(key, measureNewsCase(s.client, { origin: s.origin, id, width, probe, model }))
+  }
+  return s.probes.get(key)
 }
 
 // A) known baseline defects. Entries here keep the strict assertion in place
@@ -206,16 +269,46 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
       + 'WP11_REQUIRE_CANDIDATE=1 or WP11_CANDIDATE=1 makes the candidate verification '
       + 'mandatory: FAILING, never skipping.')
   }
-  const h = await harness()
-  const results = h.results
+  const results = await matrixResults()
   const worstContrast = results.filter(r => r.contrast.min != null)
     .sort((a, b) => a.contrast.min - b.contrast.min)[0]
   t.diagnostic(`Minimum badge/chip/impact contrast: ${JSON.stringify({
     case: worstContrast?.id, ...worstContrast?.contrast,
   })}`)
-  assert.equal(results.length, 24)
+  assert.equal(results.length, 24, 'the layout matrix renders all 24 cases')
+  assert.equal(new Set(results.map(r => r.id)).size, 24, 'every matrix case is a distinct scenario')
   const realistic = results.filter(r => r.fixture === 'realistic')
   assert.equal(realistic.length, 16)
+
+  // Readiness and isolation are asserted per case, not inferred from a green
+  // assertion below: a page that never painted, or one that inherited a
+  // previous context's storage, fails here by name.
+  for (const r of results) {
+    assert.equal(r.readiness?.ready, true,
+      `${r.id} reached its bounded readiness condition: ${JSON.stringify(r.readiness)}`)
+    assert.equal(r.isolation?.wrote, true,
+      `${r.id} writes its per-context isolation marker: ${r.isolation?.error || 'no error'}`)
+    assert.equal(r.isolation?.prior, null,
+      `${r.id} starts in a browser context free of earlier state (inherited ${JSON.stringify(r.isolation?.prior)})`)
+  }
+
+  // Negative control for the marker itself: two navigations in ONE context must
+  // see each other, or "prior === null" proves nothing about isolation.
+  const active = await suite()
+  const control = await newsIsolationControl(active.client, {
+    origin: active.origin, id: 'realistic__foryou__380__dark__en',
+  })
+  assert.equal(control.first.prior, null, 'a fresh context starts with no marker')
+  assert.equal(control.first.wrote, true, 'the isolation marker can be written')
+  assert.equal(control.second.prior, 'realistic__foryou__380__dark__en',
+    'the same context DOES observe its own marker (the per-case assertion is not vacuous)')
+
+  // The whole matrix ran through ONE browser process: a relaunch here would
+  // mean the suite silently restarted Chromium.
+  assert.equal(active.browser.child.exitCode, null,
+    'the single Chromium root process survives the whole matrix')
+  t.diagnostic(`Model News layout matrix: ${results.length} isolated pages on one Chromium root `
+    + `process in ${active.matrixElapsedMs}ms (peak owned processes ${active.peakOwnedProcesses})`)
 
   // Under a mandatory candidate run no baseline-defect waiver may soften the
   // strict bar.
@@ -287,7 +380,7 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
       // shows every relevant event on For You and every item on All, so it
       // must carry every exact ID; the candidate design paginates (For You:
       // initial ranked-group page; All: first NEWS_PAGE_SIZE entries), so
-      // there this scope asserts the rendered subset only — full candidate
+      // there it this scope asserts the rendered subset only — full candidate
       // coverage is asserted after load-more / show-all in the candidate
       // test, never weakened.
       if (r.scope === 'all' && !r.candidateDetected) {
@@ -366,28 +459,17 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
     }
   }
 
-  // Screenshot mode: only when NEWS_LAYOUT_SHOTS points outside the repo.
-  const shots = process.env.NEWS_LAYOUT_SHOTS
+  // Screenshot mode stays opt-in and outside the repository. The capture runs on
+  // the SAME isolated page that produced the measurement, so the viewport and
+  // theme are the ones asserted, and nothing launches a second browser.
+  const shots = (await suite()).shots
   if (shots) {
-    const resolved = shotsOutsideRepo(shots)
-    mkdirSync(resolved, { recursive: true })
     for (const r of results) {
-      const name = `news-${r.fixture}-${r.scope}-${r.w}-${r.theme}-${r.locale}.png`
-      const target = join(resolved, name)
-      for (let attempt = 0; attempt < 3 && !existsSync(target); attempt += 1) {
-        try {
-          execFileSync(CHROME, [
-            '--headless', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
-            '--virtual-time-budget=6000', `--window-size=${r.w},${Math.max(r.height + 40, 120)}`,
-            `--screenshot=${target}`, `${h.url}?case=${r.id}`,
-          ], { timeout: 120000, stdio: 'ignore' })
-        } catch (error) {
-          // The teardown watchdog can fire after the PNG was written; only
-          // retry when no usable file appeared.
-          if (existsSync(target)) break
-          if (attempt === 2) throw error
-        }
-      }
+      const target = join(shots, newsShotName(r.id))
+      assert.ok(existsSync(target), `${r.id} screenshot written to ${target}`)
+      const header = readFileSync(target).subarray(0, 8)
+      assert.deepEqual([...header], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+        `${r.id} screenshot is a PNG`)
     }
   }
 })
@@ -395,9 +477,7 @@ test('Model News baseline invariants and WCAG contrast (real NewsPage, committed
 test('a headline opens in the archive with the event it names actually visible', {
   skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
 }, async () => {
-  const h = await harness()
-  const result = parsePayload(chromeDom(CHROME,
-    `${h.url}?case=realistic__foryou__380__dark__en&probe=story`)).cases[0]
+  const result = await measurementFor('realistic__foryou__380__dark__en', { probe: 'story' })
   assert.ok(result?.probeStory, 'story probe recorded')
   const probe = result.probeStory
   assert.ok(probe.model, 'the probe found a headline with a model identity')
@@ -427,13 +507,11 @@ test('a headline opens in the archive with the event it names actually visible',
 test('a story without a model lands on its archive card, not on a neighbouring group', {
   skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
 }, async () => {
-  const h = await harness()
   // A plan change has no model identity, so the archive renders it as a card,
   // never as a model group. Before the card carried the focus marker the effect
   // could not find it: the reader was left at the top of the archive with the
   // story unreachable.
-  const result = parsePayload(chromeDom(CHROME,
-    `${h.url}?case=realistic__foryou__380__dark__en&probe=story&model=`)).cases[0]
+  const result = await measurementFor('realistic__foryou__380__dark__en', { probe: 'story', model: '' })
   assert.ok(result?.probeStory && !result.probeStory.missing, 'the story probe found a modelless story')
   const probe = result.probeStory
   assert.equal(probe.model, '', 'the probed story has no model identity')
@@ -449,14 +527,12 @@ test('a story without a model lands on its archive card, not on a neighbouring g
 test('a family story lands on its own event, never a hidden sibling row', {
   skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
 }, async () => {
-  const h = await harness()
   // One model, two providers: the story's headlined cut is `acme`'s, while
   // `zeta` has a newer rise, so the archive sorts zeta's offer first and its
   // matching cut is a History row inside zeta's own panel. Marking the whole
   // family would select that hidden row and consume the request; the link must
   // land on the event it names, inside the panel it opened.
-  const result = parsePayload(chromeDom(CHROME,
-    `${h.url}?case=splitfamily__foryou__380__dark__en&probe=story&model=split-model`)).cases[0]
+  const result = await measurementFor('splitfamily__foryou__380__dark__en', { probe: 'story', model: 'split-model' })
   const probe = result?.probeStory
   assert.ok(probe && !probe.missing, `split-family story probe recorded: ${JSON.stringify(probe)}`)
   assert.equal(probe.recordId, 'split-a', 'the story leads with the higher-scoring cut')
@@ -470,9 +546,7 @@ test('a family story lands on its own event, never a hidden sibling row', {
 test('a story link is consumed once and re-arms only on a new click', {
   skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
 }, async () => {
-  const h = await harness()
-  const result = parsePayload(chromeDom(CHROME,
-    `${h.url}?case=realistic__foryou__380__dark__en&probe=focusonce`)).cases[0]
+  const result = await measurementFor('realistic__foryou__380__dark__en', { probe: 'focusonce' })
   const probe = result?.probeFocusOnce
   assert.ok(probe && !probe.missing, `focus lifecycle probe recorded: ${JSON.stringify(probe)}`)
   assert.equal(probe.landed, true, 'the link lands on the story row')
@@ -497,8 +571,8 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
       + 'WP11_REQUIRE_CANDIDATE=1 or WP11_CANDIDATE=1 makes the candidate verification '
       + 'mandatory: FAILING, never skipping.')
   }
-  const h = await harness()
-  const detected = h.results.some(r => r.candidateDetected)
+  const results = await matrixResults()
+  const detected = results.some(r => r.candidateDetected)
   if (!detected) {
     const message = 'Candidate design not detected: no [data-news-group] in the rendered DOM. '
       + (MANDATORY
@@ -509,18 +583,19 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
     t.skip(message)
     return
   }
-  const all = await runProbe(h, 'realistic__all__1200__dark__en')
+  const all = await measurementFor('realistic__all__1200__dark__en', { probe: '1' })
   if (all.probe.skipped) {
     const message = `Candidate DOM hooks absent in the probed page (${all.id}).`
     if (MANDATORY) assert.fail(message)
     t.skip(message)
     return
   }
-  const forYou = await runProbe(h, 'realistic__foryou__1200__dark__en')
+  const forYou = await measurementFor('realistic__foryou__1200__dark__en', { probe: '1' })
+  assert.ok(forYou.probe, 'the For You matrix case carries its candidate probe')
   const probe = all.probe
   // Recency and age depend on Date.now: the page must run on the pinned
   // fixture era, never the real wall clock, or these assertions expire.
-  assert.equal(probe.nowMs, PAGE_NOW_MS,
+  assert.equal(probe.nowMs, NEWS_PAGE_NOW_MS,
     `the probe runs on the pinned fixture clock (got ${probe.nowMs})`)
 
   // B) initial All pagination semantics: the first NEWS_PAGE_SIZE entries
@@ -723,7 +798,7 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
   //    provenance, its exact previous/current four rates and its raw tier
   //    type/size recoverable (text or attributes; display format is not
   //    constrained beyond recoverability).
-  const evidence = await runProbe(h, 'evidence__all__1200__dark__en')
+  const evidence = await measurementFor('evidence__all__1200__dark__en', { probe: '1' })
   assert.ok(!evidence.probe?.skipped, 'evidence probe ran against the candidate DOM')
   const evOfferOf = model => evidence.probe.evidence?.find(offer => offer.model === model)
   assert.ok(evOfferOf('ev-model') && evOfferOf('hist-model'),
@@ -851,13 +926,11 @@ test('Model News candidate-design assertions (real NewsPage DOM hooks; WP11_REQU
 test('a story link reveals its group even when it sorts past the first page', {
   skip: CHROME ? false : 'No Chromium binary available for the real Model News page',
 }, async () => {
-  const h = await harness()
   // Fourteen groups match the substring "pair-model" and the target is the
   // oldest, so it is group fifteen of fifteen while the archive renders ten at a
   // time. Marking a row that was never rendered is impossible, so the link must
   // extend the page first.
-  const result = parsePayload(chromeDom(CHROME,
-    `${h.url}?case=manygroups__foryou__380__dark__en&probe=reveal&model=pair-model`)).cases[0]
+  const result = await measurementFor('manygroups__foryou__380__dark__en', { probe: 'reveal', model: 'pair-model' })
   const reveal = result?.probeReveal
   assert.ok(reveal && !reveal.missing, 'the story and its archive action are present')
   assert.ok(reveal.groups.length >= 14,
