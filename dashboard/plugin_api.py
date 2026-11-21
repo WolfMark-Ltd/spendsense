@@ -32,7 +32,7 @@ if str(_ROOT) not in sys.path:
 
 from wolfmark_ledger import LedgerUnavailable, build_ledger_report, default_db_path, load_catalogue  # noqa: E402
 from wolfmark_ledger import store  # noqa: E402
-from wolfmark_ledger.analytics import build_analytics_report  # noqa: E402
+from wolfmark_ledger.analytics import build_analytics_report, build_session_summary  # noqa: E402
 from wolfmark_ledger import allowance_weather  # noqa: E402
 from wolfmark_ledger import billing  # noqa: E402
 from wolfmark_ledger import digest  # noqa: E402
@@ -49,14 +49,14 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-VERSION = "0.6.16"
+VERSION = "0.6.17"
 
 #: Pairing level between the two halves of one release. A ``VERSION`` string
 #: alone does not establish build compatibility; this integer is what a Desktop
 #: bundle can act on. Bump it in the same commit as any backend change the UI
 #: relies on, and raise
 #: ``REQUIRED_BACKEND_CONTRACT`` in ``desktop/plugin.js`` to match.
-API_CONTRACT = 3
+API_CONTRACT = 4
 
 _REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 
@@ -274,6 +274,35 @@ def analytics(
         raise HTTPException(status_code=500, detail="analytics report failed") from exc
 
 
+@router.get("/session/summary")
+def session_summary(
+    session_id: str = Query(..., min_length=1, max_length=200,
+                            description="Hermes session id recorded on each call row"),
+    population: str = Query("all", pattern="^(main|auxiliary|all)$",
+                            description="main = provable main-loop calls only; all = every recorded call"),
+    provider: str | None = Query(None, description="Exact recorded billing route"),
+    model: str | None = Query(None, description="Exact recorded model"),
+    pricing: str = Query("strict", pattern="^(strict|third_party|approximate)$"),
+) -> dict[str, Any]:
+    """One session's canonical figures with an explicit population scope.
+
+    A narrower scope is refused, never widened, when the rows predate the
+    ``call_class`` column: an older store cannot prove which calls were
+    main-loop work.
+    """
+    try:
+        return build_session_summary(session_id=session_id, population=population,
+                                     provider=provider or None, model=model or None,
+                                     pricing_mode=pricing)
+    except LedgerUnavailable as exc:
+        raise HTTPException(status_code=503, detail="session call store unavailable") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
+        log.error("spend-sense: session summary failed")
+        raise HTTPException(status_code=500, detail="session summary failed") from exc
+
+
 @router.get("/ledger")
 def ledger(
     days: int = Query(30, ge=1, le=365, description="Rolling window in days"),
@@ -322,7 +351,18 @@ def rates(provider: str | None = Query(None), model: str | None = Query(None),
             "provider": hit.provider, "model": hit.model, "route_provider": hit.route_provider,
             "input": hit.rate.input, "output": hit.rate.output,
             "cache_read": hit.rate.cache_read, "cache_write": hit.rate.cache_write,
+            "cache_write_rates": [{"retention": name, "rate": value}
+                                  for name, value in hit.rate.cache_write_rates],
             "has_tiers": bool(hit.rate.tiers),
+            "flat": not hit.rate.tiers,
+            "tiers": [{"threshold": tier.threshold, "inclusive": bool(tier.inclusive),
+                       "input": tier.input,
+                       "output": tier.output, "cache_read": tier.cache_read,
+                       "cache_write": tier.cache_write,
+                       "cache_write_rates": [{"retention": name, "rate": value}
+                                             for name, value in tier.cache_write_rates]}
+                      for tier in hit.rate.tiers],
+            "tier_semantics": "whole_request" if hit.rate.tiers else None,
             "provenance": hit.provenance, "source": hit.source,
             "provisional": list(getattr(hit, "provisional", ())),
         }

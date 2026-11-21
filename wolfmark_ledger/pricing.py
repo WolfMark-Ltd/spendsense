@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -94,6 +95,11 @@ class Tier:
     output: Optional[float] = None
     cache_read: Optional[float] = None
     cache_write: Optional[float] = None
+    #: Named write-retention alternatives, e.g. (("30m", 2.5), ("12h", 5.0)).
+    cache_write_rates: tuple[tuple[str, float], ...] = ()
+    #: True when the provider bills the tier AT the threshold (``>=``), as xAI
+    #: does at 200K; OpenAI bills it only above the threshold (``>``).
+    inclusive: bool = False
 
 
 @dataclass(frozen=True)
@@ -103,6 +109,9 @@ class Rate:
     cache_read: Optional[float] = None
     cache_write: Optional[float] = None
     tiers: tuple[Tier, ...] = ()
+    #: Named write-retention alternatives; ``cache_write`` stays the documented
+    #: default (30 minutes for OpenAI) for compatibility with existing readers.
+    cache_write_rates: tuple[tuple[str, float], ...] = ()
 
     def has_base_price(self) -> bool:
         return self.input is not None or self.output is not None
@@ -230,6 +239,42 @@ def _num(value: Any) -> Optional[float]:
     return number if math.isfinite(number) and number >= 0 else None
 
 
+def _retention_minutes(name: str) -> int:
+    """Sort key for retention labels such as ``30m`` or ``12h`` (unknown last)."""
+    match = re.fullmatch(r"\s*(\d+)\s*([mh])\s*", name or "")
+    if not match:
+        return 10**9
+    return int(match.group(1)) * (60 if match.group(2) == "h" else 1)
+
+
+def _write_rates(value: Any) -> tuple[tuple[str, float], ...]:
+    """Parse named write-retention prices, de-duplicated and ordered by duration.
+
+    Accepts ``[{"retention": "30m", "rate": 2.5}, …]``. A malformed or empty
+    entry is dropped rather than guessed.
+    """
+    if not isinstance(value, list):
+        return ()
+    out: dict[str, float] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("retention") or "").strip()
+        rate = _num(item.get("rate"))
+        if name and rate is not None:
+            out[name] = rate
+    return tuple(sorted(out.items(), key=lambda pair: (_retention_minutes(pair[0]), pair[0])))
+
+
+def _flag(value: Any) -> bool:
+    """True for a JSON ``true``/1/"true"; everything else is False."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value or "").strip().lower() in ("1", "true", "yes")
+
+
 def _tier_from_dict(raw: dict[str, Any]) -> Optional[Tier]:
     if not isinstance(raw, dict):
         return None
@@ -243,6 +288,8 @@ def _tier_from_dict(raw: dict[str, Any]) -> Optional[Tier]:
         output=_num(raw.get("output")),
         cache_read=_num(raw.get("cache_read")),
         cache_write=_num(raw.get("cache_write")),
+        cache_write_rates=_write_rates(raw.get("cache_write_rates")),
+        inclusive=_flag(raw.get("inclusive")),
     )
 
 
@@ -286,6 +333,7 @@ def _rate_from_cost(cost: Any) -> Optional[Rate]:
         cache_read=_num(cost.get("cache_read")),
         cache_write=_num(cost.get("cache_write")),
         tiers=tuple(tiers),
+        cache_write_rates=_write_rates(cost.get("cache_write_rates")),
     )
 
 
@@ -330,6 +378,7 @@ def _windowed_rate(rate: Rate, windows: tuple, at: Optional[float]) -> Rate:
             cache_read=cr if cr is not None else rate.cache_read,
             cache_write=cw if cw is not None else rate.cache_write,
             tiers=rate.tiers,
+            cache_write_rates=rate.cache_write_rates,
         )
     return rate
 
@@ -356,9 +405,16 @@ def load_official(path: Optional[Path] = None) -> dict[tuple[str, str], tuple[Ra
         if not provider or not model:
             continue
         try:
-            rate = Rate(input=float(row["input"]), output=float(row["output"]),
-                        cache_read=float(row["cache_read"]) if row.get("cache_read") is not None else None,
-                        cache_write=float(row["cache_write"]) if row.get("cache_write") is not None else None)
+            tiers = [t for t in (_tier_from_dict(raw_tier)
+                                 for raw_tier in row.get("tiers") or []) if t]
+            tiers.sort(key=lambda t: t.threshold)
+            rate = Rate(
+                input=float(row["input"]), output=float(row["output"]),
+                cache_read=float(row["cache_read"]) if row.get("cache_read") is not None else None,
+                cache_write=float(row["cache_write"]) if row.get("cache_write") is not None else None,
+                tiers=tuple(tiers),
+                cache_write_rates=_write_rates(row.get("cache_write_rates")),
+            )
         except (KeyError, TypeError, ValueError):
             continue
         windows = []
@@ -506,6 +562,31 @@ def load_catalogue(models_dev_cache: Optional[Path] = None) -> Catalogue:
                      official=load_official())
 
 
+def _band_rate(rate: Rate, tier: Tier) -> Rate:
+    """The rate row that applies inside ``tier``, inheriting unset fields."""
+    # A tier that names retention prices without its own scalar takes the
+    # cheapest (shortest-retention) option as its scalar, so the compatibility
+    # number is always one of the prices the tier actually publishes. A tier
+    # that overrides the scalar without alternatives cannot inherit the base
+    # card's options: its write price is a different one.
+    if tier.cache_write_rates:
+        tier_scalar = (tier.cache_write if tier.cache_write is not None
+                       else tier.cache_write_rates[0][1])
+        write_options = tier.cache_write_rates
+    elif tier.cache_write is None:
+        tier_scalar, write_options = None, rate.cache_write_rates
+    else:
+        tier_scalar, write_options = tier.cache_write, ()
+    return Rate(
+        input=tier.input if tier.input is not None else rate.input,
+        output=tier.output if tier.output is not None else rate.output,
+        cache_read=tier.cache_read if tier.cache_read is not None else rate.cache_read,
+        cache_write=tier_scalar if tier_scalar is not None else rate.cache_write,
+        tiers=(),
+        cache_write_rates=write_options,
+    )
+
+
 def _effective_rate(rate: Rate, avg_prompt: float) -> tuple[Rate, bool]:
     """Apply whole-request context tiers (models.dev semantics).
 
@@ -514,19 +595,56 @@ def _effective_rate(rate: Rate, avg_prompt: float) -> tuple[Rate, bool]:
     """
     if not rate.tiers or avg_prompt <= 0:
         return rate, False
-    applicable = [t for t in rate.tiers if avg_prompt > t.threshold]
+    applicable = [t for t in rate.tiers
+                  if (avg_prompt >= t.threshold if t.inclusive else avg_prompt > t.threshold)]
     if not applicable:
         return rate, False
     tier = max(applicable, key=lambda t: t.threshold)
-    return (
-        Rate(
-            input=tier.input if tier.input is not None else rate.input,
-            output=tier.output if tier.output is not None else rate.output,
-            cache_read=tier.cache_read if tier.cache_read is not None else rate.cache_read,
-            cache_write=tier.cache_write if tier.cache_write is not None else rate.cache_write,
-            tiers=(),
-        ),
-        True,
+    return _band_rate(rate, tier), True
+
+
+def reachable_band_lowers_cost(
+    rate: Rate, prompt_tokens: float, *,
+    input_tokens: int, output_tokens: int,
+    cache_read_tokens: int, cache_write_tokens: int,
+    current_usd: float | None,
+) -> bool:
+    """True when an unentered band would price the recorded tokens below ``current_usd``.
+
+    An unproven counter can add prompt tokens and move the request into a band
+    that reprices every token. If that band is cheaper for the recorded usage,
+    the amount at the recorded band is not a lower bound on the true cost.
+    """
+    if current_usd is None:
+        return False
+    for tier in rate.tiers:
+        reachable = (tier.threshold > prompt_tokens if tier.inclusive
+                     else tier.threshold >= prompt_tokens)
+        if not reachable:
+            continue
+        band = _band_rate(rate, tier)
+        amount, _ = _amount(band, input_tokens, output_tokens,
+                            cache_read_tokens, cache_write_tokens)
+        if amount < current_usd - 1e-12:
+            return True
+    return False
+
+
+def reaches_unapplied_tier(rate: Rate, prompt_tokens: float) -> bool:
+    """True when more tokens in the same request could enter a new band.
+
+    A tier applies above its threshold when exclusive, or at it when
+    inclusive. It is therefore still reachable when the recorded prompt is at
+    or below an exclusive threshold, or strictly below an inclusive one. A
+    threshold already crossed is the applicable band and is not reachable.
+
+    Pass the catalogue rate, not an ``_effective_rate`` result: the latter has
+    its ``tiers`` stripped once a band is selected.
+    """
+    return any(
+        tier.threshold > prompt_tokens if tier.inclusive
+        else tier.threshold >= prompt_tokens
+        for tier in rate.tiers
     )
 
 

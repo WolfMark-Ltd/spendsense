@@ -80,6 +80,31 @@ def _usage_tokens(usage: Any) -> dict[str, int]:
     }
 
 
+def _usage_provenance(usage: Any) -> dict[str, int | None]:
+    """Presence flags the hook supplied. Absent keys mean "not recorded"."""
+    if not isinstance(usage, dict):
+        return {"cache_read_reported": None, "cache_write_reported": None}
+    return {
+        "cache_read_reported": store.tri_flag(usage.get("cache_read_reported")),
+        "cache_write_reported": store.tri_flag(usage.get("cache_write_reported")),
+    }
+
+
+def _call_class(kind: str, kwargs: dict[str, Any]) -> str | None:
+    """``main``/``auxiliary`` when the producer proves it, else ``None``.
+
+    ``post_auxiliary_call`` is auxiliary by construction. For the main-loop
+    hook, an empty ``aux_task`` counts as main **only when the key is present**:
+    its presence is the producer's promise that every non-main path labels
+    itself. A build that does not send the key leaves the row unclassified.
+    """
+    if kind == "aux":
+        return "auxiliary"
+    if "aux_task" not in kwargs:
+        return None
+    return "auxiliary" if _text(kwargs.get("aux_task"), 64) else "main"
+
+
 def _event_id(kind: str, kwargs: dict[str, Any]) -> str:
     raw_id = _text(kwargs.get("api_request_id"), 200)
     if raw_id:
@@ -150,7 +175,9 @@ def _base_record(kind: str, kwargs: dict[str, Any]) -> dict[str, Any]:
         "error_type": _safe_error_type(error_type),
         "status_code": status,
         "recorded_at": time.time(),
+        "call_class": _call_class(kind, kwargs),
         **usage,
+        **_usage_provenance(kwargs.get("usage")),
     }
 
 
