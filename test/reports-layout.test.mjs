@@ -1,77 +1,52 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { createDevToolsClient, pollForMeasurement } from './reports-layout.devtools.mjs'
+import {
+  REPORTS_SUITE_BUDGET_MS, connectToChromium, findChromiumBinary, launchChromium,
+  measureInBrowserContext, stopChromium,
+} from './reports-layout.chromium.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const MODULES = join(ROOT, 'test/harness/node_modules')
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
-].find(existsSync)
+const CHROME = findChromiumBinary()
+const PROFILE_DIRNAME = 'chromium-profile'
 
-const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
-
-async function chromiumSnapshot(url, profile, width, height) {
-  const browser = spawn(CHROME, [
-    '--headless', '--disable-gpu', '--no-sandbox', '--remote-debugging-port=0',
-    '--remote-allow-origins=*', `--user-data-dir=${profile}`, 'about:blank',
-  ], { stdio: 'ignore' })
-  let socket
-  try {
-    const portFile = join(profile, 'DevToolsActivePort')
-    const deadline = Date.now() + 10000
-    while (!existsSync(portFile) && Date.now() < deadline && browser.exitCode === null) await wait(50)
-    assert.ok(existsSync(portFile), 'Chromium exposes its local DevTools endpoint')
-    const port = Number(readFileSync(portFile, 'utf8').split('\n')[0])
-    const targetResponse = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })
-    assert.equal(targetResponse.ok, true, 'Chromium creates a page for the layout check')
-    const target = await targetResponse.json()
-
-    socket = new WebSocket(target.webSocketDebuggerUrl)
-    const devtools = createDevToolsClient(socket)
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Chromium DevTools connection timed out')), 5000)
-      socket.addEventListener('open', () => { clearTimeout(timeout); resolve() }, { once: true })
-      socket.addEventListener('error', () => { clearTimeout(timeout); reject(new Error('Chromium DevTools connection failed')) }, { once: true })
-      socket.addEventListener('close', () => {
-        clearTimeout(timeout)
-        reject(new Error('Chromium DevTools connection closed before opening'))
-      }, { once: true })
-    })
-    await devtools.command('Page.enable')
-    await devtools.command('Runtime.enable')
-    await devtools.command('Emulation.setDeviceMetricsOverride', {
-      width, height, deviceScaleFactor: 1, mobile: false,
-    })
-    const loaded = devtools.waitForPageLoad()
-    const navigation = devtools.command('Page.navigate', { url })
-    await Promise.all([navigation, loaded])
-    return await pollForMeasurement(timeoutMs => devtools.command('Runtime.evaluate', {
-      expression: 'document.getElementById("reports-layout-result").textContent',
-      returnByValue: true,
-    }, timeoutMs))
-  } finally {
-    if (socket && socket.readyState === WebSocket.OPEN) socket.close()
-    if (browser.exitCode === null && browser.signalCode === null) {
-      browser.kill('SIGTERM')
-      await new Promise(resolve => {
-        const timeout = setTimeout(resolve, 1000)
-        browser.once('exit', () => { clearTimeout(timeout); resolve() })
-      })
+// The fixture is served from loopback rather than file:// so browser storage has
+// a real origin: that is what lets each case prove its context is isolated.
+const startFixtureServer = html => new Promise((resolve, reject) => {
+  const server = createServer((request, response) => {
+    const pathname = (request.url || '/').split('?')[0]
+    if (pathname === '/' || pathname === '/index.html') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      response.end(html)
+    } else if (pathname === '/favicon.ico') {
+      response.writeHead(204).end()
+    } else {
+      response.writeHead(404, { 'content-type': 'text/plain' }).end('not found')
     }
-  }
-}
+  })
+  server.once('error', reject)
+  server.listen(0, '127.0.0.1', () => resolve(server))
+})
 
 test('Reports stays scannable and keyboard usable from 320px through ledger width', {
   skip: CHROME ? false : 'No Chromium binary available for real Reports layout checks',
 }, async () => {
   const work = mkdtempSync(join(tmpdir(), 'wm-reports-layout-'))
+  const profileDir = join(work, PROFILE_DIRNAME)
+  mkdirSync(profileDir)
+
+  // LIFO teardown: the browser, then the fixture server, then the scratch tree.
+  const teardown = []
+  let failure = null
+
   try {
+    teardown.push(() => rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
+
     const esbuild = (await import(pathToFileURL(join(MODULES, 'esbuild/lib/main.js')).href)).default
     const bundle = join(work, 'page.js')
     await esbuild.build({
@@ -80,8 +55,7 @@ test('Reports stays scannable and keyboard usable from 320px through ledger widt
       alias: { '@hermes/plugin-sdk': join(ROOT, 'test/reports-layout.sdk.mjs') },
       nodePaths: [MODULES], logLevel: 'warning',
     })
-    const html = join(work, 'page.html')
-    writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8">
+    const html = `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><style>
 *{box-sizing:border-box}html,body{margin:0;width:100%;min-height:100%}
 body{font:400 13px/1.5 system-ui,sans-serif;background:var(--ui-fill-primary);color:var(--ui-text-primary)}
@@ -96,18 +70,36 @@ body[data-theme="dark"]{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--
 #reports-layout-host{width:100vw;min-height:100vh;color:var(--ui-text-primary)}
 #reports-layout-result{display:none}
 </style></head><body><div id="reports-layout-host"></div><div id="reports-layout-result"></div>
-<script>${readFileSync(bundle, 'utf8')}</script></body></html>`)
-    const url = pathToFileURL(html).href
+<script>${readFileSync(bundle, 'utf8')}</script></body></html>`
+
+    const server = await startFixtureServer(html)
+    teardown.push(() => new Promise(resolve => server.close(resolve)))
+    const origin = `http://127.0.0.1:${server.address().port}/`
+
+    // One Chromium for the whole matrix: the contexts, not the browser, provide
+    // the per-combination isolation.
+    const browser = await launchChromium({ binary: CHROME, profileDir })
+    teardown.push(() => stopChromium({ child: browser.child, exited: browser.exited, stderr: browser.stderr }))
+    const { socket, client } = await connectToChromium(browser.port)
+    teardown.push(() => { socket.close() })
+
+    const deadline = Date.now() + REPORTS_SUITE_BUDGET_MS
     for (const locale of ['en', 'zh']) {
       for (const width of [320, 380, 560, 1200]) {
         const theme = locale === 'en' ? 'dark' : 'light'
         const days = width === 320 || width === 560 ? 7 : 30
-        const result = await chromiumSnapshot(
-          `${url}?locale=${locale}&days=${days}&theme=${theme}`,
-          join(work, `chrome-${locale}-${width}`), width, 1800)
         const id = `${locale}/${width}px/${theme}`
+        if (Date.now() >= deadline) {
+          throw new Error(`Reports layout checks exceeded their ${REPORTS_SUITE_BUDGET_MS}ms budget before ${id}`)
+        }
+        const result = await measureInBrowserContext(client, {
+          url: `${origin}?locale=${locale}&days=${days}&theme=${theme}`,
+          width, height: 1800,
+        })
         assert.deepEqual(result.errors, [], `${id} has no page errors`)
         assert.equal(result.viewport, width, `${id} uses the requested viewport width`)
+        assert.equal(result.inheritedState, null, `${id} starts from a browser free of earlier state`)
+        assert.equal(result.isolationMarkerWritten, true, `${id} can persist state inside its own context`)
         assert.ok(result.shellWidth > 0, `${id} renders the Reports pane`)
         assert.ok(result.pageScroll <= result.viewport + 1,
           `${id} has no page-level horizontal overflow (${result.pageScroll}/${result.viewport})`)
@@ -133,7 +125,30 @@ body[data-theme="dark"]{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--
         assert.match(result.text, locale === 'zh' ? /没有服务商读数/ : /No provider reading/)
       }
     }
-  } finally {
-    rmSync(work, { recursive: true, force: true })
+
+    assert.equal(browser.child.exitCode, null, 'the single Chromium root process survives the whole matrix')
+    assert.deepEqual(readdirSync(work).filter(name => name.startsWith(PROFILE_DIRNAME)), [PROFILE_DIRNAME],
+      'Reports opens exactly one Chromium profile for the whole suite')
+  } catch (error) {
+    failure = error
   }
+
+  const cleanupErrors = []
+  for (const step of teardown.reverse()) {
+    try {
+      await step()
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
+  }
+  if (failure) {
+    if (cleanupErrors.length) {
+      failure.message += ` (and teardown failed: ${cleanupErrors.map(error => error.message).join('; ')})`
+    }
+    throw failure
+  }
+  if (cleanupErrors.length) {
+    throw new AggregateError(cleanupErrors, 'Reports layout teardown failed')
+  }
+  assert.equal(existsSync(work), false, 'Reports removes its scratch profile after a successful run')
 })

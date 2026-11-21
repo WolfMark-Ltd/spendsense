@@ -19,6 +19,26 @@ i18nBackend.t = translate
 const period = locale === 'zh'
   ? `过去 ${days} 天（2026-11-04 → 2026-11-11 UTC）`
   : `Last ${days} days (2026-11-04 → 2026-11-11 UTC)`
+// Each case writes this key and reports what it inherited, so the suite can
+// prove a later combination cannot see an earlier one's browser storage.
+const ISOLATION_KEY = 'reports-layout-isolation-probe'
+const readInheritedState = () => {
+  try {
+    return window.localStorage.getItem(ISOLATION_KEY)
+  } catch {
+    return 'unreadable'
+  }
+}
+const writeIsolationMarker = () => {
+  try {
+    window.localStorage.setItem(ISOLATION_KEY, `${locale}/${days}/${theme}`)
+    return true
+  } catch {
+    return false
+  }
+}
+const inheritedState = readInheritedState()
+const isolationMarkerWritten = writeIsolationMarker()
 const report = {
   ok: true, identity: 'gateway-a:default', generated_at: '2026-11-11T12:00:00Z',
   days, lang: locale, period: { label: period },
@@ -111,6 +131,7 @@ async function measure() {
   }))
   const result = {
     errors, locale, theme, days, viewport: window.innerWidth,
+    inheritedState, isolationMarkerWritten,
     pageScroll: document.documentElement.scrollWidth,
     shellWidth: shell?.clientWidth || 0, shellScroll: shell?.scrollWidth || 0,
     toolbarWidth: toolbar?.clientWidth || 0, toolbarScroll: toolbar?.scrollWidth || 0,
