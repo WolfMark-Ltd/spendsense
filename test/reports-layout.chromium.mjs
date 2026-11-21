@@ -70,6 +70,10 @@ export async function launchChromium({
 } = {}) {
   if (!binary) throw new Error('No Chromium binary is available for the Reports layout checks')
 
+  // Node does not expose the `detached` spawn option on the returned child, so
+  // ownership of the process group has to be carried explicitly or teardown
+  // silently degrades to signalling only the leader.
+  const group = process.platform !== 'win32'
   const child = spawnImpl(binary, [
     '--headless', '--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage',
     '--remote-debugging-port=0', '--remote-allow-origins=*',
@@ -78,7 +82,7 @@ export async function launchChromium({
     // A dedicated process group is what lets teardown signal this browser's own
     // tree without touching any other Chrome running on the machine.
     stdio: ['ignore', 'ignore', 'pipe'],
-    detached: process.platform !== 'win32',
+    detached: group,
   })
 
   let stderr = ''
@@ -100,11 +104,11 @@ export async function launchChromium({
       profileDir, timeoutMs: startTimeoutMs,
       isAlive: () => childIsRunning(child) && child.pid !== undefined,
     })
-    return { child, port, exited, stderr: stderrTail }
+    return { child, port, exited, stderr: stderrTail, group }
   } catch (error) {
     // Never leave an unowned browser behind when startup fails.
     if (child.pid !== undefined) {
-      await stopChromium({ child, exited, stderr: stderrTail }).catch(() => {})
+      await stopChromium({ child, exited, group, stderr: stderrTail }).catch(() => {})
     }
     throw new Error(`${error.message}${formatStderr(stderrTail)}`)
   }
@@ -112,14 +116,14 @@ export async function launchChromium({
 
 // Signalling the group is the only scope-safe way to reach Chromium's zygote and
 // renderer children; a bare child.kill() leaves those running.
-export function signalOwnedTree(child, signal) {
+export function signalOwnedTree(child, signal, group = false) {
   if (!child?.pid) return false
   if (process.platform === 'win32') {
     // Node cannot signal a Windows process tree; taskkill /T is the scoped tool.
     spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
     return true
   }
-  if (child.detached) {
+  if (group === true) {
     try {
       process.kill(-child.pid, signal)
       return true
@@ -160,8 +164,8 @@ export function groupMembers(pid) {
   return members
 }
 
-export function ownedTreeGone(pid, detached) {
-  if (!pid || process.platform === 'win32' || !detached) return true
+export function ownedGroupGone(pid, group) {
+  if (!pid || process.platform === 'win32' || group !== true) return true
   try {
     process.kill(-pid, 0)
   } catch (error) {
@@ -188,12 +192,12 @@ export function waitForChildExit(child, timeoutMs) {
   })
 }
 
-export async function waitForOwnedTreeExit(child, timeoutMs, { sleep = wait, now = Date.now } = {}) {
-  if (ownedTreeGone(child.pid, child.detached)) return true
+export async function waitForOwnedTreeExit(child, group, timeoutMs, { sleep = wait, now = Date.now } = {}) {
+  if (ownedGroupGone(child.pid, group)) return true
   const deadline = now() + timeoutMs
   while (now() < deadline) {
     await sleep(25)
-    if (ownedTreeGone(child.pid, child.detached)) return true
+    if (ownedGroupGone(child.pid, group)) return true
   }
   return false
 }
@@ -204,34 +208,42 @@ export async function waitForOwnedTreeExit(child, timeoutMs, { sleep = wait, now
  * SIGTERM first so Chromium can flush and unlink its own profile, then a bounded
  * SIGKILL escalation. Success is reported only once the process group we created
  * no longer exists: a signal is a request, never evidence of termination.
+ *
+ * `group` says whether this teardown owns a process group (POSIX detached spawn).
+ * It is required rather than inferred, because Node does not expose the spawn
+ * option on the child and guessing it silently reduces the check to the leader.
  */
 export async function stopChromium({
-  child, exited, stderr = () => '',
+  child, exited, group, stderr = () => '',
   graceMs = BROWSER_TERMINATE_GRACE_MS,
   killTimeoutMs = BROWSER_KILL_TIMEOUT_MS,
   treeSettleMs = BROWSER_TREE_SETTLE_MS,
   signal = signalOwnedTree, waitForExit = waitForChildExit, waitForTree = waitForOwnedTreeExit,
 } = {}) {
-  if (!childIsRunning(child)) {
-    return { terminated: true, escalated: false, code: await exited }
+  if (typeof group !== 'boolean') {
+    throw new Error('stopChromium needs to be told whether it owns the process group')
   }
 
-  let escalated = signal(child, 'SIGTERM') === false
-  if (!await waitForExit(child, graceMs)) {
-    escalated = true
-    signal(child, 'SIGKILL')
-    if (!await waitForExit(child, killTimeoutMs)) {
-      throw new Error(`Chromium did not terminate within ${killTimeoutMs}ms of SIGKILL${formatStderr(stderr)}`)
+  let escalated = false
+
+  if (childIsRunning(child)) {
+    escalated = signal(child, 'SIGTERM', group) === false
+    if (!await waitForExit(child, graceMs)) {
+      escalated = true
+      signal(child, 'SIGKILL', group)
+      if (!await waitForExit(child, killTimeoutMs)) {
+        throw new Error(`Chromium did not terminate within ${killTimeoutMs}ms of SIGKILL${formatStderr(stderr)}`)
+      }
     }
   }
 
-  // The leader exiting is not the same as the group emptying: a stray renderer
-  // can outlive it, which is exactly the leak this check exists to catch.
-  let treeGone = await waitForTree(child, treeSettleMs)
+  // A leader that crashed or exited on its own can still leave children behind,
+  // so the group is checked on every path, not only when the leader had to die.
+  let treeGone = await waitForTree(child, group, treeSettleMs)
   if (!treeGone) {
     escalated = true
-    signal(child, 'SIGKILL')
-    treeGone = await waitForTree(child, treeSettleMs)
+    signal(child, 'SIGKILL', group)
+    treeGone = await waitForTree(child, group, treeSettleMs)
   }
   if (!treeGone) {
     throw new Error(`Chromium exited but process group ${child.pid} still has members${formatStderr(stderr)}`)

@@ -79,7 +79,10 @@ body[data-theme="dark"]{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--
     // One Chromium for the whole matrix: the contexts, not the browser, provide
     // the per-combination isolation.
     const browser = await launchChromium({ binary: CHROME, profileDir })
-    teardown.push(() => stopChromium({ child: browser.child, exited: browser.exited, stderr: browser.stderr }))
+    teardown.push(() => stopChromium({
+      child: browser.child, exited: browser.exited, group: browser.group, stderr: browser.stderr,
+    }))
+
     const { socket, client } = await connectToChromium(browser.port)
     teardown.push(() => { socket.close() })
 

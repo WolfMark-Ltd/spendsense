@@ -12,7 +12,7 @@ const suites = {
     ['membership', 38], ['membership-scope', 99, true], ['news', 24],
     ['news-editorial', 46], ['news-groups', 52], ['news-layout.harness', 4],
     ['news-render', 52, true], ['node-runner', 5], ['plugin', 65], ['recount', 16],
-    ['reports-layout.chromium', 15], ['reports-layout.devtools', 10],
+    ['reports-layout.chromium', 17], ['reports-layout.devtools', 10],
     ['sidebar', 39, true], ['ui-labels', 48],
     ['ux-primitives', 32, true], ['weather', 11], ['weather-render', 9, true],
     ['wp14-fixes', 9],

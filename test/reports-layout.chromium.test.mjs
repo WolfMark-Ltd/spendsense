@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
-  findChromiumBinary, measureInBrowserContext, ownedTreeGone, stopChromium, waitForDevToolsPort,
+  findChromiumBinary, measureInBrowserContext, ownedGroupGone, stopChromium, waitForDevToolsPort,
 } from './reports-layout.chromium.mjs'
 
 const POSIX_ONLY = process.platform === 'win32' ? 'POSIX process groups only' : false
@@ -20,8 +20,8 @@ function temporaryProfile() {
 
 // A detached node child stands in for the browser: real signals, real process
 // group, no Chromium binary needed for the lifecycle regressions.
-function spawnOwnedChild(source, args = []) {
-  const child = spawn(process.execPath, ['-e', source, ...args], { detached: true, stdio: 'ignore' })
+function spawnOwnedChild(source, args = [], { group = true } = {}) {
+  const child = spawn(process.execPath, ['-e', source, ...args], { detached: group, stdio: 'ignore' })
   const exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })))
   return { child, exited }
 }
@@ -33,6 +33,31 @@ async function waitForFile(path, timeoutMs = 5000) {
     await wait(25)
   }
   throw new Error(`${path} was not written within ${timeoutMs}ms`)
+}
+
+// Per-pid liveness that tolerates a zombie: terminated, merely unreaped.
+function childAlive(pid) {
+  try {
+    process.kill(pid, 0)
+  } catch {
+    return false
+  }
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    const close = stat.lastIndexOf(')')
+    return close >= 0 ? stat.slice(close + 2).split(' ')[0] !== 'Z' : true
+  } catch {
+    return true
+  }
+}
+
+async function waitUntilGone(pid, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!childAlive(pid)) return true
+    await wait(25)
+  }
+  return !childAlive(pid)
 }
 
 // Records every CDP call and answers like a browser would, so the orchestration
@@ -140,14 +165,26 @@ test('the Chromium lookup reports absence instead of guessing a path', () => {
   assert.equal(findChromiumBinary(['/nonexistent/google-chrome', process.execPath]), process.execPath)
 })
 
+test('teardown refuses to guess whether it owns a process group', { skip: POSIX_ONLY }, async () => {
+  // Node does not expose the spawn option on the child, so a silent default here
+  // is exactly how group verification degrades into a leader-only check.
+  const { child, exited } = spawnOwnedChild('setInterval(() => {}, 1000)')
+  try {
+    await assert.rejects(stopChromium({ child, exited }), /owns the process group/)
+  } finally {
+    await stopChromium({ child, exited, group: true, graceMs: 5000 })
+  }
+  assert.equal(ownedGroupGone(child.pid, true), true)
+})
+
 test('a browser that exits on SIGTERM is terminated without escalation', { skip: POSIX_ONLY }, async () => {
   const { child, exited } = spawnOwnedChild('setInterval(() => {}, 1000)')
-  const result = await stopChromium({ child, exited, graceMs: 5000 })
+  const result = await stopChromium({ child, exited, group: true, graceMs: 5000 })
 
   assert.equal(result.terminated, true)
   assert.equal(result.escalated, false)
   assert.equal(result.code.signal, 'SIGTERM')
-  assert.equal(ownedTreeGone(child.pid, child.detached), true)
+  assert.equal(ownedGroupGone(child.pid, true), true)
 })
 
 test('a browser that ignores SIGTERM is escalated to SIGKILL', { skip: POSIX_ONLY }, async () => {
@@ -163,7 +200,7 @@ test('a browser that ignores SIGTERM is escalated to SIGKILL', { skip: POSIX_ONL
     // Without this handshake the test can beat the handler into place and the
     // default SIGTERM disposition would make the escalation look unnecessary.
     await waitForFile(readyFile)
-    const result = await stopChromium({ child, exited, graceMs: 120, killTimeoutMs: 5000 })
+    const result = await stopChromium({ child, exited, group: true, graceMs: 120, killTimeoutMs: 5000 })
 
     assert.equal(result.terminated, true)
     assert.equal(result.escalated, true)
@@ -189,13 +226,45 @@ test('termination reaches a grandchild that ignores SIGTERM in the owned group',
     const grandchildPid = Number(await waitForFile(pidFile))
     assert.ok(grandchildPid > 0, 'the stand-in browser started a child')
 
+    // Negative controls. Without them a "gone" result cannot be told apart from
+    // a probe that never looked, which is exactly how this leak was missed.
+    assert.equal(ownedGroupGone(child.pid, true), false, 'the owned group is observable while it is alive')
+    assert.equal(childAlive(grandchildPid), true, 'the grandchild is running before teardown')
+
     // A leader-only kill would leave the grandchild holding the group open, so
-    // reaching this assertion is itself the proof that the signal was scoped to
-    // the whole tree.
-    const result = await stopChromium({ child, exited, graceMs: 120, killTimeoutMs: 5000 })
+    // reaching these assertions is the proof that the signal was tree-scoped.
+    const result = await stopChromium({ child, exited, group: true, graceMs: 120, killTimeoutMs: 5000 })
     assert.equal(result.terminated, true)
     assert.equal(result.escalated, true)
-    assert.equal(ownedTreeGone(child.pid, child.detached), true)
+    assert.equal(ownedGroupGone(child.pid, true), true, 'the owned group is empty after teardown')
+    assert.equal(await waitUntilGone(grandchildPid), true, 'the grandchild itself is gone')
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
+})
+
+test('a leader that already exited still has its surviving children cleaned up', { skip: POSIX_ONLY }, async () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'wm-orphan-'))
+  const pidFile = join(scratch, 'grandchild.pid')
+  const source = `
+    const { spawn } = require('node:child_process')
+    const { writeFileSync } = require('node:fs')
+    const grandchild = spawn(process.execPath, ['-e', ${JSON.stringify(IGNORES_SIGTERM)}], { stdio: 'ignore' })
+    writeFileSync(process.argv[1], String(grandchild.pid))
+    setTimeout(() => process.exit(0), 150)
+  `
+  const { child, exited } = spawnOwnedChild(source, [pidFile])
+  try {
+    const grandchildPid = Number(await waitForFile(pidFile))
+    await exited
+    assert.equal(child.exitCode !== null || child.signalCode !== null, true, 'the stand-in browser exited on its own')
+    assert.equal(childAlive(grandchildPid), true, 'the grandchild outlives its leader')
+
+    // A crash or clean self-exit must not be read as "nothing left to clean up".
+    const result = await stopChromium({ child, exited, group: true, graceMs: 120, killTimeoutMs: 5000 })
+    assert.equal(result.terminated, true)
+    assert.equal(ownedGroupGone(child.pid, true), true, 'the owned group is empty after teardown')
+    assert.equal(await waitUntilGone(grandchildPid), true, 'the orphaned grandchild is cleaned up')
   } finally {
     rmSync(scratch, { recursive: true, force: true })
   }
@@ -205,7 +274,7 @@ test('a browser that has already exited is reported without being signalled', { 
   const { child, exited } = spawnOwnedChild('process.exit(0)')
   await exited
 
-  const result = await stopChromium({ child, exited })
+  const result = await stopChromium({ child, exited, group: true })
   assert.equal(result.terminated, true)
   assert.equal(result.escalated, false)
   assert.equal(result.code.code, 0)
