@@ -186,213 +186,272 @@ const cardOf = (container, kind) => {
 }
 
 // ---------------------------------------------------------------------------
+// Every expectation below runs for both languages. The Chromium suites checked
+// these per locale; a replacement that checks only English would leave the
+// Chinese wording able to regress silently.
+const COPY = {
+  en: {
+    reported: 'Reported', reportedAge: /Provider reading from 10 min ago/,
+    unsupported: 'Not available from Hermes',
+    noReading: 'No reading from Hermes',
+    failed: 'Read failed', failedNote: /could not be fetched/,
+    unreported: 'Unreported',
+    included: /Included in another account[’']s subscription/,
+    prepaid: /Prepaid credits · no recurring membership fee/,
+    metered: /Metered API · no recurring membership fee/,
+    free: /Free access · no membership fee/,
+    noCredential: 'No credential',
+    unpriced: /no published price/,
+    explainer: /No reading from Hermes[\s\S]{0,400}?normal data limitation/,
+    health: /Provider readings:/,
+    healthNoReading: /2 with no reading from Hermes/,
+    healthFailed: /1 failed/,
+    attentionScope: /Plan setup and allowance marks/,
+    diagnostics: /Technical details/i,
+    optional: /optional/i,
+    summaryLabels: ['Accounts reviewed', 'Paid subscriptions', 'Needs attention', 'Membership fees'],
+    reviewedStatus: 'All arrangements', reviewedNote: /not subscribed/,
+    paidUnknown: '1 fee unknown',
+    paidNote: /Free, included and prepaid accounts are counted by arrangement/,
+    attentionStatus: 'Needs action',
+    attentionNote: /Plan setup and allowance marks\. A failed provider read is reported separately/,
+    feesStatus: 'Declared', feesNote: /Not a bill/,
+    feeLines: ['USD 110.00/mo', 'EUR 19.99/mo'],
+  },
+  zh: {
+    reported: '已上报', reportedAge: /提供方读数来自 10 分钟前/,
+    unsupported: 'Hermes 无法提供',
+    noReading: 'Hermes 未提供读数',
+    failed: '读取失败', failedNote: /无法获取提供方读数/,
+    unreported: '未上报',
+    included: /包含在另一账户的订阅中/,
+    prepaid: /预付额度/,
+    metered: /按量 API/,
+    free: /免费访问/,
+    noCredential: '无凭证',
+    unpriced: /没有公布价格/,
+    explainer: /Hermes 未提供读数[\s\S]{0,400}?正常的数据限制/,
+    health: /提供方读数/,
+    healthNoReading: /Hermes 未提供 2/,
+    healthFailed: /失败 1/,
+    attentionScope: /方案设置与额度标记/,
+    diagnostics: /技术详情/,
+    optional: /可选/,
+    summaryLabels: ['已检查账户', '付费订阅', '需要注意', '会员费用'],
+    reviewedStatus: '全部计费方式', reviewedNote: /不代表已订阅/,
+    paidUnknown: '1 项费用未知',
+    paidNote: /免费、共享与预付账户按计费方式另行统计/,
+    attentionStatus: '需处理',
+    attentionNote: /仅统计方案设置与额度标记；提供方读取失败另行报告/,
+    feesStatus: '已声明', feesNote: /不是账单/,
+    feeLines: ['USD 110.00/月', 'EUR 19.99/月'],
+  },
+}
 
-test('every reading state is named separately, in the reader\'s language', async () => {
-  const container = await boot()
-  // A successful provider reading states its age.
-  const reported = readingOf(container, 'memb:reported')
-  assert.equal(reported.state, 'reported', 'a provider reading is Reported')
-  assert.equal(reported.label, 'Reported')
-  assert.match(reported.age, /Provider reading from 10 min ago/,
-    `a provider reading states how old it is: ${reported.age}`)
-  assert.deepEqual(reported.notes, [], 'a healthy reading is not explained per card')
+const LOCALES = Object.keys(COPY)
 
-  // Hermes cannot read this route: a data limitation, with its own words.
-  const unsupported = readingOf(container, 'memb:unsupported')
-  assert.equal(unsupported.state, 'unsupported',
-    'an unreadable route is not reported as unreported')
-  assert.equal(unsupported.label, 'Not available from Hermes')
-  assert.deepEqual(unsupported.notes, [],
-    'the normal limitation is explained once, on the page, not per card')
+test('every reading state is named separately, in both languages', async () => {
+  for (const locale of LOCALES) {
+    const copy = COPY[locale]
+    const container = await boot({ locale })
 
-  // Hermes answered without a reading: not permanent, not an error.
-  const noReading = readingOf(container, 'memb:nohermes')
-  assert.equal(noReading.state, 'no_reading', 'a read that returned nothing is its own state')
-  assert.equal(noReading.label, 'No reading from Hermes')
-  assert.deepEqual(noReading.notes, [], 'a returned-nothing read is not repeated per card')
+    // A successful provider reading states its age.
+    const reported = readingOf(container, 'memb:reported')
+    assert.equal(reported.state, 'reported', `${locale}: a provider reading is Reported`)
+    assert.equal(reported.label, copy.reported, `${locale}: the reported chip is localised`)
+    assert.match(reported.age, copy.reportedAge,
+      `${locale}: a provider reading states how old it is (${reported.age})`)
+    assert.deepEqual(reported.notes, [], `${locale}: a healthy reading is not explained per card`)
 
-  // A failed read is an error, and is announced as one.
-  const failed = readingOf(container, 'memb:failed')
-  assert.equal(failed.state, 'failed', 'a failed read is a failure')
-  assert.equal(failed.label, 'Read failed')
-  assert.deepEqual(failed.notes.map(note => note.state), ['failed'])
-  assert.match(failed.notes[0].text, /could not be fetched/,
-    `the failure says what happened: ${failed.notes[0].text}`)
+    // Hermes cannot read this route: a data limitation, with its own words.
+    const unsupported = readingOf(container, 'memb:unsupported')
+    assert.equal(unsupported.state, 'unsupported',
+      `${locale}: an unreadable route is not reported as unreported`)
+    assert.equal(unsupported.label, copy.unsupported, `${locale}: the limitation is named`)
+    assert.deepEqual(unsupported.notes, [],
+      `${locale}: the normal limitation is explained once, on the page`)
 
-  // Nothing asked yet keeps the Unreported vocabulary.
-  const stored = readingOf(container, 'memb:stored')
-  assert.equal(stored.state, 'unreported', 'a stored view stays Unreported')
-  assert.equal(stored.label, 'Unreported')
-  assert.deepEqual(stored.notes, [], 'the stored view is not explained per card')
+    // Hermes answered without a reading: not permanent, not an error.
+    const noReading = readingOf(container, 'memb:nohermes')
+    assert.equal(noReading.state, 'no_reading', `${locale}: a read that returned nothing is its own state`)
+    assert.equal(noReading.label, copy.noReading)
+    assert.deepEqual(noReading.notes, [], `${locale}: a returned-nothing read is not repeated per card`)
 
-  // F85: one page-level explanation for the routes Hermes cannot read, and a
-  // health line that counts them separately from attention.
-  assert.match(container.textContent, /No reading from Hermes[\s\S]{0,400}?normal data limitation/,
-    'the page states the Hermes data limitation once')
-  const health = container.querySelector('[data-reading-health]')
-  assert.ok(health, 'the page states provider reading health')
-  assert.match(health.textContent, /Provider readings:/)
-  assert.match(health.textContent, /2 with no reading from Hermes/,
-    'the provider summary counts the routes Hermes cannot read')
-  assert.match(health.textContent, /1 failed/, 'a failed read is counted in the reading summary')
-  assert.equal(container.querySelector('[data-reading-failed]')?.getAttribute('data-reading-failed'), '1',
-    'the failed count is machine-readable for a retry')
+    // A failed read is an error, and is announced as one.
+    const failed = readingOf(container, 'memb:failed')
+    assert.equal(failed.state, 'failed', `${locale}: a failed read is a failure`)
+    assert.equal(failed.label, copy.failed)
+    assert.deepEqual(failed.notes.map(note => note.state), ['failed'])
+    assert.match(failed.notes[0].text, copy.failedNote,
+      `${locale}: the failure says what happened (${failed.notes[0].text})`)
+
+    // Nothing asked yet keeps the Unreported vocabulary.
+    const stored = readingOf(container, 'memb:stored')
+    assert.equal(stored.state, 'unreported', `${locale}: a stored view stays Unreported`)
+    assert.equal(stored.label, copy.unreported)
+    assert.deepEqual(stored.notes, [], `${locale}: the stored view is not explained per card`)
+
+    // The arrangements that are not a recurring fee each say so in their own words.
+    assert.match(readingOf(container, 'memb:included').fee, copy.included,
+      `${locale}: an included route carries no separate fee`)
+    assert.match(readingOf(container, 'memb:prepaid').fee, copy.prepaid,
+      `${locale}: prepaid credits carry no recurring fee`)
+    assert.match(readingOf(container, 'memb:nocred').fee, copy.metered,
+      `${locale}: a metered route names its arrangement`)
+    assert.match(readingOf(container, 'memb:free').fee, copy.free,
+      `${locale}: a confirmed free tier is named as free access`)
+    assert.equal(readingOf(container, 'memb:nocred').status, copy.noCredential,
+      `${locale}: a missing credential is named on the row`)
+
+    // F85: one page-level explanation, and a health line that counts the routes
+    // Hermes cannot read separately from attention.
+    assert.match(container.textContent, copy.explainer,
+      `${locale}: the page states the Hermes data limitation once`)
+    const health = container.querySelector('[data-reading-health]')
+    assert.ok(health, `${locale}: the page states provider reading health`)
+    assert.match(health.textContent, copy.health)
+    assert.match(health.textContent, copy.healthNoReading,
+      `${locale}: the provider summary counts the routes Hermes cannot read`)
+    assert.match(health.textContent, copy.healthFailed,
+      `${locale}: a failed read is counted in the reading summary`)
+    assert.equal(container.querySelector('[data-reading-failed]')?.getAttribute('data-reading-failed'), '1',
+      `${locale}: the failed count is machine-readable for a retry`)
+    assert.match(container.querySelector('[data-attention-scope]')?.textContent || '', copy.attentionScope,
+      `${locale}: the attention count says what it measures`)
+  }
 })
 
-test('the reading vocabulary survives translation without collapsing states', async () => {
-  const container = await boot({ locale: 'zh' })
-  const expected = {
-    'memb:reported': ['reported', '已上报'],
-    'memb:unsupported': ['unsupported', 'Hermes 无法提供'],
-    'memb:nohermes': ['no_reading', 'Hermes 未提供读数'],
-    'memb:failed': ['failed', '读取失败'],
-    'memb:stored': ['unreported', '未上报'],
-  }
-  for (const [id, [state, label]] of Object.entries(expected)) {
-    const reading = readingOf(container, id)
-    assert.equal(reading.state, state, `${id} keeps its state in Chinese`)
-    assert.equal(reading.label, label, `${id} is named in the reader's language`)
-  }
-  assert.deepEqual(
-    ['reviewed', 'paid', 'attention', 'fees'].map(kind => cardOf(container, kind).label),
-    ['已检查账户', '付费订阅', '需要注意', '会员费用'],
-    'the four headline readings are named in order, in Chinese')
-  assert.deepEqual(cardOf(container, 'fees').lines, ['USD 110.00/月', 'EUR 19.99/月'],
-    'fee lines keep their currency, period and one-per-line shape in Chinese')
-})
+test('absence is never rendered as a measured zero, in both languages', async () => {
+  for (const locale of LOCALES) {
+    const copy = COPY[locale]
+    const container = await boot({ locale })
+    // An unpriced plan names the gap rather than printing 0.
+    const unpriced = readingOf(container, 'memb:nohermes')
+    assert.match(unpriced.fee, copy.unpriced,
+      `${locale}: an unpriced plan states why there is no figure (${unpriced.fee})`)
+    assert.doesNotMatch(unpriced.fee, /[$€£]0\.00/, `${locale}: an unknown fee never becomes zero`)
 
-test('absence is never rendered as a measured zero', async () => {
-  const container = await boot()
-  // An unpriced plan names the gap rather than printing 0.
-  const unpriced = readingOf(container, 'memb:nohermes')
-  assert.match(unpriced.fee, /no published price/,
-    `an unpriced plan states why there is no figure: ${unpriced.fee}`)
-  assert.doesNotMatch(unpriced.fee, /[$€£]0\.00/, 'an unknown fee never becomes zero')
-  assert.equal(unpriced.status, 'Needs attention',
-    'a chosen plan with no price is attention, not a confirmed zero')
-
-  // A metered route names its arrangement instead of inventing a fee.
-  const metered = readingOf(container, 'memb:nocred')
-  assert.match(metered.fee, /Metered API · no recurring membership fee/)
-  assert.equal(metered.status, 'No credential', 'a missing credential is named on the row')
-
-  // Nowhere in the pane does an unobserved allowance read as a percentage.
-  const text = container.textContent.replace(/\s+/g, ' ')
-  assert.doesNotMatch(text, /\b0% used/, 'the pane never states 0% used')
-  assert.doesNotMatch(text, /[$€£]0\.00/, 'no zero amount is invented anywhere in the pane')
-  for (const id of ['memb:reported', 'memb:unsupported', 'memb:nohermes', 'memb:failed', 'memb:stored']) {
-    const reading = readingOf(container, id)
-    assert.doesNotMatch(reading.label, /0%/, `${id} never reads as 0% used`)
-    assert.doesNotMatch(reading.fee, /0% used/, `${id} fee never carries a usage percentage`)
+    // Nowhere in the pane does an unobserved allowance read as a percentage.
+    const text = container.textContent.replace(/\s+/g, ' ')
+    assert.doesNotMatch(text, /\b0% used/, `${locale}: the pane never states 0% used`)
+    assert.doesNotMatch(text, /[$€£]0\.00/, `${locale}: no zero amount is invented anywhere in the pane`)
+    for (const id of ['memb:reported', 'memb:unsupported', 'memb:nohermes', 'memb:failed', 'memb:stored']) {
+      const reading = readingOf(container, id)
+      assert.doesNotMatch(reading.label, /0%/, `${locale}: ${id} never reads as 0% used`)
+      assert.doesNotMatch(reading.fee, /0% used/, `${locale}: ${id} fee never carries a usage percentage`)
+    }
   }
 })
 
 test('the summary reconciles and never calls a scope count a subscription', async () => {
-  const container = await boot()
-  assert.deepEqual(['reviewed', 'paid', 'attention', 'fees'].map(kind => cardOf(container, kind).label),
-    ['Accounts reviewed', 'Paid subscriptions', 'Needs attention', 'Membership fees'],
-    'the four headline readings are named in order')
+  for (const locale of LOCALES) {
+    const copy = COPY[locale]
+    const container = await boot({ locale })
+    assert.deepEqual(['reviewed', 'paid', 'attention', 'fees'].map(kind => cardOf(container, kind).label),
+      copy.summaryLabels, `${locale}: the four headline readings are named in order`)
 
-  const reviewed = cardOf(container, 'reviewed')
-  assert.equal(reviewed.value, '9', 'every account is counted once as reviewed')
-  assert.equal(reviewed.status, 'All arrangements', 'a reviewed account is not called a subscription')
-  assert.match(reviewed.note, /not subscribed/, 'the reviewed card says what it does not mean')
+    const reviewed = cardOf(container, 'reviewed')
+    assert.equal(reviewed.value, '9', `${locale}: every account is counted once as reviewed`)
+    assert.equal(reviewed.status, copy.reviewedStatus,
+      `${locale}: a reviewed account is not called a subscription`)
+    assert.match(reviewed.note, copy.reviewedNote,
+      `${locale}: the reviewed card says what it does not mean`)
 
-  const paid = cardOf(container, 'paid')
-  assert.equal(paid.value, '4', 'only subscription accounts with a chosen plan are paid')
-  assert.equal(paid.status, '1 fee unknown', 'a paid account with no fee amount is named as unknown')
-  assert.equal(paid.tone, 'attention', 'an unknown fee changes the paid card\'s accent')
-  assert.match(paid.note, /Free, included and prepaid accounts are counted by arrangement/,
-    'the paid count states what it excludes')
+    const paid = cardOf(container, 'paid')
+    assert.equal(paid.value, '4', `${locale}: only subscription accounts with a chosen plan are paid`)
+    assert.equal(paid.status, copy.paidUnknown,
+      `${locale}: a paid account with no fee amount is named as unknown`)
+    assert.equal(paid.tone, 'attention', `${locale}: an unknown fee changes the paid card's accent`)
+    assert.match(paid.note, copy.paidNote, `${locale}: the paid count states what it excludes`)
 
-  // Strengthened: the attention count and its status are asserted explicitly.
-  // The browser suite derived the expected status from the observed value
-  // (`value === '0' ? Clear : Open`), which passes whatever the count is.
-  const attention = cardOf(container, 'attention')
-  assert.equal(attention.value, '2',
-    'the unfunded paid plan and the unconfirmed account need attention')
-  assert.equal(attention.status, 'Needs action', 'two reasons are an action, never "None"')
-  assert.match(attention.note, /Plan setup and allowance marks/,
-    'the attention count states what it measures')
-  assert.match(attention.note, /failed provider read is reported separately/i,
-    'attention never absorbs a reading failure')
+    // Strengthened: the attention count and its status are asserted explicitly.
+    // The browser suite derived the expected status from the observed value
+    // (`value === '0' ? Clear : Open`), which passes whatever the count is.
+    const attention = cardOf(container, 'attention')
+    assert.equal(attention.value, '2',
+      `${locale}: the unfunded paid plan and the unconfirmed account need attention`)
+    assert.equal(attention.status, copy.attentionStatus, `${locale}: two reasons are an action, never "None"`)
+    assert.match(attention.note, copy.attentionNote,
+      `${locale}: the attention count states what it measures`)
 
-  const fees = cardOf(container, 'fees')
-  assert.deepEqual(fees.lines, ['USD 110.00/mo', 'EUR 19.99/mo'],
-    'one fee line per currency, never summed')
-  assert.equal(fees.status, 'Declared', 'a recorded fee is Declared')
-  assert.match(fees.note, /Not a bill/, 'the fee card says it is not a bill')
-  assert.equal(fees.tone, 'declared', 'a recorded fee carries the declared accent')
-
-  // Distinct accents: a scope count, an attention count and a declared fee
-  // never share a rail.
-  assert.notEqual(reviewed.tone, paid.tone, 'a scope count and a paid count differ')
-  assert.notEqual(attention.tone, fees.tone, 'attention and declared readings do not share an accent')
+    const fees = cardOf(container, 'fees')
+    assert.deepEqual(fees.lines, copy.feeLines,
+      `${locale}: one fee line per currency, never summed`)
+    assert.equal(fees.status, copy.feesStatus, `${locale}: a recorded fee is Declared`)
+    assert.match(fees.note, copy.feesNote, `${locale}: the fee card says it is not a bill`)
+    assert.equal(fees.tone, 'declared', `${locale}: a recorded fee carries the declared accent`)
+    assert.notEqual(reviewed.tone, paid.tone, `${locale}: a scope count and a paid count differ`)
+    assert.notEqual(attention.tone, fees.tone,
+      `${locale}: attention and declared readings do not share an accent`)
+  }
 })
 
 test('accounts group by arrangement, and each heading states its own count', async () => {
-  const container = await boot()
-  const groups = [...container.querySelectorAll('[data-group-kind]')]
-  assert.deepEqual(groups.map(el => el.getAttribute('data-group-kind')),
-    ['paid', 'free', 'included', 'prepaid', 'metered', 'unconfirmed'],
-    'accounts are grouped by arrangement, in a stable order')
-  // The headings and their cards share one parent (a card keeps its identity
-  // when an edit moves it between groups), so a group is the heading plus the
-  // cards that follow it up to the next heading.
-  const cardsOf = heading => {
-    const cards = []
-    for (let node = heading.nextElementSibling; node; node = node.nextElementSibling) {
-      if (node.hasAttribute('data-group-kind')) break
-      if (node.hasAttribute('data-account')) cards.push(node)
+  for (const locale of LOCALES) {
+    const container = await boot({ locale })
+    const groups = [...container.querySelectorAll('[data-group-kind]')]
+    assert.deepEqual(groups.map(el => el.getAttribute('data-group-kind')),
+      ['paid', 'free', 'included', 'prepaid', 'metered', 'unconfirmed'],
+      `${locale}: accounts are grouped by arrangement, in a stable order`)
+    // The headings and their cards share one parent (a card keeps its identity
+    // when an edit moves it between groups), so a group is the heading plus the
+    // cards that follow it up to the next heading.
+    const cardsOf = heading => {
+      const cards = []
+      for (let node = heading.nextElementSibling; node; node = node.nextElementSibling) {
+        if (node.hasAttribute('data-group-kind')) break
+        if (node.hasAttribute('data-account')) cards.push(node)
+      }
+      return cards
     }
-    return cards
+    const counts = groups.map(heading => cardsOf(heading).length)
+    assert.deepEqual(counts, [4, 1, 1, 1, 1, 1], `${locale}: every account lands in exactly one group`)
+    for (const [index, heading] of groups.entries()) {
+      assert.equal(heading.querySelector('.wm-membership-group-count')?.textContent.trim(),
+        String(counts[index]),
+        `${locale}: the group heading states its own count (${heading.textContent.trim().slice(0, 40)})`)
+    }
+    assert.equal(counts.reduce((sum, count) => sum + count, 0),
+      container.querySelectorAll('[data-account]').length,
+      `${locale}: no account is rendered outside a group`)
+
+    // F28/F30: the normal view never shows a technical route slug, and a slug is
+    // replaced by a friendly name.
+    const text = container.textContent.replace(/\s+/g, ' ')
+    assert.doesNotMatch(text, /commandcode-anthropic|opencode-zen|xai-oauth/,
+      `${locale}: no technical route slug is shown in the normal view`)
+    assert.match(rowOf(container, 'memb:unsupported').textContent, /CommandCode \(Anthropic route\)/,
+      `${locale}: a route slug is replaced by a friendly name`)
+    assert.equal(rowOf(container, 'memb:stored').getAttribute('data-arrangement'), 'unconfirmed',
+      `${locale}: an unconfirmed account is not called "no current plan"`)
   }
-  const counts = groups.map(heading => cardsOf(heading).length)
-  assert.deepEqual(counts, [4, 1, 1, 1, 1, 1], 'every account lands in exactly one group')
-  for (const [index, heading] of groups.entries()) {
-    assert.equal(heading.querySelector('.wm-membership-group-count')?.textContent.trim(),
-      String(counts[index]),
-      `the group heading states its own count (${heading.textContent.trim().slice(0, 40)})`)
-  }
-  // Every account on the page is inside exactly one group.
-  const grouped = counts.reduce((sum, count) => sum + count, 0)
-  assert.equal(grouped, container.querySelectorAll('[data-account]').length,
-    'no account is rendered outside a group')
-  // F28/F30: the normal view never shows a technical route slug, and a slug is
-  // replaced by a friendly name.
-  const text = container.textContent.replace(/\s+/g, ' ')
-  assert.doesNotMatch(text, /commandcode-anthropic|opencode-zen|xai-oauth/,
-    'no technical route slug is shown in the normal view')
-  assert.match(rowOf(container, 'memb:unsupported').textContent, /CommandCode \(Anthropic route\)/,
-    'a route slug is replaced by a friendly name')
-  assert.equal(rowOf(container, 'memb:stored').getAttribute('data-arrangement'), 'unconfirmed',
-    'an unconfirmed account is not called "no current plan"')
 })
 
-test('backend messages stay behind the technical details', async () => {
-  const container = await boot()
-  const diagnostics = container.querySelector('[data-wm-diagnostics]')
-  assert.ok(diagnostics, 'the technical details disclosure renders')
-  assert.match(diagnostics.querySelector('summary')?.textContent || '', /Technical details/i,
-    'the disclosure is named plainly')
-  assert.match(diagnostics.textContent, /optional/i, 'the request log is marked optional')
-  // The raw provider message is inside that disclosure and nowhere else, so a
-  // closed disclosure keeps it out of the normal view (the Chromium suite still
-  // measures that visibility directly).
-  const note = container.querySelector('[data-wm-backend-notes]')
-  assert.ok(note, 'the backend messages render inside the diagnostics')
-  assert.equal(note.closest('[data-wm-diagnostics]'), diagnostics,
-    'the backend messages are inside the technical details')
-  // The message appears in one text node, inside that disclosure and nowhere
-  // else. Walk text nodes: reading textContent off every element would copy
-  // the whole subtree repeatedly and is slow on a page this size.
-  const carriers = []
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (node.nodeValue.includes('TimeoutExpired')
-      && !node.parentElement.closest('[data-wm-diagnostics]')) carriers.push(node.nodeValue.trim())
+test('backend messages stay behind the technical details, in both languages', async () => {
+  for (const locale of LOCALES) {
+    const copy = COPY[locale]
+    const container = await boot({ locale })
+    const diagnostics = container.querySelector('[data-wm-diagnostics]')
+    assert.ok(diagnostics, `${locale}: the technical details disclosure renders`)
+    assert.match(diagnostics.querySelector('summary')?.textContent || '', copy.diagnostics,
+      `${locale}: the disclosure is named plainly`)
+    assert.match(diagnostics.textContent, copy.optional, `${locale}: the request log is marked optional`)
+    // The raw provider message is inside that disclosure and nowhere else, so a
+    // closed disclosure keeps it out of the normal view (the Chromium suite
+    // still measures that visibility directly).
+    const note = container.querySelector('[data-wm-backend-notes]')
+    assert.ok(note, `${locale}: the backend messages render inside the diagnostics`)
+    assert.equal(note.closest('[data-wm-diagnostics]'), diagnostics,
+      `${locale}: the backend messages are inside the technical details`)
+    const carriers = []
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.nodeValue.includes('TimeoutExpired')
+        && !node.parentElement.closest('[data-wm-diagnostics]')) carriers.push(node.nodeValue.trim())
+    }
+    assert.deepEqual(carriers, [],
+      `${locale}: no raw provider error is rendered outside the technical details`)
   }
-  assert.deepEqual(carriers, [], 'no raw provider error is rendered outside the technical details')
 })
 
 test('the memberships stylesheet carries the disclosure and highlight contracts', async () => {

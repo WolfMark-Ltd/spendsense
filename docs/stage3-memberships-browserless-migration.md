@@ -60,7 +60,7 @@ accounts are shared with the Chromium harness through
 | 4 | clarity: `memb:failed` state + label + its one note | same test | row presence | Move |
 | 5 | clarity: `memb:stored` unreported state + label + notes | same test | row presence | Move |
 | 6 | clarity: page-level explainer and reading-health counts (`2 with no reading`, `1 failed`, machine-readable failed count) | same test | — | Move |
-| 7 | clarity (en + zh): the whole vocabulary in Chinese | reading suite · "the reading vocabulary survives translation" | — | Move |
+| 7 | clarity (en + zh): the whole vocabulary, labels, ages, notes and explainer in both languages | reading suite asserts the full matrix once per locale (en, zh) | — | Move |
 | 8 | clarity: included / prepaid / metered / free fee wording; "No credential" chip | reading suite · "absence is never rendered as a measured zero" | — | Move |
 | 9 | clarity: "no zero is invented" — pane text, per-row chips, fee cells | same test (strengthened: pane-wide and per-row) | — | Move |
 | 10 | clarity: summary labels, card kinds, reviewed 9 / paid 4, statuses, notes, fee lines, tones | reading suite · "the summary reconciles…" | figure size/weight, rail width/colour, card overflow, columns | Move |
@@ -137,8 +137,10 @@ browser assertion was deleted. Every mutation was applied to
 | M5 | every account is filed under Paid subscriptions | yes |
 | M6 | the backend messages lose the technical-details hook | yes |
 | M7 | an open group no longer turns its chevron | yes |
+| M8 | an included route renders no-plan wording instead of its own fee wording | yes |
 
-7/7 failed with the regression present and passed on the restored source.
+8/8 failed with the regression present and passed on the restored source.
+Every expectation runs in both languages, so one mutation is detected twice.
 
 **Limitation, recorded deliberately:** the faithful version of M6 — moving the
 backend-notes block out of the disclosure — is not usable as a control in this
@@ -167,12 +169,14 @@ wrapper, not estimated.
 | Metric | Before | After |
 | --- | --- | --- |
 | Memberships Chromium cases | 6 | 6 |
-| Browserless cases | 802 across 27 files | 809 across 28 files |
-| New browserless suite | — | 7 cases, 8.3 s |
-| Browserless wall clock | 97.1 s | 96.9 s |
+| Browserless cases | 802 across 27 files | 808 across 28 files |
+| New browserless suite | — | 6 cases, 6.5 s (both languages each) |
+| Browserless wall clock | 97.1 s | 88.4 s |
 
-(The browserless total moved from 97.1 s to 96.9 s while gaining seven cases:
-another run-to-run difference, not a saving.)
+(The browserless total moved from 97.1 s to 88.4 s across runs that gained six
+cases; the machine is shared and the earlier after-run measured 96.9 s for the
+same tree apart from one test. Treat this figure as machine noise, not a
+saving.)
 
 **The honest conclusion: there is no launch or wall-clock saving here, and this
 PR does not claim one.** Both states make nine launches and take about 46
