@@ -269,8 +269,12 @@ the launch counts as exact**. Hosted CI figures are in §9.
 | — per layout (×12) | 36 | 20 |
 | Usage assertion statements | 79 | 59 |
 | — per layout (×16) | 61 | 52 |
-| Overview wall clock | 36.5 s | 40.2 s |
-| Usage wall clock | 22.9 s | 16.8 s |
+| Overview wall clock (local) | 36.5 s | 40.2 s |
+| Usage wall clock (local) | 22.9 s | 16.8 s |
+| Overview wall clock (hosted CI) | 15.2 s | **10.6 s** |
+| Usage wall clock (hosted CI) | 7.9 s | **5.0 s** |
+| `chromium` job (hosted CI) | 109 s | **84 s** |
+| `linux-browserless` job (hosted CI) | 66 s | 57 s |
 | Browserless cases | 825 across 29 files | 836 across 31 files |
 | New browserless suites | — | 11 cases: 4.3 s + 6.6 s process time |
 | Owned browser processes remaining | 0 | 0 |
@@ -285,14 +289,38 @@ chip behaviour now fail in the browserless job in about a second, and the
 Chromium files no longer re-verify them 12 and 16 times over.
 
 The local wall clocks moved in both directions (Overview +3.7 s, Usage −6.1 s)
-on a loaded host; they are not a treatment effect and this PR does not claim
-one.
+on a host carrying load 5–7; they are not a treatment effect and this PR does not
+claim one. **The hosted figures are the comparable ones**, and the per-file
+reduction there is almost entirely the readiness gate: each launch used to spend
+a fixed 900 ms of page time before reading anything, and now stops as soon as the
+final structure is on screen. The assertions that left Chromium contribute
+little to the clock — they were always free once the page had been launched.
 
 ## 9. Hosted CI
 
-See the PR's final commit for the run that was green on both `tests` jobs and on
-`chromium`. The `chromium` job log gives per-file completion times, which is the
-comparable measurement the local host cannot provide.
+Measured on GitHub-hosted runners with `workflow_dispatch` on the existing
+`ci.yml` (a default-branch workflow file, so the dispatch resolves and still runs
+the branch's content):
+
+- **Before** — `main` at `d894f19`, run
+  [44957464981](https://github.com/WolfMark-Ltd/spendsense/actions/runs/44957464981):
+  all four checks green; `chromium` 109 s, `linux-browserless` 66 s,
+  `tests-windows` 136 s.
+- **After** — this branch at `688c87b`, run
+  [44957810766](https://github.com/WolfMark-Ltd/spendsense/actions/runs/44957810766):
+  `tests` ✅, `chromium` ✅ 84 s, `linux-browserless` ✅ 57 s, `tests-windows` ✅
+  118 s, Greptile ✅.
+
+Per-file Chromium times, read from the completion timestamps in each job log:
+
+| Suite | Before | After |
+| --- | --- | --- |
+| `overview-layout.test.mjs` | 15.17 s | 10.57 s |
+| `usage-layout.test.mjs` | 7.86 s | 4.99 s |
+
+The `linux-browserless` job gained two files and eleven cases and still finished
+faster than the baseline run; job totals include checkout and `npm ci`, so treat
+them as end-to-end figures rather than a per-suite measurement.
 
 ## 10. Screenshot compatibility
 
