@@ -314,7 +314,7 @@ class AnalyticsTests(unittest.TestCase):
                         next(b for b in report["trend"]["buckets"] if b["calls"])]:
             self.assertEqual(grouped["cache_hit_rate"], totals["cache_hit_rate"])
             self.assertEqual(grouped["cache_known_calls"], 2)
-        self.assertTrue(any("all-zero" in note.lower() and "unknown" in note.lower()
+        self.assertTrue(any("three-state" in note.lower() and "unreported" in note.lower()
                             for note in report["notes"]))
 
     def test_cache_scope_uses_weighted_prompt_totals_and_keeps_ambiguous_calls(self):
@@ -434,9 +434,12 @@ class AnalyticsTests(unittest.TestCase):
             Tier(100, 6, 8, 1, 9), Tier(200, 1, 2, 0, 0),
         ))}}, "fixture", "test", "", "1")
         self.create_events([
-            {"input_tokens": 50, "cache_read_tokens": 50, "output_tokens": 10},
-            {"input_tokens": 50, "cache_read_tokens": 51, "output_tokens": 10},
-            {"input_tokens": 100, "cache_read_tokens": 101, "output_tokens": 10},
+            {"input_tokens": 50, "cache_read_tokens": 50, "output_tokens": 10,
+             "cache_read_reported": 1, "cache_write_reported": 1},
+            {"input_tokens": 50, "cache_read_tokens": 51, "output_tokens": 10,
+             "cache_read_reported": 1, "cache_write_reported": 1},
+            {"input_tokens": 100, "cache_read_tokens": 101, "output_tokens": 10,
+             "cache_read_reported": 1, "cache_write_reported": 1},
         ])
         econ = self.report(days=1)["economics"]
         expected_uncached = (100 * 2 + 10 * 4 + 101 * 6 + 10 * 8 + 201 * 1 + 10 * 2) / 1_000_000

@@ -58,7 +58,10 @@ CREATE TABLE IF NOT EXISTS calls (
     total_tokens        INTEGER NOT NULL DEFAULT 0,
     error_type          TEXT NOT NULL DEFAULT '',
     status_code         INTEGER,
-    recorded_at         REAL NOT NULL
+    recorded_at         REAL NOT NULL,
+    cache_read_reported  INTEGER,
+    cache_write_reported INTEGER,
+    call_class           TEXT
 );
 CREATE INDEX IF NOT EXISTS calls_ts ON calls(ts);
 CREATE INDEX IF NOT EXISTS calls_session ON calls(session_id, ts);
@@ -118,6 +121,26 @@ def _exclusive() -> Iterator[None]:
         _WRITE_LOCK.release()
 
 
+def _tri_value(value: Any) -> Optional[int]:
+    """1/0/NULL for a reported flag. None means "not recorded", never False."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("1", "true", "yes"):
+            return 1
+        if lowered in ("0", "false", "no"):
+            return 0
+        return None
+    if isinstance(value, bool):
+        return 1 if value else 0
+    return 1 if bool(value) else 0
+
+
+#: Public within the package: the collector and the store share one coercion.
+tri_flag = _tri_value
+
+
 def event_db_path() -> Path:
     """Profile-scoped plugin data path, following Hermes' storage convention."""
     try:
@@ -136,9 +159,32 @@ def event_db_path() -> Path:
         return base / "plugin-data" / PLUGIN_NAME / DB_FILENAME
 
 
+#: Columns added after the first release. ``NULL`` is the only correct value
+#: for a row written before the column existed: it means "provenance was not
+#: recorded", never "the provider reported zero" or "this was a main-loop call".
+_ADDITIVE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("cache_read_reported", "INTEGER"),
+    ("cache_write_reported", "INTEGER"),
+    ("call_class", "TEXT"),
+)
+
+
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
+    _add_missing_columns(conn)
+    # Created after the additive migration: an older store reaches this line
+    # only once ``call_class`` exists, so the index can never reference a
+    # column the table does not have yet.
+    conn.execute("CREATE INDEX IF NOT EXISTS calls_class ON calls(session_id, call_class)")
     conn.commit()
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    """Idempotent additive migration; never rewrites or backfills a row."""
+    have = {row[1] for row in conn.execute('PRAGMA table_info("calls")').fetchall()}
+    for name, decl in _ADDITIVE_COLUMNS:
+        if name not in have:
+            conn.execute(f'ALTER TABLE calls ADD COLUMN "{name}" {decl}')
 
 
 def connect_writer(path: Optional[Path | str] = None) -> sqlite3.Connection:
@@ -314,8 +360,9 @@ def record(record: dict[str, Any], path: Optional[Path | str] = None,
                 platform, model, provider, api_mode, aux_task, streaming, outcome,
                 api_call_count, input_tokens, output_tokens, cache_read_tokens,
                 cache_write_tokens, reasoning_tokens, prompt_tokens, total_tokens,
-                error_type, status_code, recorded_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                error_type, status_code, recorded_at,
+                cache_read_reported, cache_write_reported, call_class
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 record["event_id"], record["ts"], record.get("started_at"),
@@ -330,6 +377,9 @@ def record(record: dict[str, Any], path: Optional[Path | str] = None,
                 int(record.get("reasoning_tokens") or 0), int(record.get("prompt_tokens") or 0),
                 int(record.get("total_tokens") or 0), record.get("error_type", ""),
                 record.get("status_code"), record.get("recorded_at", time.time()),
+                _tri_value(record.get("cache_read_reported")),
+                _tri_value(record.get("cache_write_reported")),
+                record.get("call_class"),
             ),
         )
         inserted = cur.rowcount > 0
@@ -346,7 +396,8 @@ def record(record: dict[str, Any], path: Optional[Path | str] = None,
                     outcome=?, api_call_count=?,
                     input_tokens=?, output_tokens=?, cache_read_tokens=?,
                     cache_write_tokens=?, reasoning_tokens=?, prompt_tokens=?,
-                    total_tokens=?, error_type='', status_code=NULL, recorded_at=?
+                    total_tokens=?, error_type='', status_code=NULL, recorded_at=?,
+                    cache_read_reported=?, cache_write_reported=?, call_class=?
                  WHERE event_id=? AND outcome!='ok'
                 """,
                 (
@@ -361,6 +412,9 @@ def record(record: dict[str, Any], path: Optional[Path | str] = None,
                     int(record.get("cache_read_tokens") or 0), int(record.get("cache_write_tokens") or 0),
                     int(record.get("reasoning_tokens") or 0), int(record.get("prompt_tokens") or 0),
                     int(record.get("total_tokens") or 0), record.get("recorded_at", time.time()),
+                    _tri_value(record.get("cache_read_reported")),
+                    _tri_value(record.get("cache_write_reported")),
+                    record.get("call_class"),
                     record["event_id"],
                 ),
             )
