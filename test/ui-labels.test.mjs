@@ -211,9 +211,11 @@ test('savings are labelled as theoretical, not cash', () => {
   // The compact gauge label leans on its tooltip for the methodology.
   assert.match(en.savingsInfo, /theoretical/i)
   assert.match(en.savingsInfo, /api-equivalent/i)
-  assert.match(en.savingsInfo, /not a credit, refund or billed charge/i)
-  assert.match(en.savingsInfo, /peak\/off-peak/i)
-  assert.match(en.savingsInfo, /more or less than the input rate/i)
+  assert.match(en.savingsInfo, /not a provider charge or subscription saving/i)
+  assert.match(en.savingsInfo, /route or peak rates may differ/i)
+  assert.match(en.savingsInfo, /cache writes may cost more or less/i)
+  assert.match(en.savingsInfo, /published premiums and retention options are included/i)
+  assert.match(en.savingsInfo, /rounded derived splits widen the range/i)
   assert.ok(zh.savingsInfo && !zh.savingsInfo.startsWith('savingsInfo'))
   assert.ok(zh.savedGauge && !zh.savedGauge.startsWith('savedGauge'))
   // A partial figure states its coverage and never borrows cash wording.
