@@ -9,6 +9,9 @@ import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { after, test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import {
+  EVIDENCE_HIST_CENTRAL_ID, EVIDENCE_HIST_LOCAL_ID, buildNewsScenarios,
+} from './news-layout.scenarios.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const HARNESS_MODULES = join(ROOT, 'test', 'harness', 'node_modules')
@@ -1013,6 +1016,52 @@ const renderNewsPageItems = async (items, scope = 'all', briefing = null) => {
   return container
 }
 
+/**
+ * Render the settled full NewsPage over a complete `/news/refresh` payload —
+ * the committed layout fixtures and their scenarios, not a hand-built list.
+ * Used by the Stage 3 tests that replaced Chromium cases: the payload and the
+ * component are the ones the browser matrix renders.
+ */
+const renderNewsPagePayload = async (payload, { scope = 'all', category = 'all' } = {}) => {
+  T.setRest(async path => path === '/news/refresh' ? payload : { ok: true })
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => { T.$newsScope.set(scope) })
+  await React.act(async () => { T.$newsCategory.set(category) })
+  await React.act(async () => { T.$newsSearch.set('') })
+  await React.act(async () => { T.$newsDays.set(null) })
+  await React.act(async () => { T.$newsShown.set(T.NEWS_PAGE_SIZE) })
+  await React.act(async () => { T.$newsShowAll.set(false) })
+  await React.act(async () => { T.$newsDetailsOpen.set([]) })
+  await React.act(async () => {
+    root.render(React.createElement(QueryClientProvider, { client: queryClient },
+      React.createElement(T.NewsPage)))
+  })
+  await React.act(async () => {
+    for (let i = 0; i < 6; i += 1) await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  return container
+}
+
+const clickElement = async element => {
+  await React.act(async () => { element.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+}
+
+/** Category segments are located by their visible label, never by an id hook. */
+const categorySegment = (container, label) =>
+  [...container.querySelectorAll('[data-news-category] button')]
+    .find(button => button.textContent.includes(label))
+
+/** Open a headline's Details disclosure if it is closed. */
+const openStoryDetails = async story => {
+  const toggle = story.querySelector('[data-news-story-details]')
+  assert.ok(toggle, 'every headline offers a Details disclosure')
+  if (toggle.getAttribute('aria-expanded') !== 'true') await clickElement(toggle)
+  return toggle
+}
+
 const eligibilityItem = (id, model, eligible, relevant) => ({
   id, origin: 'local', category: 'price_reduction',
   provider: 'Acme', model,
@@ -2005,4 +2054,183 @@ test('the ranked prefix holds when the surrounding clock is far from the fixture
   } finally {
     Date.now = realNow
   }
+})
+
+// --- committed layout fixtures, rendered browserlessly ---------------------
+// Stage 3 moved these assertions out of the Chromium Model News layout matrix.
+// They are data, copy and provenance judgements: the same payloads are rendered
+// by the same NewsPage here, in jsdom, with no browser-only measurement. The
+// scenarios come from one shared module so the two renderers cannot drift.
+const newsFixture = name => JSON.parse(readFileSync(join(ROOT, 'test', 'fixtures', 'news', name), 'utf8'))
+const NEWS_REALISTIC = newsFixture('realistic.json')
+const NEWS_VARIANTS = newsFixture('variants.json')
+const NEWS_SCENARIOS = buildNewsScenarios({ realistic: NEWS_REALISTIC, variants: NEWS_VARIANTS })
+
+test('the Subscription Updates filter names its source limitation instead of an empty result', async () => {
+  // No plan or membership event exists in this archive, so the publisher's
+  // catalogue diff cannot supply one. A generic "No updates match" would read
+  // as a working filter that happened to have nothing to show (F94).
+  const container = await renderNewsPagePayload(NEWS_SCENARIOS.noplan, { scope: 'all' })
+  const subscription = categorySegment(container, 'Subscription Updates')
+  assert.ok(subscription, 'the Subscription Updates segment renders')
+  await clickElement(subscription)
+  assert.equal(subscription.getAttribute('aria-pressed'), 'true',
+    'the category control is selected')
+  assert.equal(container.querySelectorAll('[data-news-group]').length, 0,
+    'no model group claims to be a plan change')
+  const empty = container.querySelector('.wm-empty[role="status"]')
+  assert.ok(empty, 'the empty state renders a status region')
+  assert.match(empty.textContent, /public model catalogue only/,
+    'the empty filter names the ingestion limitation')
+  assert.doesNotMatch(empty.textContent, /No updates match/,
+    'an unsupported category is never reported as an empty result set')
+  // The archive's rolling-window disclosure is present, so a search that misses
+  // an older event is readable rather than mysterious.
+  const window_ = container.querySelector('[data-news-archive-note="window"]')
+  assert.ok(window_, 'All Updates states the published window it covers')
+  assert.match(window_.textContent, /most recent \d+ events/,
+    'the window note states how far back the publication reaches')
+})
+
+test('an empty archive still names the source limitation for Subscription Updates', async () => {
+  // Zero published events is the same limitation as none-of-that-category:
+  // there are no plan events to find, so the message must not claim a filter
+  // hid results.
+  const container = await renderNewsPagePayload(NEWS_VARIANTS.empty, { scope: 'all' })
+  const subscription = categorySegment(container, 'Subscription Updates')
+  assert.ok(subscription, 'the Subscription Updates segment renders')
+  await clickElement(subscription)
+  assert.equal(subscription.getAttribute('aria-pressed'), 'true',
+    'the category control is selected')
+  const empty = container.querySelector('.wm-empty[role="status"]')
+  assert.ok(empty, 'the empty state renders a status region')
+  assert.match(empty.textContent, /public model catalogue only/,
+    'the empty archive names the ingestion limitation')
+  assert.doesNotMatch(empty.textContent, /No updates match/,
+    'an unsupported category is never reported as an empty result set')
+})
+
+test('a merged headline lists both source records, not just the one its id resolved to', async () => {
+  // One change with two sources: a local diff and a publish-side record with
+  // different ids and timestamps. Details must list both — resolving the id to
+  // a single record silently drops the other source's provenance.
+  const container = await renderNewsPagePayload(NEWS_SCENARIOS.evmerged, { scope: 'foryou' })
+  const stories = [...container.querySelectorAll('[data-news-story]')].slice(0, 6)
+  assert.ok(stories.length, 'the headline block renders stories')
+  const rendered = []
+  for (const story of stories) {
+    await openStoryDetails(story)
+    rendered.push({
+      model: story.getAttribute('data-news-story-model') || '',
+      records: [...story.querySelectorAll('[data-news-story-record]')]
+        .map(row => row.getAttribute('data-news-story-record')),
+    })
+  }
+  const merged = rendered.find(story => story.records.includes(EVIDENCE_HIST_LOCAL_ID)
+    && story.records.includes(EVIDENCE_HIST_CENTRAL_ID))
+  assert.ok(merged, `both sources of the merged event are listed: ${JSON.stringify(rendered)}`)
+  assert.equal(new Set(merged.records).size, merged.records.length,
+    'no record is listed twice')
+  // Every listed record is a real record id, never an index or a placeholder.
+  for (const id of merged.records) assert.ok(id && id.length > 3, `record id present: ${id}`)
+})
+
+test('a published briefing renders its own evidence when no archive record joins', async () => {
+  const container = await renderNewsPagePayload(NEWS_SCENARIOS.published, { scope: 'foryou' })
+  const briefing = container.querySelector('[data-news-briefing]')
+  assert.ok(briefing, 'the published briefing renders')
+  assert.equal(briefing.querySelector('[data-news-briefing-source]')
+    ?.getAttribute('data-news-briefing-source'), 'published',
+  'the publisher document wins over the local build')
+  const stories = [...briefing.querySelectorAll('[data-news-story]')]
+  const kinds = [...new Set(stories.map(el => el.getAttribute('data-news-kind')))]
+  assert.ok(kinds.includes('removed'),
+    `a history-confirmed removal is headlined: ${JSON.stringify(kinds)}`)
+  // Exactly one story has no joinable record (the removal); the joinable
+  // reduction uses the archive record instead.
+  const evidence = [...briefing.querySelectorAll('[data-news-story-entry-evidence]')]
+  assert.equal(evidence.length, 1,
+    `only the unjoinable story falls back: ${JSON.stringify(evidence.map(el => el.textContent))}`)
+  const [entry] = evidence
+  assert.match(entry.textContent, /rm-acme-alpha/, 'the published event id survives')
+  assert.match(entry.textContent, /acme/, 'the published provider survives')
+  assert.match(entry.textContent, /2026-11-09/, 'the published timestamp survives')
+  assert.deepEqual([...entry.querySelectorAll('a')].map(a => a.getAttribute('href')),
+    ['https://models.dev/removals/rm-acme-alpha'],
+    'the published source link survives')
+  // The archive cannot contain an event it never held, so that story offers no
+  // archive action while the joinable one still does.
+  const actions = briefing.querySelectorAll('[data-news-story-archive]').length
+  assert.equal(actions, stories.length - 1,
+    `only the joinable story links to the archive: ${actions}/${stories.length}`)
+})
+
+test('each headline variant keeps its own source, never the family head\'s', async () => {
+  // One family, two removal variants: `acme` joins an archive record, `zeta`
+  // exists only in the published briefing. Each carries a different source URL,
+  // and the family head carries a third. A panel that renders the head's link
+  // beside a provider's name attributes one record's evidence to another.
+  const container = await renderNewsPagePayload(NEWS_SCENARIOS.variantsources, { scope: 'foryou' })
+  const stories = [...container.querySelectorAll('[data-news-story]')].slice(0, 6)
+  let unjoined = null
+  for (const story of stories) {
+    await openStoryDetails(story)
+    unjoined = [...story.querySelectorAll('[data-news-story-variant-evidence] li')]
+      .find(row => row.getAttribute('data-news-story-variant-record') === 'zeta')
+    if (unjoined) break
+  }
+  assert.ok(unjoined, 'the unjoined variant has its own evidence block')
+  assert.deepEqual([...unjoined.querySelectorAll('a')].map(a => a.getAttribute('href')),
+    ['https://builder.example/zeta-variant'], 'the variant links to its own source')
+  assert.doesNotMatch(unjoined.outerHTML, /builder\.example\/family-head/,
+    'the family head\'s source is never attributed to another provider')
+  assert.match(unjoined.textContent, /publisher history \(zeta\)/,
+    'the variant carries its own provenance')
+})
+
+test('a publisher\'s unsupported reason never hides events this archive holds', async () => {
+  // The published briefing says "no plan events"; the local archive holds some.
+  // The limitation describes a missing SOURCE, so it may replace an empty
+  // result set only — never a populated one.
+  const container = await renderNewsPagePayload(NEWS_SCENARIOS.plansource, { scope: 'all' })
+  const subscription = categorySegment(container, 'Subscription Updates')
+  assert.ok(subscription, 'the Subscription Updates segment renders')
+  await clickElement(subscription)
+  const rendered = container.querySelectorAll('[data-news-group]').length
+    + container.querySelectorAll('.wm-news-card').length
+  assert.ok(rendered > 0, 'the local subscription events still render')
+  assert.equal(container.querySelector('.wm-empty'), null,
+    'no limitation replaces a populated filter')
+})
+
+test('the section-cap note states the limit without promising where entries are', async () => {
+  // Nine removals counted, eight in the payload. The omitted one is not
+  // readable here, so nothing can be proved about whether the archive holds it.
+  const container = await renderNewsPagePayload(NEWS_SCENARIOS.capnote, { scope: 'foryou' })
+  const notes = [...container.querySelectorAll('[data-news-kept]')]
+  assert.equal(notes.length, 1, `one note for the trimmed section: ${JSON.stringify(notes.map(n => n.textContent))}`)
+  const [note] = notes
+  assert.equal(note.getAttribute('data-news-kept'), 'limit', 'the note is a limit statement')
+  assert.equal(note.closest('[data-news-section]')?.getAttribute('data-news-section'), 'removals',
+    'it belongs to the trimmed section')
+  assert.match(note.textContent, /more are counted/, `the count is stated: ${note.textContent}`)
+  assert.doesNotMatch(note.textContent, /All Updates/,
+    'it makes no archive-coverage claim about entries it cannot see')
+})
+
+test('a no-signals For You states why it is empty and offers the archive', async () => {
+  // Nothing to personalise is not an empty archive: the page says so and keeps
+  // the scope control as the visible route to All Updates.
+  const container = await renderNewsPagePayload(NEWS_VARIANTS.nosignals, { scope: 'foryou' })
+  const empty = container.querySelector('.wm-empty[role="status"]')
+  assert.ok(empty, 'no-signals For You shows its empty state')
+  assert.match(empty.textContent, /Nothing to personalise yet/,
+    `the empty state explains the missing signals: ${empty.textContent}`)
+  const scope = container.querySelector('[data-news-scope]')
+  const allTab = [...scope.querySelectorAll('button')]
+    .find(button => /All Updates/.test(button.textContent))
+  assert.ok(allTab, 'the empty For You offers a path to All Updates')
+  await clickElement(allTab)
+  assert.ok(container.querySelectorAll('[data-news-group]').length > 0,
+    'following the path shows the full list')
 })
