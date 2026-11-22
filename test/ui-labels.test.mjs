@@ -287,6 +287,28 @@ test('a session switch never shows the previous reading', () => {
   assert.equal(switched.cache, null)
 })
 
+test('backend summary retention follows identity and runtime while local retention stays conversation keyed', () => {
+  const backend = stableLive({ savedSource: 'backend_summary', costBasis: 'range', costHigh: .5 })
+  const keyA = T.stableLiveRetentionKey(backend, 'identity-a', 'runtime-a', 'conversation')
+  const keyB = T.stableLiveRetentionKey(backend, 'identity-a', 'runtime-b', 'conversation')
+  const keyC = T.stableLiveRetentionKey(backend, 'identity-b', 'runtime-a', 'conversation')
+  assert.notEqual(keyA, keyB, 'backend evidence cannot cross runtime sessions')
+  assert.notEqual(keyA, keyC, 'backend evidence cannot cross connection identities')
+
+  const first = T.mergeStableLive(null, backend, keyA)
+  const gap = T.mergeStableLive(first.cache, { ...backend, bucket: null, usage: null }, keyA)
+  assert.equal(gap.stale, true)
+  assert.equal(gap.view.costHigh, .5, 'the same session retains its full range snapshot')
+  const refused = { ...stableLive(), bucket: null, usage: null, savedSource: 'local_conversation_estimate' }
+  const rejected = T.mergeStableLive(first.cache, refused,
+    T.stableLiveRetentionKey(refused, 'identity-a', 'runtime-b', 'conversation'))
+  assert.equal(rejected.stale, false, 'a refused new runtime scope does not restore the old backend summary')
+  assert.equal(rejected.cache, null)
+  assert.equal(T.stableLiveRetentionKey(refused, 'identity-a', 'runtime-a', 'conversation'),
+    T.stableLiveRetentionKey(refused, 'identity-b', 'runtime-b', 'conversation'),
+  'local fallback retention continues to follow its stored conversation id')
+})
+
 test('an empty session with no history stays empty', () => {
   const merged = T.mergeStableLive(null, { ...stableLive(), bucket: null, usage: null }, 's9')
   assert.equal(merged.stale, false)
@@ -577,7 +599,10 @@ test('WP42 population and cache-evidence disclosures have English and Chinese pa
     'sessionEvidenceNote', 'sessionSavingsSourceNote', 'localEstimateScopeNote',
     'savedBackendNote', 'savedLocalRunNote',
     'savedUpperBoundNote', 'savedLowerBoundNote', 'savedRangeNote',
-    'usagePopulationEvidenceNote', 'rpEvidenceNote', 'usageCacheFormula', 'src_backend_summary']
+    'usagePopulationEvidenceNote', 'rpEvidenceNote', 'usageCacheFormula', 'src_backend_summary',
+    'savingsRangeValue', 'savingsUpperBoundValue', 'savingsLowerBoundValue', 'savingsBoundValue',
+    'usageEconBound', 'usageStatSavingsBoundHint', 'costsCacheBoundedTag',
+    'costsCacheBoundedCoverageUnknownTag', 'costsCacheBoundNote']
   for (const key of keys) {
     assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)

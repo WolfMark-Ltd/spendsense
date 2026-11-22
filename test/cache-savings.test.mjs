@@ -84,10 +84,13 @@ test('a cold start no longer voids the conversation’s measured saving', () => 
   let led = T.emptyLedger()
   led = fold(led, frame(), NOW, pricedPayload)
   led = fold(led, frame({ input: 5000, prompt: 60000, output: 200, calls: 2, cache_hit_pct: 90 }), NOW + 1, pricedPayload)
-  led = fold(led, frame({ input: 5200, prompt: 120000, output: 300, calls: 3, cache_hit_pct: 95 }), NOW + 2, pricedPayload)
+  // Keep the cumulative derived write counter monotonic so its delta is
+  // classifiable; a rising rounded hit percentage can make the residual write
+  // estimate fall, in which case the cache split must remain unknown.
+  led = fold(led, frame({ input: 5200, prompt: 120000, output: 300, calls: 3, cache_hit_pct: 90 }), NOW + 2, pricedPayload)
   const hist = led.sessions.conv
   const prompt = T.tokensOf(hist)
-  const state = T.savingsState(hist, T.resolveRates({ model: hist.model, provider: 'commandcode', payload, remembered: {} }).rates)
+  const state = T.savingsState(hist, T.resolveRates({ model: hist.model, provider: 'commandcode', payload: pricedPayload, remembered: {} }).rates)
   assert.ok(hist.netSavingsRangePrompt > 0 && hist.netSavingsRangePrompt < prompt,
     `covered ${hist.netSavingsRangePrompt} of ${prompt} — the cold start is uncovered, not zero`)
   assert.ok(state.range && state.range.min > 0, 'rounded derived counters produce a qualified range')
@@ -100,9 +103,9 @@ test('a cold start no longer voids the conversation’s measured saving', () => 
 test('a fully estimated conversation is priced rather than blank', () => {
   let led = T.emptyLedger()
   led = fold(led, frame({ input: 5000, prompt: 60000, output: 200, calls: 1, cache_hit_pct: 90 }), NOW, pricedPayload)
-  led = fold(led, frame({ input: 5200, prompt: 120000, output: 300, calls: 2, cache_hit_pct: 95 }), NOW + 1, pricedPayload)
+  led = fold(led, frame({ input: 5200, prompt: 120000, output: 300, calls: 2, cache_hit_pct: 90 }), NOW + 1, pricedPayload)
   const hist = led.sessions.conv
-  const state = T.savingsState(hist, T.resolveRates({ model: hist.model, provider: 'commandcode', payload, remembered: {} }).rates)
+  const state = T.savingsState(hist, T.resolveRates({ model: hist.model, provider: 'commandcode', payload: pricedPayload, remembered: {} }).rates)
   assert.ok(state.range?.min > 0, `saving range: ${JSON.stringify(state.range)}`)
   assert.equal(state.partial, false)
   assert.equal(state.coverage, 1)
@@ -113,7 +116,7 @@ test('the totals keep the measured part and its coverage', () => {
   let led = T.emptyLedger()
   led = fold(led, frame(), NOW, pricedPayload)
   led = fold(led, frame({ input: 5000, prompt: 60000, output: 200, calls: 2, cache_hit_pct: 90 }), NOW + 1, pricedPayload)
-  led = fold(led, frame({ input: 5200, prompt: 120000, output: 300, calls: 3, cache_hit_pct: 95 }), NOW + 2, pricedPayload)
+  led = fold(led, frame({ input: 5200, prompt: 120000, output: 300, calls: 3, cache_hit_pct: 90 }), NOW + 2, pricedPayload)
   const { totals } = T.summarize(led, () => true, null)
   const state = T.savingsState(totals, null)
   assert.ok(state.range?.min > 0, 'a partial range still reports its measured saving range')
@@ -136,6 +139,38 @@ test('a route with no price names the reason instead of a figure', () => {
   const noCachePrice = T.savingsState(bucket, { input: 2, output: 4, cache: null, write: null,
     inputKnown: true, outputKnown: true, cacheKnown: false })
   assert.equal(noCachePrice.reason, 'no_cache_rate')
+})
+
+test('rounded zero reads retain possible read discounts and require every uncertain stream price', () => {
+  const rates = { input: 3, output: 4, cache: .3, write: 3.75,
+    inputKnown: true, outputKnown: true, cacheKnown: true, writeKnown: true }
+  const bounds = T.cacheSavingsBounds(0, rates, 1000,
+    { cacheCounterUncertainty: { readWriteTokens: 9 } })
+  const possibleNineReads = (9 * (rates.input - rates.cache) + 991 * (rates.input - rates.write)) / 1e6
+  assert.ok(bounds.min <= possibleNineReads && possibleNineReads <= bounds.max,
+    `the possible nine-read result ${possibleNineReads} is inside ${JSON.stringify(bounds)}`)
+  assert.equal(T.cacheSavingsBounds(0, { ...rates, cacheKnown: false }, 1000,
+    { cacheCounterUncertainty: { readWriteTokens: 9 } }), null,
+  'a possible read cannot be priced without the cache-read rate')
+  assert.equal(T.cacheSavingsBounds(0, { ...rates, write: null, writeKnown: false }, 1000,
+    { cacheCounterUncertainty: { readWriteTokens: 9 } }), null,
+  'a possible write cannot be priced without its write rate')
+  assert.equal(T.cacheSavingsBounds(0, { ...rates, cacheKnown: false }, 0).min, 0,
+    'an exactly reported zero read with no uncertainty remains a true zero')
+})
+
+test('an indeterminate main summary names unknown cache evidence after pricing gaps', () => {
+  const envelope = gaps => ({ identity: 'identity-a', sessionId: 'session-a', payload: {
+    ok: true, session_id: 'session-a',
+    population: { requested: 'main', satisfied: true, separable: true },
+    totals: { calls: 1, cache_read_state: 'unknown', cache_write_state: 'unknown' },
+    valuation: { savings_basis: 'indeterminate', covered_calls: 0, excluded_calls: 1,
+      gap_reasons: gaps }
+  } })
+  assert.equal(T.sessionSavingsState(envelope({ cache_evidence_unknown: 1 }), 'session-a', 'identity-a').reason,
+    'cache_evidence_unknown')
+  assert.equal(T.sessionSavingsState(envelope({ cache_evidence_unknown: 1, missing_cache_read_rate: 1 }),
+    'session-a', 'identity-a').reason, 'no_cache_rate', 'pricing gaps retain precedence')
 })
 
 test('a provider-reported write with no price is still named, never zero', () => {

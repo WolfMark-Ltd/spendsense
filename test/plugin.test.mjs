@@ -128,6 +128,72 @@ test('cache provenance separates explicit evidence, estimates and ambiguous zero
   assert.equal(T.hitPctOf({ input: 100, cacheRead: 0, cacheWrite: 0 }), null, 'legacy is ambiguous')
 })
 
+test('cumulative cache split evidence requires both snapshots to support the delta', () => {
+  const model = 'm', provider = 'p'
+  const payload = { model, provider, providers: [{ slug: provider, pricing: {
+    m: { input: '2', output: '4', cache: '.5', cache_write: '3', tiers: [] }
+  } }] }
+  const fold = (ledger, sessionId, usage, now) => T.applyUsage(ledger, {
+    now, sessionId, storedId: 'conv', provider, payload, usage: { model, output: 0, ...usage }
+  })
+
+  let ambiguous = fold(T.emptyLedger(), 'ambiguous', { input: 60, prompt: 100, calls: 1 }, NOW)
+  ambiguous = fold(ambiguous, 'ambiguous', {
+    input: 120, prompt: 200, cache_read: 40, cache_write: 40, calls: 2
+  }, NOW + 1)
+  const ambiguousBucket = Object.values(ambiguous.days[T.dayKey(NOW)])[0]
+  assert.equal(ambiguousBucket.cacheRead, 0)
+  assert.equal(ambiguousBucket.cacheWrite, 0)
+  assert.equal(ambiguousBucket.cacheUnknown, 80,
+    'the delta keeps the forty cached tokens unclassified, alongside the prior forty')
+  assert.equal(ambiguousBucket.cacheReadEvidence, 'unknown')
+  assert.equal(ambiguousBucket.cacheWriteEvidence, 'unknown')
+  assert.equal(ambiguous.snapshots.ambiguous.cacheReadEvidence, 'reported',
+    'the latest cumulative snapshot can be reported without labelling the derived delta reported')
+
+  let reported = fold(T.emptyLedger(), 'reported', {
+    input: 60, prompt: 100, cache_read: 30, cache_write: 10, calls: 1
+  }, NOW)
+  reported = fold(reported, 'reported', {
+    input: 120, prompt: 200, cache_read: 60, cache_write: 20, calls: 2
+  }, NOW + 1)
+  const reportedBucket = Object.values(reported.days[T.dayKey(NOW)])[0]
+  assert.deepEqual([reportedBucket.input, reportedBucket.cacheRead, reportedBucket.cacheWrite], [120, 60, 20],
+    'both monotonic reported snapshots contribute exactly their per-stream deltas')
+  assert.equal(reportedBucket.cacheReadEvidence, 'reported')
+  assert.equal(reportedBucket.cacheWriteEvidence, 'reported')
+})
+
+test('pre-upgrade aggregate evidence stays mixed after new reported cache counters', () => {
+  const model = 'm', provider = 'p'
+  const payload = { model, provider, providers: [{ slug: provider, pricing: {
+    m: { input: '2', output: '4', cache: '.5', cache_write: '3', tiers: [] }
+  } }] }
+  let ledger = T.applyUsage(T.emptyLedger(), { now: NOW, sessionId: 'old-runtime', storedId: 'conv', provider, payload,
+    usage: { model, input: 100, prompt: 1300, output: 0, calls: 1, cache_hit_pct: 15 } })
+  const key = JSON.stringify(['', provider, model, 0])
+  const day = T.dayKey(NOW)
+  const withoutEvidence = bucket => {
+    const { cacheReadEvidence, cacheWriteEvidence, ...legacy } = bucket
+    return legacy
+  }
+  ledger = {
+    ...ledger,
+    days: { ...ledger.days, [day]: { ...ledger.days[day], [key]: withoutEvidence(ledger.days[day][key]) } },
+    sessions: { ...ledger.sessions, conv: withoutEvidence(ledger.sessions.conv) }
+  }
+  ledger = T.applyUsage(ledger, { now: NOW + 1, sessionId: 'new-runtime', storedId: 'conv', provider, payload,
+    usage: { model, input: 100, prompt: 1300, output: 0, cache_read: 200, cache_write: 1000, calls: 1 } })
+
+  const dayBucket = ledger.days[day][key]
+  assert.equal(dayBucket.cacheReadEvidence, 'partial')
+  assert.equal(dayBucket.cacheWriteEvidence, 'partial', 'older derived writes are not relabelled reported')
+  assert.equal(ledger.sessions.conv.cacheReadEvidence, 'partial')
+  assert.equal(ledger.sessions.conv.cacheWriteEvidence, 'partial')
+  const row = T.ledgerCsv(ledger).trim().split('\r\n')[1].split(',')
+  assert.deepEqual(row.slice(19, 21), ['partial', 'partial'])
+})
+
 test('net savings include write premiums and require prices for used buckets', () => {
   const rates = { input: 2, output: 4, cache: .5, write: 3, inputKnown: true, outputKnown: true, cacheKnown: true }
   assert.equal(T.cacheSavings(200, rates, 1000), -.0007)
@@ -153,7 +219,7 @@ test('conversation and filtered ledger use the same weighted covered prompt rate
   assert.equal(T.summarize(led, () => false, null).totals.hitPct, null)
 })
 
-test('an ambiguous cold start stays in totals without becoming a confirmed miss', () => {
+test('an ambiguous cold start stays unavailable when derived cumulative splits cannot be differenced', () => {
   let led = T.emptyLedger()
   const opts = { now: NOW, sessionId: 'cold-start', storedId: 'conv', provider: 'p' }
   led = T.applyUsage(led, { ...opts, usage: { model: 'm', input: 100, prompt: 100, output: 10, calls: 1 } })
@@ -163,8 +229,13 @@ test('an ambiguous cold start stays in totals without becoming a confirmed miss'
   led = T.applyUsage(led, { ...opts, now: NOW + 1, usage: { model: 'm', input: 200, prompt: 300, output: 20, cache_hit_pct: 33, calls: 2 } })
   led = T.applyUsage(led, { ...opts, now: NOW + 2, usage: { model: 'm', input: 250, prompt: 400, output: 30, cache_hit_pct: 38, calls: 3 } })
   assert.equal(led.sessions.conv.calls, 3)
-  assert.ok(T.cacheCoverage(led.sessions.conv) > 0 && T.cacheCoverage(led.sessions.conv) < 1)
-  assert.equal(led.sessions.conv.cacheEstimated, true)
+  assert.equal(T.cacheCoverage(led.sessions.conv), null,
+    'the cumulative derived cache split is not presented as priced coverage when its writes move backwards')
+  assert.equal(led.sessions.conv.cacheUnknown, 150)
+  assert.equal(led.sessions.conv.cacheEstimated, false,
+    'unclassified cumulative estimates are not promoted into historical measured evidence')
+  assert.equal(led.snapshots['cold-start'].cacheReadEvidence, 'estimated')
+  assert.equal(led.snapshots['cold-start'].cacheWriteEvidence, 'derived')
 })
 
 test('settled conversation net savings include the cache-write premium', () => {
@@ -290,7 +361,10 @@ test('applyUsage: rounded cache percentage changes cannot replay cumulative prom
   } })
   const session = led.sessions.conversation
   assert.equal(session.input + session.cacheRead + session.cacheWrite + session.cacheUnknown, 1003)
-  assert.equal(session.cacheRead, 503)
+  assert.equal(session.cacheRead, 500,
+    'a rounded read increase larger than the new prompt delta is not forced into the read stream')
+  assert.equal(session.cacheUnknown, 503,
+    'the ambiguous new prompt tokens remain accounted for but unclassified')
   assert.equal(session.calls, 1)
   assert.equal(led.snapshots.rounded.counterPrompt, 1003)
 })
@@ -623,25 +697,26 @@ test('CSV appends cache provenance without moving historical columns', () => {
   ])
   assert.deepEqual(header.slice(16), ['unpriced_calls', 'missing_usage_calls', 'coverage_unknown',
     'cache_read_evidence', 'cache_write_evidence', 'cache_unknown_prompt_tokens', 'cache_savings_basis',
-    'cache_savings_min_usd', 'cache_savings_max_usd', 'cache_population', 'cache_valuation_source'])
-  assert.equal(header.length, 27)
+    'cache_savings_min_usd', 'cache_savings_max_usd', 'cache_population', 'cache_valuation_source',
+    'cache_savings_coverage'])
+  assert.equal(header.length, 28)
   const byModel = Object.fromEntries(rows.map(row => [row[3], row]))
   assert.deepEqual(byModel.complete.slice(16), ['0', '0', 'no', 'unknown', 'unknown', '0',
-    'unavailable', '', '', 'desktop_local_ledger_unclassified', 'unavailable'])
+    'unavailable', '', '', 'desktop_local_ledger_unclassified', 'unavailable', 'unavailable'])
   assert.equal(byModel.complete[6], '', 'unknown reads export blank, not measured zero')
   assert.equal(byModel.complete[7], '', 'unknown writes export blank, not measured zero')
   assert.deepEqual(byModel.gap.slice(16), ['0', '1', 'no', 'unknown', 'unknown', '0',
-    'unavailable', '', '', 'desktop_local_ledger_unclassified', 'unavailable'])
+    'unavailable', '', '', 'desktop_local_ledger_unclassified', 'unavailable', 'unavailable'])
   assert.deepEqual(byModel.legacy.slice(16), ['0', '0', 'yes', 'unknown', 'unknown', '0',
-    'unavailable', '', '', 'desktop_local_ledger_unclassified', 'unavailable'])
+    'unavailable', '', '', 'desktop_local_ledger_unclassified', 'unavailable', 'unavailable'])
 
   const reported = fields('reported', { cacheReadEvidence: 'reported', cacheWriteEvidence: 'reported',
     cacheUnknown: 25, netSavings: -.01, netSavingsPrompt: 75, cacheCoveredPrompt: 75 })
   const reportedLedger = { days: { '2026-10-21': { reported } } }
   const row = T.ledgerCsv(reportedLedger).trim().split('\r\n')[1].split(',')
   assert.equal(row[15], '', 'the historical value column remains limited to complete coverage')
-  assert.deepEqual(row.slice(19, 27), ['reported', 'reported', '25', 'partial', '-0.01', '-0.01',
-    'desktop_local_ledger_unclassified', 'desktop_local_estimate'],
+  assert.deepEqual(row.slice(19, 28), ['reported', 'reported', '25', 'partial', '-0.01', '-0.01',
+    'desktop_local_ledger_unclassified', 'desktop_local_estimate', 'partial'],
   'the additive fields carry the signed partial subtotal and its scope')
 })
 

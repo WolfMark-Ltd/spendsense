@@ -133,6 +133,23 @@ test('partial estimates prove reached thresholds but cannot claim within limit',
   assert.equal(T.sessionBudgetStatus({ guardrailValue: bucket }, [b({ enabled: false })]), null)
 })
 
+test('a main-call display keeps independently scoped local session-budget evidence', () => {
+  const history = { usageValueVersion: 2, usageValueScope: T.membershipScopeNow(),
+    usageValueCost: 1, usageValuePriced: 100, usageValueMissing: 0,
+    usageValueCallsTracked: 1, usageValueMissingCalls: 0,
+    input: 100, output: 0, cacheRead: 0, cacheWrite: 0, calls: 1 }
+  const snapshot = { ...history, usageValueCost: .25 }
+  const selected = T.sessionGuardrailValue(history, { runtime: { guardrail: snapshot } }, 'runtime')
+  assert.strictEqual(selected, history, 'a recorded conversation guardrail keeps its established scope')
+  assert.equal(T.sessionBudgetStatus({ guardrailValue: selected }, [b({ amount: .5 })]).level, 'exceeded',
+    'the local budget threshold does not use or disappear behind backend main-call valuation')
+  assert.strictEqual(T.sessionGuardrailValue(null, { runtime: { guardrail: snapshot } }, 'runtime'), snapshot,
+    'when no conversation ledger exists the focused runtime snapshot remains available')
+  assert.strictEqual(T.sessionGuardrailValue({ input: 50, calls: 1 },
+    { runtime: { guardrail: snapshot } }, 'runtime'), snapshot,
+    'a trusted current-scope runtime guardrail survives an unclassified legacy conversation')
+})
+
 test('failed refresh keeps content and neutralises session and monthly warning colours', async () => {
   await reset(); await usage(800000)
   payload.budgets.push(b({ id: 'monthly', scope: 'total' }))

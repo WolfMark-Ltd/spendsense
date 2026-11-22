@@ -284,7 +284,7 @@ test('a 57-call window with a fluctuating derived cache folds to 57 calls', () =
   }
   const conv = led.sessions[CONVERSATION]
   const expected = input + cache + output
-  const tokens = conv.input + conv.cacheRead + conv.cacheWrite + conv.output
+  const tokens = conv.input + conv.cacheRead + conv.cacheWrite + conv.cacheUnknown + conv.output
   assert.equal(conv.calls, 57)
   assert.ok(Math.abs(tokens - expected) / expected < 0.02, `tokens ${tokens} vs ${expected}`)
 })

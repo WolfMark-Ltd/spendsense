@@ -486,14 +486,17 @@ function cacheSavingsBounds(cacheRead, rates, cacheWrite = 0,
 
   if (!candidates.length || candidates.some(row => !Number.isFinite(row.input) ||
       rates.outputKnown !== true || !Number.isFinite(row.output))) return null
-  if (read && candidates.some(row => !row.cacheKnown || !Number.isFinite(row.cache))) return null
-
-  const readCoefficients = read ? candidates.map(row => row.input - row.cache) : [0]
+  const uncertain = Math.max(0, Number(counterUncertaintyTokens) || 0)
   const freshReadUncertainty = Math.max(0, Number(cacheCounterUncertainty?.freshReadTokens) || 0)
   const splitReadWriteUncertainty = Math.max(0, Number(cacheCounterUncertainty?.readWriteTokens) || 0)
   const anySplitUncertainty = Math.max(0, Number(cacheCounterUncertainty?.anyTokens) || 0)
+  const needsReadRates = read > 0 || uncertain > 0 || freshReadUncertainty > 0 ||
+    splitReadWriteUncertainty > 0 || anySplitUncertainty > 0
+  if (needsReadRates && candidates.some(row => !row.cacheKnown || !Number.isFinite(row.cache))) return null
+
+  const readCoefficients = needsReadRates ? candidates.map(row => row.input - row.cache) : [0]
   let writeCoefficients = [0]
-  if (write || splitReadWriteUncertainty || (anySplitUncertainty && hasTiers)) {
+  if (write || uncertain || splitReadWriteUncertainty || anySplitUncertainty) {
     if (candidates.some(row => row.cacheWriteRetentionUnknown)) return null
     const optionsFor = row => {
       if (row.cacheWriteRates.length) return row.cacheWriteRates.map(option => option.rate)
@@ -509,7 +512,6 @@ function cacheSavingsBounds(cacheRead, rates, cacheWrite = 0,
 
   let min = (read * Math.min(...readCoefficients) + write * Math.min(...writeCoefficients)) / M
   let max = (read * Math.max(...readCoefficients) + write * Math.max(...writeCoefficients)) / M
-  const uncertain = Math.max(0, Number(counterUncertaintyTokens) || 0)
   if (uncertain) {
     const possible = [0, ...readCoefficients, ...writeCoefficients]
     const spread = Math.max(...possible) - Math.min(...possible)
@@ -1046,10 +1048,26 @@ function pruneSessions(sessions, now) {
   return Object.fromEntries(fresh)
 }
 
-function changeCacheKnown(cur, init, delta) {
-  return cur.cacheSource !== 'unknown' && cur.cacheReadEvidence !== 'unknown' && cur.cacheWriteEvidence !== 'unknown' &&
-    init.cacheDeltaKnown === true &&
+function changeCacheKnown(init, delta) {
+  return init.cacheDeltaKnown === true &&
     num(delta.input) + num(delta.cacheRead) + num(delta.cacheWrite) > 0
+}
+
+function cacheDeltaEvidence(cur, prev, restarted) {
+  const current = localCacheEvidence(cur)
+  if (restarted || !prev) return { ...current, unclassified: false }
+  const previous = localCacheEvidence(prev)
+  const stream = (name, field) => {
+    const now = current[name], before = previous[name]
+    if (now !== before || !['reported', 'estimated', 'derived'].includes(now) ||
+        num(cur[field]) < num(prev[field])) return 'unknown'
+    return now
+  }
+  const read = stream('read', 'cacheRead')
+  const write = stream('write', 'cacheWrite')
+  return { read, write,
+    unclassified: (read === 'unknown' && num(cur.cacheRead) !== num(prev.cacheRead)) ||
+      (write === 'unknown' && num(cur.cacheWrite) !== num(prev.cacheWrite)) }
 }
 
 function mergeCacheEvidence(current, next) {
@@ -1082,13 +1100,18 @@ function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolv
   b.cacheRead += delta.cacheRead
   b.cacheWrite += delta.cacheWrite
   b.cacheUnknown += num(delta.cacheUnknown)
-  b.cacheReadEvidence = mergeCacheEvidence(b.cacheReadEvidence, cur.cacheReadEvidence)
-  b.cacheWriteEvidence = mergeCacheEvidence(b.cacheWriteEvidence, cur.cacheWriteEvidence)
+  const oldEvidence = prevBucket ? localCacheEvidence(prevBucket) : null
+  b.cacheReadEvidence = mergeCacheEvidence(prevBucket
+    ? prevBucket.cacheReadEvidence || oldEvidence.read : null,
+  usageEvidence.cacheReadEvidence ?? cur.cacheReadEvidence)
+  b.cacheWriteEvidence = mergeCacheEvidence(prevBucket
+    ? prevBucket.cacheWriteEvidence || oldEvidence.write : null,
+  usageEvidence.cacheWriteEvidence ?? cur.cacheWriteEvidence)
   b.calls += delta.calls
   b.missingUsageCalls = num(b.missingUsageCalls) + num(usageEvidence.missingCalls)
   const prompt = num(delta.input) + num(delta.cacheRead) + num(delta.cacheWrite)
   if (num(delta.cacheUnknown)) b.coverageUnknown = true
-  if (changeCacheKnown(cur, init, delta)) {
+  if (changeCacheKnown(init, delta)) {
     b.cacheCoveredPrompt = num(b.cacheCoveredPrompt) + prompt
     b.cacheCoveredRead = num(b.cacheCoveredRead) + num(delta.cacheRead)
     if (cur.cacheSource === 'exact') b.cacheExactPrompt = num(b.cacheExactPrompt) + prompt
@@ -1108,7 +1131,7 @@ function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolv
       b.netSavingsRangePrompt = num(b.netSavingsRangePrompt) + prompt
     }
   }
-  if (cur.cacheEstimated && (num(delta.cacheRead) || num(delta.cacheWrite) || changeCacheKnown(cur, init, delta))) b.cacheEstimated = true
+  if (cur.cacheEstimated && (num(delta.cacheRead) || num(delta.cacheWrite) || changeCacheKnown(init, delta))) b.cacheEstimated = true
   if (costDelta != null) {
     b.cost += costDelta
     const pricedDeltaTokens = source === 'gateway' ? deltaTokens : Math.max(0, deltaTokens - num(delta.cacheUnknown))
@@ -1178,44 +1201,27 @@ function previousPromptCounter(prev, source) {
   return null
 }
 
-function fitBucketDelta(delta, keys, total) {
-  const bucketDelta = keys.reduce((sum, key) => sum + delta[key], 0)
-  if (bucketDelta > total && bucketDelta > 0) {
-    if (Number.isInteger(total) && Number.isInteger(bucketDelta)) {
-      const parts = keys.map(key => {
-        const exact = delta[key] * total / bucketDelta
-        return { key, value: Math.floor(exact), remainder: exact - Math.floor(exact) }
-      })
-      let remaining = total - parts.reduce((sum, part) => sum + part.value, 0)
-      parts.sort((a, b) => b.remainder - a.remainder)
-      for (const part of parts) {
-        if (!remaining) break
-        if (part.value < delta[part.key]) { part.value += 1; remaining -= 1 }
-      }
-      for (const part of parts) delta[part.key] = part.value
-    } else {
-      const scale = total / bucketDelta
-      for (const key of keys) delta[key] *= scale
-    }
-  }
-  return bucketDelta < total ? total - bucketDelta : 0
-}
-
-function promptDeltaBuckets(cur, prev, promptDelta = null, freshDelta = null) {
-  const delta = {
+function promptDeltaBuckets(cur, prev, promptDelta = null, freshDelta = null, evidence = {}) {
+  const readEvidence = evidence.read || 'unknown'
+  const writeEvidence = evidence.write || 'unknown'
+  let delta = {
     input: Math.max(0, cur.input - num(prev.input)),
-    cacheRead: Math.max(0, cur.cacheRead - num(prev.cacheRead)),
-    cacheWrite: Math.max(0, cur.cacheWrite - num(prev.cacheWrite)),
-    cacheUnknown: Math.max(0, num(cur.cacheUnknown) - num(prev.cacheUnknown))
+    cacheRead: readEvidence === 'unknown' ? 0 : Math.max(0, cur.cacheRead - num(prev.cacheRead)),
+    cacheWrite: writeEvidence === 'unknown' ? 0 : Math.max(0, cur.cacheWrite - num(prev.cacheWrite)),
+    cacheUnknown: Math.max(0, num(cur.cacheUnknown) - num(prev.cacheUnknown)),
+    cacheReadEvidence: readEvidence,
+    cacheWriteEvidence: writeEvidence
   }
   if (promptDelta == null) return delta
-  if (freshDelta == null) {
-    delta.cacheUnknown = fitBucketDelta(delta, ['input', 'cacheRead', 'cacheWrite'], promptDelta)
-  } else {
-    delta.input = Math.min(promptDelta, Math.max(0, freshDelta))
-    delta.cacheUnknown = fitBucketDelta(delta, ['cacheRead', 'cacheWrite'], promptDelta - delta.input)
+
+  delta.input = Math.min(promptDelta, freshDelta == null
+    ? delta.input : Math.max(0, freshDelta))
+  const cachedDelta = Math.max(0, promptDelta - delta.input)
+  if (delta.cacheRead + delta.cacheWrite > cachedDelta) {
+    return { ...delta, cacheRead: 0, cacheWrite: 0, cacheUnknown: cachedDelta,
+      cacheReadEvidence: 'unknown', cacheWriteEvidence: 'unknown' }
   }
-  return delta
+  return { ...delta, cacheUnknown: cachedDelta - delta.cacheRead - delta.cacheWrite }
 }
 
 /**
@@ -1293,14 +1299,16 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
   // still adopts the frame as-is: its own counter starts again at 1.
   if (!restarted && !hasCallCounter && prevCalls > 0) cur.calls = prevCalls
 
+  const snapshotEvidence = cacheDeltaEvidence(cur, prev, restarted)
   const delta = restarted
-    ? cur
+    ? { ...cur, cacheReadEvidence: snapshotEvidence.read, cacheWriteEvidence: snapshotEvidence.write }
     : {
         ...promptDeltaBuckets(
           cur,
           prev,
           rawPrompt.source === 'prompt' && prevPrompt != null ? Math.max(0, rawPrompt.value - prevPrompt) : null,
-          rawFreshInput != null && prevFreshInput != null ? Math.max(0, rawFreshInput - prevFreshInput) : null
+          rawFreshInput != null && prevFreshInput != null ? Math.max(0, rawFreshInput - prevFreshInput) : null,
+          snapshotEvidence
         ),
         calls: hasCallCounter ? Math.max(0, cur.calls - prevCalls) : 0,
         output: rawOutput != null && prevOutput != null ? Math.max(0, rawOutput - prevOutput) : 0
@@ -1326,8 +1334,11 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
     ? pendingUsageCall != null ? { day, bucketKey: key, sessionId: storedId || null } : null
     : resolvedCall ? null : priorGuardrail?.pendingUsageRef ?? null
   const cacheCounterUncertainty = cacheCounterUncertaintyFor(cur, !restarted ? prev : null)
+  const deltaEvidence = { read: delta.cacheReadEvidence || 'unknown',
+    write: delta.cacheWriteEvidence || 'unknown', unclassified: snapshotEvidence.unclassified }
   const usageEvidence = { missingCalls, resolvedCalls: resolvedCall ? 1 : 0, coalesced: delta.calls > 1,
-    cacheCounterUncertainty }
+    cacheCounterUncertainty, cacheReadEvidence: deltaEvidence.read, cacheWriteEvidence: deltaEvidence.write,
+    cacheDeltaUnclassified: deltaEvidence.unclassified }
   // Metadata-only completion must settle even when the final output is zero.
   if (!deltaTokens && !delta.calls && !resolvedCall) return led
 
@@ -1345,7 +1356,8 @@ function applyUsage(led, { now = Date.now(), payload = null, profile = '', provi
 
   const days = { ...led.days }
   const forDay = { ...(days[day] || {}) }
-  const cacheDeltaKnown = cur.cacheSource !== 'unknown' && (restarted || prev?.cacheSource === cur.cacheSource)
+  const cacheDeltaKnown = ['reported', 'estimated', 'derived'].includes(deltaEvidence.read) &&
+    ['reported', 'estimated', 'derived'].includes(deltaEvidence.write)
   const change = { costDelta, cur, delta, deltaTokens, resolved, source, usageEvidence }
   const b = addDelta(forDay[key], { model, profile, provider, cacheDeltaKnown }, change)
   forDay[key] = b
@@ -1557,7 +1569,7 @@ const CSV_COLUMNS = [
   'cost_usd', 'cost_basis', 'priced_tokens', 'unpriced_tokens', 'cache_saved_usd', 'cache_estimated', 'net_cache_savings_usd',
   'unpriced_calls', 'missing_usage_calls', 'coverage_unknown', 'cache_read_evidence', 'cache_write_evidence',
   'cache_unknown_prompt_tokens', 'cache_savings_basis', 'cache_savings_min_usd', 'cache_savings_max_usd',
-  'cache_population', 'cache_valuation_source'
+  'cache_population', 'cache_valuation_source', 'cache_savings_coverage'
 ]
 
 function costBasis(b) {
@@ -1577,6 +1589,9 @@ function ledgerCsv(led) {
         : savingsStateValue.value == null ? 'unavailable'
           : savingsStateValue.partial ? 'partial'
             : savingsStateValue.estimated ? 'estimated' : 'exact'
+      const savingsCoverage = savingsStateValue.value == null && !savingsStateValue.range ? 'unavailable'
+        : savingsStateValue.partial || (savingsStateValue.coverage != null && savingsStateValue.coverage < 1)
+          ? 'partial' : savingsStateValue.coverage === 1 ? 'complete' : 'unknown'
       const savingsMin = savingsStateValue.range?.min ?? savingsStateValue.value
       const savingsMax = savingsStateValue.range?.max ?? savingsStateValue.value
       lines.push(
@@ -1593,7 +1608,8 @@ function ledgerCsv(led) {
           evidence.read, evidence.write, num(b.cacheUnknown), savingsBasis,
           savingsMin == null || b.legacy ? '' : Number(savingsMin.toFixed(6)),
           savingsMax == null || b.legacy ? '' : Number(savingsMax.toFixed(6)),
-          'desktop_local_ledger_unclassified', savingsBasis === 'unavailable' ? 'unavailable' : 'desktop_local_estimate'
+          'desktop_local_ledger_unclassified', savingsBasis === 'unavailable' ? 'unavailable' : 'desktop_local_estimate',
+          savingsCoverage
         ]
           .map(csvCell)
           .join(',')
@@ -2046,7 +2062,8 @@ function sessionSavingsState(envelope, expectedSessionId, expectedIdentity) {
       : missingCalls('missing_cache_write_rate') || missingCalls('write_rate_missing') ? 'no_write_rate'
         : missingCalls('price_evidence_missing') || missingCalls('provider_price_catalogue_missing') ||
           missingCalls('provider_unidentified') || missingCalls('model_unidentified') || missingCalls('missing_base_rate') ? 'unpriced_route'
-          : valuation.savings_basis == null && (evidence.read === 'unknown' || evidence.write === 'unknown')
+          : ['indeterminate', null, undefined].includes(valuation.savings_basis) &&
+            (evidence.read === 'unknown' || evidence.write === 'unknown')
             ? 'cache_evidence_unknown' : 'summary_unavailable'
 
   const coveredCalls = Number.isSafeInteger(valuation.covered_calls) ? valuation.covered_calls : 0
@@ -2101,6 +2118,13 @@ function backendSummaryBucket(state) {
     missingUsageCalls: 0,
     coverageUnknown: Number(valuation.covered_calls) < num(totals.calls)
   }
+}
+
+function sessionGuardrailValue(history, snapshots, sessionId) {
+  const snapshot = snapshots?.[String(sessionId)]?.guardrail || null
+  const scope = membershipScopeNow()
+  const trusted = value => value?.usageValueVersion === 2 && value.usageValueScope === scope
+  return trusted(history) ? history : trusted(snapshot) ? snapshot : history || snapshot || null
 }
 
 function localCacheEvidence(bucket) {
@@ -2359,32 +2383,33 @@ function useLive() {
     ? usage.cost_usd : null
 
   const hist = storedId && led.sessions ? led.sessions[storedId] : null
-  const summaryState = sessionSavingsState(summaryRead.data, sessionId, identity)
+  const summaryCurrent = !!sessionId && membershipIdentityCurrent(identity)
+  const summaryState = sessionSavingsState(summaryCurrent ? summaryRead.data : undefined, sessionId, identity)
   const summaryBucket = backendSummaryBucket(summaryState)
-  if (summaryState.scopeProven && summaryBucket) {
+  if (summaryState.scopeProven && !summaryState.empty && summaryBucket) {
     const valuation = summaryState.valuation || {}
     const savings = summaryState.available ? summaryState : null
     const apiValue = finiteValue(valuation.api_equivalent_usd)
-    const summaryModel = summaryRead.data?.payload?.model || ''
-    const summaryProvider = summaryRead.data?.payload?.provider || null
+    const apiValueHigh = finiteValue(valuation.api_equivalent_usd_high)
     return {
       bucket: summaryBucket,
-      guardrailValue: null,
+      guardrailValue: sessionGuardrailValue(hist, led.snapshots, sessionId),
       cacheHitPct: finiteValue(valuation.cache_hit_rate) == null
         ? null : finiteValue(valuation.cache_hit_rate) * 100,
       cost: apiValue,
+      costHigh: apiValueHigh,
       costSource: apiValue == null ? 'none' : 'backend_summary',
       costBasis: valuation.api_equivalent_basis || null,
       costPartial: valuation.api_equivalent_basis !== 'exact',
       foreignSlug: null,
       fromHistory: true,
-      model: summaryModel,
+      model,
       partial: !savings || savings.partial || Number(valuation.excluded_calls) > 0 ||
         valuation.api_equivalent_basis !== 'exact',
       pricingError: error ? String(error.message || error) : null,
       pricingLoading: isLoading,
-      provider: summaryProvider,
-      providerUnknown: !summaryProvider,
+      provider: provider || null,
+      providerUnknown: !provider,
       rates: resolved.rates,
       saved: savings?.kind === 'value' ? savings.value : null,
       savedRange: savings?.kind === 'range' ? savings.range : null,
@@ -2636,9 +2661,6 @@ function Chip() {
   const todayText = desktopTodayText(today, t)
   const todayTooltip = t('todayStatusNote')
   const savedText = savedDisplay(t, live)
-  const costApprox = live.costSource === 'backend_summary'
-    ? live.costBasis !== 'exact' ? '≈' : ''
-    : ['local_conversation_estimate', 'local_run_estimate'].includes(live.savedSource) && live.costSource !== 'gateway' ? '≈' : ''
   const savedScopeNote = live.savedSource === 'backend_summary' ? t('sessionSavingsSourceNote')
     : live.savedSource === 'local_conversation_estimate' ? t('localEstimateScopeNote')
       : live.savedSource === 'local_run_estimate' ? t('costLocalRunNote') : ''
@@ -2687,7 +2709,7 @@ function Chip() {
           style: { color: budgetColour(guard?.level) },
           'aria-label': guard ? budgetTooltip(guard, t) : undefined,
           role: guard ? 'img' : undefined,
-          children: guard?.spend != null ? `≈${fmtUsd(guard.spend)}${guard.partial ? '+' : ''}` : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${costApprox}${fmtUsd(live.cost)}${live.costPartial ? '+' : ''}`
+          children: guard?.spend != null ? `≈${fmtUsd(guard.spend)}${guard.partial ? '+' : ''}` : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${apiEquivalentDisplay(live)}`
         }),
         live.cacheHitPct != null
           ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ⚡${live.bucket?.cacheEstimated ? '≈' : ''}${Math.round(live.cacheHitPct)}%` })
@@ -2738,6 +2760,7 @@ function snapshotLive(live) {
     cacheCoverage: live.cacheCoverage,
     cacheHitPct: live.cacheHitPct,
     cost: live.cost,
+    costHigh: live.costHigh,
     costSource: live.costSource,
     foreignSlug: live.foreignSlug,
     fromHistory: live.fromHistory,
@@ -2786,6 +2809,12 @@ function mergeStableLive(prev, live, key) {
   return { view: live, stale: false, cache: prev }
 }
 
+function stableLiveRetentionKey(live, identity, sessionId, storedId) {
+  return live?.savedSource === 'backend_summary'
+    ? JSON.stringify(['backend_summary', identity, String(sessionId || ''), String(storedId || '')])
+    : String(storedId || sessionId || '')
+}
+
 let stableLiveCache = null
 function stableLive(live, key) {
   const merged = mergeStableLive(stableLiveCache, live, key)
@@ -2803,10 +2832,11 @@ function meterPresence(view, stale) {
 }
 
 function useStableLive() {
-  const live = useLive()
   const sessionId = useValue(host.state.focusedSessionId)
   const storedId = useValue(host.state.focusedStoredSessionId || $none)
-  return stableLive(live, storedId || sessionId || '')
+  const identity = useValue($membershipIdentity)
+  const live = useLive()
+  return stableLive(live, stableLiveRetentionKey(live, identity, sessionId, storedId))
 }
 
 /**
@@ -3014,14 +3044,11 @@ function MeterHeader({ presence, t, view }) {
 function CostKpi({ t, view }) {
   const warn = view.costSource === 'foreign' || view.costSource === 'none'
   const unknownCoverage = coverageUnknown(view.bucket)
-  const costApprox = view.costSource === 'backend_summary'
-    ? view.costBasis !== 'exact'
-    : ['local_conversation_estimate', 'local_run_estimate'].includes(view.savedSource) && view.costSource !== 'gateway'
   const cacheEvidenceGap = cacheEvidenceIncomplete(view.bucket)
   return jsxs('section', { className: 'wm-card', 'aria-label': t('cost'), children: [
     jsx('div', {
       className: cn('wm-kpi-figure', warn && 'wm-warn'),
-      children: view.cost == null ? '—' : `${costApprox || view.costPartial ? '≈' : ''}${fmtUsd(view.cost)}${view.costPartial ? '+' : ''}`
+      children: apiEquivalentDisplay(view)
     }, 'figure'),
     jsxs('div', { className: 'wm-kpi-source', children: [
       jsx('span', { children: t('apiEquivalent') }, 'label'),
@@ -3127,6 +3154,22 @@ function TokenComposition({ t, view }) {
       ] }, 'ctx') : null
     ].filter(Boolean) }, 'separate')
   ] })
+}
+
+function apiEquivalentDisplay(view) {
+  const value = finiteValue(view?.cost)
+  if (value == null) return '—'
+  const basis = view.costBasis
+  const high = finiteValue(view.costHigh)
+  const approximate = view.costSource === 'backend_summary'
+    ? basis !== 'exact'
+    : ['local_conversation_estimate', 'local_run_estimate'].includes(view.savedSource) && view.costSource !== 'gateway'
+  if (basis === 'range' && high != null && high >= value) {
+    return `${approximate ? '≈' : ''}${fmtUsd(value)}–${fmtUsd(high)}`
+  }
+  if (basis === 'lower_bound') return `≥${fmtUsd(value)}`
+  if (basis === 'upper_bound') return `≤${fmtUsd(value)}`
+  return `${approximate || view.costPartial ? '≈' : ''}${fmtUsd(value)}${view.costPartial ? '+' : ''}`
 }
 
 /** Translation key per unresolved-savings reason. Never interpolate the key
@@ -3852,6 +3895,35 @@ const ANALYTICS_CSS = SHARED_CSS + `
 const percent = v => finiteValue(v)==null ? '—' : `${(v*100).toFixed(1)}%`
 const exactTokens = value => finiteValue(value)==null ? '—' : value.toLocaleString('en-US')
 function analyticMoney(value) { return finiteValue(value)==null ? '—' : value<0 ? `−${fmtUsd(-value)}` : fmtUsd(value) }
+function analyticsSavingsDisplay(economics, t) {
+  const value = finiteValue(economics?.savings_usd)
+  if (value == null) return '—'
+  const basis = economics?.savings_basis
+  if (basis === 'exact') return analyticMoney(value)
+  if (basis === 'range') {
+    const high = finiteValue(economics.savings_usd_high)
+    return high == null ? t('savingsBoundValue', analyticMoney(value))
+      : t('savingsRangeValue', analyticMoney(value), analyticMoney(high))
+  }
+  if (basis === 'upper_bound') return t('savingsUpperBoundValue', analyticMoney(value))
+  if (basis === 'lower_bound') return t('savingsLowerBoundValue', analyticMoney(value))
+  return t('savingsBoundValue', analyticMoney(value))
+}
+function analyticsSavingsTone(economics) {
+  const value = finiteValue(economics?.savings_usd)
+  if (value == null) return 'wm-dim'
+  const basis = economics?.savings_basis
+  if (basis === 'exact') return value < 0 ? 'wm-warn' : value > 0 ? 'wm-good' : 'wm-dim'
+  if (basis === 'range') {
+    const high = finiteValue(economics.savings_usd_high)
+    if (high != null && high < 0) return 'wm-warn'
+    if (value > 0) return 'wm-good'
+    return 'wm-dim'
+  }
+  if (basis === 'upper_bound' && value < 0) return 'wm-warn'
+  if (basis === 'lower_bound' && value > 0) return 'wm-good'
+  return 'wm-dim'
+}
 function keyActivate(event, fn) { if (event.key === 'Enter' || event.key === ' ') {event.preventDefault();fn()} }
 function ProductButton({children, variant = 'outline', size = 'sm', className, ...props}) {
   return jsx(Button, { ...props, className: cn('wm-button', className), size, variant, children })
@@ -4191,8 +4263,12 @@ function AnalyticsEconomics({data}) {
   const t = usePluginI18n(ID)
   const e=data.economics || data.totals?.economics || {}
   const max=Math.max(num(e.uncached_usd),num(e.cached_usd)) || 1
-  return jsx(AnalyticsPanel,{number:'07',title:t('usageEconTitle'),subtitle:t('usageEconSubtitle'),controls:jsx('span',{className:cn('wm-badge',e.savings_usd<0?'wm-warn':'wm-good'),children:e.savings_usd==null?t('usageEconNoPricing'):e.savings_usd<0?t('usageEconWritePremium'):t('usageEconBenefit')}),children:jsxs('div',{className:'wm-economics',children:[
-    jsxs('div',{children:[jsx('div',{className:cn('wm-compositiontotal wm-mono',e.savings_usd<0?'wm-warn':'wm-good'),children:analyticMoney(e.savings_usd)}),jsx('div',{className:'wm-subtle',children:t('usageEconNetSavings')}),
+  const savingsTone = analyticsSavingsTone(e)
+  const savingsLabel = finiteValue(e.savings_usd) == null ? t('usageEconNoPricing')
+    : e.savings_basis === 'exact' ? e.savings_usd < 0 ? t('usageEconWritePremium') : t('usageEconBenefit')
+      : t('usageEconBound')
+  return jsx(AnalyticsPanel,{number:'07',title:t('usageEconTitle'),subtitle:t('usageEconSubtitle'),controls:jsx('span',{className:cn('wm-badge',savingsTone),children:savingsLabel}),children:jsxs('div',{className:'wm-economics',children:[
+    jsxs('div',{children:[jsx('div',{className:cn('wm-compositiontotal wm-mono',savingsTone),children:analyticsSavingsDisplay(e,t)}),jsx('div',{className:'wm-subtle',children:t('usageEconNetSavings')}),
       jsx('div',{className:'wm-comparison',children:[[t('usageEconWithoutCache'),e.uncached_usd,CHART_COLORS[0]],[t('usageEconWithCache'),e.cached_usd,CHART_COLORS[1]]].map(([label,value,color])=>jsxs('div',{className:'wm-comparerow',children:[jsxs('div',{className:'wm-comparelabel',children:[jsx('span',{children:label}),jsx('span',{className:'wm-mono',children:analyticMoney(value)})]}),jsx('div',{className:'wm-comparetrack',role:'img','aria-label':t('usageEconBarAria', label, analyticMoney(value)),children:finiteValue(value)!=null?jsx('span',{style:{width:`${num(value)/max*100}%`,background:color}}):null})]},label))})]}),
     jsxs('div',{className:'wm-explanation',children:[jsx('p',{children:t('usageEconExplainRates')}),
       jsx('p',{children:t('usageEconExplainNet')})]})]})})
@@ -4345,7 +4421,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
     totals?jsxs('div',{className:'wm-stats',children:[
       jsxs('div',{className:'wm-statgroup',role:'group','aria-label':t('usageKpiMoney'),'data-kpi-group':'money',children:[jsx('div',{className:'wm-statgrouplabel','aria-hidden':'true',children:t('usageKpiMoney')}),
         jsx(AnalyticsStat,{label:t('usageStatApiEquiv'),value:analyticMoney(totals.list_usd),tone:'wm-accent',hint:jsx('span',{className:cn('wm-badge',(num(totals.unpriced_tokens)||num(totals.unpriced_calls))&&'wm-warn'),children:analyticsPricing(totals, t)}),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.list_usd, t)) || t('usageStatApiExtra')}),
-        jsx(AnalyticsStat,{label:t('usageStatSavings'),value:analyticMoney(economics.savings_usd),tone:economics.savings_usd<0?'wm-warn':'wm-good',hint:t('usageStatSavingsHint'),extra:t('usageStatSavingsExtra', percent(economics.coverage))}),
+        jsx(AnalyticsStat,{label:t('usageStatSavings'),value:analyticsSavingsDisplay(economics,t),tone:analyticsSavingsTone(economics),hint:t(economics.savings_basis==='exact'?'usageStatSavingsHint':'usageStatSavingsBoundHint'),extra:t('usageStatSavingsExtra', percent(economics.coverage))}),
         jsx(AnalyticsStat,{id:'wm-usage-pricing-summary',tabIndex:-1,label:t('usageStatCoverage'),value:num(totals.tokens)?percent(data.pricing_coverage?.coverage):t('usageUnknown'),hint:t('usageStatCoverageHint'),extra:t('usageStatCoverageExtra')})]}),
       jsxs('div',{className:'wm-statgroup',role:'group','aria-label':t('usageKpiActivity'),'data-kpi-group':'activity',children:[jsx('div',{className:'wm-statgrouplabel','aria-hidden':'true',children:t('usageKpiActivity')}),
         jsx(AnalyticsStat,{label:t('weightedCacheHit'),value:percent(totals.cache_hit_rate),tone:'wm-good',hint: totals.cache_prompt_coverage == null ? t('cacheCoverageUnavailable') : t('cacheCoveragePrompt', percent(totals.cache_prompt_coverage)),extra:t('cacheCoverageBasis')}),
@@ -5229,7 +5305,8 @@ function usageValueDelta(previous, delta, resolved, scope = membershipScopeNow()
     (!num(delta.input) || rates.usageInputKnown === true && known(rates.input)) &&
     (!num(delta.output) || rates.usageOutputKnown === true && known(rates.output)) &&
     (!num(delta.cacheRead) || rates.usageCacheKnown === true && known(rates.cache)) &&
-    (!num(delta.cacheWrite) || rates.usageWriteKnown === true && known(rates.write)) && !num(delta.cacheUnknown)
+    (!num(delta.cacheWrite) || rates.usageWriteKnown === true && known(rates.write)) &&
+    !num(delta.cacheUnknown) && evidence.cacheDeltaUnclassified !== true
   const priced = exact && covered ? costOf(delta, { input: rates.input ?? 0, output: rates.output ?? 0,
     cache: rates.cache ?? 0, write: rates.write ?? 0 }) : null
   const value = priced && Number.isFinite(priced.total) && priced.total >= 0 ? priced.total : null
@@ -5747,19 +5824,25 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   const allowances = accountsReady ? costsAllowanceCount(accounts) : null
   const cache = totals?.economics || {}
   const savings = finiteValue(cache.savings_usd)
+  const savingsDisplay = analyticsSavingsDisplay(cache, t)
   const excludedCalls = finiteValue(cache.excluded_calls)
   const coveredCalls = finiteValue(cache.covered_calls)
   const cacheCoverage = finiteValue(cache.coverage)
   const cachePartial = (excludedCalls !== null && excludedCalls > 0) ||
     (cacheCoverage !== null && cacheCoverage < 1)
+  const cacheBounded = savings !== null && cache.savings_basis !== 'exact'
+  const cacheTone = analyticsSavingsTone(cache)
   const unreadable = !summaryReady && !summaryLoading
   const cacheStatus = summaryLoading ? t('costsLoadingShort')
     : savings === null ? t('costsUnknownTag')
+    : cacheBounded && cacheCoverage === null ? t('costsCacheBoundedCoverageUnknownTag')
+    : cacheBounded ? t('costsCacheBoundedTag')
     : cachePartial ? null
     : cacheCoverage === null ? t('costsCoverageUnknownTag') : t('costsCompleteTag')
   const cacheNote = summaryLoading ? t('costsEvidenceLoading')
     : unreadable ? t('costsEvidenceUnavailable')
     : savings === null ? t('costsCacheUnknown')
+    : cacheBounded ? t('costsCacheBoundNote')
     : savings < 0 ? t('costsCacheNegative')
     : savings === 0 ? t('costsCacheZero') : t('costsCachePositive')
   const cacheGaps = Object.entries(cache.gap_reasons || {}).filter(([, count]) => Number(count) > 0)
@@ -5817,7 +5900,7 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
     jsx(CostsEvidenceDetail, { label: t('costsActualCharges'), value: t('ovNotRecorded'),
       children: jsx('p', { children: t('costsActualChargesDetail') }) }, 'charges'),
     jsx(CostsEvidenceDetail, { label: t('costsCacheLabel'),
-      value: savings === null ? t('costsUnknownTag') : analyticMoney(savings), children: cacheDetails }, 'cache'),
+      value: savings === null ? t('costsUnknownTag') : savingsDisplay, children: cacheDetails }, 'cache'),
     jsx(CostsEvidenceDetail, { label: t('costsFeesLabel'), value: feeValue,
       children: jsx('p', { children: t('costsFeesDetails') }) }, 'fees'),
     jsx(CostsEvidenceDetail, { label: t('costsAllowancesLabel'),
@@ -5849,9 +5932,9 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
         value: summaryLoading ? '—' : summaryReady ? t('ovNotRecorded') : t('costsEvidenceUnavailable'),
         status: summaryReady ? t('costsUnknownTag') : summaryLoading ? t('costsLoadingShort') : t('costsUnknownTag'),
         note: summaryReady ? t('costsActualChargesShort') : unreadable ? t('costsEvidenceUnavailable') : t('costsEvidenceLoading') }),
-      jsx(CostsEvidenceCard, { kind: savings !== null && savings < 0 ? 'cache-negative' : 'cache',
+      jsx(CostsEvidenceCard, { kind: cacheTone === 'wm-warn' ? 'cache-negative' : 'cache',
         label: t('costsCacheLabel'), value: summaryLoading ? '—'
-          : savings === null ? t('costsUnknownTag') : analyticMoney(savings),
+          : savings === null ? t('costsUnknownTag') : savingsDisplay,
         status: cacheStatus, note: cacheNote }),
       jsx(CostsEvidenceCard, { kind: 'fees', label: t('costsFeesLabel'),
         value: !accountsReady ? accountsFailed && !accountsLoading ? t('costsEvidenceUnavailable') : '—' : feeLines.length
@@ -15476,6 +15559,9 @@ const I18N = {
     costsCacheNegative: 'Negative savings means the estimated cached API-equivalent cost exceeded the uncached equivalent at these rates.',
     costsCacheZero: 'No modeled price difference; the API-equivalent value is zero.',
     costsCachePositive: 'Estimated API-equivalent value difference; not cash saved.',
+    costsCacheBoundedTag: 'Bounded estimate',
+    costsCacheBoundedCoverageUnknownTag: 'Bounded · coverage unknown',
+    costsCacheBoundNote: 'A bounded theoretical API-equivalent value, not an exact point or a billed saving.',
     costsCacheSource: 'Theoretical API-equivalent calculation from timestamped backend calls and published rate evidence. Population follows recorded call classification; unclassified calls are not assumed to be main. Not a provider charge or subscription saving.',
     costsCacheValues: (uncached, cached) => `Uncached API-equivalent ${uncached}; cached API-equivalent ${cached}.`,
     costsCacheTokens: (covered, total) => `Tokens with cache rate evidence: ${covered} of ${total}.`,
@@ -15896,7 +15982,12 @@ const I18N = {
     usageEconNoPricing: 'INSUFFICIENT PRICING',
     usageEconWritePremium: 'NET WRITE PREMIUM',
     usageEconBenefit: 'NET CACHE BENEFIT',
+    usageEconBound: 'QUALIFIED ESTIMATE',
     usageEconNetSavings: 'theoretical net savings',
+    savingsRangeValue: (low, high) => '≈' + low + '–' + high,
+    savingsUpperBoundValue: value => '≤' + value,
+    savingsLowerBoundValue: value => '≥' + value,
+    savingsBoundValue: value => '≈' + value,
     usageEconWithoutCache: 'Without cache',
     usageEconWithCache: 'With cache',
     usageEconBarAria: (label, money) => `${label}: ${money}`,
@@ -15961,6 +16052,7 @@ const I18N = {
     usageStatApiExtra: 'Priced per-call estimate · not an invoice',
     usageStatSavings: 'Theoretical net savings',
     usageStatSavingsHint: 'Read discounts − write premiums',
+    usageStatSavingsBoundHint: 'Qualified range or bound · theoretical API-equivalent value',
     usageStatSavingsExtra: coverage => `${coverage} of tokens included`,
     usageStatTokens: 'Tokens / calls',
     usageStatTokensHint: calls => `${calls} recorded calls`,
@@ -17186,6 +17278,9 @@ const I18N = {
     costsCacheNegative: '负节省值表示按这些费率估算，缓存用量的 API 等值成本高于未缓存等值。',
     costsCacheZero: '模型计算的价格差为零。',
     costsCachePositive: 'API 等值估算差额；不是节省的现金。',
+    costsCacheBoundedTag: '有界估算',
+    costsCacheBoundedCoverageUnknownTag: '有界估算 · 覆盖情况未知',
+    costsCacheBoundNote: '这是有界的理论 API 等值，不是精确点值或实际账单节省。',
     costsCacheSource: '根据带时间戳的后端调用和公开费率证据计算的理论 API 等值。总体范围取决于已记录的调用分类；不会把未分类调用视为主调用。不是供应商费用或订阅节省。',
     costsCacheValues: (uncached, cached) => `未缓存 API 等值 ${uncached}；缓存 API 等值 ${cached}。`,
     costsCacheTokens: (covered, total) => `具有缓存费率证据的令牌：${covered} / ${total}。`,
@@ -17606,7 +17701,12 @@ const I18N = {
     usageEconNoPricing: '定价不足',
     usageEconWritePremium: '净写入溢价',
     usageEconBenefit: '净缓存收益',
+    usageEconBound: '有条件估算',
     usageEconNetSavings: '理论净节省',
+    savingsRangeValue: (low, high) => '≈' + low + '–' + high,
+    savingsUpperBoundValue: value => '≤' + value,
+    savingsLowerBoundValue: value => '≥' + value,
+    savingsBoundValue: value => '≈' + value,
     usageEconWithoutCache: '无缓存',
     usageEconWithCache: '有缓存',
     usageEconBarAria: (label, money) => `${label}：${money}`,
@@ -17671,6 +17771,7 @@ const I18N = {
     usageStatApiExtra: '已定价按次估算 · 非账单',
     usageStatSavings: '理论净节省',
     usageStatSavingsHint: '读取折扣 − 写入溢价',
+    usageStatSavingsBoundHint: '有条件的区间或界限 · 理论 API 等值',
     usageStatSavingsExtra: coverage => `${coverage} 的令牌已纳入`,
     usageStatTokens: '令牌 / 调用',
     usageStatTokensHint: calls => `${calls} 已记录调用`,
@@ -17919,12 +18020,13 @@ export const __test = {
   readUsage, cacheCoverage, cacheCoverageDetail, cacheCoverageLine, localCacheEvidence,
   resolveRates,
   summarize,
-  sessionSummaryQuery, sessionSavingsState, backendSummaryBucket,
+  sessionSummaryQuery, sessionSavingsState, backendSummaryBucket, sessionGuardrailValue,
   Meter, MeterHeader, CostKpi, TokenComposition, CacheGauge, RatesPanel, MeterEmpty, InfoTip, infoTipPlacement, LedgerSafetyNotice,
-  useStableLive, mergeStableLive, stableLive, resetStableLive, meterPresence, compositionShares,
+  useStableLive, mergeStableLive, stableLive, stableLiveRetentionKey, resetStableLive, meterPresence, compositionShares,
   $ratesOpen, $infoOpen, METER_CSS, RING_R, RING_C,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
   fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, cacheSavingsBounds, liveSavings, costOf,
+  apiEquivalentDisplay, analyticsSavingsDisplay, analyticsSavingsTone,
   savingsState, savingsGapReason, derivedWrites, savedNote, savedDisplay, savedCoveragePct, SAVED_REASON_KEYS,
   modelDisplayName,
   $ledger, $ledgerReadError, $ledgerLoadDiagnostics

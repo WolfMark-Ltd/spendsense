@@ -468,7 +468,7 @@ test('a proven main summary renders its signed zero with population and evidence
   T.setRest(async path => {
     requests.push(path)
     if (path.startsWith('/session/summary?')) return {
-      ok: true, session_id: 'summary-session', model: 'gpt-6.2-sol', provider: 'openai',
+      ok: true, session_id: 'summary-session',
       population: { requested: 'main', satisfied: true, separable: true },
       totals: { calls: 1, input_tokens: 100, output_tokens: 10, prompt_tokens: 200,
         cache_read_tokens: 100, cache_write_tokens: 0,
@@ -479,6 +479,9 @@ test('a proven main summary renders its signed zero with population and evidence
     }
     return { rate: null }
   })
+  host.state.model.set('gpt-4o')
+  queryClient.setQueryData(T.catalogQuery('summary-session', 'gpt-4o', false).queryKey,
+    { model: 'gpt-4o', provider: 'openai' })
   host.state.focusedSessionId.set('summary-session')
   const container = await renderMeter()
   await flush()
@@ -487,6 +490,10 @@ test('a proven main summary renders its signed zero with population and evidence
       path.includes('session_id=summary-session') && path.includes('population=main')),
     `main summary request: ${requests}`)
     assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeMainCalls')
+    assert.equal(container.querySelector('.wm-model').textContent, 'GPT 4o',
+      'the active Desktop route is retained instead of empty backend filter echoes')
+    assert.equal(container.querySelector('.wm-provider-badge').textContent, 'openai',
+      'the separately resolved active route provider remains visible')
     assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '$0.00')
     assert.match(container.querySelector('.wm-kpi-figure').textContent, /\$0\.0010/)
     assert.match(container.querySelector('.wm-kpi-since').textContent, /sessionEvidenceNote/)
@@ -494,6 +501,69 @@ test('a proven main summary renders its signed zero with population and evidence
       'a multi-route main summary does not present a single-route Rates panel')
     assert.equal(container.querySelector('.wm-ring').getAttribute('aria-label'), 'weightedCacheHit: 0%',
       'the zero hit rate is exposed to assistive technology')
+  } finally {
+    T.restoreRest(originalRest)
+  }
+})
+
+test('an empty proven main summary falls back to the recorded conversation estimate', async () => {
+  resetHost()
+  const originalRest = T.getRest()
+  T.setRest(async path => {
+    if (path.startsWith('/session/summary?')) return {
+      ok: true, session_id: 'empty-summary-session',
+      population: { requested: 'main', satisfied: true, separable: true },
+      totals: { calls: 0, input_tokens: 0, output_tokens: 0, prompt_tokens: 0,
+        cache_read_tokens: 0, cache_write_tokens: 0,
+        cache_read_state: 'reported', cache_write_state: 'reported' },
+      valuation: { savings_basis: 'indeterminate', covered_calls: 0, excluded_calls: 0 }
+    }
+    return { rate: null }
+  })
+  host.state.focusedSessionId.set('empty-summary-session')
+  host.state.focusedStoredSessionId.set('empty-summary-conversation')
+  const ledger = T.emptyLedger()
+  ledger.sessions['empty-summary-conversation'] = histBucket({ netSavings: .5 })
+  T.$ledger.set(ledger)
+  const container = await renderMeter()
+  await flush()
+  try {
+    assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
+    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '≈$0.500')
+    assert.match(container.querySelector('.wm-kpi-since').textContent, /localEstimateScopeNote/)
+  } finally {
+    T.restoreRest(originalRest)
+  }
+})
+
+test('a backend API-equivalent range keeps both endpoints in the pane and chip formatter', async () => {
+  resetHost()
+  const originalRest = T.getRest()
+  T.setRest(async path => {
+    if (path.startsWith('/session/summary?')) return {
+      ok: true, session_id: 'range-summary-session',
+      population: { requested: 'main', satisfied: true, separable: true },
+      totals: { calls: 1, input_tokens: 100, output_tokens: 10, prompt_tokens: 200,
+        cache_read_tokens: 100, cache_write_tokens: 0,
+        cache_read_state: 'reported', cache_write_state: 'reported', unpriced_tokens: 0 },
+      valuation: { api_equivalent_usd: .202, api_equivalent_usd_high: .502,
+        api_equivalent_basis: 'range', savings_usd: 0, savings_usd_high: null,
+        savings_basis: 'exact', coverage: 1, covered_calls: 1, excluded_calls: 0,
+        cache_hit_rate: .5, cache_hit_rate_basis: 'all_calls' }
+    }
+    return { rate: null }
+  })
+  host.state.model.set('gpt-4o')
+  queryClient.setQueryData(T.catalogQuery('range-summary-session', 'gpt-4o', false).queryKey,
+    { model: 'gpt-4o', provider: 'openai' })
+  host.state.focusedSessionId.set('range-summary-session')
+  const meter = await renderMeter()
+  await flush()
+  try {
+    assert.match(meter.querySelector('.wm-kpi-figure').textContent, /≈\$0\.202–\$0\.502/)
+    assert.equal(T.apiEquivalentDisplay({ cost: .202, costHigh: .502, costSource: 'backend_summary',
+      costBasis: 'range', costPartial: true }), meter.querySelector('.wm-kpi-figure').textContent,
+    'the status chip uses the same formatter as the pane Cost KPI')
   } finally {
     T.restoreRest(originalRest)
   }
