@@ -144,6 +144,7 @@ setTimeout(async () => {
     await wait(120)
     const popover = document.getElementById('wm-info-cache-coverage')
     coverageDisclosure.found = !!coverageButton
+    coverageDisclosure.focused = document.activeElement === coverageButton
     coverageDisclosure.expanded = coverageButton.getAttribute('aria-expanded') === 'true'
     coverageDisclosure.label = coverageButton.getAttribute('aria-label') || ''
     coverageDisclosure.tabIndex = coverageButton.tabIndex

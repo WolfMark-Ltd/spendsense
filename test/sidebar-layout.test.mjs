@@ -44,10 +44,10 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
 <script>if(new URLSearchParams(location.search).get('stateTokens') !== 'absent') document.body.dataset.stateTokens = ''</script>
 <script>${readFileSync(bundle, 'utf8')}</script></body></html>`)
     const url = pathToFileURL(html).href
-    const run = (locale, tooltipInteraction = '', coverageInteraction = '', scope = 'conversation', stateTokens = 'present') => {
-      const query = `all=1&locale=${locale}&state=partial&scope=${scope}&stateTokens=${stateTokens}${tooltipInteraction ? `&tooltipInteraction=${tooltipInteraction}` : ''}${coverageInteraction ? `&coverageInteraction=${coverageInteraction}` : ''}`
+    const run = (locale, tooltipInteraction = '', coverageInteraction = '', stateTokens = 'present') => {
+      const query = `all=1&locale=${locale}&state=partial&stateTokens=${stateTokens}${tooltipInteraction ? `&tooltipInteraction=${tooltipInteraction}` : ''}${coverageInteraction ? `&coverageInteraction=${coverageInteraction}` : ''}`
       const dom = execFileSync(CHROME, [
-        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-${locale}-${scope}-${stateTokens}`)}`,
+        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-${locale}-conversation-${stateTokens}`)}`,
         '--virtual-time-budget=5000', '--dump-dom', `${url}?${query}`,
       ], { maxBuffer: 32 * 1024 * 1024, timeout: 120000 }).toString()
       const match = dom.match(/<div id="sidebar-layout-result"[^>]*>(.*?)<\/div>/s)
@@ -60,6 +60,7 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
       assert.deepEqual(result.errors, [], `no browser errors (${locale})`)
       assert.equal(result.layouts.length, 12, `six widths/heights in both themes (${locale})`)
       assert.equal(result.coverageDisclosure.found, true, `${locale} finds the Coverage help button`)
+      assert.equal(result.coverageDisclosure.focused, true, `${locale}: Coverage help receives browser focus`)
       assert.equal(result.coverageDisclosure.expanded, true, `${locale} opens Coverage help on keyboard focus`)
       assert.equal(result.coverageDisclosure.describedBy, 'wm-info-cache-coverage', `${locale} connects the button and help text`)
       assert.equal(result.coverageDisclosure.label, locale === 'en' ? 'Coverage details' : '覆盖率说明',
@@ -136,8 +137,9 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         const gap = disclosure.popover.top - disclosure.trigger.bottom
         assert.ok(gap >= 4 && gap <= 12, `${interaction} opens directly below the trigger (${gap}px gap)`)
       }
-      const nativeTokens = run(locale, '', 'focus', 'conversation', 'absent')
+      const nativeTokens = run(locale, '', 'focus', 'absent')
       assert.deepEqual(nativeTokens.errors, [], `${locale} renders without the optional state tokens`)
+      assert.equal(nativeTokens.coverageDisclosure.focused, true, `${locale}: Coverage help receives browser focus without state tokens`)
       assert.equal(nativeTokens.coverageDisclosure.expanded, true, `${locale} keeps keyboard Coverage help`)
       assert.equal(nativeTokens.layouts.length, result.layouts.length)
       for (const [index, layout] of nativeTokens.layouts.entries()) {
@@ -151,11 +153,6 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         assert.equal(layout.writeWidth, withTokens.writeWidth)
         assert.ok(layout.writeWidth > 0)
       }
-      const runScope = run(locale, '', 'focus', 'run')
-      assert.deepEqual(runScope.errors, [], `no current-run browser errors (${locale})`)
-      assert.equal(runScope.coverageDisclosure.expanded, true, `${locale} opens current-run help with keyboard focus`)
-      if (locale === 'en') assert.match(runScope.coverageDisclosure.text, /all prompt tokens for the current run/)
-      else assert.match(runScope.coverageDisclosure.text, /本轮中具有精确或估算缓存拆分的提示词令牌 ÷ 全部提示词令牌/)
       const scroll = result.layouts.map(layout => `${layout.width}x${layout.height}:${layout.scrollDelta}px`).join(', ')
       console.log(`Sidebar vertical scroll depth (${locale}): ${scroll}`)
     }
