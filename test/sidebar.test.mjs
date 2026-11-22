@@ -574,6 +574,8 @@ test('a backend API-equivalent range keeps both endpoints in the pane and chip f
     assert.match(meter.querySelector('.wm-kpi-figure').textContent, /^\$0\.202–\$0\.502$/)
     assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'backend_summary', costBasis: 'indeterminate', costPartial: true }), '≈$2.00')
     assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'local', costPartial: true }), '≈$2.00+')
+    assert.equal(T.sidebarCostDisplay({cost: 0, costHigh: 1, costBasis: 'range', costPartial: true}), '$0.00–$1.00')
+    assert.equal(T.sidebarCostDisplay({cost: 0, costPartial: true}), '—')
     assert.match(T.apiEquivalentDisplay({ cost: .202, costHigh: .502, costSource: 'backend_summary',
       costBasis: 'range', costPartial: true }), /^≈\$0\.202–\$0\.502$/)
   } finally {
@@ -1204,6 +1206,9 @@ test('the open-ledger button routes to the ledger from the live meter', async ()
   assert.equal(button.textContent, 'openLedger')
   const seen = []
   const orig = host.navigate
+  define('location', dom.window.location)
+  define('history', dom.window.history)
+  dom.window.location.hash = '#/chat/return-test'
   host.navigate = route => seen.push(route)
   try {
     await React.act(async () => {
@@ -1221,8 +1226,12 @@ test('the open-ledger button routes to the ledger from the live meter', async ()
     await React.act(async () => benefitLink.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })))
     assert.equal(T.$ledgerTab.get(), 'usage')
     assert.deepEqual(seen, ['/spend-sense', '/spend-sense'])
+    T.closeLedger()
+    assert.equal(seen.at(-1), '/chat/return-test')
   } finally {
     host.navigate = orig
+    delete globalThis.location
+    delete globalThis.history
   }
 })
 

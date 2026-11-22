@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.19'
+const PLUGIN_VERSION = '0.6.22'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -3171,9 +3171,9 @@ function apiEquivalentDisplay(view) {
 function sidebarCostDisplay(view) {
   const value = finiteValue(view?.cost)
   if (value == null) return '—'
-  if (value === 0 && view.costPartial) return '—'
   const high = finiteValue(view.costHigh)
   if (view.costBasis === 'range' && high != null && high >= value) return `${fmtUsd(value)}–${fmtUsd(high)}`
+  if (value === 0 && view.costPartial) return '—'
   if (view.costBasis === 'lower_bound') return `≥${fmtUsd(value)}`
   if (view.costBasis === 'upper_bound') return `≤${fmtUsd(value)}`
   return fmtUsd(value)
@@ -3289,7 +3289,7 @@ function CacheGauge({ t, view }) {
       jsx(InfoTip, { id: 'cache-method', label: t('infoLabel'),
         text: `${t('cacheMethodInfo')} ${cacheCoverageLine(t, view.cacheCoverage, b)}` }, 'info'),
       !view.readBenefit?.available ? jsx('button', { type: 'button', className: 'wm-gauge-note',
-        onClick: () => { $view.set(VIEW_ALL); goLedgerTab('usage'); openLedger() }, children: t('readBenefitUsageLink') }, 'read-benefit-link') : null
+        onClick: () => { $view.set(VIEW_ALL); $ledgerTab.set('usage'); openLedger() }, children: t('readBenefitUsageLink') }, 'read-benefit-link') : null
     ] }, 'title'),
     jsxs('div', { className: 'wm-gauge-row', children: [
       jsxs('svg', {
@@ -3719,7 +3719,7 @@ function analyticsPricing(row, t = needsAttentionEn) {
   return t('usagePricingComplete')
 }
 function analyticsSort(rows, key, direction = 'desc') {
-  const value = row => key === 'savings' ? finiteValue(row.economics?.savings_usd)
+  const value = row => key === 'savings' ? analyticsSavingsValue(row.economics)
     : key === 'pricing' ? (num(row.tokens) ? num(row.priced_tokens) / num(row.tokens) : null)
     : key === 'billing' ? Object.keys(row.billing_mix || {}).filter(k=>row.billing_mix[k]>0).sort().join(' + ') || 'unknown'
     : ['model','provider'].includes(key) ? String(row[key] || '') : finiteValue(row[key])
@@ -4228,7 +4228,7 @@ function AnalyticsComposition({data,state,dispatch}) {
           return jsx('rect',{x:start,y:4,width:row.share*600,height:28,fill:row.color,role:'button',tabIndex:0,'aria-label':t('usageCompSelect', row.label),onClick:()=>select(row),onFocus:()=>select(row),onKeyDown:event=>keyActivate(event,()=>select(row)),children:jsx('title',{children:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share))})},row.id)
         })]})]}),
       jsx('div',{className:'wm-compositionkey',children:parts.map(row=>row.unknown?jsxs('div',{className:'wm-legendrow',children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsx('span',{className:'wm-value',children:t('unknown')})]},row.id):jsxs('button',{type:'button',className:'wm-legendrow','aria-label':t('usageCompSelect', row.label),'aria-pressed':state.compositionFocus===row.id,onClick:()=>select(row),onFocus:()=>select(row),title:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share)),children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsxs('span',{className:'wm-value wm-mono',children:[fmtTokens(row.value),jsx('small',{children:percent(row.share)})]})]},row.id))})]}),
-    footer:jsx('div',{'aria-live':'polite',children:focus&&!focus.unknown?t('usageCompFocus', focus.label, exactTokens(focus.value), percent(focus.share), focus.id==='cache_read_tokens'?t('usageCompNoteCacheRead'):focus.id==='cache_write_tokens'?t('usageCompNoteCacheWrite'):focus.id==='input_tokens'?t('usageCompNoteInput'):t('usageCompNoteOutput')):parts.some(row=>row.unknown)?t('usageWritesUnknown'):t('usageCompEmpty')})})
+    footer:jsx('div',{'aria-live':'polite',children:[focus&&!focus.unknown?t(parts.some(row=>row.unknown)?'usageCompKnownFocus':'usageCompFocus', focus.label, exactTokens(focus.value), percent(focus.share), focus.id==='cache_read_tokens'?t('usageCompNoteCacheRead'):focus.id==='cache_write_tokens'?t('usageCompNoteCacheWrite'):focus.id==='input_tokens'?t('usageCompNoteInput'):t('usageCompNoteOutput')):null,parts.some(row=>row.unknown)?t('usageWritesUnknown'):!focus?t('usageCompEmpty'):null].filter(Boolean).join(' ')})})
 }
 const ANALYTICS_COLUMNS = [['model','Model'],['provider','Provider'],['calls','Calls'],['tokens','Tokens'],['input_tokens','Input'],['output_tokens','Output'],['reasoning_tokens','Reasoning'],['cache_read_tokens','Read'],['cache_write_tokens','Write'],['cache_hit_rate','Cache %'],['savings','Net savings'],['list_usd','API cost'],['per_call','$/call'],['per_million','$/1M tokens'],['pricing','Pricing'],['billing','Billing']]
 const ANALYTICS_CORE_COLUMNS = ['model','provider','calls','tokens','cache_hit_rate','list_usd','pricing']
@@ -5941,7 +5941,7 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   const feeLines = costsFeeLines(fees, t)
   const allowances = accountsReady ? costsAllowanceCount(accounts) : null
   const cache = totals?.economics || {}
-  const savings = finiteValue(cache.savings_usd)
+  const savings = analyticsSavingsValue(cache)
   const savingsDisplay = analyticsSavingsDisplay(cache, t)
   const excludedCalls = finiteValue(cache.excluded_calls)
   const coveredCalls = finiteValue(cache.covered_calls)
@@ -16324,6 +16324,7 @@ const I18N = {
     usageCompPartTitle: (label, value, share) => `${label}: ${value} · ${share}`,
     usageCompSelect: label => `Select ${label} composition`,
     usageCompFocus: (label, value, share, note) => `${label}: ${value} tokens · ${share} of all tokens. ${note}`,
+    usageCompKnownFocus: (label, value, share, note) => `${label}: ${value} tokens · ${share} of known streams. ${note}`,
     usageCompNoteCacheRead: 'Reused prompt tokens; billed at the cache-read rate when known.',
     usageCompNoteCacheWrite: 'New cache writes; write premiums are included in net savings when rates are known.',
     usageCompNoteInput: 'Fresh, uncached input only.',
@@ -18093,6 +18094,7 @@ const I18N = {
     usageCompPartTitle: (label, value, share) => `${label}：${value} · ${share}`,
     usageCompSelect: label => `选择${label}构成`,
     usageCompFocus: (label, value, share, note) => `${label}：${value} 令牌 · 占全部令牌的 ${share}。${note}`,
+    usageCompKnownFocus: (label, value, share, note) => `${label}：${value} 令牌 · 占已知类别的 ${share}。${note}`,
     usageCompNoteCacheRead: '复用的提示词令牌；已知时按缓存读取单价计费。',
     usageCompNoteCacheWrite: '新增缓存写入；已知单价时，写入溢价计入净节省。',
     usageCompNoteInput: '仅新鲜未缓存输入。',
@@ -18468,7 +18470,7 @@ export const __test = {
   $ratesOpen, $infoOpen, METER_CSS, RING_R, RING_C,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
   fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, cacheSavingsBounds, liveSavings, costOf,
-  apiEquivalentDisplay, analyticsSavingsDisplay, analyticsSavingsTone, readBenefitState, readBenefitDisplay,
+  apiEquivalentDisplay, sidebarCostDisplay, analyticsSavingsDisplay, analyticsSavingsTone, readBenefitState, readBenefitDisplay,
   savingsState, savingsGapReason, derivedWrites, savedNote, savedDisplay, savedCoveragePct, SAVED_REASON_KEYS,
   modelDisplayName,
   $ledger, $ledgerReadError, $ledgerLoadDiagnostics

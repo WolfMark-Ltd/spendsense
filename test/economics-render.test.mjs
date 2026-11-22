@@ -199,6 +199,20 @@ const renderCostsSummary = async ({ billing = {}, totals = {}, accounts = [], su
   return { container, text: () => container.textContent }
 }
 
+test('Costs treats indeterminate savings consistently as unknown', async () => {
+  for (const language of ['en', 'zh']) {
+    const { container } = await renderCostsSummary({ totals: { economics: {
+      savings_usd: 99, savings_basis: 'indeterminate', coverage: 0.5,
+      covered_calls: 1, excluded_calls: 1
+    } } }, language)
+    const card = container.querySelector('[data-cost-kind="cache"]')
+    assert.ok(card)
+    assert.equal(card.querySelector('.wm-cost-card-value').textContent, T.I18N[language].costsUnknownTag)
+    assert.equal(card.querySelector('.wm-cost-card-status').textContent, T.I18N[language].costsUnknownTag)
+    assert.equal(card.querySelector('.wm-cost-card-note').textContent, T.I18N[language].costsCacheUnknown)
+  }
+})
+
 const renderAttention = async ({ groups = [], econAccounts = [], unknownFees = null, fxError = '',
   onRetryFx = null, onOpenFx = null, onOpenLog = null } = {}, language = 'en') => {
   const t = (key, ...args) => {
@@ -571,18 +585,18 @@ test('Costs keeps negative cache savings and unknown coverage distinct in both l
     React.act(() => { roots.pop().unmount() })
 
     const partialCoverage = await renderCostsSummary({
-      totals: { tokens: 0, economics: { savings_usd: 0, coverage: 0.5,
+      totals: { tokens: 0, economics: { savings_usd: 0, savings_basis: 'lower_bound', coverage: 0.5,
         covered_calls: 1, excluded_calls: 0 } },
     }, language)
     const partialCard = partialCoverage.container.querySelector('[data-cost-kind="cache"]')
     assert.equal(partialCard.querySelector('.wm-cost-card-status').textContent,
       T.I18N[language].costsCacheBoundedTag,
-      'a value without an exact basis is bounded, while partial coverage remains a separate disclosure')
+      'a supported lower bound and partial coverage remain separate disclosures')
     assert.equal(partialCoverage.container.querySelectorAll('.wm-cost-evidence-scope').length, 1,
       'known coverage below 100% is still disclosed once globally even with no excluded calls')
 
     const unknownCoverage = await renderCostsSummary({
-      totals: { tokens: 10, economics: { savings_usd: 0.1, coverage: null,
+      totals: { tokens: 10, economics: { savings_usd: 0.1, savings_basis: 'lower_bound', coverage: null,
         covered_calls: 1, excluded_calls: 0 } },
     }, language)
     const unknownCoverageCard = unknownCoverage.container.querySelector('[data-cost-kind="cache"]')

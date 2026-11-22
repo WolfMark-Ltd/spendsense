@@ -96,12 +96,15 @@ test('all explorer columns sort deterministically, preserve negative savings and
  assert.equal(typeof T.analyticsSort,'function','sort helper is exported')
  const rows = [
   {model:'b',provider:'z',calls:1,list_usd:null,cache_hit_rate:null,economics:{savings_usd:null}},
-  {model:'a',provider:'y',calls:4,list_usd:0,cache_hit_rate:0,economics:{savings_usd:-2}},
-  {model:'c',provider:'x',calls:2,list_usd:5,cache_hit_rate:.8,economics:{savings_usd:3}}
+  {model:'a',provider:'y',calls:4,list_usd:0,cache_hit_rate:0,economics:{savings_usd:-2,savings_basis:'exact'}},
+  {model:'c',provider:'x',calls:2,list_usd:5,cache_hit_rate:.8,economics:{savings_usd:3,savings_basis:'exact'}}
  ]
  assert.deepEqual(T.analyticsSort(rows,'list_usd','asc').map(r=>r.model),['a','c','b'])
  assert.deepEqual(T.analyticsSort(rows,'list_usd','desc').map(r=>r.model),['c','a','b'])
  assert.deepEqual(T.analyticsSort(rows,'savings','asc').map(r=>r.model),['a','c','b'])
+ const unknown = {model:'z',provider:'p',economics:{savings_usd:99,savings_basis:'indeterminate'}}
+ assert.deepEqual(T.analyticsSort([...rows,unknown],'savings','desc').slice(0,2).map(r=>r.model),['c','a'])
+ assert.deepEqual(T.analyticsSort([...rows,unknown],'savings','asc').slice(0,2).map(r=>r.model),['a','c'])
  assert.deepEqual(T.analyticsSort(rows,'model','asc').map(r=>r.model),['a','b','c'])
  assert.deepEqual(T.analyticsSort(rows,'provider','asc').map(r=>r.model),['c','a','b'])
  assert.deepEqual(T.analyticsSort(rows,'calls','desc').map(r=>r.calls),[4,2,1])

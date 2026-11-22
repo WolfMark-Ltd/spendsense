@@ -128,6 +128,9 @@ test('read benefit uses backend basis and coverage, and unknown writes stay unkn
     assert.ok(composition.textContent.includes(dict.usageWritesUnknown))
     assert.ok(composition.textContent.includes(dict.usageStreamCacheWrite))
     assert.ok(composition.textContent.includes(dict.unknown))
+    await click(composition.querySelector(`button[aria-label="${dict.usageCompSelect(dict.usageStreamInput)}"]`))
+    assert.ok(composition.textContent.includes(dict.usageWritesUnknown))
+    assert.ok(composition.textContent.includes(locale === 'en' ? 'of known streams' : '占已知类别'))
   }
 })
 
