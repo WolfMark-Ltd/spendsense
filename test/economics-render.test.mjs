@@ -253,6 +253,35 @@ test('the economics section leads with the three headline figures', async () => 
     'the window value, span, count and status are interpolated')
 })
 
+test('Costs keeps signed savings ranges and marks bounded coverage in English and Chinese', async () => {
+  for (const language of ['en', 'zh']) {
+    const dict = T.I18N[language]
+    const economics = { savings_usd: -.1, savings_usd_high: .05, savings_basis: 'range',
+      coverage: 1, covered_calls: 4, excluded_calls: 0, covered_tokens: 100,
+      uncached_usd: .2, cached_usd: .25, gap_reasons: {} }
+    const render = excluded_calls => renderCostsSummary({ totals: { tokens: 100,
+      economics: { ...economics, excluded_calls } } }, language)
+    const endpoints = dict.savingsRangeValue('−' + T.fmtUsd(.1), T.fmtUsd(.05))
+
+    const complete = await render(0)
+    const completeCard = complete.container.querySelector('[data-cost-kind="cache"]')
+    assert.equal(completeCard.querySelector('.wm-cost-card-value').textContent, endpoints,
+      `${language}: the full signed range retains both endpoints`)
+    assert.equal(completeCard.querySelector('.wm-cost-card-status').textContent, dict.costsCacheBoundedTag,
+      `${language}: full coverage remains bounded, never labelled complete`)
+    assert.match(completeCard.querySelector('.wm-cost-card-note').textContent, /API/)
+    const detail = [...complete.container.querySelectorAll('.wm-cost-detail-row')].find(row =>
+      row.querySelector('h3')?.textContent === dict.costsCacheLabel)
+    assert.equal(detail.querySelector('.wm-cost-detail-value').textContent, endpoints,
+      `${language}: the detailed value agrees with the card`)
+
+    const partial = await render(2)
+    const partialCard = partial.container.querySelector('[data-cost-kind="cache"]')
+    assert.equal(partialCard.querySelector('.wm-cost-card-status').textContent, dict.costsCacheBoundedTag,
+      `${language}: the card identifies its valuation as bounded without repeating global coverage`)
+  }
+})
+
 test('unknown economics currencies stay localised in headline, window and group values', async () => {
   const previousTranslator = i18nBackend.t
   i18nBackend.t = (key, ...args) => {
@@ -356,7 +385,7 @@ test('Costs distinguishes reported use, API-equivalent zero, missing charges, mi
       credits_consumed: { usd: 0, basis: 'membership_allowance', source: 'Declared allowance' },
       incremental_cash: { usd: null, basis: 'incomplete', source: 'No complete evidence' },
     } },
-    totals: { tokens: 200, economics: { savings_usd: 0, uncached_usd: 2, cached_usd: 2,
+    totals: { tokens: 200, economics: { savings_usd: 0, savings_basis: 'exact', uncached_usd: 2, cached_usd: 2,
       coverage: 0.5, covered_tokens: 100, covered_calls: 1, excluded_calls: 1,
       gap_reasons: { missing_cache_read_rate: 1 } } },
     accounts,
@@ -409,11 +438,11 @@ test('Costs labels API-equivalent subtotals as partial and discloses exact cover
   }
 })
 
-test('Costs states priced-subtotal scope once globally instead of repeating Partial pills on evidence cards', async () => {
+test('Costs states population and valuation scope once globally instead of repeating Partial pills on evidence cards', async () => {
   for (const [language, scope, neverZero, partialPill, pricedNote, unknownTag, savedTag] of [
-    ['en', 'what Hermes recorded and priced', 'never counted as zero', 'Partial',
+    ['en', 'timestamped backend calls', 'not a provider charge or subscription saving', 'Partial',
       'Priced subtotal', 'Unknown', 'Saved'],
-    ['zh', '已记录并已定价', '不按零计算', '部分',
+    ['zh', '所选报告窗口内带时间戳的后端调用', '不是供应商费用或订阅节省', '部分',
       '已定价小计', '未知', '已保存'],
   ]) {
     const { container } = await renderCostsSummary({
@@ -424,7 +453,7 @@ test('Costs states priced-subtotal scope once globally instead of repeating Part
         credits_consumed: { usd: 0, basis: 'membership_allowance', source: 'Declared allowance' },
         incremental_cash: { usd: null, basis: 'incomplete', source: 'No complete evidence' },
       } },
-      totals: { tokens: 200, economics: { savings_usd: 0.5, uncached_usd: 2, cached_usd: 1.5,
+      totals: { tokens: 200, economics: { savings_usd: 0.5, savings_basis: 'exact', uncached_usd: 2, cached_usd: 1.5,
         coverage: 0.5, covered_tokens: 100, covered_calls: 1, excluded_calls: 1,
         gap_reasons: { missing_cache_read_rate: 1 } } },
       accounts: [
@@ -447,7 +476,7 @@ test('Costs states priced-subtotal scope once globally instead of repeating Part
   }
 })
 
-test('Costs omits the global scope line when every evidence card is fully priced', async () => {
+test('Costs keeps population and valuation scope visible when every evidence card is fully priced', async () => {
   for (const language of ['en', 'zh']) {
     const { container } = await renderCostsSummary({
       billing: { evidence: {
@@ -457,14 +486,16 @@ test('Costs omits the global scope line when every evidence card is fully priced
         credits_consumed: { usd: 0, basis: 'membership_allowance', source: 'Declared allowance' },
         incremental_cash: { usd: null, basis: 'incomplete', source: 'No complete evidence' },
       } },
-      totals: { tokens: 100, economics: { savings_usd: 0.2, uncached_usd: 1, cached_usd: 0.8,
+      totals: { tokens: 100, economics: { savings_usd: 0.2, savings_basis: 'exact', uncached_usd: 1, cached_usd: 0.8,
         coverage: 1, covered_tokens: 100, covered_calls: 2, excluded_calls: 0, gap_reasons: {} } },
       accounts: [
         { id: 'usd', effective_arrangement: 'subscription',
           fee: { effective: { amount: 20, currency: 'USD', period: 'month' } }, plan: null },
       ],
     }, language)
-    assert.equal(container.querySelectorAll('.wm-cost-evidence-scope').length, 0)
+    assert.equal(container.querySelectorAll('.wm-cost-evidence-scope').length, 1)
+    assert.match(container.querySelector('.wm-cost-evidence-scope').textContent,
+      language === 'zh' ? /未分类调用不会被假设为主调用/ : /unclassified calls are not assumed to be main/)
     assert.match(container.querySelector('[data-cost-kind="api"]').textContent,
       language === 'zh' ? /已完整定价/ : /Fully priced/)
     assert.match(container.querySelector('[data-cost-kind="cache"]').textContent,
@@ -519,7 +550,7 @@ test('Costs keeps negative cache savings and unknown coverage distinct in both l
       '缓存用量的 API 等值成本高于未缓存等值'],
   ]) {
     const { container } = await renderCostsSummary({
-      totals: { tokens: 10, economics: { savings_usd: -0.4, uncached_usd: 0.1, cached_usd: 0.5,
+      totals: { tokens: 10, economics: { savings_usd: -0.4, savings_basis: 'exact', uncached_usd: 0.1, cached_usd: 0.5,
         coverage: 0.2, covered_tokens: 2, covered_calls: 1, excluded_calls: 4, gap_reasons: {} } },
     }, language)
     const negativeCard = container.querySelector('[data-cost-kind="cache-negative"]')
@@ -528,7 +559,7 @@ test('Costs keeps negative cache savings and unknown coverage distinct in both l
       'the generic pill is stated once in the global evidence scope line')
     assert.equal(container.querySelectorAll('.wm-cost-evidence-scope').length, 1)
     assert.match(negativeCard.textContent, new RegExp(negativeExplanation))
-    await React.act(async () => { roots.pop().unmount() })
+    React.act(() => { roots.pop().unmount() })
 
     const missing = await renderCostsSummary({
       totals: { tokens: 10, economics: { savings_usd: null, uncached_usd: null, cached_usd: null,
@@ -537,24 +568,25 @@ test('Costs keeps negative cache savings and unknown coverage distinct in both l
     const unknownCard = missing.container.querySelector('[data-cost-kind="cache"]')
     assert.match(unknownCard.textContent, new RegExp(unknown))
     assert.doesNotMatch(unknownCard.querySelector('.wm-cost-card-value').textContent, /\$0\.00/)
-    await React.act(async () => { roots.pop().unmount() })
+    React.act(() => { roots.pop().unmount() })
 
     const partialCoverage = await renderCostsSummary({
       totals: { tokens: 0, economics: { savings_usd: 0, coverage: 0.5,
         covered_calls: 1, excluded_calls: 0 } },
     }, language)
     const partialCard = partialCoverage.container.querySelector('[data-cost-kind="cache"]')
-    assert.equal(partialCard.querySelector('.wm-cost-card-status'), null)
+    assert.equal(partialCard.querySelector('.wm-cost-card-status').textContent,
+      T.I18N[language].costsCacheBoundedTag,
+      'a value without an exact basis is bounded, while partial coverage remains a separate disclosure')
     assert.equal(partialCoverage.container.querySelectorAll('.wm-cost-evidence-scope').length, 1,
       'known coverage below 100% is still disclosed once globally even with no excluded calls')
-    await React.act(async () => { roots.pop().unmount() })
 
     const unknownCoverage = await renderCostsSummary({
       totals: { tokens: 10, economics: { savings_usd: 0.1, coverage: null,
         covered_calls: 1, excluded_calls: 0 } },
     }, language)
     const unknownCoverageCard = unknownCoverage.container.querySelector('[data-cost-kind="cache"]')
-    assert.match(unknownCoverageCard.textContent, new RegExp(coverageUnknown))
+    assert.match(unknownCoverageCard.textContent, new RegExp(coverageUnknown, 'i'))
     assert.doesNotMatch(unknownCoverageCard.textContent, new RegExp(partial))
   }
 })

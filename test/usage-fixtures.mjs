@@ -31,7 +31,8 @@ const row = (i = 0) => ({
   cache_known_calls: 90 - i, cache_unknown_calls: 12,
   billing_mix: i % 3 === 0 ? { api: 40 } : {},
   economics: { uncached_usd: 12 - i * 0.2, cached_usd: 8 - i * 0.2, savings_usd: i === 5 ? -0.4 : 3.2 - i * 0.06,
-    coverage: 0.82, covered_tokens: 98000, covered_calls: 96, excluded_calls: 8 },
+    savings_usd_high: null, savings_basis: 'exact', coverage: 0.82,
+    covered_tokens: 98000, covered_calls: 96, excluded_calls: 8 },
 })
 
 export const usageByModel = () => Array.from({ length: 30 }, (_, i) => ({

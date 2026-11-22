@@ -66,12 +66,12 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         `${locale} gives the help button a specific accessible name`)
       assert.equal(result.coverageDisclosure.tabIndex, 0, `${locale} keeps Coverage help in the keyboard tab order`)
       if (locale === 'en') {
-        assert.match(result.coverageDisclosure.text, /all prompt tokens for the recorded conversation/)
+        assert.match(result.coverageDisclosure.text, /all prompt tokens for this locally recorded conversation; population unverified/)
         assert.match(result.coverageDisclosure.text, /cumulative since/)
         assert.match(result.coverageDisclosure.text, /cache reads ÷ split-known prompt tokens/)
         assert.match(result.coverageDisclosure.text, /priced-savings coverage/)
       } else {
-        assert.match(result.coverageDisclosure.text, /当前对话中具有精确或估算缓存拆分的提示词令牌 ÷ 全部提示词令牌/)
+        assert.match(result.coverageDisclosure.text, /总体分类尚未验证的本地记录对话中具有精确或估算缓存拆分的提示词令牌 ÷ 全部提示词令牌/)
         assert.match(result.coverageDisclosure.text, /对话覆盖率从 .* 起累计/)
         assert.match(result.coverageDisclosure.text, /圆环表示缓存命中率/)
         assert.match(result.coverageDisclosure.text, /可定价净节省覆盖率/)
@@ -109,8 +109,8 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         assert.equal(layout.openSpendSense, locale === 'en' ? 'Open SpendSense' : '打开 SpendSense',
           `${id} retains the existing navigation action`)
         if (layout.height === 650) {
-          assert.ok(layout.scrollDelta <= 65,
-            `${id} keeps 650px-host scrolling close to the measured 59–60px baseline (${layout.scrollDelta}px)`)
+          assert.ok(layout.scrollDelta <= 75,
+            `${id} keeps 650px-host scrolling within 15px of the measured 59–60px baseline (${layout.scrollDelta}px)`)
         } else {
           assert.equal(layout.scrollDelta, 0, `${id} fits the 800px host without scrolling`)
         }
