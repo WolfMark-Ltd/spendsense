@@ -15,7 +15,9 @@ const CHROME = [
 
 const LAYOUT_STRINGS = {
   en: { charges: /Not recorded/, gbpFee: /GBP 20\.00\/mo/, usdFee: /USD 0\.00\/mo/,
-    partial: /fee unknown/, cachePartial: /Partial/, scope: /what Hermes recorded and priced/, limit: /1 limit/,
+    partial: /fee unknown/, cachePartial: /Partial/,
+    scope: /timestamped backend calls.*unclassified calls are not assumed to be main.*unknown cache evidence stay out of priced subtotals.*not a provider charge or subscription saving/,
+    limit: /1 limit/,
     groups: /Fees vs usage by currency/, attention: /What needs attention\?/, fix: /Fix now/,
     seeAttention: /1 issue needs attention/, blocker: /Add a dated user-supplied/,
     feeAction: /Set or confirm this account’s subscription fee/,
@@ -23,7 +25,9 @@ const LAYOUT_STRINGS = {
     verdict: /Partial evidence: .* in known fees vs .* of attributed usage/,
     fixHint: /use the action on each row/ },
   zh: { charges: /无法获取逐次调用/, gbpFee: /GBP 20\.00\/月/, usdFee: /USD 0\.00\/月/,
-    partial: /项费用未知/, cachePartial: /部分/, scope: /已记录并已定价/, limit: /1 项限额/,
+    partial: /项费用未知/, cachePartial: /部分/,
+    scope: /所选报告窗口内带时间戳的后端调用.*未分类调用不会被假设为主调用.*未知缓存证据不计入已定价小计.*不是供应商费用或订阅节省/,
+    limit: /1 项限额/,
     groups: /按货币对比费用与用量/, attention: /哪些事项需要注意？/, fix: /立即处理/,
     seeAttention: /1 个问题需要注意/, blocker: /添加注明日期的.*汇率/,
     feeAction: /设置或确认此账户的订阅费用/,

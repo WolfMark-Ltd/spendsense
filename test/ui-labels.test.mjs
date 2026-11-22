@@ -51,7 +51,8 @@ const zh = T.I18N.zh
 
 const bucket = (over = {}) => ({
   input: 328_500, output: 57_100, cacheRead: 1_000_000, cacheWrite: 0,
-  calls: 57, pricedTokens: 6_255_600, unpricedTokens: 0, cacheEstimated: true, ...over
+  calls: 57, pricedTokens: 6_255_600, unpricedTokens: 0, cacheEstimated: true,
+  cacheReadEvidence: 'estimated', cacheWriteEvidence: 'unknown', ...over
 })
 
 test('cache coverage lines follow the chosen language', () => {
@@ -137,20 +138,22 @@ test('the totals heading follows the bucket scope', () => {
   assert.ok(rows.every(r => r.label !== 'This session'))
 })
 
-test('only derived cache fields carry ≈ and the derived tag', () => {
+test('estimated reads carry ≈ and unknown writes stay unknown', () => {
   const rows = T.tokenRows(rawT, bucket(), false, null)
   const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
   assert.equal(byKey.i.value, '328.5k', 'exact input counter, unrounded by ≈')
   assert.doesNotMatch(byKey.i.value, /≈/)
   assert.equal(byKey.cr.value.startsWith('≈'), true)
-  assert.match(byKey.cr.label, / · derived$/)
-  assert.match(byKey.tt.label, /incl\. derived cache$/)
+  assert.match(byKey.cr.label, / · estimated$/)
+  assert.equal(byKey.cw.value, 'unknown')
+  assert.match(byKey.tt.label, /incl\. estimated cache$/)
   assert.equal(byKey.tt.value.startsWith('≈'), true, 'the total carries an estimated cache component')
   assert.doesNotMatch(byKey.c.label, /≈/)
 })
 
 test('exact provider cache fields are shown without an estimate marker', () => {
-  const rows = T.tokenRows(rawT, bucket({ cacheEstimated: false }), false, null)
+  const rows = T.tokenRows(rawT, bucket({ cacheEstimated: false,
+    cacheReadEvidence: 'reported', cacheWriteEvidence: 'reported' }), false, null)
   const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
   assert.ok(rows.every(r => !r.value.includes('≈')))
   assert.doesNotMatch(byKey.cr.label, /derived/)
@@ -158,7 +161,8 @@ test('exact provider cache fields are shown without an estimate marker', () => {
 })
 
 test('a reconstructed cache write never reads as confirmed usage', () => {
-  const rows = T.tokenRows(rawT, bucket({ cacheRead: 0, cacheWrite: 216_795 }), false, null)
+  const rows = T.tokenRows(rawT, bucket({ cacheRead: 0, cacheWrite: 216_795,
+    cacheReadEvidence: 'unknown', cacheWriteEvidence: 'derived' }), false, null)
   const cw = rows.find(r => r.key === 'cw')
   assert.ok(cw.value.startsWith('≈'))
   assert.match(cw.label, /derived/)
@@ -207,9 +211,11 @@ test('savings are labelled as theoretical, not cash', () => {
   // The compact gauge label leans on its tooltip for the methodology.
   assert.match(en.savingsInfo, /theoretical/i)
   assert.match(en.savingsInfo, /api-equivalent/i)
-  assert.match(en.savingsInfo, /not a credit, refund or billed charge/i)
-  assert.match(en.savingsInfo, /peak\/off-peak/i)
-  assert.match(en.savingsInfo, /more or less than the input rate/i)
+  assert.match(en.savingsInfo, /not a provider charge or subscription saving/i)
+  assert.match(en.savingsInfo, /route or peak rates may differ/i)
+  assert.match(en.savingsInfo, /cache writes may cost more or less/i)
+  assert.match(en.savingsInfo, /published premiums and retention options are included/i)
+  assert.match(en.savingsInfo, /rounded derived splits widen the range/i)
   assert.ok(zh.savingsInfo && !zh.savingsInfo.startsWith('savingsInfo'))
   assert.ok(zh.savedGauge && !zh.savedGauge.startsWith('savedGauge'))
   // A partial figure states its coverage and never borrows cash wording.
@@ -279,6 +285,28 @@ test('a session switch never shows the previous reading', () => {
   assert.equal(switched.stale, false)
   assert.equal(switched.view.bucket, null)
   assert.equal(switched.cache, null)
+})
+
+test('backend summary retention follows identity and runtime while local retention stays conversation keyed', () => {
+  const backend = stableLive({ savedSource: 'backend_summary', costBasis: 'range', costHigh: .5 })
+  const keyA = T.stableLiveRetentionKey(backend, 'identity-a', 'runtime-a', 'conversation')
+  const keyB = T.stableLiveRetentionKey(backend, 'identity-a', 'runtime-b', 'conversation')
+  const keyC = T.stableLiveRetentionKey(backend, 'identity-b', 'runtime-a', 'conversation')
+  assert.notEqual(keyA, keyB, 'backend evidence cannot cross runtime sessions')
+  assert.notEqual(keyA, keyC, 'backend evidence cannot cross connection identities')
+
+  const first = T.mergeStableLive(null, backend, keyA)
+  const gap = T.mergeStableLive(first.cache, { ...backend, bucket: null, usage: null }, keyA)
+  assert.equal(gap.stale, true)
+  assert.equal(gap.view.costHigh, .5, 'the same session retains its full range snapshot')
+  const refused = { ...stableLive(), bucket: null, usage: null, savedSource: 'local_conversation_estimate' }
+  const rejected = T.mergeStableLive(first.cache, refused,
+    T.stableLiveRetentionKey(refused, 'identity-a', 'runtime-b', 'conversation'))
+  assert.equal(rejected.stale, false, 'a refused new runtime scope does not restore the old backend summary')
+  assert.equal(rejected.cache, null)
+  assert.equal(T.stableLiveRetentionKey(refused, 'identity-a', 'runtime-a', 'conversation'),
+    T.stableLiveRetentionKey(refused, 'identity-b', 'runtime-b', 'conversation'),
+  'local fallback retention continues to follow its stored conversation id')
 })
 
 test('an empty session with no history stays empty', () => {
@@ -536,7 +564,7 @@ test('every settings string exists in English and Chinese', () => {
     'Central catalogue: stale The cached live catalogue is shown.')
   assert.equal(en.settingsCatalogueTotals(58, 50, 5, 3),
     '58 plans · 50 verified prices · 5 provisional · 3 without a published fee')
-  assert.equal(en.settingsAboutVersion('0.6.16'), 'SpendSense 0.6.16')
+  assert.equal(en.settingsAboutVersion('0.6.18'), 'SpendSense 0.6.18')
   // Proper names survive in both languages; the legal credit is identical.
   assert.match(en.settingsPrivacyP2, /models\.dev/)
   assert.match(zh.settingsPrivacyP2, /models\.dev/)
@@ -546,7 +574,7 @@ test('every settings string exists in English and Chinese', () => {
   // The Chinese composites interpolate every argument.
   assert.match(zh.settingsCatalogueVersion('实时', '2026-11-04.3', ' · 生成于X'), /实时会员目录/)
   assert.match(zh.settingsCatalogueTotals(58, 50, 5, 3), /58 个方案/)
-  assert.equal(zh.settingsAboutVersion('0.6.16'), 'SpendSense 0.6.16')
+  assert.equal(zh.settingsAboutVersion('0.6.18'), 'SpendSense 0.6.18')
   // WP12: the subtitle scans operational-first, and the licence disclosure
   // names the exact distribution terms from NOTICE (GPL-3.0, no "or later").
   assert.match(en.settingsSubtitle, /Budgets, pricing, updates/)
@@ -560,6 +588,33 @@ test('every settings string exists in English and Chinese', () => {
   for (const key of ['settingsLinkWolfmark', 'settingsLinkRepo', 'settingsLinkBug', 'settingsLinkFeature', 'settingsLinkDocs', 'settingsAboutContact']) {
     assert.doesNotMatch(en[key], /24\/7|guarantee|within .*hour/i)
   }
+})
+
+test('WP42 population and cache-evidence disclosures have English and Chinese parity', () => {
+  const keys = ['tokenEvidence_reported', 'tokenEvidence_partial', 'tokenEvidence_unknown',
+    'tokenEvidence_derived', 'tokenEvidence_estimated', 'cacheEvidenceSummary',
+    'unclassifiedPromptTokens', 'inclUnknownPrompt', 'inclEstimatedCache', 'inclPartialCache', 'scopeMainCalls',
+    'scopeLocalConversationEstimate', 'scopeLocalRunEstimate', 'coverageScopeMainCalls',
+    'coverageScopeLocalConversation', 'cacheRateAllCalls', 'cacheRateReportedCalls',
+    'sessionEvidenceNote', 'sessionSavingsSourceNote', 'localEstimateScopeNote',
+    'savedBackendNote', 'savedLocalRunNote',
+    'savedUpperBoundNote', 'savedLowerBoundNote', 'savedRangeNote',
+    'usagePopulationEvidenceNote', 'rpEvidenceNote', 'usageCacheFormula', 'src_backend_summary',
+    'savingsRangeValue', 'savingsUpperBoundValue', 'savingsLowerBoundValue', 'savingsBoundValue',
+    'usageEconBound', 'usageStatSavingsBoundHint', 'costsCacheBoundedTag',
+    'costsCacheBoundedCoverageUnknownTag', 'costsCacheBoundNote']
+  for (const key of keys) {
+    assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
+    assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
+    assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
+  }
+  assert.match(en.sessionSavingsSourceNote, /not billed or subscription savings/)
+  assert.match(en.localEstimateScopeNote, /Population unverified/)
+  assert.match(en.coverageScopeLocalConversation, /locally recorded conversation; population unverified/)
+  assert.match(zh.localEstimateScopeNote, /主／辅助总体未验证/)
+  assert.match(zh.coverageScopeLocalConversation, /总体分类尚未验证的本地记录对话/)
+  assert.match(en.usagePopulationEvidenceNote, /unclassified calls are not assumed to be main/)
+  assert.match(zh.rpEvidenceNote, /不是供应商费用或订阅节省/)
 })
 
 test('every usage panel string exists in English and Chinese', () => {

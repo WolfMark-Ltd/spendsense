@@ -53,12 +53,14 @@ const scope = () => T.analyticsScope('default', 'connected', 'gateway-a')
  * atom, so a click in one would re-render both and an assertion could pass on
  * the wrong screen.
  */
-const boot = async ({ locale = 'en' } = {}) => {
+const boot = async ({ locale = 'en', analyticsData = null } = {}) => {
   while (roots.length) {
     const previous = roots.pop()
     try { await React.act(async () => { previous.unmount() }) } catch { /* already gone */ }
   }
   queryClient.clear()
+  T.setRest(async path => analyticsData && String(path).startsWith('/analytics?')
+    ? analyticsData : defaultUsageTransport(path))
   $testConnectionId.set('gateway-a')
   $testProfile.set('default')
   i18nBackend.t = translatorFor(T.I18N, locale)
@@ -108,6 +110,7 @@ const advancedCount = container => flat(advancedOf(container)?.querySelector('su
 const usageTotals = () => usageAnalytics().totals
 
 const LOCALES = ['en', 'zh']
+const defaultUsageTransport = usageTransport({ requiredContract: T.REQUIRED_BACKEND_CONTRACT })
 
 test('Usage states five headline figures in two labelled groups, in both languages', async () => {
   for (const locale of LOCALES) {
@@ -151,6 +154,40 @@ test('Usage states five headline figures in two labelled groups, in both languag
       `${locale}: the token total is formatted, not rounded to a bare count`)
     assert.match(stats[4].hints[0], /1,234/,
       `${locale}: the call count is stated beside the token total`)
+  }
+})
+
+test('Usage and its economics panel qualify signed ranges and directional bounds in both languages', async () => {
+  for (const locale of LOCALES) {
+    const dict = T.I18N[locale]
+    const cases = [
+      { basis: 'range', low: -.4, high: .1,
+        expected: dict.savingsRangeValue('−' + T.fmtUsd(.4), T.fmtUsd(.1)) },
+      { basis: 'upper_bound', low: -.1, high: null,
+        expected: dict.savingsUpperBoundValue('−' + T.fmtUsd(.1)) },
+      { basis: 'lower_bound', low: .1, high: null,
+        expected: dict.savingsLowerBoundValue(T.fmtUsd(.1)) }
+    ]
+    for (const item of cases) {
+      const data = usageAnalytics()
+      const economics = { ...data.economics, savings_usd: item.low, savings_usd_high: item.high,
+        savings_basis: item.basis, coverage: .82 }
+      data.economics = economics
+      data.totals.economics = economics
+      const container = await boot({ locale, analyticsData: data })
+      const savings = statsOf(container)[1]
+      assert.equal(savings.value, item.expected, `${locale} ${item.basis}: Usage keeps sign and direction`)
+      assert.ok(savings.hints.includes(dict.usageStatSavingsBoundHint),
+        `${locale} ${item.basis}: Usage labels the value as qualified`)
+      assert.equal(savings.hints.at(-1), dict.usageStatSavingsExtra('82.0%'),
+        `${locale} ${item.basis}: Usage keeps the independent coverage disclosure`)
+      const panel = [...container.querySelectorAll('.wm-panel')].find(el =>
+        flat(el.querySelector('h2')?.textContent) === dict.usageEconTitle)
+      assert.equal(flat(panel?.querySelector('.wm-compositiontotal')?.textContent), item.expected,
+        `${locale} ${item.basis}: the economics panel uses the same signed bound`)
+      assert.ok(flat(panel?.textContent).includes(dict.usageEconBound),
+        `${locale} ${item.basis}: the panel badge identifies a qualified estimate`)
+    }
   }
 })
 
