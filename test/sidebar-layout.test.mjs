@@ -98,7 +98,7 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         assert.ok(layout.ringWidth >= 68 && layout.ringWidth <= 88, `${id} scales the larger ring to ${layout.ringWidth}px`)
         assert.match(layout.savedLabel, locale === 'en' ? /Theoretical net savings/ : /理论净节省/,
           `${id} labels the theoretical estimate`)
-        assert.ok(layout.savedValue.includes('≈'), `${id} marks a partial subtotal`)
+        assert.ok(!layout.savedValue.includes('≈'), `${id} keeps the theoretical amount legible`)
         assert.match(layout.savedNote, locale === 'en' ? /70%/ : /70%/,
           `${id} states the measured prompt coverage`)
         assert.equal(layout.labelOverflow, 0, `${id} keeps the savings label inside its column`)

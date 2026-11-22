@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.19'
+const PLUGIN_VERSION = '0.6.22'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -2428,6 +2428,7 @@ function useLive() {
       savedPopulation: 'main',
       savedEvidence: summaryState.evidence,
       savedBasis: savings?.basis || null,
+      readBenefit: readBenefitState(valuation, summaryState.totalCalls),
       cacheCoverage: summaryState.evidence.read === 'reported' && summaryState.evidence.write === 'reported'
         ? 1 : null,
       sinceAt: null,
@@ -2599,6 +2600,7 @@ function scopeTotalsTitle(t, fromHistory) {
  *  because a reconstructed cache-write is not provider-confirmed usage. */
 function tokenRows(t, b, hasContext, u) {
   const evidence = localCacheEvidence(b)
+  if (evidence.write !== 'reported') evidence.write = 'unknown'
   const stateLabel = (direction, state) => t(`tokenEvidence_${state || 'unknown'}`)
   const tokenValue = (value, state) => value == null || state === 'unknown' ? t('unknown')
     : `${['partial', 'derived', 'estimated'].includes(state) ? '≈' : ''}${fmtTokens(value)}`
@@ -2606,7 +2608,7 @@ function tokenRows(t, b, hasContext, u) {
     ? b.prompt : null
   const knownPrompt = num(b.input) + (evidence.read === 'unknown' ? 0 : num(b.cacheRead)) +
     (evidence.write === 'unknown' ? 0 : num(b.cacheWrite))
-  const unclassifiedPrompt = Math.max(num(b.cacheUnknown), prompt == null ? 0 : prompt - knownPrompt)
+  const unclassifiedPrompt = Math.max(num(b.cacheUnknown) + (localCacheEvidence(b).write !== 'reported' ? num(b.cacheWrite) : 0), prompt == null ? 0 : prompt - knownPrompt)
   const evidenceStates = [evidence.read, evidence.write]
   const cacheEvidenceNote = evidenceStates.includes('partial') ? t('inclPartialCache')
     : evidenceStates.includes('derived') ? t('inclDerived')
@@ -2744,9 +2746,9 @@ const $infoOpen = atom(null)
 function compositionShares(bucket) {
   const fresh = num(bucket?.input)
   const read = num(bucket?.cacheRead)
-  const write = num(bucket?.cacheWrite)
+  const write = localCacheEvidence(bucket).write !== 'reported' ? 0 : num(bucket?.cacheWrite)
   const knownPrompt = fresh + read + write
-  const unknown = num(bucket?.cacheUnknown)
+  const unknown = num(bucket?.cacheUnknown) + (localCacheEvidence(bucket).write !== 'reported' ? num(bucket?.cacheWrite) : 0)
   const prompt = typeof bucket?.prompt === 'number' && Number.isFinite(bucket.prompt) && bucket.prompt > knownPrompt
     ? bucket.prompt : knownPrompt + unknown
   const unclassified = Math.max(unknown, prompt - knownPrompt)
@@ -2785,6 +2787,7 @@ function snapshotLive(live) {
     savedPopulation: live.savedPopulation,
     savedEvidence: live.savedEvidence,
     savedBasis: live.savedBasis,
+    readBenefit: live.readBenefit,
     population: live.population,
     evidence: live.evidence,
     costBasis: live.costBasis,
@@ -3052,25 +3055,20 @@ function CostKpi({ t, view }) {
   return jsxs('section', { className: 'wm-card', 'aria-label': t('cost'), children: [
     jsx('div', {
       className: cn('wm-kpi-figure', warn && 'wm-warn'),
-      children: apiEquivalentDisplay(view)
+      children: sidebarCostDisplay(view)
     }, 'figure'),
     jsxs('div', { className: 'wm-kpi-source', children: [
-      jsx('span', { children: t('apiEquivalent') }, 'label'),
+      jsx('span', { children: [t('apiEquivalent'), sidebarCostStatus(t, view)].filter(Boolean).join(' · ') }, 'label'),
       jsx(InfoTip, {
         id: 'cost-source',
         label: t('infoLabel'),
-        text: `${sourceLabel(t, view.costSource, view.foreignSlug, view.providerUnknown)} — ${t('costSourceInfo')}`
+        text: [sourceLabel(t, view.costSource, view.foreignSlug, view.providerUnknown), t('costSourceInfo'),
+          view.savedSource === 'backend_summary' ? t('sessionEvidenceNote', t('scopeMainCalls'),
+            t(`tokenEvidence_${view.evidence?.read || 'unknown'}`), t(`tokenEvidence_${view.evidence?.write || 'unknown'}`), view.costBasis || 'unknown')
+            : view.savedSource === 'local_conversation_estimate' ? t('localEstimateScopeNote')
+              : view.savedSource === 'local_run_estimate' ? t('costLocalRunNote') : null].filter(Boolean).join(' · ')
       }, 'info')
     ] }, 'source'),
-    view.savedSource === 'backend_summary'
-      ? jsx('div', { className: 'wm-kpi-since', children: t('sessionEvidenceNote',
-        t('scopeMainCalls'), t(`tokenEvidence_${view.evidence?.read || 'unknown'}`),
-        t(`tokenEvidence_${view.evidence?.write || 'unknown'}`), view.costBasis || 'unknown') }, 'basis')
-      : view.savedSource === 'local_conversation_estimate'
-        ? jsx('div', { className: 'wm-kpi-since', children: t('localEstimateScopeNote') }, 'basis')
-        : view.savedSource === 'local_run_estimate'
-          ? jsx('div', { className: 'wm-kpi-since', children: t('costLocalRunNote') }, 'basis')
-        : null,
     jsxs('div', { className: 'wm-kpi-metrics', children: [
       jsxs('div', { className: 'wm-metric', children: [
         jsx('span', { className: 'wm-metric-label', children: t('totalTokens') }, 'l'),
@@ -3087,13 +3085,7 @@ function CostKpi({ t, view }) {
       : null,
     view.partial
       ? jsxs('div', { className: 'wm-partial-chip', children: [
-          jsx('span', { children: `▲ ${[
-            num(view.bucket.unpricedTokens) ? t('partialShort', fmtTokens(view.bucket.unpricedTokens)) : null,
-            num(view.bucket.unpricedCalls) ? t('partialCallsShort', fmtTokens(view.bucket.unpricedCalls)) : null,
-            num(view.bucket.missingUsageCalls) ? t('missingUsageCallsShort', fmtTokens(view.bucket.missingUsageCalls)) : null,
-            unknownCoverage ? t('coverageUnknownShort') : null,
-            cacheEvidenceGap ? t('partialCacheEvidence') : null
-          ].filter(Boolean).join(' · ')}` }, 'chip'),
+          jsx('span', { children: t('sidebarEvidenceDetails') }, 'chip'),
           jsx(InfoTip, { id: 'partial', label: t('infoLabel'),
             text: [
               num(view.bucket.unpricedTokens) ? t('unpricedNote', fmtTokens(view.bucket.unpricedTokens)) : null,
@@ -3129,7 +3121,7 @@ function TokenComposition({ t, view }) {
     jsxs('div', {
       className: 'wm-mix-bar',
       role: 'img',
-      'aria-label': `${t('promptMix')}: ${t('cacheFresh')} ${pct(shares.freshFrac)}, ${t('cacheRead')} ${pct(shares.readFrac)}, ${t('cacheWrite')} ${pct(shares.writeFrac)}, ${t('unclassifiedPromptTokens')} ${pct(shares.unknownFrac)}`,
+      'aria-label': `${t('promptMix')}: ${t('cacheFresh')} ${pct(shares.freshFrac)}, ${t('cacheRead')} ${pct(shares.readFrac)}, ${t('cacheWrite')} ${byKey.cw?.value || t('unknown')}, ${t('unclassifiedPromptTokens')} ${pct(shares.unknownFrac)}`,
       children: [
         jsx('div', { className: 'wm-mix-fill', 'data-part': 'fresh',
           style: { width: pct(shares.freshFrac) } }, 'fresh'),
@@ -3174,6 +3166,25 @@ function apiEquivalentDisplay(view) {
   if (basis === 'lower_bound') return `≥${fmtUsd(value)}`
   if (basis === 'upper_bound') return `≤${fmtUsd(value)}`
   return `${approximate || view.costPartial ? '≈' : ''}${fmtUsd(value)}${view.costPartial && view.costSource !== 'backend_summary' ? '+' : ''}`
+}
+
+function sidebarCostDisplay(view) {
+  const value = finiteValue(view?.cost)
+  if (value == null) return '—'
+  const high = finiteValue(view.costHigh)
+  if (view.costBasis === 'range' && high != null && high >= value) return `${fmtUsd(value)}–${fmtUsd(high)}`
+  if (value === 0 && view.costPartial) return '—'
+  if (view.costBasis === 'lower_bound') return `≥${fmtUsd(value)}`
+  if (view.costBasis === 'upper_bound') return `≤${fmtUsd(value)}`
+  return fmtUsd(value)
+}
+
+function sidebarCostStatus(t, view) {
+  if (finiteValue(view?.cost) == null) return null
+  if (view.costPartial) return t('sidebarCostPartial')
+  if (view.costSource === 'backend_summary' ? view.costBasis !== 'exact'
+    : ['local_conversation_estimate', 'local_run_estimate'].includes(view.savedSource) && view.costSource !== 'gateway') return t('estimatedLabel')
+  return null
 }
 
 /** Translation key per unresolved-savings reason. Never interpolate the key
@@ -3276,7 +3287,9 @@ function CacheGauge({ t, view }) {
     jsxs('div', { className: 'wm-card-title', children: [
       jsx('span', { children: t('cacheTitle') }, 'label'),
       jsx(InfoTip, { id: 'cache-method', label: t('infoLabel'),
-        text: `${t('cacheMethodInfo')} ${cacheCoverageLine(t, view.cacheCoverage, b)}` }, 'info')
+        text: `${t('cacheMethodInfo')} ${cacheCoverageLine(t, view.cacheCoverage, b)}` }, 'info'),
+      !view.readBenefit?.available ? jsx('button', { type: 'button', className: 'wm-gauge-note',
+        onClick: () => { $view.set(VIEW_ALL); $ledgerTab.set('usage'); openLedger() }, children: t('readBenefitUsageLink') }, 'read-benefit-link') : null
     ] }, 'title'),
     jsxs('div', { className: 'wm-gauge-row', children: [
       jsxs('svg', {
@@ -3316,12 +3329,18 @@ function CacheGauge({ t, view }) {
         jsxs('div', { className: 'wm-gauge-stat', 'data-kind': 'saved', children: [
           jsxs('span', { className: 'wm-metric-label', children: [
             jsx('span', { children: t('savedGauge') }, 't'),
-            jsx(InfoTip, { id: 'savings-method', label: t('infoLabel'), text: t('savingsInfo'), wide: true, dir: 'up' }, 'info')
+            jsx(InfoTip, { id: 'savings-method', label: t('infoLabel'), text: [t('savingsInfo'), note].filter(Boolean).join(' '), wide: true, dir: 'up' }, 'info')
           ] }, 'l'),
           jsx('span', { className: 'wm-metric-value',
-            children: savedDisplay(t, view) }, 'v')
+            children: savedDisplay(t, view).replace(/^≈/, '') }, 'v'),
+          view.savedPartial ? jsx('span', { className: 'wm-gauge-note',
+            children: savedCoveragePct(view) == null ? t('sidebarPartialCoverage') : t('sidebarCoveragePercent', savedCoveragePct(view)) }, 'coverage') : null
         ] }, 'saved'),
-        note == null ? null : jsx('div', { className: 'wm-gauge-note', children: note }, 'marker')
+        view.readBenefit?.available ? jsxs('div', { className: 'wm-gauge-note', children: [
+          t('readBenefitLabel'), ': ', readBenefitDisplay(t, view.readBenefit), ' · ',
+          t('readBenefitCoverage', view.readBenefit.calls, view.readBenefit.total, fmtTokens(view.readBenefit.tokens)),
+          jsx(InfoTip, { id: 'read-benefit', label: t('infoLabel'), text: t('readBenefitSessionExplanation'), wide: true, dir: 'up' })
+        ] }, 'read-benefit') : null
       ].filter(Boolean) }, 'stats')
     ] }, 'row')
   ] })
@@ -3524,6 +3543,7 @@ const METER_CSS = [
   '.wm-gauge-stat .wm-metric-label{min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.3}',
   '.wm-gauge-stat .wm-metric-value{min-width:0;white-space:nowrap;text-align:right}',
   '.wm-gauge-note{font-size:10px;line-height:1.45;color:var(--ui-text-tertiary);overflow-wrap:anywhere}',
+  'button.wm-gauge-note{border:0;background:transparent;padding:0;text-align:left;text-decoration:underline;cursor:pointer}',
   '.wm-rates-head{display:flex;align-items:center;gap:6px}',
   '.wm-rates-toggle{flex:1;display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:none;padding:0;font:inherit;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ui-text-tertiary);cursor:pointer;text-align:left}',
   '.wm-chevron{font-size:14px;line-height:1;transition:transform .15s ease}',
@@ -3655,8 +3675,10 @@ const STREAM_LABEL_KEYS = {
   cache_write_tokens: 'usageStreamCacheWrite',
 }
 function analyticsComposition(totals = {}, t = needsAttentionEn) {
-  const total = TOKEN_STREAMS.reduce((s,[key])=>s+num(totals[key]),0)
-  return TOKEN_STREAMS.map(([key,,color])=>({id:key,label:t(STREAM_LABEL_KEYS[key]),color,value:num(totals[key]),share:total?num(totals[key])/total:0}))
+  const parts = TOKEN_STREAMS.map(([key,,color])=>({id:key,label:t(STREAM_LABEL_KEYS[key]),color,
+    unknown:key==='cache_write_tokens' && totals.cache_write_state !== 'reported',value:num(totals[key])}))
+  const total = parts.reduce((s,row)=>s+(row.unknown?0:row.value),0)
+  return parts.map(row=>({...row,value:row.unknown?0:row.value,share:total && !row.unknown?row.value/total:0}))
 }
 /** Never infer category-dollar costs from token proportions or current prices. */
 function analyticsTrend(buckets, metric = 'tokens') {
@@ -3664,7 +3686,7 @@ function analyticsTrend(buckets, metric = 'tokens') {
   const start = valid.length ? Date.parse(valid[0].ts) : 0
   const end = valid.length ? Date.parse(valid.at(-1).ts) : start
   const points = valid.map(row=>{
-    const values = metric === 'tokens' ? TOKEN_STREAMS.map(([key])=>num(row[key]))
+    const values = metric === 'tokens' ? TOKEN_STREAMS.map(([key])=>key === 'cache_write_tokens' && row.cache_write_state !== 'reported' ? 0 : num(row[key]))
       : ['input_usd','output_usd','cache_read_usd','cache_write_usd'].every(key=>finiteValue(row[key])!=null)
         ? ['input_usd','output_usd','cache_read_usd','cache_write_usd'].map(key=>row[key]) : null
     return {row,ts:row.ts,x:end===start?.5:(Date.parse(row.ts)-start)/(end-start),values,
@@ -3697,7 +3719,7 @@ function analyticsPricing(row, t = needsAttentionEn) {
   return t('usagePricingComplete')
 }
 function analyticsSort(rows, key, direction = 'desc') {
-  const value = row => key === 'savings' ? finiteValue(row.economics?.savings_usd)
+  const value = row => key === 'savings' ? analyticsSavingsValue(row.economics)
     : key === 'pricing' ? (num(row.tokens) ? num(row.priced_tokens) / num(row.tokens) : null)
     : key === 'billing' ? Object.keys(row.billing_mix || {}).filter(k=>row.billing_mix[k]>0).sort().join(' + ') || 'unknown'
     : ['model','provider'].includes(key) ? String(row[key] || '') : finiteValue(row[key])
@@ -3722,7 +3744,7 @@ function analyticsInsights(data, t = needsAttentionEn) {
       model:top.model,provider:top.provider})
   }
   const e = data?.economics || totals.economics || {}
-  if (finiteValue(e.savings_usd) != null) insights.push({label: t('usageInsightVerdict'), text: e.savings_basis !== 'exact'
+  if (analyticsSavingsValue(e) != null) insights.push({label: t('usageInsightVerdict'), text: e.savings_basis !== 'exact'
     ? t('usageInsightVerdictUnknown')
     : e.savings_usd < 0 ? t('usageInsightVerdictLoss', analyticMoney(-e.savings_usd))
       : t('usageInsightVerdictSave', analyticMoney(e.savings_usd), percent(e.coverage))})
@@ -3902,7 +3924,7 @@ const percent = v => finiteValue(v)==null ? '—' : `${(v*100).toFixed(1)}%`
 const exactTokens = value => finiteValue(value)==null ? '—' : value.toLocaleString('en-US')
 function analyticMoney(value) { return finiteValue(value)==null ? '—' : value<0 ? `−${fmtUsd(-value)}` : fmtUsd(value) }
 function analyticsSavingsDisplay(economics, t) {
-  const value = finiteValue(economics?.savings_usd)
+  const value = analyticsSavingsValue(economics)
   if (value == null) return '—'
   const basis = economics?.savings_basis
   if (basis === 'exact') return analyticMoney(value)
@@ -3915,8 +3937,31 @@ function analyticsSavingsDisplay(economics, t) {
   if (basis === 'lower_bound') return t('savingsLowerBoundValue', analyticMoney(value))
   return t('savingsBoundValue', analyticMoney(value))
 }
-function analyticsSavingsTone(economics) {
+function analyticsSavingsValue(economics) {
+  if (!['exact','range','upper_bound','lower_bound'].includes(economics?.savings_basis)) return null
   const value = finiteValue(economics?.savings_usd)
+  if (value == null) return null
+  if (economics.savings_basis === 'range' && (finiteValue(economics.savings_usd_high) == null || economics.savings_usd_high < value)) return null
+  return value
+}
+function readBenefitState(economics, totalCalls) {
+  const value = finiteValue(economics?.read_benefit_usd)
+  const calls = economics?.read_benefit_calls
+  const tokens = economics?.read_benefit_tokens
+  const basis = economics?.read_benefit_basis
+  const valid = ['exact','lower_bound','upper_bound'].includes(basis) && value != null &&
+    Number.isSafeInteger(calls) && calls >= 0 && Number.isSafeInteger(tokens) && tokens >= 0 &&
+    Number.isSafeInteger(totalCalls) && totalCalls > 0 && calls <= totalCalls
+  return valid ? { available: true, value, basis, calls, tokens, total: totalCalls } : { available: false }
+}
+function readBenefitDisplay(t, benefit) {
+  if (!benefit?.available) return '—'
+  if (benefit.basis === 'lower_bound') return t('savingsLowerBoundValue', analyticMoney(benefit.value))
+  if (benefit.basis === 'upper_bound') return t('savingsUpperBoundValue', analyticMoney(benefit.value))
+  return analyticMoney(benefit.value)
+}
+function analyticsSavingsTone(economics) {
+  const value = analyticsSavingsValue(economics)
   if (value == null) return 'wm-dim'
   const basis = economics?.savings_basis
   if (basis === 'exact') return value < 0 ? 'wm-warn' : value > 0 ? 'wm-good' : 'wm-dim'
@@ -4119,9 +4164,9 @@ function AnalyticsTrendChart({data,state,dispatch}) {
     jsx('div',{className:'wm-chartdetail','aria-live':'polite',children:active?[
       jsx('span',{className:'wm-mono',children:(active.row.ts_local || active.ts).replace('T',' ').replace('Z',' UTC')},'ts'),
       jsx('strong',{className:'wm-mono',children:t('usageTrendTotal', exact(active.total), num(active.row.unpriced_tokens))},'total'),
-      ...TOKEN_STREAMS.map(([key])=>jsx('span',{children:t('usageTrendStream', t(STREAM_LABEL_KEYS[key]), exactTokens(active.row[key]))},key))
+      ...TOKEN_STREAMS.map(([key])=>jsx('span',{children:t('usageTrendStream', t(STREAM_LABEL_KEYS[key]), key==='cache_write_tokens' && active.row.cache_write_state !== 'reported' ? t('unknown') : exactTokens(active.row[key]))},key))
     ]:t('usageTrendEmpty')})]}),
-    footer:metric==='cost'?t('usageTrendFooterCost'):t('usageTrendFooterTokens')})
+    footer:metric==='cost'?t('usageTrendFooterCost'):trend.points.some(point=>point.row.cache_write_state !== 'reported') ? t('usageWritesUnknown') : t('usageTrendFooterTokens')})
 }
 function AnalyticsDelegation({data,state,dispatch}) {
   const t = usePluginI18n(ID)
@@ -4145,7 +4190,7 @@ function AnalyticsDelegation({data,state,dispatch}) {
 function AnalyticsRanking({data,state,dispatch}) {
   const t = usePluginI18n(ID)
   const ranked=analyticsSort(data.by_model || [],state.ranking,'desc').slice(0,8)
-  const numeric=row=>state.ranking==='savings'?finiteValue(row.economics?.savings_usd):finiteValue(row[state.ranking])
+  const numeric=row=>state.ranking==='savings'?analyticsSavingsValue(row.economics):finiteValue(row[state.ranking])
   const maximum=Math.max(0,...ranked.map(r=>Math.abs(numeric(r)||0))) || 1
   const format=state.ranking==='savings'?analyticMoney:state.ranking==='cache_read_tokens'?fmtTokens:percent
   const signed=state.ranking==='savings'
@@ -4157,9 +4202,9 @@ function AnalyticsRanking({data,state,dispatch}) {
         const action=()=>dispatch({type:'select',group:'model',row})
         const name=modelDisplayName(row.model)||row.model||t('usageUnknownModel')
         const modelWithRoute=row.model?`${name} (${row.model})`:name
-        return jsxs('g',{transform:`translate(0,${i*42+5})`,role:'button',tabIndex:0,'aria-label':t('usageRankRowAria', modelWithRoute, row.provider, percent(row.cache_hit_rate), exactTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd)),onClick:action,onKeyDown:event=>keyActivate(event,action),style:{cursor:'pointer'},children:[
-          jsx('title',{children:t('usageRankRowTitle', modelWithRoute, row.provider, row.cache_known_calls || 0, row.cache_unknown_calls || 0, exactTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
-          jsx('text',{x:0,y:12,fill:'var(--ui-text-primary)',fontSize:13,children:name.length>31?`${name.slice(0,29)}…`:name}),jsx('text',{x:0,y:26,className:'wm-axis',children:t('usageRankRowSub', row.provider || t('unknown'), fmtTokens(row.cache_read_tokens), analyticMoney(row.economics?.savings_usd))}),
+        return jsxs('g',{transform:`translate(0,${i*42+5})`,role:'button',tabIndex:0,'aria-label':t('usageRankRowAria', modelWithRoute, row.provider, percent(row.cache_hit_rate), exactTokens(row.cache_read_tokens), analyticsSavingsDisplay(row.economics,t)),onClick:action,onKeyDown:event=>keyActivate(event,action),style:{cursor:'pointer'},children:[
+          jsx('title',{children:t('usageRankRowTitle', modelWithRoute, row.provider, row.cache_known_calls || 0, row.cache_unknown_calls || 0, exactTokens(row.cache_read_tokens), analyticsSavingsDisplay(row.economics,t))}),
+          jsx('text',{x:0,y:12,fill:'var(--ui-text-primary)',fontSize:13,children:name.length>31?`${name.slice(0,29)}…`:name}),jsx('text',{x:0,y:26,className:'wm-axis',children:t('usageRankRowSub', row.provider || t('unknown'), fmtTokens(row.cache_read_tokens), analyticsSavingsDisplay(row.economics,t))}),
           jsx('rect',{x:signed?233:start,y:5,width:signed?200:range,height:8,rx:3,fill:'var(--wm-chart-track)'}),
           value!=null?jsx('rect',{x:value<0?start-barWidth:start,y:5,width:barWidth,height:8,rx:3,fill:value<0?CHART_COLORS[3]:CHART_COLORS[1]}):null,
           signed?jsx('line',{x1:start,x2:start,y1:1,y2:18,stroke:'var(--ui-text-quaternary)'}):null,
@@ -4169,20 +4214,21 @@ function AnalyticsRanking({data,state,dispatch}) {
 function AnalyticsComposition({data,state,dispatch}) {
   const t = usePluginI18n(ID)
   const parts=analyticsComposition(data.totals, t)
+  const knownParts=parts.filter(row=>!row.unknown)
   const total=parts.reduce((s,r)=>s+r.value,0)
   const focus=parts.find(r=>r.id===state.compositionFocus)
   const select=row=>dispatch({type:'set',key:'compositionFocus',value:row.id})
   let x=0
   return jsx(AnalyticsPanel,{number:'05',title:t('usageCompTitle'),subtitle:t('usageCompSubtitle'),controls:jsx(AnalyticsSegments,{label:t('usageSegComposition'),value:state.compositionMode,options:[['stacked',t('usageSegStacked')],['doughnut',t('usageSegDoughnut')]],onChange:value=>dispatch({type:'set',key:'compositionMode',value})}),
     children:jsxs('div',{className:'wm-composition',children:[state.compositionMode==='doughnut'?
-      jsx(AnalyticsDonut,{items:parts,total,label:t('usageDonutAllStreams'),format:fmtTokens,exact:exactTokens,onSelect:select,chart:'composition',t}):
-      jsxs('div',{children:[jsx('div',{className:'wm-compositiontotal wm-mono',children:fmtTokens(total)}),jsx('p',{className:'wm-subtle',children:t('usageCompTokensTotal')}),
-        jsxs('svg',{viewBox:'0 0 600 44',style:{width:'100%',marginTop:18},'data-chart':'composition',role:'img','aria-label':t('usageCompAria', exactTokens(total)),children:[jsx('title',{children:parts.map(r=>t('usageCompSvgPart', r.label, exactTokens(r.value), percent(r.share))).join('; ')}),jsx('rect',{x:0,y:4,width:600,height:28,rx:4,fill:'var(--wm-chart-track)'}),...parts.map(row=>{
+      jsx(AnalyticsDonut,{items:knownParts,total,label:t(parts.some(row=>row.unknown)?'usageKnownStreams':'usageDonutAllStreams'),format:fmtTokens,exact:exactTokens,onSelect:select,chart:'composition',t}):
+      jsxs('div',{children:[jsx('div',{className:'wm-compositiontotal wm-mono',children:fmtTokens(total)}),jsx('p',{className:'wm-subtle',children:t(parts.some(row=>row.unknown)?'usageKnownStreams':'usageCompTokensTotal')}),
+        jsxs('svg',{viewBox:'0 0 600 44',style:{width:'100%',marginTop:18},'data-chart':'composition',role:'img','aria-label':t('usageCompAria', exactTokens(total)),children:[jsx('title',{children:knownParts.map(r=>t('usageCompSvgPart', r.label, exactTokens(r.value), percent(r.share))).join('; ')}),jsx('rect',{x:0,y:4,width:600,height:28,rx:4,fill:'var(--wm-chart-track)'}),...knownParts.map(row=>{
           const start=x;x+=row.share*600
           return jsx('rect',{x:start,y:4,width:row.share*600,height:28,fill:row.color,role:'button',tabIndex:0,'aria-label':t('usageCompSelect', row.label),onClick:()=>select(row),onFocus:()=>select(row),onKeyDown:event=>keyActivate(event,()=>select(row)),children:jsx('title',{children:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share))})},row.id)
         })]})]}),
-      jsx('div',{className:'wm-compositionkey',children:parts.map(row=>jsxs('button',{type:'button',className:'wm-legendrow','aria-label':t('usageCompSelect', row.label),'aria-pressed':state.compositionFocus===row.id,onClick:()=>select(row),onFocus:()=>select(row),title:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share)),children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsxs('span',{className:'wm-value wm-mono',children:[fmtTokens(row.value),jsx('small',{children:percent(row.share)})]})]},row.id))})]}),
-    footer:jsx('div',{'aria-live':'polite',children:focus?t('usageCompFocus', focus.label, exactTokens(focus.value), percent(focus.share), focus.id==='cache_read_tokens'?t('usageCompNoteCacheRead'):focus.id==='cache_write_tokens'?t('usageCompNoteCacheWrite'):focus.id==='input_tokens'?t('usageCompNoteInput'):t('usageCompNoteOutput')):t('usageCompEmpty')})})
+      jsx('div',{className:'wm-compositionkey',children:parts.map(row=>row.unknown?jsxs('div',{className:'wm-legendrow',children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsx('span',{className:'wm-value',children:t('unknown')})]},row.id):jsxs('button',{type:'button',className:'wm-legendrow','aria-label':t('usageCompSelect', row.label),'aria-pressed':state.compositionFocus===row.id,onClick:()=>select(row),onFocus:()=>select(row),title:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share)),children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsxs('span',{className:'wm-value wm-mono',children:[fmtTokens(row.value),jsx('small',{children:percent(row.share)})]})]},row.id))})]}),
+    footer:jsx('div',{'aria-live':'polite',children:[focus&&!focus.unknown?t(parts.some(row=>row.unknown)?'usageCompKnownFocus':'usageCompFocus', focus.label, exactTokens(focus.value), percent(focus.share), focus.id==='cache_read_tokens'?t('usageCompNoteCacheRead'):focus.id==='cache_write_tokens'?t('usageCompNoteCacheWrite'):focus.id==='input_tokens'?t('usageCompNoteInput'):t('usageCompNoteOutput')):null,parts.some(row=>row.unknown)?t('usageWritesUnknown'):!focus?t('usageCompEmpty'):null].filter(Boolean).join(' ')})})
 }
 const ANALYTICS_COLUMNS = [['model','Model'],['provider','Provider'],['calls','Calls'],['tokens','Tokens'],['input_tokens','Input'],['output_tokens','Output'],['reasoning_tokens','Reasoning'],['cache_read_tokens','Read'],['cache_write_tokens','Write'],['cache_hit_rate','Cache %'],['savings','Net savings'],['list_usd','API cost'],['per_call','$/call'],['per_million','$/1M tokens'],['pricing','Pricing'],['billing','Billing']]
 const ANALYTICS_CORE_COLUMNS = ['model','provider','calls','tokens','cache_hit_rate','list_usd','pricing']
@@ -4253,7 +4299,8 @@ function AnalyticsExplorer({data,state,dispatch}) {
         else if(key==='provider') content=jsx('span',{className:'wm-subtle',children:row.provider || t('usageUnknown')})
         else if(key==='billing') content=jsx('span',{className:'wm-badge',title:t('usageExplorerBillingTitle'),children:Object.keys(row.billing_mix || {}).filter(kind=>row.billing_mix[kind]>0).sort().join(' + ') || t('unknown')})
         else if(key==='cache_hit_rate') content=jsxs('div',{title:t('usageExplorerCacheTitle', row.cache_known_calls || 0, row.cache_unknown_calls || 0),children:[percent(row.cache_hit_rate),row.cache_hit_rate!=null?jsx('div',{className:'wm-meter',children:jsx('span',{style:{width:`${Math.max(0,Math.min(1,row.cache_hit_rate))*100}%`}})}):null]})
-        else if(key==='savings') content=jsx('span',{className:row.economics?.savings_usd<0?'wm-warn':row.economics?.savings_usd>0?'wm-good':'wm-dim',children:analyticMoney(row.economics?.savings_usd)})
+        else if(key==='cache_write_tokens' && row.cache_write_state !== 'reported') content=jsx('span',{children:t('unknown')})
+        else if(key==='savings') content=jsx('span',{className:analyticsSavingsTone(row.economics),children:analyticsSavingsDisplay(row.economics,t)})
         else if(key==='list_usd') content=jsxs('span',{className:partial?'wm-warn':'',children:[analyticMoney(row.list_usd),partial&&row.list_usd!=null?jsx('small',{children:t('usageExplorerPartial')}):null]})
         else if(key==='per_call'||key==='per_million') {
           const unitCoverageUnknown = num(row.unpriced_tokens) || (key==='per_call' && num(row.unpriced_calls))
@@ -4270,7 +4317,7 @@ function AnalyticsEconomics({data}) {
   const e=data.economics || data.totals?.economics || {}
   const max=Math.max(num(e.uncached_usd),num(e.cached_usd)) || 1
   const savingsTone = analyticsSavingsTone(e)
-  const savingsLabel = finiteValue(e.savings_usd) == null ? t('usageEconNoPricing')
+  const savingsLabel = analyticsSavingsValue(e) == null ? t('usageEconNoPricing')
     : e.savings_basis === 'exact' ? e.savings_usd < 0 ? t('usageEconWritePremium') : t('usageEconBenefit')
       : t('usageEconBound')
   return jsx(AnalyticsPanel,{number:'07',title:t('usageEconTitle'),subtitle:t('usageEconSubtitle'),controls:jsx('span',{className:cn('wm-badge',savingsTone),children:savingsLabel}),children:jsxs('div',{className:'wm-economics',children:[
@@ -4416,6 +4463,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const t = usePluginI18n(ID)
   const totals=data?.totals
   const economics=data?.economics || totals?.economics || {}
+  const readBenefit = readBenefitState(economics, totals?.calls)
   const refresh=()=>query.refetch?.()
   const billingMix=totals?.billing_mix ? Object.entries(totals.billing_mix).map(([kind,value])=>`${kind}: ${typeof value==='number'?fmtTokens(value):String(value)}`).join(' · ') : ''
   const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle',style:{marginTop:7},children:t('usageSubtitle', profile || t('usageCurrentProfile'))})]}),
@@ -4432,6 +4480,10 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
       jsxs('div',{className:'wm-statgroup',role:'group','aria-label':t('usageKpiActivity'),'data-kpi-group':'activity',children:[jsx('div',{className:'wm-statgrouplabel','aria-hidden':'true',children:t('usageKpiActivity')}),
         jsx(AnalyticsStat,{label:t('weightedCacheHit'),value:percent(totals.cache_hit_rate),tone:'wm-good',hint: totals.cache_prompt_coverage == null ? t('cacheCoverageUnavailable') : t('cacheCoveragePrompt', percent(totals.cache_prompt_coverage)),extra:t('cacheCoverageBasis')}),
         jsx(AnalyticsStat,{label:t('usageStatTokens'),value:fmtTokens(totals.tokens),hint:t('usageStatTokensHint', exactTokens(totals.calls)),extra:(data.previous?.comparable && deltaText(data.previous.deltas?.tokens, t)) || t('usageStatTokensExtra', fmtTokens(totals.input_tokens), fmtTokens(totals.output_tokens))})]})]}):null,
+    totals?jsxs('div',{className:'wm-insight',children:[jsx('b',{children:t('readBenefitLabel')}),
+      jsx('span',{className:'wm-mono',children:readBenefitDisplay(t, readBenefit)}),
+      jsx('span',{children:readBenefit.available ? t('readBenefitCoverage', readBenefit.calls, readBenefit.total, fmtTokens(readBenefit.tokens)) : t('readBenefitUnavailable')}),
+      jsx('span',{children:t('readBenefitExplanation')})]}):null,
     totals&&analyticsInsights(data, t).length?jsx('div',{className:'wm-insights','aria-label':t('usageInsightsAria'),children:analyticsInsights(data, t).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{title:item.model?`${item.model} · ${item.provider||''}`:undefined,'aria-label':item.model?`${item.text} (${item.model} · ${item.provider||''})`:undefined,children:item.text})]},item.label))}):null,
     totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:billingMix || t('usageBillingTitle'),children:[jsx('strong',{children:t('usageBillingLabel')}),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),' ',jsx('span',{className:cn('wm-badge',!totals.billed_complete&&'wm-warn'),children:totals.billed_complete?t('usageBillingComplete'):totals.billed_usd==null?t('usageUnknown'):t('usageBillingPartial')}),t('usageBillingNote')]}),jsx('span',{className:'wm-mono',children:data.window?t('usageWindowDash', String(data.window.since_local || data.window.since || '').slice(0,10), String(data.window.until_local || data.window.until || '').slice(0,10), data.window.since_local ? data.window.timezone || 'local' : 'UTC'):t('usageWindowPending')})]}):null,
     totals&&num(totals.calls)?jsx(AnalyticsCoverageSummary,{data,dispatch,days:state.days}):null,
@@ -5889,7 +5941,7 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   const feeLines = costsFeeLines(fees, t)
   const allowances = accountsReady ? costsAllowanceCount(accounts) : null
   const cache = totals?.economics || {}
-  const savings = finiteValue(cache.savings_usd)
+  const savings = analyticsSavingsValue(cache)
   const savingsDisplay = analyticsSavingsDisplay(cache, t)
   const excludedCalls = finiteValue(cache.excluded_calls)
   const coveredCalls = finiteValue(cache.covered_calls)
@@ -14743,6 +14795,18 @@ const I18N = {
     meterRecorded: 'Recorded',
     meterUpdating: 'Updating…',
     apiEquivalent: 'API equivalent',
+    sidebarCostPartial: 'partial estimate',
+    sidebarEvidenceDetails: 'Evidence details',
+    sidebarPartialCoverage: 'Partial coverage',
+    sidebarCoveragePercent: value => `${value}% covered`,
+    readBenefitLabel: 'Theoretical API-equivalent cache-read benefit',
+    readBenefitCoverage: (calls, total, tokens) => `${calls} of ${total} calls · ${tokens} read tokens`,
+    readBenefitUnavailable: 'Read benefit unavailable for the selected calls.',
+    readBenefitExplanation: 'Read discount only; excludes cache writes. Not net savings or money paid. Covers the selected Usage filters and period.',
+    readBenefitSessionExplanation: 'Read discount for the proven main-call session. Excludes cache writes; not net savings or money paid.',
+    readBenefitUsageLink: 'Read benefit in Usage',
+    usageWritesUnknown: 'Cache-write tokens are unknown. Chart shares cover known streams only.',
+    usageKnownStreams: 'tokens in known streams',
     costSourceInfo: 'SpendSense prices this conversation from Hermes backend estimates or catalogue $/Mtok rates, depending on what is available. A provider invoice may differ by route, peak pricing or rounding.',
     totalTokens: 'Total tokens',
     sinceDate: d => `since ${d}`,
@@ -15732,7 +15796,7 @@ const I18N = {
     inclPartialCache: ' · incl. partial cache evidence',
     scopeMainCalls: 'main calls',
     scopeLocalBudget: 'local session budget estimate',
-    scopeLocalConversationEstimate: 'local conversation estimate',
+    scopeLocalConversationEstimate: 'conversation',
     scopeLocalRunEstimate: 'focused run estimate',
     coverageScopeMainCalls: 'main calls in this focused session',
     coverageScopeLocalConversation: 'this locally recorded conversation; population unverified',
@@ -16260,6 +16324,7 @@ const I18N = {
     usageCompPartTitle: (label, value, share) => `${label}: ${value} · ${share}`,
     usageCompSelect: label => `Select ${label} composition`,
     usageCompFocus: (label, value, share, note) => `${label}: ${value} tokens · ${share} of all tokens. ${note}`,
+    usageCompKnownFocus: (label, value, share, note) => `${label}: ${value} tokens · ${share} of known streams. ${note}`,
     usageCompNoteCacheRead: 'Reused prompt tokens; billed at the cache-read rate when known.',
     usageCompNoteCacheWrite: 'New cache writes; write premiums are included in net savings when rates are known.',
     usageCompNoteInput: 'Fresh, uncached input only.',
@@ -16506,6 +16571,18 @@ const I18N = {
     meterRecorded: '已记录',
     meterUpdating: '更新中…',
     apiEquivalent: 'API 等值',
+    sidebarCostPartial: '部分估算',
+    sidebarEvidenceDetails: '证据详情',
+    sidebarPartialCoverage: '部分覆盖',
+    sidebarCoveragePercent: value => `覆盖率 ${value}%`,
+    readBenefitLabel: '理论 API 等值缓存读取收益',
+    readBenefitCoverage: (calls, total, tokens) => `${total} 次调用中 ${calls} 次 · ${tokens} 个读取令牌`,
+    readBenefitUnavailable: '所选调用的读取收益不可用。',
+    readBenefitExplanation: '仅读取折扣，不含缓存写入。不是净节省或实际付款。范围为用量页所选筛选条件和时间段。',
+    readBenefitSessionExplanation: '已确认的主调用会话的读取折扣。不含缓存写入；不是净节省或实际付款。',
+    readBenefitUsageLink: '用量中的读取收益',
+    usageWritesUnknown: '缓存写入令牌数未知。图表比例仅涵盖已知数据。',
+    usageKnownStreams: '已知类别中的令牌',
     costSourceInfo: 'SpendSense 按 Hermes 后端估算或目录单价（$/百万令牌）为本次对话计价，具体取决于可用数据。实际账单可能因线路、峰谷价或取整而不同。',
     totalTokens: '总令牌',
     sinceDate: d => `自 ${d} 起`,
@@ -17422,7 +17499,7 @@ const I18N = {
     inclPartialCache: ' · 含部分缓存证据',
     scopeMainCalls: '主调用',
     scopeLocalBudget: '本地会话预算估算',
-    scopeLocalConversationEstimate: '本地对话估算',
+    scopeLocalConversationEstimate: '对话',
     scopeLocalRunEstimate: '当前运行估算',
     coverageScopeMainCalls: '此焦点会话中的主调用',
     coverageScopeLocalConversation: '总体分类尚未验证的本地记录对话',
@@ -18017,6 +18094,7 @@ const I18N = {
     usageCompPartTitle: (label, value, share) => `${label}：${value} · ${share}`,
     usageCompSelect: label => `选择${label}构成`,
     usageCompFocus: (label, value, share, note) => `${label}：${value} 令牌 · 占全部令牌的 ${share}。${note}`,
+    usageCompKnownFocus: (label, value, share, note) => `${label}：${value} 令牌 · 占已知类别的 ${share}。${note}`,
     usageCompNoteCacheRead: '复用的提示词令牌；已知时按缓存读取单价计费。',
     usageCompNoteCacheWrite: '新增缓存写入；已知单价时，写入溢价计入净节省。',
     usageCompNoteInput: '仅新鲜未缓存输入。',
@@ -18392,7 +18470,7 @@ export const __test = {
   $ratesOpen, $infoOpen, METER_CSS, RING_R, RING_C,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
   fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, cacheSavingsBounds, liveSavings, costOf,
-  apiEquivalentDisplay, analyticsSavingsDisplay, analyticsSavingsTone,
+  apiEquivalentDisplay, sidebarCostDisplay, analyticsSavingsDisplay, analyticsSavingsTone, readBenefitState, readBenefitDisplay,
   savingsState, savingsGapReason, derivedWrites, savedNote, savedDisplay, savedCoveragePct, SAVED_REASON_KEYS,
   modelDisplayName,
   $ledger, $ledgerReadError, $ledgerLoadDiagnostics

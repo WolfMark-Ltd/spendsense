@@ -1421,7 +1421,7 @@ test('conversation cost warning explains unknown call-level coverage', async () 
   }
   await React.act(async () => root.render(React.createElement(T.CostKpi, { t: i18nBackend.t, view })))
   const partial = container.querySelector('.wm-partial-chip')
-  assert.match(partial.textContent, /coverage unknown/i)
+  assert.match(partial.textContent, /evidence details/i)
   const info = partial.querySelector('button.wm-info-btn')
   assert.ok(info, 'the partial warning has an explanation control')
   await React.act(async () => info.dispatchEvent(new window.MouseEvent('click', { bubbles: true })))
