@@ -231,3 +231,17 @@ test('Overview ranks recorded calls, names models plainly and keeps their exact 
       `${locale}: Most-used models does not repeat the Usage shortcut`)
   }
 })
+
+test('the charges methodology links once to the About FAQ, in both languages', async () => {
+  for (const locale of LOCALES) {
+    const container = await boot({ locale })
+    const method = container.querySelector('details.wm-method')
+    const links = [...method.querySelectorAll('button')]
+      .filter(button => flat(button.textContent) === T.I18N[locale].ovMethodChargesFaqLink)
+    assert.equal(links.length, 1, `${locale}: exactly one FAQ link, in the charges section`)
+    assert.equal(flat(links[0].closest('section').querySelector('h3')?.textContent),
+      T.I18N[locale].ovMethodChargesTitle, `${locale}: the link sits with the charges explanation`)
+    await React.act(async () => links[0].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })))
+    assert.equal(T.$ledgerTab.get(), 'about', `${locale}: the link navigates to About & Support`)
+  }
+})

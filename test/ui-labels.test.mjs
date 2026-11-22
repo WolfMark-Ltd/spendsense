@@ -377,6 +377,8 @@ test('Overview labels separate the all-profile ledger from the active-profile es
   assert.match(en.ovMethodPricingBody, /historical values are not backfilled/i)
   assert.match(en.ovMethodPricingBody, /migrated v1 buckets.*remembered model rates.*did not retain capture-time prices/i)
   assert.match(en.ovMethodChargesBody, /no per-call actual-charge evidence/i)
+  assert.match(en.ovMethodChargesFaqLink, /provider’s dashboard\? See the FAQ/)
+  assert.match(zh.ovMethodChargesFaqLink, /服务商面板.*常见问题/)
   assert.match(en.ovMethodFeesBody, /No currency conversion or shared-entitlement relationship is inferred/i)
   assert.match(en.ovScopeInfo, /cannot be added|not like-for-like/i)
   assert.match(en.todayStatusNote, /when available.*not actual provider charges/i)
@@ -416,15 +418,15 @@ test('Overview labels separate the all-profile ledger from the active-profile es
 })
 
 test('every ledger tab string exists in English and Chinese', () => {
-  const keys = ['tabOverview', 'tabUsage', 'tabCosts', 'tabMemberships', 'tabReports', 'tabNews', 'tabSettings']
+  const keys = ['tabOverview', 'tabUsage', 'tabCosts', 'tabMemberships', 'tabReports', 'tabNews', 'tabSettings', 'tabAbout']
   for (const key of keys) {
     assert.ok(en[key] && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] && zh[key] !== key, `zh has ${key}`)
   }
   assert.deepEqual(keys.map(key => en[key]),
-    ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings'])
+    ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings', 'About & Support'])
   assert.deepEqual(keys.map(key => zh[key]),
-    ['总览', '用量', '费用', '会员', '报告', '模型动态', '设置'])
+    ['总览', '用量', '费用', '会员', '报告', '模型动态', '设置', '关于与支持'])
 })
 
 test('every costs string exists in English and Chinese', () => {
@@ -547,11 +549,20 @@ test('every settings string exists in English and Chinese', () => {
     'settingsDiagnosticsEmpty', 'settingsDiagnosticsNote', 'settingsRecoveryHeading',
     'settingsRecoveryPrefsExplain', 'settingsRecoveryPrefsConfirmText', 'settingsRecoveryPrefsConfirm',
     'settingsResetPrefs', 'settingsRecoveryDataExplain', 'settingsRecoveryBackupText',
-    'settingsRecoveryDataConfirm', 'settingsCopyBackup', 'settingsAboutHeading', 'settingsAboutVersion',
-    'settingsAboutCredit', 'settingsAboutSupport', 'settingsAboutContact', 'settingsLinkWolfmark',
+    'settingsRecoveryDataConfirm', 'settingsCopyBackup', 'settingsAboutVersion',
+    'settingsAboutCredit', 'settingsAboutContact', 'settingsLinkWolfmark',
     'settingsLinkRepo', 'settingsLinkBug', 'settingsLinkFeature', 'settingsLinkDocs',
     'settingsAboutLicenceHeading', 'settingsAboutLicenceText', 'settingsAboutCatalogueNote',
-    'settingsPanePlacement']
+    'settingsPricingMethodHeading', 'settingsModelsDetailHeading', 'settingsDataDetailHeading',
+    'settingsDiagnosticsContract', 'settingsDiagnosticsRevision', 'settingsDiagnosticsDigest',
+    'settingsDiagnosticsCopy', 'settingsDiagnosticsCopied', 'settingsDiagnosticsCopyFailed',
+    'aboutTitle', 'aboutSubtitle', 'aboutIntro', 'aboutDeveloper', 'aboutActionsHeading',
+    'aboutActionDocsDesc', 'aboutLinkHelp', 'aboutActionHelpDesc', 'aboutActionBugDesc',
+    'aboutActionFeatureDesc', 'aboutActionRepoDesc', 'aboutActionWolfmarkDesc',
+    'aboutSupportHeading', 'aboutSupportBody', 'aboutSupportCta', 'aboutSupportNote',
+    'aboutMoreHeading', 'aboutFaqMismatchQ', 'aboutFaqMismatchA1', 'aboutFaqMismatchA2',
+    'aboutFaqTroubleshooting', 'aboutPrivacyHeading', 'aboutPrivacyBody',
+    'ovMethodChargesFaqLink', 'settingsPanePlacement']
   for (const key of keys) {
     assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)
@@ -564,7 +575,7 @@ test('every settings string exists in English and Chinese', () => {
     'Central catalogue: stale The cached live catalogue is shown.')
   assert.equal(en.settingsCatalogueTotals(58, 50, 5, 3),
     '58 plans · 50 verified prices · 5 provisional · 3 without a published fee')
-  assert.equal(en.settingsAboutVersion('0.6.18'), 'SpendSense 0.6.18')
+  assert.equal(en.settingsAboutVersion('0.6.19'), 'SpendSense 0.6.19')
   // Proper names survive in both languages; the legal credit is identical.
   assert.match(en.settingsPrivacyP2, /models\.dev/)
   assert.match(zh.settingsPrivacyP2, /models\.dev/)
@@ -574,7 +585,7 @@ test('every settings string exists in English and Chinese', () => {
   // The Chinese composites interpolate every argument.
   assert.match(zh.settingsCatalogueVersion('实时', '2026-11-04.3', ' · 生成于X'), /实时会员目录/)
   assert.match(zh.settingsCatalogueTotals(58, 50, 5, 3), /58 个方案/)
-  assert.equal(zh.settingsAboutVersion('0.6.18'), 'SpendSense 0.6.18')
+  assert.equal(zh.settingsAboutVersion('0.6.19'), 'SpendSense 0.6.19')
   // WP12: the subtitle scans operational-first, and the licence disclosure
   // names the exact distribution terms from NOTICE (GPL-3.0, no "or later").
   assert.match(en.settingsSubtitle, /Budgets, pricing, updates/)
@@ -585,9 +596,20 @@ test('every settings string exists in English and Chinese', () => {
   assert.match(zh.settingsAboutLicenceText, /GPL-3\.0/)
   assert.match(zh.settingsAboutLicenceText, /licenses\/Apache-2\.0\.txt/)
   // Support labels name destinations, never a response promise.
-  for (const key of ['settingsLinkWolfmark', 'settingsLinkRepo', 'settingsLinkBug', 'settingsLinkFeature', 'settingsLinkDocs', 'settingsAboutContact']) {
+  for (const key of ['settingsLinkWolfmark', 'settingsLinkRepo', 'settingsLinkBug', 'settingsLinkFeature', 'settingsLinkDocs', 'settingsAboutContact', 'aboutLinkHelp']) {
     assert.doesNotMatch(en[key], /24\/7|guarantee|within .*hour/i)
   }
+  // The About hub states the voluntary nature of contributions explicitly.
+  assert.match(en.aboutSupportBody, /voluntary contribution/i)
+  assert.match(en.aboutSupportNote, /not charitable donations/i)
+  assert.match(en.aboutSupportNote, /no guaranteed rewards/i)
+  assert.match(zh.aboutSupportNote, /不是慈善捐赠/)
+  assert.match(en.aboutFaqMismatchQ, /provider’s usage or billing dashboard/)
+  assert.match(en.aboutFaqMismatchA1, /calendar month to date/)
+  assert.match(en.aboutFaqMismatchA2, /API-equivalent estimates, not payments/)
+  assert.match(zh.aboutFaqMismatchA2, /API 等值估算，而非实际付款/)
+  assert.equal(en.settingsDiagnosticsContract(4), 'Backend contract 4')
+  assert.equal(en.tabAbout, en.aboutTitle)
 })
 
 test('WP42 population and cache-evidence disclosures have English and Chinese parity', () => {

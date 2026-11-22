@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 // into force-exit only for React/jsdom harnesses with lingering handles.
 const suites = {
   browserless: [
+    ['about', 7, true],
     ['analytics', 49], ['budgets', 30, true], ['cache-savings', 36],
     ['compatibility', 16], ['dashboard-entry', 1], ['digest', 2],
     ['digest-render', 24, true], ['economics', 28], ['economics-render', 52, true],
@@ -14,7 +15,7 @@ const suites = {
     ['news-editorial', 46], ['news-groups', 52], ['news-layout.chromium', 16],
     ['news-layout.harness', 4],
     ['news-render', 60, true], ['node-runner', 5], ['plugin', 67], ['recount', 16],
-    ['overview-render', 4, true],
+    ['overview-render', 5, true],
     ['reports-layout.chromium', 19], ['reports-layout.devtools', 11],
     ['sidebar', 45, true], ['ui-labels', 50],
     ['usage-render', 8, true],
@@ -22,6 +23,7 @@ const suites = {
     ['wp14-fixes', 9],
   ],
   browser: [
+    ['about-layout', 1],
     ['budgets-layout', 1], ['costs-layout', 1], ['memberships-cards', 1],
     ['memberships-clarity', 1], ['memberships-disclosure', 1],
     ['memberships-layout', 1], ['memberships-polish', 1], ['memberships-visibility', 1],

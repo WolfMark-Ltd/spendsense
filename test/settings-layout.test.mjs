@@ -1,7 +1,9 @@
 // WP12: real Chromium layout of the reorganised Settings page with isolated,
-// invented values and no transport. Operational sections first, privacy notes
-// next to their controls, support links and licence disclosure in About.
-// Jump controls are buttons that scroll without touching the host hash.
+// invented values and no transport. Operational sections stack full-width,
+// methodology sits in disclosures next to its controls, and long diagnostics
+// identifiers wrap with copy buttons. About content moved to its own tab
+// (test/about-layout.test.mjs). Jump controls are buttons that scroll without
+// touching the host hash.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
@@ -13,27 +15,26 @@ const root = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const modules = join(root, 'test/harness/node_modules')
 const chrome = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find(existsSync)
 
-const ABOUT_LINKS = ['https://wolfmark.co.uk/', 'https://github.com/WolfMark-Ltd/spendsense',
-  'https://github.com/WolfMark-Ltd/spendsense/issues/new?template=bug-report.yml',
-  'https://github.com/WolfMark-Ltd/spendsense/issues/new?template=feature-request.yml',
-  'https://github.com/WolfMark-Ltd/spendsense/blob/main/docs/quickstart.md',
-  'https://wolfmark.co.uk/contact']
+const DIAG_REVISION = '0123456789abcdef0123456789abcdef01234567'
+const DIAG_DIGEST = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 const CASES = {
   en: {
     heads: ['Budget guardrails', 'Pricing provenance and freshness', 'SpendSense Live Updates',
       'Hermes model availability', 'Advanced billing rules', 'Display and recovery',
-      'Diagnostics', 'About and support'],
+      'Diagnostics'],
     navLabel: 'On this page',
-    licence: 'Licence & credits',
     privacy: ['no direct HTTP pricing requests', 'off by default', 'cached in this Desktop session', 'telemetry'],
+    copied: 'Copied.',
+    copyFailed: 'Copy failed.',
   },
   zh: {
     heads: ['预算护栏', '价格溯源与新鲜度', 'SpendSense 实时更新',
       'Hermes 模型可用性', '高级计费规则', '显示与恢复',
-      '诊断', '关于与支持'],
+      '诊断'],
     navLabel: '本页导航',
-    licence: '许可与致谢',
     privacy: ['不直接发起', '默认关闭', '已缓存的选项', '遥测'],
+    copied: '已复制。',
+    copyFailed: '复制失败。',
   },
 }
 
@@ -61,7 +62,7 @@ globalThis.__settingsCanned = {
   // A matched pair: WP15's shell reads build.contract, and a fixture without one
   // would paint the mismatch notice over every container. The notice itself is
   // covered by test/compatibility.test.mjs.
-  'health': { ok: true, version: '0.6.0-test', db_present: true, build: { contract: 3 } },
+  'health': { ok: true, version: '0.6.0-test', db_present: true, build: { contract: 3, revision: '${DIAG_REVISION}', desktop_sha256: '${DIAG_DIGEST}' } },
   'news-settings': { ok: true, settings: { live_updates: false } },
   'budget-status': { ok: true, rev: 'fixture', budgets: [], statuses: [] },
   'billing-profiles': { ok: true, profiles: [] },
@@ -76,7 +77,7 @@ for(const id of cases) {
 // roots heavier, so wait for every root to carry its sections and bound the wait.
 let readyChecks = 0
 const begin = () => {
-  const ready = cases.every(id => document.querySelector('#'+id+' #settings-about'))
+  const ready = cases.every(id => document.querySelector('#'+id+' #settings-diagnostics'))
   if (!ready && ++readyChecks <= 120) return setTimeout(begin, 25)
   measure()
 }
@@ -86,15 +87,13 @@ const measure = () => {
     const el=document.getElementById(id), rect=el.getBoundingClientRect()
     const nav=el.querySelector('nav[aria-label]')
     const jumps=[...(nav?.querySelectorAll('button') || [])].map(b=>b.textContent)
-    const outside=[...el.querySelectorAll('input,select,button,a,details')].filter(x=>{const r=x.getBoundingClientRect();return r.left < rect.left-1 || r.right > rect.right+1})
+    const outside=[...el.querySelectorAll('input,select,button,a,details,.wm-diagnostic-value')].filter(x=>{const r=x.getBoundingClientRect();return r.left < rect.left-1 || r.right > rect.right+1})
     const tabs=[...el.querySelectorAll('[role=\"tab\"]')].map(t=>t.getAttribute('aria-selected')+':'+t.tabIndex)
     out.layouts.push({id,
       heads:[...el.querySelectorAll('.wm-settings-grid h2')].map(h=>h.textContent),
       navLabel:nav?.getAttribute('aria-label'), jumps,
-      aboutLinks:[...el.querySelector('#settings-about').querySelectorAll('a')].map(a=>a.getAttribute('href')),
-      aboutTargets:[...el.querySelector('#settings-about').querySelectorAll('a')].map(a=>a.getAttribute('target')+'|'+a.getAttribute('rel')),
-      licence:el.querySelector('#settings-about details summary')?.textContent || '',
-      licenceStartsClosed:el.querySelector('#settings-about details')?.open === false,
+      diagValues:[...el.querySelectorAll('#settings-diagnostics .wm-diagnostic-value')].map(s=>s.textContent),
+      diagCopy:el.querySelectorAll('#settings-diagnostics .wm-diagnostic-row button').length,
       toggles:el.querySelectorAll('.wm-setting-toggle input[type=\"checkbox\"]').length,
       overflow:outside.map(x=>x.tagName), tabs})
   }
@@ -105,7 +104,7 @@ const measure = () => {
   const narrow = document.getElementById('narrow-dark')
   const hashBefore = location.hash
   const jumpBtns = [...narrow.querySelectorAll('nav[aria-label] button')]
-  const about = document.getElementById('settings-about')
+  const about = document.getElementById('settings-diagnostics')
   jumpBtns[jumpBtns.length - 1]?.click()
   out.hashUnchanged = location.hash === hashBefore
   out.jumpFocusTag = document.activeElement?.tagName || ''
@@ -116,10 +115,10 @@ const measure = () => {
     out.jumpVisible = targetTop >= bar.getBoundingClientRect().bottom - 1
     out.jumpInView = targetTop >= 0 && targetTop < window.innerHeight
     out.scrollMargins = {
-      narrow: getComputedStyle(narrow.querySelector('#settings-about')).scrollMarginTop,
-      wide: getComputedStyle(document.getElementById('wide-dark').querySelector('#settings-about')).scrollMarginTop,
+      narrow: getComputedStyle(narrow.querySelector('#settings-diagnostics')).scrollMarginTop,
+      wide: getComputedStyle(document.getElementById('wide-dark').querySelector('#settings-diagnostics')).scrollMarginTop,
     }
-    const summary = document.querySelector('#wide-light #settings-about details summary')
+    const summary = document.querySelector('#wide-light #settings-diagnostics details summary')
     summary?.focus()
     out.focusedSummary = document.activeElement === summary
     const details = summary?.closest('details')
@@ -129,7 +128,28 @@ const measure = () => {
     const jump = document.querySelector('#wide-light nav[aria-label] button')
     jump?.focus()
     out.focusedJump = document.activeElement === jump
-    document.getElementById('result').textContent=JSON.stringify(out)
+    // Deterministic clipboard: the host clipboard call never settles under
+    // --dump-dom, so shadow it and drive both outcomes via the desktop bridge.
+    try { Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true }) } catch {}
+    window.hermesDesktop = { writeClipboard: async () => {} }
+    const copyBtns = [...document.querySelectorAll('#wide-light #settings-diagnostics .wm-diagnostic-row button')]
+    const copyText = index => document.querySelectorAll('#wide-light #settings-diagnostics .wm-diagnostic-row')[index]?.querySelector('.wm-diagnostic-copy')?.textContent || ''
+    copyBtns[0]?.click()
+    let copyChecks = 0
+    const readCopy = () => {
+      out.copyOk = copyText(0)
+      if (!out.copyOk && ++copyChecks <= 10) return setTimeout(readCopy, 50)
+      delete window.hermesDesktop
+      copyBtns[1]?.click()
+      copyChecks = 0
+      const readFail = () => {
+        out.copyFail = copyText(1)
+        if (!out.copyFail && ++copyChecks <= 10) return setTimeout(readFail, 50)
+        document.getElementById('result').textContent=JSON.stringify(out)
+      }
+      setTimeout(readFail, 50)
+    }
+    setTimeout(readCopy, 50)
   }, 100)
 }
 begin()
@@ -155,15 +175,13 @@ begin()
         assert.deepEqual(layout.heads, CASES[locale].heads, `${locale} ${layout.id}: operational sections first`)
         assert.equal(layout.navLabel, CASES[locale].navLabel, `${locale} ${layout.id}`)
         assert.deepEqual(layout.jumps, CASES[locale].heads, `${locale} ${layout.id}: jump labels match sections`)
-        assert.deepEqual(layout.aboutLinks, ABOUT_LINKS, `${locale} ${layout.id}`)
-        assert.ok(layout.aboutTargets.every(t => t === '_blank|noreferrer'), `${locale} ${layout.id}`)
-        assert.equal(layout.licence, CASES[locale].licence, `${locale} ${layout.id}`)
-        assert.equal(layout.licenceStartsClosed, true, `${locale} ${layout.id}`)
+        assert.deepEqual(layout.diagValues, [DIAG_REVISION, DIAG_DIGEST], `${locale} ${layout.id}: identifiers render in full`)
+        assert.equal(layout.diagCopy, 2, `${locale} ${layout.id}: both identifiers have copy buttons`)
         assert.equal(layout.toggles, 2, `${locale} ${layout.id}: both opt-in toggles render`)
         assert.deepEqual(layout.overflow, [], `${locale} ${layout.id}`)
-        assert.equal(layout.tabs.length, 7, `${locale} ${layout.id}: seven-tab navigation kept`)
+        assert.equal(layout.tabs.length, 8, `${locale} ${layout.id}: eight-tab navigation kept`)
         assert.equal(layout.tabs.filter(t => t.startsWith('true:')).length, 1, `${locale} ${layout.id}`)
-        assert.equal(layout.tabs.filter(t => t === 'false:-1').length, 6, `${locale} ${layout.id}: roving tabindex`)
+        assert.equal(layout.tabs.filter(t => t === 'false:-1').length, 7, `${locale} ${layout.id}: roving tabindex`)
       }
       for (const [index, snippet] of CASES[locale].privacy.entries()) {
         assert.match(data.privacy[index], new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${locale}: privacy note ${index} sits with its control`)
@@ -177,6 +195,8 @@ begin()
       assert.equal(data.focusedSummary, true, `${locale}: disclosure summary is keyboard-focusable`)
       assert.equal(data.toggleWorks, true, `${locale}: disclosure toggles`)
       assert.equal(data.focusedJump, true, `${locale}: jump controls are keyboard-focusable`)
+      assert.equal(data.copyOk, CASES[locale].copied, `${locale}: a successful copy is confirmed`)
+      assert.equal(data.copyFail, CASES[locale].copyFailed, `${locale}: an unavailable clipboard is reported`)
     }
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })

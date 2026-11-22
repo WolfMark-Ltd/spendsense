@@ -320,7 +320,7 @@ test('a failed refresh keeps the cached report behind a stale warning', async ()
 test('the reports page keeps the shared tab navigation', async () => {
   const { container } = await bootReports()
   const tabs = [...container.querySelectorAll('[role="tab"]')].map(tab => tab.getAttribute('aria-label'))
-  assert.deepEqual(tabs, ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings'])
+  assert.deepEqual(tabs, ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings', 'About & Support'])
   const pageRoot = container.firstElementChild
   const tablist = container.querySelector('[role="tablist"]')
   assert.ok(tablist, 'reports renders the tab bar')

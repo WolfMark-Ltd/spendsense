@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.18'
+const PLUGIN_VERSION = '0.6.19'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -3411,9 +3411,10 @@ function rangeNotes(t, totals, storageError) {
 /**
  * Spend Sense marque (assets/branding/spend-sense-marque-v2.svg), inlined
  * because the desktop plugin loader forbids relative asset imports. Rendered
- * small and decorative beside existing titles — never a hero element — with
- * fixed dimensions so it cannot shift surrounding layout. Each call site passes
- * a distinct `id` so the inline gradient defs never share a document id.
+ * small and decorative beside existing titles, and prominent only in the About
+ * & Support hero — with fixed dimensions so it cannot shift surrounding
+ * layout. Each call site passes a distinct `id` so the inline gradient defs
+ * never share a document id.
  */
 const BRAND_MARK_PATH = 'M 352.000000 84.000000 L 208.000000 84.000000 C 200.573938 84.000000 193.452029 86.949992 188.201010 92.201010 L 92.201010 188.201010 C 86.949992 193.452029 84.000000 200.573938 84.000000 208.000000 L 84.000000 224.000000 C 84.000000 233.958678 89.289516 243.167920 97.891611 248.185809 L 265.891611 346.185809 C 279.249065 353.977657 296.393961 349.465842 304.185809 336.108389 C 311.977657 322.750935 307.465842 305.606039 294.108389 297.814191 L 126.108389 199.814191 L 112.000000 224.000000 L 140.000000 224.000000 L 140.000000 208.000000 L 112.000000 208.000000 L 131.798990 227.798990 L 227.798990 131.798990 L 208.000000 140.000000 L 352.000000 140.000000 C 367.463973 140.000000 380.000000 127.463973 380.000000 112.000000 C 380.000000 96.536027 367.463973 84.000000 352.000000 84.000000 Z M 160.000000 428.000000 L 304.000000 428.000000 C 311.426062 428.000000 318.547971 425.050008 323.798990 419.798990 L 419.798990 323.798990 C 425.050008 318.547971 428.000000 311.426062 428.000000 304.000000 L 428.000000 288.000000 C 428.000000 278.041322 422.710484 268.832080 414.108389 263.814191 L 246.108389 165.814191 C 232.750935 158.022343 215.606039 162.534158 207.814191 175.891611 C 200.022343 189.249065 204.534158 206.393961 217.891611 214.185809 L 385.891611 312.185809 L 400.000000 288.000000 L 372.000000 288.000000 L 372.000000 304.000000 L 400.000000 304.000000 L 380.201010 284.201010 L 284.201010 380.201010 L 304.000000 372.000000 L 160.000000 372.000000 C 144.536027 372.000000 132.000000 384.536027 132.000000 400.000000 C 132.000000 415.463973 144.536027 428.000000 160.000000 428.000000 Z'
 function BrandMark({ size = 20, id = 'mark' }) {
@@ -4574,10 +4575,13 @@ function evidenceForMode(rows, mode) {
   return rows.filter(row => keys.includes(row.key))
 }
 /** Initial tab from the host hash. Settings is matched before billing so a
- * settings-section hash (e.g. `#settings-billing`) selects Settings. */
+ * settings-section hash (e.g. `#settings-billing`) selects Settings. About is
+ * matched before settings so a legacy `#settings-about` deep link lands on the
+ * About & Support tab that now holds that content. */
 function ledgerTabForHash(hash) {
   const value = String(hash || '')
   if (/memberships?/.test(value)) return 'memberships'
+  if (/about/.test(value)) return 'about'
   if (/settings/.test(value)) return 'settings'
   if (/billing/.test(value)) return 'costs'
   if (/usage/.test(value)) return 'usage'
@@ -5145,7 +5149,7 @@ function econVerdict(headline, windowLines, t) {
 
 const LEDGER_TABS = [['overview', 'Overview'], ['usage', 'Usage'], ['costs', 'Costs'],
   ['memberships', 'Memberships'], ['reports', 'Reports'], ['news', 'Model News'],
-  ['settings', 'Settings']]
+  ['settings', 'Settings'], ['about', 'About & Support']]
 /** Tab ids to their I18N label keys. LEDGER_TABS keeps the canonical English labels. */
 const TAB_LABEL_KEYS = {
   overview: 'tabOverview',
@@ -5155,6 +5159,7 @@ const TAB_LABEL_KEYS = {
   reports: 'tabReports',
   news: 'tabNews',
   settings: 'tabSettings',
+  about: 'tabAbout',
 }
 const $digestDays = atom(30)
 /** Model News view state: audience scope plus one category filter. */
@@ -5715,10 +5720,45 @@ const PRODUCT_CSS = [
   '.wm-product .wm-cost-row small{display:block;margin-top:3px;color:var(--ui-text-tertiary);font-size:11px;line-height:1.4}',
   '.wm-product .wm-source-link{border:0;padding:0;background:none;color:var(--ui-text-tertiary);font:inherit;font-size:11px;text-align:left;text-decoration:underline;text-underline-offset:2px;cursor:pointer}',
   '.wm-product .wm-source-link:hover{color:var(--ui-text-primary)}',
-  '.wm-product .wm-settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}',
+  '.wm-product .wm-settings-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}',
   '.wm-product .wm-settings-grid .wm-product-section{min-width:0}',
   '.wm-product .wm-settings-grid [id]{scroll-margin-top:70px}',
   '@container(max-width:760px){.wm-product .wm-settings-grid [id]{scroll-margin-top:150px}}',
+  '.wm-product .wm-settings-grid details{margin:4px 0 12px}',
+  '.wm-product .wm-settings-grid details summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--ui-text-secondary);min-height:32px}',
+  '.wm-product .wm-settings-grid details summary:hover{color:var(--ui-text-primary)}',
+  '.wm-product .wm-settings-grid details p{margin:6px 0 0;color:var(--ui-text-tertiary);font-size:12px;line-height:1.5;max-width:78ch}',
+  '.wm-product .wm-diagnostic-ids{display:grid;gap:8px;margin:4px 0 12px}',
+  '.wm-product .wm-diagnostic-ids>p{margin:0}',
+  '.wm-product .wm-diagnostic-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;min-width:0}',
+  '.wm-product .wm-diagnostic-label{flex:0 0 auto;font-size:12px;color:var(--ui-text-secondary)}',
+  '.wm-product .wm-diagnostic-value{flex:1 1 12ch;min-width:0;overflow-wrap:anywhere;user-select:text;-webkit-user-select:text;font-size:12px;font-variant-numeric:tabular-nums;color:var(--ui-text-primary)}',
+  '.wm-product .wm-diagnostic-row .wm-button{flex:0 0 auto}',
+  '.wm-product .wm-diagnostic-copy{flex:0 0 auto;font-size:11.5px}',
+  '.wm-product .wm-diagnostic-copy[data-status="success"]{color:var(--wm-positive)}',
+  '.wm-product .wm-diagnostic-copy[data-status="error"]{color:var(--wm-error)}',
+  '.wm-product .wm-about-hero{display:grid;gap:10px}',
+  '.wm-product .wm-about-brandrow{display:flex;align-items:center;gap:14px;min-width:0}',
+  '.wm-product .wm-about-brandrow>div{min-width:0}',
+  '.wm-product .wm-about-brandrow .wm-about-name{margin:0;font-size:19px;font-weight:640;letter-spacing:-.3px;color:var(--ui-text-primary);overflow-wrap:anywhere}',
+  '.wm-product .wm-about-developer{margin:2px 0 0;font-size:12.5px;color:var(--ui-text-secondary)}',
+  '.wm-product .wm-about-actions{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:8px}',
+  '.wm-product .wm-about-action{display:block;border:1px solid var(--wm-border);border-radius:8px;padding:10px 13px;text-decoration:none;color:inherit;background:var(--wm-surface);transition:border-color .15s ease,background-color .15s ease}',
+  '.wm-product .wm-about-action:hover{border-color:color-mix(in srgb,var(--wm-action) 45%,var(--wm-border));background:var(--wm-surface-raised)}',
+  '.wm-product .wm-about-action strong{display:block;font-size:13px;font-weight:600;color:var(--ui-text-primary)}',
+  '.wm-product .wm-about-action span{display:block;margin-top:2px;font-size:11.5px;line-height:1.45;color:var(--ui-text-tertiary)}',
+  '.wm-product .wm-about-support{border-color:color-mix(in srgb,var(--wm-action) 40%,var(--wm-border));background:color-mix(in srgb,var(--wm-action) 6%,var(--wm-surface))}',
+  '.wm-product .wm-about-kofi{display:inline-flex;align-items:center;min-height:38px;margin-top:4px;padding:9px 20px;border-radius:8px;background:linear-gradient(135deg,#2563EB,#813CF8);color:#fff;font-size:13px;font-weight:650;text-decoration:none;transition:filter .15s ease}',
+  '.wm-product .wm-about-kofi:hover{filter:brightness(1.08);color:#fff}',
+  '.wm-product .wm-about-faq{margin:10px 0 0}',
+  '.wm-product .wm-about-faq summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--ui-text-primary);min-height:32px}',
+  '.wm-product .wm-about-faq p{margin:6px 0 0;color:var(--ui-text-secondary);font-size:12.5px;line-height:1.55;max-width:78ch}',
+  '.wm-product .wm-about-more details{margin:10px 0 0}',
+  '.wm-product .wm-about-more summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--ui-text-secondary);min-height:32px}',
+  '.wm-product .wm-about-more summary:hover{color:var(--ui-text-primary)}',
+  '.wm-product .wm-about-more details p{margin:6px 0 0;color:var(--ui-text-tertiary);font-size:12px;line-height:1.5;max-width:78ch}',
+  '.wm-product .wm-about-more [id]{scroll-margin-top:70px}',
+  '@container(max-width:760px){.wm-product .wm-about-more [id]{scroll-margin-top:150px}}',
   '.wm-product .wm-setting-action{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}',
   '.wm-product .wm-setting-toggle{display:flex;align-items:flex-start;gap:9px;margin:10px 0;padding:10px;border:1px solid var(--ui-stroke-secondary);border-radius:7px;background:var(--ui-fill-secondary);color:var(--ui-text-primary);font-size:12px;line-height:1.45}',
   '.wm-product .wm-setting-toggle input{margin:2px 0 0;accent-color:var(--ui-accent)}',
@@ -5734,7 +5774,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-section p{max-width:78ch}',
   '.wm-product :focus-visible{outline:2px solid var(--wm-action);outline-offset:2px}',
   '@container(max-width:760px){.wm-product .wm-product-tabs{padding:6px 14px;gap:2px}.wm-product .wm-product-brand{flex:0 0 100%;min-height:39px;align-self:auto;margin:0;padding:0 0 8px;border-right:0;border-bottom:1px solid var(--wm-border)}}',
-  '@media(prefers-reduced-motion:reduce){.wm-product .wm-product-tab,.wm-product .wm-button,.wm-product .wm-account-chip{transition:none!important}.wm-product .wm-button:active:not(:disabled){transform:none}}',
+  '@media(prefers-reduced-motion:reduce){.wm-product .wm-product-tab,.wm-product .wm-button,.wm-product .wm-account-chip,.wm-product .wm-about-action,.wm-product .wm-about-kofi{transition:none!important}.wm-product .wm-button:active:not(:disabled){transform:none}}',
   '@container(max-width:760px){.wm-product .wm-overview-panels{grid-template-columns:1fr}}',
   '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;flex-wrap:wrap;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}.wm-product .wm-method-grid{grid-template-columns:1fr}}',
   '@container(max-width:340px){.wm-product .wm-overview-grid{grid-template-columns:1fr}}',
@@ -6979,12 +7019,31 @@ function OverviewPage() {
           const key = section[0].toUpperCase() + section.slice(1)
           return jsxs('section', { children: [
             jsx('h3', { children: t(`ovMethod${key}Title`) }),
-            jsx('p', { children: t(`ovMethod${key}Body`) })
+            jsx('p', { children: t(`ovMethod${key}Body`) }),
+            section === 'charges'
+              ? jsx('p', { children: jsx('button', { type: 'button', className: 'wm-source-link',
+                  onClick: goAboutFaq, children: t('ovMethodChargesFaqLink') }) })
+              : null
           ] }, section)
         }) })
       ] })
     ] })
   })
+}
+
+/** A long backend identifier with a copy button. The value always wraps
+ * instead of overflowing, stays selectable, and is copied in full. */
+function CopyableDiagnostic({ label, value, copyable, t }) {
+  const [copied, setCopied] = useState(null)
+  return jsxs('div', { className: 'wm-diagnostic-row', children: [
+    jsx('span', { className: 'wm-diagnostic-label', children: label }, 'label'),
+    jsx('span', { className: 'wm-diagnostic-value', children: value }, 'value'),
+    copyable ? jsx(ProductButton, { type: 'button', size: 'sm',
+      onClick: async () => setCopied(await writeClipboard(value) ? 'success' : 'error'),
+      children: t('settingsDiagnosticsCopy') }, 'copy') : null,
+    copied ? jsx('span', { className: 'wm-diagnostic-copy', 'data-status': copied,
+      role: 'status', children: t(copied === 'success' ? 'settingsDiagnosticsCopied' : 'settingsDiagnosticsCopyFailed') }, 'state') : null
+  ].filter(Boolean) })
 }
 
 /** In-page jump that never touches the host hash (hash changes corrupt returnTo). */
@@ -7175,7 +7234,6 @@ function SettingsPage() {
         ['settings-billing', 'advRulesTitle'],
         ['settings-data', 'settingsRecoveryHeading'],
         ['settings-diagnostics', 'settingsDiagnosticsHeading'],
-        ['settings-about', 'settingsAboutHeading'],
       ].map(([id, key]) => jsx('button', { type: 'button', className: 'wm-account-chip',
         onClick: () => jumpToSettingsSection(id), children: t(key) }, id)) }),
       jsxs('div', { className: 'wm-settings-grid', children: keyedElementChildren([
@@ -7193,10 +7251,11 @@ function SettingsPage() {
           jsx('p', { className: 'wm-subtle', children: t('settingsPricingRefreshNote') }),
           jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: status.isFetching,
             onClick: () => status.refetch?.(), children: status.isFetching ? t('settingsChecking') : t('settingsRefreshPricing') }),
-          jsxs('p', { children: [
-            t('settingsCapturedCosts')
+          jsx('details', { children: [
+            jsx('summary', { children: t('settingsPricingMethodHeading') }),
+            jsx('p', { children: t('settingsCapturedCosts') }),
+            jsx('p', { children: t('settingsCatalogueFeed') })
           ] }),
-          jsx('p', { children: t('settingsCatalogueFeed') }),
           membershipBook ? jsxs('div', { className: 'wm-note', children: [
             jsx('p', { children: t('settingsCatalogueVersion',
               membershipBook.source === 'live' ? t('settingsCatalogueLive') : t('settingsCatalogueBundled'),
@@ -7265,13 +7324,16 @@ function SettingsPage() {
         jsxs('section', { id: 'settings-models', className: 'wm-product-section', children: [
           jsx('h2', { children: t('settingsModelsHeading') }),
           jsx('p', { children: t('settingsModelsExplain') }),
-          jsx('p', { children: t('settingsPrivacyP2') }),
           jsx('label', { className: 'wm-setting-toggle', children: [
             jsx('input', { type: 'checkbox', checked: automaticModelOptions,
               onChange: event => $automaticModelOptions.set(Boolean(event.target.checked)) }),
             jsx('span', { children: t('settingsAutoRefreshToggle') })
           ] }),
-          jsx('p', { children: t('settingsPrivacyP4') }),
+          jsx('details', { children: [
+            jsx('summary', { children: t('settingsModelsDetailHeading') }),
+            jsx('p', { children: t('settingsPrivacyP2') }),
+            jsx('p', { children: t('settingsPrivacyP4') })
+          ] }),
           liveRefresh?.stage === 'confirm-models'
             ? jsx('div', { className: 'wm-confirm-box', children: [
                 jsx('p', { role: 'alert', children: t('settingsModelsConfirmText') }),
@@ -7296,7 +7358,10 @@ function SettingsPage() {
                 onClick: () => $settingsConfirmation.set({ origin: identity, stage: 'reset-preferences' }),
                 children: t('settingsResetPrefs') }),
           jsx('p', { children: t('settingsRecoveryDataExplain') }),
-          jsx('p', { children: t('settingsPrivacyP3') }),
+          jsx('details', { children: [
+            jsx('summary', { children: t('settingsDataDetailHeading') }),
+            jsx('p', { children: t('settingsPrivacyP3') })
+          ] }),
           liveConfirmation?.stage === 'data-copied'
             ? jsx('div', { className: 'wm-confirm-box', children: [
                 jsx('p', { role: 'alert', children: t('settingsRecoveryBackupText') }),
@@ -7314,10 +7379,16 @@ function SettingsPage() {
           jsx('p', { className: 'wm-subtle', 'data-ledger-load-diagnostics': '',
             children: ledgerDiagnosticText(ledgerDiagnostics, t) }),
           last?.build
-            ? jsx('p', { className: 'wm-subtle', children: t('settingsDiagnosticsIdentity',
-                String(last.build.contract ?? '—'),
-                last.build.revision || t('settingsDiagnosticsUnrecorded'),
-                last.build.desktop_sha256 || t('settingsDiagnosticsUnrecorded')) })
+            ? jsxs('div', { className: 'wm-diagnostic-ids', children: [
+                jsx('p', { className: 'wm-subtle', children: t('settingsDiagnosticsContract',
+                  String(last.build.contract ?? '—')) }, 'contract'),
+                jsx(CopyableDiagnostic, { label: t('settingsDiagnosticsRevision'),
+                  value: last.build.revision || t('settingsDiagnosticsUnrecorded'),
+                  copyable: !!last.build.revision, t }, 'revision'),
+                jsx(CopyableDiagnostic, { label: t('settingsDiagnosticsDigest'),
+                  value: last.build.desktop_sha256 || t('settingsDiagnosticsUnrecorded'),
+                  copyable: !!last.build.desktop_sha256, t }, 'digest')
+              ] })
             : null,
           health.error ? jsx('p', { className: 'wm-warn-note', role: 'status',
             children: t('settingsHealthFailed', String(health.error.message || health.error)) }) : null,
@@ -7332,31 +7403,105 @@ function SettingsPage() {
           ] }),
           jsx('p', { className: 'wm-subtle', children: t('settingsDiagnosticsNote') })
         ] }),
-        jsxs('section', { id: 'settings-about', className: 'wm-product-section', children: [
-          jsx('h2', { children: t('settingsAboutHeading') }),
-          jsx(BrandMark, { size: 32, id: 'about' }),
-          jsx('p', { children: t('settingsAboutVersion', PLUGIN_VERSION) }),
-          jsx('p', { children: t('settingsAboutCredit') }),
-          jsx('p', { children: t('settingsAboutSupport') }),
-          jsx('ul', { style: { listStyle: 'none', margin: '8px 0 12px', padding: 0, display: 'grid', gap: '6px' }, children: [
-            ['https://wolfmark.co.uk/', 'settingsLinkWolfmark'],
-            ['https://github.com/WolfMark-Ltd/spendsense', 'settingsLinkRepo'],
-            ['https://github.com/WolfMark-Ltd/spendsense/issues/new?template=bug-report.yml', 'settingsLinkBug'],
-            ['https://github.com/WolfMark-Ltd/spendsense/issues/new?template=feature-request.yml', 'settingsLinkFeature'],
-            ['https://github.com/WolfMark-Ltd/spendsense/blob/main/docs/quickstart.md', 'settingsLinkDocs'],
-            ['https://wolfmark.co.uk/contact', 'settingsAboutContact'],
-          ].map(([href, key]) => jsx('li', { children: jsx('a', { href, target: '_blank', rel: 'noreferrer',
-            className: 'wm-source-link', children: t(key) }) }, key)) }),
-          jsxs('details', { children: [
-            jsx('summary', { children: t('settingsAboutLicenceHeading') }),
-            jsx('p', { children: t('settingsAboutLicenceText') }),
-          ] }),
-          jsx('p', { className: 'wm-subtle', children: t('settingsAboutCatalogueNote') })
-        ] })
       ], 'settings-grid') }),
       liveRefresh?.tone === 'warn' && !liveRefresh.stage
         ? jsx('div', { className: 'wm-alert', role: 'status', children: liveRefresh.text }) : null,
           jsx('p', { className: 'wm-subtle', children: t('settingsPanePlacement') })
+    ] })
+  })
+}
+
+/** Overview's methodology note links here: switch to About and reveal the FAQ.
+ * Numbered like the news-focus nonce so a repeat click replays the reveal. */
+let aboutFaqRequest = 0
+let aboutFaqConsumed = 0
+function goAboutFaq() {
+  aboutFaqRequest += 1
+  goLedgerTab('about')
+}
+
+const ABOUT_ACTIONS = [
+  ['https://github.com/WolfMark-Ltd/spendsense/blob/main/docs/quickstart.md', 'settingsLinkDocs', 'aboutActionDocsDesc'],
+  ['https://github.com/WolfMark-Ltd/spendsense/blob/main/docs/troubleshooting.md', 'aboutLinkHelp', 'aboutActionHelpDesc'],
+  ['https://github.com/WolfMark-Ltd/spendsense/issues/new?template=bug-report.yml', 'settingsLinkBug', 'aboutActionBugDesc'],
+  ['https://github.com/WolfMark-Ltd/spendsense/issues/new?template=feature-request.yml', 'settingsLinkFeature', 'aboutActionFeatureDesc'],
+  ['https://github.com/WolfMark-Ltd/spendsense', 'settingsLinkRepo', 'aboutActionRepoDesc'],
+  ['https://wolfmark.co.uk/', 'settingsLinkWolfmark', 'aboutActionWolfmarkDesc'],
+]
+const KOFI_URL = 'https://ko-fi.com/wolfmark'
+const TROUBLESHOOTING_URL = 'https://github.com/WolfMark-Ltd/spendsense/blob/main/docs/troubleshooting.md'
+const CONTACT_URL = 'https://wolfmark.co.uk/contact'
+
+function AboutPage() {
+  const t = usePluginI18n(ID)
+  useEffect(() => {
+    if (aboutFaqRequest === aboutFaqConsumed) return
+    aboutFaqConsumed = aboutFaqRequest
+    try {
+      if (typeof document === 'undefined') return
+      const faq = document.getElementById('about-faq')
+      if (faq) faq.open = true
+      const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+      faq?.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+      const summary = faq?.querySelector('summary')
+      if (summary && !summary.hasAttribute('tabindex')) summary.setAttribute('tabindex', '-1')
+      try { summary?.focus({ preventScroll: true }) } catch {
+        try { summary?.focus() } catch {}
+      }
+    } catch {}
+  }, [])
+  return jsx(ProductShell, { children:
+    jsxs('main', { className: 'wm-shell', children: [
+      jsx(ProductHeader, { title: t('aboutTitle'),
+        subtitle: t('aboutSubtitle') }),
+      jsxs('section', { className: 'wm-product-section wm-about-hero', children: [
+        jsxs('div', { className: 'wm-about-brandrow', children: [
+          jsx(BrandMark, { size: 56, id: 'about-hero' }),
+          jsxs('div', { children: [
+            jsx('h2', { className: 'wm-about-name', children: t('settingsAboutVersion', PLUGIN_VERSION) }),
+            jsx('p', { className: 'wm-about-developer', children: t('aboutDeveloper') })
+          ] })
+        ] }),
+        jsx('p', { children: t('aboutIntro') })
+      ] }),
+      jsxs('section', { className: 'wm-product-section', children: [
+        jsx('h2', { children: t('aboutActionsHeading') }),
+        jsx('ul', { className: 'wm-about-actions', children: ABOUT_ACTIONS.map(([href, labelKey, descKey]) =>
+          jsx('li', { children: jsxs('a', { href, target: '_blank', rel: 'noreferrer',
+            className: 'wm-about-action', children: [
+              jsx('strong', { children: t(labelKey) }),
+              jsx('span', { children: t(descKey) })
+            ] }) }, labelKey)) })
+      ] }),
+      jsxs('section', { className: 'wm-product-section wm-about-support', children: [
+        jsx('h2', { children: t('aboutSupportHeading') }),
+        jsx('p', { children: t('aboutSupportBody') }),
+        jsx('a', { href: KOFI_URL, target: '_blank', rel: 'noreferrer',
+          className: 'wm-about-kofi', children: t('aboutSupportCta') }),
+        jsx('p', { className: 'wm-subtle', children: t('aboutSupportNote') })
+      ] }),
+      jsxs('section', { className: 'wm-product-section wm-about-more', children: [
+        jsx('h2', { children: t('aboutMoreHeading') }),
+        jsxs('details', { id: 'about-faq', className: 'wm-about-faq', children: [
+          jsx('summary', { children: t('aboutFaqMismatchQ') }),
+          jsx('p', { children: t('aboutFaqMismatchA1') }),
+          jsx('p', { children: t('aboutFaqMismatchA2') }),
+          jsx('p', { children: jsx('a', { href: TROUBLESHOOTING_URL, target: '_blank', rel: 'noreferrer',
+            className: 'wm-source-link', children: t('aboutFaqTroubleshooting') }) })
+        ] }),
+        jsxs('details', { children: [
+          jsx('summary', { children: t('aboutPrivacyHeading') }),
+          jsx('p', { children: t('aboutPrivacyBody') })
+        ] }),
+        jsxs('details', { children: [
+          jsx('summary', { children: t('settingsAboutLicenceHeading') }),
+          jsx('p', { children: t('settingsAboutLicenceText') }),
+          jsx('p', { children: t('settingsAboutCatalogueNote') })
+        ] }),
+        jsx('p', { children: t('settingsAboutCredit') }),
+        jsx('p', { children: jsx('a', { href: CONTACT_URL, target: '_blank', rel: 'noreferrer',
+          className: 'wm-source-link', children: t('settingsAboutContact') }) })
+      ] })
     ] })
   })
 }
@@ -14222,6 +14367,7 @@ function LedgerPage() {
     if (tab === 'overview') return jsx(OverviewPage, {})
     if (tab === 'news') return jsx(NewsPage, {})
     if (tab === 'settings') return jsx(SettingsPage, {})
+    if (tab === 'about') return jsx(AboutPage, {})
     return jsx(AnalyticsPage, { productPage: true })
   }
 
@@ -15000,6 +15146,7 @@ const I18N = {
     ovMethodPricingBody: 'Migrated v1 buckets may use remembered model rates because v1 did not retain capture-time prices. Records written before call-level coverage counters cannot confirm every call included usage data; historical values are not backfilled. Partial amounts are lower bounds, and unpriced usage is reported separately.',
     ovMethodChargesTitle: 'Actual provider charges',
     ovMethodChargesBody: 'Actual provider charges are not recorded in this view. The analytics endpoint has no per-call actual-charge evidence, and billing classifications cannot replace it.',
+    ovMethodChargesFaqLink: 'Why don’t my figures match my provider’s dashboard? See the FAQ.',
     ovMethodFeesTitle: 'Saved fees and account relationships',
     ovMethodFeesBody: 'Saved account fees retain their currency and billing period. Unknown fees are excluded and counted. No currency conversion or shared-entitlement relationship is inferred. Subscription-value comparisons stay out of Overview until account relationships and financial coverage are verified.',
     ovMethodModelsTitle: 'Model rankings',
@@ -15514,6 +15661,7 @@ const I18N = {
     tabReports: 'Reports',
     tabNews: 'Model News',
     tabSettings: 'Settings',
+    tabAbout: 'About & Support',
     // Usage header.
     usageTitle: 'Usage analytics',
     usageSubtitle: profile => `Recorded calls · ${profile} · all Hermes surfaces`,
@@ -15690,7 +15838,7 @@ const I18N = {
     advRulesEstimatesNote: 'Prepaid and custom-rate rules affect estimates only. They do not change settled Desktop records or represent provider invoices.',
     advRulesSave: 'Save rule',
     advRulesCancel: 'Cancel',
-    // Settings & About.
+    // Settings.
     tabListLabel: 'SpendSense sections',
     settingsNotifyPrefsReset: 'SpendSense display preferences were reset. Hermes saved pane placement is unchanged.',
     settingsNotifyPrefsFailed: f => `Preferences could not be reset: ${f}`,
@@ -15701,8 +15849,8 @@ const I18N = {
     settingsNotifyCatalogueOk: 'Membership catalogue was refreshed. Stored memberships, fees and selections are unchanged.',
     settingsNotifyCatalogueFailed: f => `Membership catalogue could not be refreshed: ${f}`,
     settingsNotifyLiveOff: 'SpendSense Live Updates is off, so the bundled catalogue is shown. Stored memberships, fees and selections are unchanged.',
-    settingsTitle: 'Settings & About',
-    settingsSubtitle: 'Budgets, pricing, updates, billing, maintenance, diagnostics and about.',
+    settingsTitle: 'Settings',
+    settingsSubtitle: 'Budgets, pricing, updates, billing, maintenance and diagnostics.',
     settingsNavLabel: 'On this page',
     settingsPrivacyHeading: 'External data and privacy',
     settingsPrivacyP1: 'SpendSense makes no direct HTTP pricing requests. It reads Hermes model-pricing metadata when available and falls back to its bundled offline rate snapshot. Membership plans are bundled; user-defined plans stay in your plugin data.',
@@ -15720,6 +15868,7 @@ const I18N = {
     settingsPricingRefreshNote: 'Refreshing this status only rereads the backend metadata. It does not trigger an external pricing fetch.',
     settingsChecking: 'Checking…',
     settingsRefreshPricing: 'Refresh pricing status',
+    settingsPricingMethodHeading: 'Cost basis and catalogue feed',
     settingsCapturedCosts: 'Captured Desktop costs retain the rates applied when recorded. Backend API-equivalent values are estimates recalculated using the current available prices; they are not historical charges.',
     settingsCatalogueFeed: 'WolfMark publishes an optional, versioned membership catalogue feed. When SpendSense Live Updates is on, the pane fetches it — validating the schema, caching it for offline use and falling back to the bundled plans on any failure; otherwise this build uses the bundled plans. Stored memberships, fees and selections never change.',
     settingsCatalogueLive: 'Live',
@@ -15738,6 +15887,7 @@ const I18N = {
     settingsCatalogueProvenanceUnavailable: 'Bundled membership catalogue provenance is unavailable.',
     settingsModelsHeading: 'Hermes model availability',
     settingsModelsExplain: 'This refresh asks Hermes to refresh the current profile’s model list. Hermes may probe configured provider endpoints using credentials managed by Hermes.',
+    settingsModelsDetailHeading: 'How model availability works',
     settingsAutoRefreshToggle: 'Allow automatic Hermes model-options refresh for live pricing. Off by default; when off, cached options and bundled/offline rates are used, with uncertain routes labelled or left unpriced.',
     settingsModelsConfirmText: 'This can make authenticated requests to configured providers. Continue with the current Hermes profile?',
     settingsModelsConfirm: 'Confirm model refresh',
@@ -15746,7 +15896,12 @@ const I18N = {
     settingsDiagnosticsHeading: 'Diagnostics',
     settingsDiagnosticsVersions: (plugin, backend) => `Plugin version ${plugin} · ${backend}`,
     settingsDiagnosticsBackend: v => `backend version ${v}`,
-    settingsDiagnosticsIdentity: (contract, revision, digest) => `Backend contract ${contract} · revision ${revision} · paired Desktop bundle SHA-256 ${digest}`,
+    settingsDiagnosticsContract: c => `Backend contract ${c}`,
+    settingsDiagnosticsRevision: 'Backend revision',
+    settingsDiagnosticsDigest: 'Paired Desktop bundle SHA-256',
+    settingsDiagnosticsCopy: 'Copy',
+    settingsDiagnosticsCopied: 'Copied.',
+    settingsDiagnosticsCopyFailed: 'Copy failed.',
     settingsDiagnosticsUnrecorded: 'not recorded',
     settingsDiagnosticsChecking: 'checking backend…',
     settingsDiagnosticsNoBackend: 'backend status unavailable',
@@ -15782,13 +15937,12 @@ const I18N = {
     settingsRecoveryPrefsConfirm: 'Confirm preference reset',
     settingsResetPrefs: 'Reset display preferences',
     settingsRecoveryDataExplain: 'User-data recovery covers Memberships, seat history, route entitlement relationships, budgets and advanced billing rules. It leaves the captured Desktop usage ledger, Hermes data and provider credentials untouched.',
+    settingsDataDetailHeading: 'What SpendSense stores',
     settingsRecoveryBackupText: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership, seat history, route entitlement relationships, budget and advanced-rule data.',
     settingsRecoveryDataConfirm: 'Confirm and clear user-entered data',
     settingsCopyBackup: 'Copy recovery backup before reset',
-    settingsAboutHeading: 'About and support',
     settingsAboutVersion: v => `SpendSense ${v}`,
     settingsAboutCredit: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.',
-    settingsAboutSupport: 'Support and product information are available from WolfMark.',
     settingsAboutContact: 'Contact WolfMark support',
     settingsLinkWolfmark: 'WolfMark website',
     settingsLinkRepo: 'GitHub repository',
@@ -15798,6 +15952,30 @@ const I18N = {
     settingsAboutLicenceHeading: 'Licence & credits',
     settingsAboutLicenceText: 'SpendSense is distributed under GPL-3.0 — see LICENSE in the repository. Third-party credits are in NOTICE, and the Apache License 2.0 text covering the AFei component is in licenses/Apache-2.0.txt.',
     settingsAboutCatalogueNote: 'The bundled pricing and membership catalogue is maintained through normal reviewed plugin releases. No user-defined plan is overwritten by a catalogue update.',
+    // About & Support tab.
+    aboutTitle: 'About & Support',
+    aboutSubtitle: 'SpendSense, WolfMark, help and ways to support development.',
+    aboutIntro: 'SpendSense is usage accounting for Hermes: it records what your sessions use, prices it against an offline catalogue, and keeps memberships, budgets and reports in one place.',
+    aboutDeveloper: 'Developed by WolfMark Ltd.',
+    aboutActionsHeading: 'Get help and get involved',
+    aboutActionDocsDesc: 'Install, connect and read your first figures.',
+    aboutLinkHelp: 'Help and troubleshooting',
+    aboutActionHelpDesc: 'Fix a stale UI, pairing and backend problems.',
+    aboutActionBugDesc: 'Tell us what broke, with steps to reproduce it.',
+    aboutActionFeatureDesc: 'Suggest an improvement or a new capability.',
+    aboutActionRepoDesc: 'Source code, releases and issue tracking.',
+    aboutActionWolfmarkDesc: 'News and other software from WolfMark.',
+    aboutSupportHeading: 'Support WolfMark Development',
+    aboutSupportBody: 'Enjoying SpendSense? A voluntary contribution helps WolfMark maintain and improve our independent tools and build more useful software.',
+    aboutSupportCta: 'Support on Ko-fi',
+    aboutSupportNote: 'Voluntary contributions go to WolfMark Ltd. They are not charitable donations and come with no guaranteed rewards or privileges.',
+    aboutMoreHeading: 'More information',
+    aboutFaqMismatchQ: 'Why don’t my SpendSense figures match my provider’s usage or billing dashboard?',
+    aboutFaqMismatchA1: 'The windows rarely match. The Desktop figure covers the calendar month to date across every profile in this ledger, while the backend estimate covers timestamped calls for the active profile over the rolling last 30 days at current catalogue rates. Provider dashboards may use a billing cycle, a different timezone, or a subscription allowance period instead.',
+    aboutFaqMismatchA2: 'The money is measured differently too. SpendSense figures are API-equivalent estimates, not payments: captured costs keep the rates applied when recorded, backend values are recalculated estimates, and actual provider charges are not recorded. Calls with missing usage or pricing are reported separately rather than guessed, and provider credits, discounts and subscription billing sit outside this accounting.',
+    aboutFaqTroubleshooting: 'Still stuck? See the troubleshooting guide.',
+    aboutPrivacyHeading: 'Privacy',
+    aboutPrivacyBody: 'SpendSense processes usage on your own machines. It does not collect prompts, responses or telemetry, and optional network features stay off until you enable them.',
     settingsPanePlacement: 'The SpendSense pane can be dragged to the left or right using Hermes’ supported layout controls. Hermes remembers your placement across reloads.',
     // Usage analytics helpers.
     usagePricingNone: 'No usage',
@@ -16725,6 +16903,7 @@ const I18N = {
     ovMethodPricingBody: '迁移的 v1 记录可能使用先前保存的模型费率，因为 v1 未保存记录时的价格。逐次调用覆盖计数器启用前写入的记录，无法确认每次调用都包含用量数据；不会回填历史数据。部分金额是下限，未定价用量会单独说明。',
     ovMethodChargesTitle: '实际服务商费用',
     ovMethodChargesBody: '此视图不记录实际服务商费用。分析接口没有逐次调用的实际费用证据，账单分类也不能替代此证据。',
+    ovMethodChargesFaqLink: '为什么我的数据与服务商面板对不上？查看常见问题。',
     ovMethodFeesTitle: '已保存费用与账户关系',
     ovMethodFeesBody: '已保存账户费用保留其币种和账单周期。未知费用会排除并计数。不进行币种换算，也不推断共享权益关系。在账户关系和财务覆盖情况得到核实前，总览不汇总订阅价值比较。',
     ovMethodModelsTitle: '模型排名',
@@ -17235,6 +17414,7 @@ const I18N = {
     tabReports: '报告',
     tabNews: '模型动态',
     tabSettings: '设置',
+    tabAbout: '关于与支持',
     // 用量页眉。
     usageTitle: '用量分析',
     usageSubtitle: profile => `已记录调用 · ${profile} · 所有 Hermes 来源`,
@@ -17411,7 +17591,7 @@ const I18N = {
     advRulesEstimatesNote: '预付与自定义单价规则仅影响估算。它们不改变已结算的桌面记录，也不代表供应商账单。',
     advRulesSave: '保存规则',
     advRulesCancel: '取消',
-    // 设置与关于。
+    // 设置。
     tabListLabel: 'SpendSense 选项卡',
     settingsNotifyPrefsReset: 'SpendSense 显示偏好已重置。Hermes 已保存的面板位置不变。',
     settingsNotifyPrefsFailed: f => `偏好设置未能重置：${f}`,
@@ -17422,8 +17602,8 @@ const I18N = {
     settingsNotifyCatalogueOk: '会员目录已刷新。已存储的会员、费用与选择不变。',
     settingsNotifyCatalogueFailed: f => `会员目录未能刷新：${f}`,
     settingsNotifyLiveOff: 'SpendSense 实时更新已关闭，当前显示内置目录。已存储的会员、费用与选择不变。',
-    settingsTitle: '设置与关于',
-    settingsSubtitle: '预算、价格、更新、计费、维护、诊断与关于。',
+    settingsTitle: '设置',
+    settingsSubtitle: '预算、价格、更新、计费、维护与诊断。',
     settingsNavLabel: '本页导航',
     settingsPrivacyHeading: '外部数据与隐私',
     settingsPrivacyP1: 'SpendSense 不直接发起 HTTP 价格请求。它在可用时读取 Hermes 模型价格元数据，并回退到内置离线单价快照。会员方案为内置方案；自定义方案保留在您的插件数据中。',
@@ -17441,6 +17621,7 @@ const I18N = {
     settingsPricingRefreshNote: '刷新此状态仅重读后端元数据，不会触发外部价格获取。',
     settingsChecking: '正在检查…',
     settingsRefreshPricing: '刷新价格状态',
+    settingsPricingMethodHeading: '成本口径与目录源',
     settingsCapturedCosts: '已捕获的桌面成本保留记录时的单价。后端 API 等值按当前可用价格重算估算，并非历史费用。',
     settingsCatalogueFeed: 'WolfMark 发布可选的、带版本的会员目录源。开启 SpendSense 实时更新后，面板会获取该源——校验结构、缓存以供离线使用，并在任何失败时回退到内置方案；否则此构建使用内置方案。已存储的会员、费用与选择永不改变。',
     settingsCatalogueLive: '实时',
@@ -17458,6 +17639,7 @@ const I18N = {
     settingsSourceNoDate: '未记录获取日期',
     settingsCatalogueProvenanceUnavailable: '内置会员目录溯源不可用。',
     settingsModelsHeading: 'Hermes 模型可用性',
+    settingsModelsDetailHeading: '模型可用性工作原理',
     settingsModelsExplain: '此刷新会请求 Hermes 刷新当前配置文件的模型列表。Hermes 可能使用其管理的凭据探测已配置的供应商端点。',
     settingsAutoRefreshToggle: '允许自动刷新 Hermes 模型选项以支持实时计价。默认关闭；关闭时使用缓存选项与内置/离线单价，不确定的线路会明确标注或保持未定价。',
     settingsModelsConfirmText: '这可能向已配置的供应商发起认证请求。继续使用当前 Hermes 配置文件吗？',
@@ -17467,7 +17649,12 @@ const I18N = {
     settingsDiagnosticsHeading: '诊断',
     settingsDiagnosticsVersions: (plugin, backend) => `插件版本 ${plugin} · ${backend}`,
     settingsDiagnosticsBackend: v => `后端版本 ${v}`,
-    settingsDiagnosticsIdentity: (contract, revision, digest) => `后端契约 ${contract} · 修订版本 ${revision} · 配对的 Desktop 版本包 SHA-256 ${digest}`,
+    settingsDiagnosticsContract: c => `后端契约 ${c}`,
+    settingsDiagnosticsRevision: '后端修订版本',
+    settingsDiagnosticsDigest: '配对的桌面包 SHA-256',
+    settingsDiagnosticsCopy: '复制',
+    settingsDiagnosticsCopied: '已复制。',
+    settingsDiagnosticsCopyFailed: '复制失败。',
     settingsDiagnosticsUnrecorded: '未记录',
     settingsDiagnosticsChecking: '正在检查后端…',
     settingsDiagnosticsNoBackend: '后端状态不可用',
@@ -17498,6 +17685,7 @@ const I18N = {
     settingsDiagnosticsEmpty: '此会话中未记录会员请求。',
     settingsDiagnosticsNote: '诊断仅包含方法、相对路径、状态、配置文件作用域与时间。不包含令牌、标头、凭据值或请求体。',
     settingsRecoveryHeading: '显示与恢复',
+    settingsDataDetailHeading: 'SpendSense 存储的数据',
     settingsRecoveryPrefsExplain: '重置显示偏好仅影响 SpendSense 筛选与视图模式。Hermes 面板位置由 Hermes 存储，保持您的设置不变。',
     settingsRecoveryPrefsConfirmText: '将 SpendSense 显示偏好重置为默认值吗？',
     settingsRecoveryPrefsConfirm: '确认重置偏好',
@@ -17506,10 +17694,8 @@ const I18N = {
     settingsRecoveryBackupText: '备份已复制到剪贴板。在清除配置文件会员、席位历史、线路权益关系、预算与高级规则数据前，请将其保存到安全位置。',
     settingsRecoveryDataConfirm: '确认并清除用户输入的数据',
     settingsCopyBackup: '重置前复制恢复备份',
-    settingsAboutHeading: '关于与支持',
     settingsAboutVersion: v => `SpendSense ${v}`,
     settingsAboutCredit: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.',
-    settingsAboutSupport: '可从 WolfMark 获取支持与产品信息。',
     settingsAboutContact: '联系 WolfMark 支持',
     settingsLinkWolfmark: 'WolfMark 官网',
     settingsLinkRepo: 'GitHub 仓库',
@@ -17519,6 +17705,30 @@ const I18N = {
     settingsAboutLicenceHeading: '许可与致谢',
     settingsAboutLicenceText: 'SpendSense 遵循 GPL-3.0 发布——见仓库中的 LICENSE。第三方致谢见 NOTICE，涵盖 AFei 组件的 Apache License 2.0 全文见 licenses/Apache-2.0.txt。',
     settingsAboutCatalogueNote: '内置价格与会员目录通过常规评审插件版本维护。目录更新不会覆盖任何用户自定义方案。',
+    // 关于与支持选项卡。
+    aboutTitle: '关于与支持',
+    aboutSubtitle: 'SpendSense、WolfMark、帮助与支持开发的方式。',
+    aboutIntro: 'SpendSense 是 Hermes 的用量记账工具：记录会话用量，按离线目录计价，并将会员、预算与报告集中在一处。',
+    aboutDeveloper: '由 WolfMark Ltd 开发。',
+    aboutActionsHeading: '获取帮助与参与',
+    aboutActionDocsDesc: '安装、连接并读懂第一组数据。',
+    aboutLinkHelp: '帮助与故障排除',
+    aboutActionHelpDesc: '修复过期界面、配对与后端问题。',
+    aboutActionBugDesc: '告诉我们哪里坏了，并附上复现步骤。',
+    aboutActionFeatureDesc: '建议改进或新功能。',
+    aboutActionRepoDesc: '源代码、发布与问题跟踪。',
+    aboutActionWolfmarkDesc: 'WolfMark 的新闻与其他软件。',
+    aboutSupportHeading: '支持 WolfMark 开发',
+    aboutSupportBody: '喜欢 SpendSense？自愿赞助可以帮助 WolfMark 维护和改进我们的独立工具，并开发更多实用的软件。',
+    aboutSupportCta: '在 Ko-fi 上支持',
+    aboutSupportNote: '自愿赞助将支付给 WolfMark Ltd。这不是慈善捐赠，不附带任何保证的回报或特权。',
+    aboutMoreHeading: '更多信息',
+    aboutFaqMismatchQ: '为什么 SpendSense 的数据与服务商的用量或账单面板对不上？',
+    aboutFaqMismatchA1: '统计口径常常不同。桌面数据覆盖本日历月至今、此账本中所有配置文件；后端估算仅涵盖当前配置文件滚动 30 天内带时间戳的调用，按当前目录价格计算。而服务商面板可能按账单周期、不同时区或订阅额度周期统计。',
+    aboutFaqMismatchA2: '金额的计量方式也不同。SpendSense 数据是 API 等值估算，而非实际付款：已捕获成本保留记录时的单价，后端数值为重算估算，且不记录实际服务商费用。缺失用量或价格的调用会单独报告而不猜测；服务商的抵扣、折扣与订阅计费不在此记账范围内。',
+    aboutFaqTroubleshooting: '仍未解决？请参阅故障排除指南。',
+    aboutPrivacyHeading: '隐私',
+    aboutPrivacyBody: 'SpendSense 在您自己的机器上处理用量数据。不收集提示词、回复或遥测数据，可选的联网功能在您开启之前保持关闭。',
     settingsPanePlacement: '可使用 Hermes 支持的布局控件将 SpendSense 面板拖到左侧或右侧。Hermes 会在重新加载后记住您的位置。',
     // 用量分析助手。
     usagePricingNone: '无用量',
@@ -17992,7 +18202,7 @@ export const __test = {
   costsUnknownFeeAccounts, trendMonthComparable, trendWarrantsInline, costsPricingSourceLabel, scrollToCostsAttention,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
-  CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
+  CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, AboutPage, goAboutFaq, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
   $settingsConfirmation, $modelRefreshState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, desktopTodayText, desktopTodayAmount, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,

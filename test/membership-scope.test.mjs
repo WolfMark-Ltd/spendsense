@@ -1957,7 +1957,7 @@ test('every tab keeps the shared tab bar as a direct child of the page root', as
   T.$digestDays.set(30)
   // Membership reads succeed with an empty list; everything else fails, so
   // each page renders its error state — the tab bar must still sit outside
-  // the content shell in exactly the same place on all seven tabs.
+  // the content shell in exactly the same place on all eight tabs.
   transportCtl.respond(call => call.path === '/membership/accounts'
     ? { ok: true, accounts: [], store: { loaded: true, error: '' }, notes: [] }
     : call.path === '/membership/plans' ? plansOk()
@@ -1971,6 +1971,7 @@ test('every tab keeps the shared tab bar as a direct child of the page root', as
     ['reports', T.ReportsPage, {}],
     ['news', T.NewsPage, {}],
     ['settings', T.SettingsPage, {}],
+    ['about', T.AboutPage, {}],
   ]
   for (const [tab, Component, props] of pages) {
     queryClient.clear()
@@ -1983,7 +1984,7 @@ test('every tab keeps the shared tab bar as a direct child of the page root', as
         React.createElement(Component, props)))
     })
     await flush(4)
-    assert.equal(container.querySelectorAll('[role="tab"]').length, 7, `${tab} shows all seven tabs`)
+    assert.equal(container.querySelectorAll('[role="tab"]').length, 8, `${tab} shows all eight tabs`)
     const pageRoot = container.firstElementChild
     const tablist = container.querySelector('[role="tablist"]')
     assert.ok(tablist, `${tab} renders the tab bar`)

@@ -752,6 +752,8 @@ test('close never loops back onto the ledger; falls back to new chat', () => {
 test('settings-section hashes select Settings, never Costs', () => {
   assert.equal(T.ledgerTabForHash('#settings-billing'), 'settings')
   assert.equal(T.ledgerTabForHash('#settings'), 'settings')
+  assert.equal(T.ledgerTabForHash('#about'), 'about')
+  assert.equal(T.ledgerTabForHash('#settings-about'), 'about')
   assert.equal(T.ledgerTabForHash('#membership'), 'memberships')
   assert.equal(T.ledgerTabForHash('#billing'), 'costs')
   assert.equal(T.ledgerTabForHash('#costs'), 'costs')

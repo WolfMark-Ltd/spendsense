@@ -31,7 +31,7 @@ assets have separate terms in BRANDING.md.
 
 ## Release identity and the pairing contract
 
-The current source declares `0.6.18` in `plugin.yaml`, `PLUGIN_VERSION`,
+The current source declares `0.6.19` in `plugin.yaml`, `PLUGIN_VERSION`,
 `dashboard/manifest.json`, `plugin_api.VERSION` and the README version badge.
 The wave advances from `0.6.9` by one patch for each of PRs #72, #73 and #74.
 The preceding wave advanced from `0.6.7` to `0.6.9` for PRs #70 and #71.
