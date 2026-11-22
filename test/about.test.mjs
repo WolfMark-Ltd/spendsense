@@ -247,6 +247,40 @@ test('clicks fall back to the desktop preload bridge when ctx.os lacks the door'
   }
 })
 
+test('a false OS result falls through to the preload bridge', async () => {
+  const osSeen = []
+  const bridgeSeen = []
+  window.hermesDesktop = { openExternal: async url => { bridgeSeen.push(url); return true } }
+  try {
+    await withOsApi({ openExternal: async url => { osSeen.push(url); return false } }, async () => {
+      const container = await boot()
+      await React.act(async () => { container.querySelector('.wm-about-action').click() })
+      await flush()
+      assert.deepEqual(osSeen, [ACTION_URLS[0]])
+      assert.deepEqual(bridgeSeen, [ACTION_URLS[0]])
+    })
+  } finally {
+    delete window.hermesDesktop
+  }
+})
+
+test('a throwing OS opener falls through to the preload bridge', async () => {
+  const osSeen = []
+  const bridgeSeen = []
+  window.hermesDesktop = { openExternal: async url => { bridgeSeen.push(url); return true } }
+  try {
+    await withOsApi({ openExternal: async url => { osSeen.push(url); throw new Error('door slammed') } }, async () => {
+      const container = await boot()
+      await React.act(async () => { container.querySelector('.wm-about-action').click() })
+      await flush()
+      assert.deepEqual(osSeen, [ACTION_URLS[0]])
+      assert.deepEqual(bridgeSeen, [ACTION_URLS[0]])
+    })
+  } finally {
+    delete window.hermesDesktop
+  }
+})
+
 test('clicks keep native navigation when no host door exists', async () => {
   const container = await boot()
   const link = container.querySelector('.wm-about-action')
