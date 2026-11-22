@@ -193,17 +193,32 @@ def _call_economics(row: dict[str, Any], book: Catalogue, *,
         # depend on the write price. Keep that one term (the published
         # definition covers calls with a proven read counter and a published
         # read price) and let the caller record the net gap as before.
-        benefit = None
-        if read_known and rate.cache_read is not None:
-            benefit = (row["_cache_read"]
+        #
+        # An unproven read counter contributes no value but still carries the
+        # direction its own card implies, exactly as the fully priced path
+        # below does. Without it a batch holding one proven-read call and one
+        # unreported-read call would publish their sum as ``exact`` when the
+        # unreported reads could only add to it.
+        benefit: float | None = None
+        read_direction: str | None = None
+        if read_known:
+            # A positive read with no published price was refused above, so a
+            # missing read price here means the proven counter is zero.
+            benefit = (0.0 if rate.cache_read is None else
+                       row["_cache_read"]
                        * (float(rate.input) - float(rate.cache_read)) / 1_000_000)
-        if benefit is None:
-            return None, "missing_cache_write_rate"
+        elif rate.cache_read is None:
+            read_direction = "unknown"
+        elif float(rate.cache_read) == float(rate.input):
+            benefit = 0.0  # an unrecorded read priced at input adds nothing
+        else:
+            read_direction = ("lower" if float(rate.cache_read) < float(rate.input)
+                              else "upper")
         return {"uncached": None, "cached": None,
                 "savings_low": 0.0, "savings_high": 0.0,
                 "retention_range": False, "savings": [], "premium": None,
                 "read_benefit": benefit,
-                "read_benefit_direction": None}, "missing_cache_write_rate"
+                "read_benefit_direction": read_direction}, "missing_cache_write_rate"
     uncached = (prompt * rate.input + row["_output"] * rate.output) / 1_000_000
     cached = (row["_input"] * rate.input + row["_output"] * rate.output
               + row["_cache_read"] * (rate.cache_read or 0)
@@ -454,7 +469,8 @@ class _AnalyticsAcc:
         # calls whose read counter is proven, and the basis says whether
         # anything is missing from it. An unproven read counter only adds value
         # when the card discounts reads, so the direction follows the card.
-        if not self.covered_calls and not self.read_benefit_calls:
+        if not self.covered_calls and not self.read_benefit_calls \
+                and not self.read_benefit_directions:
             read_benefit_basis, read_benefit_usd = None, None
         elif not self.read_benefit_directions:
             read_benefit_basis, read_benefit_usd = "exact", round(self.read_benefit_usd, 6)

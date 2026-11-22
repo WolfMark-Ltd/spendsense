@@ -448,6 +448,59 @@ class ProvenanceContractTests(unittest.TestCase):
         self.assertEqual(valuation["read_benefit_basis"], "exact")
         self.assertAlmostEqual(valuation["read_benefit_usd"], 0.0171, places=6)
 
+    def test_a_mixed_provenance_batch_withholds_the_exact_basis(self):
+        """One unproven read beside a proven one makes the total a lower bound.
+
+        Both calls carry a proven positive write and the card publishes no
+        write price, so both stay out of the net population and out of
+        coverage. The proven call keeps its measured read discount; the call
+        whose read counter was not reported keeps the direction its card
+        implies, so the published sum cannot call itself exact.
+        """
+        self.create_events([
+            {"provider": "noprice", "input_tokens": 1_000, "cache_read_tokens": 9_000,
+             "cache_write_tokens": 500, "output_tokens": 100,
+             "cache_read_reported": 1, "cache_write_reported": 1},
+            {"provider": "noprice", "input_tokens": 1_000, "cache_read_tokens": 0,
+             "cache_write_tokens": 500, "output_tokens": 100,
+             "cache_read_reported": 0, "cache_write_reported": 1},
+        ])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["read_benefit_basis"], "lower_bound")
+        self.assertAlmostEqual(valuation["read_benefit_usd"], 0.0171, places=6)
+        self.assertEqual(valuation["read_benefit_calls"], 1)
+        self.assertEqual(valuation["read_benefit_tokens"], 9_000)
+        # Net savings stay excluded, and both calls stay outside coverage.
+        self.assertIsNone(valuation["savings_usd"])
+        self.assertIsNone(valuation["savings_basis"])
+        self.assertEqual(valuation["covered_calls"], 0)
+        self.assertEqual(valuation["excluded_calls"], 2)
+        self.assertEqual(valuation["gap_reasons"], {"missing_cache_write_rate": 2})
+        econ = analytics.build_analytics_report(
+            self.events, state_db_path=self.state, now=NOW,
+            catalogue=self.book, days=1)["economics"]
+        self.assertEqual(econ["read_benefit_basis"], "lower_bound")
+        self.assertAlmostEqual(econ["read_benefit_usd"], 0.0171, places=6)
+        self.assertIsNone(econ["savings_usd"])
+        self.assertEqual(econ["covered_calls"], 0)
+        self.assertEqual(econ["excluded_calls"], 2)
+
+    def test_an_unproven_read_takes_the_direction_its_own_card_signs(self):
+        """The direction is card-signed, not assumed: a dearer read is an upper bound."""
+        book = Catalogue({"dearread": {"m": Rate(2, 10, 3.0, None)}},
+                         "fixture", "test", "2026-11-21", "1")
+        self.create_events([{"provider": "dearread", "input_tokens": 1_000,
+                             "cache_write_tokens": 500, "output_tokens": 100,
+                             "cache_write_reported": 1}])
+        valuation = analytics.build_session_summary(
+            self.events, state_db_path=self.state, catalogue=book,
+            now=NOW, session_id="s1")["valuation"]
+        self.assertEqual(valuation["read_benefit_basis"], "upper_bound")
+        self.assertEqual(valuation["read_benefit_usd"], 0.0)
+        self.assertEqual(valuation["read_benefit_calls"], 0)
+        self.assertEqual(valuation["covered_calls"], 0)
+        self.assertEqual(valuation["excluded_calls"], 1)
+
     def test_read_benefit_keeps_a_measured_zero(self):
         """A proven zero-read call is a measurement, not a gap."""
         self.create_events([{"provider": "premium", "input_tokens": 1_000,
