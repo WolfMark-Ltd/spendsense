@@ -41,7 +41,7 @@ const billingSummary = {
     subscription_fee: { usd: 0, basis: 'membership_catalogue_or_declared', source: 'Memberships' },
   } },
   totals: { calls: 2, tokens: 100, economics: {
-    uncached_usd: 4, cached_usd: 4, savings_usd: 0, coverage: 0.5,
+    uncached_usd: 4, cached_usd: 4, savings_usd: 0, savings_basis: 'exact', coverage: 0.5,
     covered_tokens: 50, covered_calls: 1, excluded_calls: 1,
     gap_reasons: { missing_cache_read_rate: 1 },
   } },
