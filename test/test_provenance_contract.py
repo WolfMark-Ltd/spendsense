@@ -393,6 +393,30 @@ class ProvenanceContractTests(unittest.TestCase):
         self.assertIsNone(summary["savings_usd"])
         self.assertIsNone(econ["savings_usd"])
 
+    def test_read_benefit_survives_a_missing_write_price(self):
+        """The read term is measurable exactly where net savings are not."""
+        self.create_events([{"provider": "noprice", "input_tokens": 1_000,
+                             "cache_read_tokens": 9_000, "output_tokens": 100}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["savings_basis"], "indeterminate")
+        self.assertEqual(valuation["savings_bound_reason"], "write_rate_missing")
+        self.assertIsNone(valuation["savings_usd"])
+        self.assertEqual(valuation["read_benefit_basis"], "exact")
+        self.assertAlmostEqual(valuation["read_benefit_usd"], 0.0171, places=6)
+        self.assertEqual(valuation["read_benefit_calls"], 1)
+        self.assertEqual(valuation["read_benefit_tokens"], 9_000)
+
+    def test_read_benefit_keeps_a_measured_zero(self):
+        """A proven zero-read call is a measurement, not a gap."""
+        self.create_events([{"provider": "premium", "input_tokens": 1_000,
+                             "output_tokens": 100, "cache_read_reported": 1,
+                             "cache_write_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["read_benefit_basis"], "exact")
+        self.assertEqual(valuation["read_benefit_usd"], 0.0)
+        self.assertEqual(valuation["read_benefit_calls"], 1)
+        self.assertEqual(valuation["read_benefit_tokens"], 0)
+
     def test_unreported_writes_above_every_tier_keep_the_direction(self):
         self.create_events([{"provider": "tiered", "input_tokens": 272_001,
                              "cache_read_reported": 1}])
