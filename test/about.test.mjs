@@ -10,6 +10,7 @@
  * Run with:   bash scripts/node-tests.sh browserless
  */
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { after, test } from 'node:test'
 import { flat, loadPageHarness, translatorFor } from './render-harness.mjs'
 import { overviewHealth } from './overview-fixtures.mjs'
@@ -211,6 +212,29 @@ test('the hero showcases the WolfMark company lockup beside the SpendSense marqu
   assert.equal(lockup.getAttribute('aria-label'), 'WolfMark')
   assert.equal(lockup.querySelectorAll('path').length, 9)
   assert.match(flat(hero.querySelector('.wm-about-developer')?.textContent), /WolfMark Ltd/)
+})
+
+test('the company lockup reproduces the approved master exactly', async () => {
+  const container = await boot()
+  const company = container.querySelector('.wm-about-company')
+  const lockup = company.querySelector('svg')
+  assert.equal(lockup.getAttribute('viewBox'), '232.558 267.748 1360.585 336.056')
+  const paths = [...lockup.querySelectorAll('path')]
+  assert.equal(paths.length, 9)
+  // Pinned digest of the nine glyph `d` strings in DOM order, taken from the
+  // approved brand-kit master: any redrawn, retraced or edited glyph fails.
+  // Re-pin only from a newly approved master, never from rendered output.
+  const geometry = createHash('sha256')
+    .update(paths.map(path => path.getAttribute('d')).join('\n')).digest('hex')
+  assert.equal(geometry, '0e98641af8d8175d0ce6d6e0bfe200a8a54f9bafd4dd9fa84579be71b83e45c1')
+  // The master marks the O, A and R counters fill-rule evenodd; without it
+  // the default nonzero rule fills the R bowl and the A counter (F150).
+  paths.forEach((path, index) => {
+    assert.equal(path.getAttribute('fill-rule'), [2, 6, 7].includes(index) ? 'evenodd' : null)
+  })
+  assert.equal(company.children[0].className, 'wm-about-developer')
+  assert.equal(company.children[1].tagName, 'svg',
+    'the developer caption leads into the company signature lockup')
 })
 
 test('the six actions stay ordered under three group headings', async () => {
