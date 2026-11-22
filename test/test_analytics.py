@@ -75,6 +75,68 @@ class AnalyticsTests(unittest.TestCase):
                 conn.execute(f"INSERT OR REPLACE INTO sessions ({','.join(columns)}) VALUES "
                              f"({','.join('?' for _ in columns)})", list(values.values()))
 
+    def test_indeterminate_savings_publish_no_figure(self):
+        """The Usage view must not render a number its own basis disowns."""
+        self.book = Catalogue({"test": {"nw": Rate(2, 4, .5, None)}}, "fixture", "test", "", "1")
+        self.create_events([{"model": "nw", "input_tokens": 1_000,
+                             "cache_read_tokens": 9_000, "cache_write_reported": 0}])
+        econ = self.report(days=1)["economics"]
+        self.assertEqual(econ["savings_basis"], "indeterminate")
+        self.assertEqual(econ["savings_bound_reason"], "write_rate_missing")
+        self.assertIsNone(econ["savings_usd"])
+        self.assertAlmostEqual(econ["uncached_usd"], 0.02, places=6)
+        self.assertAlmostEqual(econ["cached_usd"], 0.0065, places=6)
+
+    def test_an_exact_basis_still_publishes_the_figure(self):
+        """Withholding an indeterminate figure must not hide a measured one."""
+        self.book = Catalogue({"test": {"atinput": Rate(2, 4, .5, 2.0)}}, "fixture", "test", "", "1")
+        self.create_events([{"model": "atinput", "input_tokens": 1_000,
+                             "cache_read_tokens": 9_000, "cache_write_reported": 1}])
+        econ = self.report(days=1)["economics"]
+        self.assertEqual(econ["savings_basis"], "exact")
+        self.assertAlmostEqual(econ["savings_usd"], 0.0135, places=6)
+
+    def test_read_benefit_publishes_where_net_savings_cannot(self):
+        """The read term is measurable on a card with no write price."""
+        self.book = Catalogue({"test": {"nw": Rate(2, 4, .5, None)}}, "fixture", "test", "", "1")
+        self.create_events([{"model": "nw", "input_tokens": 1_000,
+                             "cache_read_tokens": 9_000, "cache_write_reported": 0}])
+        econ = self.report(days=1)["economics"]
+        self.assertEqual(econ["savings_basis"], "indeterminate")
+        self.assertIsNone(econ["savings_usd"])
+        self.assertEqual(econ["read_benefit_basis"], "exact")
+        self.assertAlmostEqual(econ["read_benefit_usd"], 0.0135, places=6)
+        self.assertEqual(econ["read_benefit_calls"], 1)
+        self.assertEqual(econ["read_benefit_tokens"], 9_000)
+
+    def test_read_benefit_is_a_lower_bound_when_a_counter_is_unproven(self):
+        """A measured subtotal keeps its value and names the direction."""
+        self.book = Catalogue({"test": {"premium": Rate(2, 4, .1, 2.5)}},
+                              "fixture", "test", "", "1")
+        self.create_events([
+            {"model": "premium", "input_tokens": 1_000, "cache_read_tokens": 9_000,
+             "cache_write_reported": 1},
+            # Unproven read, proven write: covered, but contributes nothing.
+            {"model": "premium", "input_tokens": 1_000, "cache_write_reported": 1},
+        ])
+        econ = self.report(days=1)["economics"]
+        self.assertEqual(econ["read_benefit_basis"], "lower_bound")
+        self.assertAlmostEqual(econ["read_benefit_usd"], 0.0171, places=6)
+        self.assertEqual(econ["read_benefit_calls"], 1)
+        self.assertEqual(econ["read_benefit_tokens"], 9_000)
+
+    def test_read_benefit_without_a_read_price_is_indeterminate(self):
+        """No read price means no defensible read figure either."""
+        self.book = Catalogue({"test": {"noread": Rate(2, 4, None, 2.5)}},
+                              "fixture", "test", "", "1")
+        self.create_events([{"model": "noread", "input_tokens": 1_000,
+                             "cache_write_tokens": 500, "cache_write_reported": 1,
+                             "cache_read_reported": 0}])
+        econ = self.report(days=1)["economics"]
+        self.assertEqual(econ["read_benefit_basis"], "indeterminate")
+        self.assertIsNone(econ["read_benefit_usd"])
+        self.assertEqual(econ["read_benefit_calls"], 0)
+
     def test_scope_attribution_separates_direct_subagent_auxiliary_and_unattributed(self):
         self.create_sessions([
             {"id": "parent-a"},
@@ -334,9 +396,16 @@ class AnalyticsTests(unittest.TestCase):
         self.assertAlmostEqual(filtered["totals"]["cache_prompt_coverage"], 400 / 520, places=6)
 
     def test_economics_uses_whole_known_calls_and_preserves_negative_savings(self):
+        # Both counters are proven on both calls, so the population is exact and
+        # the negative figure below is a measured one. Without the flags this
+        # same population is indeterminate (one read and one write counter
+        # unproven, in opposite directions) and publishes no figure at all —
+        # see `test_indeterminate_savings_publish_no_figure`.
         self.create_events([
-            {"input_tokens": 100, "cache_read_tokens": 200, "output_tokens": 10},
-            {"input_tokens": 100, "cache_write_tokens": 1000, "output_tokens": 10},
+            {"input_tokens": 100, "cache_read_tokens": 200, "output_tokens": 10,
+             "cache_read_reported": 1, "cache_write_reported": 1},
+            {"input_tokens": 100, "cache_write_tokens": 1000, "output_tokens": 10,
+             "cache_read_reported": 1, "cache_write_reported": 1},
             {"input_tokens": 100, "output_tokens": 10},
             {"input_tokens": 100, "cache_read_tokens": 50, "outcome": "error"},
             {"input_tokens": 100, "cache_read_tokens": 50, "outcome": "missing_usage"},

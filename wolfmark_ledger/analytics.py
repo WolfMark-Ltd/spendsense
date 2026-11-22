@@ -221,11 +221,37 @@ def _call_economics(row: dict[str, Any], book: Catalogue, *,
         # is not a defensible bound on the true value. Use the catalogue rate:
         # ``rate`` has its tiers stripped once a band is selected.
         directions = [("indeterminate", "tier")]
+    # The measured read benefit: the discount on the tokens the provider proved
+    # it served from cache. It is a separate question from net savings — it
+    # never contains the write term — so it survives a missing write counter or
+    # an unpublished write price, which is exactly where net savings cannot be
+    # established. A call whose read counter is unproven contributes nothing
+    # and carries the direction its own card implies.
+    read_benefit: float | None = None
+    read_direction: str | None = None
+    if read_known:
+        if rate.cache_read is None:
+            # Positive reads with no published price are refused above; a call
+            # with no reads contributes zero whatever the price would be.
+            read_benefit = 0.0 if not row["_cache_read"] else None
+            if read_benefit is None:
+                read_direction = "unknown"
+        else:
+            read_benefit = (row["_cache_read"]
+                            * (float(rate.input) - float(rate.cache_read)) / 1_000_000)
+    elif rate.cache_read is None:
+        read_direction = "unknown"
+    elif float(rate.cache_read) == float(rate.input):
+        read_benefit = 0.0  # an unrecorded read priced at input adds nothing
+    else:
+        read_direction = "lower" if float(rate.cache_read) < float(rate.input) else "upper"
     return {"uncached": uncached, "cached": cached,
             "savings_low": low, "savings_high": high,
             "retention_range": retention_range,
             "savings": directions,
-            "premium": premium}, ""
+            "premium": premium,
+            "read_benefit": read_benefit,
+            "read_benefit_direction": read_direction}, ""
 
 
 class _AnalyticsAcc:
@@ -239,6 +265,10 @@ class _AnalyticsAcc:
         self.known_write_tokens = 0
         self.uncached_usd = 0.0
         self.cached_usd = 0.0
+        self.read_benefit_usd = 0.0
+        self.read_benefit_calls = 0
+        self.read_benefit_tokens = 0
+        self.read_benefit_directions: set[str] = set()
         self.savings_low_usd = 0.0
         self.savings_high_usd = 0.0
         self.retention_calls = 0
@@ -289,6 +319,14 @@ class _AnalyticsAcc:
                 self.bound_causes.setdefault(direction, set()).add(cause)
             if economics["premium"] is not None:
                 self.premiums.add(economics["premium"])
+            benefit = economics.get("read_benefit")
+            if benefit is None:
+                self.read_benefit_directions.add(
+                    economics.get("read_benefit_direction") or "unknown")
+            else:
+                self.read_benefit_usd += benefit
+                self.read_benefit_calls += 1
+                self.read_benefit_tokens += row["_cache_read"]
         # Cost completeness covers every priced call, including those excluded
         # from the savings comparison above.
         for bound in row.get("_cost_bounds") or ():
@@ -353,7 +391,12 @@ class _AnalyticsAcc:
                 savings_usd_high = high
         else:
             savings_basis, savings_reason = basis, bound_reason
-            if savings_basis is None or savings_reason == "context_tier_unknown":
+            # An indeterminate basis is not a bound: the true value can move in
+            # either direction, so the recorded-counter arithmetic must not be
+            # published as a figure. Withhold it for every indeterminate cause
+            # (reachable context tier, missing read price, missing write price,
+            # mixed directions), matching what a reader is told by the basis.
+            if savings_basis is None or savings_basis == "indeterminate":
                 savings_usd = None
         if base["unpriced_tokens"]:
             api_basis, api_reason, api_high = "incomplete", "unpriced_tokens", None
@@ -381,6 +424,23 @@ class _AnalyticsAcc:
                     if self.known_prompt_tokens else None)
         every_call_proven = (read_state == "reported"
                              and self.cache_known_calls == base["calls"])
+        # A measured subtotal is not a blank: the benefit keeps the value of the
+        # calls whose read counter is proven, and the basis says whether
+        # anything is missing from it. An unproven read counter only adds value
+        # when the card discounts reads, so the direction follows the card.
+        if not self.covered_calls:
+            read_benefit_basis, read_benefit_usd = None, None
+        elif not self.read_benefit_directions:
+            read_benefit_basis, read_benefit_usd = "exact", round(self.read_benefit_usd, 6)
+        elif self.read_benefit_directions == {"lower"}:
+            read_benefit_basis, read_benefit_usd = "lower_bound", round(self.read_benefit_usd, 6)
+        elif self.read_benefit_directions == {"upper"}:
+            read_benefit_basis, read_benefit_usd = "upper_bound", round(self.read_benefit_usd, 6)
+        else:
+            # A missing read price or conflicting directions leave the true
+            # total unknowable, so the figure is withheld (contract: an
+            # indeterminate basis is not a bound).
+            read_benefit_basis, read_benefit_usd = "indeterminate", None
         return {**{key: base[key] for key in _TOTAL_FIELDS},
                 "pricing_provenance": base.get("pricing_provenance", "unpriced"),
                 "pricing_mix": base.get("pricing_mix", {}),
@@ -404,6 +464,13 @@ class _AnalyticsAcc:
                 "economics": {
                     "uncached_usd": round(self.uncached_usd, 6) if self.covered_calls else None,
                     "cached_usd": round(self.cached_usd, 6) if self.covered_calls else None,
+                    # The read term on its own. It answers a different question
+                    # from `savings_usd` and stays measurable where a net saving
+                    # cannot be established.
+                    "read_benefit_usd": read_benefit_usd,
+                    "read_benefit_basis": read_benefit_basis,
+                    "read_benefit_calls": self.read_benefit_calls,
+                    "read_benefit_tokens": self.read_benefit_tokens,
                     "savings_usd": savings_usd,
                     "savings_usd_high": savings_usd_high,
                     "savings_basis": savings_basis,
@@ -872,6 +939,10 @@ def build_session_summary(
                 "api_equivalent_bound_reason": api_reason,
                 "uncached_usd": economics["uncached_usd"],
                 "cached_usd": economics["cached_usd"],
+                "read_benefit_usd": economics["read_benefit_usd"],
+                "read_benefit_basis": economics["read_benefit_basis"],
+                "read_benefit_calls": economics["read_benefit_calls"],
+                "read_benefit_tokens": economics["read_benefit_tokens"],
                 "savings_usd": economics["savings_usd"],
                 "savings_usd_high": economics["savings_usd_high"],
                 "savings_basis": economics["savings_basis"],
@@ -920,6 +991,9 @@ def build_session_summary(
             "priced_at": "call_capture_time",
             "cache_denominator": "calls_with_proven_cache_fields",
             "savings_definition": "sum(uncached - cached) over covered calls",
+            "read_benefit_definition": "sum(cache_read * (input - cache_read_rate)) over calls "
+                                       "with a proven read counter and a published read price; never "
+                                       "includes the write term",
         }
         payload["alternate"] = {"scope": "all_calls", **block(rows)}
         payload["notes"] = [{"code": "population_not_recorded", "calls": len(rows)}]
@@ -931,6 +1005,9 @@ def build_session_summary(
         "priced_at": "call_capture_time",
         "cache_denominator": "calls_with_proven_cache_fields",
         "savings_definition": "sum(uncached - cached) over covered calls",
+        "read_benefit_definition": "sum(cache_read * (input - cache_read_rate)) over calls "
+                                   "with a proven read counter and a published read price; never "
+                                   "includes the write term",
     }
     notes: list[dict[str, Any]] = []
     if not scope_rows:
