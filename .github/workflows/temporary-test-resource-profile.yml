@@ -1,0 +1,24 @@
+name: Temporary SpendSense resource profile
+on:
+  push:
+    branches: [wolfmark/temporary-test-resource-profile]
+permissions:
+  contents: read
+concurrency:
+  group: spendsense-temporary-resource-profile
+  cancel-in-progress: false
+jobs:
+  representative-workloads:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix test/harness
+      - name: Measure three guarded workloads sequentially
+        run: python3 .github/profile-guarded-tests.py
