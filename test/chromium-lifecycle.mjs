@@ -80,7 +80,7 @@ export function formatStderr(stderr) {
 
 export async function launchChromium({
   binary, profileDir, startTimeoutMs = BROWSER_START_TIMEOUT_MS,
-  spawnImpl = spawn, waitForPort = waitForDevToolsPort,
+  spawnImpl = spawn, waitForPort = waitForDevToolsPort, stopImpl = stopChromium,
 } = {}) {
   if (!binary) throw new Error('No Chromium binary is available for the browser layout checks')
 
@@ -121,10 +121,20 @@ export async function launchChromium({
     return { child, port, exited, stderr: stderrTail, group }
   } catch (error) {
     // Never leave an unowned browser behind when startup fails.
+    let cleanupError
     if (child.pid !== undefined) {
-      await stopChromium({ child, exited, group, stderr: stderrTail }).catch(() => {})
+      try {
+        await stopImpl({ child, exited, group, stderr: stderrTail })
+      } catch (failure) {
+        cleanupError = failure
+      }
     }
-    throw new Error(`${error.message}${formatStderr(stderrTail)}`)
+    const message = `${error.message}${formatStderr(stderrTail)}`
+    if (cleanupError) {
+      throw new AggregateError([error, cleanupError],
+        `${message}\nChromium startup cleanup failed: ${cleanupError.message}`)
+    }
+    throw new Error(message, { cause: error })
   }
 }
 

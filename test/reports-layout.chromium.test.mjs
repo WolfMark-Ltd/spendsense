@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
-  findChromiumBinary, measureInBrowserContext, ownedGroupGone, stopChromium, waitForDevToolsPort,
+  findChromiumBinary, launchChromium, measureInBrowserContext, ownedGroupGone, stopChromium, waitForDevToolsPort,
 } from './reports-layout.chromium.mjs'
 
 const POSIX_ONLY = process.platform === 'win32' ? 'POSIX process groups only' : false
@@ -163,6 +164,41 @@ test('the Chromium lookup reports absence instead of guessing a path', () => {
   assert.equal(findChromiumBinary([]), null)
   assert.equal(findChromiumBinary(['/nonexistent/google-chrome']), null)
   assert.equal(findChromiumBinary(['/nonexistent/google-chrome', process.execPath]), process.execPath)
+})
+
+test('startup failure includes a subsequent browser cleanup failure', async () => {
+  const child = new EventEmitter()
+  child.pid = 123
+  child.exitCode = null
+  child.signalCode = null
+  const startup = new Error('port unavailable')
+  const cleanup = new Error('owned browser survived')
+  await assert.rejects(launchChromium({
+    binary: 'mock', profileDir: 'mock', spawnImpl: () => child,
+    waitForPort: async () => { throw startup },
+    stopImpl: async () => { throw cleanup },
+  }), error => {
+    assert.ok(error instanceof AggregateError)
+    assert.deepEqual(error.errors, [startup, cleanup])
+    assert.match(error.message, /port unavailable/)
+    assert.match(error.message, /startup cleanup failed: owned browser survived/)
+    return true
+  })
+})
+
+test('startup failure remains visible when browser cleanup succeeds', async () => {
+  const child = new EventEmitter()
+  child.pid = 123
+  child.exitCode = null
+  child.signalCode = null
+  const startup = new Error('port unavailable')
+  let cleaned = false
+  await assert.rejects(launchChromium({
+    binary: 'mock', profileDir: 'mock', spawnImpl: () => child,
+    waitForPort: async () => { throw startup },
+    stopImpl: async () => { cleaned = true },
+  }), error => error.cause === startup && /port unavailable/.test(error.message))
+  assert.equal(cleaned, true)
 })
 
 test('teardown refuses to guess whether it owns a process group', { skip: POSIX_ONLY }, async () => {
