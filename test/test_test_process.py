@@ -1,6 +1,7 @@
 import asyncio
 import os
 import pathlib
+import shutil
 import sys
 import tempfile
 import unittest
@@ -32,6 +33,20 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.cancelled.set()
         with self.assertRaisesRegex(RunFailed, 'cancelled before launch'):
             await self.run_code('raise AssertionError("worker launched")')
+        self.assertFalse(self.journal.exists())
+
+    async def test_cancellation_during_startup_never_releases_worker(self):
+        create_process = asyncio.create_subprocess_exec
+
+        async def cancel_during_spawn(*args, **kwargs):
+            worker = await create_process(*args, **kwargs)
+            self.cancelled.set()
+            return worker
+
+        with patch('test_process.asyncio.create_subprocess_exec', side_effect=cancel_during_spawn):
+            with self.assertRaisesRegex(RunFailed, 'cancelled.*cleanup verified'):
+                await self.run_code('import pathlib; pathlib.Path("launched").touch()')
+        self.assertFalse((self.root / 'launched').exists())
         self.assertFalse(self.journal.exists())
 
     async def test_cancellation_during_execution(self):
@@ -68,7 +83,9 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
 
     @unittest.skipIf(os.name == 'nt', 'POSIX browser process groups')
     async def test_registered_group_outlives_worker_and_is_terminated(self):
-        node = os.environ.get('SPENDSENSE_NODE', 'node')
+        node = shutil.which(os.environ.get('SPENDSENSE_NODE', 'node'))
+        if node is None:
+            self.skipTest('Node is required for the detached Chromium gate control')
         uri = (ROOT / 'test' / 'chromium-lifecycle.mjs').as_uri()
         code = f"""
 import {{ spawnRegisteredGroup }} from {uri!r}
