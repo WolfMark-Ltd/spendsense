@@ -73,7 +73,7 @@ test('top-N conserves priced subtotal, excludes unknown prices and exposes exact
 test('timestamp stacks use true elapsed time and preserve missing cost components as gaps', () => {
  assert.equal(typeof T.analyticsTrend, 'function', 'trend helper is exported')
  const rows = [
-  {ts:'2026-10-29T00:00:00Z',input_tokens:3,output_tokens:2,cache_read_tokens:5,cache_write_tokens:1,list_usd:9},
+  {ts:'2026-10-29T00:00:00Z',input_tokens:3,output_tokens:2,cache_read_tokens:5,cache_write_tokens:1,cache_write_state:'reported',list_usd:9},
   {ts:'2026-10-29T01:00:00Z',input_tokens:0,output_tokens:4,cache_read_tokens:0,cache_write_tokens:0,list_usd:null},
   {ts:'2026-10-29T04:00:00Z',input_tokens:9,output_tokens:0,cache_read_tokens:0,cache_write_tokens:0,list_usd:0}
  ]
@@ -87,7 +87,7 @@ test('timestamp stacks use true elapsed time and preserve missing cost component
  assert.equal(cost.points[2].total,0)
  assert.equal(cost.stacked,false)
  assert.deepEqual(T.analyticsTrend([],'tokens').points,[])
- const composition = T.analyticsComposition(rows[0])
+ const composition = T.analyticsComposition({...rows[0], cache_write_state:'reported'})
  assert.equal(composition.reduce((s,r)=>s+r.value,0),11)
  assert.ok(composition.every(x=>Number.isFinite(x.share)))
 })
@@ -147,7 +147,7 @@ test('exact AND filter state is scope-isolated and query identity includes every
  assert.equal(T.analyticsScope('p','open'),T.analyticsScope('p','open'))
 })
 
-const metric = (i=0) => ({tokens:10000-i*100,calls:12-i,input_tokens:2000,output_tokens:1000,cache_read_tokens:6000-i*100,cache_write_tokens:1000,
+const metric = (i=0) => ({tokens:10000-i*100,calls:12-i,input_tokens:2000,output_tokens:1000,cache_read_tokens:6000-i*100,cache_write_tokens:1000,cache_write_state:'reported',
  list_usd:i===8?null:10-i,priced_tokens:i===8?0:10000-i*100,unpriced_tokens:i===8?9200:0,coverage:i===8?0:1,
  cache_hit_rate:i===8?null:.6-i*.03,cache_known_calls:8,cache_unknown_calls:4,cache_coverage:.66,billed_usd:0,billed_complete:false,
  economics:{uncached_usd:12-i,cached_usd:8-i,savings_usd:i===7?-1:4,coverage:.8,covered_tokens:8000,covered_calls:8,excluded_calls:4}})
@@ -293,7 +293,7 @@ test('analytics pricing, insights and deltas follow the chosen language', () => 
   assert.equal(T.deltaText(.125, zhT), '▲ 12.5%（较上一周期）')
   assert.equal(T.deltaText(null, zhT), null)
   const data = { totals: { list_usd: 10, tokens: 100 }, by_model: [{ model: 'm1', provider: 'p1', list_usd: 6 }],
-    economics: { savings_usd: -1, coverage: .5 }, by_scope: [{ scope: 'subagent', tokens: 40, calls: 3 }] }
+    economics: { savings_usd: -1, savings_basis: 'exact', coverage: .5 }, by_scope: [{ scope: 'subagent', tokens: 40, calls: 3 }] }
   const found = T.analyticsInsights(data, zhT)
   assert.deepEqual(found.map(i => i.label), ['最大驱动', '缓存结论', '委派工作'])
   assert.match(found[0].text, /M1 经 p1/)

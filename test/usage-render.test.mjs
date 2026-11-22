@@ -112,6 +112,47 @@ const usageTotals = () => usageAnalytics().totals
 const LOCALES = ['en', 'zh']
 const defaultUsageTransport = usageTransport({ requiredContract: T.REQUIRED_BACKEND_CONTRACT })
 
+test('read benefit uses backend basis and coverage, and unknown writes stay unknown', async () => {
+  for (const locale of LOCALES) {
+    const dict = T.I18N[locale]
+    const data = usageAnalytics()
+    data.totals.cache_write_state = 'unknown'
+    data.economics = { ...data.economics, savings_basis: 'indeterminate', savings_usd: 99,
+      read_benefit_usd: 1.25, read_benefit_basis: 'exact', read_benefit_calls: 5, read_benefit_tokens: 188224 }
+    const container = await boot({ locale, analyticsData: data })
+    assert.match(container.textContent, /\$1\.25/)
+    assert.ok(container.textContent.includes(dict.readBenefitCoverage(5, 1234, T.fmtTokens(188224))))
+    assert.ok(container.textContent.includes(dict.readBenefitExplanation))
+    assert.equal(statsOf(container)[1].value, '—')
+    const composition = [...container.querySelectorAll('.wm-panel')].find(panel => panel.textContent.includes(dict.usageCompTitle))
+    assert.ok(composition.textContent.includes(dict.usageWritesUnknown))
+    assert.ok(composition.textContent.includes(dict.usageStreamCacheWrite))
+    assert.ok(composition.textContent.includes(dict.unknown))
+  }
+})
+
+test('read benefit refuses absent or indeterminate values and preserves directional bounds', () => {
+  const t = translatorFor(T.I18N, 'en')
+  assert.equal(T.readBenefitState({}, 4).available, false)
+  assert.equal(T.readBenefitState({read_benefit_usd: 0, read_benefit_basis: 'indeterminate', read_benefit_calls: 1, read_benefit_tokens: 0}, 4).available, false)
+  assert.equal(T.readBenefitState({read_benefit_usd: 0, read_benefit_basis: 'exact', read_benefit_calls: 5, read_benefit_tokens: 0}, 4).available, false)
+  const reportedZero = T.readBenefitState({read_benefit_usd: 0, read_benefit_basis: 'exact', read_benefit_calls: 1, read_benefit_tokens: 0}, 1)
+  assert.equal(T.readBenefitDisplay(t, reportedZero), '$0.00')
+  assert.equal(T.analyticsComposition({cache_write_tokens: 0, cache_write_state: 'reported'}, t).find(row => row.id === 'cache_write_tokens').unknown, false)
+  assert.equal(T.analyticsComposition({cache_write_tokens: 0, cache_write_state: 'unknown'}, t).find(row => row.id === 'cache_write_tokens').unknown, true)
+  const base = {read_benefit_usd: -1, read_benefit_calls: 2, read_benefit_tokens: 100}
+  for (const basis of ['exact', 'lower_bound', 'upper_bound']) {
+    const benefit = T.readBenefitState({...base, read_benefit_basis: basis}, 4)
+    assert.equal(benefit.available, true)
+    assert.match(T.readBenefitDisplay(t, benefit), /−\$1\.00/)
+  }
+  for (const benefit of [0.19, 0.38]) {
+    const state = T.readBenefitState({read_benefit_usd: benefit, read_benefit_basis: 'exact',
+      read_benefit_calls: 1, read_benefit_tokens: 100000, uncached_usd: 999, cached_usd: 0}, 1)
+    assert.equal(state.value, benefit, 'the backend value is retained across different rate bands')
+  }
+})
+
 test('Usage states five headline figures in two labelled groups, in both languages', async () => {
   for (const locale of LOCALES) {
     const container = await boot({ locale })

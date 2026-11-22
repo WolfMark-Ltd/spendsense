@@ -134,6 +134,13 @@ const flush = async (times = 6) => {
   })
 }
 
+const openTip = async (container, id) => {
+  const button = container.querySelector(`[aria-controls="wm-info-${id}"]`)
+  assert.ok(button, `missing ${id} disclosure`)
+  await React.act(async () => button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })))
+  return container.querySelector(`#wm-info-${id}`).textContent
+}
+
 const sectionsOf = container => ({
   head: container.querySelector('.wm-meter-head'),
   cards: [...container.querySelectorAll('.wm-meter-sections .wm-card')],
@@ -237,7 +244,8 @@ test('a recorded conversation stays selected when the current run has larger tot
   await flush()
   const before = sectionsOf(container)
   const figureBefore = container.querySelector('.wm-kpi-figure').textContent
-  assert.equal(figureBefore, '≈$0.0010+', 'local API-equivalent cost is qualified when coverage metadata is absent')
+  assert.equal(figureBefore, '$0.0010')
+  assert.match(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/)
   assert.deepEqual([...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
     .map(el => el.textContent), ['350', '1'])
   assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
@@ -321,7 +329,8 @@ test('recorded conversation totals render exactly with recorded presence', async
   T.$ledger.set(ledger)
   const container = await renderMeter()
   await flush()
-  assert.equal(container.querySelector('.wm-kpi-figure').textContent, '≈$1.23+')
+  assert.equal(container.querySelector('.wm-kpi-figure').textContent, '$1.23')
+  assert.match(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/)
   assert.match(container.textContent, /meterRecorded/)
   assert.match(container.textContent, /scopeLocalConversationEstimate/)
   const metrics = [...container.querySelectorAll('.wm-metric-value')].map(el => el.textContent)
@@ -332,7 +341,7 @@ test('recorded conversation totals render exactly with recorded presence', async
   const expected = (1000000 / 1328500) * T.RING_C
   const dash = ring.querySelector('.wm-ring-value').getAttribute('stroke-dasharray')
   assert.ok(Math.abs(parseFloat(dash) - expected) < 1e-6, `ring arc ${dash} matches 75.27%`)
-  assert.match(container.textContent, /estimatedLabel/)
+  assert.match(await openTip(container, 'savings-method'), /estimatedLabel/)
   assert.match(container.textContent, /≈/)
   // Compact gauge metrics: coverage beside the ring, savings beneath it.
   const stats = container.querySelector('.wm-gauge-stats').textContent
@@ -371,21 +380,24 @@ test('a cache coverage change redraws the gauge in place', async () => {
   assert.ok(estMetrics[0].startsWith('≈'), `reconstructed totals carry ≈: ${estMetrics}`)
   // Rounded hit percentages cannot recover measured writes, and this route
   // publishes no write price, so net savings are unavailable.
-  const estimatedNotes = [...container.querySelectorAll('.wm-gauge-stats .wm-gauge-note')].map(el => el.textContent)
-  assert.equal(estimatedNotes.length, 1)
-  assert.match(estimatedNotes[0], /savedNotEstablished/)
-  assert.match(estimatedNotes[0], /savedReasonNoWriteRate/)
-  assert.doesNotMatch(estimatedNotes[0], /exactLabel|estimatedLabel/)
+  assert.match(await openTip(container, 'savings-method'), /savedReasonNoWriteRate/)
+  assert.match(container.textContent, /readBenefitUsageLink/)
 
-  // A route the catalogue cannot price has no figure at all; the note names
-  // the reason instead of leaving a bare dash.
   host.state.focusedUsage.set({ input: 1000, prompt: 2000, cache_hit_pct: 50, output: 100, calls: 1, model: 'no-such-model-9z' })
   await flush()
-  const notes = [...container.querySelectorAll('.wm-gauge-stats .wm-gauge-note')].map(el => el.textContent)
-  assert.equal(notes.length, 1, 'an unavailable saving names why it is unavailable')
-  assert.match(notes[0], /savedNotEstablished/)
-  assert.doesNotMatch(notes[0], /exactLabel|estimatedLabel/,
-    'no exact/estimated claim sits over an unavailable savings value')
+  assert.match(await openTip(container, 'savings-method'), /savedNotEstablished/)
+
+})
+
+test('rounded hit-rate residual is unclassified rather than a measured write', () => {
+  const bucket = T.readUsage({input: 500, prompt: 1000, output: 0, calls: 1, cache_hit_pct: 40})
+  assert.equal(bucket.cacheWriteEvidence, 'derived')
+  const rows = T.tokenRows(key => key, bucket, false, null)
+  assert.equal(rows.find(row => row.key === 'cw').value, 'unknown')
+  const shares = T.compositionShares(bucket)
+  assert.equal(shares.write, 0)
+  assert.equal(shares.unknown, 100)
+  assert.equal(shares.prompt, 1000)
 })
 
 test('a conversation whose cold start is unreported shows the measured saving', async () => {
@@ -409,9 +421,7 @@ test('a conversation whose cold start is unreported shows the measured saving', 
   const stats = container.querySelector('.wm-gauge-stats')
   const values = [...stats.querySelectorAll('.wm-metric-value')].map(el => el.textContent)
   assert.ok(values.includes('≈$1.50'), `the measured saving renders: ${values}`)
-  const note = stats.querySelector('.wm-gauge-note')
-  assert.ok(note, 'a partial figure carries a note')
-  assert.match(note.textContent, /savedPartialNote/, `coverage is stated: ${note.textContent}`)
+  assert.match(await openTip(container, 'savings-method'), /savedPartialNote/)
   assert.doesNotMatch(stats.textContent, /exactLabel/,
     'a figure covering part of the conversation is never labelled exact')
 })
@@ -437,7 +447,7 @@ test('a net cache loss renders as a signed figure, not $0.00', async () => {
   const stats = container.querySelector('.wm-gauge-stats')
   assert.match(stats.textContent, /−\$1\.25/, `signed saving: ${stats.textContent}`)
   assert.doesNotMatch(stats.textContent, /\$0\.00/, 'a loss never renders as zero')
-  assert.match(stats.textContent, /estimatedLabel/, 'local conversation values are qualified')
+  assert.match(await openTip(container, 'savings-method'), /estimatedLabel/)
 })
 
 test('a measured zero is displayed as zero with full coverage', async () => {
@@ -457,7 +467,7 @@ test('a measured zero is displayed as zero with full coverage', async () => {
   await flush()
   const saved = container.querySelector('[data-kind="saved"] .wm-metric-value')
   assert.equal(saved.textContent, '≈$0.00')
-  assert.match(container.querySelector('.wm-gauge-stats').textContent, /estimatedLabel/)
+  assert.match(await openTip(container, 'savings-method'), /estimatedLabel/)
   assert.doesNotMatch(container.querySelector('.wm-gauge-stats').textContent, /savedNotEstablished/)
 })
 
@@ -474,6 +484,7 @@ test('a proven main summary renders its signed zero with population and evidence
         cache_read_tokens: 100, cache_write_tokens: 0,
         cache_read_state: 'reported', cache_write_state: 'reported', unpriced_tokens: 0 },
       valuation: { api_equivalent_usd: .001, api_equivalent_basis: 'exact',
+        read_benefit_usd: .005, read_benefit_basis: 'exact', read_benefit_calls: 1, read_benefit_tokens: 100,
         savings_usd: 0, savings_usd_high: null, savings_basis: 'exact', coverage: 1,
         covered_calls: 1, excluded_calls: 0, cache_hit_rate: 0, cache_hit_rate_basis: 'all_calls' }
     }
@@ -495,8 +506,9 @@ test('a proven main summary renders its signed zero with population and evidence
     assert.equal(container.querySelector('.wm-provider-badge').textContent, 'openai',
       'the separately resolved active route provider remains visible')
     assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '$0.00')
+    assert.match(container.textContent, /readBenefitLabel.*\$0\.0050.*readBenefitCoverage/)
+    assert.match(await openTip(container, 'read-benefit'), /readBenefitSessionExplanation/)
     assert.match(container.querySelector('.wm-kpi-figure').textContent, /\$0\.0010/)
-    assert.match(container.querySelector('.wm-kpi-since').textContent, /sessionEvidenceNote/)
     assert.equal(container.querySelector('.wm-rates-toggle'), null,
       'a multi-route main summary does not present a single-route Rates panel')
     assert.equal(container.querySelector('.wm-ring').getAttribute('aria-label'), 'weightedCacheHit: 0%',
@@ -530,7 +542,6 @@ test('an empty proven main summary falls back to the recorded conversation estim
   try {
     assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
     assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '≈$0.500')
-    assert.match(container.querySelector('.wm-kpi-since').textContent, /localEstimateScopeNote/)
   } finally {
     T.restoreRest(originalRest)
   }
@@ -560,12 +571,11 @@ test('a backend API-equivalent range keeps both endpoints in the pane and chip f
   const meter = await renderMeter()
   await flush()
   try {
-    assert.match(meter.querySelector('.wm-kpi-figure').textContent, /≈\$0\.202–\$0\.502/)
+    assert.match(meter.querySelector('.wm-kpi-figure').textContent, /^\$0\.202–\$0\.502$/)
     assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'backend_summary', costBasis: 'indeterminate', costPartial: true }), '≈$2.00')
     assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'local', costPartial: true }), '≈$2.00+')
-    assert.equal(T.apiEquivalentDisplay({ cost: .202, costHigh: .502, costSource: 'backend_summary',
-      costBasis: 'range', costPartial: true }), meter.querySelector('.wm-kpi-figure').textContent,
-    'the status chip uses the same formatter as the pane Cost KPI')
+    assert.match(T.apiEquivalentDisplay({ cost: .202, costHigh: .502, costSource: 'backend_summary',
+      costBasis: 'range', costPartial: true }), /^≈\$0\.202–\$0\.502$/)
   } finally {
     T.restoreRest(originalRest)
   }
@@ -600,7 +610,6 @@ test('a refused main summary falls back to the focused local conversation only',
     assert.ok(requests.some(path => path.startsWith('/session/summary?') && path.includes('population=main')))
     assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
     assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '≈−$0.500')
-    assert.match(container.querySelector('.wm-kpi-since').textContent, /localEstimateScopeNote/)
     assert.doesNotMatch(container.textContent, /999999/,
       'the refused response alternate all-calls block is never rendered')
   } finally {
@@ -649,9 +658,10 @@ test('a calls-only frame still renders without token data', async () => {
   assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalRunEstimate')
   const ring = container.querySelector('.wm-ring')
   assert.match(ring.getAttribute('aria-label'), /—/, 'no prompt means no hit rate')
-  assert.match(container.querySelector('.wm-kpi-figure').textContent, /^≈.*\+$/,
-    'a zero-priced subtotal with unknown cache counters is qualified and marked incomplete')
-  assert.match(container.querySelector('.wm-partial-chip').textContent, /partialCacheEvidence/)
+  assert.equal(container.querySelector('.wm-kpi-figure').textContent, '—')
+  assert.match(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/,
+    'a zero-priced subtotal with unknown cache counters is marked incomplete')
+  assert.match(await openTip(container, 'partial'), /partialCacheEvidence/)
   const method = container.querySelector('[aria-controls="wm-info-cache-method"]')
   await React.act(async () => {
     method.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
@@ -1066,7 +1076,7 @@ test('the composition bar labels every part with its share', async () => {
   document.body.appendChild(container)
   const root = ReactDOMClient.createRoot(container)
   roots.push(root)
-  const view = { bucket: { input: 100, output: 50, cacheRead: 300, cacheWrite: 100, calls: 2 }, usage: null }
+  const view = { bucket: { input: 100, output: 50, cacheRead: 300, cacheWrite: 100, calls: 2, cacheSource: 'exact' }, usage: null }
   await React.act(async () => {
     root.render(React.createElement(T.TokenComposition, { t: key => key, view }))
   })
@@ -1204,6 +1214,16 @@ test('the open-ledger button routes to the ledger from the live meter', async ()
     host.navigate = orig
   }
   assert.deepEqual(seen, ['/spend-sense'])
+  const benefitLink = [...container.querySelectorAll('button')].find(el => el.textContent === 'readBenefitUsageLink')
+  assert.ok(benefitLink)
+  host.navigate = route => seen.push(route)
+  try {
+    await React.act(async () => benefitLink.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })))
+    assert.equal(T.$ledgerTab.get(), 'usage')
+    assert.deepEqual(seen, ['/spend-sense', '/spend-sense'])
+  } finally {
+    host.navigate = orig
+  }
 })
 
 test('the empty state offers the ledger action', async () => {

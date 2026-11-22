@@ -164,8 +164,9 @@ test('a reconstructed cache write never reads as confirmed usage', () => {
   const rows = T.tokenRows(rawT, bucket({ cacheRead: 0, cacheWrite: 216_795,
     cacheReadEvidence: 'unknown', cacheWriteEvidence: 'derived' }), false, null)
   const cw = rows.find(r => r.key === 'cw')
-  assert.ok(cw.value.startsWith('≈'))
-  assert.match(cw.label, /derived/)
+  assert.equal(cw.value, 'unknown')
+  assert.match(cw.label, /unknown/)
+  assert.ok(rows.some(row => row.key === 'cu'))
 })
 
 test('context is shown only when the gateway supplies it', () => {
@@ -227,7 +228,7 @@ test('savings are labelled as theoretical, not cash', () => {
 })
 
 test('composition shares split the prompt into fresh, read and write', () => {
-  const shares = T.compositionShares({ input: 100, cacheRead: 300, cacheWrite: 100, output: 50 })
+  const shares = T.compositionShares({ input: 100, cacheRead: 300, cacheWrite: 100, output: 50, cacheSource: 'exact' })
   assert.equal(shares.prompt, 500)
   assert.equal(shares.output, 50)
   assert.ok(Math.abs(shares.freshFrac - 0.2) < 1e-9)

@@ -24,6 +24,7 @@ export const USAGE_FILTERS = {
 const row = (i = 0) => ({
   tokens: 120000 - i * 1500, calls: 140 - i, input_tokens: 24000, output_tokens: 12000,
   cache_read_tokens: 72000 - i * 1500, cache_write_tokens: 12000,
+  cache_write_state: 'reported',
   list_usd: i === 27 ? null : 9.6 - i * 0.2,
   priced_tokens: i === 27 ? 0 : 120000 - i * 1500, unpriced_tokens: i === 27 ? 92000 : 150 * i,
   unpriced_calls: i % 9 === 0 ? 2 : 0, fallback_calls: i % 7 === 0 ? 1 : 0,
@@ -32,6 +33,7 @@ const row = (i = 0) => ({
   billing_mix: i % 3 === 0 ? { api: 40 } : {},
   economics: { uncached_usd: 12 - i * 0.2, cached_usd: 8 - i * 0.2, savings_usd: i === 5 ? -0.4 : 3.2 - i * 0.06,
     savings_usd_high: null, savings_basis: 'exact', coverage: 0.82,
+    read_benefit_usd: 4.2, read_benefit_basis: 'exact', read_benefit_calls: 96, read_benefit_tokens: 72000,
     covered_tokens: 98000, covered_calls: 96, excluded_calls: 8 },
 })
 
@@ -44,6 +46,7 @@ export const usageByModel = () => Array.from({ length: 30 }, (_, i) => ({
 const totals = () => ({
   ...row(0), tokens: 3141592, calls: 1234, input_tokens: 640000, output_tokens: 320000,
   cache_read_tokens: 1900000, cache_write_tokens: 281592, list_usd: 82.4,
+  cache_write_state: 'reported',
   priced_tokens: 3014592, unpriced_tokens: 127000, unpriced_calls: 6,
   cache_hit_rate: 0.61, cache_prompt_coverage: 0.66,
   billed_usd: 18.2, billed_complete: false, billing_mix: { api: 900, included: 300 },

@@ -185,7 +185,7 @@ setTimeout(async () => {
     const savedRow = node.querySelector('.wm-gauge-stat[data-kind="saved"]')
     const savedLabel = savedRow?.querySelector('.wm-metric-label')
     const savedValue = savedRow?.querySelector('.wm-metric-value')
-    const savedNote = node.querySelector('.wm-gauge-note')
+    const savedNote = node.querySelector('.wm-gauge-stats .wm-gauge-note')
     const gaugeCard = savedRow?.closest('.wm-card')
     const labelRect = rect(savedLabel)
     const valueRect = rect(savedValue)
