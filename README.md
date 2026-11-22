@@ -231,7 +231,7 @@ Run the Python tests from a virtual environment — never system Python (on macO
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install fastapi httpx
-.venv/bin/python -m unittest discover -s test -p 'test_*.py'
+.venv/bin/python scripts/managed-tests.py python
 ```
 
 With [uv](https://docs.astral.sh/uv/) instead: `uv venv .venv && uv pip install --python .venv/bin/python fastapi httpx`, then run the tests as above.
@@ -251,6 +251,44 @@ bash scripts/node-tests.sh browser
 ```
 
 The browser command runs one test file at a time and fails if Chromium is missing or any expected case is skipped. Screenshots are opt-in via the relevant suite's environment variable. Both commands verify per-file completion, not just Node's exit status. When adding a file or changing its test count, update the inventory in `scripts/node-tests.mjs`.
+
+The shell wrapper uses Python 3.9+ alongside Node. Set `SPENDSENSE_PYTHON` to
+select a different Python interpreter, or use the Python entry point directly
+(including on Windows for Python tests):
+
+```bash
+python3 scripts/managed-tests.py browserless node-runner.test.mjs
+.venv/bin/python scripts/managed-tests.py python test_test_guard.py
+.venv/bin/python scripts/managed-tests.py all
+```
+
+`all` includes Chromium acceptance. Only use it on a test machine. Agents
+should use these managed commands for both full and focused runs. The OS lock
+is shared across worktrees under the same user account on the same host.
+Contending invocations fail immediately. Builds and lint commands can continue
+independently. Raw `node --test` and `python -m unittest` bypass this guard and
+its cleanup and reporting checks.
+
+Each test file or Python suite has a five-minute deadline. Ctrl-C or TERM stops the current
+run. On macOS and Linux, the supervisor sends TERM and then KILL if necessary,
+and checks that the owned groups have no live members. Shared Chromium launches
+publish their detached group before the browser can start. Legacy browser tests
+are supervised through their inherited group. Processes that independently
+leave a group without registering, including platform-specific browser helpers,
+are outside this guarantee. On Windows the managed Python runner uses a Job
+Object, releases its startup gate only after assignment, and checks that the job
+is empty after termination. Native Windows Chromium acceptance is outside CI.
+
+The OS releases the advisory lock on owner exit. If cleanup is incomplete or the
+supervisor dies during a run, the persistent `active-run` marker blocks new
+runs pending inspection. It points to the directory containing the worker ID and any registered
+group IDs. Check that both the worker and its owned groups have stopped before
+removing the marker. Do not signal a stale PID solely from an old record. Leave
+the advisory lock file in place. POSIX supervisor SIGKILL or system failure can
+bypass cleanup. Windows enables kill-on-close for assigned job members, but an
+abruptly killed supervisor cannot report verification. These mechanisms do not
+cap memory or CPU, contain unmanaged commands, or protect against separate user
+accounts running tests concurrently.
 
 Some API tests need FastAPI and HTTPX (installed above) and are skipped without them. Hermes catalogue admission additionally requires `hermes plugins validate /path/to/plugin --install-deps` on the exact commit.
 

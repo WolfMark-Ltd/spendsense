@@ -14,8 +14,9 @@
 // - a fresh browser context and page per case, released on every path;
 // - bounded, labelled polling for a published measurement.
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const DEVTOOLS_COMMAND_TIMEOUT_MS = 5000
 export const PAGE_LOAD_TIMEOUT_MS = 10000
@@ -78,9 +79,38 @@ export function formatStderr(stderr) {
   return text ? `\nChromium stderr (tail):\n${text}` : ''
 }
 
+const registeredGroups = new WeakMap()
+
+export function spawnRegisteredGroup(binary, args, options) {
+  const registry = process.env.SPENDSENSE_TEST_REGISTRY
+  if (!registry || !options.detached) return spawn(binary, args, options)
+  const gate = fileURLToPath(new URL('../scripts/test_process.py', import.meta.url))
+  const child = spawn(process.env.SPENDSENSE_TEST_PYTHON, [gate, '--gate', binary, ...args], {
+    ...options, stdio: ['pipe', ...options.stdio.slice(1)],
+  })
+  // The detached bootstrap cannot exec Chromium before publication. If the
+  // worker dies first, EOF closes the gate without launching the browser.
+  child.stdin.on('error', () => {})
+  if (child.pid === undefined) {
+    child.stdin.destroy()
+    return child
+  }
+  const marker = join(registry, String(child.pid))
+  try {
+    writeFileSync(marker, '', { flag: 'wx' })
+    registeredGroups.set(child, marker)
+    child.stdin.end('1')
+  } catch (error) {
+    child.stdin.destroy()
+    child.once('error', () => {})
+    throw new Error('Cannot register the detached Chromium process group', { cause: error })
+  }
+  return child
+}
+
 export async function launchChromium({
   binary, profileDir, startTimeoutMs = BROWSER_START_TIMEOUT_MS,
-  spawnImpl = spawn, waitForPort = waitForDevToolsPort, stopImpl = stopChromium,
+  spawnImpl = spawnRegisteredGroup, waitForPort = waitForDevToolsPort, stopImpl = stopChromium,
 } = {}) {
   if (!binary) throw new Error('No Chromium binary is available for the browser layout checks')
 
@@ -273,7 +303,13 @@ export async function stopChromium({
     throw new Error(`Chromium exited but process group ${child.pid} still has members${formatStderr(stderr)}`)
   }
 
-  return { terminated: true, escalated, code: await exited }
+  const result = { terminated: true, escalated, code: await exited }
+  const marker = registeredGroups.get(child)
+  if (marker) {
+    unlinkSync(marker)
+    registeredGroups.delete(child)
+  }
+  return result
 }
 
 export async function openSocket(socket, timeoutMs = BROWSER_CONNECT_TIMEOUT_MS) {
