@@ -105,7 +105,8 @@ child.stdin.on('finish', () => process.exit(0))
     async def test_outer_cancellation_cleans_up_process_groups_from_nested_supervisors(self):
         leaf = (
             'import os,pathlib,time; '
-            'pathlib.Path("ready").write_text(str(os.getpid())); time.sleep(8)'
+            'pathlib.Path("pid").write_text(str(os.getpid())); '
+            'pathlib.Path("pid").replace("ready"); time.sleep(8)'
         )
 
         def nested(command, journal):
