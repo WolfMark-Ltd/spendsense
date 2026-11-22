@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -15,7 +15,7 @@ const suites = {
     ['news-layout.harness', 4],
     ['news-render', 60, true], ['node-runner', 5], ['plugin', 67], ['recount', 16],
     ['overview-render', 4, true],
-    ['reports-layout.chromium', 17], ['reports-layout.devtools', 11],
+    ['reports-layout.chromium', 19], ['reports-layout.devtools', 11],
     ['sidebar', 43, true], ['ui-labels', 50],
     ['usage-render', 8, true],
     ['ux-primitives', 32, true], ['weather', 11], ['weather-render', 9, true],
@@ -52,8 +52,11 @@ export function checkResult({ error, status, signal, stdout }, expected) {
   }
 }
 
-function main([mode = 'browserless', ...args]) {
-  if (!Object.hasOwn(suites, mode) || args.length) throw new Error('usage: node-tests.sh [browserless|browser]')
+async function main([action, mode, selected, ...args]) {
+  if (!process.env.SPENDSENSE_TEST_REGISTRY) throw new Error('Use bash scripts/node-tests.sh or scripts/managed-tests.py')
+  if (!Object.hasOwn(suites, mode) || args.length || !['--plan', '--run'].includes(action)) {
+    throw new Error('invalid managed Node test request')
+  }
   // The isolation flag arrived in 22.8; the locked jsdom requires 22.13 on Node 22.
   const [major, minor] = process.versions.node.split('.').map(Number)
   if (!(major === 22 && minor >= 13) && major < 24) {
@@ -72,31 +75,51 @@ function main([mode = 'browserless', ...args]) {
     '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
   ].some(existsSync)) throw new Error('Chrome/Chromium is required for the browser suite')
 
-  let passed = 0
-  for (const [name, expected, forceExit] of suites[mode]) {
-    // Each file already gets its own OS process. Do not nest Node's isolated
-    // runner, whose force-exit path can truncate the worker report pipe.
-    const result = spawnSync(process.execPath, [
-      '--test', isolationFlag, ...(forceExit ? ['--test-force-exit'] : []),
-      '--test-reporter=tap', `test/${fileName(name)}`,
-    ], { cwd: root, encoding: 'utf8', timeout: 300_000, maxBuffer: 16 * 1024 * 1024 })
-    try {
-      checkResult(result, expected)
-    } catch (error) {
-      console.error(result.stdout?.slice(-12000) || '', result.stderr?.slice(-8000) || '')
-      throw new Error(`${fileName(name)}: ${error.message}`)
-    }
-    console.log(`${fileName(name)}: ${expected}/${expected}`)
-    passed += expected
+  const entries = suites[mode].filter(([name]) => !selected || fileName(name) === selected)
+  if (!entries.length) throw new Error(`${selected} is not declared in the ${mode} inventory`)
+  if (action === '--plan') {
+    console.log(JSON.stringify(entries.map(([name]) => fileName(name))))
+    return
   }
-  console.log(`${mode}: ${passed} passed across ${suites[mode].length} files`)
+  if (!selected) throw new Error('managed execution requires one declared file')
+  const [[name, expected, forceExit]] = entries
+  const child = spawn(process.execPath, [
+    '--test', isolationFlag, ...(forceExit ? ['--test-force-exit'] : []),
+    '--test-reporter=tap', `test/${fileName(name)}`,
+  ], { cwd: root, stdio: ['ignore', 'pipe', 'inherit'] })
+  // Keep TAP complete for the existing checker. The outer supervisor closes
+  // the owned group if the publisher or any pipe holder fails to exit.
+  const chunks = []
+  let size = 0
+  const result = await new Promise((resolve, reject) => {
+    child.stdout.on('data', chunk => {
+      size += chunk.length
+      if (size > 16 * 1024 * 1024) {
+        child.stdout.destroy()
+        reject(new Error('TAP output exceeded 16 MiB'))
+      } else {
+        chunks.push(chunk)
+      }
+    })
+    child.once('error', reject)
+    child.once('close', (status, signal) => resolve({ status, signal }))
+  }).catch(error => {
+    console.error(`${selected}: ${error.message}`)
+    process.exit(1)
+  })
+  const stdout = Buffer.concat(chunks).toString('utf8')
+  try {
+    checkResult({ ...result, stdout }, expected)
+  } catch (error) {
+    console.error(stdout.slice(-12000))
+    throw new Error(`${selected}: ${error.message}`)
+  }
+  console.log(`${selected}: ${expected}/${expected}`)
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  try {
-    main(process.argv.slice(2))
-  } catch (error) {
+  main(process.argv.slice(2)).catch(error => {
     console.error(error.message)
     process.exitCode = 1
-  }
+  })
 }
