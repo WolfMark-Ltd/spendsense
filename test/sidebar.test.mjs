@@ -251,7 +251,7 @@ test('a recorded conversation stays selected when the current run has larger tot
   assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
   assert.ok(container.querySelector('.wm-kpi-since'), 'conversation period remains visible')
   const savedBefore = container.querySelector('[data-kind="saved"] .wm-metric-value').textContent
-  assert.equal(savedBefore, '≈$0.0001')
+  assert.equal(savedBefore, '$0.0001')
 
   host.state.focusedUsage.set(liveUsage({ input: 2400, calls: 3 }))
   await flush()
@@ -420,7 +420,7 @@ test('a conversation whose cold start is unreported shows the measured saving', 
   await flush()
   const stats = container.querySelector('.wm-gauge-stats')
   const values = [...stats.querySelectorAll('.wm-metric-value')].map(el => el.textContent)
-  assert.ok(values.includes('≈$1.50'), `the measured saving renders: ${values}`)
+  assert.ok(values.includes('$1.50'), `the measured saving renders: ${values}`)
   assert.match(await openTip(container, 'savings-method'), /savedPartialNote/)
   assert.doesNotMatch(stats.textContent, /exactLabel/,
     'a figure covering part of the conversation is never labelled exact')
@@ -466,7 +466,7 @@ test('a measured zero is displayed as zero with full coverage', async () => {
   const container = await renderMeter()
   await flush()
   const saved = container.querySelector('[data-kind="saved"] .wm-metric-value')
-  assert.equal(saved.textContent, '≈$0.00')
+  assert.equal(saved.textContent, '$0.00')
   assert.match(await openTip(container, 'savings-method'), /estimatedLabel/)
   assert.doesNotMatch(container.querySelector('.wm-gauge-stats').textContent, /savedNotEstablished/)
 })
@@ -541,7 +541,7 @@ test('an empty proven main summary falls back to the recorded conversation estim
   await flush()
   try {
     assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
-    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '≈$0.500')
+    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '$0.500')
   } finally {
     T.restoreRest(originalRest)
   }
@@ -609,7 +609,7 @@ test('a refused main summary falls back to the focused local conversation only',
   try {
     assert.ok(requests.some(path => path.startsWith('/session/summary?') && path.includes('population=main')))
     assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
-    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '≈−$0.500')
+    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '−$0.500')
     assert.doesNotMatch(container.textContent, /999999/,
       'the refused response alternate all-calls block is never rendered')
   } finally {

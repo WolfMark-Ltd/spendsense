@@ -3332,7 +3332,7 @@ function CacheGauge({ t, view }) {
             jsx(InfoTip, { id: 'savings-method', label: t('infoLabel'), text: [t('savingsInfo'), note].filter(Boolean).join(' '), wide: true, dir: 'up' }, 'info')
           ] }, 'l'),
           jsx('span', { className: 'wm-metric-value',
-            children: savedDisplay(t, view) }, 'v'),
+            children: savedDisplay(t, view).replace(/^≈/, '') }, 'v'),
           view.savedPartial ? jsx('span', { className: 'wm-gauge-note',
             children: savedCoveragePct(view) == null ? t('sidebarPartialCoverage') : t('sidebarCoveragePercent', savedCoveragePct(view)) }, 'coverage') : null
         ] }, 'saved'),
