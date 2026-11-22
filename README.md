@@ -272,7 +272,9 @@ its cleanup and reporting checks.
 Each test file or Python suite has a five-minute deadline. Ctrl-C or TERM stops the current
 run. On macOS and Linux, the supervisor sends TERM and then KILL if necessary,
 and checks that the owned groups have no live members. Shared Chromium launches
-publish their detached group before the browser can start. Legacy browser tests
+publish their detached group before the browser can start. Nested supervisors
+publish their registries before launching workers so the outer supervisor can
+verify their groups even if an intermediate worker dies. Legacy browser tests
 are supervised through their inherited group. Processes that independently
 leave a group without registering, including platform-specific browser helpers,
 are outside this guarantee. On Windows the managed Python runner uses a Job

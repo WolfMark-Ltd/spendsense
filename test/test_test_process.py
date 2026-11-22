@@ -2,6 +2,7 @@ import asyncio
 import os
 import pathlib
 import shutil
+import signal
 import sys
 import tempfile
 import unittest
@@ -99,6 +100,47 @@ child.stdin.on('finish', () => process.exit(0))
             await supervise([node, '--input-type=module', '-e', code], cwd=self.root,
                             journal=self.journal, cancelled=self.cancelled, timeout=5)
         self.assertFalse(group_state(int((self.root / 'group').read_text())))
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX nested process groups')
+    async def test_outer_cancellation_cleans_up_process_groups_from_nested_supervisors(self):
+        leaf = (
+            'import os,pathlib,time; '
+            'pathlib.Path("ready").write_text(str(os.getpid())); time.sleep(8)'
+        )
+
+        def nested(command, journal):
+            return f"""
+import asyncio, pathlib, sys
+sys.path.insert(0, {str(ROOT / 'scripts')!r})
+from test_process import supervise
+
+async def main():
+    await supervise([sys.executable, '-c', {command!r}], cwd=pathlib.Path.cwd(),
+                    journal=pathlib.Path({journal!r}), cancelled=asyncio.Event(), timeout=7)
+
+asyncio.run(main())
+"""
+
+        task = asyncio.create_task(self.run_code(
+            nested(nested(leaf, 'deep-run'), 'nested-run'), timeout=6))
+        group = None
+        try:
+            await self.wait_ready()
+            group = int((self.root / 'ready').read_text())
+            self.assertTrue(group_state(group))
+            self.cancelled.set()
+            with self.assertRaisesRegex(RunFailed, 'cancelled.*cleanup verified'):
+                await task
+            self.assertFalse(group_state(group), 'detached nested worker survived cancellation')
+            self.assertFalse(self.journal.exists())
+        finally:
+            self.cancelled.set()
+            await asyncio.gather(task, return_exceptions=True)
+            if group is not None and group_state(group):
+                try:
+                    os.killpg(group, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
     @unittest.skipIf(os.name == 'nt', 'POSIX launch gate')
     async def test_gate_does_not_launch_without_permission(self):

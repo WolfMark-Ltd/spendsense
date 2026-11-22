@@ -2,6 +2,7 @@
 import asyncio
 import os
 import pathlib
+import shutil
 import signal
 import sys
 import tempfile
@@ -33,15 +34,42 @@ def group_state(group):
     return True
 
 
+def registry_groups(registry):
+    def entries():
+        try:
+            return list(registry.iterdir())
+        except FileNotFoundError:
+            # A nested supervisor can retire its registry after verification.
+            return []
+
+    def group_id(name):
+        if not (name.isascii() and name.isdecimal() and int(name) > 1):
+            raise RuntimeError(f'invalid process ownership record: {name}')
+        return int(name)
+
+    # Observe the worker before enumerating the records it can publish. If
+    # it is still live we will rescan; otherwise those records are final.
+    live = set()
+    for marker in entries():
+        if marker.name.startswith('worker-'):
+            group = group_id(marker.name.removeprefix('worker-'))
+            if group_state(group):
+                live.add(group)
+    for marker in entries():
+        if marker.name.startswith('worker-'):
+            continue
+        if marker.name.startswith('processes-'):
+            live.update(registry_groups(marker))
+        else:
+            group = group_id(marker.name)
+            if group_state(group):
+                live.add(group)
+    return live
+
+
 def live_groups(root, registry):
-    live = [root] if group_state(root) else []
-    for marker in registry.iterdir():
-        if not marker.name.isdecimal() or int(marker.name) <= 1:
-            raise RuntimeError(f'invalid process ownership record: {marker.name}')
-        group = int(marker.name)
-        if group_state(group):
-            live.append(group)
-    return sorted(set(live))
+    live = {root} if group_state(root) else set()
+    return sorted(live | registry_groups(registry))
 
 
 async def settle_groups(root, registry, grace, natural_exit=False):
@@ -80,7 +108,10 @@ async def supervise(command, *, cwd, journal, cancelled, timeout=300, grace=2, c
         raise RunFailed('cancelled before launch')
     started = time.monotonic()
     windows = os.name == 'nt'
-    registry = pathlib.Path(tempfile.mkdtemp(prefix='processes-', dir=journal.parent))
+    # Publish nested registries before spawning anything. Their owners may
+    # die before cleanup, so the parent must be able to find every group.
+    inherited = os.environ.get('SPENDSENSE_TEST_REGISTRY') if not windows else None
+    registry = pathlib.Path(tempfile.mkdtemp(prefix='processes-', dir=inherited or journal.parent))
     journal.write_text(str(registry), encoding='utf-8')
     env = dict(os.environ, SPENDSENSE_TEST_REGISTRY=str(registry),
                SPENDSENSE_TEST_PYTHON=sys.executable)
@@ -102,7 +133,7 @@ async def supervise(command, *, cwd, journal, cancelled, timeout=300, grace=2, c
                 stdin=asyncio.subprocess.PIPE,
                 stdout=output if capture else None,
             )
-            (registry / str(child.pid)).touch(exist_ok=False)
+            (registry / f'worker-{child.pid}').touch(exist_ok=False)
             if job:
                 job.assign(child.pid)
             await asyncio.sleep(0)
@@ -139,9 +170,7 @@ async def supervise(command, *, cwd, journal, cancelled, timeout=300, grace=2, c
                         # Rescan detached groups after observing the worker group.
                         cleanup, leaked = await settle_groups(child.pid, registry, grace, natural_exit=not reason)
                     await asyncio.wait_for(child.wait(), timeout=3)
-                for marker in registry.iterdir():
-                    marker.unlink()
-                registry.rmdir()
+                shutil.rmtree(registry)
                 journal.unlink()
             except Exception as error:
                 raise RunFailed(f'{command[-1]} ({time.monotonic() - started:.2f}s, exit '
