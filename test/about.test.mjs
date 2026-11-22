@@ -17,7 +17,7 @@ import { overviewHealth } from './overview-fixtures.mjs'
 const harness = await loadPageHarness()
 const { T, React, ReactDOMClient, QueryClientProvider, queryClient, i18nBackend, plugin, dom, flush } = harness
 
-plugin.register({
+const baseCtx = {
   rest: async path => {
     if (path === '/health') return overviewHealth(T.REQUIRED_BACKEND_CONTRACT)
     return { ok: true }
@@ -27,7 +27,18 @@ plugin.register({
   setTimeout: fn => { const timer = setTimeout(fn, 0); return () => clearTimeout(timer) },
   setInterval: () => () => {}, addEventListener: () => () => {},
   os: {}, pet: null, i18n: { register() {}, t: key => key },
-})
+}
+plugin.register(baseCtx)
+
+/**
+ * Re-register with a stubbed OS door, restoring the doorless ctx after.
+ * osApi is module state set by register, so this drives the real host-door
+ * branch of external links without touching any other suite state.
+ */
+const withOsApi = async (os, fn) => {
+  plugin.register({ ...baseCtx, os })
+  try { await fn() } finally { await React.act(async () => { plugin.register(baseCtx) }) }
+}
 
 const roots = []
 
@@ -139,12 +150,19 @@ test('the FAQ answers the provider-mismatch question, collapsed by default', asy
   assert.equal(guide.getAttribute('target'), '_blank')
 })
 
+test('Help & FAQ is its own discoverable section', async () => {
+  const container = await boot()
+  const faqSection = container.querySelector('.wm-about-faq-section')
+  assert.ok(faqSection)
+  assert.equal(flat(faqSection.querySelector('h2')?.textContent), 'Help & FAQ')
+  assert.equal(faqSection.querySelector('#about-faq')?.tagName, 'DETAILS')
+})
+
 test('more information keeps privacy, licence, credits and contact', async () => {
   const container = await boot()
   const more = container.querySelector('.wm-about-more')
   assert.deepEqual([...more.querySelectorAll('details > summary')].map(s => flat(s.textContent)),
-    ['Why don’t my SpendSense figures match my provider’s usage or billing dashboard?',
-      'Privacy', 'Licence & credits'])
+    ['Privacy', 'Licence & credits'])
   assert.match(flat(more.textContent), /does not collect prompts, responses or telemetry/)
   assert.match(flat(more.textContent), /GPL-3\.0/)
   assert.match(flat(more.textContent), /AFei/)
@@ -161,6 +179,9 @@ test('Chinese labels render through the dictionary', async () => {
   assert.equal(tabs.at(-1).getAttribute('aria-label'), '关于与支持')
   assert.deepEqual([...container.querySelectorAll('.wm-about-action strong')].map(s => flat(s.textContent)),
     ACTION_LABELS.zh)
+  assert.deepEqual([...container.querySelectorAll('.wm-about-group h3')].map(s => flat(s.textContent)),
+    ['帮助资源', '参与贡献', 'WolfMark'])
+  assert.equal(flat(container.querySelector('.wm-about-faq-section h2')?.textContent), '帮助与常见问题')
   assert.equal(flat(container.querySelector('.wm-about-kofi')?.textContent), '在 Ko-fi 上支持')
   assert.equal(flat(container.querySelector('#about-faq summary')?.textContent),
     '为什么 SpendSense 的数据与服务商的用量或账单面板对不上？')
@@ -179,4 +200,91 @@ test('goAboutFaq reveals and focuses the FAQ exactly once', async () => {
     'the summary stays in the normal keyboard tab order')
   const replay = await boot()
   assert.equal(replay.querySelector('#about-faq').open, false, 'a satisfied request never replays itself')
+})
+
+test('the hero showcases the WolfMark company lockup beside the SpendSense marque', async () => {
+  const container = await boot()
+  const hero = container.querySelector('.wm-about-hero')
+  assert.equal(hero.querySelectorAll('svg').length, 2)
+  const lockup = hero.querySelector('.wm-about-company svg')
+  assert.ok(lockup)
+  assert.equal(lockup.getAttribute('aria-label'), 'WolfMark')
+  assert.equal(lockup.querySelectorAll('path').length, 9)
+  assert.match(flat(hero.querySelector('.wm-about-developer')?.textContent), /WolfMark Ltd/)
+})
+
+test('the six actions stay ordered under three group headings', async () => {
+  const container = await boot()
+  const groups = [...container.querySelectorAll('.wm-about-group')]
+  assert.deepEqual(groups.map(g => flat(g.querySelector('h3')?.textContent)),
+    ['Help resources', 'Contribute', 'WolfMark'])
+  assert.deepEqual(groups.map(g => g.querySelectorAll('.wm-about-action').length), [2, 2, 2])
+})
+
+test('action and Ko-fi clicks call the host external opener with the exact URLs', async () => {
+  const seen = []
+  await withOsApi({ openExternal: async url => { seen.push(url); return true } }, async () => {
+    const container = await boot()
+    for (const action of container.querySelectorAll('.wm-about-action')) {
+      await React.act(async () => { action.click() })
+    }
+    await React.act(async () => { container.querySelector('.wm-about-kofi').click() })
+    await flush()
+    assert.deepEqual(seen, [...ACTION_URLS, 'https://ko-fi.com/wolfmark'])
+  })
+})
+
+test('clicks fall back to the desktop preload bridge when ctx.os lacks the door', async () => {
+  const seen = []
+  window.hermesDesktop = { openExternal: async url => { seen.push(url); return true } }
+  try {
+    const container = await boot()
+    await React.act(async () => { container.querySelector('.wm-about-action').click() })
+    await flush()
+    assert.deepEqual(seen, [ACTION_URLS[0]])
+  } finally {
+    delete window.hermesDesktop
+  }
+})
+
+test('a false OS result falls through to the preload bridge', async () => {
+  const osSeen = []
+  const bridgeSeen = []
+  window.hermesDesktop = { openExternal: async url => { bridgeSeen.push(url); return true } }
+  try {
+    await withOsApi({ openExternal: async url => { osSeen.push(url); return false } }, async () => {
+      const container = await boot()
+      await React.act(async () => { container.querySelector('.wm-about-action').click() })
+      await flush()
+      assert.deepEqual(osSeen, [ACTION_URLS[0]])
+      assert.deepEqual(bridgeSeen, [ACTION_URLS[0]])
+    })
+  } finally {
+    delete window.hermesDesktop
+  }
+})
+
+test('a throwing OS opener falls through to the preload bridge', async () => {
+  const osSeen = []
+  const bridgeSeen = []
+  window.hermesDesktop = { openExternal: async url => { bridgeSeen.push(url); return true } }
+  try {
+    await withOsApi({ openExternal: async url => { osSeen.push(url); throw new Error('door slammed') } }, async () => {
+      const container = await boot()
+      await React.act(async () => { container.querySelector('.wm-about-action').click() })
+      await flush()
+      assert.deepEqual(osSeen, [ACTION_URLS[0]])
+      assert.deepEqual(bridgeSeen, [ACTION_URLS[0]])
+    })
+  } finally {
+    delete window.hermesDesktop
+  }
+})
+
+test('clicks keep native navigation when no host door exists', async () => {
+  const container = await boot()
+  const link = container.querySelector('.wm-about-action')
+  const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+  await React.act(async () => { link.dispatchEvent(event) })
+  assert.equal(event.defaultPrevented, false)
 })
