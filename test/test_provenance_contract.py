@@ -345,6 +345,54 @@ class ProvenanceContractTests(unittest.TestCase):
         self.assertEqual(valuation["savings_bound_reason"], "context_tier_unknown")
         self.assertIsNone(valuation["savings_usd"])
 
+    def test_every_indeterminate_basis_withholds_the_figure(self):
+        """An indeterminate basis is not a bound, whatever the cause.
+
+        A reachable context tier, an unpublished read price, an unpublished
+        write price and mixed premium/discount evidence all leave the direction
+        unknowable. Publishing the recorded-counter arithmetic beside that
+        basis presents a figure the evidence cannot support — and makes the
+        session summary disagree with the Usage view, which renders it as a
+        bound. The counterfactual stays measurable either way.
+        """
+        cases = {
+            "write_rate_missing": [
+                {"provider": "noprice", "input_tokens": 1_000,
+                 "cache_read_tokens": 9_000, "cache_write_reported": 0}],
+            "read_rate_missing": [
+                {"provider": "noread", "input_tokens": 1_000, "cache_write_tokens": 500,
+                 "cache_write_reported": 1, "cache_read_reported": 0}],
+            "mixed_read_write_evidence": [
+                {"provider": "premium", "input_tokens": 1_000, "cache_read_tokens": 9_000},
+                {"provider": "discount", "input_tokens": 1_000, "cache_read_tokens": 9_000}],
+        }
+        for reason, rows in cases.items():
+            with self.subTest(reason=reason):
+                if self.events.exists():
+                    os.remove(self.events)
+                self.create_events(rows)
+                valuation = self.summary(session_id="s1")["valuation"]
+                self.assertEqual(valuation["savings_basis"], "indeterminate")
+                self.assertEqual(valuation["savings_bound_reason"], reason)
+                self.assertIsNone(valuation["savings_usd"],
+                                  "an indeterminate basis must not publish a figure")
+                self.assertIsNone(valuation["savings_usd_high"])
+                self.assertIsNotNone(valuation["uncached_usd"])
+                self.assertIsNotNone(valuation["cached_usd"])
+
+    def test_both_surfaces_withhold_the_same_indeterminate_figure(self):
+        """The Usage view and the session summary answer with one rule."""
+        self.create_events([{"provider": "noprice", "input_tokens": 1_000,
+                             "cache_read_tokens": 9_000}])
+        summary = self.summary(session_id="s1")["valuation"]
+        econ = analytics.build_analytics_report(
+            self.events, state_db_path=self.state, now=NOW,
+            catalogue=self.book, days=1)["economics"]
+        self.assertEqual(summary["savings_basis"], econ["savings_basis"])
+        self.assertEqual(summary["savings_bound_reason"], econ["savings_bound_reason"])
+        self.assertIsNone(summary["savings_usd"])
+        self.assertIsNone(econ["savings_usd"])
+
     def test_unreported_writes_above_every_tier_keep_the_direction(self):
         self.create_events([{"provider": "tiered", "input_tokens": 272_001,
                              "cache_read_reported": 1}])

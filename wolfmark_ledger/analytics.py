@@ -353,7 +353,12 @@ class _AnalyticsAcc:
                 savings_usd_high = high
         else:
             savings_basis, savings_reason = basis, bound_reason
-            if savings_basis is None or savings_reason == "context_tier_unknown":
+            # An indeterminate basis is not a bound: the true value can move in
+            # either direction, so the recorded-counter arithmetic must not be
+            # published as a figure. Withhold it for every indeterminate cause
+            # (reachable context tier, missing read price, missing write price,
+            # mixed directions), matching what a reader is told by the basis.
+            if savings_basis is None or savings_basis == "indeterminate":
                 savings_usd = None
         if base["unpriced_tokens"]:
             api_basis, api_reason, api_high = "incomplete", "unpriced_tokens", None
