@@ -24,14 +24,14 @@ const ACTION_URLS = [
 const KOFI_URL = 'https://ko-fi.com/wolfmark'
 const CASES = {
   en: {
-    heads: ['SpendSense 0.6.19', 'Get help and get involved', 'Support WolfMark Development', 'More information'],
+    heads: ['SpendSense 0.6.19', 'Get help and get involved', 'Support WolfMark Development', 'Help & FAQ', 'More information'],
     kofi: 'Support on Ko-fi',
     faqQ: 'Why don’t my SpendSense figures match my provider’s usage or billing dashboard?',
     privacy: 'Privacy',
     licence: 'Licence & credits',
   },
   zh: {
-    heads: ['SpendSense 0.6.19', '获取帮助与参与', '支持 WolfMark 开发', '更多信息'],
+    heads: ['SpendSense 0.6.19', '获取帮助与参与', '支持 WolfMark 开发', '帮助与常见问题', '更多信息'],
     kofi: '在 Ko-fi 上支持',
     faqQ: '为什么 SpendSense 的数据与服务商的用量或账单面板对不上？',
     privacy: '隐私',
@@ -130,8 +130,8 @@ begin()
       assert.equal(data.calls, 0, `${locale}: no transport or host requests`)
       assert.equal(data.layouts.length, 4, locale)
       for (const layout of data.layouts) {
-        assert.deepEqual(layout.heads, CASES[locale].heads, `${locale} ${layout.id}: hero, actions, support, more`)
-        assert.equal(layout.heroSvg, 1, `${locale} ${layout.id}: hero carries the marque`)
+        assert.deepEqual(layout.heads, CASES[locale].heads, `${locale} ${layout.id}: hero, actions, support, faq, more`)
+        assert.equal(layout.heroSvg, 2, `${locale} ${layout.id}: hero carries the marque and company lockup`)
         assert.deepEqual(layout.actionHrefs, ACTION_URLS, `${locale} ${layout.id}: actions in order`)
         assert.ok(layout.actionTargets.every(t => t === '_blank|noreferrer'), `${locale} ${layout.id}`)
         assert.equal(layout.kofiHref, KOFI_URL, `${locale} ${layout.id}: exact Ko-fi URL`)
@@ -142,7 +142,7 @@ begin()
         assert.equal(layout.embeds, 0, `${locale} ${layout.id}: no payment widgets, scripts or iframes`)
         assert.equal(layout.faqQ, CASES[locale].faqQ, `${locale} ${layout.id}`)
         assert.equal(layout.faqClosed, true, `${locale} ${layout.id}`)
-        assert.deepEqual(layout.moreSummaries, [CASES[locale].faqQ, CASES[locale].privacy, CASES[locale].licence], `${locale} ${layout.id}`)
+        assert.deepEqual(layout.moreSummaries, [CASES[locale].privacy, CASES[locale].licence], `${locale} ${layout.id}`)
         assert.deepEqual(layout.overflow, [], `${locale} ${layout.id}`)
         assert.equal(layout.tabs.length, 8, `${locale} ${layout.id}: eight-tab navigation kept`)
         assert.equal(layout.tabs.filter(t => t.startsWith('true:')).length, 1, `${locale} ${layout.id}`)
