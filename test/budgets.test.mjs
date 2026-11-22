@@ -118,6 +118,10 @@ test('legacy, unpriced, unknown-rate and cross-gateway activity never become com
     assert.equal(result.usageValuePriced, 0)
     assert.equal(result.usageValueMissing, 100)
   }
+  const retentionRates = { ...good.rates, write: 2, usageWriteKnown: true, cacheWriteRates: [{ rate: 2 }, { rate: 4 }] }
+  const writes = { input: 0, output: 0, cacheRead: 0, cacheWrite: 100 }
+  assert.equal(T.usageValueDelta(null, writes, { ...good, rates: retentionRates }).usageValueMissing, 100)
+  assert.equal(T.usageValueDelta(null, writes, { ...good, rates: { ...retentionRates, cacheWriteRates: [{ rate: 2 }] } }).usageValuePriced, 100)
   await usage(800000)
   const live = { guardrailValue: T.$ledger.get().sessions.conversation }
   assert.equal(T.sessionBudgetStatus(live, [b()]).level, 'warning')

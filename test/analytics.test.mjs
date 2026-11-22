@@ -251,11 +251,13 @@ test('custom rate overrides and account labels persist in the payload', () => {
 
 test('insights name the driver, cache verdict and delegated share from existing data', () => {
  const data={totals:{list_usd:10,tokens:100},by_model:[{model:'m1',provider:'p1',list_usd:6},{model:'m2',provider:'p2',list_usd:4}],
-   economics:{savings_usd:-1,coverage:.5},by_scope:[{scope:'subagent',tokens:40,calls:3}]}
+   economics:{savings_usd:-1,savings_basis:'exact',coverage:.5},by_scope:[{scope:'subagent',tokens:40,calls:3}]}
  const found=T.analyticsInsights(data)
  assert.deepEqual(found.map(i=>i.label),['Biggest driver','Cache verdict','Delegated work'])
  assert.match(found[0].text,/M1 via p1 is 60\.0%/)
  assert.match(found[1].text,/writes cost/)
+ data.economics = { savings_usd: -1, savings_usd_high: 1, savings_basis: 'range' }
+ assert.match(T.analyticsInsights(data)[1].text, /direction is uncertain/)
  assert.equal(T.deltaText(.125),'▲ 12.5% vs previous period')
  assert.equal(T.deltaText(null),null)
  assert.match(T.analyticsExplorerCsv([{model:'=m',provider:'p',calls:2,tokens:100,list_usd:4,per_call:2,per_million:40000,cache_hit_rate:.5}]),/usd_per_call/)

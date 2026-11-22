@@ -561,6 +561,8 @@ test('a backend API-equivalent range keeps both endpoints in the pane and chip f
   await flush()
   try {
     assert.match(meter.querySelector('.wm-kpi-figure').textContent, /≈\$0\.202–\$0\.502/)
+    assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'backend_summary', costBasis: 'indeterminate', costPartial: true }), '≈$2.00')
+    assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'local', costPartial: true }), '≈$2.00+')
     assert.equal(T.apiEquivalentDisplay({ cost: .202, costHigh: .502, costSource: 'backend_summary',
       costBasis: 'range', costPartial: true }), meter.querySelector('.wm-kpi-figure').textContent,
     'the status chip uses the same formatter as the pane Cost KPI')

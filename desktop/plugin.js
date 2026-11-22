@@ -496,6 +496,7 @@ function cacheSavingsBounds(cacheRead, rates, cacheWrite = 0,
 
   const readCoefficients = needsReadRates ? candidates.map(row => row.input - row.cache) : [0]
   let writeCoefficients = [0]
+  let writeOptions = candidates.map(() => [0])
   if (write || uncertain || splitReadWriteUncertainty || anySplitUncertainty) {
     if (candidates.some(row => row.cacheWriteRetentionUnknown)) return null
     const optionsFor = row => {
@@ -504,14 +505,17 @@ function cacheSavingsBounds(cacheRead, rates, cacheWrite = 0,
       return []
     }
     const options = candidates.map(optionsFor)
+    writeOptions = options
     if (options.some(rowOptions => !rowOptions.length)) return null
     writeCoefficients = candidates.flatMap((row, index) =>
       options[index].map(rate => row.input - rate))
     if (!writeCoefficients.length) return null
   }
 
-  let min = (read * Math.min(...readCoefficients) + write * Math.min(...writeCoefficients)) / M
-  let max = (read * Math.max(...readCoefficients) + write * Math.max(...writeCoefficients)) / M
+  const rowValues = candidates.flatMap((row, i) => writeOptions[i].map(rate =>
+    (read * (needsReadRates ? row.input - row.cache : 0) + write * (row.input - rate)) / M))
+  let min = Math.min(...rowValues)
+  let max = Math.max(...rowValues)
   if (uncertain) {
     const possible = [0, ...readCoefficients, ...writeCoefficients]
     const spread = Math.max(...possible) - Math.min(...possible)
@@ -2114,7 +2118,7 @@ function backendSummaryBucket(state) {
     cacheReadEvidence: state.evidence.read,
     cacheWriteEvidence: state.evidence.write,
     unpricedTokens: num(totals.unpriced_tokens),
-    unpricedCalls: num(valuation.excluded_calls),
+    unpricedCalls: finiteValue(totals.unpriced_calls),
     missingUsageCalls: 0,
     coverageUnknown: Number(valuation.covered_calls) < num(totals.calls)
   }
@@ -2685,7 +2689,7 @@ function Chip() {
 
   const warn = live.costSource === 'foreign' || live.costSource === 'none'
   return jsx(Tip, {
-    label: (guard ? budgetTooltip(guard, t) + (budgetRead.error ? ' · ' + t('budgetStale') : '') + ' · ' : '') + liveScopeLabel + '\n' + t(
+    label: (guard ? budgetTooltip(guard, t) + (budgetRead.error ? ' · ' + t('budgetStale') : '') + ' · ' + t('scopeLocalBudget') + '\n' : '') + liveScopeLabel + '\n' + t(
       'chipTip',
       live.model || '—',
       guard?.spend != null ? t('budgetEstimated') : sourceLabel(t, live.costSource, live.foreignSlug, live.providerUnknown),
@@ -3169,7 +3173,7 @@ function apiEquivalentDisplay(view) {
   }
   if (basis === 'lower_bound') return `≥${fmtUsd(value)}`
   if (basis === 'upper_bound') return `≤${fmtUsd(value)}`
-  return `${approximate || view.costPartial ? '≈' : ''}${fmtUsd(value)}${view.costPartial ? '+' : ''}`
+  return `${approximate || view.costPartial ? '≈' : ''}${fmtUsd(value)}${view.costPartial && view.costSource !== 'backend_summary' ? '+' : ''}`
 }
 
 /** Translation key per unresolved-savings reason. Never interpolate the key
@@ -3717,9 +3721,10 @@ function analyticsInsights(data, t = needsAttentionEn) {
       model:top.model,provider:top.provider})
   }
   const e = data?.economics || totals.economics || {}
-  if (finiteValue(e.savings_usd) != null) insights.push({label: t('usageInsightVerdict'), text: e.savings_usd < 0
-    ? t('usageInsightVerdictLoss', analyticMoney(-e.savings_usd))
-    : t('usageInsightVerdictSave', analyticMoney(e.savings_usd), percent(e.coverage))})
+  if (finiteValue(e.savings_usd) != null) insights.push({label: t('usageInsightVerdict'), text: e.savings_basis !== 'exact'
+    ? t('usageInsightVerdictUnknown')
+    : e.savings_usd < 0 ? t('usageInsightVerdictLoss', analyticMoney(-e.savings_usd))
+      : t('usageInsightVerdictSave', analyticMoney(e.savings_usd), percent(e.coverage))})
   const scopes = Object.fromEntries((data?.by_scope || []).map(r => [r.scope, r]))
   const sub = scopes.subagent
   if (sub && num(totals.tokens)) insights.push({label: t('usageInsightDelegated'),
@@ -5301,11 +5306,13 @@ function usageValueDelta(previous, delta, resolved, scope = membershipScopeNow()
   const exact = ['backend', 'live', 'remembered', 'bundled'].includes(resolved?.origin)
   const rates = resolved?.rates
   const known = value => typeof value === 'number' && Number.isFinite(value) && value >= 0
+  const writeRates = rates?.cacheWriteRates || []
+  const retentionUnknown = new Set(writeRates.map(option => option.rate)).size > 1
   const covered = !evidence.coalesced && rates?.usagePricingVersion === 2 && rates.usageTierKnown === true &&
     (!num(delta.input) || rates.usageInputKnown === true && known(rates.input)) &&
     (!num(delta.output) || rates.usageOutputKnown === true && known(rates.output)) &&
     (!num(delta.cacheRead) || rates.usageCacheKnown === true && known(rates.cache)) &&
-    (!num(delta.cacheWrite) || rates.usageWriteKnown === true && known(rates.write)) &&
+    (!num(delta.cacheWrite) || rates.usageWriteKnown === true && known(rates.write) && !retentionUnknown) &&
     !num(delta.cacheUnknown) && evidence.cacheDeltaUnclassified !== true
   const priced = exact && covered ? costOf(delta, { input: rates.input ?? 0, output: rates.output ?? 0,
     cache: rates.cache ?? 0, write: rates.write ?? 0 }) : null
@@ -15440,6 +15447,7 @@ const I18N = {
     inclEstimatedCache: ' · incl. estimated cache',
     inclPartialCache: ' · incl. partial cache evidence',
     scopeMainCalls: 'main calls',
+    scopeLocalBudget: 'local session budget estimate',
     scopeLocalConversationEstimate: 'local conversation estimate',
     scopeLocalRunEstimate: 'focused run estimate',
     coverageScopeMainCalls: 'main calls in this focused session',
@@ -15493,7 +15501,7 @@ const I18N = {
     today: 'today',
     total: 'Total',
     unpricedNote: n => `${n} tokens had no known rate and are not in the total (shown as ≥).`,
-    unpricedCallsNote: n => `${n} calls had no known rate and are not in the total (shown as ≥).`,
+    unpricedCallsNote: n => `${n} calls have incomplete pricing or usage evidence.`,
     missingUsageCallsNote: n => `${n} calls lacked usage data and are not in the API-equivalent total (shown as ≥).`,
     ledgerReadErrorTitle: 'Desktop ledger unavailable; recording is paused.',
     ledgerReadErrorBody: 'SpendSense could not safely read the saved Desktop ledger. The stored data was left unchanged. Restore a known-good backup before recording resumes.',
@@ -15839,6 +15847,7 @@ const I18N = {
     usageInsightDriver: 'Biggest driver',
     usageInsightDriverText: (model, provider, share) => `${model} via ${provider} is ${share} of priced API-equivalent cost.`,
     usageInsightVerdict: 'Cache verdict',
+    usageInsightVerdictUnknown: 'Cache savings direction is uncertain; see Cache economics for the qualified value.',
     usageInsightVerdictLoss: money => `Cache writes cost ${money} more than reads save on covered calls. See Cache economics.`,
     usageInsightVerdictSave: (money, coverage) => `Caching saves a theoretical ${money} on covered calls (${coverage} covered).`,
     usageInsightDelegated: 'Delegated work',
@@ -16083,7 +16092,7 @@ const I18N = {
     usagePopulationEvidenceNote: 'Usage totals cover timestamped backend call rows in the selected filters. Main/auxiliary scope is available only where call classification was recorded; unclassified calls are not assumed to be main. API-equivalent value and cache savings use backend pricing evidence, not provider charges.',
     rpEvidenceNote: 'Report totals cover timestamped captured backend calls in this period. Population depends on recorded call classification; unknown cache evidence and unpriced routes remain disclosed in Coverage and Methodology. API-equivalent valuation is not a provider charge or subscription saving.',
     usageRecordingPending: 'not yet available',
-    usageCacheFormula: 'Cache hit = reported read tokens ÷ prompt tokens with reported cache evidence, weighted across calls. Estimated or derived counters are labelled; missing reads or writes remain unknown and are excluded from that denominator. Legacy zero-cache rows are ambiguous.',
+    usageCacheFormula: 'Cache hit = reported read tokens ÷ prompt tokens for calls with a reported read count, weighted across calls. Missing reads are excluded; missing writes remain unknown, not zero, and do not exclude a call. Estimated or derived counters are labelled. Legacy zero-cache rows are ambiguous.',
     usageMethodologyTitle: 'Methodology & coverage details',
     usageBaselineSummaryTitle: 'Historical baseline & reconciliation — separate cumulative estimate',
   },
@@ -17092,6 +17101,7 @@ const I18N = {
     inclEstimatedCache: ' · 含估算缓存',
     inclPartialCache: ' · 含部分缓存证据',
     scopeMainCalls: '主调用',
+    scopeLocalBudget: '本地会话预算估算',
     scopeLocalConversationEstimate: '本地对话估算',
     scopeLocalRunEstimate: '当前运行估算',
     coverageScopeMainCalls: '此焦点会话中的主调用',
@@ -17152,7 +17162,7 @@ const I18N = {
     today: '今日',
     total: '合计',
     unpricedNote: n => `有 ${n} 令牌没有可用单价，未计入总额（显示为 ≥）。`,
-    unpricedCallsNote: n => `有 ${n} 次调用没有可用单价，未计入总额（显示为 ≥）。`,
+    unpricedCallsNote: n => `有 ${n} 次调用的定价或用量证据不完整。`,
     missingUsageCallsNote: n => `有 ${n} 次调用缺少用量数据，未计入 API 等值总额（显示为 ≥）。`,
     ledgerReadErrorTitle: '桌面账本不可用；记录已暂停。',
     ledgerReadErrorBody: 'SpendSense 无法安全读取已保存的桌面账本。存储数据未更改。请先从已知完好的备份恢复，然后再恢复记录。',
@@ -17558,6 +17568,7 @@ const I18N = {
     usageInsightDriver: '最大驱动',
     usageInsightDriverText: (model, provider, share) => `${model} 经 ${provider} 占已定价 API 等值成本的 ${share}。`,
     usageInsightVerdict: '缓存结论',
+    usageInsightVerdictUnknown: '缓存节省的方向尚不确定；请查看缓存经济中的有条件估算。',
     usageInsightVerdictLoss: money => `在覆盖调用上，缓存写入成本比读取节省多 ${money}。见“缓存经济”。`,
     usageInsightVerdictSave: (money, coverage) => `在覆盖调用上，缓存理论上节省 ${money}（覆盖率 ${coverage}）。`,
     usageInsightDelegated: '委派工作',
@@ -17802,7 +17813,7 @@ const I18N = {
     usagePopulationEvidenceNote: '用量合计涵盖所选筛选条件下带时间戳的后端调用记录。只有记录了调用分类时才能区分主调用与辅助调用；未分类调用不会被假设为主调用。API 等值和缓存节省使用后端价格证据，不是供应商费用。',
     rpEvidenceNote: '报告合计涵盖此期间带时间戳的后端调用记录。总体范围取决于已记录的调用分类；覆盖率和方法说明会披露未知缓存证据和未定价线路。API 等值估价不是供应商费用或订阅节省。',
     usageRecordingPending: '暂不可用',
-    usageCacheFormula: '缓存命中 = 已报告的读取令牌 ÷ 具有已报告缓存证据的提示令牌，按调用加权。估算或推算的计数会明确标注；缺失的读取或写入保持未知，并从分母中排除。旧零缓存行含义不明。',
+    usageCacheFormula: '缓存命中 = 已报告的读取令牌 ÷ 报告了读取计数的调用的提示令牌，按调用加权。缺失读取的调用不计入；缺失写入保持未知而非零，不影响调用计入。估算或推算的计数会明确标注。旧零缓存行含义不明。',
     usageMethodologyTitle: '方法与覆盖详情',
     usageBaselineSummaryTitle: '历史基线与对账——独立累计估算',
   }
