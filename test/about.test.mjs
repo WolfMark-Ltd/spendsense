@@ -213,6 +213,23 @@ test('the hero showcases the WolfMark company lockup beside the SpendSense marqu
   assert.match(flat(hero.querySelector('.wm-about-developer')?.textContent), /WolfMark Ltd/)
 })
 
+test('the company lockup reproduces the approved master exactly', async () => {
+  const container = await boot()
+  const company = container.querySelector('.wm-about-company')
+  const lockup = company.querySelector('svg')
+  assert.equal(lockup.getAttribute('viewBox'), '232.558 267.748 1360.585 336.056')
+  const paths = [...lockup.querySelectorAll('path')]
+  assert.equal(paths.length, 9)
+  // The master marks the O, A and R counters fill-rule evenodd; without it
+  // the default nonzero rule fills the R bowl and the A counter (F150).
+  paths.forEach((path, index) => {
+    assert.equal(path.getAttribute('fill-rule'), [2, 6, 7].includes(index) ? 'evenodd' : null)
+  })
+  assert.equal(company.children[0].className, 'wm-about-developer')
+  assert.equal(company.children[1].tagName, 'svg',
+    'the developer caption leads into the company signature lockup')
+})
+
 test('the six actions stay ordered under three group headings', async () => {
   const container = await boot()
   const groups = [...container.querySelectorAll('.wm-about-group')]
