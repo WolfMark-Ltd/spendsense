@@ -188,7 +188,22 @@ def _call_economics(row: dict[str, Any], book: Catalogue, *,
     if row["_cache_read"] and rate.cache_read is None:
         return None, "missing_cache_read_rate"
     if row["_cache_write"] and rate.cache_write is None:
-        return None, "missing_cache_write_rate"
+        # The write term cannot be priced, so this call stays out of the net
+        # comparison and out of coverage — but its read discount does not
+        # depend on the write price. Keep that one term (the published
+        # definition covers calls with a proven read counter and a published
+        # read price) and let the caller record the net gap as before.
+        benefit = None
+        if read_known and rate.cache_read is not None:
+            benefit = (row["_cache_read"]
+                       * (float(rate.input) - float(rate.cache_read)) / 1_000_000)
+        if benefit is None:
+            return None, "missing_cache_write_rate"
+        return {"uncached": None, "cached": None,
+                "savings_low": 0.0, "savings_high": 0.0,
+                "retention_range": False, "savings": [], "premium": None,
+                "read_benefit": benefit,
+                "read_benefit_direction": None}, "missing_cache_write_rate"
     uncached = (prompt * rate.input + row["_output"] * rate.output) / 1_000_000
     cached = (row["_input"] * rate.input + row["_output"] * rate.output
               + row["_cache_read"] * (rate.cache_read or 0)
@@ -302,7 +317,18 @@ class _AnalyticsAcc:
         self.write_prov.add(row.get("_cache_write_reported"), row["_cache_write"])
         self.known_write_tokens += row["_cache_write"]
         economics = row["_economics"]
-        if economics is None:
+        if economics is None or economics.get("uncached") is None:
+            # A partially priced call: the net comparison is impossible (the
+            # gap below records why), but a proven read keeps its discount.
+            if economics is not None:
+                benefit = economics.get("read_benefit")
+                if benefit is None:
+                    self.read_benefit_directions.add(
+                        economics.get("read_benefit_direction") or "unknown")
+                else:
+                    self.read_benefit_usd += benefit
+                    self.read_benefit_calls += 1
+                    self.read_benefit_tokens += row["_cache_read"]
             self.economics_gaps[row["_economics_gap"]] += 1
             self.excluded_tokens += prompt
         else:
@@ -428,7 +454,7 @@ class _AnalyticsAcc:
         # calls whose read counter is proven, and the basis says whether
         # anything is missing from it. An unproven read counter only adds value
         # when the card discounts reads, so the direction follows the card.
-        if not self.covered_calls:
+        if not self.covered_calls and not self.read_benefit_calls:
             read_benefit_basis, read_benefit_usd = None, None
         elif not self.read_benefit_directions:
             read_benefit_basis, read_benefit_usd = "exact", round(self.read_benefit_usd, 6)

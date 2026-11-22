@@ -406,6 +406,48 @@ class ProvenanceContractTests(unittest.TestCase):
         self.assertEqual(valuation["read_benefit_calls"], 1)
         self.assertEqual(valuation["read_benefit_tokens"], 9_000)
 
+    def test_read_benefit_survives_a_positive_unpriced_write(self):
+        """A priced read term is not lost because the write price is missing.
+
+        The call stays out of the net comparison and out of coverage; its read
+        discount is still exact, because the write term is not part of it.
+        """
+        self.create_events([{"provider": "noprice", "input_tokens": 1_000,
+                             "cache_read_tokens": 9_000, "cache_write_tokens": 500,
+                             "output_tokens": 100, "cache_read_reported": 1,
+                             "cache_write_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertIsNone(valuation["savings_usd"])
+        self.assertIsNone(valuation["savings_basis"])
+        self.assertEqual(valuation["read_benefit_basis"], "exact")
+        self.assertAlmostEqual(valuation["read_benefit_usd"], 0.0171, places=6)
+        self.assertEqual(valuation["read_benefit_calls"], 1)
+        self.assertEqual(valuation["read_benefit_tokens"], 9_000)
+        # Still excluded from the net population and from its coverage.
+        self.assertEqual(valuation["covered_calls"], 0)
+        self.assertEqual(valuation["excluded_calls"], 1)
+        self.assertEqual(valuation["gap_reasons"], {"missing_cache_write_rate": 1})
+        econ = analytics.build_analytics_report(
+            self.events, state_db_path=self.state, now=NOW,
+            catalogue=self.book, days=1)["economics"]
+        self.assertIsNone(econ["savings_usd"])
+        self.assertEqual(econ["read_benefit_basis"], "exact")
+        self.assertAlmostEqual(econ["read_benefit_usd"], 0.0171, places=6)
+        self.assertEqual(econ["covered_calls"], 0)
+        self.assertEqual(econ["excluded_calls"], 1)
+
+    def test_a_priced_write_keeps_the_read_term_in_the_net_population(self):
+        """The wider fix must not disturb a call that is fully comparable."""
+        self.create_events([{"provider": "premium", "input_tokens": 1_000,
+                             "cache_read_tokens": 9_000, "cache_write_tokens": 500,
+                             "output_tokens": 100, "cache_read_reported": 1,
+                             "cache_write_reported": 1}])
+        valuation = self.summary(session_id="s1")["valuation"]
+        self.assertEqual(valuation["covered_calls"], 1)
+        self.assertEqual(valuation["excluded_calls"], 0)
+        self.assertEqual(valuation["read_benefit_basis"], "exact")
+        self.assertAlmostEqual(valuation["read_benefit_usd"], 0.0171, places=6)
+
     def test_read_benefit_keeps_a_measured_zero(self):
         """A proven zero-read call is a measurement, not a gap."""
         self.create_events([{"provider": "premium", "input_tokens": 1_000,
