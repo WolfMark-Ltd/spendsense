@@ -561,6 +561,8 @@ test('every settings string exists in English and Chinese', () => {
     'aboutActionDocsDesc', 'aboutLinkHelp', 'aboutActionHelpDesc', 'aboutActionBugDesc',
     'aboutActionFeatureDesc', 'aboutActionRepoDesc', 'aboutActionWolfmarkDesc',
     'aboutSupportHeading', 'aboutSupportBody', 'aboutSupportCta', 'aboutSupportNote',
+    'aboutActionsHelpGroup', 'aboutActionsContributeGroup', 'aboutActionsWolfmarkGroup',
+    'aboutFaqHeading',
     'aboutMoreHeading', 'aboutFaqMismatchQ', 'aboutFaqMismatchA1', 'aboutFaqMismatchA2',
     'aboutFaqTroubleshooting', 'aboutPrivacyHeading', 'aboutPrivacyBody',
     'ovMethodChargesFaqLink', 'settingsPanePlacement']
