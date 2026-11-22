@@ -1,4 +1,4 @@
-// Run: node --test --test-force-exit test/*.test.mjs
+// Run: bash scripts/node-tests.sh browserless sidebar.test.mjs
 //
 // Live sidebar regressions — real React, real atoms, synthetic host state.
 // The hard requirement under test: the five sections stay mounted and keep
@@ -25,7 +25,7 @@ writeFileSync(entry, `
 export { default as plugin, __test as T } from '${join(ROOT, 'desktop', 'plugin.js')}'
 export * as React from 'react'
 export * as ReactDOMClient from 'react-dom/client'
-export { QueryClientProvider, queryClient, host, gatewayActivationEpoch, __bumpActivation } from '@hermes/plugin-sdk'
+export { QueryClientProvider, queryClient, host, i18nBackend, gatewayActivationEpoch, __bumpActivation } from '@hermes/plugin-sdk'
 `)
 const bundle = join(work, 'bundle.mjs')
 const esbuild = (await import(pathToFileURL(join(HARNESS_MODULES, 'esbuild', 'lib', 'main.js')).href)).default
@@ -60,7 +60,7 @@ define('Event', dom.window.Event)
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const lib = await import(pathToFileURL(bundle).href)
-const { plugin, T, React, ReactDOMClient, QueryClientProvider, queryClient, host, __bumpActivation } = lib
+const { plugin, T, React, ReactDOMClient, QueryClientProvider, queryClient, host, i18nBackend, __bumpActivation } = lib
 
 const storageSets = []
 const intervals = new Set()
@@ -824,6 +824,61 @@ test('info popovers open on keyboard focus', async () => {
   await flush(2)
   assert.equal(container.querySelector('.wm-info-pop'), null, 'blur closes the popover')
 })
+
+for (const [locale, label, wording] of [
+  ['en', 'Coverage details', /all prompt tokens for the current run/],
+  ['zh', '覆盖率说明', /本轮中具有精确或估算缓存拆分的提示词令牌 ÷ 全部提示词令牌/],
+]) {
+  test(`current-run Coverage help opens on focus and explains its scope (${locale})`, async () => {
+    resetHost()
+    host.state.focusedSessionId.set('s1')
+    host.state.focusedUsage.set(liveUsage({
+      model: 'deepseek/deepseek-v4.1-flash',
+      input: 100000, prompt: 600000, output: 10000, cache_read: 500000, cache_write: 0, calls: 1,
+    }))
+    const previousTranslate = i18nBackend.t
+    i18nBackend.t = (key, ...args) => {
+      const value = T.I18N[locale][key]
+      return typeof value === 'function' ? value(...args) : value ?? key
+    }
+    const errors = []
+    const recordError = event => errors.push(String(event.error || event.message || event.reason))
+    window.addEventListener('error', recordError)
+    window.addEventListener('unhandledrejection', recordError)
+    try {
+      const container = await renderMeter()
+      await flush()
+      const tipId = 'wm-info-cache-coverage'
+      const button = container.querySelector(`[aria-controls="${tipId}"]`)
+      assert.ok(button, 'Coverage help button renders')
+      assert.equal(button.getAttribute('aria-label'), label)
+      assert.equal(button.tabIndex, 0)
+      assert.equal(button.getAttribute('aria-expanded'), 'false')
+
+      await React.act(async () => { button.focus() })
+      await flush(2)
+      assert.equal(document.activeElement, button)
+      assert.equal(button.getAttribute('aria-expanded'), 'true')
+      assert.equal(button.getAttribute('aria-describedby'), tipId)
+      const help = container.querySelector(`#${tipId}`)
+      assert.ok(help, 'Coverage help text renders')
+      assert.match(help.textContent, wording)
+
+      await React.act(async () => {
+        button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      await flush(2)
+      assert.equal(button.getAttribute('aria-expanded'), 'false')
+      assert.equal(container.querySelector(`#${tipId}`), null)
+      assert.equal(document.activeElement, button, 'Escape leaves focus on Coverage help')
+      assert.deepEqual(errors, [], 'current-run Coverage help reports no runtime errors')
+    } finally {
+      window.removeEventListener('error', recordError)
+      window.removeEventListener('unhandledrejection', recordError)
+      i18nBackend.t = previousTranslate
+    }
+  })
+}
 
 test('a click never toggles shut what hover just opened', async () => {
   resetHost()
