@@ -50,7 +50,7 @@ Note: the dashboard web view intentionally shows only "Open SpendSense in Hermes
 
 ## Open SpendSense and find your way
 
-Open the **SpendSense** sidebar entry. The page has seven tabs:
+Open the **SpendSense** sidebar entry. The page has eight tabs:
 
 | Tab | What it answers |
 | --- | --- |
@@ -60,7 +60,8 @@ Open the **SpendSense** sidebar entry. The page has seven tabs:
 | Memberships | Which plan is each provider account on? |
 | Reports | A local 7- or 30-day Markdown digest. |
 | Model News | New models and price changes detected locally. |
-| Settings | Privacy controls, data recovery export, and About. |
+| Settings | Budgets, pricing, updates, billing, display, recovery and diagnostics. |
+| About & Support | Help, product information and supporting WolfMark. |
 
 The sixty-second tour: **Overview** for the headline figures, **Usage** for the model × route breakdown, **Memberships** to confirm your plans, and **Settings** when you need the recovery export.
 

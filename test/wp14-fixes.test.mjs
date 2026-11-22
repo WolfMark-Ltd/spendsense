@@ -114,17 +114,20 @@ test('WP14 MAJOR-5: ArrowRight from usage moves to costs, Home/End jump', async 
   T.LedgerTabs().props.onKeyDown(wp14Key('Home'))
   assert.equal(T.$ledgerTab.get(), 'overview')
   T.LedgerTabs().props.onKeyDown(wp14Key('End'))
-  assert.equal(T.$ledgerTab.get(), 'settings')
+  assert.equal(T.$ledgerTab.get(), 'about')
 })
 
 test('WP14 MAJOR-5: arrow navigation wraps at both ends', async () => {
   const T = await loadPlugin('en')
-  T.$ledgerTab.set('settings')
+  T.$ledgerTab.set('about')
   T.LedgerTabs().props.onKeyDown(wp14Key('ArrowRight'))
   assert.equal(T.$ledgerTab.get(), 'overview')
+  T.$ledgerTab.set('settings')
+  T.LedgerTabs().props.onKeyDown(wp14Key('ArrowRight'))
+  assert.equal(T.$ledgerTab.get(), 'about')
   T.$ledgerTab.set('overview')
   T.LedgerTabs().props.onKeyDown(wp14Key('ArrowLeft'))
-  assert.equal(T.$ledgerTab.get(), 'settings')
+  assert.equal(T.$ledgerTab.get(), 'about')
 })
 
 // Per-query dispatcher data for a full SettingsPage render.

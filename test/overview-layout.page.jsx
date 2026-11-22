@@ -92,7 +92,10 @@ const run = async () => {
         excess: element.scrollWidth - element.clientWidth, scrollWidth: element.scrollWidth,
         clientWidth: element.clientWidth, text: element.textContent }))
     const paneBounds = pane.getBoundingClientRect()
-    const buttons = [...pane.querySelectorAll('button')].filter(button => button.getClientRects().length)
+    // Collapsed disclosures keep layout boxes in newer Chrome but are never
+    // painted, so geometry assertions cover visible controls only.
+    const buttons = [...pane.querySelectorAll('button')]
+      .filter(button => button.getClientRects().length && !button.closest('details:not([open])'))
     const tabs = pane.querySelector('.wm-product-tabs')
     output.layouts.push({
       id, width: pane.clientWidth,

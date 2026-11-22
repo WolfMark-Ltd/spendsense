@@ -7,7 +7,7 @@
   <a href="https://github.com/WolfMark-Ltd/spendsense/actions/workflows/ci.yml"><img src="https://github.com/WolfMark-Ltd/spendsense/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/Hermes-%3E%3D0.22.5-informational" alt="Requires Hermes 0.22.5 or newer" />
   <img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="GPL-3.0 license" />
-  <img src="https://img.shields.io/badge/version-0.6.18-informational" alt="Version 0.6.18" />
+  <img src="https://img.shields.io/badge/version-0.6.19-informational" alt="Version 0.6.19" />
   <a href="https://coderabbit.ai"><img src="https://img.shields.io/coderabbit/prs/github/WolfMark-Ltd/spendsense?label=Reviewed%20by%20CodeRabbit&logo=coderabbit" alt="Reviewed by CodeRabbit" /></a>
   <a href="https://www.greptile.com/?utm_source=oss_badge&utm_medium=readme&utm_campaign=greptile_for_open_source"><img src="https://www.greptile.com/badge.svg" alt="Greptile: The War on Bugs" /></a>
   <a href="https://github.com/WolfMark-Ltd/spendsense"><img src="https://img.shields.io/github/stars/WolfMark-Ltd/spendsense?logo=github" alt="GitHub stars" /></a>
@@ -116,7 +116,7 @@ Spend Sense answers those from the usage Hermes already sees, on your own machin
 1. **Collect.** Hermes observer hooks (`post_api_request`, `post_auxiliary_call`, `api_request_error`) hand Spend Sense accounting metadata for each call: provider, model, route, token buckets, outcome and timestamps. Prompts, responses and credentials are never recorded.
 2. **Store locally.** Calls go into a profile-scoped SQLite store in the plugin's data directory. Memberships and billing rules live in separate local JSON files and survive plugin upgrades.
 3. **Price.** Each recorded call is priced from the best available catalogue — Hermes' models.dev cache first, then the bundled snapshot. The Desktop ledger uses the rates captured at the time; backend analytics use the currently available catalogue. They are related, but they are not the same view and are not presented as one figure.
-4. **Present.** The Desktop plugin renders the live pane, the ledger, the Usage analytics, Costs, Memberships, Model News, Reports and Settings & About views from the local backend. Nothing needs to leave your machine for the core views.
+4. **Present.** The Desktop plugin renders the live pane, the ledger, the Usage analytics, Costs, Memberships, Model News, Reports, Settings and About & Support views from the local backend. Nothing needs to leave your machine for the core views.
 
 ### Membership discovery
 
@@ -198,7 +198,7 @@ Unpriced usage is reported as unpriced. Unknown is never shown as zero, and know
 - Spend Sense makes no direct HTTP pricing requests. Automatic Hermes model-options refresh is off by default; when enabled, Hermes may refresh public models.dev metadata or contact configured providers using credentials Hermes manages.
 - Model News snapshots your local Hermes pricing cache and bundled plan catalogue to detect newly listed models and rate changes. The first snapshot is a baseline, not news. Nothing is uploaded and no network request is made; everything works offline.
 - Spend Sense Live Updates (Settings, off by default) downloads public Model News and subscription-plan JSON feeds over HTTPS when enabled. Requests contain no user IDs, accounts, credentials, model lists, usage totals or tracking tokens; the source IP is visible to the service, and anonymous aggregate request statistics may be produced. On a remote Hermes host, that host makes the request. Disabling Live Updates stops the requests; local news and locally stored memberships continue to work. See the public [Model News feed contract](news-feed/README.md) and [plans feed contract](plans-feed/README.md) for endpoints and schemas.
-- Settings & About can clear your Memberships, route entitlement relationships, budgets and advanced billing rules for the current profile. Captured usage records, Hermes data, provider credentials and catalogues are left untouched.
+- Settings can clear your Memberships, route entitlement relationships, budgets and advanced billing rules for the current profile. Captured usage records, Hermes data, provider credentials and catalogues are left untouched.
 
 ## Requirements and compatibility
 
@@ -209,7 +209,7 @@ Unpriced usage is reported as unpriced. Unknown is never shown as zero, and know
 ## Budget guardrails
 
 Set monthly limits for all usage, a provider route or a model × route in
-**Settings & About**. Choose **estimated usage value** (catalogue-based, including
+**Settings**. Choose **estimated usage value** (catalogue-based, including
 subscription usage) or **actual metered spending** (requires charge evidence).
 The two measurements are never combined with one another, subscription fees or
 allowances. Current Hermes hooks do not provide per-call billed charges, so actual

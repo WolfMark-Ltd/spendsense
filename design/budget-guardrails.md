@@ -1,7 +1,7 @@
 # Budget guardrails
 
 Budget limits are advisory. They cannot interrupt Hermes calls and do not send
-notifications outside the application. Configure them in **Settings & About**;
+notifications outside the application. Configure them in **Settings**;
 Overview shows a compact summary and Costs shows evidence and forecasts.
 
 ## Measurements

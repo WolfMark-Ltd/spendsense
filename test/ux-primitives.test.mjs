@@ -1,6 +1,6 @@
 // Run: node --test --test-force-exit test/*.test.mjs
 // Phase A shared primitives (design/proposal.md §3–§4): token roles, product
-// header, seven-tab navigation, opaque tooltips and async-button feedback.
+// header, eight-tab navigation, opaque tooltips and async-button feedback.
 // Real React + jsdom harness, same as sidebar/membership tests. No production
 // page is rebuilt here; these tests pin the shared layer PR-B/C/D build on.
 import assert from 'node:assert/strict'
@@ -133,21 +133,21 @@ test('layout breakpoints use container queries on the plugin root, not the viewp
   assert.match(T.PRODUCT_CSS, /\.wm-product-tabs\{[^}]*flex-wrap:wrap[^}]*overflow:visible/)
 })
 
-test('LedgerTabs: seven tabs in order, roving tabindex, click and arrow navigation', async () => {
+test('LedgerTabs: eight tabs in order, roving tabindex, click and arrow navigation', async () => {
   T.$ledgerTab.set('overview')
   const container = await renderEl(React.createElement(T.LedgerTabs))
   const tabs = [...container.querySelectorAll('[role="tab"]')]
-  assert.deepEqual(tabs.map(el => el.getAttribute('aria-label')), ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings'])
+  assert.deepEqual(tabs.map(el => el.getAttribute('aria-label')), ['Overview', 'Usage', 'Costs', 'Memberships', 'Reports', 'Model News', 'Settings', 'About & Support'])
   assert.ok(tabs.every(el => !el.querySelector('.wm-product-tab-number')),
     'section numbers belong in Usage, not on the top-level navigation tabs')
   assert.equal(tabs[0].getAttribute('aria-selected'), 'true')
-  assert.deepEqual(tabs.map(el => el.tabIndex), [0, -1, -1, -1, -1, -1, -1], 'only the active tab is tabbable')
+  assert.deepEqual(tabs.map(el => el.tabIndex), [0, -1, -1, -1, -1, -1, -1, -1], 'only the active tab is tabbable')
 
   await React.act(async () => tabs[2].click()); await flush()
   assert.equal(T.$ledgerTab.get(), 'costs')
   const after = [...container.querySelectorAll('[role="tab"]')]
   assert.equal(after[2].getAttribute('aria-selected'), 'true')
-  assert.deepEqual(after.map(el => el.tabIndex), [-1, -1, 0, -1, -1, -1, -1])
+  assert.deepEqual(after.map(el => el.tabIndex), [-1, -1, 0, -1, -1, -1, -1, -1])
 
   // ArrowRight from Costs moves selection and focus to Memberships.
   await React.act(async () => {
@@ -161,10 +161,10 @@ test('LedgerTabs: seven tabs in order, roving tabindex, click and arrow navigati
   await React.act(async () => {
     current[3].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
   }); await flush()
-  assert.equal(T.$ledgerTab.get(), 'settings')
+  assert.equal(T.$ledgerTab.get(), 'about')
   const last = [...container.querySelectorAll('[role="tab"]')]
   await React.act(async () => {
-    last[6].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
+    last[7].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
   }); await flush()
   assert.equal(T.$ledgerTab.get(), 'overview')
 })
@@ -179,7 +179,7 @@ test('LedgerTabs: Chinese labels render through the dictionary', async () => {
     const container = await renderEl(React.createElement(T.LedgerTabs))
     const tabs = [...container.querySelectorAll('[role="tab"]')]
     assert.deepEqual(tabs.map(el => el.getAttribute('aria-label')),
-      ['总览', '用量', '费用', '会员', '报告', '模型动态', '设置'])
+      ['总览', '用量', '费用', '会员', '报告', '模型动态', '设置', '关于与支持'])
   } finally {
     i18nBackend.t = enT
   }
@@ -199,7 +199,7 @@ test('ProductHeader renders one h1, subtitle and actions in the shared heading',
   assert.equal(bare.querySelector('p'), null, 'subtitle is optional')
 })
 
-test('ProductShell shares themed chrome and keeps the seven-tab bar outside page content', async () => {
+test('ProductShell shares themed chrome and keeps the eight-tab bar outside page content', async () => {
   T.$ledgerTab.set('memberships')
   const container = await renderEl(React.createElement(T.ProductShell, {
     pageStyles: '.wp01-test{display:block}',
@@ -208,7 +208,7 @@ test('ProductShell shares themed chrome and keeps the seven-tab bar outside page
   const shell = container.querySelector('.wm-analytics.wm-product')
   assert.ok(shell)
   assert.equal(shell.querySelector('style').textContent.includes('.wp01-test'), true)
-  assert.equal(shell.querySelectorAll('.wm-product-tabs [role="tab"]').length, 7)
+  assert.equal(shell.querySelectorAll('.wm-product-tabs [role="tab"]').length, 8)
   assert.equal(shell.querySelector('.wm-product-tabs').nextElementSibling.tagName, 'MAIN')
   assert.equal(shell.querySelector('main').textContent, 'Page content')
 })
@@ -334,9 +334,10 @@ test('LedgerPage: keyboard navigation restores focus to the newly mounted select
 })
 
 test('LedgerPage: a no-op Home/End press does not leak focus restoration into mouse navigation', async () => {
-  // Edge case: Home on Overview (or End on Settings) selects the tab that is
-  // already active, so no page transition mounts a new tab bar to consume
-  // the keyboard flag. A later mouse navigation must not be force-focused.
+  // Edge case: Home on Overview (or End on About & Support) selects the tab
+  // that is already active, so no page transition mounts a new tab bar to
+  // consume the keyboard flag. A later mouse navigation must not be
+  // force-focused.
   await resetDom()
   T.$ledgerTab.set('overview')
   const container = await renderEl(React.createElement(T.LedgerPage))
@@ -356,14 +357,14 @@ test('LedgerPage: a no-op Home/End press does not leak focus restoration into mo
   assert.notEqual(document.activeElement, costsNow,
     'mouse navigation after a no-op key press must not receive restored focus')
 
-  // Same at the other end: End on Settings is a no-op.
-  T.$ledgerTab.set('settings'); await flush(4)
-  const settingsTab = [...container.querySelectorAll('[role="tab"]')]
-    .find(el => el.getAttribute('aria-label') === 'Settings')
+  // Same at the other end: End on About & Support is a no-op.
+  T.$ledgerTab.set('about'); await flush(4)
+  const aboutTab = [...container.querySelectorAll('[role="tab"]')]
+    .find(el => el.getAttribute('aria-label') === 'About & Support')
   await React.act(async () => {
-    settingsTab.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
+    aboutTab.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
   }); await flush(4)
-  assert.equal(T.$ledgerTab.get(), 'settings', 'End on the last tab is a no-op')
+  assert.equal(T.$ledgerTab.get(), 'about', 'End on the last tab is a no-op')
   const overviewTab2 = [...container.querySelectorAll('[role="tab"]')]
     .find(el => el.getAttribute('aria-label') === 'Overview')
   await React.act(async () => overviewTab2.click()); await flush(4)
@@ -526,6 +527,75 @@ test('hash navigation away from Usage clears pending pricing focus', async () =>
     if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation)
     else delete globalThis.location
   }
+})
+
+test('hash navigation honours the legacy settings-about link and ignores unknown host hashes', async () => {
+  await resetDom()
+  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location')
+  Object.defineProperty(globalThis, 'location', { value: dom.window.location, configurable: true, writable: true })
+  try {
+    T.$ledgerTab.set('overview')
+    dom.window.history.replaceState(null, '', '#overview')
+    await renderEl(React.createElement(T.LedgerTabs))
+    await flush(2)
+
+    await React.act(async () => {
+      dom.window.history.replaceState(null, '', '#settings-about')
+      dom.window.dispatchEvent(new dom.window.HashChangeEvent('hashchange'))
+    })
+    await flush(2)
+    assert.equal(T.$ledgerTab.get(), 'about', 'the legacy About deep link selects the About tab')
+
+    await React.act(async () => {
+      dom.window.history.replaceState(null, '', '#/settings?tab=a')
+      dom.window.dispatchEvent(new dom.window.HashChangeEvent('hashchange'))
+    })
+    await flush(2)
+    assert.equal(T.$ledgerTab.get(), 'about', 'an unknown host hash leaves the tab alone')
+  } finally {
+    if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation)
+    else delete globalThis.location
+  }
+})
+
+test('CopyableDiagnostic reports copies, resets on value change and ignores stale results', async () => {
+  await resetDom()
+  // Deterministic clipboard: the desktop bridge is the only route, so every
+  // outcome below is driven, never host-dependent.
+  const previousClipboard = Object.getOwnPropertyDescriptor(dom.window.navigator, 'clipboard')
+  Object.defineProperty(dom.window.navigator, 'clipboard', { value: undefined, configurable: true })
+  try {
+    const container = document.createElement('div'); document.body.appendChild(container)
+    const root = ReactDOMClient.createRoot(container); roots.push(root)
+    const show = value => React.act(async () => {
+      root.render(React.createElement(QueryClientProvider, { client: queryClient },
+        React.createElement(T.CopyableDiagnostic, { label: 'Revision', value, copyable: true, t: enT })))
+    })
+    await show('rev-one'); await flush(2)
+    assert.equal(container.querySelector('.wm-diagnostic-value').textContent, 'rev-one')
+    await React.act(async () => { container.querySelector('button').click() }); await flush(2)
+    assert.equal(container.querySelector('.wm-diagnostic-copy')?.textContent, 'Copy failed.')
+
+    await show('rev-two'); await flush(2)
+    assert.equal(container.querySelector('.wm-diagnostic-value').textContent, 'rev-two')
+    assert.equal(container.querySelector('.wm-diagnostic-copy'), null, 'a new value clears the old feedback')
+
+    let release
+    window.hermesDesktop = { writeClipboard: () => new Promise(res => { release = res }) }
+    await React.act(async () => { container.querySelector('button').click() })
+    await show('rev-three'); await flush(2)
+    await React.act(async () => { release() }); await flush(2)
+    assert.equal(container.querySelector('.wm-diagnostic-copy'), null, 'a stale success never lands')
+    delete window.hermesDesktop
+  } finally {
+    if (previousClipboard) Object.defineProperty(dom.window.navigator, 'clipboard', previousClipboard)
+    else delete dom.window.navigator.clipboard
+  }
+})
+
+test('narrow containers densify the tab strip for eight tabs', () => {
+  assert.ok(T.PRODUCT_CSS.includes('.wm-product .wm-product-tab{padding:0 7px;font-size:12px;min-height:32px}'),
+    'narrow tabs stay compact so eight fit the rows seven used')
 })
 
 test('every attention (attn*) string exists in both en and zh, and zh renders', () => {
