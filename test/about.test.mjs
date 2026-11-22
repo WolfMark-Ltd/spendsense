@@ -175,6 +175,8 @@ test('goAboutFaq reveals and focuses the FAQ exactly once', async () => {
   const faq = revealed.querySelector('#about-faq')
   assert.equal(faq.open, true)
   assert.equal(document.activeElement, faq.querySelector('summary'))
+  assert.equal(faq.querySelector('summary').hasAttribute('tabindex'), false,
+    'the summary stays in the normal keyboard tab order')
   const replay = await boot()
   assert.equal(replay.querySelector('#about-faq').open, false, 'a satisfied request never replays itself')
 })

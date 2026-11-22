@@ -529,6 +529,75 @@ test('hash navigation away from Usage clears pending pricing focus', async () =>
   }
 })
 
+test('hash navigation honours the legacy settings-about link and ignores unknown host hashes', async () => {
+  await resetDom()
+  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location')
+  Object.defineProperty(globalThis, 'location', { value: dom.window.location, configurable: true, writable: true })
+  try {
+    T.$ledgerTab.set('overview')
+    dom.window.history.replaceState(null, '', '#overview')
+    await renderEl(React.createElement(T.LedgerTabs))
+    await flush(2)
+
+    await React.act(async () => {
+      dom.window.history.replaceState(null, '', '#settings-about')
+      dom.window.dispatchEvent(new dom.window.HashChangeEvent('hashchange'))
+    })
+    await flush(2)
+    assert.equal(T.$ledgerTab.get(), 'about', 'the legacy About deep link selects the About tab')
+
+    await React.act(async () => {
+      dom.window.history.replaceState(null, '', '#/settings?tab=a')
+      dom.window.dispatchEvent(new dom.window.HashChangeEvent('hashchange'))
+    })
+    await flush(2)
+    assert.equal(T.$ledgerTab.get(), 'about', 'an unknown host hash leaves the tab alone')
+  } finally {
+    if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation)
+    else delete globalThis.location
+  }
+})
+
+test('CopyableDiagnostic reports copies, resets on value change and ignores stale results', async () => {
+  await resetDom()
+  // Deterministic clipboard: the desktop bridge is the only route, so every
+  // outcome below is driven, never host-dependent.
+  const previousClipboard = Object.getOwnPropertyDescriptor(dom.window.navigator, 'clipboard')
+  Object.defineProperty(dom.window.navigator, 'clipboard', { value: undefined, configurable: true })
+  try {
+    const container = document.createElement('div'); document.body.appendChild(container)
+    const root = ReactDOMClient.createRoot(container); roots.push(root)
+    const show = value => React.act(async () => {
+      root.render(React.createElement(QueryClientProvider, { client: queryClient },
+        React.createElement(T.CopyableDiagnostic, { label: 'Revision', value, copyable: true, t: enT })))
+    })
+    await show('rev-one'); await flush(2)
+    assert.equal(container.querySelector('.wm-diagnostic-value').textContent, 'rev-one')
+    await React.act(async () => { container.querySelector('button').click() }); await flush(2)
+    assert.equal(container.querySelector('.wm-diagnostic-copy')?.textContent, 'Copy failed.')
+
+    await show('rev-two'); await flush(2)
+    assert.equal(container.querySelector('.wm-diagnostic-value').textContent, 'rev-two')
+    assert.equal(container.querySelector('.wm-diagnostic-copy'), null, 'a new value clears the old feedback')
+
+    let release
+    window.hermesDesktop = { writeClipboard: () => new Promise(res => { release = res }) }
+    await React.act(async () => { container.querySelector('button').click() })
+    await show('rev-three'); await flush(2)
+    await React.act(async () => { release() }); await flush(2)
+    assert.equal(container.querySelector('.wm-diagnostic-copy'), null, 'a stale success never lands')
+    delete window.hermesDesktop
+  } finally {
+    if (previousClipboard) Object.defineProperty(dom.window.navigator, 'clipboard', previousClipboard)
+    else delete dom.window.navigator.clipboard
+  }
+})
+
+test('narrow containers densify the tab strip for eight tabs', () => {
+  assert.ok(T.PRODUCT_CSS.includes('.wm-product .wm-product-tab{padding:0 7px;font-size:12px;min-height:32px}'),
+    'narrow tabs stay compact so eight fit the rows seven used')
+})
+
 test('every attention (attn*) string exists in both en and zh, and zh renders', () => {
   const enKeys = Object.keys(T.I18N.en).filter(k => k.startsWith('attn'))
   assert.ok(enKeys.length > 5, 'the attention copy set is non-trivial')

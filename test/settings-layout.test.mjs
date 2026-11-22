@@ -129,9 +129,9 @@ const measure = () => {
     jump?.focus()
     out.focusedJump = document.activeElement === jump
     // Deterministic clipboard: the host clipboard call never settles under
-    // --dump-dom, so shadow it and drive both outcomes via the desktop bridge.
+    // --dump-dom, so shadow it and drive every outcome via the desktop bridge.
     try { Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true }) } catch {}
-    window.hermesDesktop = { writeClipboard: async () => {} }
+    window.hermesDesktop = { writeClipboard: async text => { (window.__copiedValues = window.__copiedValues || []).push(text) } }
     const copyBtns = [...document.querySelectorAll('#wide-light #settings-diagnostics .wm-diagnostic-row button')]
     const copyText = index => document.querySelectorAll('#wide-light #settings-diagnostics .wm-diagnostic-row')[index]?.querySelector('.wm-diagnostic-copy')?.textContent || ''
     copyBtns[0]?.click()
@@ -139,15 +139,24 @@ const measure = () => {
     const readCopy = () => {
       out.copyOk = copyText(0)
       if (!out.copyOk && ++copyChecks <= 10) return setTimeout(readCopy, 50)
-      delete window.hermesDesktop
       copyBtns[1]?.click()
       copyChecks = 0
-      const readFail = () => {
-        out.copyFail = copyText(1)
-        if (!out.copyFail && ++copyChecks <= 10) return setTimeout(readFail, 50)
-        document.getElementById('result').textContent=JSON.stringify(out)
+      const readSecond = () => {
+        out.copySecond = copyText(1)
+        if (!out.copySecond && ++copyChecks <= 10) return setTimeout(readSecond, 50)
+        out.copiedValues = window.__copiedValues || []
+        delete window.hermesDesktop
+        copyBtns[1]?.click()
+        copyChecks = 0
+        const readFail = () => {
+          out.copyFail = copyText(1)
+          if (out.copyFail !== out.copyFailExpected && ++copyChecks <= 10) return setTimeout(readFail, 50)
+          document.getElementById('result').textContent=JSON.stringify(out)
+        }
+        out.copyFailExpected = globalThis.__settingsT('settingsDiagnosticsCopyFailed')
+        setTimeout(readFail, 50)
       }
-      setTimeout(readFail, 50)
+      setTimeout(readSecond, 50)
     }
     setTimeout(readCopy, 50)
   }, 100)
@@ -196,6 +205,8 @@ begin()
       assert.equal(data.toggleWorks, true, `${locale}: disclosure toggles`)
       assert.equal(data.focusedJump, true, `${locale}: jump controls are keyboard-focusable`)
       assert.equal(data.copyOk, CASES[locale].copied, `${locale}: a successful copy is confirmed`)
+      assert.equal(data.copySecond, CASES[locale].copied, `${locale}: the second identifier copies too`)
+      assert.deepEqual(data.copiedValues, [DIAG_REVISION, DIAG_DIGEST], `${locale}: the bridge receives the full values`)
       assert.equal(data.copyFail, CASES[locale].copyFailed, `${locale}: an unavailable clipboard is reported`)
     }
   } finally { rmSync(dir, { recursive: true, force: true }) }

@@ -5202,7 +5202,10 @@ function LedgerTabs() {
   useEffect(() => {
     if (typeof window === 'undefined' || typeof location === 'undefined') return undefined
     const sync = () => {
-      const id = String(location.hash || '').replace('#', '')
+      const raw = String(location.hash || '').replace('#', '')
+      // The one legacy deep link: the About section used to live under
+      // Settings. Every other unknown host hash stays excluded.
+      const id = raw === 'settings-about' ? 'about' : raw
       if (LEDGER_TABS.some(([known]) => known === id) && $ledgerTab.get() !== id) {
         $infoOpen.set(null)
         if (id !== 'usage' && $analyticsFocus.get()) $analyticsFocus.set(null)
@@ -5773,7 +5776,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-stat small{display:block;margin-top:6px;color:var(--ui-text-tertiary);font-size:11px;line-height:1.4}',
   '.wm-product .wm-product-section p{max-width:78ch}',
   '.wm-product :focus-visible{outline:2px solid var(--wm-action);outline-offset:2px}',
-  '@container(max-width:760px){.wm-product .wm-product-tabs{padding:6px 14px;gap:2px}.wm-product .wm-product-brand{flex:0 0 100%;min-height:39px;align-self:auto;margin:0;padding:0 0 8px;border-right:0;border-bottom:1px solid var(--wm-border)}}',
+  '@container(max-width:760px){.wm-product .wm-product-tabs{padding:6px 10px;gap:2px}.wm-product .wm-product-tab{padding:0 7px;font-size:12px;min-height:32px}.wm-product .wm-product-brand{flex:0 0 100%;min-height:37px;align-self:auto;margin:0;padding:0 0 6px;border-right:0;border-bottom:1px solid var(--wm-border)}}',
   '@media(prefers-reduced-motion:reduce){.wm-product .wm-product-tab,.wm-product .wm-button,.wm-product .wm-account-chip,.wm-product .wm-about-action,.wm-product .wm-about-kofi{transition:none!important}.wm-product .wm-button:active:not(:disabled){transform:none}}',
   '@container(max-width:760px){.wm-product .wm-overview-panels{grid-template-columns:1fr}}',
   '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;flex-wrap:wrap;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}.wm-product .wm-method-grid{grid-template-columns:1fr}}',
@@ -7035,11 +7038,21 @@ function OverviewPage() {
  * instead of overflowing, stays selectable, and is copied in full. */
 function CopyableDiagnostic({ label, value, copyable, t }) {
   const [copied, setCopied] = useState(null)
+  const requestRef = useRef(0)
+  useEffect(() => {
+    // A new value invalidates the old feedback and any copy still in flight.
+    requestRef.current += 1
+    setCopied(null)
+  }, [value])
   return jsxs('div', { className: 'wm-diagnostic-row', children: [
     jsx('span', { className: 'wm-diagnostic-label', children: label }, 'label'),
     jsx('span', { className: 'wm-diagnostic-value', children: value }, 'value'),
     copyable ? jsx(ProductButton, { type: 'button', size: 'sm',
-      onClick: async () => setCopied(await writeClipboard(value) ? 'success' : 'error'),
+      onClick: async () => {
+        const request = ++requestRef.current
+        const ok = await writeClipboard(value)
+        if (requestRef.current === request) setCopied(ok ? 'success' : 'error')
+      },
       children: t('settingsDiagnosticsCopy') }, 'copy') : null,
     copied ? jsx('span', { className: 'wm-diagnostic-copy', 'data-status': copied,
       role: 'status', children: t(copied === 'success' ? 'settingsDiagnosticsCopied' : 'settingsDiagnosticsCopyFailed') }, 'state') : null
@@ -7444,10 +7457,14 @@ function AboutPage() {
       const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
       faq?.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
       const summary = faq?.querySelector('summary')
-      if (summary && !summary.hasAttribute('tabindex')) summary.setAttribute('tabindex', '-1')
+      // A native summary is focusable, so any fallback tabindex is transient:
+      // it is removed right after focusing to keep sequential Tab order.
+      const addedTabIndex = summary && !summary.hasAttribute('tabindex')
+      if (addedTabIndex) summary.setAttribute('tabindex', '-1')
       try { summary?.focus({ preventScroll: true }) } catch {
         try { summary?.focus() } catch {}
       }
+      if (addedTabIndex) summary.removeAttribute('tabindex')
     } catch {}
   }, [])
   return jsx(ProductShell, { children:
@@ -18202,7 +18219,7 @@ export const __test = {
   costsUnknownFeeAccounts, trendMonthComparable, trendWarrantsInline, costsPricingSourceLabel, scrollToCostsAttention,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
-  CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, AboutPage, goAboutFaq, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
+  CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, AboutPage, goAboutFaq, CopyableDiagnostic, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
   $settingsConfirmation, $modelRefreshState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, desktopTodayText, desktopTodayAmount, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
