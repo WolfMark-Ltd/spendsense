@@ -10,6 +10,7 @@
  * Run with:   bash scripts/node-tests.sh browserless
  */
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { after, test } from 'node:test'
 import { flat, loadPageHarness, translatorFor } from './render-harness.mjs'
 import { overviewHealth } from './overview-fixtures.mjs'
@@ -220,6 +221,12 @@ test('the company lockup reproduces the approved master exactly', async () => {
   assert.equal(lockup.getAttribute('viewBox'), '232.558 267.748 1360.585 336.056')
   const paths = [...lockup.querySelectorAll('path')]
   assert.equal(paths.length, 9)
+  // Pinned digest of the nine glyph `d` strings in DOM order, taken from the
+  // approved brand-kit master: any redrawn, retraced or edited glyph fails.
+  // Re-pin only from a newly approved master, never from rendered output.
+  const geometry = createHash('sha256')
+    .update(paths.map(path => path.getAttribute('d')).join('\n')).digest('hex')
+  assert.equal(geometry, '0e98641af8d8175d0ce6d6e0bfe200a8a54f9bafd4dd9fa84579be71b83e45c1')
   // The master marks the O, A and R counters fill-rule evenodd; without it
   // the default nonzero rule fills the R bowl and the A counter (F150).
   paths.forEach((path, index) => {
