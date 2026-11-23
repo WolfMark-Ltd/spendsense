@@ -685,6 +685,38 @@ class FeedValidationTests(NewsTestCase):
         feed, _ = news.validate_feed(["not", "an", "object"])
         self.assertIsNone(feed)
 
+    def test_non_finite_params_dropped_item_kept(self):
+        # F120: Python's json accepts NaN/Infinity, so a hostile or buggy
+        # feed could smuggle them in. The params are dropped; the item stays.
+        news = news_module()
+        feed, problems = news.validate_feed(feed_doc([
+            feed_item("good", summary_params={"pct": float("nan"),
+                                              "note": "kept",
+                                              "big": float("inf")}),
+        ]))
+        self.assertIsNotNone(feed)
+        params = feed["items"][0]["summary_params"]
+        self.assertNotIn("pct", params)
+        self.assertNotIn("big", params)
+        self.assertEqual(params["note"], "kept")
+
+    def test_non_finite_money_renders_unknown(self):
+        news = news_module()
+        self.assertEqual(news._money(float("inf")), "—")
+        self.assertEqual(news._money(float("nan")), "—")
+        self.assertEqual(news._fee_text({"amount": float("inf"), "currency": "USD"}),
+                         "fee unpublished")
+        self.assertEqual(news._money(1.5), "$1.5")
+
+    def test_non_finite_impact_degrades_to_unavailable(self):
+        news = news_module()
+        item = {"category": "price_reduction",
+                "previous": {"input": 1.0, "output": 1.0},
+                "current": {"input": float("inf"), "output": 1.0}}
+        tokens = {"input": 1000, "output": 100, "cache_read": 0, "cache_write": 0}
+        impact = news.estimate_impact(item, tokens)
+        self.assertEqual(impact["basis"], "unavailable")
+
     def test_feed_truncated_to_cap(self):
         news = news_module()
         feed, problems = news.validate_feed(feed_doc(

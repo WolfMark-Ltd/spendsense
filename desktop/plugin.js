@@ -8669,7 +8669,9 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn, context = {}
         ? { reading: t('memQuotaNoHermesReading'), state: t('memQuotaNoHermesReadingShort') }
         : context.readState === 'unreported'
           ? { reading: t('memQuotaNotReported'), state: t('memQuotaNotReportedShort') }
-          : { reading: t('memQuotaNoReading'), state: t('memQuotaUnrecorded') }
+          : context.readState === 'unverified'
+            ? { reading: t('memQuotaUnverified'), state: t('memQuotaUnverifiedShort') }
+            : { reading: t('memQuotaNoReading'), state: t('memQuotaUnrecorded') }
   return windows.map(window => {
     // Whole-account marks persist a language-neutral label; the translated
     // scope name applies at display time from the synthetic row's own scope,
@@ -8749,6 +8751,12 @@ function allowanceReadState(account, context = {}) {
   if (provider === 'identity_mismatch') {
     return { state: 'failed', provider, probeState, reason: t('memReadIdentity') }
   }
+  // An anonymous reading for a named account is withheld, not misattributed.
+  // It keeps its own state (F119) so the UI can say why instead of showing a
+  // generic "not reported" that hides a reading Hermes did send.
+  if (provider === 'identity_unverified') {
+    return { state: 'unverified', provider, probeState }
+  }
   if (provider === 'unavailable') return { state: 'no_reading', provider, probeState }
   if (provider === 'live' || provider === 'stale') return { state: 'unreported', provider, probeState }
   // No probe metadata and no reading: say "not read" only when nothing was
@@ -8765,6 +8773,7 @@ function allowanceReadNoteKey(state) {
     : state === 'not_read' ? 'memReadingNoteNotRead'
     : state === 'unreported' ? 'memReadingNoteUnreported'
     : state === 'stale' ? 'memReadingNoteStale'
+    : state === 'unverified' ? 'memReadingNoteUnverified'
     : ''
 }
 
@@ -8803,9 +8812,10 @@ function membershipReadingStatus(rows, t = needsAttentionEn, context = null) {
     // Only a read Hermes could not do, or one that failed, changes the chip.
     // "Nothing asked for yet" and "asked, nothing reported" keep the existing
     // Unreported vocabulary; the group note says which it was.
-    if (read && ['unsupported', 'no_reading', 'failed'].includes(read.state)) {
+    if (read && ['unsupported', 'no_reading', 'failed', 'unverified'].includes(read.state)) {
       const key = read.state === 'failed' ? 'memAllowanceFailed'
-        : read.state === 'unsupported' ? 'memAllowanceNotAvailable' : 'memAllowanceNoHermesReading'
+        : read.state === 'unsupported' ? 'memAllowanceNotAvailable'
+        : read.state === 'unverified' ? 'memAllowanceUnverified' : 'memAllowanceNoHermesReading'
       return { state: read.state, reason: read.reason || '', label: t(key) }
     }
     return { state: 'unreported', label: t('memAllowanceUnreported') }
@@ -10194,6 +10204,7 @@ function membershipReadFailures(accounts) {
   const missing = list.filter(account => {
     const state = String(account?.native_probe?.state || '')
     return state === 'unsupported' || state === 'unavailable'
+      || account?.quota?.provider_state === 'identity_unverified'
   })
   return { failed: failed.length, missing: missing.length, total: list.length }
 }
@@ -15105,6 +15116,7 @@ const I18N = {
     memAllowanceNotAvailable: 'Not available from Hermes',
     memAllowanceFailed: 'Read failed',
     memAllowanceNoHermesReading: 'No reading from Hermes',
+    memAllowanceUnverified: 'Unverified reading',
     memGroupPlan: 'Plan & billing',
     memSeats: 'Seats',
     memSaveSeats: 'Save seats',
@@ -15149,6 +15161,7 @@ const I18N = {
     memReadingNoteFailed: 'The provider reading could not be fetched. Saved plans, fees and marks are unchanged.',
     memReadingNoteNoReading: 'Hermes returned no allowance reading for this route: no credential, no usage endpoint, or the read failed. That is a data limitation, not zero usage; your own marks still apply. Try Refresh provider usage.',
     memReadingNoteUnreported: 'Hermes read this account and reported no allowance windows.',
+    memReadingNoteUnverified: 'Hermes did not say which account this reading came from, so it is withheld rather than shown as this account\u2019s.',
     memReadingNoteStale: 'The provider reading is older than the freshness window, so it is not shown as current.',
     memReadAgeNow: 'Provider reading from just now.',
     memReadAgeMins: n => `Provider reading from ${n} min ago.`,
@@ -15264,6 +15277,8 @@ const I18N = {
     memQuotaNotAvailableShort: 'not available',
     memQuotaNotReported: 'Not reported by the provider',
     memQuotaNotReportedShort: 'not reported',
+    memQuotaUnverified: 'Withheld: unverified account',
+    memQuotaUnverifiedShort: 'unverified',
     memQuotaReadFailed: 'Read failed',
     memQuotaReadFailedShort: 'read failed',
     memQuotaNoHermesReading: 'No reading from Hermes',
@@ -16885,6 +16900,7 @@ const I18N = {
     memAllowanceNotAvailable: 'Hermes 无法提供',
     memAllowanceFailed: '读取失败',
     memAllowanceNoHermesReading: 'Hermes 未提供读数',
+    memAllowanceUnverified: '未验证的读数',
     memGroupPlan: '方案与账单',
     memSeats: '席位数',
     memSaveSeats: '保存席位数',
@@ -16929,6 +16945,7 @@ const I18N = {
     memReadingNoteFailed: '无法获取提供方读数。已保存的方案、费用与标记均未改变。',
     memReadingNoteNoReading: 'Hermes 未返回此线路的额度读数：无凭据、无用量端点或读取失败。这是数据限制，并非零用量；您自己的标记仍然有效。可尝试“刷新提供方用量”。',
     memReadingNoteUnreported: 'Hermes 已读取此账户，但没有上报额度窗口。',
+    memReadingNoteUnverified: 'Hermes 未说明此读数来自哪个账户，因此暂不显示为该账户的读数。',
     memReadingNoteStale: '提供方读数已超过新鲜度时限，因此不按当前读数显示。',
     memReadAgeNow: '提供方读数来自刚刚。',
     memReadAgeMins: n => `提供方读数来自 ${n} 分钟前。`,
@@ -17044,6 +17061,8 @@ const I18N = {
     memQuotaNotAvailableShort: '不可用',
     memQuotaNotReported: '提供方未上报',
     memQuotaNotReportedShort: '未上报',
+    memQuotaUnverified: '已暂扣：账户未验证',
+    memQuotaUnverifiedShort: '未验证',
     memQuotaReadFailed: '读取失败',
     memQuotaReadFailedShort: '读取失败',
     memQuotaNoHermesReading: 'Hermes 未提供读数',

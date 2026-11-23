@@ -464,6 +464,12 @@ test('a reading is classified by why it exists, not only by whether it does', ()
   const mismatch = account({ quota: { provider_state: 'identity_mismatch', windows: [] } })
   assert.equal(T.allowanceReadState(mismatch, { native: true }).state, 'failed')
 
+  // An anonymous reading for a named account keeps its own state (F119):
+  // withheld, never misattributed, never a generic "not reported".
+  const unverified = account({ quota: { provider_state: 'identity_unverified', windows: [] } })
+  assert.equal(T.allowanceReadState(unverified, { native: true }).state, 'unverified')
+  assert.equal(T.allowanceReadNoteKey('unverified'), 'memReadingNoteUnverified')
+
   // A real read that carried no windows is reported as empty, not as a limit.
   const empty = account({ quota: { provider_state: 'live', windows: [] } })
   assert.equal(T.allowanceReadState(empty, { native: true }).state, 'unreported')
@@ -484,6 +490,8 @@ test('the row chip names the limitation, and never reads as zero usage', () => {
     'No reading from Hermes', 'a read that returned nothing is not called permanent')
   assert.equal(chip({ quota: { provider_state: 'absent', windows: [] },
     native_probe: { state: 'unavailable' } }, true).state, 'no_reading')
+  assert.equal(chip({ quota: { provider_state: 'identity_unverified', windows: [] } }, true).label,
+    'Unverified reading', 'a withheld anonymous reading names itself')
   // Without context the previous contract is unchanged.
   assert.deepEqual(T.membershipReadingStatus([]), { state: 'unreported', label: 'Unreported' })
 })
@@ -497,9 +505,12 @@ test('a window nobody reads says why, instead of “No reading”', () => {
   assert.equal(unreported.reading, 'Not reported by the provider')
   const failed = T.quotaRows(account(base), Date.now(), undefined, { readState: 'failed' })[0]
   assert.equal(failed.reading, 'Read failed')
+  const unverified = T.quotaRows(account(base), Date.now(), undefined, { readState: 'unverified' })[0]
+  assert.equal(unverified.reading, 'Withheld: unverified account')
+  assert.equal(unverified.stateLabel, 'unverified')
   // Unchanged default for a caller that supplies no context.
   assert.equal(T.quotaRows(account(base))[0].reading, 'No reading')
-  for (const row of [unsupported, unreported, failed]) {
+  for (const row of [unsupported, unreported, failed, unverified]) {
     assert.doesNotMatch(row.reading, /0%|\$0\.00/, 'absence is never rendered as zero')
   }
 })
@@ -534,6 +545,10 @@ test('a refresh counts the accounts it could not read', () => {
   const mismatched = [account({ id: 'e', native_probe: { state: 'ok' },
     quota: { provider_state: 'identity_mismatch', windows: [] } })]
   assert.equal(T.membershipReadFailures(mismatched).failed, 1)
+  // A withheld anonymous reading counts as missing, never failed.
+  const unverified = [account({ id: 'f', native_probe: { state: 'ok' },
+    quota: { provider_state: 'identity_unverified', windows: [] } })]
+  assert.deepEqual(T.membershipReadFailures(unverified), { failed: 0, missing: 1, total: 1 })
   assert.deepEqual(T.membershipReadFailures([]), { failed: 0, missing: 0, total: 0 })
 })
 

@@ -533,6 +533,8 @@ def _money(value: Any) -> str:
         number = float(value)
     except (TypeError, ValueError):
         return "—"
+    if not math.isfinite(number):
+        return "—"
     text = f"{number:.4f}".rstrip("0").rstrip(".")
     return f"${text}" if text else "$0"
 
@@ -544,6 +546,8 @@ def _fee_text(price: Mapping[str, Any]) -> str:
     try:
         number = float(amount)
     except (TypeError, ValueError):
+        return "fee unpublished"
+    if not math.isfinite(number):
         return "fee unpublished"
     per = f"/{period}" if period else ""
     if currency:
@@ -1297,6 +1301,8 @@ def validate_feed(raw: Any, *,
         params: dict[str, Any] = {}
         if isinstance(raw_params, dict):
             for key, value in list(raw_params.items())[:16]:
+                if isinstance(value, float) and not math.isfinite(value):
+                    continue  # F120: NaN/Infinity must never reach JSON or the UI
                 if value is None or isinstance(value, (str, int, float, bool)):
                     params[str(key)[:64]] = value[:256] if isinstance(value, str) else value
         item = {
@@ -1731,6 +1737,10 @@ def _cost(tokens: Mapping[str, int], rates: Mapping[str, Any],
             total += count * float(rate) / 1_000_000
         except (TypeError, ValueError):
             return None, False
+    if not math.isfinite(total):
+        # F120: absurd magnitudes or hostile rates must degrade to the
+        # existing unavailable path, never Infinity/NaN in JSON.
+        return None, False
     return total, complete
 
 
