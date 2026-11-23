@@ -667,5 +667,80 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(len(report["trend"]["buckets"]), 30)
 
 
+class CustomFixableTests(unittest.TestCase):
+    """WP48: unpriced usage a custom rate could still price.
+
+    Catalogue-fixable gaps with no matching custom rule count; failed or
+    unidentifiable usage never counts; saving the matching rule clears the
+    remainder so the fix action cannot nag after the fix.
+    """
+
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR"))
+        self.addCleanup(self.scratch.cleanup)
+        self.events = Path(self.scratch.name) / "usage.db"
+        self.state = Path(self.scratch.name) / "state.db"
+        from wolfmark_ledger.pricing import Catalogue, Rate
+        self.book = Catalogue({"test": {"m": Rate(2, 4, .5, 3)}}, "fixture", "test", "", "1")
+
+    def report(self, **kwargs):
+        build = importlib.import_module("wolfmark_ledger.analytics").build_analytics_report
+        return build(self.events, state_db_path=self.state, now=kwargs.pop("now", NOW),
+                     catalogue=self.book, **kwargs)
+
+    def create_events(self, rows=()):
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.executescript(store._SCHEMA)
+            for index, row in enumerate(rows):
+                values = {"event_id": f"event-{index}", "ts": NOW - 1,
+                          "model": "m", "provider": "test", "platform": "desktop",
+                          "outcome": "ok", "recorded_at": NOW, **row}
+                columns = list(values)
+                conn.execute(f"INSERT INTO calls ({','.join(columns)}) VALUES "
+                             f"({','.join('?' for _ in columns)})", list(values.values()))
+
+    def _profiles(self, entries):
+        import json as _json
+
+        path = Path(self.scratch.name) / "billing-profiles.json"
+        path.write_text(_json.dumps({"profiles": entries}))
+        return path
+
+    def test_fixable_gap_without_rule_counts(self):
+        self.create_events([{"model": "zzz", "input_tokens": 100}])
+        report = self.report(days=1)
+        totals = report["totals"]
+        self.assertEqual(totals["unpriced_tokens"], 100)
+        self.assertEqual(totals["custom_fixable_tokens"], 100)
+        self.assertEqual(totals["custom_fixable_calls"], 1)
+
+    def test_matching_custom_rule_clears_the_remainder(self):
+        self.create_events([{"model": "zzz", "input_tokens": 100}])
+        profiles = self._profiles([{"id": "c1", "kind": "custom", "provider": "test",
+                                    "model": "zzz",
+                                    "rate_override": {"input": 1, "output": 2}}])
+        report = self.report(days=1, profiles_path=profiles)
+        totals = report["totals"]
+        self.assertEqual(totals["unpriced_tokens"], 100,
+                         "catalogue totals stay catalogue-pure")
+        self.assertEqual(totals["custom_fixable_tokens"], 0)
+        self.assertEqual(totals["custom_fixable_calls"], 0)
+
+    def test_unrelated_custom_rule_does_not_clear(self):
+        self.create_events([{"model": "zzz", "input_tokens": 100}])
+        profiles = self._profiles([{"id": "c1", "kind": "custom", "provider": "other",
+                                    "model": "zzz",
+                                    "rate_override": {"input": 1, "output": 2}}])
+        report = self.report(days=1, profiles_path=profiles)
+        self.assertEqual(report["totals"]["custom_fixable_tokens"], 100)
+
+    def test_failed_calls_are_never_fixable(self):
+        self.create_events([{"input_tokens": 100, "outcome": "error"}])
+        report = self.report(days=1)
+        self.assertEqual(report["totals"]["unpriced_tokens"], 100)
+        self.assertEqual(report["totals"]["custom_fixable_tokens"], 0)
+        self.assertEqual(report["totals"]["custom_fixable_calls"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

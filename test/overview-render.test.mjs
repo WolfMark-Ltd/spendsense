@@ -173,9 +173,10 @@ test('Overview never prefixes a measured figure with a lower-bound qualifier, in
 })
 
 test('Overview routes fixable pricing gaps to custom rates and keeps review for the rest, in both languages', async () => {
-  // WP48/F109: a missing catalogue rate earns the Settings fix (a custom
-  // token rate the user sets genuinely prices the usage); failed, missing
-  // and unidentified usage keeps the honest Usage review, never a fix action.
+  // WP48/F109: the backend counts unpriced usage a custom rate could still
+  // price (fixable catalogue gaps with no matching rule). That remainder
+  // earns the Settings fix; anything else keeps the honest Usage review,
+  // and a cleared remainder never nags again.
   const variantTransport = totals => {
     const base = overviewTransport({ requiredContract: T.REQUIRED_BACKEND_CONTRACT })
     const analytics = overviewAnalytics()
@@ -187,7 +188,7 @@ test('Overview routes fixable pricing gaps to custom rates and keeps review for 
   try {
     for (const locale of LOCALES) {
       T.setRest(variantTransport({ unpriced_tokens: 1500, unpriced_calls: 0,
-        pricing_gaps: { model_not_in_catalogue: 4 } }))
+        custom_fixable_tokens: 1500, custom_fixable_calls: 0 }))
       const fixed = await boot({ locale })
       const fixRow = [...fixed.querySelectorAll('.wm-overview-attention li')]
         .find(li => li.textContent.includes(T.I18N[locale].ovPricingTitle))
@@ -203,12 +204,14 @@ test('Overview routes fixable pricing gaps to custom rates and keeps review for 
       assert.equal(T.$ledgerTab.get(), 'settings',
         `${locale}: the fix action lands on Settings`)
 
-      T.setRest(variantTransport({ unpriced_tokens: 0, unpriced_calls: 3,
-        pricing_gaps: { call_failed: 3 } }))
+      // Unpriced usage with nothing left to fix (failed calls, or routes a
+      // custom rate already covers): review wording, Usage destination.
+      T.setRest(variantTransport({ unpriced_tokens: 1500, unpriced_calls: 3,
+        custom_fixable_tokens: 0, custom_fixable_calls: 0 }))
       const review = await boot({ locale })
       const reviewRow = [...review.querySelectorAll('.wm-overview-attention li')]
         .find(li => li.textContent.includes(T.I18N[locale].ovPricingTitle))
-      assert.ok(reviewRow, `${locale}: the pricing row renders for failed calls`)
+      assert.ok(reviewRow, `${locale}: the pricing row renders for unfixable gaps`)
       assert.ok(reviewRow.textContent.includes(T.I18N[locale].ovUnpriced),
         `${locale}: unfixable gaps keep the review wording`)
       const reviewButton = [...reviewRow.querySelectorAll('button')]

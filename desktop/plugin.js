@@ -6907,15 +6907,6 @@ function OverviewIcon({ name }) {
     fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round',
     'data-tone': name, 'aria-hidden': true, children: jsx('path', { d: paths[name] || paths.recorded }) })
 }
-/** Pricing-gap reasons a custom token rate can genuinely resolve (WP48): the
- *  route identity exists but the catalogue lacks rates, so a user-asserted
- *  rate makes the usage priced. Failed, missing and unidentified usage can
- *  only be reviewed in Usage, never priced by the user. Unknown reasons stay
- *  on the review path: only a proven-fixable cause earns the fix action. */
-const OV_PRICING_FIXABLE_REASONS = ['model_not_in_catalogue', 'provider_not_in_catalogue',
-  'price_evidence_missing', 'missing_base_rate', 'tier_rate_unavailable',
-  'cache_rate_unavailable', 'missing_cache_rate', 'missing_cache_read_rate',
-  'missing_cache_write_rate']
 function OverviewPage() {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
@@ -6942,12 +6933,13 @@ function OverviewPage() {
   const unpricedTokens = Number(result.unpriced_tokens || 0)
   const unpricedCalls = Number(result.unpriced_calls || 0)
   const unpriced = unpricedTokens > 0 || unpricedCalls > 0
-  // Cause-aware pricing action (WP48/F109): catalogue-rate gaps earn the
-  // Settings fix (a custom token rate prices them); failed, missing and
-  // unidentified usage keeps the honest Usage review. Older backends send
-  // no gap breakdown and keep the previous review-only row.
-  const pricingGaps = result.pricing_gaps || {}
-  const unpricedFixable = OV_PRICING_FIXABLE_REASONS.some(reason => num(pricingGaps[reason]) > 0)
+  // Cause-aware pricing action (WP48/F109): the backend counts unpriced
+  // usage a custom rate could still price (fixable catalogue gaps whose
+  // routes have no custom rule yet). Saving the matching rate clears
+  // exactly that remainder, so the fix action can never nag after the
+  // fix; anything else keeps the honest Usage review. Older backends
+  // omit the counts and keep the previous review-only row.
+  const unpricedFixable = num(result.custom_fixable_tokens) > 0 || num(result.custom_fixable_calls) > 0
   const topModels = overviewTopModels(analytics.data?.by_model)
   const topModelMax = topModels[0]?.calls || 1
   // Accounts that could carry a recurring fee but have no known amount —
