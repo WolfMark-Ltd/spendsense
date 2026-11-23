@@ -700,6 +700,28 @@ class FeedValidationTests(NewsTestCase):
         self.assertNotIn("big", params)
         self.assertEqual(params["note"], "kept")
 
+    def test_non_finite_change_numbers_degrade_to_none(self):
+        # F120: the change block is display-layer data, so bad numbers degrade
+        # to None in place (keeping the shape) rather than rejecting the item.
+        news = news_module()
+        feed, problems = news.validate_feed(feed_doc([
+            feed_item("good", change={
+                "direction": "down", "dominant": "input",
+                "max_abs_pct": float("inf"), "max_abs_delta": -1.0,
+                "rates": {"input": {"before": 3.0, "after": 2.0,
+                                    "delta": -1.0, "pct": float("nan")},
+                          "output": {"before": "cheap", "after": 10.0,
+                                     "delta": 0.0, "pct": 0.0}}}),
+        ]))
+        self.assertIsNotNone(feed)
+        change = feed["items"][0]["change"]
+        self.assertIsNone(change["max_abs_pct"])
+        self.assertEqual(change["max_abs_delta"], -1.0)
+        self.assertEqual(change["rates"]["input"],
+                         {"before": 3.0, "after": 2.0,
+                          "delta": -1.0, "pct": None})
+        self.assertIsNone(change["rates"]["output"]["before"])
+
     def test_non_finite_money_renders_unknown(self):
         news = news_module()
         self.assertEqual(news._money(float("inf")), "—")

@@ -9689,7 +9689,7 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
   const readingStatus = membershipReadingStatus(rows, t, { account, native: !!native })
   // The page explains the Hermes data limitation once. A card repeats only the
   // states the reader must act on, never the normal limitation again.
-  const readNoteKey = ['failed', 'stale'].includes(read.state) ? allowanceReadNoteKey(read.state) : ''
+  const readNoteKey = ['failed', 'stale', 'unverified'].includes(read.state) ? allowanceReadNoteKey(read.state) : ''
   // A provider reading is only trustworthy with its age beside it, and the age
   // keeps counting after the answer arrives.
   const readAge = ['reported', 'stale', 'partial'].includes(readingStatus.state)

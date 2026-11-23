@@ -1216,6 +1216,14 @@ def _valid_rate_block(value: Any) -> Optional[dict[str, Any]]:
     return out
 
 
+def _finite_number(value: Any) -> Optional[float]:
+    # F120: display-layer numbers degrade to None rather than rejecting the
+    # item. NaN/Infinity (and non-numbers) must never reach JSON or the UI.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value if math.isfinite(value) else None
+
+
 def _valid_text(value: Any, limit: int) -> str:
     if not isinstance(value, str):
         return ""
@@ -1345,8 +1353,10 @@ def validate_feed(raw: Any, *,
             rates = change.get("rates")
             cleaned_rates = {
                 str(key)[:16]: {
-                    "before": sub.get("before"), "after": sub.get("after"),
-                    "delta": sub.get("delta"), "pct": sub.get("pct"),
+                    "before": _finite_number(sub.get("before")),
+                    "after": _finite_number(sub.get("after")),
+                    "delta": _finite_number(sub.get("delta")),
+                    "pct": _finite_number(sub.get("pct")),
                 }
                 for key, sub in (rates.items() if isinstance(rates, dict) else [])
                 if isinstance(sub, dict) and str(key) in ("input", "output",
@@ -1355,10 +1365,8 @@ def validate_feed(raw: Any, *,
             item["change"] = {
                 "direction": _valid_text(change.get("direction"), 16),
                 "dominant": _valid_text(change.get("dominant"), 16),
-                "max_abs_pct": change.get("max_abs_pct")
-                if isinstance(change.get("max_abs_pct"), (int, float)) else None,
-                "max_abs_delta": change.get("max_abs_delta")
-                if isinstance(change.get("max_abs_delta"), (int, float)) else None,
+                "max_abs_pct": _finite_number(change.get("max_abs_pct")),
+                "max_abs_delta": _finite_number(change.get("max_abs_delta")),
                 "rates": cleaned_rates,
             }
         items.append(item)
