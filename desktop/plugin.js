@@ -5969,7 +5969,7 @@ function CostsEvidenceDetail({ label, value, children }) {
   ].filter(Boolean) })
 }
 
-function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, summaryLoading, accountsLoading, summaryReady, accountsFailed, t }) {
+function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, summaryLoading, accountsLoading, summaryReady, accountsFailed, t, summaryWindow = null, summaryScope = null }) {
   const rows = billingEvidence(billing, t)
   const evidence = Object.fromEntries(rows.map(row => [row.key, row]))
   const unknownFees = accountsReady ? costsUnknownFeeCount(accounts) : null
@@ -6018,22 +6018,32 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   const apiUnpricedCalls = finiteValue(apiCoverage?.unpriced_calls)
   const apiPartial = apiCoverageKnown && (apiUnpricedTokens > 0 || apiUnpricedCalls > 0)
   const apiCoverageUnknown = !apiCoverageKnown
+  // The analytics basis behind the same rows. Billing sums row values the
+  // analytics engine already bounded, so a non-exact basis with fully priced
+  // rows still withholds the Fully priced verdict: the subtotal is a bound,
+  // not a complete measurement. Unpriced-row and coverage-unknown wording
+  // stays more specific and wins.
+  const apiBasis = totals?.economics?.api_equivalent_basis
+  const apiBounded = apiBasis != null && apiBasis !== 'exact'
   const apiStatus = summaryLoading ? t('costsLoadingShort')
     : api.usd == null ? t('costsUnknownTag')
     : apiPartial ? null
-    : apiCoverageUnknown ? t('costsCoverageUnknownTag') : t('costsCompleteTag')
+    : apiCoverageUnknown ? t('costsCoverageUnknownTag')
+    : apiBounded ? null : t('costsCompleteTag')
   const apiNote = summaryLoading ? t('costsEvidenceLoading')
     : unreadable ? t('costsEvidenceUnavailable')
     : api.usd == null ? apiPartial ? t('costsApiNoPricedSubtotal') : api.empty
     : apiPartial ? t('costsApiPartialShort')
-    : apiCoverageUnknown ? t('costsApiCoverageUnknownShort') : t('costsApiShort')
+    : apiCoverageUnknown ? t('costsApiCoverageUnknownShort')
+    : apiBounded ? t('costsApiBoundShort') : t('costsApiShort')
   const apiCoverageDetails = apiCoverageKnown
     ? t('costsApiCoverageCounts', exactTokens(apiCoverage.priced_tokens), exactTokens(apiCoverage.priced_calls),
       exactTokens(apiCoverage.unpriced_tokens), exactTokens(apiCoverage.unpriced_calls))
     : t('costsApiCoverageUnavailable')
   const apiExplanation = api.usd == null ? t('costsApiNoPricedExplain')
     : apiPartial ? t('costsApiPartialExplain')
-    : apiCoverageUnknown ? t('costsApiCoverageUnknownExplain') : api.explanation
+    : apiCoverageUnknown ? t('costsApiCoverageUnknownExplain')
+    : apiBounded ? t('costsApiBoundExplain') : api.explanation
   const additional = ['credits_consumed', 'incremental_cash'].map(key => evidence[key])
   const feeValue = feeLines.length ? jsx('ul', { className: 'wm-cost-detail-fees', children: feeLines.map(line =>
     jsx('li', { children: line.label }, `${line.currency}/${line.period}`)) })
@@ -6066,11 +6076,16 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
         row.source ? jsx('p', { children: `${t('costsSourceLabel')}: ${row.source}` }) : null
       ].filter(Boolean) }) }, row.key))
   ]
+  // The backend extends the trailing window (30 → 32 days) when a billing
+  // profile carries a billing cycle, so the scope line states the actual
+  // window the figures cover instead of a nominal one.
+  const windowDays = Number.isFinite(Number(summaryScope?.window_days)) ? Number(summaryScope.window_days)
+    : Number.isFinite(Number(summaryWindow?.days)) ? Number(summaryWindow.days) : null
   return jsxs('section', { className: 'wm-product-section wm-cost-overview', 'aria-label': t('costsOverviewTitle'), children: [
     jsx('h2', { children: t('costsOverviewTitle') }),
     jsx('p', { children: t('costsOverviewIntro') }),
     summaryReady
-      ? jsx('p', { className: 'wm-cost-evidence-scope', children: t('costsEvidenceScope') }) : null,
+      ? jsx('p', { className: 'wm-cost-evidence-scope', children: t('costsEvidenceScope') + (windowDays != null ? ` ${t('costsEvidenceWindow', windowDays)}` : '') }) : null,
     summaryLoading ? jsx('p', { className: 'wm-subtle', children: t('costsEvidenceLoading') }) : null,
     jsxs('div', { className: 'wm-cost-summary-grid', children: [
       jsx(CostsEvidenceCard, { kind: 'api', label: api.label,
@@ -6155,7 +6170,9 @@ function CostsPage() {
         : null,
       jsx(CostsEvidenceSummary, { billing, totals, fees, accounts: list, accountsReady,
         summaryLoading: summary.isPending, accountsLoading: accounts.isPending,
-        summaryReady, accountsFailed: !!accounts.error, t }),
+        summaryReady, accountsFailed: !!accounts.error, t,
+        summaryWindow: summaryReady ? summary.data?.window ?? null : null,
+        summaryScope: summaryReady ? summary.data?.scope ?? null : null }),
       jsx(EconomicsPanel, { identity,
         unknownFees: accountsReady
           ? { count: unknownFeeAccounts.length,
@@ -6933,6 +6950,14 @@ function OverviewPage() {
   const unpricedTokens = Number(result.unpriced_tokens || 0)
   const unpricedCalls = Number(result.unpriced_calls || 0)
   const unpriced = unpricedTokens > 0 || unpricedCalls > 0
+  // The backend's own bound on this subtotal. A lower_bound/range/incomplete
+  // figure with fully priced rows still omits evidence, so it carries the
+  // Partial chip — the same qualifier Usage and the taskbar chip express with
+  // ≥/range/+ markers. The figure itself stays unprefixed per the accepted
+  // Overview hierarchy, and the pricing-coverage attention row stays scoped
+  // to genuinely unpriced calls.
+  const estimateBasis = result.economics?.api_equivalent_basis
+  const estimateBounded = estimateBasis != null && estimateBasis !== 'exact'
   const topModels = overviewTopModels(analytics.data?.by_model)
   const topModelMax = topModels[0]?.calls || 1
   // Accounts that could carry a recurring fee but have no known amount —
@@ -7015,7 +7040,7 @@ function OverviewPage() {
             : result.calls === 0 ? t('ovBackendEmpty') : t('ovBackendProv') }),
           jsxs('div', { className: 'wm-kpi-foot', children: [
             certaintyChip('estimated', t('ovCertEstimated'), 'est'),
-            unpriced ? certaintyChip('partial', t('ovCertPartial'), 'part') : null
+            unpriced || estimateBounded ? certaintyChip('partial', t('ovCertPartial'), 'part') : null
           ].filter(Boolean) })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'saved-fees', children: [
@@ -15945,6 +15970,9 @@ const I18N = {
     costsApiShort: 'Current rates · not provider charges',
     costsApiPartialShort: 'Priced subtotal · some usage is unpriced; not provider charges.',
     costsApiCoverageUnknownShort: 'Pricing coverage for this value is unknown; the amount may be partial.',
+    costsApiBoundShort: 'Bounded subtotal · cache or rate evidence is incomplete; not provider charges.',
+    costsApiBoundExplain: 'The backend reports this subtotal as a bound rather than an exact value because cache-counter or rate evidence is incomplete. It is not a charge.',
+    costsEvidenceWindow: days => `Evidence window: ${days} days of timestamped backend calls.`,
     costsApiNoPricedSubtotal: 'No priced subtotal; unpriced usage is not zero.',
     costsApiPartialExplain: 'Only rows with published API rates or configured custom rates contribute to this subtotal; unpriced rows are excluded. It is not a charge.',
     costsApiCoverageUnknownExplain: 'Coverage counts for the rows behind this value are unavailable, so completeness cannot be confirmed.',
@@ -17721,6 +17749,9 @@ const I18N = {
     costsApiShort: '当前费率 · 非供应商费用',
     costsApiPartialShort: '已定价小计 · 部分用量未定价；并非供应商收费。',
     costsApiCoverageUnknownShort: '此值的定价覆盖情况未知；金额可能仅为部分小计。',
+    costsApiBoundShort: '受限小计 · 缓存或费率证据不完整；并非供应商收费。',
+    costsApiBoundExplain: '由于缓存计数或费率证据不完整，后端将此小计报告为界限值而非精确值。它不是实际收费。',
+    costsEvidenceWindow: days => `证据窗口：${days} 天的带时间戳后端调用。`,
     costsApiNoPricedSubtotal: '没有可显示的已定价小计；未定价用量不代表零。',
     costsApiPartialExplain: '此小计仅包含使用公开 API 费率或已配置自定义费率的记录；未定价记录已排除。它不是实际收费。',
     costsApiCoverageUnknownExplain: '此金额所依据记录的覆盖计数不可用，因此无法确认是否完整。',
