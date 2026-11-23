@@ -1139,6 +1139,27 @@ class PayloadTests(NewsTestCase):
                       {"kind": "changed", "field": "allowance"}]}}
         self.assertTrue(news.item_proves_change(fields))
 
+    def test_item_proves_change_keeps_flag_less_legacy_records(self):
+        # Review case: records without fee_changed predate machine
+        # comparison, so differing fee strings prove a fee change there and
+        # equal ones prove nothing either way — both are kept rather than
+        # risk hiding a real change. Only an explicit False with no field
+        # evidence is withheld.
+        news = news_module()
+        base = {"origin": "local", "category": "subscription",
+                "summary_code": "news_sum_plan_change"}
+        differing = dict(base, summary_params={"plan": "Plus", "fee_before": "$20/mo",
+                                               "fee_after": "$25/mo", "terms_changed": False})
+        self.assertTrue(news.item_proves_change(differing))
+        equal = dict(base, summary_params={"plan": "Plus", "fee_before": "$20/mo",
+                                           "fee_after": "$20/mo", "terms_changed": True})
+        self.assertTrue(news.item_proves_change(equal))
+        explicit_empty = dict(
+            base, summary_params={"plan": "Plus", "fee_before": "$20/mo",
+                                  "fee_after": "$20/mo", "fee_changed": False,
+                                  "terms_changed": True})
+        self.assertFalse(news.item_proves_change(explicit_empty))
+
 
 # ------------------------------------------------------------------ eligibility
 

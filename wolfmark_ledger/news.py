@@ -1076,6 +1076,11 @@ def item_proves_change(item: Mapping[str, Any]) -> bool:
     no field list. Those records prove no change and are withheld from the
     payload; the store itself is untouched and current diffs cannot emit
     them. Central items keep the publisher's own semantics.
+
+    Records without the ``fee_changed`` flag predate machine comparison
+    entirely (or are foreign): they are kept, since differing fee strings
+    prove a fee change there and equal ones prove nothing either way. Only
+    an explicit ``False`` with no field evidence is withheld.
     """
     if item.get("origin") == "central":
         return True
@@ -1086,7 +1091,8 @@ def item_proves_change(item: Mapping[str, Any]) -> bool:
     params = item.get("summary_params")
     if not isinstance(params, dict):
         return True
-    if params.get("fee_changed"):
+    fee_changed = params.get("fee_changed")
+    if fee_changed is True or not isinstance(fee_changed, bool):
         return True
     fields = params.get("field_changes")
     return isinstance(fields, list) and len(fields) > 0
