@@ -4,12 +4,18 @@ Two defects from the integration review live here. The cache was keyed by
 provider alone, so a second Hermes home reused the first home's snapshot; and the
 per-provider budget was longer than the Desktop transport allows, so a slow probe
 looked like a missing route.
+
+WP47 adds capability-aware probing: families Hermes cannot read usage for
+(no fetcher, no provider-hook override) are reported unsupported without
+spending a subprocess, instead of timing out or failing one by one.
 """
 from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -108,6 +114,151 @@ class MultiSlotDiscoveryTest(unittest.TestCase):
         self.assertEqual(out["accounts"][0]["identity_source"], "provider_default_slot")
         self.assertTrue(any("2" in note and "credential" in note for note in out["notes"]),
                         f"multi-slot ambiguity must be named: {out['notes']}")
+
+
+class UsageSupportTest(unittest.TestCase):
+    """WP47/F143: probe only families Hermes can actually read usage for.
+
+    The running Hermes' own fetcher registry (plus provider-hook overrides)
+    decides eligibility — never a hardcoded list, and never a guess. When
+    Hermes cannot be introspected the verdict is unknown and probes run as
+    before.
+    """
+
+    def setUp(self) -> None:
+        discovery._CACHE.clear()
+        discovery._SUPPORT_CACHE.clear()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(discovery._CACHE.clear)
+        self.addCleanup(discovery._SUPPORT_CACHE.clear)
+        self._modules = []
+
+    def tearDown(self) -> None:
+        for name in self._modules:
+            sys.modules.pop(name, None)
+
+    def stub_hermes(self, fetchers, hooks=()):
+        """Install stub agent/providers modules; None fetchers means no registry."""
+        agent = types.ModuleType("agent")
+        account_usage = types.ModuleType("agent.account_usage")
+        if fetchers is not None:
+            account_usage._USAGE_FETCHERS = {slug: (lambda *a: None) for slug in fetchers}
+        providers = types.ModuleType("providers")
+        base = types.ModuleType("providers.base")
+
+        class ProviderProfile:
+            def fetch_account_usage(self, **kwargs):
+                return None
+
+        class HookedProfile(ProviderProfile):
+            def fetch_account_usage(self, **kwargs):
+                return {"hooked": True}
+
+        base.ProviderProfile = ProviderProfile
+        hooked = set(hooks)
+
+        def get_provider_profile(slug):
+            if slug in hooked:
+                return HookedProfile()
+            if slug == "plain":
+                return ProviderProfile()
+            return None
+
+        providers.get_provider_profile = get_provider_profile
+        sys.modules["agent"] = agent
+        sys.modules["agent.account_usage"] = account_usage
+        sys.modules["providers"] = providers
+        sys.modules["providers.base"] = base
+        self._modules.extend(["agent", "agent.account_usage", "providers", "providers.base"])
+
+    def test_fetcher_slugs_are_supported(self) -> None:
+        self.stub_hermes({"openai-codex", "anthropic", "openrouter"})
+        self.assertEqual(discovery.usage_support("openai-codex"), "supported")
+        self.assertEqual(discovery.usage_support("OpenRouter"), "supported")
+
+    def test_hook_overrides_are_supported(self) -> None:
+        self.stub_hermes({"openai-codex"}, hooks={"gateway-x"})
+        self.assertEqual(discovery.usage_support("gateway-x"), "supported")
+
+    def test_plain_profiles_and_unknown_slugs_are_unsupported(self) -> None:
+        self.stub_hermes({"openai-codex"}, hooks={"gateway-x"})
+        self.assertEqual(discovery.usage_support("plain"), "unsupported")
+        self.assertEqual(discovery.usage_support("commandcode-anthropic"), "unsupported")
+
+    def test_unreadable_hermes_is_unknown_not_unsupported(self) -> None:
+        # No stub modules at all (and none importable here): capability is
+        # unknown, so probes run exactly as before instead of going quiet.
+        self.assertEqual(discovery.usage_support("openai-codex"), "unknown")
+        self.stub_hermes(None)
+        discovery._SUPPORT_CACHE.clear()
+        self.assertEqual(discovery.usage_support("openai-codex"), "unknown")
+
+    def test_unsupported_families_are_reported_without_a_subprocess(self) -> None:
+        self.stub_hermes({"openai-codex"})
+        with mock.patch.object(discovery, "_hermes_binary", return_value="/usr/bin/hermes"), \
+             mock.patch.object(discovery.subprocess, "run") as run:
+            result = discovery.native_snapshot("commandcode-anthropic", home=self.home)
+        run.assert_not_called()
+        self.assertEqual(result["state"], "unsupported")
+        self.assertIn("no usage endpoint", result["reason"])
+        self.assertIsNone(result["snapshot"])
+
+    def test_supported_families_still_probe(self) -> None:
+        self.stub_hermes({"openai-codex"})
+        calls: list = []
+
+        def fake(*args, **kwargs):
+            calls.append(args[0])
+            return subprocess.CompletedProcess(args[0], 0, '{"provider": "openai-codex"}', "")
+
+        with mock.patch.object(discovery, "_hermes_binary", return_value="/usr/bin/hermes"), \
+             mock.patch.object(discovery.subprocess, "run", side_effect=fake):
+            result = discovery.native_snapshot("openai-codex", home=self.home)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result["state"], "ok")
+
+    def test_unknown_capability_still_probes(self) -> None:
+        calls: list = []
+
+        def fake(*args, **kwargs):
+            calls.append(args[0])
+            return subprocess.CompletedProcess(args[0], 1, "", "nope")
+
+        with mock.patch.object(discovery, "_hermes_binary", return_value="/usr/bin/hermes"), \
+             mock.patch.object(discovery.subprocess, "run", side_effect=fake):
+            result = discovery.native_snapshot("mystery", home=self.home)
+        self.assertEqual(len(calls), 1, "unknown capability must not skip the probe")
+        self.assertEqual(result["state"], "unavailable")
+
+    def test_discover_names_unsupported_families_quietly(self) -> None:
+        self.stub_hermes({"openai-codex"})
+        (self.home / "auth.json").write_text(json.dumps({
+            "credential_pool": {"openai-codex": [{"label": "a"}],
+                                "commandcode-anthropic": [{"label": "b"}]}
+        }))
+        with mock.patch.object(discovery, "_hermes_binary", return_value="/usr/bin/hermes"), \
+             mock.patch.object(discovery.subprocess, "run",
+                               return_value=subprocess.CompletedProcess(
+                                   [], 0, '{"provider": "openai-codex", "windows": []}', "")) as run:
+            out = discovery.discover({}, include_native=True, home=self.home)
+        self.assertEqual(run.call_count, 1, "only the supported family is probed")
+        states = {a["family"]: a.get("usage_source") for a in out["accounts"]}
+        self.assertEqual(states["commandcode-anthropic"], "none")
+        self.assertTrue(any("commandcode-anthropic" in note and "no usage endpoint" in note
+                            for note in out["notes"]),
+                        f"unsupported families are named, not errored: {out['notes']}")
+        self.assertFalse(any("TimeoutExpired" in note or "could not be read" in note
+                             for note in out["notes"]),
+                         f"no spurious failure diagnostics: {out['notes']}")
+
+    def test_an_exhausted_budget_reports_without_probing(self) -> None:
+        with mock.patch.object(discovery.subprocess, "run") as run:
+            out = discovery.probe_providers(["a", "b"], home=self.home, budget_seconds=0)
+        run.assert_not_called()
+        self.assertEqual(out["a"]["state"], "unavailable")
+        self.assertIn("budget", out["a"]["reason"])
 
 
 if __name__ == "__main__":
