@@ -5840,8 +5840,8 @@ const PRODUCT_CSS = [
   '.wm-product .wm-about-more details p{margin:6px 0 0;color:var(--ui-text-tertiary);font-size:12px;line-height:1.5;max-width:78ch}',
   '.wm-product .wm-about-more [id]{scroll-margin-top:70px}',
   '@container(max-width:760px){.wm-product .wm-about-more [id]{scroll-margin-top:150px}}',
-  '.wm-product .wm-about-company{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;margin-top:2px;padding:12px 14px;border:1px solid var(--wm-border);border-radius:8px;background:var(--wm-surface-raised)}',
-  '.wm-product .wm-about-company .wm-about-developer{margin:0}',
+  '.wm-product .wm-about-company{display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin-top:4px;padding:16px;border:1px solid var(--wm-border);border-left:3px solid #2563EB;border-radius:10px;background:color-mix(in srgb,#2563EB 5%,var(--wm-surface-raised))}',
+  '.wm-product .wm-about-company .wm-about-developer{margin:0;font-size:11.5px;font-weight:650;letter-spacing:.4px;text-transform:uppercase;color:var(--ui-text-tertiary)}',
   '.wm-product .wm-about-group{display:grid;gap:6px;margin:12px 0 0}',
   '.wm-product .wm-about-group h3{margin:0;font-size:11.5px;font-weight:650;letter-spacing:.5px;text-transform:uppercase;color:var(--ui-text-tertiary)}',
   '.wm-product .wm-about-group .wm-about-actions{margin:0}',
@@ -7574,15 +7574,23 @@ function externalLinkProps(url) {
 }
 
 /**
- * WolfMark company lockup (WolfMark Ltd brand kit
- * svg/core-colour/wolfmark-lockup-horizontal-blue.svg), inlined because the
- * desktop plugin loader forbids relative asset imports. Path data is the
- * approved master geometry; the core-colour Wolf Blue reads on both light
- * and dark host themes, so one asset serves both. Rendered only in the
- * About & Support hero, with fixed dimensions so it cannot shift
- * surrounding layout.
+ * WolfMark company lockup, an exact transcription of the approved master
+ * `svg/core-colour/wolfmark-lockup-horizontal-blue.svg` from the WolfMark Ltd
+ * brand kit (verified against manifest sha256
+ * df67e54664dc9bfda40b8c3f0a37f1fc28942d9690dc3b94a0a756073ad5acdd:
+ * viewBox and all nine path `d` strings are byte-identical). Inlined because
+ * the desktop plugin loader forbids relative asset imports. The core-colour
+ * Wolf Blue reads on both light and dark host themes, so one asset serves
+ * both. Rendered only in the About & Support hero, with fixed dimensions so
+ * it cannot shift surrounding layout.
+ *
+ * The O, A and R glyphs (paths 2, 6, 7) each carry a counter wound the same
+ * way as the glyph outline, so the master marks them fill-rule evenodd.
+ * Omitting it silently fills the R bowl and the A counter under the default
+ * nonzero rule — the incorrect R rejected in 0.6.22 owner UAT (F150).
  */
 const WOLFMARK_LOCKUP_VIEWBOX = '232.558 267.748 1360.585 336.056'
+const WOLFMARK_LOCKUP_EVENODD = new Set([2, 6, 7])
 const WOLFMARK_LOCKUP_PATHS = [
   'M438.025146,578.962341 C426.062622,586.516785 414.413452,593.886902 401.899597,601.804077 C402.074066,595.640625 401.354645,590.645935 406.051270,586.187012 C413.288025,579.316650 419.933868,571.811646 426.631866,564.396545 C427.930542,562.958801 428.953705,560.726562 429.033691,558.815979 C430.155853,532.018250 431.033051,505.210236 432.197998,478.414642 C432.281342,476.497833 433.701965,474.117798 435.242798,472.867706 C448.178192,462.372803 461.250763,452.045258 474.375061,441.786316 C476.935547,439.784882 478.113770,437.699646 478.079529,434.286194 C477.980927,424.461395 478.367737,414.631927 478.549103,404.803986 C478.584717,402.874451 478.554260,400.943756 478.554260,397.960999 C469.936859,403.539062 462.143860,408.529236 454.406433,413.604126 C441.594940,422.007050 428.874847,430.551086 415.983398,438.828827 C413.265686,440.573944 412.270111,442.397095 412.260590,445.639954 C412.163818,478.630585 411.833252,511.620514 411.730621,544.611145 C411.720276,547.943787 410.665100,550.116516 408.171082,552.240051 C400.564484,558.716553 393.171387,565.443726 385.486816,572.258057 C377.091949,564.873657 368.685516,557.593872 360.471558,550.103088 C359.484619,549.203064 359.188538,547.163147 359.166962,545.643127 C358.689240,511.990356 358.333557,478.335754 357.778656,444.684448 C357.749359,442.907379 356.645844,440.443054 355.237823,439.499664 C335.044952,425.970673 314.714630,412.646729 294.407959,399.287781 C294.007172,399.024109 293.493134,398.932526 292.543854,398.578735 C292.543854,407.503906 293.100922,416.256012 292.399902,424.906189 C291.562653,435.237122 295.353363,442.112885 303.907043,448.000336 C314.854980,455.535828 324.911835,464.382599 335.172577,472.881714 C336.708313,474.153778 338.042877,476.567749 338.152191,478.527069 C339.637024,505.139160 340.842407,531.766724 342.287567,558.381287 C342.402100,560.490845 343.285522,562.966064 344.657013,564.529907 C350.806030,571.541321 356.881622,578.697571 363.731537,584.987122 C368.772827,589.616028 369.848358,594.740662 368.980743,601.528625 C358.526093,594.921265 348.611603,587.942261 338.027039,582.197876 C329.972839,577.826904 325.582611,571.703979 322.882599,563.187134 C318.808624,550.336304 314.021667,537.693542 309.040497,525.159912 C307.665649,521.700500 305.046021,518.281677 302.110352,515.971741 C285.517334,502.915314 268.654327,490.201965 251.188278,476.840027 C257.211975,474.210602 262.567474,471.872833 268.637451,469.223206 C257.184296,458.167267 245.991333,447.362549 234.558060,436.325836 C243.892410,422.256012 252.663498,407.911407 262.598480,394.424133 C270.218781,384.079163 273.651184,373.562805 273.202393,360.468903 C272.232574,332.175201 272.900085,303.825409 272.897858,275.498566 C272.897736,273.881805 272.897858,272.265045 272.897858,271.026154 C279.354736,277.112579 285.979614,283.052368 292.259277,289.337036 C307.686462,304.776611 322.885223,320.445007 338.383789,335.811676 C340.122589,337.535675 343.190399,338.764648 345.652985,338.783600 C372.645294,338.991333 399.640411,338.989136 426.632599,338.772827 C428.887726,338.754761 431.646790,337.285034 433.294678,335.621155 C453.460144,315.259674 473.474365,294.748230 493.475037,274.224213 C494.715088,272.951752 495.514771,271.250183 496.519348,269.748291 C497.102783,270.101746 497.686188,270.455231 498.269592,270.808685 C498.269592,278.209534 498.271881,285.610413 498.269196,293.011261 C498.259369,320.171600 498.180176,347.332336 498.345795,374.491577 C498.361664,377.096893 499.382233,380.025238 500.809845,382.240814 C512.428040,400.271881 524.254395,418.168823 535.550781,435.395050 C524.805725,446.965332 514.305237,458.272278 503.701080,469.690826 C508.165527,471.654663 513.409973,473.961639 519.189514,476.503967 C518.066650,477.535583 517.238037,478.419189 516.290833,479.149017 C500.198944,491.548340 484.015625,503.831299 468.066925,516.411865 C465.502197,518.434937 463.235382,521.489746 462.084961,524.540588 C456.504089,539.340332 451.139130,554.231323 446.175293,569.247864 C444.698151,573.716553 442.569061,576.924622 438.025146,578.962341 z',
   'M565.379 398.322H592.729L617.311 476.637 644.295 398.132H668.902L694.213 476.068 720.885 398.150H746.683L710.207 510.574H679.383L655.466 434.903 631.241 510.574H602.127Z',
@@ -7598,7 +7606,10 @@ function WolfMarkLockup({ width = 208 }) {
   return jsxs('svg', { viewBox: WOLFMARK_LOCKUP_VIEWBOX, width, height: width * 336.056 / 1360.585,
     role: 'img', 'aria-label': 'WolfMark',
     style: { flexShrink: 0, maxWidth: '100%', height: 'auto' },
-    children: WOLFMARK_LOCKUP_PATHS.map((d, index) => jsx('path', { fill: '#2563EB', d }, index)) })
+    children: WOLFMARK_LOCKUP_PATHS.map((d, index) => jsx('path', {
+      fill: '#2563EB', d,
+      ...(WOLFMARK_LOCKUP_EVENODD.has(index) ? { fillRule: 'evenodd' } : null),
+    }, index)) })
 }
 
 /**
@@ -7659,8 +7670,8 @@ function AboutPage() {
         ] }),
         jsx('p', { children: t('aboutIntro') }),
         jsxs('div', { className: 'wm-about-company', children: [
-          jsx(WolfMarkLockup, { width: 208 }),
-          jsx('p', { className: 'wm-about-developer', children: t('aboutDeveloper') })
+          jsx('p', { className: 'wm-about-developer', children: t('aboutDeveloper') }),
+          jsx(WolfMarkLockup, { width: 224 })
         ] })
       ] }),
       jsxs('section', { className: 'wm-product-section', children: [
