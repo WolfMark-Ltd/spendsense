@@ -477,10 +477,12 @@ test('cached Usage data does not consume the pending pricing focus before refres
     assert.ok(analyticsFetches >= 2, 'the stale cached query starts its refresh after Overview loads')
     assert.equal(T.$analyticsFocus.get()?.target, 'pricing-coverage',
       'the one-shot focus remains pending while the cached report is being refreshed')
-    const staleSummary = container.querySelector('#wm-usage-pricing-summary')
-    assert.ok(staleSummary, 'the cached report is rendered while its refresh is pending')
+    const staleSummary = container.querySelector('.wm-usage-summary')
+    assert.ok(staleSummary, 'the cached report keeps its primary figures while its refresh is pending')
+    assert.equal(staleSummary.querySelectorAll('.wm-stat').length, 3,
+      'the cached summary stays limited to its three primary figures')
     assert.notEqual(document.activeElement, staleSummary,
-      'the stale summary does not steal focus from the incoming pricing evidence')
+      'the stale figures do not steal focus from the incoming pricing evidence')
 
     await React.act(async () => resolveFresh(pricingReport()))
     await flush(8)

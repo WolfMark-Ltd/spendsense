@@ -52,9 +52,27 @@ const totals = () => ({
   billed_usd: 18.2, billed_complete: false, billing_mix: { api: 900, included: 300 },
 })
 
-export const usageAnalytics = () => {
+export const usageAnalytics = (fixtureState = 'fixture') => {
   const byModel = usageByModel()
   const total = totals()
+  if (fixtureState === 'known') {
+    total.calls = 6335
+    total.priced_tokens = total.tokens
+    total.unpriced_tokens = 0
+    total.unpriced_calls = 0
+    total.economics = { ...total.economics, read_benefit_usd: 196.99,
+      read_benefit_basis: 'exact', read_benefit_calls: 6335, read_benefit_tokens: 4282240 }
+  } else if (fixtureState === 'partial') {
+    total.calls = 6335
+    total.priced_tokens = total.tokens - 127000
+    total.unpriced_tokens = 127000
+    total.unpriced_calls = 360
+    total.economics = { ...total.economics, read_benefit_usd: 196.99,
+      read_benefit_basis: 'exact', read_benefit_calls: 5975, read_benefit_tokens: 4282240 }
+  } else if (fixtureState === 'unavailable') {
+    total.economics = { ...total.economics, read_benefit_usd: null,
+      read_benefit_basis: 'indeterminate', read_benefit_calls: 0, read_benefit_tokens: 0 }
+  }
   return {
     ok: true,
     window: {
@@ -107,8 +125,8 @@ export const usageHealth = contract => ({
 })
 
 /** The transport both renderers register: one mapping, one answer. */
-export const usageTransport = ({ requiredContract } = {}) => async path => {
-  if (String(path).startsWith('/analytics?')) return usageAnalytics()
+export const usageTransport = ({ requiredContract, state = 'fixture' } = {}) => async path => {
+  if (String(path).startsWith('/analytics?')) return usageAnalytics(state)
   if (path === '/health') return usageHealth(requiredContract)
   return { ok: true }
 }

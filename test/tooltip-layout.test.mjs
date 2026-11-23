@@ -141,7 +141,7 @@ body{margin:0;background:${THEMES[theme].background};color-scheme:${theme};font:
                 `Escape elsewhere in the scope dismisses ${tag}`)
               assert.equal(tip.navigations, 0, `Escape never navigates while ${tag} is involved`)
             }
-            for (const tipId of ['rates-source', 'savings-method', 'cost-source', 'cache-method']) {
+            for (const tipId of ['rates-source', 'read-benefit', 'cost-source', 'cache-coverage']) {
               const tip = result.tooltips[tipId]
               checkTip(tipId, tip, 'pane')
               if (tipId === 'rates-source') {
@@ -181,11 +181,9 @@ body{margin:0;background:${THEMES[theme].background};color-scheme:${theme};font:
               `[${id}] WP13 long model keeps a tooltip`)
             assert.equal(result.wp13.figure, '—', `[${id}] WP13 unknown cost renders an em dash`)
             if (locale === 'en') {
-              assert.equal(result.wp13.badge && result.wp13.badge.text, 'provider ?', `[${id}] WP13 unknown provider badge`)
-              assert.match(result.wp13.badge.title || '', /estimate/, `[${id}] WP13 unknown provider tooltip`)
+              assert.equal(result.wp13.badge, null, `[${id}] unknown provider badge stays out of the normal header`)
             } else {
-              assert.equal(result.wp13.badge && result.wp13.badge.text, '供应商未知', `[${id}] WP13 unknown provider badge (zh)`)
-              assert.ok((result.wp13.badge.title || '').length > 0, `[${id}] WP13 unknown provider tooltip (zh)`)
+              assert.equal(result.wp13.badge, null, `[${id}] unknown provider badge stays out of the Chinese header`)
             }
           }
         }

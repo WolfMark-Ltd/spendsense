@@ -1,5 +1,5 @@
 name: spend-sense
-version: "0.6.22"
+version: "0.6.25"
 description: "SpendSense: Hermes usage accounting, provider-aware cost estimates, membership plans and fees, offline pricing, and live session usage."
 author: "WolfMark Ltd (fork of Token & Cost Meter by AFei, Apache-2.0)"
 kind: standalone

@@ -4,10 +4,12 @@ import { createRoot } from 'react-dom/client'
 import plugin, { __test as T } from '../desktop/plugin.js'
 import { USAGE_FILTERS, usageTransport } from './usage-fixtures.mjs'
 
+const params = new URLSearchParams(location.search)
+const fixtureState = params.get('state') || 'fixture'
 // The payload lives in `usage-fixtures.mjs` so the browser and the browserless
 // Usage suite render one synthetic dataset, not two that can drift.
 plugin.register({
-  rest: usageTransport({ requiredContract: T.REQUIRED_BACKEND_CONTRACT }),
+  rest: usageTransport({ requiredContract: T.REQUIRED_BACKEND_CONTRACT, state: fixtureState }),
   storage: { get: (_key, fallback) => fallback, set() {}, delete() {} },
   register() {}, registerMany() {}, onDispose() {}, onEvent: () => () => {},
   setTimeout: fn => { const timer = setTimeout(fn, 0); return () => clearTimeout(timer) },
@@ -15,7 +17,6 @@ plugin.register({
   os: {}, pet: null, i18n: { register() {}, t: key => key },
 })
 
-const params = new URLSearchParams(location.search)
 // Locale is fixed per run (see sdk note); ?case= selects one case for shots.
 globalThis.__usageI18N = T.I18N
 globalThis.__usageLocale = params.get('locale') || 'en'
@@ -151,7 +152,7 @@ async function measure() {
     const pane = document.getElementById(id)
     if (!pane?.querySelector('.wm-shell')) return false
     return pane.querySelectorAll('section.wm-panel').length === 7
-      && pane.querySelectorAll('.wm-stat').length === 5
+      && pane.querySelectorAll('.wm-stat').length === 3
       && pane.querySelectorAll('.wm-scopechips button').length === 3
       && pane.querySelectorAll('[data-trend-point]').length > 0
       && pane.querySelectorAll('.wm-tablewrap thead th').length === 7
@@ -226,6 +227,7 @@ async function measure() {
       headingStart: pane.querySelector('.wm-topline > div > :first-child')?.textContent,
       sections: pane.querySelectorAll('section.wm-panel').length,
       stats: stats.length,
+      readBenefit: pane.querySelector('#wm-usage-read-benefit .wm-statvalue')?.textContent || '',
       selects: pane.querySelectorAll('select').length,
       advancedFilters: !!advanced,
       // The advanced row's own height: a collapsed `<details>` measures zero

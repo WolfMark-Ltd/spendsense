@@ -99,7 +99,11 @@ const click = async element => {
 }
 
 const statsOf = container => [...container.querySelectorAll('.wm-stat')].map(el => ({
-  label: flat(el.querySelector('.wm-statlabel')?.textContent),
+  label: (() => {
+    const label = el.querySelector('.wm-statlabel')
+    const infoLabel = label?.querySelector('.wm-stat-with-info')
+    return flat(infoLabel?.firstChild?.textContent ?? label?.textContent)
+  })(),
   value: flat(el.querySelector('.wm-statvalue')?.textContent),
   hints: [...el.querySelectorAll('.wm-subtle')].map(hint => flat(hint.textContent)),
 }))
@@ -121,16 +125,21 @@ test('read benefit uses backend basis and coverage, and unknown writes stay unkn
       read_benefit_usd: 1.25, read_benefit_basis: 'exact', read_benefit_calls: 5, read_benefit_tokens: 188224 }
     const container = await boot({ locale, analyticsData: data })
     assert.match(container.textContent, /\$1\.25/)
-    assert.ok(container.textContent.includes(dict.readBenefitCoverage(5, 1234, T.fmtTokens(188224))))
-    assert.ok(container.textContent.includes(dict.readBenefitExplanation))
-    assert.equal(statsOf(container)[1].value, '—')
+    assert.equal(statsOf(container).length, 3, `${locale}: coverage details do not add normal-page text`)
+    const benefitTip = container.querySelector('[aria-controls="wm-info-usage-read-benefit"]')
+    await click(benefitTip)
+    assert.ok(container.querySelector('#wm-info-usage-read-benefit')?.textContent.includes(
+      dict.readBenefitCoverage(5, 1234, T.fmtTokens(188224))))
+    assert.ok(container.querySelector('#wm-info-usage-read-benefit')?.textContent.includes(dict.readBenefitExplanation))
+    assert.equal(statsOf(container)[1].value, '$1.25')
     const composition = [...container.querySelectorAll('.wm-panel')].find(panel => panel.textContent.includes(dict.usageCompTitle))
-    assert.ok(composition.textContent.includes(dict.usageWritesUnknown))
+    assert.doesNotMatch(composition.textContent, /unknown|unclassified/i,
+      `${locale}: unavailable cache evidence stays a quiet dash in the normal composition chart`)
     assert.ok(composition.textContent.includes(dict.usageStreamCacheWrite))
-    assert.ok(composition.textContent.includes(dict.unknown))
+    assert.match(composition.textContent, /Cache write[^—]*—|缓存写入[^—]*—/)
     await click(composition.querySelector(`button[aria-label="${dict.usageCompSelect(dict.usageStreamInput)}"]`))
-    assert.ok(composition.textContent.includes(dict.usageWritesUnknown))
-    assert.ok(composition.textContent.includes(locale === 'en' ? 'of known streams' : '占已知类别'))
+    assert.doesNotMatch(composition.textContent, /unknown|unclassified/i,
+      `${locale}: selecting a known stream does not add a technical coverage warning`)
   }
 })
 
@@ -156,52 +165,55 @@ test('read benefit refuses absent or indeterminate values and preserves directio
   }
 })
 
-test('Usage states five headline figures in two labelled groups, in both languages', async () => {
+test('Usage keeps its headline to API-equivalent, read benefit and tokens, in both languages', async () => {
   for (const locale of LOCALES) {
     const container = await boot({ locale })
     const dict = T.I18N[locale]
     assert.equal(flat(container.querySelector('h1')?.textContent), dict.usageTitle,
       `${locale}: the page states its title`)
 
-    const groups = [...container.querySelectorAll('[data-kpi-group]')]
-    assert.deepEqual(groups.map(el => el.dataset.kpiGroup), ['money', 'activity'],
-      `${locale}: the figures keep a money group and an activity group`)
-    assert.deepEqual(groups.map(el => el.getAttribute('aria-label')),
-      [dict.usageKpiMoney, dict.usageKpiActivity], `${locale}: each group is named for assistive technology`)
-    assert.ok(groups.every(el => el.getAttribute('role') === 'group'),
-      `${locale}: the separators are real groups, not styling`)
-
     const stats = statsOf(container)
     assert.deepEqual(stats.map(stat => stat.label),
-      [dict.usageStatApiEquiv, dict.usageStatSavings, dict.usageStatCoverage, dict.weightedCacheHit, dict.usageStatTokens],
-      `${locale}: five figures, in the accepted order`)
-
-    // The pricing qualifier states two different denominators: the share of
-    // tokens that carry a price, and the calls that lack evidence.
-    const pricing = T.analyticsPricing(usageTotals(), translatorFor(T.I18N, locale))
-    assert.equal(stats[0].hints[0], pricing,
-      `${locale}: the API-equivalent figure carries its own priced/partial qualifier`)
-    assert.match(pricing, locale === 'en'
-      ? /Partial · 96\.0% priced · 6 calls incomplete/
-      : /部分 · 96\.0% 已定价 · 6 次调用不完整/,
-      `${locale}: a partly priced subtotal keeps token and call coverage separate (${pricing})`)
-    // A measured cash figure is not the same thing as a theoretical saving.
-    assert.equal(stats[1].value, T.fmtUsd(3.2),
-      `${locale}: the savings figure is the measured net saving (${stats[1].value})`)
-    assert.equal(stats[1].hints.at(-1), dict.usageStatSavingsExtra('82.0%'),
-      `${locale}: the saving states its own coverage`)
-    assert.equal(stats[2].value, '96.0%', `${locale}: pricing coverage is the backend's own figure`)
-    assert.equal(stats[3].value, '61.0%', `${locale}: the cache hit rate is the weighted reading`)
-    assert.equal(stats[3].hints[0], dict.cacheCoveragePrompt('66.0%'),
-      `${locale}: the cache reading states the coverage behind it`)
-    assert.equal(stats[4].value, T.fmtTokens(3141592),
+      [dict.usageStatApiEquiv, dict.readBenefitLabel, dict.usageStatTokens],
+      `${locale}: three figures, in a direct reading order`)
+    assert.equal(stats.length, 3, `${locale}: no duplicate or theoretical-savings tile`)
+    assert.equal(stats[0].value, '$82.40+', `${locale}: incomplete pricing stays visible as a short qualifier`)
+    assert.equal(stats[1].value, '$4.20', `${locale}: read benefit uses the backend value`)
+    assert.equal(stats[2].value, T.fmtTokens(3141592),
       `${locale}: the token total is formatted, not rounded to a bare count`)
-    assert.match(stats[4].hints[0], /1,234/,
-      `${locale}: the call count is stated beside the token total`)
+    assert.match(stats[2].hints[0], /1,234/,
+      `${locale}: the call count stays accessible beside the token total`)
+    assert.equal(container.querySelectorAll('.wm-usage-summary .wm-stat').length, 3,
+      `${locale}: the normal summary contains only the three primary figures`)
+    assert.equal(container.querySelector('.wm-nerd-mode')?.open, false,
+      `${locale}: detailed pricing and savings methodology starts collapsed`)
+    const benefitTip = container.querySelector('[aria-controls="wm-info-usage-read-benefit"]')
+    assert.ok(benefitTip, `${locale}: read benefit keeps its adjacent tooltip`)
+    await click(benefitTip)
+    assert.ok(container.querySelector('#wm-info-usage-read-benefit')?.textContent.includes(
+      dict.readBenefitCoverage(96, 1234, T.fmtTokens(72000))),
+    `${locale}: call and token coverage stays in the tooltip`)
   }
 })
 
-test('Usage and its economics panel qualify signed ranges and directional bounds in both languages', async () => {
+test('Usage renders the backend $196.99 read benefit without a second benefit card', async () => {
+  for (const locale of LOCALES) {
+    for (const state of ['known', 'partial']) {
+      const container = await boot({ locale, analyticsData: usageAnalytics(state) })
+      assert.equal(statsOf(container)[1].value, '$196.99', `${locale}/${state}: use backend read-benefit evidence`)
+      assert.equal(container.querySelectorAll('#wm-usage-read-benefit').length, 1,
+        `${locale}/${state}: one read-benefit figure`)
+      assert.equal(container.querySelectorAll('.wm-usage-summary .wm-stat').length, 3,
+        `${locale}/${state}: no second benefit card`)
+      assert.equal(container.querySelector('.wm-nerd-mode')?.open, false,
+        `${locale}/${state}: methodology remains in the collapsed details area`)
+    }
+    const unavailable = await boot({ locale, analyticsData: usageAnalytics('unavailable') })
+    assert.equal(statsOf(unavailable)[1].value, '—', `${locale}: unavailable is not shown as zero`)
+  }
+})
+
+test('Usage keeps signed net-saving analysis in collapsed details, separate from read benefit', async () => {
   for (const locale of LOCALES) {
     const dict = T.I18N[locale]
     const cases = [
@@ -219,12 +231,10 @@ test('Usage and its economics panel qualify signed ranges and directional bounds
       data.economics = economics
       data.totals.economics = economics
       const container = await boot({ locale, analyticsData: data })
-      const savings = statsOf(container)[1]
-      assert.equal(savings.value, item.expected, `${locale} ${item.basis}: Usage keeps sign and direction`)
-      assert.ok(savings.hints.includes(dict.usageStatSavingsBoundHint),
-        `${locale} ${item.basis}: Usage labels the value as qualified`)
-      assert.equal(savings.hints.at(-1), dict.usageStatSavingsExtra('82.0%'),
-        `${locale} ${item.basis}: Usage keeps the independent coverage disclosure`)
+      assert.equal(statsOf(container)[1].value, '$4.20',
+        `${locale} ${item.basis}: read benefit stays independent of net-savings evidence`)
+      const nerdMode = container.querySelector('.wm-nerd-mode')
+      assert.equal(nerdMode?.open, false, `${locale} ${item.basis}: detailed economics stay collapsed`)
       const panel = [...container.querySelectorAll('.wm-panel')].find(el =>
         flat(el.querySelector('h2')?.textContent) === dict.usageEconTitle)
       assert.equal(flat(panel?.querySelector('.wm-compositiontotal')?.textContent), item.expected,
@@ -239,13 +249,15 @@ test('Usage numbers seven sections 01–07 and names every panel, in both langua
   for (const locale of LOCALES) {
     const container = await boot({ locale })
     const dict = T.I18N[locale]
-    assert.deepEqual([...container.querySelectorAll('.wm-panel .wm-number')].map(el => el.textContent),
-      ['01', '02', '03', '04', '05', '06', '07'], `${locale}: every section is numbered 01–07`)
+    const numbers = [...container.querySelectorAll('.wm-panel .wm-number')].map(el => el.textContent)
+    assert.equal(numbers.length, 7, `${locale}: every panel is numbered`)
+    assert.deepEqual([...numbers].sort(), ['01', '02', '03', '04', '05', '06', '07'],
+      `${locale}: section numbers remain unique and cover 01–07`)
     assert.equal(container.querySelectorAll('section.wm-panel').length, 7,
       `${locale}: seven numbered panels`)
     assert.deepEqual([...container.querySelectorAll('.wm-panel h2')].map(el => flat(el.textContent)), [
-      dict.usageDistTitle, dict.usageTrendPanelTitle, dict.usageDelegTitle, dict.usageRankTitle,
-      dict.usageCompTitle, dict.usageExplorerTitle, dict.usageEconTitle,
+      dict.usageDistTitle, dict.usageTrendPanelTitle, dict.usageCompTitle, dict.usageDelegTitle,
+      dict.usageRankTitle, dict.usageExplorerTitle, dict.usageEconTitle,
     ], `${locale}: every panel keeps its own title`)
   }
 })
@@ -311,7 +323,7 @@ test('Usage drops a filter from its chip and the disclosure count follows, in bo
   }
 })
 
-test('Usage keeps methodology and baseline collapsed, and leaves one coverage disclosure, in both languages', async () => {
+test('Usage keeps methodology and baseline collapsed, with coverage inside More details', async () => {
   for (const locale of LOCALES) {
     const container = await boot({ locale })
     const dict = T.I18N[locale]
@@ -326,9 +338,9 @@ test('Usage keeps methodology and baseline collapsed, and leaves one coverage di
     assert.equal(baseline.open, false, `${locale}: the baseline stays collapsed`)
     assert.equal(flat(baseline.querySelector('summary')?.textContent), dict.usageBaselineSummaryTitle,
       `${locale}: the baseline states that it is a separate estimate`)
-    // Exactly one coverage summary region keeps the page's inference visible.
+    // Detailed evidence is accessible inside the collapsed disclosure.
     assert.equal(container.querySelectorAll('.wm-coverage[role="region"]').length, 1,
-      `${locale}: one Data coverage summary, not one per panel`)
+      `${locale}: one Data coverage summary is retained for people who open More details`)
   }
 })
 
@@ -368,20 +380,16 @@ test('Usage offers exact chart values on hover and keeps every point and legend 
   }
 })
 
-test('Usage keeps its billing and cache honesty copy on the rendered page, in both languages', async () => {
+test('Usage keeps billing and cache methodology available in collapsed details, in both languages', async () => {
   for (const locale of LOCALES) {
     const container = await boot({ locale })
     const dict = T.I18N[locale]
     // The shell, not the whole container: the page carries its own <style>.
     const text = flat(container.querySelector('.wm-shell')?.textContent)
-    assert.ok(text.includes(dict.usageStatSavings),
-      `${locale}: the cache saving is named as theoretical, not cash`)
     assert.ok(text.includes(dict.usageCoverageCharges),
       `${locale}: provider charges stay not recorded (${dict.usageCoverageCharges})`)
     assert.ok(text.includes(dict.usageBillingLabel.trim()),
       `${locale}: the recorded-cost classification stays visible`)
-    assert.ok(text.includes(dict.usageStatCoverage),
-      `${locale}: the pricing-coverage figure stays named`)
     assert.ok(text.includes(dict.usageMethodologyTitle),
       `${locale}: the methodology disclosure stays available`)
   }
