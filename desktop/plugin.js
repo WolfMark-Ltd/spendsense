@@ -4581,6 +4581,7 @@ function billingEvidence(billing, t = needsAttentionEn) {
     usd: ev[key]?.usd ?? null,
     basis: ev[key]?.basis || 'none',
     source: ev[key]?.source || '',
+    billingBasis: ev[key]?.billing_basis ?? null,
     pricingCoverage: ev[key]?.pricing_coverage || null
   }))
 }
@@ -6018,12 +6019,14 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   const apiUnpricedCalls = finiteValue(apiCoverage?.unpriced_calls)
   const apiPartial = apiCoverageKnown && (apiUnpricedTokens > 0 || apiUnpricedCalls > 0)
   const apiCoverageUnknown = !apiCoverageKnown
-  // The analytics basis behind the same rows. Billing sums row values the
-  // analytics engine already bounded, so a non-exact basis with fully priced
-  // rows still withholds the Fully priced verdict: the subtotal is a bound,
-  // not a complete measurement. Unpriced-row and coverage-unknown wording
-  // stays more specific and wins.
-  const apiBasis = totals?.economics?.api_equivalent_basis
+  // The billing-native basis of the displayed subtotal itself, aggregated
+  // by the backend over exactly the rows it sums: cycle-excluded rows never
+  // reach it, and custom-override rows are bounded by their own configured
+  // rates rather than the catalogue bounds the analytics totals carry. A
+  // non-exact basis with fully priced rows withholds the Fully priced
+  // verdict. Unpriced-row and coverage-unknown wording stays more specific
+  // and wins. Older backends omit the field and keep the previous verdicts.
+  const apiBasis = api.billingBasis
   const apiBounded = apiBasis != null && apiBasis !== 'exact'
   const apiStatus = summaryLoading ? t('costsLoadingShort')
     : api.usd == null ? t('costsUnknownTag')

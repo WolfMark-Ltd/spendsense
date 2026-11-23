@@ -456,14 +456,15 @@ test('Costs labels API-equivalent subtotals as partial and discloses exact cover
 
 test('Costs withholds Fully priced when the backend bounds the API-equivalent subtotal, in both languages', async () => {
   for (const language of ['en', 'zh']) {
-    // Fully priced rows, but the analytics engine bounded the same rows'
-    // subtotal (unreported cache counters): the card keeps the measured
-    // figure while the note names the bound, like the Overview Partial chip.
+    // Fully priced rows, but billing bounded its own subtotal (unreported
+    // cache counters over exactly the rows summed): the card keeps the
+    // measured figure while the note names the bound, like the Overview
+    // Partial chip.
     const { container } = await renderCostsSummary({ billing: { evidence: {
       api_equivalent: { usd: 1.25, basis: 'estimated', source: 'Published catalogue',
+        billing_basis: 'lower_bound', billing_bound_reason: 'write_not_reported',
         pricing_coverage: { priced_tokens: 100, unpriced_tokens: 0, priced_calls: 1, unpriced_calls: 0 } },
-    } },
-    totals: { economics: { api_equivalent_basis: 'lower_bound' } } }, language)
+    } } }, language)
     const card = container.querySelector('[data-cost-kind="api"]')
     assert.equal(card.querySelector('.wm-cost-card-value').textContent, '$1.25')
     assert.doesNotMatch(card.textContent, new RegExp(T.I18N[language].costsCompleteTag
@@ -474,6 +475,24 @@ test('Costs withholds Fully priced when the backend bounds the API-equivalent su
     assert.match(container.querySelector('.wm-cost-detail-row').textContent,
       new RegExp(T.I18N[language].costsApiBoundExplain.slice(0, 24).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
       `${language}: the disclosure explains the bound`)
+  }
+})
+
+test('Costs never borrows the analytics basis for the billing subtotal, in both languages', async () => {
+  for (const language of ['en', 'zh']) {
+    // The analytics basis describes the catalogue valuation over all rows;
+    // billing can value the same rows differently (custom overrides) or sum
+    // fewer rows (cycle exclusions). An older backend omits billing_basis,
+    // and the card must keep its previous verdict rather than mix bases.
+    const { container } = await renderCostsSummary({ billing: { evidence: {
+      api_equivalent: { usd: 1.25, basis: 'estimated', source: 'Configured custom rate overrides',
+        pricing_coverage: { priced_tokens: 100, unpriced_tokens: 0, priced_calls: 1, unpriced_calls: 0 } },
+    } },
+    totals: { economics: { api_equivalent_basis: 'incomplete' } } }, language)
+    const card = container.querySelector('[data-cost-kind="api"]')
+    assert.match(card.textContent, new RegExp(T.I18N[language].costsCompleteTag
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    `${language}: without a billing basis the analytics basis is ignored`)
   }
 })
 
