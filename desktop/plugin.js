@@ -6337,13 +6337,24 @@ const $fxNotice = atom(null)
  * The editor stays disabled until the saved document has loaded for this
  * connection: replacing rates that were never read would silently drop them.
  */
-function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave, t }) {
+
+/**
+ * The draft pins the saved revision it was staged from (F125 review). Later
+ * edits keep the original revision, so a save after someone else's change
+ * 409s instead of silently replacing their rates; only discarding the
+ * draft (reload) starts a new one against fresh saved rates.
+ */
+function stageFxDraft(prev, identity, rates, savedRev) {
+  const rev = prev && prev.origin === identity && 'rev' in prev ? prev.rev : (savedRev ?? null)
+  return { origin: identity, rates, rev }
+}
+function EconomicsFx({ fxError, fxReady, identity, rates, fxRev, onRetry, onSave, t }) {
   const rawDraft = useValue($fxDraft)
   const saving = useValue($fxSaving)?.origin === identity
   const notice = useValue($fxNotice)
   const saved = rates || []
   const draft = rawDraft?.origin === identity ? rawDraft.rates : saved
-  const stage = next => $fxDraft.set({ origin: identity, rates: next })
+  const stage = next => $fxDraft.set(stageFxDraft($fxDraft.get(), identity, next, fxRev))
   const add = event => {
     event.preventDefault()
     const read = name => (new FormData(event.target).get(name) || '').toString().trim()
@@ -6394,9 +6405,14 @@ function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave, t }) 
     ] }),
     notice?.origin === identity ? jsx('p', { className: notice.tone === 'good' ? 'wm-subtle' : 'wm-warn-note',
       role: notice.tone === 'good' ? 'status' : 'alert', children: notice.text }) : null,
-    jsx('div', { className: 'wm-setting-action', children:
+    jsx('div', { className: 'wm-setting-action', children: [
       jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !fxReady || !dirty || saving,
-        onClick: () => onSave(draft), children: saving ? t('fxSaving') : t('fxSave') }) })
+        onClick: () => onSave(draft), children: saving ? t('fxSaving') : t('fxSave') }),
+      dirty && !saving
+        ? jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $fxDraft.set(null),
+            children: t('fxReloadSaved') })
+        : null
+    ].filter(Boolean) })
   ].filter(Boolean) })
 }
 
@@ -6516,7 +6532,7 @@ function EconomicsGroupRow({ group, t }) {
  * Subscription economics, rendered from one report payload. Pure presentation:
  * the container owns the queries, so the harness can drive this with fixtures.
  */
-function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx, onSaveFx, onOpenFx }) {
+function EconomicsSection({ data, fxError, fxReady, identity, fxRates, fxRev, onRetryFx, onSaveFx, onOpenFx }) {
   const t = usePluginI18n(ID)
   const headline = data?.headline || {}
   const groups = data?.groups || []
@@ -6639,7 +6655,7 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
     jsxs('details', { id: 'wm-cost-fx-details', className: 'wm-econ-disclosure', children: [
       jsx('summary', { children: t('econFxTitle') }),
       jsx('p', { className: 'wm-subtle', children: t('econFxHint') }),
-      jsx(EconomicsFx, { fxError, fxReady, identity, rates: fxRates || [], onRetry: onRetryFx, onSave: onSaveFx, t })
+      jsx(EconomicsFx, { fxError, fxReady, identity, rates: fxRates || [], fxRev, onRetry: onRetryFx, onSave: onSaveFx, t })
     ] })
   ].filter(Boolean) })
 }
@@ -6674,8 +6690,12 @@ function EconomicsPanel({ identity, unknownFees = null }) {
     if (!membershipIdentityCurrent(captured)) return
     $fxSaving.set({ origin: captured })
     $fxNotice.set(null)
+    // The draft's own pinned revision, never the latest fetched one: after
+    // someone else's save, a retry must 409 again until the user reloads.
+    const draft = $fxDraft.get()
+    const draftRev = draft?.origin === captured && 'rev' in draft ? draft.rev : null
     try {
-      await fxWrite(rates, fxCurrent ? fx.data?.rev : null)
+      await fxWrite(rates, draftRev)
       await queryClient.invalidateQueries({ queryKey: [ID, 'budget-status', captured] })
       if (!membershipIdentityCurrent(captured) || $fxDraft.get()?.origin !== captured) return
       $fxDraft.set(null)
@@ -6718,7 +6738,7 @@ function EconomicsPanel({ identity, unknownFees = null }) {
     jsx(CostsAttention, { groups: economics.data?.groups || [], econAccounts: economics.data?.accounts || [],
       unknownFees, fxError, onRetryFx: () => fx.refetch?.(), onOpenFx: openFx, onOpenLog: openLog, t }, 'attention'),
     jsx(EconomicsSection, { data: economics.data, identity,
-      fxRates: fxReady ? fx.data?.rates || [] : [], fxReady, fxError,
+      fxRates: fxReady ? fx.data?.rates || [] : [], fxRev: fxReady ? fx.data?.rev ?? null : null, fxReady, fxError,
       onRetryFx: () => fx.refetch?.(), onSaveFx: saveFx, onOpenFx: openFx }, 'economics')
   ]
 }
@@ -15762,6 +15782,7 @@ const I18N = {
     fxAdd: 'Add rate',
     fxSave: 'Save rates',
     fxSaving: 'Saving…',
+    fxReloadSaved: 'Reload saved rates',
     fxStaged: c => `A rate for ${c} is already staged.`,
     fxSaved: 'Rates saved.',
     fxReadError: 'Saved FX rates could not be read for this connection.',
@@ -17538,6 +17559,7 @@ const I18N = {
     fxAdd: '添加费率',
     fxSave: '保存费率',
     fxSaving: '保存中…',
+    fxReloadSaved: '重新加载已保存的费率',
     fxStaged: c => `已暂存 ${c} 的费率。`,
     fxSaved: '费率已保存。',
     fxReadError: '无法读取此连接已保存的外汇汇率。',
@@ -18457,7 +18479,7 @@ export const __test = {
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
   membershipEntitlementSummary,
   billingNumberStep, $billingDraft, $billingNotice,
-  economicsQuery, fxQuery, fxWrite, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
+  economicsQuery, fxQuery, fxWrite, stageFxDraft, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
   econWindowLines, windowSpanLabel, invalidateEconomicsFor,
   weatherQuery, invalidateWeatherFor, invalidateBillingDependentsFor,
   wxVerdictLabel, wxLimitLabel, wxCycleSummary, wxWindowRow, wxRuleRow,

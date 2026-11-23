@@ -439,7 +439,7 @@ class BaselineTests(EventLedgerCase):
         self.assertEqual(report["baseline"]["tier_mode"], "average_estimate")
 
 
-class MoaAdvisorTests(unittest.TestCase):
+class MoaAdvisorTests(EventLedgerCase):
     """F129: per-slot MoA advisor spend is attributed, never dropped."""
 
     def _parent(self, **overrides):
@@ -504,18 +504,12 @@ class MoaAdvisorTests(unittest.TestCase):
         self.assertEqual(collector._advisor_records(self._parent(), {}), [])
         self.assertEqual(collector._advisor_records(self._parent(), {"moa_references": None}), [])
 
-    def test_advisor_rows_persist_and_price_at_advisor_rates(self):
+    def test_advisor_rows_persist_with_slot_routes(self):
         parent = self._parent()
         rows = collector._advisor_records(parent, {"moa_references": self._refs()})
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.addCleanup(self._reset_writer)
-        db = str(Path(tmp.name) / "usage.db")
         for row in rows:
-            store.record(row, path=db)
-        conn = store.connect_reader(db)
-        self.assertIsNotNone(conn)
-        assert conn is not None
+            self.put(row)
+        conn = sqlite3.connect(self.event_db)
         try:
             found = conn.execute(
                 "SELECT event_id, model, provider, total_tokens FROM calls ORDER BY event_id"
@@ -527,14 +521,24 @@ class MoaAdvisorTests(unittest.TestCase):
             ("api:req-1:moa:1", "gpt-6.1-sol", "openai-codex", 600),
         ])
 
-    def _reset_writer(self):
-        try:
-            if store._WRITER is not None:
-                store._WRITER.close()
-        except Exception:
-            pass
-        store._WRITER = None
-        store._WRITER_PATH = None
+    def test_advisor_spend_prices_at_advisor_rates_in_reports(self):
+        from wolfmark_ledger.aggregate import build_event_period
+        from wolfmark_ledger.pricing import Catalogue, Rate
+        book = Catalogue({"agg": {"big": Rate(10.0, 20.0, 1.0)},
+                          "adv": {"small": Rate(1.0, 2.0, 0.1)}}, "f", "t", "", "1")
+        at = NOW - 3600
+        self.put(_record("turn-1", at, provider="agg", model="big", input_tokens=1_000_000))
+        self.put(_record("turn-1:moa:0", at, provider="adv", model="small",
+                         input_tokens=1_000_000))
+        result = build_event_period(self.event_db, days=2, catalogue=book, now=NOW)
+        models = {(r["provider"], r["model"]): r for r in result["by_model"]}
+        agg, adv = models[("agg", "big")], models[("adv", "small")]
+        # Advisor tokens stay on the advisor route: nothing is folded into
+        # the aggregator, and each side prices at its own card.
+        self.assertEqual(agg["tokens"], 1_000_000)
+        self.assertEqual(adv["tokens"], 1_000_000)
+        self.assertAlmostEqual(agg["list_usd"], 10.0)
+        self.assertAlmostEqual(adv["list_usd"], 1.0)
 
 
 class ResponseModelTests(unittest.TestCase):

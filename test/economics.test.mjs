@@ -459,3 +459,17 @@ test('costsPricingSourceLabel translates known sources and keeps unknown ones', 
     'models.dev 价格目录（本地缓存）')
   assert.equal(S.costsPricingSourceLabel(null, en), null)
 })
+
+test('stageFxDraft pins the revision from staging start, not the latest fetch', () => {
+  // F125 review: a draft staged at rev-1 keeps rev-1 across later edits
+  // even after the saved document moves to rev-2, so the retry 409s
+  // instead of silently replacing the other editor's rates.
+  const first = S.stageFxDraft(null, 'id', [{ currency: 'GBP' }], 'rev-1')
+  assert.deepEqual(first, { origin: 'id', rates: [{ currency: 'GBP' }], rev: 'rev-1' })
+  const second = S.stageFxDraft(first, 'id', [{ currency: 'GBP' }, { currency: 'EUR' }], 'rev-2')
+  assert.equal(second.rev, 'rev-1', 'later edits keep the original revision')
+  // A new draft after discarding (or on another connection) starts fresh.
+  assert.equal(S.stageFxDraft(null, 'id', [], 'rev-2').rev, 'rev-2')
+  assert.equal(S.stageFxDraft({ origin: 'other', rates: [], rev: 'rev-1' }, 'id', [], 'rev-2').rev, 'rev-2')
+  assert.equal(S.stageFxDraft(null, 'id', [], null).rev, null)
+})
