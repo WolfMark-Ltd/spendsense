@@ -168,6 +168,11 @@ def _base_record(kind: str, kwargs: dict[str, Any]) -> dict[str, Any]:
         "platform": _text(kwargs.get("platform"), 64),
         "model": _text(kwargs.get("model"), 160),
         "provider": _text(kwargs.get("provider"), 80),
+        # Served-model provenance (F130). Pricing still follows the requested
+        # model: relays can report snapshot ids the catalogue does not know,
+        # and no substitution mispricing is proven. The column exists so a
+        # future comparison can measure substitution if it ever matters.
+        "response_model": _text(kwargs.get("response_model"), 160) or None,
         "api_mode": _text(kwargs.get("api_mode"), 40),
         "aux_task": _text(kwargs.get("aux_task"), 64),
         "streaming": bool(kwargs.get("streaming") or kwargs.get("first_chunk_at")),
@@ -181,11 +186,70 @@ def _base_record(kind: str, kwargs: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _advisor_records(parent: dict[str, Any], kwargs: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-slot MoA advisor rows for one hook call (F129).
+
+    Hermes folds advisor fan-out spend into its own counters but hands the
+    plugin aggregator-only usage; the per-advisor breakdown arrives
+    separately as ``moa_references``. Each slot with a usable route and
+    non-zero tokens becomes its own row (same turn, its own provider and
+    model) so catalogue pricing attributes the spend instead of dropping
+    it. Advisor text (``output``) is never stored. Slots without a route
+    or without tokens are skipped: they carry no measurable spend.
+    """
+    refs = kwargs.get("moa_references")
+    if not isinstance(refs, list) or not refs:
+        return []
+    rows: list[dict[str, Any]] = []
+    for index, ref in enumerate(refs):
+        if not isinstance(ref, dict):
+            continue
+        model = _text(ref.get("model"), 160)
+        provider = _text(ref.get("provider"), 80)
+        usage = _usage_tokens(ref.get("usage"))
+        if not model or not provider or not any(usage.values()):
+            continue
+        rows.append({
+            "event_id": f"{parent['event_id']}:moa:{index}",
+            "ts": parent["ts"],
+            "started_at": parent.get("started_at"),
+            "ended_at": parent.get("ended_at"),
+            "session_id": parent.get("session_id", ""),
+            "task_id": parent.get("task_id", ""),
+            "turn_id": parent.get("turn_id", ""),
+            "platform": parent.get("platform", ""),
+            "model": model,
+            "provider": provider,
+            "response_model": None,
+            "api_mode": "",
+            "aux_task": "",
+            "streaming": False,
+            "outcome": "ok",
+            "api_call_count": 1,
+            "error_type": "",
+            "status_code": None,
+            "recorded_at": time.time(),
+            "call_class": parent.get("call_class"),
+            **usage,
+            **_usage_provenance(ref.get("usage")),
+        })
+    return rows
+
+
+def _record_advisors(parent: dict[str, Any], kwargs: dict[str, Any], hook: str) -> None:
+    for row in _advisor_records(parent, kwargs):
+        try:
+            store.record(row)
+        except Exception:
+            log.debug("spend-sense: %s advisor record failed", hook)
+
+
 def _post_api_request(**kwargs: Any) -> None:
     try:
         record = _base_record("main", kwargs)
         record["outcome"] = "ok" if record["total_tokens"] > 0 else "missing_usage"
         store.record(record)
+        _record_advisors(record, kwargs, "post_api_request")
     except Exception:
         log.debug("spend-sense: post_api_request record failed")
 
@@ -200,6 +264,7 @@ def _post_auxiliary_call(**kwargs: Any) -> None:
         else:
             record["outcome"] = "missing_usage"
         store.record(record)
+        _record_advisors(record, kwargs, "post_auxiliary_call")
     except Exception:
         log.debug("spend-sense: post_auxiliary_call record failed")
 

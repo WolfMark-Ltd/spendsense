@@ -118,6 +118,26 @@ function num(v) {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
+/** External URLs may only become links over http(s) (F126). Anything else —
+ *  javascript:, data:, protocol-relative, relative paths, garbage — returns
+ *  null so the caller renders plain text: a compromised feed or a hand-edited
+ *  catalogue can never inject a link target. Returns the trimmed URL or null.
+ */
+function safeHttpUrl(value) {
+  const url = String(value || '').trim()
+  if (!/^https?:\/\//i.test(url)) return null
+  return url
+}
+
+/** Feed-supplied source link (F126): an http(s) anchor, else nothing. A
+ *  missing or unsafe URL renders no anchor at all — the provenance text
+ *  beside it still names the origin, so no evidence label is lost. */
+function NewsSourceLink({ url, t }) {
+  const href = safeHttpUrl(url)
+  return href ? jsx('a', { href, target: '_blank', rel: 'noreferrer',
+    className: 'wm-source-link', children: t('newsSource') }) : null
+}
+
 function tokensOf(b) {
   const streams = num(b.input) + num(b.cacheRead) + num(b.cacheWrite) + num(b.cacheUnknown)
   const prompt = typeof b.prompt === 'number' && Number.isFinite(b.prompt) && b.prompt >= 0
@@ -4762,9 +4782,10 @@ function fxQuery(identity = membershipIdentityNow()) {
   }
 }
 
-async function fxWrite(rates, transport = rest) {
+async function fxWrite(rates, rev, transport = rest) {
   if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
-  const result = await transport('/membership/fx', { method: 'PUT', body: { rates } })
+  const result = await transport(`/membership/fx?if_rev=${encodeURIComponent(rev || '')}`,
+    { method: 'PUT', body: { rates } })
   if (!result || result.ok === false) throw new Error(result?.detail || result?.error || 'The rates were not saved.')
   return result
 }
@@ -6654,7 +6675,7 @@ function EconomicsPanel({ identity, unknownFees = null }) {
     $fxSaving.set({ origin: captured })
     $fxNotice.set(null)
     try {
-      await fxWrite(rates)
+      await fxWrite(rates, fxCurrent ? fx.data?.rev : null)
       await queryClient.invalidateQueries({ queryKey: [ID, 'budget-status', captured] })
       if (!membershipIdentityCurrent(captured) || $fxDraft.get()?.origin !== captured) return
       $fxDraft.set(null)
@@ -6663,6 +6684,9 @@ function EconomicsPanel({ identity, unknownFees = null }) {
     } catch (error) {
       if (membershipIdentityCurrent(captured)) {
         $fxNotice.set({ tone: 'warn', origin: captured, text: fxErrorMessage(t, error) })
+        // A conflict means someone else saved first: reload silently so a
+        // retry carries the fresh revision; the staged draft is untouched.
+        if (/409|conflict/i.test(String(error?.message || ''))) await fx.refetch?.()
       }
     } finally {
       // Release this save's flag even after a connection switch, so the new
@@ -7398,10 +7422,14 @@ function SettingsPage() {
             jsx('details', { children: [
               jsx('summary', { children: t('settingsSourceRegister',
                 membershipBook.source === 'live' ? t('settingsCatalogueLive') : t('settingsCatalogueBundled')) }),
-              jsx('ul', { children: (membershipBook.sources || []).map(source => jsx('li', { children: [
-                source.id + ' · ' + source.evidence_kind + ' · ' + (source.retrieved_at || t('settingsSourceNoDate')) + ' · ',
-                jsx('a', { href: source.url, target: '_blank', rel: 'noreferrer', children: source.url })
-              ] }, source.id)) })
+              jsx('ul', { children: (membershipBook.sources || []).map(source => {
+                const href = safeHttpUrl(source.url)
+                return jsx('li', { children: [
+                  source.id + ' · ' + source.evidence_kind + ' · ' + (source.retrieved_at || t('settingsSourceNoDate')) + ' · ',
+                  href ? jsx('a', { href, target: '_blank', rel: 'noreferrer', children: source.url })
+                    : String(source.url || '')
+                ] }, source.id)
+              }) })
             ] })
           ] }) : planCatalogue.error ? jsx('p', { className: 'wm-warn-note', children: t('settingsCatalogueProvenanceUnavailable') }) : null
         ] }),
@@ -8540,7 +8568,7 @@ function membershipErrorKind(error) {
   const status = Number((raw.match(/\b([45][0-9]{2})\b/) || [])[1] || 0)
   if (/seat_write_uncertain/i.test(raw)) return { kind: 'seat_write_uncertain', status }
   if (/entitlement_write_uncertain/i.test(raw)) return { kind: 'entitlement_write_uncertain', status }
-  if (/store_unreadable/i.test(raw)) return { kind: 'storage', status }
+  if (/store_unreadable|store_busy/i.test(raw)) return { kind: 'storage', status }
   if (status === 401 || /unauthori|sign in/i.test(raw)) return { kind: 'auth', status }
   if (/plugin not found|no such plugin/i.test(raw)) return { kind: 'namespace', status }
   if (status === 409 || /conflict/i.test(raw)) return { kind: 'conflict', status }
@@ -13071,10 +13099,9 @@ function NewsStoryEntryEvidence({ entry, t }) {
           t('newsObserved', entry?.observed_at || '—'),
           entry?.effective_at ? ` · ${t('newsEffective', entry.effective_at)}` : '',
         ] }),
-        entry?.source_url
-          ? jsx('p', { className: 'wm-news-meta', children: jsx('a', { href: entry.source_url,
-              target: '_blank', rel: 'noreferrer', className: 'wm-source-link',
-              children: t('newsSource') }) })
+        safeHttpUrl(entry?.source_url)
+          ? jsx('p', { className: 'wm-news-meta',
+              children: jsx(NewsSourceLink, { url: entry.source_url, t }) })
           : null,
       ] }, 'entry') }),
   ] })
@@ -13219,9 +13246,8 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
               jsx(NewsTierBlocks, { event: item, t }),
               jsxs('p', { className: 'wm-news-meta', children: [
                 `${item?.provenance || ''} · ${item?.confidence || ''}`,
-                item?.source_url
-                  ? jsxs('span', { children: [' · ', jsx('a', { href: item.source_url, target: '_blank',
-                      rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
+                safeHttpUrl(item?.source_url)
+                  ? jsxs('span', { children: [' · ', jsx(NewsSourceLink, { url: item.source_url, t })] })
                   : null,
               ] }),
               jsxs('p', { className: 'wm-news-dates', children: [
@@ -13250,10 +13276,9 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
                   : null,
                 jsx('p', { className: 'wm-news-dates', children:
                   t('newsObserved', variant?.observed_at || '—') }),
-                variant?.source_url
-                  ? jsx('p', { className: 'wm-news-meta', children: jsx('a', {
-                      href: variant.source_url, target: '_blank', rel: 'noreferrer',
-                      className: 'wm-source-link', children: t('newsSource') }) })
+                safeHttpUrl(variant?.source_url)
+                  ? jsx('p', { className: 'wm-news-meta',
+                      children: jsx(NewsSourceLink, { url: variant.source_url, t }) })
                   : null,
               ] }, `uv-${index}`)) }),
           ] })
@@ -13725,10 +13750,7 @@ function NewsEvidenceRow({ source, t }) {
     jsx('span', { children: t('newsObserved', source?.observed_at || '—') }),
     source?.effective_at ? jsx('span', { children: t('newsEffective', source.effective_at) }) : null,
     source?.provenance ? jsx('span', { children: source.provenance }) : null,
-    source?.source_url
-      ? jsx('a', { href: source.source_url, target: '_blank', rel: 'noreferrer',
-          className: 'wm-source-link', children: t('newsSource') })
-      : null,
+    jsx(NewsSourceLink, { url: source?.source_url, t }),
     jsx(NewsRateTable, { previous: source?.previous, current: source?.current, t, exact: true }),
     jsx(NewsTierBlocks, { event: source, t }),
   ] })
@@ -13828,9 +13850,8 @@ function NewsCard({ item, impact, t, flat = false }) {
       : null,
     jsxs('p', { className: 'wm-news-meta', children: [
       `${item.provenance || ''} · ${item.confidence || ''}`,
-      item.source_url
-        ? jsxs('span', { children: [' · ', jsx('a', { href: item.source_url, target: '_blank',
-            rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
+      safeHttpUrl(item.source_url)
+        ? jsxs('span', { children: [' · ', jsx(NewsSourceLink, { url: item.source_url, t })] })
         : null,
     ] }),
     // Compact exact-evidence disclosure: the card's own original record —
@@ -13992,9 +14013,8 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
         jsx('p', { className: 'wm-news-dates', children: dates.join(' · ') }),
         jsxs('p', { className: 'wm-news-meta', children: [
           `${latest?.provenance || ''} · ${latest?.confidence || ''}`,
-          latest?.source_url
-            ? jsxs('span', { children: [' · ', jsx('a', { href: latest.source_url, target: '_blank',
-                rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
+          safeHttpUrl(latest?.source_url)
+            ? jsxs('span', { children: [' · ', jsx(NewsSourceLink, { url: latest.source_url, t })] })
             : null,
         ] }),
         // Tier rows are listed one by one when they are known; never averaged.
@@ -14051,10 +14071,7 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
             jsx('span', { className: 'wm-news-historycode', children: event?.id || '' }),
             jsx('span', { children: t('newsObserved', fmtDay(event?.observed_at)) }),
             jsx('span', { children: newsSummaryText(event, t) }),
-            event?.source_url
-              ? jsx('a', { href: event.source_url, target: '_blank', rel: 'noreferrer',
-                  className: 'wm-source-link', children: t('newsSource') })
-              : null,
+            jsx(NewsSourceLink, { url: event?.source_url, t }),
             // The full audit trail of one historical event: the exact
             // was/now rates, the raw tier rows and every original source
             // record with its exact id, dates, provenance and URL — nested
@@ -18473,6 +18490,7 @@ export const __test = {
   NEWS_FOR_YOU_INITIAL, NEWS_EVENT_LINK_FIELDS, NEWS_RATE_CLASS_BY_CODE,
   newsUsedRecently, newsLastUsedMs, newsItemReasonCodes, newsGroupReasonCodes,
   newsMergeEvents, newsSameEventProof, newsTransitionKey, newsTransitionBase, newsSameTransition,
+  safeHttpUrl, NewsSourceLink,
   newsEvidenceRecords, NewsEvidenceRow, NewsTierBlocks,
   analyticsNoteText, analyticsNotesText, ANALYTICS_NOTE_KEYS, analyticsGapReasonLabel, OV_GAP_REASON_KEYS,
   econNoteText, econNotesText, econSingularNoteText, econExplanationText, ECON_NOTE_KEYS, ECON_EXPLANATION_KEYS,

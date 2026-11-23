@@ -42,6 +42,7 @@ from wolfmark_ledger import user_data  # noqa: E402
 from wolfmark_ledger import membership_api as members  # noqa: E402
 from wolfmark_ledger import monitoring, news as news_mod  # noqa: E402
 from wolfmark_ledger.membership import CatalogueError  # noqa: E402
+from wolfmark_ledger.filelock import LockUnavailable  # noqa: E402
 from wolfmark_ledger.membership_store import (EntitlementStoreDurabilityError, MembershipConflict,
                                               SeatStoreDurabilityError, StoreUnreadable)  # noqa: E402
 
@@ -443,9 +444,10 @@ def membership_plans_refresh() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail="plans refresh failed") from exc
 
 
-def _store_unreadable(exc: StoreUnreadable) -> HTTPException:
+def _store_unreadable(exc: StoreUnreadable | LockUnavailable) -> HTTPException:
     """503 with a machine-readable prefix; the pane turns it into a storage notice."""
-    return HTTPException(status_code=503, detail=f"store_unreadable: {exc}")
+    prefix = "store_busy" if isinstance(exc, LockUnavailable) else "store_unreadable"
+    return HTTPException(status_code=503, detail=f"{prefix}: {exc}")
 
 
 @router.get("/membership/accounts")
@@ -457,7 +459,7 @@ def membership_accounts(native: bool = Query(False, description="Read account us
     """
     try:
         return members.accounts_payload(native=native)
-    except StoreUnreadable as exc:
+    except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -468,7 +470,7 @@ def membership_discover(native: bool = Query(False, description="Also read accou
     """Find configured accounts and merge them into the store."""
     try:
         return members.discover_payload(include_native=native)
-    except StoreUnreadable as exc:
+    except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -487,7 +489,7 @@ def membership_save(account_id: str, account: dict[str, Any],
     """Save an existing membership using its revision token."""
     try:
         return members.save_payload(account_id, account, if_rev=if_rev)
-    except StoreUnreadable as exc:
+    except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     except KeyError as exc:
         # Unknown here means "not in this store", which is what a stale card from
@@ -505,7 +507,7 @@ def membership_save(account_id: str, account: dict[str, Any],
 def membership_arrangement_save(account_id: str, body: dict[str, Any]) -> dict[str, Any]:
     try:
         return members.save_arrangement_payload(account_id, body)
-    except StoreUnreadable as exc:
+    except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="no such membership in this store") from exc
@@ -522,7 +524,7 @@ def membership_delete(account_id: str) -> dict[str, Any]:
     """Delete a membership and its associated seat history."""
     try:
         return members.delete_payload(account_id)
-    except StoreUnreadable as exc:
+    except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     except SeatStoreDurabilityError as exc:
         raise HTTPException(status_code=503, detail="seat_write_uncertain: reload membership data before retrying") from exc
@@ -533,7 +535,7 @@ def membership_seats_save(account_id: str, body: dict[str, Any]) -> dict[str, An
     """Append a seat revision after checking account and seat revisions."""
     try:
         return members.save_seat_payload(account_id, body)
-    except StoreUnreadable as exc:
+    except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="no such membership") from exc
@@ -550,7 +552,7 @@ def membership_declare(account_id: str, body: dict[str, Any]) -> dict[str, Any]:
     """Record a manual exhaustion mark. Never presented as provider-confirmed."""
     try:
         return members.declare_payload(account_id, body)
-    except StoreUnreadable as exc:
+    except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="no such membership") from exc
@@ -564,7 +566,7 @@ def membership_declare(account_id: str, body: dict[str, Any]) -> dict[str, Any]:
 def membership_clear(account_id: str, entry_id: str) -> dict[str, Any]:
     try:
         return members.clear_payload(account_id, entry_id)
-    except StoreUnreadable as exc:
+    except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="no such mark") from exc
@@ -585,7 +587,7 @@ def economics_summary(
     """
     try:
         return economics.build_economics_report(days=days, trend_months=trend_months)
-    except StoreUnreadable as exc:
+    except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -610,7 +612,7 @@ def allowance_weather_report(
     """
     try:
         return allowance_weather.build_weather_report(native=native)
-    except StoreUnreadable as exc:
+    except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -636,7 +638,7 @@ def digest_report(
         raise HTTPException(status_code=400, detail="days must be 7 or 30")
     try:
         return digest.build_digest(days=days, lang=lang)
-    except StoreUnreadable as exc:
+    except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     except CatalogueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -657,12 +659,20 @@ def fx_rates() -> dict[str, Any]:
 
 
 @router.put("/membership/fx")
-def fx_save(body: dict[str, Any]) -> dict[str, Any]:
-    """Replace the whole FX document. Every rate needs a date and a source."""
+def fx_save(body: dict[str, Any], if_rev: str | None = Query(None)) -> dict[str, Any]:
+    """Replace the whole FX document. Every rate needs a date and a source.
+
+    ``if_rev`` must match the stored revision (409 on mismatch), mirroring
+    membership saves, so two editors cannot silently lose each other's rates.
+    """
     try:
-        result = economics.save_fx(body.get("rates", []))
+        result = economics.save_fx(body.get("rates", []), if_rev=if_rev or body.get("rev"))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except economics.FxConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (StoreUnreadable, LockUnavailable) as exc:
+        raise _store_unreadable(exc) from exc
     return {"ok": True, **result}
 
 
@@ -679,7 +689,7 @@ def billing_summary(days: int = Query(30, ge=1, le=365)) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="billing call store unavailable") from exc
     try:
         membership_fees = members.fee_summary_payload()
-    except StoreUnreadable as exc:
+    except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     billing_report = dict(report.get("billing") or {})
     usd_month = membership_fees.get("totals_by_currency_period", {}).get("USD/month")

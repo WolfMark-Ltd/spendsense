@@ -110,13 +110,17 @@ test('fxWrite posts the whole document and surfaces the server sentence', async 
     return { ok: true, rates: opts.body.rates }
   }
   const rates = [{ currency: 'GBP', usd_per_unit: 1.25, as_of: '2026-10-31', source: 'Example' }]
-  const result = await S.fxWrite(rates, transport)
-  assert.equal(calls[0].path, '/membership/fx')
+  const result = await S.fxWrite(rates, 'rev-1', transport)
+  assert.equal(calls[0].path, '/membership/fx?if_rev=rev-1')
   assert.equal(calls[0].method, 'PUT')
   assert.deepEqual(calls[0].body, { rates })
   assert.deepEqual(result.rates, rates)
-  await assert.rejects(S.fxWrite(rates, async () => ({ ok: false, detail: 'bad rate' })), /bad rate/)
-  await assert.rejects(S.fxWrite(rates, null), /bridge/)
+  await assert.rejects(S.fxWrite(rates, 'rev-1', async () => ({ ok: false, detail: 'bad rate' })), /bad rate/)
+  await assert.rejects(S.fxWrite(rates, null, null), /bridge/)
+  // A missing revision still sends the parameter (empty): first saves on an
+  // empty document need no revision, existing documents 409 without one.
+  await S.fxWrite(rates, null, transport)
+  assert.equal(calls[1].path, '/membership/fx?if_rev=')
 })
 
 test('fxErrorMessage keeps validation detail and translates transport states', () => {

@@ -65,6 +65,25 @@ class ProbeCacheTest(unittest.TestCase):
         self.assertIn("TimeoutExpired", result["reason"])
         self.assertIsNone(result["snapshot"])
 
+    def test_a_malformed_family_fails_its_probe_not_the_page(self) -> None:
+        # F127: an embedded NUL (or any control byte) makes subprocess raise
+        # ValueError. The probe reports an error for that family instead of
+        # 500ing the whole refresh, and no subprocess is attempted.
+        with mock.patch.object(discovery, "_hermes_binary",
+                               return_value="/usr/bin/hermes"), \
+             mock.patch.object(discovery.subprocess, "run") as run:
+            result = discovery.native_snapshot("owe\x00d", home=self.homes[0])
+        run.assert_not_called()
+        self.assertEqual(result["state"], "error")
+        self.assertIn("invalid provider family", result["reason"])
+        with mock.patch.object(discovery, "_hermes_binary",
+                               return_value="/usr/bin/hermes"), \
+             mock.patch.object(discovery.subprocess, "run",
+                               side_effect=ValueError("embedded null byte")) as run:
+            result = discovery.native_snapshot("plain", home=self.homes[0])
+        self.assertEqual(result["state"], "error")
+        self.assertIn("ValueError", result["reason"])
+
     def test_a_missing_credential_is_unavailable_not_zero(self) -> None:
         def fake(*args, **kwargs):
             return subprocess.CompletedProcess(args[0], 1, "", "not configured")

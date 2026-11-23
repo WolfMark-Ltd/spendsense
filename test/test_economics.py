@@ -812,6 +812,47 @@ class FxStoreTests(unittest.TestCase):
         self.assertEqual(doc["rates"], [{"currency": "GBP", "usd_per_unit": 1.25,
                                          "as_of": "2026-10-31", "source": "Example Bank"}])
 
+    def test_revision_is_stable_across_round_trip(self):
+        rates = [{"currency": "gbp", "usd_per_unit": 1.25,
+                  "as_of": "2026-10-31", "source": "Example Bank"}]
+        saved = E.save_fx(rates, self.path)
+        doc = E.load_fx(self.path)
+        self.assertTrue(doc["loaded"])
+        self.assertEqual(saved["rev"], doc["rev"])
+        # Order- and case-insensitive: the same rates hash the same.
+        self.assertEqual(E.fx_revision(list(reversed(saved["rates"]))), saved["rev"])
+
+    def test_stale_revision_conflicts_instead_of_losing_rates(self):
+        first = E.save_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                            "as_of": "2026-10-31", "source": "Example Bank"}], self.path)
+        with self.assertRaises(E.FxConflict):
+            E.save_fx([{"currency": "EUR", "usd_per_unit": 1.10,
+                        "as_of": "2026-10-31", "source": "Example Bank"}],
+                      self.path, if_rev="stale-revision")
+        # The loser's write never landed.
+        doc = E.load_fx(self.path)
+        self.assertEqual([r["currency"] for r in doc["rates"]], ["GBP"])
+        # The fresh revision saves cleanly.
+        updated = E.save_fx([{"currency": "EUR", "usd_per_unit": 1.10,
+                              "as_of": "2026-10-31", "source": "Example Bank"}],
+                            self.path, if_rev=first["rev"])
+        self.assertEqual([r["currency"] for r in updated["rates"]], ["EUR"])
+
+    def test_missing_revision_keeps_previous_behaviour(self):
+        # Older Desktops send no revision: they keep last-writer-wins so a
+        # version skew never blocks their saves; only a supplied stale
+        # revision conflicts.
+        E.save_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                    "as_of": "2026-10-31", "source": "Example Bank"}], self.path)
+        updated = E.save_fx([{"currency": "EUR", "usd_per_unit": 1.10,
+                              "as_of": "2026-10-31", "source": "Example Bank"}], self.path)
+        self.assertEqual([r["currency"] for r in updated["rates"]], ["EUR"])
+
+    def test_first_save_needs_no_revision(self):
+        saved = E.save_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                            "as_of": "2026-10-31", "source": "Example Bank"}], self.path)
+        self.assertTrue(saved["rev"])
+
     def test_validation_rejects_bad_rates(self):
         self.assertTrue(E.fx_validation_errors("nope"))
         self.assertTrue(E.fx_validation_errors([{"currency": "XX", "usd_per_unit": 1,
@@ -996,6 +1037,24 @@ class EconomicsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 500)
         self.assertNotIn("private sentinel", response.text)
 
+    def test_fx_conflict_maps_to_409(self):
+        with patch.object(plugin_api.economics, "save_fx",
+                          side_effect=plugin_api.economics.FxConflict("conflict: stale")):
+            response = self.client.put("/api/plugins/spend-sense/membership/fx",
+                                       params={"if_rev": "stale"},
+                                       json={"rates": []})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("conflict", response.text)
+
+    def test_fx_save_passes_if_rev_through(self):
+        with patch.object(plugin_api.economics, "save_fx",
+                          return_value={"rates": [], "rev": "new"}) as saver:
+            response = self.client.put("/api/plugins/spend-sense/membership/fx",
+                                       params={"if_rev": "abc123"},
+                                       json={"rates": []})
+        self.assertEqual(response.status_code, 200)
+        saver.assert_called_once_with([], if_rev="abc123")
+
     def test_summary_maps_store_errors(self):
         from wolfmark_ledger.membership import CatalogueError
         from wolfmark_ledger.membership_store import StoreUnreadable
@@ -1021,7 +1080,7 @@ class EconomicsApiTests(unittest.TestCase):
             response = self.client.put("/api/plugins/spend-sense/membership/fx",
                                        json={"rates": doc["rates"]})
         self.assertEqual(response.status_code, 200)
-        saver.assert_called_once_with(doc["rates"])
+        saver.assert_called_once_with(doc["rates"], if_rev=None)
 
     def test_fx_save_rejects_invalid_rates(self):
         with patch.object(plugin_api.economics, "save_fx",

@@ -120,6 +120,11 @@ def native_snapshot(provider: str, *, home: Optional[Path | str] = None,
     binary = _hermes_binary()
     if not binary:
         return {"state": "unsupported", "snapshot": None, "reason": "the hermes CLI is not on PATH"}
+    family = str(provider or "")
+    if not family or len(family) > 128 or any(ord(char) < 32 or char == "\x7f" for char in family):
+        # F127: a malformed family (notably an embedded NUL) must fail this
+        # probe, never the whole page. Control bytes cannot be a provider.
+        return {"state": "error", "snapshot": None, "reason": "invalid provider family"}
     # Keyed by the resolved home as well as the provider: two profiles share a
     # process, and a cache hit across homes reports the wrong account's usage.
     key = f"usage:{hermes_home(home)}:{provider}"
@@ -131,7 +136,10 @@ def native_snapshot(provider: str, *, home: Optional[Path | str] = None,
     try:
         proc = subprocess.run([binary, "usage", "--provider", provider, "--json"],
                               capture_output=True, text=True, timeout=timeout, env=env)
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        # ValueError is the NUL-byte shape subprocess raises for a bad
+        # argument; validation above should have caught it, but a probe
+        # must never take down the whole refresh either way.
         result = {"state": "error", "snapshot": None, "reason": f"usage read failed: {type(exc).__name__}"}
         _CACHE[key] = (now, result)
         return result

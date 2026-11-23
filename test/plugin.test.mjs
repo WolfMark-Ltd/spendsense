@@ -1222,3 +1222,25 @@ test('synthetic cumulative model switch counts each delta once', () => {
   assert.equal(session.input + session.output + session.cacheRead + session.cacheWrite, 320)
   assert.equal(session.calls, 2)
 })
+
+test('safeHttpUrl allowlists http(s) and rejects unsafe schemes', () => {
+  // F126: only verifiable web URLs may become link targets.
+  assert.equal(T.safeHttpUrl('https://example.com/pricing'), 'https://example.com/pricing')
+  assert.equal(T.safeHttpUrl('http://example.com/x'), 'http://example.com/x')
+  assert.equal(T.safeHttpUrl('  https://example.com/trimmed  '), 'https://example.com/trimmed')
+  for (const bad of ['', null, undefined, 'javascript:alert(1)', 'JaVaScRiPt:alert(1)',
+      'data:text/html,<h1>x</h1>', '//example.com/protocol-relative', '/relative/path',
+      'ftp://example.com/file', 'not a url']) {
+    assert.equal(T.safeHttpUrl(bad), null, `rejected: ${String(bad)}`)
+  }
+})
+
+test('NewsSourceLink renders an anchor for http(s) and nothing otherwise', () => {
+  const t = key => key
+  const link = T.NewsSourceLink({ url: 'https://example.com/x', t })
+  assert.equal(link.type, 'a')
+  assert.equal(link.props.href, 'https://example.com/x')
+  assert.equal(link.props.target, '_blank')
+  assert.equal(T.NewsSourceLink({ url: 'javascript:alert(1)', t }), null)
+  assert.equal(T.NewsSourceLink({ url: '', t }), null)
+})
