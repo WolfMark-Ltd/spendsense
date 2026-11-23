@@ -31,6 +31,7 @@ PLUGIN_NAME = "spend-sense"
 DB_FILENAME = "usage.db"
 RETENTION_DAYS = 180
 PRUNE_EVERY = 500
+ERASE_CONFIRMATION = "ERASE_CAPTURED_USAGE"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS calls (
@@ -187,6 +188,28 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f'ALTER TABLE calls ADD COLUMN "{name}" {decl}')
 
 
+def _secure_paths(target: Path) -> None:
+    """Owner-only permissions for the store, its sidecars and its directory.
+
+    POSIX only; Windows ACLs are out of scope and the call is a no-op there.
+    Never raises: a hook-path write must not fail over a chmod. Runs on
+    every writer connect (healing stores created 0644) and after every
+    record commit (SQLite recreates sidecars with default permissions).
+    """
+    if os.name == "nt":
+        return
+    try:
+        parent = target.parent
+        if parent.is_dir():
+            os.chmod(parent, 0o700)
+        for candidate in (target, Path(str(target) + "-wal"),
+                          Path(str(target) + "-shm"), Path(str(target) + "-journal")):
+            if candidate.is_file():
+                os.chmod(candidate, 0o600)
+    except OSError:
+        log.debug("spend-sense: could not restrict usage store permissions")
+
+
 def connect_writer(path: Optional[Path | str] = None) -> sqlite3.Connection:
     """Shared writer connection. Caller must hold ``_WRITE_LOCK`` for writes."""
     global _WRITER, _WRITER_PATH
@@ -213,6 +236,15 @@ def connect_writer(path: Optional[Path | str] = None) -> sqlite3.Connection:
             conn = None
     if conn is None:
         target.parent.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt" and not target.exists():
+            # Pre-create owner-only so the file never exists 0644, even
+            # briefly; SQLite then opens the existing file as-is.
+            try:
+                fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                pass  # another process won the race; open below
+            else:
+                os.close(fd)
         # Fail fast (no busy wait): this connection serves hook callbacks on
         # API dispatch, where stalling for another process's lock is worse
         # than dropping one accounting row. The collector is fail-open.
@@ -221,6 +253,7 @@ def connect_writer(path: Optional[Path | str] = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=0")
     _ensure_schema(conn)
+    _secure_paths(target)
     _WRITER, _WRITER_PATH = conn, key
     return conn
 
@@ -328,8 +361,20 @@ def bootstrap(state_db_path: Optional[Path | str] = None, path: Optional[Path | 
         capture_baseline(conn, state_db_path)
 
 
+def _retention_cutoff(now: float) -> float:
+    return now - RETENTION_DAYS * 86_400
+
+
+def _oldest_predates_retention(conn: sqlite3.Connection, now: float) -> bool:
+    try:
+        oldest = conn.execute("SELECT MIN(ts) FROM calls").fetchone()[0]
+    except sqlite3.Error:
+        return False
+    return oldest is not None and float(oldest) < _retention_cutoff(now)
+
+
 def _prune_locked(conn: sqlite3.Connection, now: Optional[float] = None) -> int:
-    cutoff = (now or time.time()) - RETENTION_DAYS * 86_400
+    cutoff = _retention_cutoff(now if now is not None else time.time())
     cur = conn.execute("DELETE FROM calls WHERE ts < ?", (cutoff,))
     conn.commit()
     return int(cur.rowcount or 0)
@@ -338,6 +383,73 @@ def _prune_locked(conn: sqlite3.Connection, now: Optional[float] = None) -> int:
 def prune(conn: sqlite3.Connection, *, now: Optional[float] = None) -> int:
     with _WRITE_LOCK:
         return _prune_locked(conn, now)
+
+
+class EraseBusy(Exception):
+    """The store is busy; the caller should ask the user to retry."""
+
+
+def erase_ledger(path: Optional[Path | str] = None) -> dict[str, Any]:
+    """Delete the captured usage ledger and its baseline (F122).
+
+    Removes usage.db plus WAL/SHM/journal sidecars, so neither rows nor WAL
+    residue survive. The next write recreates a fresh store and recaptures
+    the baseline from that moment on; reconciliation restarts there.
+    Idempotent: a missing store erases to an empty success, and a busy
+    store raises EraseBusy (loudly retried, never silently partial).
+    Never touches Hermes state, credentials or any other profile data.
+    """
+    global _WRITER, _WRITER_PATH, _INSERTS_SINCE_PRUNE
+    target = Path(path) if path else event_db_path()
+    files = [target, Path(str(target) + "-wal"), Path(str(target) + "-shm"),
+             Path(str(target) + "-journal")]
+    calls_deleted = 0
+    try:
+        present = any(p.is_file() for p in files)
+    except OSError:
+        present = False
+    if present:
+        try:
+            conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True, timeout=2)
+        except sqlite3.Error:
+            conn = None
+        if conn is not None:
+            try:
+                calls_deleted = int(conn.execute("SELECT COUNT(*) FROM calls").fetchone()[0] or 0)
+            except sqlite3.Error:
+                calls_deleted = 0
+            finally:
+                conn.close()
+    # Brief bounded wait for in-flight hook writes; never hang the request.
+    acquired = False
+    for _ in range(20):
+        if _WRITE_LOCK.acquire(blocking=False):
+            acquired = True
+            break
+        time.sleep(0.05)
+    if not acquired:
+        raise EraseBusy("usage store is busy; retry the erasure")
+    try:
+        if _WRITER is not None and _WRITER_PATH == str(target):
+            try:
+                _WRITER.close()
+            except Exception:
+                pass
+            _WRITER = None
+            _WRITER_PATH = None
+        removed: list[str] = []
+        for victim in files:
+            try:
+                victim.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise EraseBusy(f"could not remove {victim.name}: {exc}") from exc
+            removed.append(victim.name)
+        _INSERTS_SINCE_PRUNE = 0
+    finally:
+        _WRITE_LOCK.release()
+    return {"calls_deleted": calls_deleted, "removed": removed}
 
 
 def record(record: dict[str, Any], path: Optional[Path | str] = None,
@@ -424,6 +536,14 @@ def record(record: dict[str, Any], path: Optional[Path | str] = None,
         if _INSERTS_SINCE_PRUNE >= PRUNE_EVERY:
             _INSERTS_SINCE_PRUNE = 0
             _prune_locked(conn)
+        elif _oldest_predates_retention(conn, time.time()):
+            # Retention is time-based, not insert-count-based: a single new
+            # call prunes rows past RETENTION_DAYS — no 500-insert wait.
+            # Reads never prune (the report path stays read-only), so a
+            # fully idle store keeps rows at rest, owner-only on POSIX,
+            # until its next write or an explicit erasure.
+            _prune_locked(conn)
+        _secure_paths(Path(path) if path else event_db_path())
         return inserted
 
 

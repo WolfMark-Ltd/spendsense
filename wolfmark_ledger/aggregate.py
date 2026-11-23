@@ -294,7 +294,6 @@ def _row_result(row: dict[str, Any], catalogue: Catalogue, mode: str) -> dict[st
 
     return {
         "_session_id": str(row.get("session_id") or ""),
-        "_title": str(row.get("title") or ""),
         "_surface": surface,
         "_profile": str(row.get("profile") or ""),
         "_started_at": row.get("started_at"),
@@ -363,10 +362,11 @@ def _session_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not sid:
             continue
         if sid not in groups:
+            # No title (F121): session titles are free-form Hermes content
+            # the UI never needed, so they stay out of every payload.
             groups[sid] = (
                 {
                     "session_id": sid,
-                    "title": row["_title"],
                     "surface": row["_surface"],
                     "profile": row["_profile"],
                     "started_at": row["_started_at"],
@@ -701,7 +701,6 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
 
     return {
         "_session_id": str(row.get("session_id") or ""),
-        "_title": "",
         "_surface": surface,
         "_profile": "",
         "_started_at": row.get("started_at"),

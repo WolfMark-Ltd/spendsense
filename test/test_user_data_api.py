@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover - depends on the test interpreter
     TestClient = None  # type: ignore
     plugin_api = None
 
-from wolfmark_ledger import billing, membership_store
+from wolfmark_ledger import billing, membership_store, store
 
 
 @unittest.skipUnless(FastAPI is not None and TestClient is not None,
@@ -88,6 +88,68 @@ class UserDataResetApiTests(unittest.TestCase):
         self.assertEqual(response.json()["detail"],
                          "reset_uncertain: reload and verify user data before retrying")
         self.assertNotIn("/private/billing-profiles.json", response.text)
+
+
+@unittest.skipUnless(FastAPI is not None and TestClient is not None,
+                     "FastAPI/httpx not installed in this interpreter")
+class EraseLedgerApiTests(unittest.TestCase):
+    """F122: explicit in-product erasure of the captured usage ledger."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        base = Path(self.directory.name)
+        self.event_db = base / "usage.db"
+        self.memberships = base / "memberships.json"
+        self.memberships.write_text(json.dumps({"version": 1, "accounts": []}))
+        app = FastAPI()
+        app.include_router(plugin_api.router, prefix="/api/plugins/spend-sense")
+        self.client = TestClient(app)
+        self.addCleanup(self.client.close)
+        self.addCleanup(self.directory.cleanup)
+        self.addCleanup(self._reset_writer)
+
+    def _reset_writer(self):
+        try:
+            if store._WRITER is not None:
+                store._WRITER.close()
+        except Exception:
+            pass
+        store._WRITER = None
+        store._WRITER_PATH = None
+        store._INSERTS_SINCE_PRUNE = 0
+
+    def test_wrong_confirmation_leaves_the_ledger_untouched(self):
+        store.record({"event_id": "e1", "ts": 1_700_000_000.0}, path=self.event_db)
+        before = self.event_db.read_bytes()
+        with patch.object(store, "event_db_path", return_value=self.event_db):
+            response = self.client.post("/api/plugins/spend-sense/settings/erase-usage-ledger",
+                                        json={"confirm": "RESET_USER_ENTERED_DATA"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.event_db.read_bytes(), before)
+
+    def test_exact_confirmation_erases_ledger_and_reports_counts(self):
+        import time
+        now = time.time()
+        store.record({"event_id": "e1", "ts": now}, path=self.event_db)
+        store.record({"event_id": "e2", "ts": now}, path=self.event_db)
+        with patch.object(store, "event_db_path", return_value=self.event_db):
+            response = self.client.post("/api/plugins/spend-sense/settings/erase-usage-ledger",
+                                        json={"confirm": "ERASE_CAPTURED_USAGE"})
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["calls_deleted"], 2)
+        self.assertIn("usage.db", body["removed"])
+        self.assertFalse(self.event_db.exists())
+        self.assertTrue(self.memberships.exists(), "memberships are retained")
+        self.assertIn("provider credentials", body["retained"])
+
+    def test_erase_of_a_missing_store_succeeds_empty(self):
+        with patch.object(store, "event_db_path", return_value=self.event_db):
+            response = self.client.post("/api/plugins/spend-sense/settings/erase-usage-ledger",
+                                        json={"confirm": "ERASE_CAPTURED_USAGE"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["calls_deleted"], 0)
 
 
 if __name__ == "__main__":
