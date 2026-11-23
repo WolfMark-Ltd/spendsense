@@ -68,7 +68,10 @@ class EraseTests(StoreLifecycleCase):
         self.assertFalse(self.db.exists())
         leftovers = [p.name for p in self.dir.iterdir()
                       if p.name.startswith("usage.db")]
-        self.assertEqual(leftovers, [], "no WAL/SHM/journal residue may survive")
+        # Only the generation marker survives, by design: it tells other
+        # processes holding the old file open to reopen on their next write.
+        self.assertEqual(leftovers, ["usage.db.generation"],
+                         "no WAL/SHM/journal residue may survive")
 
     def test_erase_is_idempotent_on_a_missing_store(self) -> None:
         result = store.erase_ledger(path=self.db)
@@ -132,6 +135,71 @@ class RetentionTests(StoreLifecycleCase):
         store.record(_record("recent", now - 3600), path=self.db)
         store.record(_record("new", now), path=self.db)
         self.assertEqual(self._calls(), 2)
+
+
+class CrossProcessTests(StoreLifecycleCase):
+    """Erasure must be visible to processes holding the old file open."""
+
+    def test_generation_mismatch_reopens_the_writer(self) -> None:
+        store.record(_record("e1", time.time()), path=self.db)
+        first = store.connect_writer(path=self.db)
+        store._write_generation(self.db, store._read_generation(self.db) + 1)
+        second = store.connect_writer(path=self.db)
+        self.assertIsNot(first, second,
+                         "a bumped generation must drop the cached handle")
+
+    @unittest.skipIf(os.name == "nt", "Windows locks open files, so erasure there "
+                                             "reports EraseBusy instead of unlinking")
+    def test_writer_in_another_process_survives_erasure(self) -> None:
+        import multiprocessing as mp
+
+        ctx = mp.get_context("spawn")
+        ready = ctx.Event()
+        go = ctx.Event()
+        db = str(self.db)
+        store.record(_record("e1", time.time()), path=self.db)
+        worker = ctx.Process(target=_hold_and_record_after_erase,
+                             args=(db, ready, go))
+        worker.start()
+        try:
+            self.assertTrue(ready.wait(timeout=30), "worker did not open the store")
+            result = store.erase_ledger(path=self.db)
+            self.assertEqual(result["calls_deleted"], 1)
+            go.set()
+            worker.join(timeout=30)
+            self.assertEqual(worker.exitcode, 0, "worker must record without error")
+        finally:
+            if worker.is_alive():
+                worker.terminate()
+            worker.join(timeout=10)
+        conn = sqlite3.connect(self.db)
+        try:
+            ids = [row[0] for row in conn.execute("SELECT event_id FROM calls").fetchall()]
+        finally:
+            conn.close()
+        self.assertEqual(ids, ["worker-row"],
+                         "the post-erase write must land in the new file, not an unlinked inode")
+
+
+def _hold_and_record_after_erase(db: str, ready, go) -> None:
+    """Worker: open the writer, wait out an erasure elsewhere, then record."""
+    import time as _time
+
+    from wolfmark_ledger import store as worker_store
+
+    worker_store._WRITER = None
+    worker_store._WRITER_PATH = None
+    worker_store._WRITER_GENERATION = None
+    worker_store.connect_writer(path=db)
+    ready.set()
+    if not go.wait(timeout=30):
+        raise SystemExit("erase signal never arrived")
+    worker_store.record({
+        "event_id": "worker-row", "ts": _time.time(), "outcome": "ok",
+        "input_tokens": 10, "output_tokens": 0, "cache_read_tokens": 0,
+        "cache_write_tokens": 0, "reasoning_tokens": 0, "prompt_tokens": 10,
+        "total_tokens": 10,
+    }, path=db)
 
 
 @unittest.skipIf(os.name == "nt", "POSIX permission bits only")

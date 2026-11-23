@@ -98,6 +98,7 @@ _REQUIRED_COLUMNS = {
 _WRITE_LOCK = threading.Lock()
 _WRITER: Optional[sqlite3.Connection] = None
 _WRITER_PATH: Optional[str] = None
+_WRITER_GENERATION: Optional[int] = None
 _INSERTS_SINCE_PRUNE = 0
 
 
@@ -210,12 +211,35 @@ def _secure_paths(target: Path) -> None:
         log.debug("spend-sense: could not restrict usage store permissions")
 
 
+def _generation_path(target: Path) -> Path:
+    return target.parent / (target.name + ".generation")
+
+
+def _read_generation(target: Path) -> int:
+    try:
+        return int(_generation_path(target).read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def _write_generation(target: Path, generation: int) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _generation_path(target).write_text(str(generation), encoding="utf-8")
+
+
 def connect_writer(path: Optional[Path | str] = None) -> sqlite3.Connection:
-    """Shared writer connection. Caller must hold ``_WRITE_LOCK`` for writes."""
-    global _WRITER, _WRITER_PATH
+    """Shared writer connection. Caller must hold ``_WRITE_LOCK`` for writes.
+
+    Cross-process safe against erasure: every acquisition compares the
+    store generation marker, and a mismatch drops the cached handle (which
+    may point at an unlinked inode) and reopens, so no row is ever
+    written where it cannot be read back.
+    """
+    global _WRITER, _WRITER_PATH, _WRITER_GENERATION
     target = Path(path) if path else event_db_path()
     key = str(target)
-    if _WRITER is not None and _WRITER_PATH == key:
+    generation = _read_generation(target)
+    if _WRITER is not None and _WRITER_PATH == key and _WRITER_GENERATION == generation:
         return _WRITER
 
     if _WRITER is not None:
@@ -225,6 +249,7 @@ def connect_writer(path: Optional[Path | str] = None) -> sqlite3.Connection:
             pass
         _WRITER = None
         _WRITER_PATH = None
+        _WRITER_GENERATION = None
 
     conn: Optional[sqlite3.Connection] = None
     if path is None:
@@ -250,11 +275,15 @@ def connect_writer(path: Optional[Path | str] = None) -> sqlite3.Connection:
         # than dropping one accounting row. The collector is fail-open.
         conn = sqlite3.connect(target, timeout=0, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
+    else:
+        # The storage helper may have created the file with default
+        # permissions; tighten before any schema or data lands in it.
+        _secure_paths(target)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=0")
     _ensure_schema(conn)
     _secure_paths(target)
-    _WRITER, _WRITER_PATH = conn, key
+    _WRITER, _WRITER_PATH, _WRITER_GENERATION = conn, key, generation
     return conn
 
 
@@ -393,13 +422,16 @@ def erase_ledger(path: Optional[Path | str] = None) -> dict[str, Any]:
     """Delete the captured usage ledger and its baseline (F122).
 
     Removes usage.db plus WAL/SHM/journal sidecars, so neither rows nor WAL
-    residue survive. The next write recreates a fresh store and recaptures
-    the baseline from that moment on; reconciliation restarts there.
-    Idempotent: a missing store erases to an empty success, and a busy
-    store raises EraseBusy (loudly retried, never silently partial).
-    Never touches Hermes state, credentials or any other profile data.
+    residue survive, then bumps the store generation marker. Any other
+    process holding the old file open reopens on its next write instead of
+    recording into an unlinked inode. The next write recreates a fresh
+    store and recaptures the baseline from that moment on; reconciliation
+    restarts there. Idempotent: a missing store erases to an empty success,
+    and a busy store raises EraseBusy (loudly retried, never silently
+    partial). Never touches Hermes state, credentials or any other profile
+    data.
     """
-    global _WRITER, _WRITER_PATH, _INSERTS_SINCE_PRUNE
+    global _WRITER, _WRITER_PATH, _WRITER_GENERATION, _INSERTS_SINCE_PRUNE
     target = Path(path) if path else event_db_path()
     files = [target, Path(str(target) + "-wal"), Path(str(target) + "-shm"),
              Path(str(target) + "-journal")]
@@ -437,6 +469,7 @@ def erase_ledger(path: Optional[Path | str] = None) -> dict[str, Any]:
                 pass
             _WRITER = None
             _WRITER_PATH = None
+            _WRITER_GENERATION = None
         removed: list[str] = []
         for victim in files:
             try:
@@ -446,6 +479,11 @@ def erase_ledger(path: Optional[Path | str] = None) -> dict[str, Any]:
             except OSError as exc:
                 raise EraseBusy(f"could not remove {victim.name}: {exc}") from exc
             removed.append(victim.name)
+        # Bumped even when nothing was removed: a process could still hold
+        # an unlinked handle from an earlier erase whose marker write failed.
+        # An OSError here propagates (→ erase_uncertain): claiming success
+        # while other processes cannot see the erasure would be a lie.
+        _write_generation(target, _read_generation(target) + 1)
         _INSERTS_SINCE_PRUNE = 0
     finally:
         _WRITE_LOCK.release()

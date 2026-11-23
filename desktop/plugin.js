@@ -6821,6 +6821,7 @@ const ECONOMICS_CSS = [
 
 const $settingsConfirmation = atom(null)
 const $modelRefreshState = atom(null)
+const $ledgerEraseState = atom(null)
 const $membershipClock = atom(Date.now())
 
 function overviewAnalyticsQuery(identity = membershipIdentityNow()) {
@@ -7189,6 +7190,8 @@ function SettingsPage() {
   const automaticModelOptions = useValue($automaticModelOptions)
   const liveConfirmation = confirmation?.origin === identity ? confirmation : null
   const liveRefresh = refreshState?.origin === identity ? refreshState : null
+  const eraseState = useValue($ledgerEraseState)
+  const liveErase = eraseState?.origin === identity ? eraseState : null
   const [clock] = [useValue($membershipClock)]
   const newsSettings = useQuery(newsSettingsQuery(identity))
   const liveNewsState = useValue($newsLiveState)
@@ -7270,6 +7273,7 @@ function SettingsPage() {
     if (!liveConfirmation || liveConfirmation.stage !== 'erase-ledger' ||
         !membershipIdentityCurrent(identity)) {
       $settingsConfirmation.set({ origin: identity, stage: 'erase-ledger' })
+      $ledgerEraseState.set(null)
       return
     }
     const captured = identity
@@ -7277,7 +7281,10 @@ function SettingsPage() {
       const result = await rest('/settings/erase-usage-ledger', {
         method: 'POST', body: { confirm: 'ERASE_CAPTURED_USAGE' }
       })
-      if (!membershipIdentityCurrent(captured) || !result?.ok) return
+      if (!membershipIdentityCurrent(captured)) return
+      // A destructive action must never fail silently: an ok:false result
+      // raises into the same notice path as a transport failure.
+      if (!result?.ok) throw new Error(result?.detail || result?.error || 'The ledger was not erased.')
       $settingsConfirmation.set(null)
       await queryClient.invalidateQueries({ queryKey: [ID, 'overview-analytics', captured] })
       await queryClient.invalidateQueries({ queryKey: [ID, 'analytics'] })
@@ -7286,12 +7293,14 @@ function SettingsPage() {
       await queryClient.invalidateQueries({ queryKey: [ID, 'digest-report'] })
       await queryClient.invalidateQueries({ queryKey: [ID, 'ledger'] })
       await queryClient.invalidateQueries({ queryKey: [ID, 'budget-status', captured] })
+      await queryClient.invalidateQueries({ queryKey: [ID, 'model-news', captured] })
+      await queryClient.invalidateQueries({ queryKey: [ID, 'news-settings', captured] })
       await invalidateEconomicsFor(captured)
       await invalidateWeatherFor(captured)
-      $modelRefreshState.set({ origin: captured, tone: 'good',
+      $ledgerEraseState.set({ origin: captured, tone: 'good',
         text: t('settingsNotifyLedgerErased', result.calls_deleted ?? 0) })
     } catch (error) {
-      if (membershipIdentityCurrent(captured)) $modelRefreshState.set({
+      if (membershipIdentityCurrent(captured)) $ledgerEraseState.set({
         origin: captured, tone: 'warn',
         text: t('settingsNotifyLedgerEraseFailed', String(error.message || error))
       })
@@ -7306,7 +7315,8 @@ function SettingsPage() {
       const result = await rest('/settings/reset-user-data', {
         method: 'POST', body: { confirm: 'RESET_USER_ENTERED_DATA' }
       })
-      if (!membershipIdentityCurrent(captured) || !result?.ok) return
+      if (!membershipIdentityCurrent(captured)) return
+      if (!result?.ok) throw new Error(result?.detail || result?.error || 'User-entered data was not reset.')
       $settingsConfirmation.set(null)
       $membershipSnapshot.set({ identity: captured, accounts: [], store: { loaded: true, error: '' }, notes: [] })
       await queryClient.invalidateQueries({ queryKey: [ID, 'membership-accounts', captured] })
@@ -7526,7 +7536,9 @@ function SettingsPage() {
                 jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: t('settingsCancel') })
               ] })
             : jsx(ProductButton, { type: 'button', className: 'wm-button',
-                onClick: eraseUsageLedger, children: t('settingsEraseLedger') })
+                onClick: eraseUsageLedger, children: t('settingsEraseLedger') }),
+          liveErase?.text ? jsx('p', { className: liveErase.tone === 'warn' ? 'wm-warn-note' : 'wm-subtle',
+            role: 'status', children: liveErase.text }) : null
         ] }),
         jsxs('section', { id: 'settings-diagnostics', className: 'wm-product-section', children: [
           jsx('h2', { children: t('settingsDiagnosticsHeading') }),
@@ -18537,7 +18549,7 @@ export const __test = {
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
   CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, AboutPage, goAboutFaq, CopyableDiagnostic, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
-  $settingsConfirmation, $modelRefreshState,
+  $settingsConfirmation, $modelRefreshState, $ledgerEraseState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, analyticsListDisplay, desktopTodayText, desktopTodayAmount, desktopTodayTooltip, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, openUsagePricingCoverage, $analytics, $analyticsFocus,
