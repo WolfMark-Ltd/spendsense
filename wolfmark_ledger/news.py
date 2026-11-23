@@ -1221,7 +1221,11 @@ def _finite_number(value: Any) -> Optional[float]:
     # item. NaN/Infinity (and non-numbers) must never reach JSON or the UI.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return value if math.isfinite(value) else None
+    try:
+        return value if math.isfinite(value) else None
+    except OverflowError:
+        # Integers beyond the float range cannot be classified as finite.
+        return None
 
 
 def _valid_text(value: Any, limit: int) -> str:

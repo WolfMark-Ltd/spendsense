@@ -722,6 +722,19 @@ class FeedValidationTests(NewsTestCase):
                           "delta": -1.0, "pct": None})
         self.assertIsNone(change["rates"]["output"]["before"])
 
+    def test_oversized_change_integer_degrades_to_none(self):
+        # An integer beyond the float range degrades rather than aborting
+        # the whole feed: math.isfinite would raise OverflowError on it.
+        news = news_module()
+        feed, _ = news.validate_feed(feed_doc([
+            feed_item("huge", change={"max_abs_pct": 10 ** 400,
+                                      "max_abs_delta": 2.5}),
+        ]))
+        self.assertIsNotNone(feed)
+        change = feed["items"][0]["change"]
+        self.assertIsNone(change["max_abs_pct"])
+        self.assertEqual(change["max_abs_delta"], 2.5)
+
     def test_non_finite_money_renders_unknown(self):
         news = news_module()
         self.assertEqual(news._money(float("inf")), "—")

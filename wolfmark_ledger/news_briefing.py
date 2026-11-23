@@ -1005,6 +1005,8 @@ def _text(value: Any, limit: int = _MAX_TEXT) -> str:
 
 def _finite_scalar(item: Any) -> bool:
     # F120: NaN/Infinity must never reach the saved briefing or the UI.
+    # Only floats reach math.isfinite here, so no OverflowError is possible
+    # (unlike _finite_number in news.py, which also classifies ints).
     return not (isinstance(item, float) and not math.isfinite(item))
 
 
