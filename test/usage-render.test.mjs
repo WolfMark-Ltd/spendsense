@@ -124,14 +124,14 @@ test('read benefit uses backend basis and coverage, and unknown writes stay unkn
     data.economics = { ...data.economics, savings_basis: 'indeterminate', savings_usd: 99,
       read_benefit_usd: 1.25, read_benefit_basis: 'exact', read_benefit_calls: 5, read_benefit_tokens: 188224 }
     const container = await boot({ locale, analyticsData: data })
-    assert.match(container.textContent, /\$1\.25/)
+    assert.match(container.textContent, /\$1\.25\+/)
     assert.equal(statsOf(container).length, 3, `${locale}: coverage details do not add normal-page text`)
     const benefitTip = container.querySelector('[aria-controls="wm-info-usage-read-benefit"]')
     await click(benefitTip)
     assert.ok(container.querySelector('#wm-info-usage-read-benefit')?.textContent.includes(
       dict.readBenefitCoverage(5, 1234, T.fmtTokens(188224))))
     assert.ok(container.querySelector('#wm-info-usage-read-benefit')?.textContent.includes(dict.readBenefitExplanation))
-    assert.equal(statsOf(container)[1].value, '$1.25')
+    assert.equal(statsOf(container)[1].value, '$1.25+')
     const composition = [...container.querySelectorAll('.wm-panel')].find(panel => panel.textContent.includes(dict.usageCompTitle))
     assert.doesNotMatch(composition.textContent, /unknown|unclassified/i,
       `${locale}: unavailable cache evidence stays a quiet dash in the normal composition chart`)
@@ -178,7 +178,7 @@ test('Usage keeps its headline to API-equivalent, read benefit and tokens, in bo
       `${locale}: three figures, in a direct reading order`)
     assert.equal(stats.length, 3, `${locale}: no duplicate or theoretical-savings tile`)
     assert.equal(stats[0].value, '$82.40+', `${locale}: incomplete pricing stays visible as a short qualifier`)
-    assert.equal(stats[1].value, '$4.20', `${locale}: read benefit uses the backend value`)
+    assert.equal(stats[1].value, '$4.20+', `${locale}: partial read benefit stays distinct from a complete total`)
     assert.equal(stats[2].value, T.fmtTokens(3141592),
       `${locale}: the token total is formatted, not rounded to a bare count`)
     assert.match(stats[2].hints[0], /1,234/,
@@ -200,7 +200,8 @@ test('Usage renders the backend $196.99 read benefit without a second benefit ca
   for (const locale of LOCALES) {
     for (const state of ['known', 'partial']) {
       const container = await boot({ locale, analyticsData: usageAnalytics(state) })
-      assert.equal(statsOf(container)[1].value, '$196.99', `${locale}/${state}: use backend read-benefit evidence`)
+      assert.equal(statsOf(container)[1].value, state === 'partial' ? '$196.99+' : '$196.99',
+        `${locale}/${state}: use backend read-benefit evidence and mark a known subtotal`)
       assert.equal(container.querySelectorAll('#wm-usage-read-benefit').length, 1,
         `${locale}/${state}: one read-benefit figure`)
       assert.equal(container.querySelectorAll('.wm-usage-summary .wm-stat').length, 3,
@@ -231,7 +232,7 @@ test('Usage keeps signed net-saving analysis in collapsed details, separate from
       data.economics = economics
       data.totals.economics = economics
       const container = await boot({ locale, analyticsData: data })
-      assert.equal(statsOf(container)[1].value, '$4.20',
+      assert.equal(statsOf(container)[1].value, '$4.20+',
         `${locale} ${item.basis}: read benefit stays independent of net-savings evidence`)
       const nerdMode = container.querySelector('.wm-nerd-mode')
       assert.equal(nerdMode?.open, false, `${locale} ${item.basis}: detailed economics stay collapsed`)

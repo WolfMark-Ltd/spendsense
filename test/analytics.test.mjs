@@ -193,10 +193,23 @@ test('taskbar Today uses the same one-day filtered analytics query as Usage', as
  assert.match(staleTree.props.label,/Filtered Usage for today is unavailable/)
 })
 
+test('API-equivalent figures preserve backend bounds and mark incomplete totals', () => {
+ const value=(economics,extra={})=>T.analyticsListDisplay({list_usd:1.25,economics,...extra})
+ assert.equal(value({api_equivalent_basis:'exact'}),'$1.25')
+ assert.equal(value({api_equivalent_basis:'lower_bound'}),'≥$1.25')
+ assert.equal(value({api_equivalent_basis:'upper_bound'}),'≤$1.25')
+ assert.equal(value({api_equivalent_basis:'range',api_equivalent_usd_high:1.75}),'$1.25–$1.75')
+ assert.equal(value({api_equivalent_basis:'range'}),'—','a missing range endpoint cannot be shown as a complete amount')
+ assert.equal(value({api_equivalent_basis:'incomplete'}),'$1.25+')
+ assert.equal(value({api_equivalent_basis:'exact'},{unpriced_calls:1}),'$1.25+')
+ assert.equal(value({}), '$1.25+', 'an absent basis is treated as incomplete')
+})
+
 const metric = (i=0) => ({tokens:10000-i*100,calls:12-i,input_tokens:2000,output_tokens:1000,cache_read_tokens:6000-i*100,cache_write_tokens:1000,cache_write_state:'reported',
  list_usd:i===8?null:10-i,priced_tokens:i===8?0:10000-i*100,unpriced_tokens:i===8?9200:0,coverage:i===8?0:1,
  cache_hit_rate:i===8?null:.6-i*.03,cache_known_calls:8,cache_unknown_calls:4,cache_coverage:.66,billed_usd:0,billed_complete:false,
- economics:{uncached_usd:12-i,cached_usd:8-i,savings_usd:i===7?-1:4,coverage:.8,covered_tokens:8000,covered_calls:8,excluded_calls:4}})
+ economics:{uncached_usd:12-i,cached_usd:8-i,savings_usd:i===7?-1:4,coverage:.8,covered_tokens:8000,covered_calls:8,excluded_calls:4,
+  api_equivalent_basis:'exact',api_equivalent_usd_high:null}})
 const fixture = {ok:true,window:{since:'2026-10-01T00:00:00Z',until:'2026-10-30T00:00:00Z',days:30,timezone:'UTC'},
  totals:{...metric(),unpriced_tokens:1000,priced_tokens:9000,coverage:.9},economics:metric().economics,
  options:{models:[{model:'m0',provider:'p0'}],providers:['p0','p1'],surfaces:['telegram','cli'],tasks:['main','aux']},
@@ -207,6 +220,20 @@ function page(data=fixture,extra={},props={}) {
  globalThis.analyticsResponse = {data,isLoading:false,isFetching:false,refetch:()=>{globalThis.analyticsRefetch=(globalThis.analyticsRefetch||0)+1},...extra}
  return render(T.AnalyticsPage(props))
 }
+test('Usage and taskbar share the backend valuation bound', () => {
+ T.$analytics.set({})
+ globalThis.analyticsLanguage='en'
+ const data={...fixture,totals:{...fixture.totals,list_usd:1.25,unpriced_tokens:0,unpriced_calls:0,
+  economics:{...fixture.totals.economics,api_equivalent_basis:'range',api_equivalent_usd_high:1.75}}}
+ const usage=page(data)
+ const usageAmount=nodes(usage,node=>node.type==='div'&&String(node.props.className||'').split(/\s+/).includes('wm-statvalue'))[0]
+ assert.equal(text(usageAmount),'$1.25–$1.75')
+ globalThis.analyticsQueries=[]
+ const chip=render(T.Chip())
+ const today=nodes(chip,node=>node.type==='button'&&text(node).includes('Today'))[0]
+ assert.ok(today)
+ assert.ok(text(today).includes('$1.25–$1.75'))
+})
 function button(tree,label) { return nodes(tree,n=>n.type==='button' && (n.props['aria-label']===label || text(n)===label))[0] }
 
 test('analytics cache coverage uses the selected language', () => {

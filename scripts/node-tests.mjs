@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const suites = {
   browserless: [
     ['about', 16, true],
-    ['analytics', 51], ['budgets', 30, true], ['cache-savings', 36],
+    ['analytics', 53], ['budgets', 30, true], ['cache-savings', 36],
     ['compatibility', 16], ['dashboard-entry', 1], ['digest', 2],
     ['digest-render', 24, true], ['economics', 28], ['economics-render', 53, true],
     ['membership', 38], ['membership-scope', 99, true], ['memberships-reading', 6, true],

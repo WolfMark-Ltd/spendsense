@@ -132,7 +132,12 @@ test('legacy, unpriced, unknown-rate and cross-gateway activity never become com
 test('partial estimates prove reached thresholds but cannot claim within limit', async () => {
   await reset(); await usage(800000)
   const bucket = { ...T.$ledger.get().sessions.conversation, usageValueMissing: 1000 }
-  assert.equal(T.sessionBudgetStatus({ guardrailValue: bucket }, [b()]).level, 'warning')
+  const partial = T.sessionBudgetStatus({ guardrailValue: bucket }, [b()])
+  assert.equal(partial.level, 'warning')
+  assert.equal(T.sessionBudgetFigure(partial), `${T.fmtUsd(partial.spend)}+`,
+    'a partial session subtotal keeps its compact marker without combining it with approximation')
+  const complete = T.sessionBudgetStatus({ guardrailValue: T.$ledger.get().sessions.conversation }, [b()])
+  assert.equal(T.sessionBudgetFigure(complete), `≈${T.fmtUsd(complete.spend)}`)
   assert.equal(T.sessionBudgetStatus({ guardrailValue: bucket }, [b({ amount: 10 })]).level, 'unavailable')
   assert.equal(T.sessionBudgetStatus({ guardrailValue: bucket }, [b({ enabled: false })]), null)
 })

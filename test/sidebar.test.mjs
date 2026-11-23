@@ -501,7 +501,7 @@ test('a proven session summary renders the cache-read benefit with coverage in i
     if (path.startsWith('/session/summary?')) return {
       ok: true, session_id: 'summary-session',
       population: { requested: 'all', satisfied: true, separable: false },
-      totals: { calls: 1, input_tokens: 100, output_tokens: 10, prompt_tokens: 200,
+      totals: { calls: 2, input_tokens: 100, output_tokens: 10, prompt_tokens: 200,
         cache_read_tokens: 100, cache_write_tokens: 0,
         cache_read_state: 'reported', cache_write_state: 'reported', unpriced_tokens: 0 },
       valuation: { api_equivalent_usd: .001, api_equivalent_basis: 'exact',
@@ -527,14 +527,14 @@ test('a proven session summary renders the cache-read benefit with coverage in i
     assert.equal(container.querySelector('.wm-provider-badge').textContent, 'openai',
       'the separately resolved active route provider remains visible')
     const benefitFigure = container.querySelector('[data-kind="saved"] .wm-metric-value')
-    assert.equal(benefitFigure.textContent, '$0.0050')
+    assert.equal(benefitFigure.textContent, '$0.0050+')
     assert.equal(container.querySelectorAll('[data-kind="saved"]').length, 1,
       'the session read benefit appears once')
     assert.doesNotMatch(container.textContent, /1 of 1 calls|100 read tokens|readBenefitUsageLink/,
       'coverage details and the Usage link stay out of the normal pane')
     const benefitTip = await openTip(container, 'read-benefit')
     assert.match(benefitTip, /API-equivalent cache-read benefit for this runtime session/)
-    assert.match(benefitTip, /1 of 1 calls · 100 read tokens/)
+    assert.match(benefitTip, /1 of 2 calls · 100 read tokens/)
     assert.match(container.querySelector('.wm-kpi-figure').textContent, /\$0\.0010/)
     assert.equal(container.querySelector('.wm-rates-toggle'), null,
       'a multi-route session summary does not present a single-route Rates panel')
@@ -1116,6 +1116,19 @@ test('the composition bar labels every part with its share', async () => {
   assert.match(bar.getAttribute('aria-label'), /60%/)
   const fills = [...bar.querySelectorAll('.wm-mix-fill')].map(el => el.style.width)
   assert.deepEqual(fills, ['20%', '60%', '20%', '0%'])
+  const partialBucket = T.readUsage({ input: 500, prompt: 1000, output: 0, calls: 1, cache_hit_pct: 40 })
+  await React.act(async () => {
+    root.render(React.createElement(T.TokenComposition, {
+      t: key => key === 'unclassifiedPromptTokens' ? 'unclassified prompt' : key,
+      view: { bucket: partialBucket, usage: null }
+    }))
+  })
+  const partialBar = container.querySelector('.wm-mix-bar')
+  const unknownLegend = [...container.querySelectorAll('.wm-legend-item')]
+    .find(item => item.textContent.includes('unclassified prompt'))
+  assert.ok(unknownLegend, 'a visible unknown segment has a compact legend label')
+  assert.match(unknownLegend.textContent, /≈100/, 'the residual count stays visibly approximate')
+  assert.equal(partialBar.querySelector('[data-part="unknown"]').style.width, '10%')
 })
 
 // --- WP13: compact sidebar ------------------------------------------------------

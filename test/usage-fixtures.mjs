@@ -33,6 +33,7 @@ const row = (i = 0) => ({
   billing_mix: i % 3 === 0 ? { api: 40 } : {},
   economics: { uncached_usd: 12 - i * 0.2, cached_usd: 8 - i * 0.2, savings_usd: i === 5 ? -0.4 : 3.2 - i * 0.06,
     savings_usd_high: null, savings_basis: 'exact', coverage: 0.82,
+    api_equivalent_basis: 'exact', api_equivalent_usd_high: null,
     read_benefit_usd: 4.2, read_benefit_basis: 'exact', read_benefit_calls: 96, read_benefit_tokens: 72000,
     covered_tokens: 98000, covered_calls: 96, excluded_calls: 8 },
 })
@@ -46,6 +47,7 @@ export const usageByModel = () => Array.from({ length: 30 }, (_, i) => ({
 const totals = () => ({
   ...row(0), tokens: 3141592, calls: 1234, input_tokens: 640000, output_tokens: 320000,
   cache_read_tokens: 1900000, cache_write_tokens: 281592, list_usd: 82.4,
+  economics: { ...row(0).economics, api_equivalent_basis: 'incomplete' },
   cache_write_state: 'reported',
   priced_tokens: 3014592, unpriced_tokens: 127000, unpriced_calls: 6,
   cache_hit_rate: 0.61, cache_prompt_coverage: 0.66,
@@ -61,14 +63,14 @@ export const usageAnalytics = (fixtureState = 'fixture') => {
     total.unpriced_tokens = 0
     total.unpriced_calls = 0
     total.economics = { ...total.economics, read_benefit_usd: 196.99,
-      read_benefit_basis: 'exact', read_benefit_calls: 6335, read_benefit_tokens: 4282240 }
+      api_equivalent_basis: 'exact', read_benefit_basis: 'exact', read_benefit_calls: 6335, read_benefit_tokens: 4282240 }
   } else if (fixtureState === 'partial') {
     total.calls = 6335
     total.priced_tokens = total.tokens - 127000
     total.unpriced_tokens = 127000
     total.unpriced_calls = 360
     total.economics = { ...total.economics, read_benefit_usd: 196.99,
-      read_benefit_basis: 'exact', read_benefit_calls: 5975, read_benefit_tokens: 4282240 }
+      api_equivalent_basis: 'incomplete', read_benefit_basis: 'exact', read_benefit_calls: 5975, read_benefit_tokens: 4282240 }
   } else if (fixtureState === 'unavailable') {
     total.economics = { ...total.economics, read_benefit_usd: null,
       read_benefit_basis: 'indeterminate', read_benefit_calls: 0, read_benefit_tokens: 0 }

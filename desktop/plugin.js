@@ -2618,6 +2618,8 @@ function tokenRows(t, b, hasContext, u) {
       value: tokenValue(b.cacheRead, evidence.read) },
     { key: 'cw', dim: true, label: t('cacheWrite'),
       value: tokenValue(b.cacheWrite, evidence.write) },
+    unclassifiedPrompt ? { key: 'cu', dim: true, label: t('unclassifiedPromptTokens'),
+      value: `≈${fmtTokens(unclassifiedPrompt)}` } : null,
     { key: 'tt', label: t('total'),
       value: `${cacheEstimated || b.cacheEstimated || unclassifiedPrompt ? '≈' : ''}${fmtTokens(tokensOf(b))}` },
     { key: 'c', dim: true, label: t('calls'), value: String(b.calls ?? 0) }
@@ -2629,10 +2631,21 @@ function tokenRows(t, b, hasContext, u) {
 }
 
 function analyticsListDisplay(totals) {
-  const value = analyticMoney(totals?.list_usd)
-  if (value === '—') return value
+  const amount = finiteValue(totals?.list_usd)
+  if (amount == null) return '—'
+  const economics = totals?.economics || {}
+  const basis = economics.api_equivalent_basis
+  const value = analyticMoney(amount)
+  if (basis === 'lower_bound') return `≥${value}`
+  if (basis === 'upper_bound') return `≤${value}`
+  if (basis === 'range') {
+    const high = finiteValue(economics.api_equivalent_usd_high)
+    return high == null || high < amount ? '—' : `${value}–${analyticMoney(high)}`
+  }
+  if (basis && !['exact', 'incomplete'].includes(basis)) return '—'
   const partial = num(totals?.unpriced_tokens) > 0 || num(totals?.unpriced_calls) > 0 ||
-    num(totals?.missing_usage_calls) > 0 || totals?.coverage_unknown === true
+    num(totals?.missing_usage_calls) > 0 || totals?.coverage_unknown === true ||
+    basis === 'incomplete' || basis == null
   return `${value}${partial ? '+' : ''}`
 }
 
@@ -2717,7 +2730,7 @@ function Chip() {
           style: { color: budgetColour(guard?.level) },
           'aria-label': guard ? budgetTooltip(guard, t) : undefined,
           role: guard ? 'img' : undefined,
-          children: guard?.spend != null ? `≈${fmtUsd(guard.spend)}` : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${apiEquivalentDisplay(live)}`
+          children: guard?.spend != null ? sessionBudgetFigure(guard) : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${apiEquivalentDisplay(live)}`
         }),
         live.cacheHitPct != null
           ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ⚡${live.bucket?.cacheEstimated ? '≈' : ''}${Math.round(live.cacheHitPct)}%` })
@@ -3142,7 +3155,8 @@ function TokenComposition({ t, view }) {
     jsxs('div', { className: 'wm-legend', children: [
       legend('i', t('cacheFresh'), 'fresh'),
       legend('cr', byKey.cr ? byKey.cr.label : t('cacheRead'), 'read'),
-      legend('cw', byKey.cw ? byKey.cw.label : t('cacheWrite'), 'write')
+      legend('cw', byKey.cw ? byKey.cw.label : t('cacheWrite'), 'write'),
+      shares.unknown > 0 ? legend('cu', t('unclassifiedPromptTokens'), 'unknown') : null
     ] }, 'legend'),
     jsxs('div', { className: 'wm-legend wm-legend-separate', children: [
       jsxs('div', { className: 'wm-legend-item', children: [
@@ -3965,7 +3979,7 @@ function readBenefitDisplay(t, benefit) {
   if (!benefit?.available) return '—'
   if (benefit.basis === 'lower_bound') return t('savingsLowerBoundValue', analyticMoney(benefit.value))
   if (benefit.basis === 'upper_bound') return t('savingsUpperBoundValue', analyticMoney(benefit.value))
-  return analyticMoney(benefit.value)
+  return `${analyticMoney(benefit.value)}${benefit.partial ? '+' : ''}`
 }
 function analyticsSavingsTone(economics) {
   const value = analyticsSavingsValue(economics)
@@ -4082,6 +4096,10 @@ function AnalyticsPanel({number,title,subtitle,controls,children,footer,compact=
   return jsxs(ProductCard,{as:'section',className:'wm-panel','aria-label':title,children:[
     jsxs('div',{className:'wm-panelhead',children:[jsxs('div',{children:[jsxs('div',{className:'wm-paneltitle',children:[jsx('span',{className:'wm-number',children:number}),jsx('h2',{children:title}),titleInfo]}),!compact&&subtitle?jsx('p',{className:'wm-subtle',children:subtitle}):null]}),controls]}),
     children,footer&&(!compact||compactFooter)?compact&&compactFooter?footer:jsx('div',{className:'wm-footnote',children:footer}):null]})
+}
+function sessionBudgetFigure(guard) {
+  if (guard?.spend == null) return null
+  return `${guard.partial ? '' : '≈'}${fmtUsd(guard.spend)}${guard.partial ? '+' : ''}`
 }
 function AnalyticsStat({id,tabIndex,label,value,hint,extra,tone}) {
   return jsxs('div',{id,tabIndex,className:'wm-stat',children:[jsx('div',{className:'wm-statlabel',children:label}),jsx('div',{className:cn('wm-statvalue wm-mono',tone),children:value}),hint?jsx('div',{className:'wm-subtle',children:hint}):null,extra?jsx('div',{className:'wm-subtle',style:{marginTop:5},children:extra}):null]})
@@ -18510,7 +18528,8 @@ export const __test = {
   $ratesOpen, $infoOpen, METER_CSS, RING_R, RING_C,
   sourceLabel, sourceFallback, SOURCE_FALLBACKS, scopeTotalsTitle, tokenRows, I18N,
   fmtUsd, fmtTokens, fmtRate, fmtDate, tokensOf, hitPctOf, cacheSavings, cacheSavingsBounds, liveSavings, costOf,
-  apiEquivalentDisplay, sidebarCostDisplay, analyticsSavingsDisplay, analyticsSavingsTone, readBenefitState, readBenefitDisplay,
+  apiEquivalentDisplay, sidebarCostDisplay, sessionBudgetFigure,
+  analyticsSavingsDisplay, analyticsSavingsTone, readBenefitState, readBenefitDisplay,
   savingsState, savingsGapReason, derivedWrites, savedNote, savedDisplay, savedCoveragePct, SAVED_REASON_KEYS,
   modelDisplayName,
   $ledger, $ledgerReadError, $ledgerLoadDiagnostics
