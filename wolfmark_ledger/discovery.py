@@ -273,10 +273,13 @@ def probe_providers(providers: Iterable[str], *, home: Optional[Path | str] = No
     results = {}
     for provider in providers:
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        if remaining <= 0 and usage_support(provider) != "unsupported":
             results[provider] = {"state": "unavailable", "snapshot": None,
                                  "reason": "discovery time budget exhausted"}
         else:
+            # Unsupported families cost nothing (no subprocess), so they
+            # report their true state even after the budget is gone; only
+            # families worth probing can exhaust it.
             results[provider] = native_snapshot(provider, home=home,
                                                  timeout=min(PROBE_TIMEOUT, remaining))
     return results

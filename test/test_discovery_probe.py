@@ -188,9 +188,13 @@ class UsageSupportTest(unittest.TestCase):
         self.assertEqual(discovery.usage_support("commandcode-anthropic"), "unsupported")
 
     def test_unreadable_hermes_is_unknown_not_unsupported(self) -> None:
-        # No stub modules at all (and none importable here): capability is
-        # unknown, so probes run exactly as before instead of going quiet.
-        self.assertEqual(discovery.usage_support("openai-codex"), "unknown")
+        # Blocked imports (None entries fail the import even where a real
+        # Hermes is installed): capability is unknown, so probes run exactly
+        # as before instead of going quiet.
+        blocked = {"agent": None, "agent.account_usage": None,
+                   "providers": None, "providers.base": None}
+        with mock.patch.dict(sys.modules, blocked):
+            self.assertEqual(discovery.usage_support("openai-codex"), "unknown")
         self.stub_hermes(None)
         discovery._SUPPORT_CACHE.clear()
         self.assertEqual(discovery.usage_support("openai-codex"), "unknown")
@@ -259,6 +263,18 @@ class UsageSupportTest(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(out["a"]["state"], "unavailable")
         self.assertIn("budget", out["a"]["reason"])
+
+    def test_unsupported_families_report_true_state_after_budget_gone(self) -> None:
+        # Capability is checked before the budget: an unsupported family
+        # costs no subprocess, so it must not inherit a budget-exhaustion
+        # misdiagnosis from earlier slow reads.
+        self.stub_hermes({"openai-codex"})
+        with mock.patch.object(discovery, "_hermes_binary", return_value="/usr/bin/hermes"), \
+             mock.patch.object(discovery.subprocess, "run") as run:
+            out = discovery.probe_providers(["commandcode-anthropic"], home=self.home,
+                                            budget_seconds=0)
+        run.assert_not_called()
+        self.assertEqual(out["commandcode-anthropic"]["state"], "unsupported")
 
 
 if __name__ == "__main__":
