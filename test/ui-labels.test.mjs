@@ -166,7 +166,10 @@ test('a reconstructed cache write never reads as confirmed usage', () => {
   const cw = rows.find(r => r.key === 'cw')
   assert.equal(cw.value, '—')
   assert.equal(cw.label, 'Cache write')
-  assert.equal(rows.some(row => row.key === 'cu'), false, 'no technical unknown row is added')
+  const unclassified = rows.find(row => row.key === 'cu')
+  assert.equal(unclassified.label, rawT('unclassifiedPromptTokens'))
+  assert.equal(unclassified.value, `≈${T.fmtTokens(216_795)}`,
+    'a derived write stays visibly approximate in the unclassified prompt segment')
 })
 
 test('context is shown only when the gateway supplies it', () => {
@@ -398,7 +401,8 @@ test('Overview labels separate the all-profile ledger from the active-profile es
     '用量 · 2026-11-22 → 2026-11-23 · Europe/London · API 等值')
 
   const today = {
-    totals: { list_usd: 3.75, unpriced_tokens: 0, unpriced_calls: 0 },
+    totals: { list_usd: 3.75, unpriced_tokens: 0, unpriced_calls: 0,
+      economics: { api_equivalent_basis: 'exact' } },
     window: { since_local: '2026-11-22', until_local: '2026-11-23', timezone: 'Europe/London' }
   }
   const translate = language => (key, ...args) => {
