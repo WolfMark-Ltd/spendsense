@@ -6907,6 +6907,15 @@ function OverviewIcon({ name }) {
     fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round',
     'data-tone': name, 'aria-hidden': true, children: jsx('path', { d: paths[name] || paths.recorded }) })
 }
+/** Pricing-gap reasons a custom token rate can genuinely resolve (WP48): the
+ *  route identity exists but the catalogue lacks rates, so a user-asserted
+ *  rate makes the usage priced. Failed, missing and unidentified usage can
+ *  only be reviewed in Usage, never priced by the user. Unknown reasons stay
+ *  on the review path: only a proven-fixable cause earns the fix action. */
+const OV_PRICING_FIXABLE_REASONS = ['model_not_in_catalogue', 'provider_not_in_catalogue',
+  'price_evidence_missing', 'missing_base_rate', 'tier_rate_unavailable',
+  'cache_rate_unavailable', 'missing_cache_rate', 'missing_cache_read_rate',
+  'missing_cache_write_rate']
 function OverviewPage() {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
@@ -6933,6 +6942,12 @@ function OverviewPage() {
   const unpricedTokens = Number(result.unpriced_tokens || 0)
   const unpricedCalls = Number(result.unpriced_calls || 0)
   const unpriced = unpricedTokens > 0 || unpricedCalls > 0
+  // Cause-aware pricing action (WP48/F109): catalogue-rate gaps earn the
+  // Settings fix (a custom token rate prices them); failed, missing and
+  // unidentified usage keeps the honest Usage review. Older backends send
+  // no gap breakdown and keep the previous review-only row.
+  const pricingGaps = result.pricing_gaps || {}
+  const unpricedFixable = OV_PRICING_FIXABLE_REASONS.some(reason => num(pricingGaps[reason]) > 0)
   const topModels = overviewTopModels(analytics.data?.by_model)
   const topModelMax = topModels[0]?.calls || 1
   // Accounts that could carry a recurring fee but have no known amount —
@@ -7073,10 +7088,11 @@ function OverviewPage() {
                 jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
                 jsxs('div', { className: 'wm-attn-main', children: [
                   jsx('strong', { children: t('ovPricingTitle') }),
-                  jsx('span', { children: t('ovUnpriced') })
+                  jsx('span', { children: unpricedFixable ? t('ovUnpricedFixable') : t('ovUnpriced') })
                 ] }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
-                  onClick: openUsagePricingCoverage, children: t('ovPricingAction') })
+                  onClick: unpricedFixable ? () => goLedgerTab('settings') : openUsagePricingCoverage,
+                  children: unpricedFixable ? t('econActionPricing') : t('ovPricingAction') })
               ] }, 'unpriced') : null
             ].filter(Boolean) })
           : null,
@@ -15381,6 +15397,7 @@ const I18N = {
     ovNothingToDo: 'Nothing needs confirming right now.',
     ovPricingTitle: 'Usage pricing',
     ovUnpriced: 'Pricing evidence is incomplete for some backend usage in the last 30 days.',
+    ovUnpricedFixable: 'Some backend usage has no catalogue price; a custom token rate you set can price it.',
     ovWeatherStale: 'Refresh failed — weather warnings may be stale.',
     ovStrip: n => `${n} need attention`,
     ovStripReview: 'Review',
@@ -17161,6 +17178,7 @@ const I18N = {
     ovNothingToDo: '目前没有需要确认的事项。',
     ovPricingTitle: '用量定价',
     ovUnpriced: '过去 30 天的部分后端用量缺少完整定价证据。',
+    ovUnpricedFixable: '部分后端用量缺少目录价格；您设置的自定义令牌单价可以为其定价。',
     ovWeatherStale: '刷新失败——额度预警可能已过期。',
     ovStrip: n => `有 ${n} 项需要注意`,
     ovStripReview: '查看',
