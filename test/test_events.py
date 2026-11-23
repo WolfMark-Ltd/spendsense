@@ -578,6 +578,23 @@ class ResponseModelTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(value, "served-1")
+        # The retry UPDATE path: an error stub first, then the successful
+        # attempt with the same id and a different served model.
+        failed = _record("e2", NOW, input_tokens=0)
+        failed["outcome"] = "error"
+        failed["response_model"] = None
+        store.record(failed, path=self.db)
+        retry = _record("e2", NOW, input_tokens=100)
+        retry["response_model"] = "served-2"
+        store.record(retry, path=self.db)
+        conn = sqlite3.connect(self.db)
+        try:
+            row = conn.execute(
+                "SELECT outcome, total_tokens, response_model FROM calls"
+                " WHERE event_id='e2'").fetchone()
+        finally:
+            conn.close()
+        self.assertEqual((row[0], row[1], row[2]), ("ok", 100, "served-2"))
 
     def test_pre_column_stores_migrate_additively(self):
         # A store written before the column existed: full old schema, one row.
