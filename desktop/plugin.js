@@ -2663,7 +2663,7 @@ function Chip() {
   const todayFilters = analyticsStates[todayScope]?.filters || analyticsInitialState().filters
   const todayFiltered = Object.values(todayFilters).some(Boolean)
   const todayRead = useQuery(analyticsQuery(1, todayFilters, todayScope))
-  const today = todayRead.data
+  const today = todayRead.error ? null : todayRead.data
   const identity = useValue($membershipIdentity)
   const budgetRead = useQuery(budgetQuery(identity))
   const budgetData = budgetRead.data?.identity === identity && membershipIdentityCurrent(identity) ? budgetRead.data : null
@@ -4078,10 +4078,10 @@ function AnalyticsSegments({label,value,options,onChange}) {
   return jsx('div',{className:'wm-segments',role:'group','aria-label':label,children:options.map(([id,text,aria])=>
     jsx('button',{type:'button','aria-label':aria || `${label} ${text}`,'aria-pressed':value===id,onClick:()=>onChange(id),children:text},id))})
 }
-function AnalyticsPanel({number,title,subtitle,controls,children,footer,compact=false,titleInfo=null}) {
+function AnalyticsPanel({number,title,subtitle,controls,children,footer,compact=false,compactFooter=false,titleInfo=null}) {
   return jsxs(ProductCard,{as:'section',className:'wm-panel','aria-label':title,children:[
     jsxs('div',{className:'wm-panelhead',children:[jsxs('div',{children:[jsxs('div',{className:'wm-paneltitle',children:[jsx('span',{className:'wm-number',children:number}),jsx('h2',{children:title}),titleInfo]}),!compact&&subtitle?jsx('p',{className:'wm-subtle',children:subtitle}):null]}),controls]}),
-    children,!compact&&footer?jsx('div',{className:'wm-footnote',children:footer}):null]})
+    children,footer&&(!compact||compactFooter)?compact&&compactFooter?footer:jsx('div',{className:'wm-footnote',children:footer}):null]})
 }
 function AnalyticsStat({id,tabIndex,label,value,hint,extra,tone}) {
   return jsxs('div',{id,tabIndex,className:'wm-stat',children:[jsx('div',{className:'wm-statlabel',children:label}),jsx('div',{className:cn('wm-statvalue wm-mono',tone),children:value}),hint?jsx('div',{className:'wm-subtle',children:hint}):null,extra?jsx('div',{className:'wm-subtle',style:{marginTop:5},children:extra}):null]})
@@ -4226,7 +4226,7 @@ function AnalyticsComposition({data,state,dispatch}) {
   const focus=parts.find(r=>r.id===state.compositionFocus)
   const select=row=>dispatch({type:'set',key:'compositionFocus',value:row.id})
   let x=0
-  return jsx(AnalyticsPanel,{number:'05',title:t('usageCompTitle'),subtitle:t('usageCompSubtitle'),compact:true,
+  return jsx(AnalyticsPanel,{number:'05',title:t('usageCompTitle'),subtitle:t('usageCompSubtitle'),compact:true,compactFooter:true,
     titleInfo:jsx(InfoTip,{id:'usage-composition',label:t('infoLabel'),text:t('usageCompInfo'),wide:true}),
     controls:jsx(AnalyticsSegments,{label:t('usageSegComposition'),value:state.compositionMode,options:[['stacked',t('usageSegStacked')],['doughnut',t('usageSegDoughnut')]],onChange:value=>dispatch({type:'set',key:'compositionMode',value})}),
     children:jsxs('div',{className:'wm-composition',children:[state.compositionMode==='doughnut'?
@@ -4237,7 +4237,7 @@ function AnalyticsComposition({data,state,dispatch}) {
           return jsx('rect',{x:start,y:4,width:row.share*600,height:28,fill:row.color,role:'button',tabIndex:0,'aria-label':t('usageCompSelect', row.label),onClick:()=>select(row),onFocus:()=>select(row),onKeyDown:event=>keyActivate(event,()=>select(row)),children:jsx('title',{children:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share))})},row.id)
         })]})]}),
       jsx('div',{className:'wm-compositionkey',children:parts.map(row=>row.unknown?jsxs('div',{className:'wm-legendrow',children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsx('span',{className:'wm-value',children:'—'})]},row.id):jsxs('button',{type:'button',className:'wm-legendrow','aria-label':t('usageCompSelect', row.label),'aria-pressed':state.compositionFocus===row.id,onClick:()=>select(row),onFocus:()=>select(row),title:t('usageCompPartTitle', row.label, exactTokens(row.value), percent(row.share)),children:[jsx('span',{className:'wm-dot',style:{background:row.color}}),jsx('span',{children:row.label}),jsxs('span',{className:'wm-value wm-mono',children:[fmtTokens(row.value),jsx('small',{children:percent(row.share)})]})]},row.id))})]}),
-    footer:jsx('div',{'aria-live':'polite',children:focus&&!focus.unknown?t(parts.some(row=>row.unknown)?'usageCompKnownFocus':'usageCompFocus', focus.label, exactTokens(focus.value), percent(focus.share), focus.id==='cache_read_tokens'?t('usageCompNoteCacheRead'):focus.id==='cache_write_tokens'?t('usageCompNoteCacheWrite'):focus.id==='input_tokens'?t('usageCompNoteInput'):t('usageCompNoteOutput')):null})})
+    footer:jsx('div',{className:'wm-chartdetail','aria-live':'polite',children:focus&&!focus.unknown?t(parts.some(row=>row.unknown)?'usageCompKnownFocus':'usageCompFocus', focus.label, exactTokens(focus.value), percent(focus.share), focus.id==='cache_read_tokens'?t('usageCompNoteCacheRead'):focus.id==='cache_write_tokens'?t('usageCompNoteCacheWrite'):focus.id==='input_tokens'?t('usageCompNoteInput'):t('usageCompNoteOutput')):null})})
 }
 const ANALYTICS_COLUMNS = [['model','Model'],['provider','Provider'],['calls','Calls'],['tokens','Tokens'],['input_tokens','Input'],['output_tokens','Output'],['reasoning_tokens','Reasoning'],['cache_read_tokens','Read'],['cache_write_tokens','Write'],['cache_hit_rate','Cache %'],['savings','Net savings'],['list_usd','API cost'],['per_call','$/call'],['per_million','$/1M tokens'],['pricing','Pricing'],['billing','Billing']]
 const ANALYTICS_CORE_COLUMNS = ['model','provider','calls','tokens','cache_hit_rate','list_usd','pricing']

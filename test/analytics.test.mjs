@@ -183,6 +183,14 @@ test('taskbar Today uses the same one-day filtered analytics query as Usage', as
  assert.equal(params.get('model'),'m6')
  assert.equal(params.get('surface'),'telegram')
  assert.equal(params.get('timezone'),null,'the server report owns the timezone used by both surfaces')
+
+ globalThis.analyticsResponse={data:report,isLoading:false,isFetching:false,error:new Error('refresh failed')}
+ globalThis.analyticsQueries=[]
+ const staleTree=render(T.Chip())
+ const staleButton=nodes(staleTree,node=>node.type==='button'&&text(node).includes('Today · filtered'))[0]
+ assert.ok(staleButton)
+ assert.equal(text(staleButton).trim(),'Today · filtered —','a failed refresh must not show the retained successful total')
+ assert.match(staleTree.props.label,/Filtered Usage for today is unavailable/)
 })
 
 const metric = (i=0) => ({tokens:10000-i*100,calls:12-i,input_tokens:2000,output_tokens:1000,cache_read_tokens:6000-i*100,cache_write_tokens:1000,cache_write_state:'reported',
@@ -562,6 +570,16 @@ test('chart hover and focus surfaces carry exact values, not rounded ones', () =
  const segment=nodes(donut,n=>n.type==='circle' && n.props.role==='button')[0]
  assert.ok(text(nodes(segment,n=>n.type==='title')[0]).includes('2,000'),'doughnut hover carries the exact count')
  assert.ok(segment.props['aria-label'].includes('2,000'),'doughnut focus label carries the exact count')
+})
+
+test('compact composition chart keeps its selected detail available to keyboard users', () => {
+ globalThis.analyticsLanguage='en'
+ const tree=render(T.AnalyticsComposition({data:fixture,state:{...T.analyticsInitialState(),compositionFocus:'input_tokens'},dispatch:()=>{}}))
+ const detail=nodes(tree,node=>node.type==='div'&&node.props.className==='wm-chartdetail'&&node.props['aria-live']==='polite')[0]
+ assert.ok(detail,'the compact composition panel retains its live detail region')
+ assert.match(text(detail),/Input.*2,000/)
+ assert.equal(nodes(tree,node=>node.type==='div'&&node.props.className==='wm-footnote').length,0,
+  'static compact panel footnotes remain hidden')
 })
 
 test('legend focus swaps the visible value to exact', () => {
