@@ -151,7 +151,7 @@ try {
         out.productWidth = product ? Math.round(productRect.width) : 0
         out.viewportWidth = window.innerWidth
         out.tooltips = {}
-        for (const id of ['cost-source', 'cache-method', 'savings-method', 'rates-source']) {
+        for (const id of ['cost-source', 'cache-coverage', 'read-benefit', 'rates-source']) {
           out.tooltips[id] = await exerciseTip(pane, () => rectOf(pane), id)
         }
         if (product) {

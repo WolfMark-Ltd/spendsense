@@ -31,7 +31,7 @@ test('Usage and shared state paint work at 380px and 1200px in both themes and l
     const html = join(work, 'page.html')
     writeFileSync(html, `<!doctype html><html><head><meta charset="utf-8"><style>
 *{box-sizing:border-box}body{margin:0;padding:10px;display:grid;grid-template-columns:380px 1200px;gap:10px;align-items:start;font:13px/1.5 system-ui,sans-serif}
-.case{height:2200px;overflow:auto;background:var(--ui-fill-primary);color:var(--ui-text-primary)}
+.case{height:900px;overflow:auto;background:var(--ui-fill-primary);color:var(--ui-text-primary)}
 .case.dark{--ui-fill-primary:#12141a;--ui-fill-secondary:#1a1d26;--ui-fill-tertiary:#232633;--ui-stroke-secondary:#2b2f40;--ui-text-primary:#eef0f6;--ui-text-secondary:#b9bdd1;--ui-text-tertiary:#a9aec6;--ui-text-quaternary:#9398b0;--ui-accent:#7fa0ff;--ui-success:#2dd4bf}
 body[data-state-tokens] .case.dark{--ui-warning:#f5b544;--ui-error:#f26d6d}
 .case.light{--ui-fill-primary:#fff;--ui-fill-secondary:#f2f4f7;--ui-fill-tertiary:#e3e5eb;--ui-stroke-secondary:#c5cbd5;--ui-text-primary:#151823;--ui-text-secondary:#414655;--ui-text-tertiary:#555b69;--ui-text-quaternary:#626877;--ui-accent:#3157c0;--ui-success:#087f5b}
@@ -45,13 +45,13 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
 <script>if(new URLSearchParams(location.search).get('stateTokens') !== 'absent') document.body.dataset.stateTokens = ''</script>
 <script>${readFileSync(bundle, 'utf8')}</script></body></html>`)
     const url = pathToFileURL(html).href
-    const run = (locale, stateTokens) => {
+    const run = (locale, stateTokens, fixtureState = 'fixture') => {
       const dom = execFileSync(CHROME, [
-        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-profile-${locale}-${stateTokens}`)}`,
-        '--virtual-time-budget=8000', '--dump-dom', `${url}?locale=${locale}&open=filters&stateTokens=${stateTokens}`,
+        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-profile-${fixtureState}-${locale}-${stateTokens}`)}`,
+        '--virtual-time-budget=8000', '--dump-dom', `${url}?locale=${locale}&open=filters&stateTokens=${stateTokens}&state=${fixtureState}`,
       ], { maxBuffer: 64 * 1024 * 1024, timeout: 120000 }).toString()
       const match = dom.match(/<div id="usage-layout-result"[^>]*>([^<]*)<\/div>/)
-      assert.ok(match?.[1], `Chromium records Usage layout results (${locale})`)
+      assert.ok(match?.[1], `Chromium records Usage layout results (${locale}/${fixtureState})`)
       return JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&gt;/g, '>').replace(/&lt;/g, '<'))
     }
     for (const [locale, stateTokens] of [
@@ -71,7 +71,8 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.equal(layout.usageOverflowY, 'visible', `${id} leaves vertical scrolling to the main host`)
         assert.equal(layout.usageScrollDelta, 0, `${id} has no nested Usage vertical scroll range`)
         assert.ok(layout.mainScrollDelta > 0, `${id} lets the main host scroll the full Usage page`)
-        assert.equal(layout.stats, 5, `${id} keeps five KPI stats`)
+        assert.equal(layout.stats, 3, `${id} keeps only three primary figures`)
+        assert.equal(layout.readBenefit, '$4.20+', `${id} shows the partial backend cache-read benefit`)
         assert.equal(layout.selects, 7, `${id} keeps all seven filters`)
         assert.equal(layout.advancedFilters, true, `${id} discloses advanced filters`)
         assert.ok(layout.advancedRowHeight > 0,
@@ -151,19 +152,37 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
       assert.equal(interaction.otherListVerticalDelta, 0, `the expanded remainder list grows to full height (${locale})`)
     }
 
+    for (const fixtureState of ['known', 'partial', 'unavailable']) {
+      for (const locale of ['en', 'zh-CN']) {
+        const result = run(locale, 'present', fixtureState)
+        assert.deepEqual(result.errors, [], `no page errors (${locale}/${fixtureState})`)
+        assert.deepEqual(result.queryErrors, [], `no analytics query errors (${locale}/${fixtureState})`)
+        assert.equal(result.readiness?.ready, true, `the ${fixtureState} fixture reaches the final structure (${locale})`)
+        assert.equal(result.layouts.length, 4, `${locale}/${fixtureState} paints narrow/wide light/dark layouts`)
+        for (const layout of result.layouts) {
+          assert.equal(layout.stats, 3, `${locale}/${fixtureState}/${layout.id} keeps three summary figures`)
+          assert.equal(layout.readBenefit, fixtureState === 'unavailable' ? '—' : fixtureState === 'partial' ? '$196.99+' : '$196.99',
+            `${locale}/${fixtureState}/${layout.id} shows the backend evidence state`)
+        }
+      }
+    }
+
     const screenshotDir = process.env.USAGE_LAYOUT_SHOT_DIR
     if (screenshotDir) {
       mkdirSync(screenshotDir, { recursive: true })
-      for (const locale of ['en', 'zh-CN']) {
-        for (const id of CASES) {
-          const width = id.startsWith('narrow') ? 420 : 1240
-          const height = id.startsWith('narrow') ? 3600 : 2200
-          execFileSync(CHROME, [
-            '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-shot-${locale}-${id}`)}`,
-            '--virtual-time-budget=8000',
-            `--window-size=${width},${height}`, `--screenshot=${join(screenshotDir, `usage-${locale}-${id}.png`)}`,
-            `${url}?case=${id}&locale=${locale}`,
-          ], { timeout: 120000, stdio: 'ignore' })
+      for (const state of ['known', 'partial', 'unavailable']) {
+        for (const locale of ['en', 'zh-CN']) {
+          for (const id of CASES) {
+            const width = id.startsWith('narrow') ? 420 : 1240
+            const height = id.startsWith('narrow') ? 3600 : 2200
+            execFileSync(CHROME, [
+              '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-shot-${state}-${locale}-${id}`)}`,
+              '--virtual-time-budget=8000',
+              `--window-size=${width},${height}`,
+              `--screenshot=${join(screenshotDir, `usage-${state}-${locale}-${id}.png`)}`,
+              `${url}?case=${id}&locale=${locale}&state=${state}`,
+            ], { timeout: 120000, stdio: 'ignore' })
+          }
         }
       }
     }

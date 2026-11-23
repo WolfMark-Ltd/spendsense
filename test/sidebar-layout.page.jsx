@@ -5,7 +5,7 @@ import { host, queryClient, QueryClientProvider, i18nBackend } from '@hermes/plu
 
 const params = new URLSearchParams(location.search)
 const tooltipInteraction = params.get('tooltipInteraction')
-const coverageInteraction = params.get('coverageInteraction')
+const readBenefitInteraction = params.get('readBenefitInteraction')
 const preservePosition = params.get('preservePosition') === 'true'
 const locale = params.get('locale') === 'zh-CN' ? 'zh' : 'en'
 const scope = params.get('scope') || 'conversation'
@@ -25,7 +25,33 @@ const translate = (key, ...args) => {
 i18nBackend.t = translate
 
 plugin.register({
-  rest: async () => ({ ok: true }),
+  rest: async path => {
+    if (String(path).startsWith('/session/summary?') && ['known', 'partial', 'unavailable'].includes(state)) {
+      const totalCalls = state === 'partial' ? 30 : 26
+      const readCalls = state === 'partial' ? 21 : 26
+      const valuation = {
+        api_equivalent_usd: 1.23, api_equivalent_basis: 'exact',
+        savings_usd: state === 'unavailable' ? null : 5.4,
+        savings_usd_high: null, savings_basis: state === 'unavailable' ? 'indeterminate' : 'exact',
+        coverage: state === 'partial' ? 0.8 : 1,
+        covered_calls: state === 'partial' ? 21 : 26, excluded_calls: state === 'partial' ? 9 : 0,
+        cache_hit_rate: 0.83, cache_hit_rate_basis: 'all_calls',
+      }
+      if (state !== 'unavailable') Object.assign(valuation, {
+        read_benefit_usd: 12.35, read_benefit_basis: 'exact',
+        read_benefit_calls: readCalls, read_benefit_tokens: 500000,
+      })
+      return {
+        ok: true, session_id: 'layout',
+        population: { requested: 'all', satisfied: true, separable: false },
+        totals: { calls: totalCalls, input_tokens: 80000, output_tokens: 10000,
+          prompt_tokens: 600000, cache_read_tokens: 500000, cache_write_tokens: 20000,
+          cache_read_state: 'reported', cache_write_state: 'reported', unpriced_tokens: 0 },
+        valuation,
+      }
+    }
+    return { ok: true }
+  },
   storage: { get: (_key, fallback) => fallback, set() {}, delete() {} },
   register() {}, registerMany() {}, onDispose() {}, onEvent: () => () => {},
   setTimeout: fn => { const timer = setTimeout(fn, 0); return () => clearTimeout(timer) },
@@ -131,30 +157,30 @@ setTimeout(async () => {
       await wait(60)
     }
   }
-  const coverageButton = rootNode.querySelector('.wm-info-btn[aria-controls="wm-info-cache-coverage"]')
-  const coverageDisclosure = {}
-  if (coverageButton && ['hover', 'focus', 'click'].includes(coverageInteraction)) {
-    if (coverageInteraction === 'hover') {
-      coverageButton.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }))
-    } else if (coverageInteraction === 'focus') {
-      coverageButton.focus()
+  const readBenefitButton = rootNode.querySelector('.wm-gauge-stat[data-kind="saved"] .wm-info-btn')
+  const readBenefitDisclosure = {}
+  if (readBenefitButton && ['hover', 'focus', 'click'].includes(readBenefitInteraction)) {
+    if (readBenefitInteraction === 'hover') {
+      readBenefitButton.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }))
+    } else if (readBenefitInteraction === 'focus') {
+      readBenefitButton.focus()
     } else {
-      coverageButton.click()
+      readBenefitButton.click()
     }
     await wait(120)
-    const popover = document.getElementById('wm-info-cache-coverage')
-    coverageDisclosure.found = !!coverageButton
-    coverageDisclosure.focused = document.activeElement === coverageButton
-    coverageDisclosure.expanded = coverageButton.getAttribute('aria-expanded') === 'true'
-    coverageDisclosure.label = coverageButton.getAttribute('aria-label') || ''
-    coverageDisclosure.tabIndex = coverageButton.tabIndex
-    coverageDisclosure.describedBy = coverageButton.getAttribute('aria-describedby') || ''
-    coverageDisclosure.text = popover?.textContent || ''
-    coverageDisclosure.trigger = rect(coverageButton)
-    coverageDisclosure.popover = popover ? rect(popover) : null
-    coverageDisclosure.offsetParent = popover?.offsetParent?.className || ''
-    if (coverageInteraction === 'focus' || coverageInteraction === 'click') {
-      coverageButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    const popover = document.getElementById('wm-info-read-benefit')
+    readBenefitDisclosure.found = !!readBenefitButton
+    readBenefitDisclosure.focused = document.activeElement === readBenefitButton
+    readBenefitDisclosure.expanded = readBenefitButton.getAttribute('aria-expanded') === 'true'
+    readBenefitDisclosure.label = readBenefitButton.getAttribute('aria-label') || ''
+    readBenefitDisclosure.tabIndex = readBenefitButton.tabIndex
+    readBenefitDisclosure.describedBy = readBenefitButton.getAttribute('aria-describedby') || ''
+    readBenefitDisclosure.text = popover?.textContent || ''
+    readBenefitDisclosure.trigger = rect(readBenefitButton)
+    readBenefitDisclosure.popover = popover ? rect(popover) : null
+    readBenefitDisclosure.offsetParent = popover?.offsetParent?.className || ''
+    if (readBenefitInteraction === 'focus' || readBenefitInteraction === 'click') {
+      readBenefitButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
       await wait(60)
     }
   }
@@ -182,6 +208,7 @@ setTimeout(async () => {
     const write = node.querySelector('.wm-mix-fill[data-part="write"]')
     const productTitle = node.querySelector('.wm-meter-brandrow .wm-meter-name')
     const statusRow = node.querySelector('.wm-meter-statusrow')
+    const scopeChip = node.querySelector('.wm-scope-chip')
     const savedRow = node.querySelector('.wm-gauge-stat[data-kind="saved"]')
     const savedLabel = savedRow?.querySelector('.wm-metric-label')
     const savedValue = savedRow?.querySelector('.wm-metric-value')
@@ -189,8 +216,10 @@ setTimeout(async () => {
     const gaugeCard = savedRow?.closest('.wm-card')
     const labelRect = rect(savedLabel)
     const valueRect = rect(savedValue)
-    const noteRect = rect(savedNote)
+    const noteRect = savedNote ? rect(savedNote) : null
     const gaugeRect = rect(gaugeCard)
+    const statusRect = rect(statusRow)
+    const scopeRect = rect(scopeChip)
     return {
       id: node.dataset.case,
       width: node.clientWidth,
@@ -207,6 +236,9 @@ setTimeout(async () => {
       productTitle: productTitle?.textContent || '',
       productTitleOverflow: productTitle ? Math.max(0, productTitle.scrollWidth - productTitle.clientWidth) : -1,
       productTitleOwnRow: !!productTitle && !!statusRow && productTitle.parentElement.nextElementSibling === statusRow,
+      scopeLabel: scopeChip?.textContent || '',
+      scopeOverflow: scopeChip ? Math.max(0, scopeChip.scrollWidth - scopeChip.clientWidth) : -1,
+      scopeContained: !!statusRow && !!scopeChip && inside(statusRect, scopeRect),
       tooltipMetrics,
       writePaint: write ? getComputedStyle(write).backgroundColor : null,
       writeWidth: write ? rect(write).width : 0,
@@ -221,13 +253,14 @@ setTimeout(async () => {
       valueOverflow: savedValue ? Math.max(0, savedValue.scrollWidth - savedValue.clientWidth) : -1,
       noteOverflow: savedNote ? Math.max(0, savedNote.scrollWidth - savedNote.clientWidth) : -1,
       labelValueOverlap: overlaps(labelRect, valueRect),
-      contentsWithinCard: inside(gaugeRect, labelRect) && inside(gaugeRect, valueRect) && inside(gaugeRect, noteRect),
+      contentsWithinCard: inside(gaugeRect, labelRect) && inside(gaugeRect, valueRect) && (!savedNote || inside(gaugeRect, noteRect)),
+      readBenefitText: savedRow?.textContent || '',
       openSpendSense: node.querySelector('.wm-open-ledger')?.textContent || '',
     }
   })
   document.getElementById('sidebar-layout-result').textContent = JSON.stringify({
-    errors: window.__sidebarErrors || [], locale, state, scope, tooltipInteraction, coverageInteraction,
-    modelIdDisclosures, coverageDisclosure,
+    errors: window.__sidebarErrors || [], locale, state, scope, tooltipInteraction, readBenefitInteraction,
+    modelIdDisclosures, readBenefitDisclosure,
     layouts,
   })
 }, 350)

@@ -1409,7 +1409,7 @@ test('Overview keeps the subtotal visible and explains unknown legacy coverage',
   await React.act(async () => T.$ledger.set(T.emptyLedger()))
 })
 
-test('conversation cost warning explains unknown call-level coverage', async () => {
+test('conversation cost keeps unknown call-level coverage in its tooltip', async () => {
   const container = document.createElement('div'); document.body.appendChild(container)
   const root = ReactDOMClient.createRoot(container); roots.push(root)
   const view = {
@@ -1417,15 +1417,17 @@ test('conversation cost warning explains unknown call-level coverage', async () 
       cost: 0.42, pricedTokens: 1500, unpricedTokens: 0, unpricedCalls: 0,
       missingUsageCalls: 0, coverageUnknown: true },
     cost: 0.42, costSource: 'live', foreignSlug: null, providerUnknown: false,
-    partial: true
+    partial: true, costPartial: true
   }
   await React.act(async () => root.render(React.createElement(T.CostKpi, { t: i18nBackend.t, view })))
-  const partial = container.querySelector('.wm-partial-chip')
-  assert.match(partial.textContent, /evidence details/i)
-  const info = partial.querySelector('button.wm-info-btn')
-  assert.ok(info, 'the partial warning has an explanation control')
+  assert.equal(container.querySelector('.wm-kpi-figure').textContent, '$0.420+')
+  assert.match(container.querySelector('.wm-kpi-source').textContent, /API equivalent/i)
+  assert.equal(container.querySelector('.wm-partial-chip'), null,
+    'the normal card uses the figure marker instead of a technical warning block')
+  const info = container.querySelector('[aria-controls="wm-info-cost-source"]')
+  assert.ok(info, 'the source figure keeps a nearby information control')
   await React.act(async () => info.dispatchEvent(new window.MouseEvent('click', { bubbles: true })))
-  assert.match(container.querySelector('#wm-info-partial').textContent, /lack complete call-level coverage counters/i)
+  assert.match(container.querySelector('#wm-info-cost-source').textContent, /lack complete call-level coverage counters/i)
 })
 
 test('Overview keeps subscription value out of the summary pending verified account and financial coverage', async () => {

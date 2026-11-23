@@ -144,9 +144,9 @@ test('estimated reads carry ≈ and unknown writes stay unknown', () => {
   assert.equal(byKey.i.value, '328.5k', 'exact input counter, unrounded by ≈')
   assert.doesNotMatch(byKey.i.value, /≈/)
   assert.equal(byKey.cr.value.startsWith('≈'), true)
-  assert.match(byKey.cr.label, / · estimated$/)
-  assert.equal(byKey.cw.value, 'unknown')
-  assert.match(byKey.tt.label, /incl\. estimated cache$/)
+  assert.equal(byKey.cr.label, 'Cache read', 'the figure carries the estimate marker without a second caveat')
+  assert.equal(byKey.cw.value, '—', 'unknown cache writes stay visually quiet')
+  assert.equal(byKey.tt.label, 'Total', 'the total label stays short')
   assert.equal(byKey.tt.value.startsWith('≈'), true, 'the total carries an estimated cache component')
   assert.doesNotMatch(byKey.c.label, /≈/)
 })
@@ -164,9 +164,12 @@ test('a reconstructed cache write never reads as confirmed usage', () => {
   const rows = T.tokenRows(rawT, bucket({ cacheRead: 0, cacheWrite: 216_795,
     cacheReadEvidence: 'unknown', cacheWriteEvidence: 'derived' }), false, null)
   const cw = rows.find(r => r.key === 'cw')
-  assert.equal(cw.value, 'unknown')
-  assert.match(cw.label, /unknown/)
-  assert.ok(rows.some(row => row.key === 'cu'))
+  assert.equal(cw.value, '—')
+  assert.equal(cw.label, 'Cache write')
+  const unclassified = rows.find(row => row.key === 'cu')
+  assert.equal(unclassified.label, rawT('unclassifiedPromptTokens'))
+  assert.equal(unclassified.value, `≈${T.fmtTokens(216_795)}`,
+    'a derived write stays visibly approximate in the unclassified prompt segment')
 })
 
 test('context is shown only when the gateway supplies it', () => {
@@ -382,8 +385,8 @@ test('Overview labels separate the all-profile ledger from the active-profile es
   assert.match(zh.ovMethodChargesFaqLink, /服务商面板.*常见问题/)
   assert.match(en.ovMethodFeesBody, /No currency conversion or shared-entitlement relationship is inferred/i)
   assert.match(en.ovScopeInfo, /cannot be added|not like-for-like/i)
-  assert.match(en.todayStatusNote, /when available.*not actual provider charges/i)
-  assert.match(en.todayStatusNote, /all profiles in this Desktop ledger/i)
+  assert.equal(en.todayStatusNote('2026-11-22 → 2026-11-23 · Europe/London', false),
+    'Usage · 2026-11-22 → 2026-11-23 · Europe/London · API-equivalent')
   assert.match(zh.ovRecordedScope, /所有配置文件.*本日历月至今/)
   assert.match(zh.ovRecordedProv, /并非服务商费用/)
   assert.match(zh.ovCertRecorded, /保存费率/)
@@ -394,12 +397,13 @@ test('Overview labels separate the all-profile ledger from the active-profile es
   assert.match(zh.ovMethodUsageBody, /两者都是估算，并非付款、发票或实际服务商费用/)
   assert.match(zh.ovMethodPricingBody, /不会回填历史数据/)
   assert.match(zh.ovMethodPricingBody, /迁移的 v1 记录.*先前保存的模型费率.*未保存记录时的价格/)
-  assert.match(zh.todayStatusNote, /并非实际服务商费用/)
-  assert.match(zh.todayStatusNote, /所有配置文件/)
+  assert.equal(zh.todayStatusNote('2026-11-22 → 2026-11-23 · Europe/London', false),
+    '用量 · 2026-11-22 → 2026-11-23 · Europe/London · API 等值')
 
   const today = {
-    known: true, cost: 3.75, unpricedTokens: 0, unpricedCalls: 0,
-    missingUsageCalls: 0, coverageUnknown: true
+    totals: { list_usd: 3.75, unpriced_tokens: 0, unpriced_calls: 0,
+      economics: { api_equivalent_basis: 'exact' } },
+    window: { since_local: '2026-11-22', until_local: '2026-11-23', timezone: 'Europe/London' }
   }
   const translate = language => (key, ...args) => {
     const entry = T.I18N[language][key]
@@ -407,15 +411,21 @@ test('Overview labels separate the all-profile ledger from the active-profile es
   }
   const englishChip = T.desktopTodayText(today, translate('en'))
   const chineseChip = T.desktopTodayText(today, translate('zh'))
-  assert.match(englishChip, /API-equivalent.*all profiles/i)
-  assert.match(englishChip, /coverage unknown/i)
-  assert.match(chineseChip, /API 等值.*所有配置文件/)
-  assert.match(chineseChip, /覆盖情况未知/)
-  assert.equal(T.desktopTodayAmount({ known: true, cost: 3.75 }, translate('en')), '$3.75')
-  assert.equal(T.desktopTodayAmount({ known: true, cost: 3.75, missingUsageCalls: 1 }, translate('en')), '$3.75+')
-  assert.equal(T.desktopTodayAmount({ known: true, cost: 3.75, coverageUnknown: true }, translate('en')), '$3.75+')
-  assert.equal(T.desktopTodayAmount({ known: false, cost: 0 }, translate('en')), 'unknown')
-  assert.equal(T.desktopTodayAmount({ known: false, cost: 0 }, translate('zh')), '未知')
+  assert.equal(englishChip, 'Today $3.75')
+  assert.equal(chineseChip, '今日 $3.75')
+  assert.equal(T.desktopTodayTooltip(today, translate('en')),
+    'Usage · 2026-11-22 → 2026-11-23 · Europe/London · API-equivalent')
+  assert.equal(T.desktopTodayText(today, translate('en'), true), 'Today · filtered $3.75')
+  assert.equal(T.desktopTodayText(today, translate('zh'), true), '今日 · 已筛选 $3.75')
+  assert.equal(T.desktopTodayTooltip(today, translate('en'), true),
+    'Filtered Usage · 2026-11-22 → 2026-11-23 · Europe/London · API-equivalent')
+  assert.equal(T.desktopTodayTooltip(today, translate('zh'), true),
+    '筛选后的用量 · 2026-11-22 → 2026-11-23 · Europe/London · API 等值')
+  assert.equal(T.desktopTodayAmount({ totals: { list_usd: 3.75, unpriced_calls: 1 } }), '$3.75+')
+  assert.equal(T.desktopTodayAmount({ totals: { list_usd: 3.75, missing_usage_calls: 1 } }), '$3.75+')
+  assert.equal(T.desktopTodayAmount({ totals: { list_usd: null } }), '—')
+  assert.equal(T.desktopTodayText(null, translate('en')), 'Today —')
+  assert.equal(T.desktopTodayTooltip(null, translate('en')), 'Usage for today is unavailable.')
 })
 
 test('every ledger tab string exists in English and Chinese', () => {
@@ -618,7 +628,7 @@ test('every settings string exists in English and Chinese', () => {
 test('WP42 population and cache-evidence disclosures have English and Chinese parity', () => {
   const keys = ['tokenEvidence_reported', 'tokenEvidence_partial', 'tokenEvidence_unknown',
     'tokenEvidence_derived', 'tokenEvidence_estimated', 'cacheEvidenceSummary',
-    'unclassifiedPromptTokens', 'inclUnknownPrompt', 'inclEstimatedCache', 'inclPartialCache', 'scopeMainCalls',
+    'unclassifiedPromptTokens', 'inclUnknownPrompt', 'inclEstimatedCache', 'inclPartialCache', 'scopeMainCalls', 'scopeSession',
     'scopeLocalConversationEstimate', 'scopeLocalRunEstimate', 'coverageScopeMainCalls',
     'coverageScopeLocalConversation', 'cacheRateAllCalls', 'cacheRateReportedCalls',
     'sessionEvidenceNote', 'sessionSavingsSourceNote', 'localEstimateScopeNote',
@@ -634,6 +644,9 @@ test('WP42 population and cache-evidence disclosures have English and Chinese pa
     assert.equal(typeof zh[key], typeof en[key], `${key} has the same shape`)
   }
   assert.match(en.sessionSavingsSourceNote, /not billed or subscription savings/)
+  assert.equal(en.scopeSession, 'This session · all recorded calls')
+  assert.equal(zh.scopeSession, '当前会话 · 所有已记录调用')
+  assert.match(en.readBenefitSessionExplanation, /runtime session/)
   assert.match(en.localEstimateScopeNote, /Population unverified/)
   assert.match(en.coverageScopeLocalConversation, /locally recorded conversation; population unverified/)
   assert.match(zh.localEstimateScopeNote, /主／辅助总体未验证/)

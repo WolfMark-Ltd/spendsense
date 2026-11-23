@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const suites = {
   browserless: [
     ['about', 16, true],
-    ['analytics', 49], ['budgets', 30, true], ['cache-savings', 36],
+    ['analytics', 53], ['budgets', 30, true], ['cache-savings', 36],
     ['compatibility', 16], ['dashboard-entry', 1], ['digest', 2],
     ['digest-render', 24, true], ['economics', 28], ['economics-render', 53, true],
     ['membership', 38], ['membership-scope', 99, true], ['memberships-reading', 6, true],
@@ -18,7 +18,7 @@ const suites = {
     ['overview-render', 5, true],
     ['reports-layout.chromium', 19], ['reports-layout.devtools', 11],
     ['sidebar', 46, true], ['ui-labels', 50],
-    ['usage-render', 10, true],
+    ['usage-render', 11, true],
     ['ux-primitives', 35, true], ['weather', 11], ['weather-render', 9, true],
     ['wp14-fixes', 9],
   ],

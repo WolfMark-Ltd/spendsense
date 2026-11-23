@@ -13,7 +13,7 @@ const CHROME = [
   '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
 ].find(existsSync)
 
-test('Hermes sidebar keeps the model and net cache evidence readable from 268px to 500px', {
+test('Hermes sidebar keeps the model and cache-read figure readable from 268px to 500px', {
   skip: CHROME ? false : 'No Chromium binary available for real sidebar layout checks',
 }, async () => {
   const work = mkdtempSync(join(tmpdir(), 'wm-sidebar-layout-'))
@@ -44,10 +44,10 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
 <script>if(new URLSearchParams(location.search).get('stateTokens') !== 'absent') document.body.dataset.stateTokens = ''</script>
 <script>${readFileSync(bundle, 'utf8')}</script></body></html>`)
     const url = pathToFileURL(html).href
-    const run = (locale, tooltipInteraction = '', coverageInteraction = '', stateTokens = 'present') => {
-      const query = `all=1&locale=${locale}&state=partial&stateTokens=${stateTokens}${tooltipInteraction ? `&tooltipInteraction=${tooltipInteraction}` : ''}${coverageInteraction ? `&coverageInteraction=${coverageInteraction}` : ''}`
+    const run = (locale, tooltipInteraction = '', readBenefitInteraction = '', state = 'partial', stateTokens = 'present', all = true) => {
+      const query = `${all ? 'all=1&' : ''}locale=${locale}&state=${state}&stateTokens=${stateTokens}${tooltipInteraction ? `&tooltipInteraction=${tooltipInteraction}` : ''}${readBenefitInteraction ? `&readBenefitInteraction=${readBenefitInteraction}` : ''}${all ? '' : '&width=268&height=650&theme=dark'}`
       const dom = execFileSync(CHROME, [
-        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-${locale}-conversation-${stateTokens}`)}`,
+        '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-${locale}-${state}-${stateTokens}`)}`,
         '--virtual-time-budget=5000', '--dump-dom', `${url}?${query}`,
       ], { maxBuffer: 32 * 1024 * 1024, timeout: 120000 }).toString()
       const match = dom.match(/<div id="sidebar-layout-result"[^>]*>(.*?)<\/div>/s)
@@ -59,23 +59,19 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
       const result = run(locale, locale === 'en' ? 'both' : '', 'focus')
       assert.deepEqual(result.errors, [], `no browser errors (${locale})`)
       assert.equal(result.layouts.length, 12, `six widths/heights in both themes (${locale})`)
-      assert.equal(result.coverageDisclosure.found, true, `${locale} finds the Coverage help button`)
-      assert.equal(result.coverageDisclosure.focused, true, `${locale}: Coverage help receives browser focus`)
-      assert.equal(result.coverageDisclosure.expanded, true, `${locale} opens Coverage help on keyboard focus`)
-      assert.equal(result.coverageDisclosure.describedBy, 'wm-info-cache-coverage', `${locale} connects the button and help text`)
-      assert.equal(result.coverageDisclosure.label, locale === 'en' ? 'Coverage details' : '覆盖率说明',
-        `${locale} gives the help button a specific accessible name`)
-      assert.equal(result.coverageDisclosure.tabIndex, 0, `${locale} keeps Coverage help in the keyboard tab order`)
+      assert.equal(result.readBenefitDisclosure.found, true, `${locale} finds the cache-read help button`)
+      assert.equal(result.readBenefitDisclosure.focused, true, `${locale}: cache-read help receives browser focus`)
+      assert.equal(result.readBenefitDisclosure.expanded, true, `${locale} opens cache-read help on keyboard focus`)
+      assert.equal(result.readBenefitDisclosure.describedBy, 'wm-info-read-benefit', `${locale} connects the button and help text`)
+      assert.equal(result.readBenefitDisclosure.label, locale === 'en' ? 'More information' : '更多信息',
+        `${locale} keeps the existing accessible help control`)
+      assert.equal(result.readBenefitDisclosure.tabIndex, 0, `${locale} keeps cache-read help in the keyboard tab order`)
       if (locale === 'en') {
-        assert.match(result.coverageDisclosure.text, /all prompt tokens for this locally recorded conversation; population unverified/)
-        assert.match(result.coverageDisclosure.text, /cumulative since/)
-        assert.match(result.coverageDisclosure.text, /cache reads ÷ split-known prompt tokens/)
-        assert.match(result.coverageDisclosure.text, /priced-savings coverage/)
+        assert.match(result.readBenefitDisclosure.text, /API-equivalent cache-read benefit for this runtime session/)
+        assert.match(result.readBenefitDisclosure.text, /21 of 30 calls · 500\.0k read tokens/)
       } else {
-        assert.match(result.coverageDisclosure.text, /总体分类尚未验证的本地记录对话中具有精确或估算缓存拆分的提示词令牌 ÷ 全部提示词令牌/)
-        assert.match(result.coverageDisclosure.text, /对话覆盖率从 .* 起累计/)
-        assert.match(result.coverageDisclosure.text, /圆环表示缓存命中率/)
-        assert.match(result.coverageDisclosure.text, /可定价净节省覆盖率/)
+        assert.match(result.readBenefitDisclosure.text, /当前运行会话的 API 等值缓存读取收益/)
+        assert.match(result.readBenefitDisclosure.text, /30 次调用中 21 次 · 500\.0k 个读取令牌/)
       }
       for (const layout of result.layouts) {
         const id = `${locale}/${layout.id}`
@@ -85,6 +81,10 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         assert.equal(layout.productTitle, 'SpendSense', `${id} keeps the full product name`)
         assert.equal(layout.productTitleOverflow, 0, `${id} does not clip the product name`)
         assert.equal(layout.productTitleOwnRow, true, `${id} gives the full product title its own header row`)
+        assert.equal(layout.scopeLabel, locale === 'en' ? 'This session · all recorded calls' : '当前会话 · 所有已记录调用',
+          `${id} states that the cache benefit covers this session's recorded calls`)
+        assert.equal(layout.scopeOverflow, 0, `${id} keeps the session scope label readable`)
+        assert.equal(layout.scopeContained, true, `${id} keeps the session scope label inside the status row`)
         assert.ok(layout.tooltipMetrics.length >= 4, `${id} renders the expected sidebar tooltip controls`)
         for (const [index, tip] of layout.tooltipMetrics.entries()) {
           assert.equal(tip.hitWidth, 24, `${id}/tip${index} keeps the accessible hit width`)
@@ -93,19 +93,20 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
           assert.ok(tip.glyphFontSize >= 6 && tip.glyphFontSize <= 9,
             `${id}/tip${index} keeps the visible information glyph compact (${tip.glyphFontSize}px)`)
         }
-        assert.equal(layout.provider, 'commandcode', `${id} keeps the provider separate`)
-        assert.equal(layout.providerSeparate, true, `${id} puts the provider on its own line`)
+        assert.equal(layout.provider, '', `${id} does not infer a provider from the recorded conversation for this session summary`)
+        assert.equal(layout.providerSeparate, true, `${id} leaves the model row clear when provider evidence is unavailable`)
         assert.ok(layout.ringWidth >= 68 && layout.ringWidth <= 88, `${id} scales the larger ring to ${layout.ringWidth}px`)
-        assert.match(layout.savedLabel, locale === 'en' ? /Theoretical net savings/ : /理论净节省/,
-          `${id} labels the theoretical estimate`)
-        assert.ok(!layout.savedValue.includes('≈'), `${id} keeps the theoretical amount legible`)
-        assert.match(layout.savedNote, locale === 'en' ? /70%/ : /70%/,
-          `${id} states the measured prompt coverage`)
-        assert.equal(layout.labelOverflow, 0, `${id} keeps the savings label inside its column`)
+        assert.match(layout.savedLabel, locale === 'en' ? /Cache-read benefit/ : /缓存读取收益/,
+          `${id} labels the supported figure`)
+        assert.equal(layout.savedValue, '$12.35+', `${id} marks the partial backend benefit value`)
+        assert.doesNotMatch(layout.readBenefitText, /30 calls|500k read tokens|80% covered/,
+          `${id} keeps call, token and coverage details out of the normal view`)
+        assert.equal(layout.savedNote, '', `${id} removes the inline coverage note`)
+        assert.equal(layout.labelOverflow, 0, `${id} keeps the benefit label inside its column`)
         assert.equal(layout.valueOverflow, 0, `${id} keeps the amount and qualifier together`)
-        assert.equal(layout.noteOverflow, 0, `${id} wraps the coverage note`)
+        assert.equal(layout.noteOverflow, -1, `${id} has no inline coverage note`)
         assert.equal(layout.labelValueOverlap, false, `${id} keeps label and amount distinct`)
-        assert.equal(layout.contentsWithinCard, true, `${id} keeps label, amount and note inside the card`)
+        assert.equal(layout.contentsWithinCard, true, `${id} keeps the figure inside the card`)
         assert.equal(layout.horizontalOverflow, 0, `${id} has no horizontal pane overflow`)
         assert.equal(layout.openSpendSense, locale === 'en' ? 'Open SpendSense' : '打开 SpendSense',
           `${id} retains the existing navigation action`)
@@ -120,6 +121,10 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
           assert.equal(layout.openSpendSenseVisible, true, `${id} reveals Open SpendSense at the bottom`)
         }
       }
+      assert.deepEqual(run(locale, '', '', 'unavailable', 'present', false).layouts.map(layout => layout.savedValue), ['—'],
+        `${locale} keeps unavailable evidence distinct from zero`)
+      assert.deepEqual(run(locale, '', '', 'known', 'present', false).layouts.map(layout => layout.savedValue), ['$12.35'],
+        `${locale} renders a complete session benefit`)
       for (const theme of ['dark', 'light']) for (const height of [650, 800]) {
         const ringWidths = [268, 350, 500].map(width => result.layouts.find(layout =>
           layout.id === `${width}-${height}-${theme}`).ringWidth)
@@ -137,10 +142,10 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         const gap = disclosure.popover.top - disclosure.trigger.bottom
         assert.ok(gap >= 4 && gap <= 12, `${interaction} opens directly below the trigger (${gap}px gap)`)
       }
-      const nativeTokens = run(locale, '', 'focus', 'absent')
+      const nativeTokens = run(locale, '', 'focus', 'partial', 'absent')
       assert.deepEqual(nativeTokens.errors, [], `${locale} renders without the optional state tokens`)
-      assert.equal(nativeTokens.coverageDisclosure.focused, true, `${locale}: Coverage help receives browser focus without state tokens`)
-      assert.equal(nativeTokens.coverageDisclosure.expanded, true, `${locale} keeps keyboard Coverage help`)
+      assert.equal(nativeTokens.readBenefitDisclosure.focused, true, `${locale}: cache-read help receives browser focus without state tokens`)
+      assert.equal(nativeTokens.readBenefitDisclosure.expanded, true, `${locale} keeps keyboard cache-read help`)
       assert.equal(nativeTokens.layouts.length, result.layouts.length)
       for (const [index, layout] of nativeTokens.layouts.entries()) {
         const withTokens = result.layouts[index]
@@ -160,17 +165,21 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
     const screenshotDir = process.env.SIDEBAR_LAYOUT_SHOT_DIR
     if (screenshotDir) {
       mkdirSync(screenshotDir, { recursive: true })
-      for (const [width, height, theme] of [[268, 650, 'dark'], [268, 800, 'light'], [500, 650, 'light'], [500, 800, 'dark']]) {
-        const name = `sidebar-en-${width}x${height}-${theme}.png`
-        const screenshot = join(screenshotDir, name)
-        const profile = join(work, `shot-${width}-${height}-${theme}`)
-        execFileSync(CHROME, [
-          '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${profile}`,
-          '--virtual-time-budget=5000', `--window-size=${width},${height}`,
-          `--screenshot=${screenshot}`,
-          `${url}?case=${width}-${height}-${theme}&width=${width}&height=${height}&theme=${theme}&locale=en&state=partial&preservePosition=true`,
-        ], { timeout: 120000, stdio: 'ignore' })
-        assert.ok(existsSync(screenshot) && statSync(screenshot).size > 0, `writes ${name}`)
+      for (const [state, fixtureState] of [['known', 'known'], ['partial', 'partial'], ['unavailable', 'unavailable']]) {
+        for (const locale of ['en', 'zh-CN']) {
+          for (const [width, height, theme] of [[268, 650, 'dark'], [268, 800, 'light'], [500, 650, 'light'], [500, 800, 'dark']]) {
+            const name = `sidebar-${state}-${locale}-${width}x${height}-${theme}.png`
+            const screenshot = join(screenshotDir, name)
+            const profile = join(work, `shot-${fixtureState}-${locale}-${width}-${height}-${theme}`)
+            execFileSync(CHROME, [
+              '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${profile}`,
+              '--virtual-time-budget=5000', `--window-size=${width},${height}`,
+              `--screenshot=${screenshot}`,
+              `${url}?case=${width}-${height}-${theme}&width=${width}&height=${height}&theme=${theme}&locale=${locale}&state=${fixtureState}&preservePosition=true`,
+            ], { timeout: 120000, stdio: 'ignore' })
+            assert.ok(existsSync(screenshot) && statSync(screenshot).size > 0, `writes ${name}`)
+          }
+        }
       }
       const disclosureShot = join(screenshotDir, 'sidebar-model-id-hover-268x650-dark.png')
       execFileSync(CHROME, [
@@ -179,13 +188,13 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         `${url}?case=268-650-dark&width=268&height=650&theme=dark&locale=en&state=partial&tooltipInteraction=hover&preservePosition=true`,
       ], { timeout: 120000, stdio: 'ignore' })
       assert.ok(existsSync(disclosureShot) && statSync(disclosureShot).size > 0, 'writes the model-ID disclosure screenshot')
-      const coverageShot = join(screenshotDir, 'sidebar-coverage-help-268x650-dark.png')
+      const coverageShot = join(screenshotDir, 'sidebar-cache-read-info-268x650-dark.png')
       execFileSync(CHROME, [
         '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, 'shot-coverage-help')}`,
         '--virtual-time-budget=5000', '--window-size=268,650', `--screenshot=${coverageShot}`,
-        `${url}?case=268-650-dark&width=268&height=650&theme=dark&locale=en&state=partial&coverageInteraction=hover&preservePosition=true`,
+        `${url}?case=268-650-dark&width=268&height=650&theme=dark&locale=en&state=partial&readBenefitInteraction=hover&preservePosition=true`,
       ], { timeout: 120000, stdio: 'ignore' })
-      assert.ok(existsSync(coverageShot) && statSync(coverageShot).size > 0, 'writes the Coverage help screenshot')
+      assert.ok(existsSync(coverageShot) && statSync(coverageShot).size > 0, 'writes the cache-read benefit tooltip screenshot')
     }
   } finally { rmSync(work, { recursive: true, force: true }) }
 })

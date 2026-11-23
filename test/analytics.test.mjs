@@ -38,6 +38,7 @@ globalThis.analyticsQueries = []
 function render(node) {
  if (node == null || typeof node !== 'object') return node
  if (Array.isArray(node)) return node.map(render)
+ if (node.type === T.InfoTip) return {type:'info-tip',props:node.props}
  if (typeof node.type === 'function') return render(node.type(node.props))
  return {...node, props:{...node.props,children:render(node.props.children)}}
 }
@@ -150,10 +151,65 @@ test('exact AND filter state is scope-isolated and query identity includes every
  assert.equal(T.analyticsScope('p','open'),T.analyticsScope('p','open'))
 })
 
+test('taskbar Today uses the same one-day filtered analytics query as Usage', async () => {
+ const scope=T.analyticsScope('default','connected','local')
+ const filters={...T.analyticsInitialState().filters,model:'m6',surface:'telegram'}
+ T.$analytics.set({[scope]:{...T.analyticsInitialState(),days:1,filters}})
+ globalThis.analyticsQueries=[]
+ page()
+ const usageQuery=globalThis.analyticsQueries.find(query=>query.queryKey[1]==='analytics')
+ assert.ok(usageQuery,'the Usage page queries analytics')
+
+ const report={ok:true,totals:{list_usd:.949,unpriced_calls:1},
+  window:{since_local:'2026-11-22T00:00:00+00:00',until_local:'2026-11-23T00:00:00+00:00',timezone:'Europe/London'}}
+ globalThis.analyticsResponse={data:report,isLoading:false,isFetching:false}
+ globalThis.analyticsQueries=[]
+ const tree=render(T.Chip())
+ const todayQuery=globalThis.analyticsQueries.find(query=>query.queryKey[1]==='analytics'&&query.queryKey[3]===1)
+ assert.ok(todayQuery,'the taskbar queries the same analytics endpoint')
+ assert.deepEqual(todayQuery.queryKey,usageQuery.queryKey,'period, scope, filters and source match Usage')
+ const todayButton=nodes(tree,node=>node.type==='button'&&text(node).includes('Today · filtered'))[0]
+ assert.ok(todayButton)
+ assert.match(text(todayButton),/Today · filtered \$0\.949\+/)
+ assert.match(tree.props.label,/Filtered Usage · 2026-11-22 → 2026-11-23 · Europe\/London · API-equivalent/)
+
+ const previousRest=T.getRest()
+ let requestedPath=''
+ T.setRest(async path=>{requestedPath=path;return report})
+ try { await todayQuery.queryFn() } finally { T.restoreRest(previousRest) }
+ const params=new URLSearchParams(requestedPath.split('?')[1])
+ assert.equal(requestedPath.split('?')[0],'/analytics')
+ assert.equal(params.get('days'),'1')
+ assert.equal(params.get('model'),'m6')
+ assert.equal(params.get('surface'),'telegram')
+ assert.equal(params.get('timezone'),null,'the server report owns the timezone used by both surfaces')
+
+ globalThis.analyticsResponse={data:report,isLoading:false,isFetching:false,error:new Error('refresh failed')}
+ globalThis.analyticsQueries=[]
+ const staleTree=render(T.Chip())
+ const staleButton=nodes(staleTree,node=>node.type==='button'&&text(node).includes('Today · filtered'))[0]
+ assert.ok(staleButton)
+ assert.equal(text(staleButton).trim(),'Today · filtered —','a failed refresh must not show the retained successful total')
+ assert.match(staleTree.props.label,/Filtered Usage for today is unavailable/)
+})
+
+test('API-equivalent figures preserve backend bounds and mark incomplete totals', () => {
+ const value=(economics,extra={})=>T.analyticsListDisplay({list_usd:1.25,economics,...extra})
+ assert.equal(value({api_equivalent_basis:'exact'}),'$1.25')
+ assert.equal(value({api_equivalent_basis:'lower_bound'}),'≥$1.25')
+ assert.equal(value({api_equivalent_basis:'upper_bound'}),'≤$1.25')
+ assert.equal(value({api_equivalent_basis:'range',api_equivalent_usd_high:1.75}),'$1.25–$1.75')
+ assert.equal(value({api_equivalent_basis:'range'}),'—','a missing range endpoint cannot be shown as a complete amount')
+ assert.equal(value({api_equivalent_basis:'incomplete'}),'$1.25+')
+ assert.equal(value({api_equivalent_basis:'exact'},{unpriced_calls:1}),'$1.25+')
+ assert.equal(value({}), '$1.25+', 'an absent basis is treated as incomplete')
+})
+
 const metric = (i=0) => ({tokens:10000-i*100,calls:12-i,input_tokens:2000,output_tokens:1000,cache_read_tokens:6000-i*100,cache_write_tokens:1000,cache_write_state:'reported',
  list_usd:i===8?null:10-i,priced_tokens:i===8?0:10000-i*100,unpriced_tokens:i===8?9200:0,coverage:i===8?0:1,
  cache_hit_rate:i===8?null:.6-i*.03,cache_known_calls:8,cache_unknown_calls:4,cache_coverage:.66,billed_usd:0,billed_complete:false,
- economics:{uncached_usd:12-i,cached_usd:8-i,savings_usd:i===7?-1:4,coverage:.8,covered_tokens:8000,covered_calls:8,excluded_calls:4}})
+ economics:{uncached_usd:12-i,cached_usd:8-i,savings_usd:i===7?-1:4,coverage:.8,covered_tokens:8000,covered_calls:8,excluded_calls:4,
+  api_equivalent_basis:'exact',api_equivalent_usd_high:null}})
 const fixture = {ok:true,window:{since:'2026-10-01T00:00:00Z',until:'2026-10-30T00:00:00Z',days:30,timezone:'UTC'},
  totals:{...metric(),unpriced_tokens:1000,priced_tokens:9000,coverage:.9},economics:metric().economics,
  options:{models:[{model:'m0',provider:'p0'}],providers:['p0','p1'],surfaces:['telegram','cli'],tasks:['main','aux']},
@@ -164,6 +220,20 @@ function page(data=fixture,extra={},props={}) {
  globalThis.analyticsResponse = {data,isLoading:false,isFetching:false,refetch:()=>{globalThis.analyticsRefetch=(globalThis.analyticsRefetch||0)+1},...extra}
  return render(T.AnalyticsPage(props))
 }
+test('Usage and taskbar share the backend valuation bound', () => {
+ T.$analytics.set({})
+ globalThis.analyticsLanguage='en'
+ const data={...fixture,totals:{...fixture.totals,list_usd:1.25,unpriced_tokens:0,unpriced_calls:0,
+  economics:{...fixture.totals.economics,api_equivalent_basis:'range',api_equivalent_usd_high:1.75}}}
+ const usage=page(data)
+ const usageAmount=nodes(usage,node=>node.type==='div'&&String(node.props.className||'').split(/\s+/).includes('wm-statvalue'))[0]
+ assert.equal(text(usageAmount),'$1.25–$1.75')
+ globalThis.analyticsQueries=[]
+ const chip=render(T.Chip())
+ const today=nodes(chip,node=>node.type==='button'&&text(node).includes('Today'))[0]
+ assert.ok(today)
+ assert.ok(text(today).includes('$1.25–$1.75'))
+})
 function button(tree,label) { return nodes(tree,n=>n.type==='button' && (n.props['aria-label']===label || text(n)===label))[0] }
 
 test('analytics cache coverage uses the selected language', () => {
@@ -184,8 +254,8 @@ test('usage header follows the selected language', () => {
   try {
     const view = text(page())
     assert.match(view, /用量分析/)
-    assert.match(view, /已记录调用 · default · 所有 Hermes 来源/)
-    assert.match(view, /极客模式/)
+    assert.match(view, /后端调用 · default · 所有来源/)
+    assert.match(view, new RegExp(T.I18N.zh.usageMethodologyTitle))
     assert.match(view, /↻ 刷新/)
     assert.match(view, /此桌面/)
     assert.doesNotMatch(view, /× 关闭/, 'the redundant header Close is gone; Esc and tabs navigate')
@@ -194,8 +264,8 @@ test('usage header follows the selected language', () => {
   }
   const english = text(page())
   assert.match(english, /Usage analytics/)
-  assert.match(english, /Recorded calls · default · all Hermes surfaces/)
-  assert.match(english, /NERD MODE/)
+  assert.match(english, /Backend calls · default · all surfaces/)
+  assert.match(english, new RegExp(T.I18N.en.usageMethodologyTitle))
   assert.doesNotMatch(english, /× Close/, 'the redundant header Close is gone; Esc and tabs navigate')
   assert.equal(T.I18N.en.usageCurrentProfile, 'current profile')
   assert.equal(T.I18N.zh.usageCurrentProfile, '当前配置文件')
@@ -391,7 +461,18 @@ test('dashboard renders three SVG analytics, honest pricing/billing/cache covera
  assert.equal(typeof T.AnalyticsPage,'function','analytics page is exported')
  T.$analytics.set({})
  const tree=page()
- for(const title of ['Usage analytics','API-equivalent','Weighted cache hit','Theoretical net savings','Pricing coverage','Model Explorer','Cache economics']) assert.ok(text(tree).includes(title),title)
+ for(const title of ['Usage analytics','API-equivalent','Cache-read benefit','Tokens','Model Explorer','Cache economics']) assert.ok(text(tree).includes(title),title)
+ const summary=nodes(tree,n=>n.type==='div'&&String(n.props.className||'').split(/\s+/).includes('wm-usage-summary'))[0]
+ assert.ok(summary,'the Usage summary renders')
+ const summaryStats=nodes(summary,n=>n.type==='div'&&String(n.props.className||'').split(/\s+/).includes('wm-stat'))
+ assert.equal(summaryStats.length,3,'the normal summary has three figures')
+ assert.ok(text(summaryStats[0]).includes('API-equivalent'))
+ assert.ok(text(summaryStats[1]).includes('Cache-read benefit'))
+ assert.ok(text(summaryStats[2]).includes('Tokens'))
+ assert.doesNotMatch(text(summary),/Theoretical net savings|Pricing coverage|Weighted cache hit/,
+  'the primary figures omit secondary estimates and coverage copy')
+ assert.equal(summary.props.role,'group')
+ assert.equal(summary.props['aria-label'],'Usage summary')
  assert.ok(text(tree).includes('Partial'))
  assert.ok(text(tree).includes('Billing classification'))
  assert.ok(text(tree).includes('Provider charges are not recorded'))
@@ -402,7 +483,7 @@ test('dashboard renders three SVG analytics, honest pricing/billing/cache covera
  const labels=nodes(tree,n=>n.type==='th').map(text)
  for(const label of ['Model','Provider','Calls','Tokens','Cache %','API cost','Pricing']) assert.ok(labels.some(value=>value.includes(label)),label)
  assert.ok(text(tree).includes('Reasoning is already included in output'))
- assert.ok(nodes(tree,n=>n.type==='details' && nodes(n,x=>x.type==='summary' && text(x)==='Methodology & coverage details').length>0).some(n=>!n.props.open))
+ assert.ok(nodes(tree,n=>n.type==='details' && nodes(n,x=>x.type==='summary' && text(x)===T.I18N.en.usageMethodologyTitle).length>0).some(n=>!n.props.open))
  assert.equal(nodes(tree,n=>n.type==='div'&&n.props.className==='wm-coverage'&&n.props.role==='region').length,1,
   'the page presents one Data coverage summary')
  assert.ok(nodes(tree,n=>n.type==='th').every(n=>!!n.props['aria-sort']))
@@ -425,7 +506,8 @@ test('dashboard renders three SVG analytics, honest pricing/billing/cache covera
 
 test('legend exact-selection, Other inspection, sorting and keyboard chart details are wired', () => {
  assert.equal(typeof T.AnalyticsPage,'function','analytics page is exported')
- T.$analytics.set({})
+ const initial={...T.analyticsInitialState(),distributionMetric:'cost'}
+ T.$analytics.set({[T.analyticsScope('default','connected')]:initial})
  const scope=T.analyticsScope('default','connected')
  let tree=page()
  button(tree,'Inspect Other models · $7.00').props.onClick()
@@ -450,18 +532,20 @@ test('legend exact-selection, Other inspection, sorting and keyboard chart detai
  assert.equal(T.$analytics.get()[scope].compositionFocus,'cache_read_tokens')
 })
 
-test('usage sections number 01–07 and group KPIs into money and activity', () => {
+test('usage sections number 01–07 and group three core figures in one accessible summary', () => {
  T.$analytics.set({})
  const tree=page()
- assert.deepEqual(nodes(tree,n=>n.type==='span' && n.props.className==='wm-number').map(text),
+ assert.deepEqual(nodes(tree,n=>n.type==='span' && n.props.className==='wm-number').map(text).sort(),
    ['01','02','03','04','05','06','07'])
- const groups=nodes(tree,n=>n.props?.['data-kpi-group'])
- assert.deepEqual(groups.map(n=>n.props['data-kpi-group']),['money','activity'])
- assert.deepEqual(groups.map(n=>n.props['aria-label']),['Cost & coverage','Volume & cache'])
- assert.ok(groups.every(n=>n.props.role==='group'))
- const money=text(groups[0]), activity=text(groups[1])
- for (const label of ['API-equivalent','Theoretical net savings','Pricing coverage']) assert.ok(money.includes(label),label)
- for (const label of ['Weighted cache hit','Tokens / calls']) assert.ok(activity.includes(label),label)
+ const summaries=nodes(tree,n=>n.type==='div'&&String(n.props.className||'').split(/\s+/).includes('wm-usage-summary'))
+ assert.equal(summaries.length,1)
+ assert.equal(summaries[0].props.role,'group')
+ assert.equal(summaries[0].props['aria-label'],'Usage summary')
+ const stats=nodes(summaries[0],n=>n.type==='div'&&String(n.props.className||'').split(/\s+/).includes('wm-stat'))
+ assert.equal(stats.length,3)
+ assert.ok(text(stats[0]).includes('API-equivalent'))
+ assert.ok(text(stats[1]).includes('Cache-read benefit'))
+ assert.ok(text(stats[2]).includes('Tokens'))
 })
 
 test('token streams keep four distinct colours with a dedicated theme-aware cache-read', () => {
@@ -495,7 +579,7 @@ test('advanced filters stay available behind a disclosure that counts active sli
 test('chart hover and focus surfaces carry exact values, not rounded ones', () => {
  T.$analytics.set({})
  const scope=T.analyticsScope('default','connected','local')
- T.$analytics.set({[scope]:{...T.analyticsInitialState(),trendIndex:0}})
+ T.$analytics.set({[scope]:{...T.analyticsInitialState(),distributionMetric:'cost',trendIndex:0}})
  const tree=page()
  const detail=nodes(tree,n=>n.type==='div' && n.props.className==='wm-chartdetail')[0]
  assert.ok(text(detail).includes('10,000'),'trend detail shows the exact point total')
@@ -513,6 +597,16 @@ test('chart hover and focus surfaces carry exact values, not rounded ones', () =
  const segment=nodes(donut,n=>n.type==='circle' && n.props.role==='button')[0]
  assert.ok(text(nodes(segment,n=>n.type==='title')[0]).includes('2,000'),'doughnut hover carries the exact count')
  assert.ok(segment.props['aria-label'].includes('2,000'),'doughnut focus label carries the exact count')
+})
+
+test('compact composition chart keeps its selected detail available to keyboard users', () => {
+ globalThis.analyticsLanguage='en'
+ const tree=render(T.AnalyticsComposition({data:fixture,state:{...T.analyticsInitialState(),compositionFocus:'input_tokens'},dispatch:()=>{}}))
+ const detail=nodes(tree,node=>node.type==='div'&&node.props.className==='wm-chartdetail'&&node.props['aria-live']==='polite')[0]
+ assert.ok(detail,'the compact composition panel retains its live detail region')
+ assert.match(text(detail),/Input.*2,000/)
+ assert.equal(nodes(tree,node=>node.type==='div'&&node.props.className==='wm-footnote').length,0,
+  'static compact panel footnotes remain hidden')
 })
 
 test('legend focus swaps the visible value to exact', () => {
@@ -607,6 +701,7 @@ test('baseline query is lazy and separate, rapid actions preserve every exact fi
 test('keyboard repeats use current selected timestamp and Other toggles do not capture stale state', () => {
  T.$analytics.set({})
  const scope=T.analyticsScope('default','connected')
+ T.$analytics.set({[scope]:{...T.analyticsInitialState(),distributionMetric:'cost'}})
  const data={...fixture,trend:{granularity:'day',buckets:[...fixture.trend.buckets,{ts:'2026-10-04T00:00:00Z',...metric()}]}}
  const tree=page(data)
  const point=nodes(tree,n=>n.props?.['data-trend-point']===0)[0]

@@ -159,10 +159,10 @@ test('rounded zero reads retain possible read discounts and require every uncert
     'an exactly reported zero read with no uncertainty remains a true zero')
 })
 
-test('an indeterminate main summary names unknown cache evidence after pricing gaps', () => {
+test('an indeterminate session summary names unknown cache evidence after pricing gaps', () => {
   const envelope = gaps => ({ identity: 'identity-a', sessionId: 'session-a', payload: {
     ok: true, session_id: 'session-a',
-    population: { requested: 'main', satisfied: true, separable: true },
+    population: { requested: 'all', satisfied: true, separable: false },
     totals: { calls: 1, cache_read_state: 'unknown', cache_write_state: 'unknown' },
     valuation: { savings_basis: 'indeterminate', covered_calls: 0, excluded_calls: 1,
       gap_reasons: gaps }
@@ -597,7 +597,7 @@ const provenMainEnvelope = (valuation = {}, totals = {}, population = {}) => ({
   identity: 'profile-a', sessionId: 'session-a',
   payload: {
     ok: true, session_id: 'session-a',
-    population: { requested: 'main', satisfied: true, separable: true, ...population },
+    population: { requested: 'all', satisfied: true, separable: false, ...population },
     totals: { calls: 2, input_tokens: 100, output_tokens: 20, prompt_tokens: 300,
       cache_read_tokens: 200, cache_write_tokens: 0,
       cache_read_state: 'reported', cache_write_state: 'reported', ...totals },
@@ -607,7 +607,7 @@ const provenMainEnvelope = (valuation = {}, totals = {}, population = {}) => ({
   }
 })
 
-test('the main summary preserves exact zero, negative savings and retention ranges', () => {
+test('the session summary preserves exact zero, negative savings and retention ranges', () => {
   const exactZero = T.sessionSavingsState(provenMainEnvelope(), 'session-a', 'profile-a')
   assert.equal(exactZero.available, true)
   assert.equal(exactZero.value, 0)

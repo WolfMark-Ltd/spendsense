@@ -244,14 +244,16 @@ test('a recorded conversation stays selected when the current run has larger tot
   await flush()
   const before = sectionsOf(container)
   const figureBefore = container.querySelector('.wm-kpi-figure').textContent
-  assert.equal(figureBefore, '$0.0010')
-  assert.match(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/)
+  assert.equal(figureBefore, '$0.0010+')
+  assert.match(container.querySelector('.wm-kpi-source').textContent, /apiEquivalent/)
+  assert.doesNotMatch(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/)
+  assert.match(await openTip(container, 'cost-source'), /localEstimateScopeNote/)
   assert.deepEqual([...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
     .map(el => el.textContent), ['350', '1'])
   assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
   assert.ok(container.querySelector('.wm-kpi-since'), 'conversation period remains visible')
   const savedBefore = container.querySelector('[data-kind="saved"] .wm-metric-value').textContent
-  assert.equal(savedBefore, '$0.0001')
+  assert.equal(savedBefore, '—', 'a local net-savings estimate is not shown as cache-read benefit')
 
   host.state.focusedUsage.set(liveUsage({ input: 2400, calls: 3 }))
   await flush()
@@ -319,7 +321,7 @@ test('a session switch never bleeds the previous reading', async () => {
   assert.doesNotMatch(container.textContent, /meterUpdating/)
 })
 
-test('recorded conversation totals render exactly with recorded presence', async () => {
+test('recorded conversation figures stay simple while scope details remain available', async () => {
   resetHost()
   host.state.focusedSessionId.set('runtime-9')
   host.state.focusedStoredSessionId.set('stored-9')
@@ -329,8 +331,10 @@ test('recorded conversation totals render exactly with recorded presence', async
   T.$ledger.set(ledger)
   const container = await renderMeter()
   await flush()
-  assert.equal(container.querySelector('.wm-kpi-figure').textContent, '$1.23')
-  assert.match(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/)
+  assert.equal(container.querySelector('.wm-kpi-figure').textContent, '$1.23+')
+  assert.match(container.querySelector('.wm-kpi-source').textContent, /apiEquivalent/)
+  assert.doesNotMatch(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/)
+  assert.match(await openTip(container, 'cost-source'), /localEstimateScopeNote/)
   assert.match(container.textContent, /meterRecorded/)
   assert.match(container.textContent, /scopeLocalConversationEstimate/)
   const metrics = [...container.querySelectorAll('.wm-metric-value')].map(el => el.textContent)
@@ -341,14 +345,13 @@ test('recorded conversation totals render exactly with recorded presence', async
   const expected = (1000000 / 1328500) * T.RING_C
   const dash = ring.querySelector('.wm-ring-value').getAttribute('stroke-dasharray')
   assert.ok(Math.abs(parseFloat(dash) - expected) < 1e-6, `ring arc ${dash} matches 75.27%`)
-  assert.match(await openTip(container, 'savings-method'), /estimatedLabel/)
-  assert.match(container.textContent, /≈/)
-  // Compact gauge metrics: coverage beside the ring, savings beneath it.
+  // Compact gauge metrics keep the supported cache-read figure prominent.
   const stats = container.querySelector('.wm-gauge-stats').textContent
-  assert.match(stats, /coverageLabel/)
-  assert.match(stats, /100%/)
-  assert.match(stats, /savedGauge/)
-  assert.match(stats, /\$0\.50/)
+  assert.doesNotMatch(stats, /coverageLabel|savedGauge|\$0\.50/)
+  assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '—',
+    'a local net-savings estimate is not presented as the cache-read benefit')
+  assert.match(await openTip(container, 'cache-coverage'), /cacheCoverageHelp/,
+    'coverage scope remains available behind the title tooltip')
   assert.doesNotMatch(stats, /hitRate/, 'the ring is the only hit-rate display')
 })
 
@@ -378,14 +381,13 @@ test('a cache coverage change redraws the gauge in place', async () => {
   const estMetrics = [...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
     .map(el => el.textContent)
   assert.ok(estMetrics[0].startsWith('≈'), `reconstructed totals carry ≈: ${estMetrics}`)
-  // Rounded hit percentages cannot recover measured writes, and this route
-  // publishes no write price, so net savings are unavailable.
-  assert.match(await openTip(container, 'savings-method'), /savedReasonNoWriteRate/)
-  assert.match(container.textContent, /readBenefitUsageLink/)
+  // Rounded hit percentages cannot establish the backend cache-read benefit.
+  assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '—')
+  assert.doesNotMatch(container.textContent, /readBenefitUsageLink/)
 
   host.state.focusedUsage.set({ input: 1000, prompt: 2000, cache_hit_pct: 50, output: 100, calls: 1, model: 'no-such-model-9z' })
   await flush()
-  assert.match(await openTip(container, 'savings-method'), /savedNotEstablished/)
+  assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '—')
 
 })
 
@@ -393,14 +395,15 @@ test('rounded hit-rate residual is unclassified rather than a measured write', (
   const bucket = T.readUsage({input: 500, prompt: 1000, output: 0, calls: 1, cache_hit_pct: 40})
   assert.equal(bucket.cacheWriteEvidence, 'derived')
   const rows = T.tokenRows(key => key, bucket, false, null)
-  assert.equal(rows.find(row => row.key === 'cw').value, 'unknown')
+  assert.equal(rows.find(row => row.key === 'cw').value, '—',
+    'the normal figure uses a dash instead of a technical unknown label')
   const shares = T.compositionShares(bucket)
   assert.equal(shares.write, 0)
   assert.equal(shares.unknown, 100)
   assert.equal(shares.prompt, 1000)
 })
 
-test('a conversation whose cold start is unreported shows the measured saving', async () => {
+test('a partial local conversation keeps coverage details off the sidebar figures', async () => {
   resetHost()
   host.state.focusedSessionId.set('s1')
   host.state.focusedStoredSessionId.set('stored-partial')
@@ -418,12 +421,11 @@ test('a conversation whose cold start is unreported shows the measured saving', 
   host.state.focusedUsage.set(null)
   const container = await renderMeter()
   await flush()
-  const stats = container.querySelector('.wm-gauge-stats')
-  const values = [...stats.querySelectorAll('.wm-metric-value')].map(el => el.textContent)
-  assert.ok(values.includes('$1.50'), `the measured saving renders: ${values}`)
-  assert.match(await openTip(container, 'savings-method'), /savedPartialNote/)
-  assert.doesNotMatch(stats.textContent, /exactLabel/,
-    'a figure covering part of the conversation is never labelled exact')
+  assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '—',
+    'partial local net savings are not substituted for the supported cache-read figure')
+  assert.doesNotMatch(container.querySelector('.wm-gauge-stats').textContent, /\$1\.50/)
+  assert.match(await openTip(container, 'cache-coverage'), /cacheCoverageHelp/,
+    'scope and methodology remain available on demand')
 })
 
 test('a net cache loss renders as a signed figure, not $0.00', async () => {
@@ -445,15 +447,26 @@ test('a net cache loss renders as a signed figure, not $0.00', async () => {
   const container = await renderMeter()
   await flush()
   const stats = container.querySelector('.wm-gauge-stats')
-  assert.match(stats.textContent, /−\$1\.25/, `signed saving: ${stats.textContent}`)
+  assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '—',
+    'a local cache loss is not shown as the cache-read benefit')
+  assert.doesNotMatch(stats.textContent, /−\$1\.25/)
   assert.doesNotMatch(stats.textContent, /\$0\.00/, 'a loss never renders as zero')
-  assert.match(await openTip(container, 'savings-method'), /estimatedLabel/)
 })
 
-test('a measured zero is displayed as zero with full coverage', async () => {
+test('an exact backend zero cache-read benefit remains distinct from unavailable', async () => {
   resetHost()
   host.state.focusedSessionId.set('runtime-zero')
   host.state.focusedStoredSessionId.set('stored-zero')
+  const originalRest = T.getRest()
+  T.setRest(async path => path.startsWith('/session/summary?') ? {
+    ok: true, session_id: 'runtime-zero',
+    population: { requested: 'all', satisfied: true, separable: false },
+    totals: { calls: 1, input_tokens: 100, output_tokens: 10, prompt_tokens: 120,
+      cache_read_tokens: 20, cache_write_tokens: 0,
+      cache_read_state: 'reported', cache_write_state: 'reported', unpriced_tokens: 0 },
+    valuation: { read_benefit_usd: 0, read_benefit_basis: 'exact',
+      read_benefit_calls: 1, read_benefit_tokens: 20 }
+  } : { rate: null })
   const ledger = T.emptyLedger()
   ledger.sessions['stored-zero'] = histBucket({
     input: 100, output: 10, cacheRead: 20, cacheWrite: 0, calls: 1,
@@ -465,22 +478,30 @@ test('a measured zero is displayed as zero with full coverage', async () => {
   T.$ledger.set(ledger)
   const container = await renderMeter()
   await flush()
-  const saved = container.querySelector('[data-kind="saved"] .wm-metric-value')
-  assert.equal(saved.textContent, '$0.00')
-  assert.match(await openTip(container, 'savings-method'), /estimatedLabel/)
-  assert.doesNotMatch(container.querySelector('.wm-gauge-stats').textContent, /savedNotEstablished/)
+  try {
+    const saved = container.querySelector('[data-kind="saved"] .wm-metric-value')
+    assert.equal(saved.textContent, '$0.00')
+    assert.doesNotMatch(container.querySelector('.wm-gauge-stats').textContent, /savedNotEstablished/)
+  } finally {
+    T.restoreRest(originalRest)
+  }
 })
 
-test('a proven main summary renders its signed zero with population and evidence labels', async () => {
+test('a proven session summary renders the cache-read benefit with coverage in its tooltip', async () => {
   resetHost()
   const requests = []
   const originalRest = T.getRest()
+  const previousTranslate = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const value = T.I18N.en[key]
+    return typeof value === 'function' ? value(...args) : value ?? key
+  }
   T.setRest(async path => {
     requests.push(path)
     if (path.startsWith('/session/summary?')) return {
       ok: true, session_id: 'summary-session',
-      population: { requested: 'main', satisfied: true, separable: true },
-      totals: { calls: 1, input_tokens: 100, output_tokens: 10, prompt_tokens: 200,
+      population: { requested: 'all', satisfied: true, separable: false },
+      totals: { calls: 2, input_tokens: 100, output_tokens: 10, prompt_tokens: 200,
         cache_read_tokens: 100, cache_write_tokens: 0,
         cache_read_state: 'reported', cache_write_state: 'reported', unpriced_tokens: 0 },
       valuation: { api_equivalent_usd: .001, api_equivalent_basis: 'exact',
@@ -498,33 +519,40 @@ test('a proven main summary renders its signed zero with population and evidence
   await flush()
   try {
     assert.ok(requests.some(path => path.startsWith('/session/summary?') &&
-      path.includes('session_id=summary-session') && path.includes('population=main')),
-    `main summary request: ${requests}`)
-    assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeMainCalls')
+      path.includes('session_id=summary-session') && path.includes('population=all')),
+    `session summary request: ${requests}`)
+    assert.equal(container.querySelector('.wm-scope-chip').textContent, 'This session · all recorded calls')
     assert.equal(container.querySelector('.wm-model').textContent, 'GPT 4o',
       'the active Desktop route is retained instead of empty backend filter echoes')
     assert.equal(container.querySelector('.wm-provider-badge').textContent, 'openai',
       'the separately resolved active route provider remains visible')
-    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '$0.00')
-    assert.match(container.textContent, /readBenefitLabel.*\$0\.0050.*readBenefitCoverage/)
-    assert.match(await openTip(container, 'read-benefit'), /readBenefitSessionExplanation/)
+    const benefitFigure = container.querySelector('[data-kind="saved"] .wm-metric-value')
+    assert.equal(benefitFigure.textContent, '$0.0050+')
+    assert.equal(container.querySelectorAll('[data-kind="saved"]').length, 1,
+      'the session read benefit appears once')
+    assert.doesNotMatch(container.textContent, /1 of 1 calls|100 read tokens|readBenefitUsageLink/,
+      'coverage details and the Usage link stay out of the normal pane')
+    const benefitTip = await openTip(container, 'read-benefit')
+    assert.match(benefitTip, /API-equivalent cache-read benefit for this runtime session/)
+    assert.match(benefitTip, /1 of 2 calls · 100 read tokens/)
     assert.match(container.querySelector('.wm-kpi-figure').textContent, /\$0\.0010/)
     assert.equal(container.querySelector('.wm-rates-toggle'), null,
-      'a multi-route main summary does not present a single-route Rates panel')
-    assert.equal(container.querySelector('.wm-ring').getAttribute('aria-label'), 'weightedCacheHit: 0%',
+      'a multi-route session summary does not present a single-route Rates panel')
+    assert.equal(container.querySelector('.wm-ring').getAttribute('aria-label'), 'Weighted cache hit: 0%',
       'the zero hit rate is exposed to assistive technology')
   } finally {
     T.restoreRest(originalRest)
+    i18nBackend.t = previousTranslate
   }
 })
 
-test('an empty proven main summary falls back to the recorded conversation estimate', async () => {
+test('an empty session summary does not present unsupported local net savings', async () => {
   resetHost()
   const originalRest = T.getRest()
   T.setRest(async path => {
     if (path.startsWith('/session/summary?')) return {
       ok: true, session_id: 'empty-summary-session',
-      population: { requested: 'main', satisfied: true, separable: true },
+      population: { requested: 'all', satisfied: true, separable: false },
       totals: { calls: 0, input_tokens: 0, output_tokens: 0, prompt_tokens: 0,
         cache_read_tokens: 0, cache_write_tokens: 0,
         cache_read_state: 'reported', cache_write_state: 'reported' },
@@ -541,7 +569,7 @@ test('an empty proven main summary falls back to the recorded conversation estim
   await flush()
   try {
     assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
-    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '$0.500')
+    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '—')
   } finally {
     T.restoreRest(originalRest)
   }
@@ -553,7 +581,7 @@ test('a backend API-equivalent range keeps both endpoints in the pane and chip f
   T.setRest(async path => {
     if (path.startsWith('/session/summary?')) return {
       ok: true, session_id: 'range-summary-session',
-      population: { requested: 'main', satisfied: true, separable: true },
+      population: { requested: 'all', satisfied: true, separable: false },
       totals: { calls: 1, input_tokens: 100, output_tokens: 10, prompt_tokens: 200,
         cache_read_tokens: 100, cache_write_tokens: 0,
         cache_read_state: 'reported', cache_write_state: 'reported', unpriced_tokens: 0 },
@@ -572,8 +600,8 @@ test('a backend API-equivalent range keeps both endpoints in the pane and chip f
   await flush()
   try {
     assert.match(meter.querySelector('.wm-kpi-figure').textContent, /^\$0\.202–\$0\.502$/)
-    assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'backend_summary', costBasis: 'indeterminate', costPartial: true }), '≈$2.00')
-    assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'local', costPartial: true }), '≈$2.00+')
+    assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'backend_summary', costBasis: 'indeterminate', costPartial: true }), '$2.00+')
+    assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'local', costPartial: true }), '$2.00+')
     assert.equal(T.sidebarCostDisplay({cost: 0, costHigh: 1, costBasis: 'range', costPartial: true}), '$0.00–$1.00')
     assert.equal(T.sidebarCostDisplay({cost: 0, costPartial: true}), '—')
     assert.match(T.apiEquivalentDisplay({ cost: .202, costHigh: .502, costSource: 'backend_summary',
@@ -583,7 +611,7 @@ test('a backend API-equivalent range keeps both endpoints in the pane and chip f
   }
 })
 
-test('a refused main summary falls back to the focused local conversation only', async () => {
+test('a refused session summary does not present unsupported local net savings', async () => {
   resetHost()
   const requests = []
   const originalRest = T.getRest()
@@ -591,7 +619,7 @@ test('a refused main summary falls back to the focused local conversation only',
     requests.push(path)
     if (path.startsWith('/session/summary?')) return {
       ok: true, session_id: 'refused-session', model: 'gpt-4o', provider: 'openai',
-      population: { requested: 'main', satisfied: false, separable: false,
+      population: { requested: 'all', satisfied: false, separable: false,
         reason: 'population_not_recorded' }, totals: null, valuation: null,
       alternate: { scope: 'all_calls', valuation: { savings_usd: 999999, savings_basis: 'exact' } }
     }
@@ -609,9 +637,9 @@ test('a refused main summary falls back to the focused local conversation only',
   const container = await renderMeter()
   await flush()
   try {
-    assert.ok(requests.some(path => path.startsWith('/session/summary?') && path.includes('population=main')))
+    assert.ok(requests.some(path => path.startsWith('/session/summary?') && path.includes('population=all')))
     assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
-    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '−$0.500')
+    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '—')
     assert.doesNotMatch(container.textContent, /999999/,
       'the refused response alternate all-calls block is never rendered')
   } finally {
@@ -661,15 +689,16 @@ test('a calls-only frame still renders without token data', async () => {
   const ring = container.querySelector('.wm-ring')
   assert.match(ring.getAttribute('aria-label'), /—/, 'no prompt means no hit rate')
   assert.equal(container.querySelector('.wm-kpi-figure').textContent, '—')
-  assert.match(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/,
-    'a zero-priced subtotal with unknown cache counters is marked incomplete')
-  assert.match(await openTip(container, 'partial'), /partialCacheEvidence/)
-  const method = container.querySelector('[aria-controls="wm-info-cache-method"]')
+  assert.doesNotMatch(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial|partialCacheEvidence|coverageUnknownNote/,
+    'the normal sidebar has no prominent technical coverage caveat')
+  assert.match(await openTip(container, 'cost-source'), /partialCacheEvidence/,
+    'the detail remains available in the tooltip by the figure')
+  const method = container.querySelector('[aria-controls="wm-info-cache-coverage"]')
   await React.act(async () => {
     method.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
   })
   await flush(2)
-  assert.doesNotMatch(container.querySelector('#wm-info-cache-method').textContent, /0%/,
+  assert.doesNotMatch(container.querySelector('#wm-info-cache-coverage').textContent, /0%/,
     'unavailable coverage is omitted, not shown as 0%')
   const before = sectionsOf(container)
   host.state.focusedUsage.set(liveUsage({ input: 0, output: 0, cache_read: 0, cache_write: 0, calls: 4 }))
@@ -777,8 +806,8 @@ test('info popovers open on click and close on Escape', async () => {
   await flush()
   const buttons = [...container.querySelectorAll('.wm-info-btn')]
   assert.ok(buttons.length >= 3, `info buttons render: ${buttons.length}`)
-  const first = container.querySelector('[aria-controls="wm-info-savings-method"]')
-  assert.ok(first, 'the savings methodology tip is present')
+  const first = container.querySelector('[aria-controls="wm-info-read-benefit"]')
+  assert.ok(first, 'the cache-read benefit figure keeps its help tip')
   assert.equal(first.getAttribute('aria-expanded'), 'false')
   assert.equal(container.querySelector('.wm-info-pop'), null)
 
@@ -787,7 +816,7 @@ test('info popovers open on click and close on Escape', async () => {
   })
   await flush(2)
   assert.equal(first.getAttribute('aria-expanded'), 'true')
-  const pop = container.querySelector('#wm-info-savings-method')
+  const pop = container.querySelector('#wm-info-read-benefit')
   assert.ok(pop, 'popover opens')
   assert.equal(pop.getAttribute('role'), 'tooltip')
   assert.ok(pop.textContent.length > 0, 'popover content is rendered')
@@ -984,13 +1013,13 @@ test('the cache popover carries the coverage breakdown', async () => {
   host.state.focusedUsage.set(liveUsage())
   const container = await renderMeter()
   await flush()
-  const method = container.querySelector('[aria-controls="wm-info-cache-method"]')
-  assert.ok(method, 'the cache title keeps its info button')
+  const method = container.querySelector('[aria-controls="wm-info-cache-coverage"]')
+  assert.ok(method, 'the cache title keeps its coverage help button')
   await React.act(async () => {
     method.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
   })
   await flush(2)
-  const pop = container.querySelector('#wm-info-cache-method')
+  const pop = container.querySelector('#wm-info-cache-coverage')
   assert.ok(pop, 'the methodology popover opens')
   assert.match(pop.textContent, /cacheMethodInfo/)
   assert.match(pop.textContent, /cacheCoverageLine/, 'the exact/estimated breakdown moved here')
@@ -1032,15 +1061,15 @@ test('the savings label keeps its methodology tooltip', async () => {
   T.$ledger.set(ledger)
   const container = await renderMeter()
   await flush()
-  const savings = container.querySelector('[aria-controls="wm-info-savings-method"]')
-  assert.ok(savings, 'the savings label keeps its info button')
+  const savings = container.querySelector('[aria-controls="wm-info-read-benefit"]')
+  assert.ok(savings, 'the cache-read figure keeps its info button')
   await React.act(async () => {
     savings.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
   })
   await flush(2)
-  const pop = container.querySelector('#wm-info-savings-method')
-  assert.ok(pop, 'the savings popover opens')
-  assert.match(pop.textContent, /savingsInfo/)
+  const pop = container.querySelector('#wm-info-read-benefit')
+  assert.ok(pop, 'the cache-read popover opens')
+  assert.match(pop.textContent, /readBenefitSessionExplanation/)
   assert.ok(pop.classList.contains('wm-info-pop-wide'), 'the narrow column gets the wide popover')
   assert.ok(pop.classList.contains('wm-info-up'), 'the low-anchored popover opens upward')
 })
@@ -1087,6 +1116,19 @@ test('the composition bar labels every part with its share', async () => {
   assert.match(bar.getAttribute('aria-label'), /60%/)
   const fills = [...bar.querySelectorAll('.wm-mix-fill')].map(el => el.style.width)
   assert.deepEqual(fills, ['20%', '60%', '20%', '0%'])
+  const partialBucket = T.readUsage({ input: 500, prompt: 1000, output: 0, calls: 1, cache_hit_pct: 40 })
+  await React.act(async () => {
+    root.render(React.createElement(T.TokenComposition, {
+      t: key => key === 'unclassifiedPromptTokens' ? 'unclassified prompt' : key,
+      view: { bucket: partialBucket, usage: null }
+    }))
+  })
+  const partialBar = container.querySelector('.wm-mix-bar')
+  const unknownLegend = [...container.querySelectorAll('.wm-legend-item')]
+    .find(item => item.textContent.includes('unclassified prompt'))
+  assert.ok(unknownLegend, 'a visible unknown segment has a compact legend label')
+  assert.match(unknownLegend.textContent, /≈100/, 'the residual count stays visibly approximate')
+  assert.equal(partialBar.querySelector('[data-part="unknown"]').style.width, '10%')
 })
 
 // --- WP13: compact sidebar ------------------------------------------------------
@@ -1114,9 +1156,7 @@ test('the model label is readable while its exact ID stays in the title', async 
   assert.equal(model.getAttribute('title'), WP13_LONG_MODEL, 'the tooltip carries the full name')
   assert.ok(container.querySelector('.wm-model-name-row button'), 'the exact ID has a focusable disclosure')
   const badge = container.querySelector('.wm-provider-badge')
-  assert.equal(badge.textContent, 'providerUnknown', 'no provider id is synthesised')
-  assert.equal(badge.getAttribute('title'), 'providerUnknownTip')
-  assert.doesNotMatch(badge.textContent, /undefined|null/, 'no raw placeholder leaks')
+  assert.equal(badge, null, 'an unknown provider is not added as sidebar clutter')
 })
 
 test('provider-prefixed model IDs have a readable name and keyboard disclosure', async () => {
@@ -1161,8 +1201,7 @@ test('an unmapped provider prints its id as-is with the raw-id tooltip', async (
   assert.equal(badge.getAttribute('title'), 'providerTip')
   const unknown = await renderHeader({ model: 'gpt-4o', provider: null, fromHistory: false })
   const unknownBadge = unknown.querySelector('.wm-provider-badge')
-  assert.equal(unknownBadge.textContent, 'providerUnknown')
-  assert.equal(unknownBadge.getAttribute('title'), 'providerUnknownTip')
+  assert.equal(unknownBadge, null, 'the normal header omits an unknown provider message')
 })
 
 test('the provider badge tooltip carries the raw provider id', async () => {
@@ -1219,20 +1258,11 @@ test('the open-ledger button routes to the ledger from the live meter', async ()
     host.navigate = orig
   }
   assert.deepEqual(seen, ['/spend-sense'])
-  const benefitLink = [...container.querySelectorAll('button')].find(el => el.textContent === 'readBenefitUsageLink')
-  assert.ok(benefitLink)
-  host.navigate = route => seen.push(route)
-  try {
-    await React.act(async () => benefitLink.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })))
-    assert.equal(T.$ledgerTab.get(), 'usage')
-    assert.deepEqual(seen, ['/spend-sense', '/spend-sense'])
-    T.closeLedger()
-    assert.equal(seen.at(-1), '/chat/return-test')
-  } finally {
-    host.navigate = orig
-    delete globalThis.location
-    delete globalThis.history
-  }
+  assert.equal([...container.querySelectorAll('button')].some(el => el.textContent === 'readBenefitUsageLink'), false,
+    'the pane has no redundant Usage link')
+  host.navigate = orig
+  delete globalThis.location
+  delete globalThis.history
 })
 
 test('the empty state offers the ledger action', async () => {
