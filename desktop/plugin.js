@@ -118,6 +118,26 @@ function num(v) {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
+/** External URLs may only become links over http(s) (F126). Anything else —
+ *  javascript:, data:, protocol-relative, relative paths, garbage — returns
+ *  null so the caller renders plain text: a compromised feed or a hand-edited
+ *  catalogue can never inject a link target. Returns the trimmed URL or null.
+ */
+function safeHttpUrl(value) {
+  const url = String(value || '').trim()
+  if (!/^https?:\/\//i.test(url)) return null
+  return url
+}
+
+/** Feed-supplied source link (F126): an http(s) anchor, else nothing. A
+ *  missing or unsafe URL renders no anchor at all — the provenance text
+ *  beside it still names the origin, so no evidence label is lost. */
+function NewsSourceLink({ url, t }) {
+  const href = safeHttpUrl(url)
+  return href ? jsx('a', { href, target: '_blank', rel: 'noreferrer',
+    className: 'wm-source-link', children: t('newsSource') }) : null
+}
+
 function tokensOf(b) {
   const streams = num(b.input) + num(b.cacheRead) + num(b.cacheWrite) + num(b.cacheUnknown)
   const prompt = typeof b.prompt === 'number' && Number.isFinite(b.prompt) && b.prompt >= 0
@@ -4763,9 +4783,10 @@ function fxQuery(identity = membershipIdentityNow()) {
   }
 }
 
-async function fxWrite(rates, transport = rest) {
+async function fxWrite(rates, rev, transport = rest) {
   if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
-  const result = await transport('/membership/fx', { method: 'PUT', body: { rates } })
+  const result = await transport(`/membership/fx?if_rev=${encodeURIComponent(rev || '')}`,
+    { method: 'PUT', body: { rates } })
   if (!result || result.ok === false) throw new Error(result?.detail || result?.error || 'The rates were not saved.')
   return result
 }
@@ -6336,13 +6357,24 @@ const $fxNotice = atom(null)
  * The editor stays disabled until the saved document has loaded for this
  * connection: replacing rates that were never read would silently drop them.
  */
-function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave, t }) {
+
+/**
+ * The draft pins the saved revision it was staged from (F125 review). Later
+ * edits keep the original revision, so a save after someone else's change
+ * 409s instead of silently replacing their rates; only discarding the
+ * draft (reload) starts a new one against fresh saved rates.
+ */
+function stageFxDraft(prev, identity, rates, savedRev) {
+  const rev = prev && prev.origin === identity && 'rev' in prev ? prev.rev : (savedRev ?? null)
+  return { origin: identity, rates, rev }
+}
+function EconomicsFx({ fxError, fxReady, identity, rates, fxRev, onRetry, onSave, t }) {
   const rawDraft = useValue($fxDraft)
   const saving = useValue($fxSaving)?.origin === identity
   const notice = useValue($fxNotice)
   const saved = rates || []
   const draft = rawDraft?.origin === identity ? rawDraft.rates : saved
-  const stage = next => $fxDraft.set({ origin: identity, rates: next })
+  const stage = next => $fxDraft.set(stageFxDraft($fxDraft.get(), identity, next, fxRev))
   const add = event => {
     event.preventDefault()
     const read = name => (new FormData(event.target).get(name) || '').toString().trim()
@@ -6393,9 +6425,14 @@ function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave, t }) 
     ] }),
     notice?.origin === identity ? jsx('p', { className: notice.tone === 'good' ? 'wm-subtle' : 'wm-warn-note',
       role: notice.tone === 'good' ? 'status' : 'alert', children: notice.text }) : null,
-    jsx('div', { className: 'wm-setting-action', children:
+    jsx('div', { className: 'wm-setting-action', children: [
       jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !fxReady || !dirty || saving,
-        onClick: () => onSave(draft), children: saving ? t('fxSaving') : t('fxSave') }) })
+        onClick: () => onSave(draft), children: saving ? t('fxSaving') : t('fxSave') }),
+      dirty && !saving
+        ? jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $fxDraft.set(null),
+            children: t('fxReloadSaved') })
+        : null
+    ].filter(Boolean) })
   ].filter(Boolean) })
 }
 
@@ -6515,7 +6552,7 @@ function EconomicsGroupRow({ group, t }) {
  * Subscription economics, rendered from one report payload. Pure presentation:
  * the container owns the queries, so the harness can drive this with fixtures.
  */
-function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx, onSaveFx, onOpenFx }) {
+function EconomicsSection({ data, fxError, fxReady, identity, fxRates, fxRev, onRetryFx, onSaveFx, onOpenFx }) {
   const t = usePluginI18n(ID)
   const headline = data?.headline || {}
   const groups = data?.groups || []
@@ -6638,7 +6675,7 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
     jsxs('details', { id: 'wm-cost-fx-details', className: 'wm-econ-disclosure', children: [
       jsx('summary', { children: t('econFxTitle') }),
       jsx('p', { className: 'wm-subtle', children: t('econFxHint') }),
-      jsx(EconomicsFx, { fxError, fxReady, identity, rates: fxRates || [], onRetry: onRetryFx, onSave: onSaveFx, t })
+      jsx(EconomicsFx, { fxError, fxReady, identity, rates: fxRates || [], fxRev, onRetry: onRetryFx, onSave: onSaveFx, t })
     ] })
   ].filter(Boolean) })
 }
@@ -6673,8 +6710,12 @@ function EconomicsPanel({ identity, unknownFees = null }) {
     if (!membershipIdentityCurrent(captured)) return
     $fxSaving.set({ origin: captured })
     $fxNotice.set(null)
+    // The draft's own pinned revision, never the latest fetched one: after
+    // someone else's save, a retry must 409 again until the user reloads.
+    const draft = $fxDraft.get()
+    const draftRev = draft?.origin === captured && 'rev' in draft ? draft.rev : null
     try {
-      await fxWrite(rates)
+      await fxWrite(rates, draftRev)
       await queryClient.invalidateQueries({ queryKey: [ID, 'budget-status', captured] })
       if (!membershipIdentityCurrent(captured) || $fxDraft.get()?.origin !== captured) return
       $fxDraft.set(null)
@@ -6683,6 +6724,9 @@ function EconomicsPanel({ identity, unknownFees = null }) {
     } catch (error) {
       if (membershipIdentityCurrent(captured)) {
         $fxNotice.set({ tone: 'warn', origin: captured, text: fxErrorMessage(t, error) })
+        // A conflict means someone else saved first: reload silently so a
+        // retry carries the fresh revision; the staged draft is untouched.
+        if (/409|conflict/i.test(String(error?.message || ''))) await fx.refetch?.()
       }
     } finally {
       // Release this save's flag even after a connection switch, so the new
@@ -6714,7 +6758,7 @@ function EconomicsPanel({ identity, unknownFees = null }) {
     jsx(CostsAttention, { groups: economics.data?.groups || [], econAccounts: economics.data?.accounts || [],
       unknownFees, fxError, onRetryFx: () => fx.refetch?.(), onOpenFx: openFx, onOpenLog: openLog, t }, 'attention'),
     jsx(EconomicsSection, { data: economics.data, identity,
-      fxRates: fxReady ? fx.data?.rates || [] : [], fxReady, fxError,
+      fxRates: fxReady ? fx.data?.rates || [] : [], fxRev: fxReady ? fx.data?.rev ?? null : null, fxReady, fxError,
       onRetryFx: () => fx.refetch?.(), onSaveFx: saveFx, onOpenFx: openFx }, 'economics')
   ]
 }
@@ -7476,10 +7520,14 @@ function SettingsPage() {
             jsx('details', { children: [
               jsx('summary', { children: t('settingsSourceRegister',
                 membershipBook.source === 'live' ? t('settingsCatalogueLive') : t('settingsCatalogueBundled')) }),
-              jsx('ul', { children: (membershipBook.sources || []).map(source => jsx('li', { children: [
-                source.id + ' · ' + source.evidence_kind + ' · ' + (source.retrieved_at || t('settingsSourceNoDate')) + ' · ',
-                jsx('a', { href: source.url, target: '_blank', rel: 'noreferrer', children: source.url })
-              ] }, source.id)) })
+              jsx('ul', { children: (membershipBook.sources || []).map(source => {
+                const href = safeHttpUrl(source.url)
+                return jsx('li', { children: [
+                  source.id + ' · ' + source.evidence_kind + ' · ' + (source.retrieved_at || t('settingsSourceNoDate')) + ' · ',
+                  href ? jsx('a', { href, target: '_blank', rel: 'noreferrer', children: source.url })
+                    : String(source.url || '')
+                ] }, source.id)
+              }) })
             ] })
           ] }) : planCatalogue.error ? jsx('p', { className: 'wm-warn-note', children: t('settingsCatalogueProvenanceUnavailable') }) : null
         ] }),
@@ -8629,7 +8677,7 @@ function membershipErrorKind(error) {
   const status = Number((raw.match(/\b([45][0-9]{2})\b/) || [])[1] || 0)
   if (/seat_write_uncertain/i.test(raw)) return { kind: 'seat_write_uncertain', status }
   if (/entitlement_write_uncertain/i.test(raw)) return { kind: 'entitlement_write_uncertain', status }
-  if (/store_unreadable/i.test(raw)) return { kind: 'storage', status }
+  if (/store_unreadable|store_busy/i.test(raw)) return { kind: 'storage', status }
   if (status === 401 || /unauthori|sign in/i.test(raw)) return { kind: 'auth', status }
   if (/plugin not found|no such plugin/i.test(raw)) return { kind: 'namespace', status }
   if (status === 409 || /conflict/i.test(raw)) return { kind: 'conflict', status }
@@ -13192,10 +13240,9 @@ function NewsStoryEntryEvidence({ entry, t }) {
           t('newsObserved', entry?.observed_at || '—'),
           entry?.effective_at ? ` · ${t('newsEffective', entry.effective_at)}` : '',
         ] }),
-        entry?.source_url
-          ? jsx('p', { className: 'wm-news-meta', children: jsx('a', { href: entry.source_url,
-              target: '_blank', rel: 'noreferrer', className: 'wm-source-link',
-              children: t('newsSource') }) })
+        safeHttpUrl(entry?.source_url)
+          ? jsx('p', { className: 'wm-news-meta',
+              children: jsx(NewsSourceLink, { url: entry.source_url, t }) })
           : null,
       ] }, 'entry') }),
   ] })
@@ -13340,9 +13387,8 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
               jsx(NewsTierBlocks, { event: item, t }),
               jsxs('p', { className: 'wm-news-meta', children: [
                 `${item?.provenance || ''} · ${item?.confidence || ''}`,
-                item?.source_url
-                  ? jsxs('span', { children: [' · ', jsx('a', { href: item.source_url, target: '_blank',
-                      rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
+                safeHttpUrl(item?.source_url)
+                  ? jsxs('span', { children: [' · ', jsx(NewsSourceLink, { url: item.source_url, t })] })
                   : null,
               ] }),
               jsxs('p', { className: 'wm-news-dates', children: [
@@ -13371,10 +13417,9 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
                   : null,
                 jsx('p', { className: 'wm-news-dates', children:
                   t('newsObserved', variant?.observed_at || '—') }),
-                variant?.source_url
-                  ? jsx('p', { className: 'wm-news-meta', children: jsx('a', {
-                      href: variant.source_url, target: '_blank', rel: 'noreferrer',
-                      className: 'wm-source-link', children: t('newsSource') }) })
+                safeHttpUrl(variant?.source_url)
+                  ? jsx('p', { className: 'wm-news-meta',
+                      children: jsx(NewsSourceLink, { url: variant.source_url, t }) })
                   : null,
               ] }, `uv-${index}`)) }),
           ] })
@@ -13846,10 +13891,7 @@ function NewsEvidenceRow({ source, t }) {
     jsx('span', { children: t('newsObserved', source?.observed_at || '—') }),
     source?.effective_at ? jsx('span', { children: t('newsEffective', source.effective_at) }) : null,
     source?.provenance ? jsx('span', { children: source.provenance }) : null,
-    source?.source_url
-      ? jsx('a', { href: source.source_url, target: '_blank', rel: 'noreferrer',
-          className: 'wm-source-link', children: t('newsSource') })
-      : null,
+    jsx(NewsSourceLink, { url: source?.source_url, t }),
     jsx(NewsRateTable, { previous: source?.previous, current: source?.current, t, exact: true }),
     jsx(NewsTierBlocks, { event: source, t }),
   ] })
@@ -13949,9 +13991,8 @@ function NewsCard({ item, impact, t, flat = false }) {
       : null,
     jsxs('p', { className: 'wm-news-meta', children: [
       `${item.provenance || ''} · ${item.confidence || ''}`,
-      item.source_url
-        ? jsxs('span', { children: [' · ', jsx('a', { href: item.source_url, target: '_blank',
-            rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
+      safeHttpUrl(item.source_url)
+        ? jsxs('span', { children: [' · ', jsx(NewsSourceLink, { url: item.source_url, t })] })
         : null,
     ] }),
     // Compact exact-evidence disclosure: the card's own original record —
@@ -14113,9 +14154,8 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
         jsx('p', { className: 'wm-news-dates', children: dates.join(' · ') }),
         jsxs('p', { className: 'wm-news-meta', children: [
           `${latest?.provenance || ''} · ${latest?.confidence || ''}`,
-          latest?.source_url
-            ? jsxs('span', { children: [' · ', jsx('a', { href: latest.source_url, target: '_blank',
-                rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
+          safeHttpUrl(latest?.source_url)
+            ? jsxs('span', { children: [' · ', jsx(NewsSourceLink, { url: latest.source_url, t })] })
             : null,
         ] }),
         // Tier rows are listed one by one when they are known; never averaged.
@@ -14172,10 +14212,7 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
             jsx('span', { className: 'wm-news-historycode', children: event?.id || '' }),
             jsx('span', { children: t('newsObserved', fmtDay(event?.observed_at)) }),
             jsx('span', { children: newsSummaryText(event, t) }),
-            event?.source_url
-              ? jsx('a', { href: event.source_url, target: '_blank', rel: 'noreferrer',
-                  className: 'wm-source-link', children: t('newsSource') })
-              : null,
+            jsx(NewsSourceLink, { url: event?.source_url, t }),
             // The full audit trail of one historical event: the exact
             // was/now rates, the raw tier rows and every original source
             // record with its exact id, dates, provenance and URL — nested
@@ -15867,6 +15904,7 @@ const I18N = {
     fxAdd: 'Add rate',
     fxSave: 'Save rates',
     fxSaving: 'Saving…',
+    fxReloadSaved: 'Reload saved rates',
     fxStaged: c => `A rate for ${c} is already staged.`,
     fxSaved: 'Rates saved.',
     fxReadError: 'Saved FX rates could not be read for this connection.',
@@ -17653,6 +17691,7 @@ const I18N = {
     fxAdd: '添加费率',
     fxSave: '保存费率',
     fxSaving: '保存中…',
+    fxReloadSaved: '重新加载已保存的费率',
     fxStaged: c => `已暂存 ${c} 的费率。`,
     fxSaved: '费率已保存。',
     fxReadError: '无法读取此连接已保存的外汇汇率。',
@@ -18581,7 +18620,7 @@ export const __test = {
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
   membershipEntitlementSummary,
   billingNumberStep, $billingDraft, $billingNotice,
-  economicsQuery, fxQuery, fxWrite, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
+  economicsQuery, fxQuery, fxWrite, stageFxDraft, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
   econWindowLines, windowSpanLabel, invalidateEconomicsFor,
   weatherQuery, invalidateWeatherFor, invalidateBillingDependentsFor,
   wxVerdictLabel, wxLimitLabel, wxCycleSummary, wxWindowRow, wxRuleRow,
@@ -18614,6 +18653,7 @@ export const __test = {
   NEWS_FOR_YOU_INITIAL, NEWS_EVENT_LINK_FIELDS, NEWS_RATE_CLASS_BY_CODE,
   newsUsedRecently, newsLastUsedMs, newsItemReasonCodes, newsGroupReasonCodes,
   newsMergeEvents, newsSameEventProof, newsTransitionKey, newsTransitionBase, newsSameTransition, newsUrlsConflict,
+  safeHttpUrl, NewsSourceLink,
   newsEvidenceRecords, NewsEvidenceRow, NewsTierBlocks,
   analyticsNoteText, analyticsNotesText, ANALYTICS_NOTE_KEYS, analyticsGapReasonLabel, OV_GAP_REASON_KEYS,
   econNoteText, econNotesText, econSingularNoteText, econExplanationText, ECON_NOTE_KEYS, ECON_EXPLANATION_KEYS,

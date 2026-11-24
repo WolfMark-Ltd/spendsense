@@ -38,6 +38,7 @@ Model rules (each has a regression test):
 from __future__ import annotations
 
 import calendar
+import hashlib
 import json
 import math
 import os
@@ -54,6 +55,7 @@ from . import membership_store as mstore
 from . import store as ustore
 from .aggregate import _event_result
 from .analytics import build_analytics_report
+from .filelock import locked as _locked
 from .pricing import Catalogue, load_catalogue
 
 #: Weekly fees are annualised at 52 weeks per year, so one week of fee is
@@ -511,10 +513,30 @@ def fx_validation_errors(entries: Any) -> list[str]:
     return errors
 
 
+class FxConflict(Exception):
+    """An FX save raced another writer; reload before retrying."""
+
+
+def fx_revision(rates: list[dict[str, Any]]) -> str:
+    """Stable revision hash over normalised rates (F125).
+
+    Callers pass validated rates; invalid input raises loudly rather than
+    hashing to a colliding revision that would mask a lost update.
+    """
+    body = sorted(
+        [{"currency": str(r["currency"]).strip().upper(),
+          "usd_per_unit": float(r["usd_per_unit"]),
+          "as_of": r["as_of"], "source": str(r["source"]).strip()}
+         for r in rates],
+        key=lambda item: item["currency"])
+    return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
 def load_fx(path: Path | str | None = None) -> dict[str, Any]:
     """Read the FX file. A missing file is simply "no rates"."""
     target = Path(path) if path else fx_path()
-    empty = {"rates": [], "loaded": False, "error": "", "path": str(target)}
+    empty: dict[str, Any] = {"rates": [], "loaded": False, "error": "", "path": str(target),
+                             "rev": None}
     if not target.exists():
         return empty
     try:
@@ -530,11 +552,21 @@ def load_fx(path: Path | str | None = None) -> dict[str, Any]:
               "usd_per_unit": float(r["usd_per_unit"]),
               "as_of": r["as_of"], "source": str(r["source"]).strip()}
              for r in data["rates"]]
-    return {"rates": rates, "loaded": True, "error": "", "path": str(target)}
+    return {"rates": rates, "loaded": True, "error": "", "path": str(target),
+            "rev": fx_revision(rates)}
 
 
-def save_fx(entries: list[dict[str, Any]], path: Path | str | None = None) -> dict[str, Any]:
-    """Replace the whole FX document atomically. Raises ValueError when invalid."""
+def save_fx(entries: list[dict[str, Any]], path: Path | str | None = None, *,
+            if_rev: Optional[str] = None) -> dict[str, Any]:
+    """Replace the whole FX document atomically. Raises ValueError when invalid.
+
+    Mirrors the membership-save discipline (F125): the read-modify-write
+    runs under the cross-process exclusive lock, and a supplied ``if_rev``
+    must match the stored revision, else :class:`FxConflict` (→ HTTP 409)
+    instead of a silent last-writer-wins. A missing revision keeps the
+    previous last-writer behaviour so older Desktops still save during a
+    version skew; the current Desktop always sends one.
+    """
     errors = fx_validation_errors(entries)
     if errors:
         raise ValueError("; ".join(errors))
@@ -545,17 +577,26 @@ def save_fx(entries: list[dict[str, Any]], path: Path | str | None = None) -> di
          "as_of": e["as_of"], "source": str(e["source"]).strip()}
         for e in entries]}
     target.parent.mkdir(parents=True, exist_ok=True)
-    handle = tempfile.NamedTemporaryFile("w", dir=target.parent, delete=False, suffix=".tmp")
-    try:
-        json.dump(payload, handle, indent=2, sort_keys=True)
-        handle.flush()
-        os.fsync(handle.fileno())
-        handle.close()
-        os.replace(handle.name, target)
-    finally:
-        if not handle.closed:
+    with _locked(target):
+        current = load_fx(target)
+        if target.exists() and not current["loaded"]:
+            # Strict like membership saves: never overwrite an unreadable
+            # document the writer could not compare against.
+            raise mstore.StoreUnreadable(current["error"] or "fx rates unreadable")
+        if current["loaded"]:
+            if if_rev is not None and if_rev != current["rev"]:
+                raise FxConflict("conflict: FX rates changed; reload before saving")
+        handle = tempfile.NamedTemporaryFile("w", dir=target.parent, delete=False, suffix=".tmp")
+        try:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
             handle.close()
-    return {"rates": payload["rates"], "path": str(target)}
+            os.replace(handle.name, target)
+        finally:
+            if not handle.closed:
+                handle.close()
+    return {"rates": payload["rates"], "path": str(target), "rev": fx_revision(payload["rates"])}
 
 
 def fx_citation(rate: Mapping[str, Any]) -> str:

@@ -110,13 +110,17 @@ test('fxWrite posts the whole document and surfaces the server sentence', async 
     return { ok: true, rates: opts.body.rates }
   }
   const rates = [{ currency: 'GBP', usd_per_unit: 1.25, as_of: '2026-10-31', source: 'Example' }]
-  const result = await S.fxWrite(rates, transport)
-  assert.equal(calls[0].path, '/membership/fx')
+  const result = await S.fxWrite(rates, 'rev-1', transport)
+  assert.equal(calls[0].path, '/membership/fx?if_rev=rev-1')
   assert.equal(calls[0].method, 'PUT')
   assert.deepEqual(calls[0].body, { rates })
   assert.deepEqual(result.rates, rates)
-  await assert.rejects(S.fxWrite(rates, async () => ({ ok: false, detail: 'bad rate' })), /bad rate/)
-  await assert.rejects(S.fxWrite(rates, null), /bridge/)
+  await assert.rejects(S.fxWrite(rates, 'rev-1', async () => ({ ok: false, detail: 'bad rate' })), /bad rate/)
+  await assert.rejects(S.fxWrite(rates, null, null), /bridge/)
+  // A missing revision still sends the parameter (empty): first saves on an
+  // empty document need no revision, existing documents 409 without one.
+  await S.fxWrite(rates, null, transport)
+  assert.equal(calls[1].path, '/membership/fx?if_rev=')
 })
 
 test('fxErrorMessage keeps validation detail and translates transport states', () => {
@@ -454,4 +458,18 @@ test('costsPricingSourceLabel translates known sources and keeps unknown ones', 
   assert.equal(S.costsPricingSourceLabel('models.dev cache (models_dev_cache.json)', zh),
     'models.dev 价格目录（本地缓存）')
   assert.equal(S.costsPricingSourceLabel(null, en), null)
+})
+
+test('stageFxDraft pins the revision from staging start, not the latest fetch', () => {
+  // F125 review: a draft staged at rev-1 keeps rev-1 across later edits
+  // even after the saved document moves to rev-2, so the retry 409s
+  // instead of silently replacing the other editor's rates.
+  const first = S.stageFxDraft(null, 'id', [{ currency: 'GBP' }], 'rev-1')
+  assert.deepEqual(first, { origin: 'id', rates: [{ currency: 'GBP' }], rev: 'rev-1' })
+  const second = S.stageFxDraft(first, 'id', [{ currency: 'GBP' }, { currency: 'EUR' }], 'rev-2')
+  assert.equal(second.rev, 'rev-1', 'later edits keep the original revision')
+  // A new draft after discarding (or on another connection) starts fresh.
+  assert.equal(S.stageFxDraft(null, 'id', [], 'rev-2').rev, 'rev-2')
+  assert.equal(S.stageFxDraft({ origin: 'other', rates: [], rev: 'rev-1' }, 'id', [], 'rev-2').rev, 'rev-2')
+  assert.equal(S.stageFxDraft(null, 'id', [], null).rev, null)
 })

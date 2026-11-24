@@ -168,6 +168,7 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("cache_read_reported", "INTEGER"),
     ("cache_write_reported", "INTEGER"),
     ("call_class", "TEXT"),
+    ("response_model", "TEXT"),
 )
 
 
@@ -507,19 +508,20 @@ def record(record: dict[str, Any], path: Optional[Path | str] = None,
             """
             INSERT OR IGNORE INTO calls (
                 event_id, ts, started_at, ended_at, session_id, task_id, turn_id,
-                platform, model, provider, api_mode, aux_task, streaming, outcome,
+                platform, model, provider, response_model, api_mode, aux_task, streaming, outcome,
                 api_call_count, input_tokens, output_tokens, cache_read_tokens,
                 cache_write_tokens, reasoning_tokens, prompt_tokens, total_tokens,
                 error_type, status_code, recorded_at,
                 cache_read_reported, cache_write_reported, call_class
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 record["event_id"], record["ts"], record.get("started_at"),
                 record.get("ended_at"), record.get("session_id", ""),
                 record.get("task_id", ""), record.get("turn_id", ""),
                 record.get("platform", ""), record.get("model", ""),
-                record.get("provider", ""), record.get("api_mode", ""),
+                record.get("provider", ""), record.get("response_model"),
+                record.get("api_mode", ""),
                 record.get("aux_task", ""), int(bool(record.get("streaming"))),
                 record.get("outcome", "ok"), int(record.get("api_call_count") or 0),
                 int(record.get("input_tokens") or 0), int(record.get("output_tokens") or 0),
@@ -537,12 +539,17 @@ def record(record: dict[str, Any], path: Optional[Path | str] = None,
 
         if not inserted and record.get("outcome") == "ok" and int(record.get("total_tokens") or 0) > 0:
             # A duplicate callback may carry the final usage after an earlier
-            # missing-usage/error attempt with the same request id.
+            # missing-usage/error attempt with the same request id. F131: the
+            # overwrite is lossless for accounting because Hermes error hooks
+            # carry no usage (verified against the installed dispatcher), so
+            # the replaced row held zero tokens. If Hermes ever reports
+            # partial usage on errors, revisit: error tokens would need
+            # adding, not replacing.
             conn.execute(
                 """
                 UPDATE calls SET
                     ts=?, started_at=?, ended_at=?, session_id=?, task_id=?, turn_id=?,
-                    platform=?, model=?, provider=?, api_mode=?, aux_task=?, streaming=?,
+                    platform=?, model=?, provider=?, response_model=?, api_mode=?, aux_task=?, streaming=?,
                     outcome=?, api_call_count=?,
                     input_tokens=?, output_tokens=?, cache_read_tokens=?,
                     cache_write_tokens=?, reasoning_tokens=?, prompt_tokens=?,
@@ -555,6 +562,7 @@ def record(record: dict[str, Any], path: Optional[Path | str] = None,
                     record.get("session_id", ""), record.get("task_id", ""),
                     record.get("turn_id", ""), record.get("platform", ""),
                     record.get("model", ""), record.get("provider", ""),
+                    record.get("response_model"),
                     record.get("api_mode", ""), record.get("aux_task", ""),
                     int(bool(record.get("streaming"))),
                     record.get("outcome", "ok"), int(record.get("api_call_count") or 0),
