@@ -12,7 +12,7 @@ const suites = {
     ['digest-render', 24, true], ['economics', 32], ['economics-render', 58, true],
     ['membership', 38], ['membership-scope', 99, true], ['memberships-reading', 7, true],
     ['news', 24],
-    ['news-editorial', 46], ['news-groups', 52], ['news-layout.chromium', 16],
+    ['news-editorial', 51], ['news-groups', 52], ['news-layout.chromium', 16],
     ['news-layout.harness', 4],
     ['news-render', 61, true], ['node-runner', 5], ['plugin', 69], ['recount', 16],
     ['overview-render', 9, true],

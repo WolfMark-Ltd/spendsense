@@ -263,6 +263,96 @@ test('a family group keeps every provider row under one banner', () => {
   }
 })
 
+test('a family group collapses byte-identical rows into one observed count', () => {
+  // UAT: one transition re-observed (recurrence plus central echo) rendered
+  // three identical rows. Same displayed row collapses; every id survives;
+  // a genuinely different transition stays its own row.
+  const same = (id, observed_at) => S.newsEditorialEntry(item({ id, provider: 'openrouter',
+    model: 'z-ai/glm-5.3-flash', observed_at,
+    previous: { input: 0.15, output: 0.5 }, current: { input: 0.0399, output: 0.0784 } }))
+  const other = S.newsEditorialEntry(item({ id: 'md-other', provider: 'openrouter',
+    model: 'z-ai/glm-5.3-flash', observed_at: '2026-11-23T00:00:00Z',
+    previous: { input: 0.15, output: 0.5 }, current: { input: 0.12, output: 0.38 } }))
+  const entries = [same('md-1', '2026-11-22T10:40:00Z'), other,
+    same('md-2', '2026-11-22T21:08:00Z'), same('md-3', '2026-11-22T22:29:00Z')]
+  const [group] = S.newsEditorialGroup(entries)
+  assert.equal(group.family_event_count, 4, 'the banner still counts every member')
+  assert.deepEqual(group.event_ids.sort(), ['md-1', 'md-2', 'md-3', 'md-other'])
+  assert.equal(group.variants.length, 2, 'identical rows collapse, the distinct transition stays')
+  const collapsed = group.variants.find(variant => variant.observed_count === 3)
+  const distinct = group.variants.find(variant => variant.observed_count === undefined)
+  assert.ok(collapsed && distinct, 'one collapsed row and one lone row')
+  assert.equal(collapsed.observed_count, 3)
+  assert.deepEqual(collapsed.event_ids.sort(), ['md-1', 'md-2', 'md-3'])
+  assert.equal(collapsed.observed_at, '2026-11-22T22:29:00Z', 'the collapsed row carries the newest date')
+  assert.equal(distinct.observed_count, undefined, 'a lone row carries no count')
+  assert.equal(distinct.event_ids.length, 1)
+})
+
+test('a collapsed variant row names its observed count in both languages', () => {
+  for (const locale of ['en', 'zh']) {
+    const t = (key, ...args) => {
+      const entry = S.I18N[locale][key]
+      return typeof entry === 'function' ? entry(...args) : entry ?? key
+    }
+    assert.equal(S.newsVariantObservedSuffix({ observed_count: 3 }, t),
+      locale === 'en' ? ' — observed 3 times' : ' — 已观察 3 次')
+    assert.equal(S.newsVariantObservedSuffix({}, t), null, 'a lone row carries no suffix')
+    assert.equal(S.newsVariantObservedSuffix({ observed_count: 1 }, t), null)
+    assert.equal(S.newsVariantObservedSuffix({ observed_count: 2.9 }, t),
+      locale === 'en' ? ' — observed 2 times' : ' — 已观察 2 次',
+      'a fractional count floors instead of printing decimals')
+    assert.equal(S.newsVariantObservedSuffix({ observed_count: 'x' }, t), null)
+  }
+})
+
+test('members with conflicting source URLs never collapse away evidence', () => {
+  // Same displayed row, but two non-empty source URLs that differ are
+  // distinct observations (the merge layer's own rule): each keeps its
+  // own row and evidence link. A missing URL never conflicts.
+  const same = (id, source_url) => S.newsEditorialEntry(item({ id, provider: 'acme',
+    model: 'acme-1', source_url,
+    previous: { input: 10 }, current: { input: 5 } }))
+  const clashing = S.newsEditorialGroup([
+    same('md-u1', 'https://example.com/a'), same('md-u2', 'https://example.com/b')])
+  assert.equal(clashing[0].variants.length, 2, 'conflicting URLs stay separate')
+  assert.ok(clashing[0].variants.every(variant => variant.observed_count === undefined))
+  const missing = S.newsEditorialGroup([
+    same('md-u3', 'https://example.com/a'), same('md-u4', '')])
+  assert.equal(missing[0].variants.length, 1, 'a missing URL collapses')
+  assert.equal(missing[0].variants[0].observed_count, 2)
+})
+
+test('the collapse key mirrors exactly what the row renders', () => {
+  const keyOf = overrides => S.newsEditorialRowKey(S.newsEditorialEntry(item({
+    id: 'md-k', provider: 'acme', model: 'acme-1',
+    previous: { input: 10 }, current: { input: 5 }, ...overrides })))
+  assert.equal(keyOf({ observed_at: '2026-11-01T00:00:00Z' }),
+    keyOf({ observed_at: '2026-11-02T00:00:00Z' }), 'stamps never split rows')
+  const launched = confidence => S.newsEditorialRowKey(S.newsEditorialEntry(item({
+    id: 'md-L', category: 'new_model', provider: 'acme', model: 'acme-9',
+    confidence, first_seen_at: '2026-11-03T00:00:00Z' })))
+  assert.equal(launched('verified'), launched('curated'),
+    'launch confidence is unrendered, so it never splits rows')
+  assert.notEqual(keyOf({}), keyOf({ previous: { input: 10 }, current: { input: 6 } }),
+    'a different move keeps its own row')
+})
+
+test('mixed rows collapse when only unrendered percentages differ', () => {
+  // The mixed row names raised/cut rates, never their percentages: two
+  // members with the same rate lists but different pcts render identically.
+  const mixed = (id, observed_at, after) => S.newsEditorialEntry(item({ id,
+    provider: 'openrouter', model: 'z-ai/glm-5.3-flash', observed_at,
+    previous: { input: 0.15, output: 0.5, cache_read: 0.03 }, current: after }))
+  const [group] = S.newsEditorialGroup([
+    mixed('md-x', '2026-11-24T05:46:00Z', { input: 0.77, output: 2.5, cache_read: 0.02 }),
+    mixed('md-y', '2026-11-24T07:41:00Z', { input: 0.73, output: 2.4, cache_read: 0.02 }),
+  ])
+  assert.equal(group.variants.length, 1)
+  assert.equal(group.variants[0].observed_count, 2)
+  assert.deepEqual(group.variants[0].event_ids.sort(), ['md-x', 'md-y'])
+})
+
 test('For You splits unrelated providers out of a matched model group', () => {
   const relevant = item({ id: 'md-a', provider: 'alpha', model: 'glm-5.3-flash' })
   relevant.relevance = { relevant: true, reasons: ['configured_provider'] }
@@ -458,6 +548,11 @@ test('a published briefing wins; a malformed one is ignored, never fatal', () =>
     sections: [{ id: 'biggest_reductions', entries: [{ headline: '', provider: 'alpha' }, null] }],
   })
   assert.deepEqual(partial.sections[0].entries, [])
+  // A collapsed variant keeps its observed count through sanitising.
+  const counted = S.newsSanitiseBriefing({ version: 1, sections: [{ id: 'biggest_reductions',
+    entries: [{ headline: 'ok', provider: 'acme',
+      variants: [{ headline: 'row', provider: 'acme', observed_count: 3 }] }] }] })
+  assert.equal(counted.sections[0].entries[0].variants[0].observed_count, 3)
 })
 
 test('a published briefing shows personal headlines only', () => {

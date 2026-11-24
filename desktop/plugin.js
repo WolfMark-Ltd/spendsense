@@ -12700,7 +12700,16 @@ const ratesMissingPct = (comparison, key) =>
 // source to another.
 const NEWS_EDITORIAL_VARIANT_FIELDS = ['event_type', 'headline_code', 'headline_params',
   'headline', 'provider', 'model', 'observed_at', 'event_ids',
-  'source_url', 'provenance', 'confidence']
+  'source_url', 'provenance', 'confidence', 'observed_count']
+
+/** The "observed N times" suffix for a collapsed variant row, or null for a
+ * lone row. Defensive: a hostile or hand-written briefing can carry any
+ * finite number, so only integers above one render, floored. */
+function newsVariantObservedSuffix(variant, t) {
+  const count = Math.floor(Number(variant?.observed_count))
+  if (!Number.isFinite(count) || count < 2) return null
+  return ` — ${t('newsVariantObserved', count)}`
+}
 
 /** Compact per-provider row inside a family group: localisable, never a copy. */
 function newsEditorialVariant(entry) {
@@ -12739,6 +12748,60 @@ function newsEditorialNewest(members) {
  * Group entries under their model family without merging identity: one grouped
  * row per family, with every exact provider/model variant kept underneath.
  */
+/**
+ * Identity of one member's DISPLAYED row: the provider and model printed
+ * beside it plus everything the row text is computed from. Members that
+ * share it would render byte-identical rows (a re-observed transition, a
+ * recurrence, a central echo of a local find), so the group collapses
+ * them into one row with an observed count. Evidence is untouched: every
+ * member keeps its event id in the union below and in All Updates.
+ */
+function newsEditorialRowKey(entry) {
+  const params = entry?.headline_params && typeof entry.headline_params === 'object'
+    ? entry.headline_params : {}
+  const ordered = {}
+  // newsHeadlineText never renders these params in a row; keying on them
+  // would keep byte-identical rows (re-observations, recurrences, mixed
+  // moves whose percentages differ, launches whose confidence differs)
+  // separate. Every other param feeds the text, including first_seen, so
+  // distinct rows never collapse.
+  for (const key of Object.keys(params).sort()) {
+    if (['observed_at', 'effective_at', 'also_moved', 'raised_pct', 'cut_pct',
+      'raised_values', 'cut_values', 'confidence'].includes(key)) continue
+    ordered[key] = params[key]
+  }
+  return JSON.stringify([entry?.event_type || '', entry?.provider || '', entry?.model || '',
+    entry?.headline_code || '', entry?.headline || '', ordered])
+}
+
+/**
+ * Collapse same-row members, representative first; every id survives.
+ * Members whose non-empty source URLs conflict stay separate (the merge
+ * layer's own rule): distinct observations must never collapse away each
+ * other's evidence links. A missing URL never conflicts.
+ */
+function newsEditorialCollapse(sorted) {
+  const runs = new Map()
+  for (const member of sorted) {
+    const key = newsEditorialRowKey(member)
+    if (!runs.has(key)) runs.set(key, [])
+    const buckets = runs.get(key)
+    const open = buckets.find(run => run.every(other => !newsUrlsConflict(other, member)))
+    if (open) open.push(member)
+    else buckets.push([member])
+  }
+  return [...runs.values()].flatMap(buckets => buckets).map(members => {
+    const [first] = members
+    if (members.length < 2) return newsEditorialVariant(first)
+    return {
+      ...newsEditorialVariant(first),
+      event_ids: members.flatMap(row => row.event_ids || []),
+      observed_at: newsEditorialNewest(members) || first.observed_at,
+      observed_count: members.length,
+    }
+  })
+}
+
 function newsEditorialGroup(entries) {
   const buckets = new Map()
   const loose = []
@@ -12767,7 +12830,9 @@ function newsEditorialGroup(entries) {
       providers,
       event_ids: sorted.flatMap(row => row.event_ids || []),
       score: Math.max(...sorted.map(row => row.score)),
-      variants: sorted.slice(0, NEWS_EDITORIAL_VARIANT_LIMIT).map(newsEditorialVariant),
+      // Collapse precedes truncation: identical rows must never crowd a
+      // distinct transition out of the visible variant list.
+      variants: newsEditorialCollapse(sorted).slice(0, NEWS_EDITORIAL_VARIANT_LIMIT),
     }
     if (sorted.length > 1) {
       const label = head.family_label || head.model
@@ -12986,7 +13051,7 @@ function newsSanitiseBriefing(raw) {
       'confidence', 'provenance']) out[key] = text(entry[key], 500)
     out.source_url = safeUrl(entry.source_url)
     if (!out.headline || !out.provider) return null
-    for (const key of ['score', 'family_event_count']) {
+    for (const key of ['score', 'family_event_count', 'observed_count']) {
       if (typeof entry[key] === 'number' && Number.isFinite(entry[key])) out[key] = entry[key]
     }
     // F138: the backend's personal flag survives sanitising so For You can
@@ -13462,7 +13527,10 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
           jsxs('li', { 'data-news-story-variant': `${variant.provider || ''}:${variant.model || ''}`,
             children: [
               jsx('span', { className: 'wm-news-storyvariantprovider', children: variant.provider || '' }),
-              jsx('span', { className: 'wm-news-storyvarianttext', children: newsHeadlineText(variant, t) }),
+              jsx('span', { className: 'wm-news-storyvarianttext', children: [
+                newsHeadlineText(variant, t),
+                newsVariantObservedSuffix(variant, t),
+              ].filter(Boolean) }),
             ] }, `v-${variant.provider || ''}-${variant.model || ''}-${index}`)) })
       : null,
     jsxs('div', { className: 'wm-news-storyfoot', children: [
@@ -15876,6 +15944,7 @@ const I18N = {
     newsKindOther: 'Update',
     newsStoryDetails: 'Details',
     newsStoryEvents: 'Event records',
+    newsVariantObserved: count => `observed ${count} times`,
     newsStoryObservations: n => `Confirmed across ${n} catalogue observation${n === 1 ? '' : 's'}.`,
     newsHeadVerbCut: 'cuts',
     newsHeadVerbRaise: 'raises',
@@ -17684,6 +17753,7 @@ const I18N = {
     newsKindOther: '动态',
     newsStoryDetails: '详情',
     newsStoryEvents: '事件记录',
+    newsVariantObserved: count => `已观察 ${count} 次`,
     newsStoryObservations: n => `经 ${n} 次目录观察确认。`,
     newsHeadVerbCut: '下调',
     newsHeadVerbRaise: '上调',
@@ -18786,7 +18856,8 @@ export const __test = {
   // WP22 editorial layer: deterministic briefing, family grouping and headlines.
   newsModelFamily, newsFamilyLabel, newsPreviewSignal, newsEditorialComparison,
   newsEditorialEventType, newsEditorialSignals, newsEditorialScore, newsEditorialEntry,
-  newsEditorialHeadline, newsEditorialVariant, newsEditorialGroup, newsEditorialMaterial,
+  newsEditorialHeadline, newsEditorialVariant, newsEditorialGroup, newsEditorialCollapse,
+  newsEditorialRowKey, newsVariantObservedSuffix, newsEditorialMaterial,
   newsBuildBriefing, newsBriefingFor, newsFilterBriefingPersonal, newsSanitiseBriefing, newsWithinWindow,
   newsInstant, newsRateText, $newsFocus, $newsDetailsOpen, newsDetailsPanelId,
   newsHeadlineText, newsSectionTitle, newsSectionEntries, newsFocusGroup,
