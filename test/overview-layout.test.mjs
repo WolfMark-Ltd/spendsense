@@ -96,7 +96,10 @@ if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(win
         for (const theme of ['dark', 'light']) {
           const id = `w${width}-${theme}`
           const viewportWidth = width + 40
-          const viewportHeight = 2400
+          // 2500 (was 2400): the F19 Subscription value strip adds one
+          // flowing line to the pane. Bumped by the measured worst case
+          // (~65px at 268px with two fee currencies) plus margin, not reset.
+          const viewportHeight = 2500
           const singleDom = execFileSync(CHROME, [
             '--headless', '--disable-gpu', '--no-sandbox', `--user-data-dir=${join(work, `chrome-single-${id}-${locale}`)}`,
             '--virtual-time-budget=5000', `--window-size=${viewportWidth},${viewportHeight}`, '--dump-dom',

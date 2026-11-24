@@ -1225,6 +1225,49 @@ test('a comparable headline tells whether membership is worthwhile without claim
   assert.match(evenVerdict.textContent, /matches fees/)
 })
 
+test('a theoretical headline states components without a value verdict', async () => {
+  // F116/F117: figures stand, direction stays unstated, qualifier names why.
+  const data = econFixture()
+  data.headline.verdict = 'theoretical'
+  data.headline.theoretical = true
+  data.headline.fx_aged = false
+  const verdict = (await renderSection(data)).container.querySelector('[data-econ-verdict]')
+  assert.equal(verdict.dataset.econVerdict, 'partial')
+  assert.match(verdict.textContent, /Theoretical comparison on observed usage/)
+  assert.match(verdict.textContent, /USD 19\.37 in known fees vs \$2\.00 of attributed usage/)
+  assert.doesNotMatch(verdict.textContent, /favours|exceed|matches fees/)
+  const fx = econFixture()
+  fx.headline.verdict = 'theoretical'
+  fx.headline.theoretical = false
+  fx.headline.fx_aged = true
+  const fxVerdict = (await renderSection(fx)).container.querySelector('[data-econ-verdict]')
+  assert.match(fxVerdict.textContent, /Indicative comparison/)
+  assert.match(fxVerdict.textContent, /over 30 days old/)
+})
+
+test('a failed provider call is logged neutrally and kept out of attention', async () => {
+  // F110: the explanation lives in the blocker log; the attention summary
+  // stays quiet because a past provider error is not something to fix.
+  const data = econFixture()
+  data.groups = [{ currency: 'USD', monthly_fees: 20, window_fees: 19.37, fee_complete: true,
+    window_fee_complete: true, usage_usd: 2, difference_usd: -17.37, converted: false,
+    fx: null, status: 'ok', notes: [], blockers: [
+      { account_id: 'test:default', code: 'call_failed' },
+    ] }]
+  data.accounts[0].blockers = [{ code: 'call_failed' }]
+  const { container } = await renderSection(data)
+  const log = container.querySelector('#wm-cost-blocker-log')
+  assert.match(log.textContent, /provider call failed/)
+  assert.match(log.textContent, /still counted/)
+  assert.match(log.textContent, /cannot be priced/)
+  assert.doesNotMatch(log.textContent, /unresolved comparison blocker/)
+  const attention = await renderAttention({ groups: data.groups,
+    econAccounts: [{ account_id: 'test:default', label: 'Test account', family: 'test' }] })
+  assert.equal(attention.container.querySelector('.wm-cost-attn-count'), null,
+    'no attention item is raised for a failed provider call')
+  assert.match(attention.text(), /Nothing needs attention/)
+})
+
 test('a comparable headline tells the worth-it story in Simplified Chinese', async () => {
   const previousTranslator = i18nBackend.t
   i18nBackend.t = (key, ...args) => {

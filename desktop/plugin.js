@@ -4988,6 +4988,7 @@ function econBlockerText(blocker, t) {
   if (code === 'tier_rate_unavailable') return t('econBlockTierRate')
   if (['cache_rate_unavailable', 'missing_cache_rate', 'missing_cache_read_rate',
     'missing_cache_write_rate'].includes(code)) return t('econBlockCacheRate')
+  if (code === 'call_failed') return t('econBlockCallFailed')
   return code ? t('econBlockGeneric', code) : t('econBlockGeneric', t('econBlockUnknown'))
 }
 
@@ -5027,8 +5028,12 @@ const COSTS_ATTENTION_HISTORY_CODES = new Set([
 const COSTS_KNOWN_BLOCKER_CODES = new Set([
   ...COSTS_ATTENTION_FIX_CODES, ...COSTS_ATTENTION_HISTORY_CODES,
   'tier_rate_unavailable', 'cache_rate_unavailable', 'missing_cache_rate',
-  'missing_cache_read_rate', 'missing_cache_write_rate'
+  'missing_cache_read_rate', 'missing_cache_write_rate', 'call_failed'
 ])
+/** F110: a past provider error is neutral information, not something to fix.
+ * These codes keep their sentence in the per-account blocker log but never
+ * appear under "What needs attention?". */
+const COSTS_NON_ATTENTION_CODES = new Set(['call_failed'])
 function costsBlockerCategory(code) {
   if (COSTS_ATTENTION_FIX_CODES.has(code)) return 'fix'
   if (COSTS_ATTENTION_HISTORY_CODES.has(code)) return 'history'
@@ -5225,6 +5230,14 @@ function econVerdict(headline, windowLines, t) {
     return null
   }
   if (usage == null || !knownFees.length) return null
+  // F116/F117: a theoretical or indicative headline keeps its figures but
+  // never a definitive verdict. Theoretical wins when both apply; the
+  // headline notes carry the FX-age detail either way.
+  if (headline.verdict === 'theoretical') {
+    const key = headline.theoretical === false && headline.fx_aged
+      ? 'econVerdictIndicative' : 'econVerdictTheoretical'
+    return { tone: 'partial', text: t(key, knownFees.join(' · '), analyticMoney(usage)) }
+  }
   const rows = Array.isArray(headline.fees_window_by_currency) ? headline.fees_window_by_currency : []
   if (usage === 0 && rows.every(row => finiteValue(row?.amount) === 0)) return null
   const fees = knownFees.join(' · ')
@@ -6392,7 +6405,10 @@ function CostsAttention({ groups, econAccounts, unknownFees, fxError, onRetryFx,
   if (unknownFees?.count > 0 && !collected.some(entry => entry.code === 'subscription_fee_missing')) {
     items.push({ code: 'subscription_fee_missing', currency: null, accountIds: [], accountLabels: unknownFees.labels || [] })
   }
-  for (const entry of collected) items.push(entry)
+  for (const entry of collected) {
+    if (COSTS_NON_ATTENTION_CODES.has(entry.code)) continue
+    items.push(entry)
+  }
   if (fxError) items.push({ code: 'fx_read_error', currency: null, accountIds: [] })
   const byCategory = { fix: [], history: [], unavailable: [] }
   for (const item of items) {
@@ -6866,6 +6882,40 @@ function settledDesktopMonth(ledger, now = new Date()) {
   }
 }
 
+/** F19: the concise Subscription value headline on Overview. One flowing
+ * line — label, compact figures, status, inline link — because the
+ * single-pane layout budget has no room for a stacked section. Blockers
+ * and fixes live in Costs, never here. Fail-closed: anything but a
+ * readable both-sided headline says so plainly instead of implying a
+ * comparison. */
+function OverviewEconomics({ economics, identity }) {
+  const t = usePluginI18n(ID)
+  const ready = economics?.data?.identity === identity && membershipIdentityCurrent(identity)
+  const data = ready ? economics.data : null
+  const loading = !data && (economics?.isPending || economics?.isLoading)
+  const headline = data?.headline || null
+  const knownFees = headline
+    ? econWindowLines(headline.fees_window_by_currency, data?.groups, t).filter(line => line !== '—')
+    : []
+  const usage = headline ? finiteValue(headline.usage_usd) : null
+  const status = !headline ? '' : headline.verdict === 'theoretical'
+    ? (headline.theoretical === false && headline.fx_aged
+      ? t('econOverviewIndicative') : t('econOverviewTheoretical'))
+    : econStatusLabel(t, headline.status)
+  const line = loading ? t('econOverviewReading')
+    : !headline ? t('econOverviewError')
+    : knownFees.length && usage != null
+      ? t('econOverviewSmall', knownFees.join(' · '), analyticMoney(usage), status)
+      : t('econOverviewNone')
+  return jsxs('p', { className: 'wm-scope-note wm-overview-econ',
+    'data-overview-econ': true, children: [
+    jsx('strong', { children: t('econOverviewLabel') }),
+    jsx('span', { children: ` — ${line} ` }),
+    jsx('button', { type: 'button', className: 'wm-source-link',
+      onClick: () => goLedgerTab('costs'), children: t('econOverviewSeeCosts') })
+  ] })
+}
+
 function overviewTopModels(rows, limit = 4) {
   return (Array.isArray(rows) ? rows : [])
     .map(row => ({ ...row, calls: finiteValue(row?.calls) }))
@@ -6912,7 +6962,7 @@ function OverviewPage() {
   const identity = useValue($membershipIdentity)
   const analytics = useQuery(overviewAnalyticsQuery(identity))
   const accounts = useQuery(membershipQuery(false, identity))
-  useQuery(economicsQuery(identity))
+  const economics = useQuery(economicsQuery(identity))
   // Stored allowance readings only: native=false can never trigger a
   // provider request, so attention stays passive.
   const weather = useQuery(weatherQuery(identity, false))
@@ -7040,6 +7090,7 @@ function OverviewPage() {
         jsx('span', { children: t('ovScopeNote') }),
         jsx(InfoTip, { id: 'overview-periods', label: t('ovScopeInfoLabel'), text: t('ovScopeInfo'), wide: true })
       ] }),
+      jsx(OverviewEconomics, { economics, identity }),
       jsxs('div', { className: 'wm-overview-panels', children: [
       jsxs(ProductCard, { as: 'section', className: 'wm-product-section wm-overview-attention', id: 'wm-needs-attention', 'aria-label': items.length || unpriced ? t('ovAttention') : t('ovContinue'), children: [
         jsxs('h2', { children: [
@@ -14900,6 +14951,10 @@ const I18N = {
       `Partial evidence: ${fees} in known fees — the full comparison is unavailable.`,
     econVerdictPartialUsage: usage =>
       `Partial evidence: ${usage} of attributed usage — the full comparison is unavailable.`,
+    econVerdictTheoretical: (fees, usage) =>
+      `Theoretical comparison on observed usage: ${fees} in known fees vs ${usage} of attributed usage — unattributed usage may belong to a quiet subscription, so no value verdict is given.`,
+    econVerdictIndicative: (fees, usage) =>
+      `Indicative comparison: ${fees} in known fees vs ${usage} of attributed usage — the FX rate is over 30 days old, so no definitive verdict is given.`,
     econVerdictSeeAttention: 'See what blocks it',
     econWorthEven: (usage, fees) =>
       `${usage} of API-equivalent usage attributed to memberships, against ${fees} in fees — usage value matches fees this window. Estimated value, not cash saved.`,
@@ -14957,6 +15012,7 @@ const I18N = {
     econBlockBaseRate: 'A base price is missing; check the provider and model in Usage.',
     econBlockTierRate: 'A tier price is unavailable; check the provider’s price evidence.',
     econBlockCacheRate: 'A cache rate is unavailable; check the provider’s cache price evidence.',
+    econBlockCallFailed: 'A provider call failed: its usage is still counted, but its API-equivalent value cannot be priced.',
     econBlockGeneric: reason => `This account has an unresolved comparison blocker (${reason}). Review its fee and usage evidence in Memberships, Costs and Usage.`,
     econBlockGenericShort: 'An unrecognised comparison issue needs review; the exact code is in the blocker log.',
     econBlockerLogTitle: 'Per-account blocker log',
@@ -15000,7 +15056,10 @@ const I18N = {
     econOverviewError: 'Subscription economics could not be read for this connection.',
     econOverviewReading: 'Reading subscription economics…',
     econOverviewNone: 'No comparison is available. See Costs.',
-    econOverviewSmall: (f, w, s, u) => `${f} · ${w} ${s} · ${u} usage. See Costs.`,
+    econOverviewSeeCosts: 'See Costs',
+    econOverviewSmall: (fees, usage, status) => `${fees} in fees · ${usage} attributed usage · ${status}.`,
+    econOverviewTheoretical: 'Theoretical — no verdict',
+    econOverviewIndicative: 'Indicative — no verdict',
     // Overview (Phase B).
     ovTitle: 'Overview',
     ovSubtitle: 'See captured usage value, backend estimates, saved account fees and what needs attention.',
@@ -15687,7 +15746,7 @@ const I18N = {
     ovNoteBilling: 'Billing mix is the latest route/model classification, not a per-call invoice. Only included routes have known $0 marginal billing.',
     ovNotePrevious: 'Previous totals cover the equal-length window immediately before this one under the same filters, for comparison only; deltas are omitted when that window has no recorded calls and it may predate recording.',
     ovNoteGap: (count, reason) => `Economics excluded ${count} calls: ${reason}.`,
-    ovGapCallFailed: 'Call failed, so usage could not be valued',
+    ovGapCallFailed: 'Provider call failed; usage is counted but cannot be priced',
     ovGapUsageMissing: 'Usage data is missing',
     ovGapProviderMissing: 'Provider is not recorded',
     ovGapModelMissing: 'Model is not recorded',
@@ -16239,7 +16298,7 @@ const I18N = {
     usagePricingPartialCalls: (pct, calls, fallback) => `Partial · ${pct}% priced · ${exactTokens(calls)} ${calls===1?'call':'calls'} incomplete${fallback ? ' · fallback rates' : ''}`,
     usagePricingCallsNoTokens: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no token usage; cost is unavailable.`,
     usagePricingCallsUnknown: count => `Price evidence incomplete · ${exactTokens(count)} ${count===1?'call':'calls'}.`,
-    usagePricingCallFailed: count => `${exactTokens(count)} ${count===1?'call':'calls'} failed; cost cannot be estimated.`,
+    usagePricingCallFailed: count => `${exactTokens(count)} ${count===1?'call':'calls'} failed; usage is counted but cost cannot be estimated.`,
     usagePricingUsageMissing: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no usage data.`,
     usagePricingPriceMissing: count => `No matching rate · ${exactTokens(count)} ${count===1?'call':'calls'}.`,
     usagePricingProviderUnknown: count => `Provider unidentified · ${exactTokens(count)} ${count===1?'call':'calls'}.`,
@@ -16257,7 +16316,7 @@ const I18N = {
     usageCoverageRateBasis: 'API-equivalent totals use current catalogue rates. A partial amount is the priced subtotal; unknown values remain unknown, not zero.',
     usageCoverageBillingBasis: 'Billing shows the latest route/model classification, not per-call provider charges.',
     usageCoverageEconomicsLabel: calls => `Cache comparison excludes ${exactTokens(calls)} ${calls===1?'call':'calls'}:`,
-    usageCoverageCallFailed: count => `${exactTokens(count)} ${count===1?'call':'calls'} failed; cost cannot be estimated.`,
+    usageCoverageCallFailed: count => `${exactTokens(count)} ${count===1?'call':'calls'} failed; usage is counted but cost cannot be estimated.`,
     usageCoverageUsageMissing: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no token data.`,
     usageCoverageProviderUnknown: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no identified provider.`,
     usageCoverageProviderRateMissing: count => `${exactTokens(count)} ${count===1?'call has':'calls have'} no published provider rate.`,
@@ -16681,6 +16740,10 @@ const I18N = {
       `部分证据：已知费用 ${fees}——完整比较不可用。`,
     econVerdictPartialUsage: usage =>
       `部分证据：归属用量 ${usage}——完整比较不可用。`,
+    econVerdictTheoretical: (fees, usage) =>
+      `基于已观测用量的理论比较：已知费用 ${fees}，归属用量 ${usage}——未归属用量可能属于某个无用量订阅，因此不给出价值结论。`,
+    econVerdictIndicative: (fees, usage) =>
+      `参考性比较：已知费用 ${fees}，归属用量 ${usage}——汇率已超过 30 天，因此不给出确定性结论。`,
     econVerdictSeeAttention: '查看受阻原因',
     econWorthEven: (usage, fees) =>
       `归属会员的 API 等值用量为 ${usage}，费用为 ${fees}——本窗口用量价值与费用持平。仅为估算价值，不是实际节省的现金。`,
@@ -16738,6 +16801,7 @@ const I18N = {
     econBlockBaseRate: '缺少基础价格；请在“用量”中检查供应商和模型。',
     econBlockTierRate: '阶梯价格不可用；请检查供应商价格证据。',
     econBlockCacheRate: '缓存费率不可用；请检查供应商缓存价格证据。',
+    econBlockCallFailed: '提供方调用失败：其用量仍计入统计，但无法为其 API 等值估值。',
     econBlockGeneric: reason => `此账户有未解决的比较问题（${reason}）。请在“会员”、“费用”和“用量”中检查费用与用量证据。`,
     econBlockGenericShort: '有一项无法识别的比较问题需要检查；确切代码见问题日志。',
     econBlockerLogTitle: '各帐户问题日志',
@@ -16781,7 +16845,10 @@ const I18N = {
     econOverviewError: '无法读取此连接的订阅经济分析。',
     econOverviewReading: '正在读取订阅经济分析…',
     econOverviewNone: '无可用的比较。请查看“费用”。',
-    econOverviewSmall: (f, w, s, u) => `${f} · ${w} ${s} · 用量 ${u}。请查看“费用”。`,
+    econOverviewSeeCosts: '查看“费用”',
+    econOverviewSmall: (fees, usage, status) => `费用 ${fees} · 归属用量 ${usage} · ${status}。`,
+    econOverviewTheoretical: '理论比较——无结论',
+    econOverviewIndicative: '参考比较——无结论',
     // 总览（第二阶段）。
     ovTitle: '总览',
     ovSubtitle: '查看已记录用量价值、后端估算、已保存账户费用和待处理事项。',
@@ -17463,7 +17530,7 @@ const I18N = {
     ovNoteBilling: 'Billing mix 是最新的路由/模型分类，不是逐调用账单。只有 included 路由的边际账单确认为 $0。',
     ovNotePrevious: 'Previous 总量覆盖同一过滤条件下紧邻的前一个等长窗口，仅用于对比；当前一窗口无记录调用时省略差值，且该窗口可能早于记录起点。',
     ovNoteGap: (count, reason) => `Economics 已排除 ${count} 次调用：${reason}。`,
-    ovGapCallFailed: '调用失败，无法估值用量',
+    ovGapCallFailed: '提供方调用失败；用量已统计，但无法估值',
     ovGapUsageMissing: '缺少用量数据',
     ovGapProviderMissing: '未记录供应商',
     ovGapModelMissing: '未记录模型',
@@ -18015,7 +18082,7 @@ const I18N = {
     usagePricingPartialCalls: (pct, calls, fallback) => `部分 · ${pct}% 已定价 · ${exactTokens(calls)} 次调用不完整${fallback ? ' · 回退单价' : ''}`,
     usagePricingCallsNoTokens: count => `${exactTokens(count)} 次调用没有令牌用量，成本不可用。`,
     usagePricingCallsUnknown: count => `价格证据不完整 · ${exactTokens(count)} 次调用。`,
-    usagePricingCallFailed: count => `${exactTokens(count)} 次调用失败，无法估算成本。`,
+    usagePricingCallFailed: count => `${exactTokens(count)} 次调用失败，用量已统计，但无法估算成本。`,
     usagePricingUsageMissing: count => `${exactTokens(count)} 次调用缺少用量数据。`,
     usagePricingPriceMissing: count => `没有匹配单价 · ${exactTokens(count)} 次调用。`,
     usagePricingProviderUnknown: count => `供应商未知 · ${exactTokens(count)} 次调用。`,
@@ -18033,7 +18100,7 @@ const I18N = {
     usageCoverageRateBasis: 'API 等值总额按当前目录单价计算。部分金额为已定价小计；未知仍是未知，不当作零。',
     usageCoverageBillingBasis: '计费显示最近线路/模型分类，不是逐次供应商费用。',
     usageCoverageEconomicsLabel: calls => `缓存比较排除了 ${exactTokens(calls)} 次调用：`,
-    usageCoverageCallFailed: count => `${exactTokens(count)} 次调用失败，无法估算其成本。`,
+    usageCoverageCallFailed: count => `${exactTokens(count)} 次调用失败，用量已统计，但无法估算其成本。`,
     usageCoverageUsageMissing: count => `${exactTokens(count)} 次调用没有令牌数据。`,
     usageCoverageProviderUnknown: count => `${exactTokens(count)} 次调用没有已识别的供应商。`,
     usageCoverageProviderRateMissing: count => `${exactTokens(count)} 次调用缺少已发布的供应商单价。`,
@@ -18479,6 +18546,7 @@ export const __test = {
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   EconomicsGroupRow, CostsAttention, costsBlockerCategory, costsAttentionActionFor, collectCostsBlockers,
+  econBlockerText, econBlockerDestination, COSTS_NON_ATTENTION_CODES,
   econGroupFeeScope, econVerdict,
   costsUnknownFeeAccounts, trendMonthComparable, trendWarrantsInline, costsPricingSourceLabel, scrollToCostsAttention,
   $fxDraft, $fxSaving, $fxNotice,
@@ -18486,7 +18554,7 @@ export const __test = {
   CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, AboutPage, goAboutFaq, CopyableDiagnostic, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
   $settingsConfirmation, $modelRefreshState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
-  settledDesktopMonth, analyticsListDisplay, desktopTodayText, desktopTodayAmount, desktopTodayTooltip, overviewTopModels, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
+  settledDesktopMonth, analyticsListDisplay, desktopTodayText, desktopTodayAmount, desktopTodayTooltip, overviewTopModels, OverviewEconomics, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, openUsagePricingCoverage, $analytics, $analyticsFocus,
   setRest: value => { $backendCompatibility.set([]); rest = wrapBackendTransport(value) },
   getRest: () => rest,

@@ -541,6 +541,34 @@ class ComparisonTests(EconomicsCase):
                          + coverage["unattributed_tokens"]
                          + coverage["ambiguous_tokens"], 1_500_000)
 
+    def test_zero_use_paid_with_unattributed_usage_is_theoretical(self):
+        # F116 option 3: the zero is not proven when unattributed usage
+        # exists that could belong to the account. Figures stand; the
+        # definitive verdict is withheld.
+        self.anchor_coverage()
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        self.create_events([{"ts": NOW - 90, "provider": "mystery", "model": "m",
+                             "input_tokens": 500_000}])
+        result = self.report(days=30, trend_months=0)
+        headline = result["headline"]
+        self.assertEqual(headline["status"], "ok")
+        self.assertLess(headline["difference_usd"], 0)
+        self.assertTrue(headline["theoretical"])
+        self.assertEqual(headline["verdict"], "theoretical")
+        codes = [c["code"] for c in headline["note_codes"]]
+        self.assertIn("econ_head_theoretical", codes)
+
+    def test_zero_use_paid_with_full_attribution_stays_definitive(self):
+        # F116: a zero nothing observed could belong to is a proven zero.
+        self.anchor_coverage()
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        self.create_events([])
+        result = self.report(days=30, trend_months=0)
+        headline = result["headline"]
+        self.assertEqual(headline["status"], "ok")
+        self.assertFalse(headline["theoretical"])
+        self.assertEqual(headline["verdict"], "definitive")
+
     def test_unpriced_usage_marks_the_comparison_partial(self):
         self.anchor_coverage()
         self.write_store([account("a", "test", plan_id="test.plus")])
@@ -678,6 +706,48 @@ class CurrencyTests(EconomicsCase):
         self.create_events([{"ts": NOW - 100, "input_tokens": 1_000_000},
                             {"ts": NOW - 90, "provider": "other",
                              "input_tokens": 500_000}])
+
+    def test_aged_fx_rate_keeps_figures_but_withholds_verdict(self):
+        # F117: a rate over 30 days old at the valuation date still
+        # converts, but the comparison is indicative, not definitive.
+        self.two_currency_store()
+        E.save_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                    "as_of": "2026-09-01", "source": "Bank of England spot"}],
+                  self.fx)
+        result = self.report(days=30, trend_months=0)
+        groups = {g["currency"]: g for g in result["groups"]}
+        self.assertTrue(groups["GBP"]["converted"])
+        self.assertIsNotNone(groups["GBP"]["difference_usd"])
+        self.assertTrue(groups["GBP"]["fx_aged"])
+        self.assertEqual(groups["GBP"]["fx_age_days"], 60)
+        self.assertFalse(groups["USD"]["fx_aged"])
+        headline = result["headline"]
+        self.assertTrue(headline["fx_aged"])
+        self.assertEqual(headline["verdict"], "theoretical")
+
+    def test_thirty_day_old_rate_is_the_oldest_definitive_rate(self):
+        # F117 boundary: exactly 30 days old still supports a verdict.
+        self.two_currency_store()
+        E.save_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                    "as_of": "2026-10-01", "source": "Bank of England spot"}],
+                  self.fx)
+        result = self.report(days=30, trend_months=0)
+        groups = {g["currency"]: g for g in result["groups"]}
+        self.assertEqual(groups["GBP"]["fx_age_days"], 30)
+        self.assertFalse(groups["GBP"]["fx_aged"])
+        self.assertEqual(result["headline"]["verdict"], "definitive")
+
+    def test_thirty_one_day_old_rate_is_indicative(self):
+        # F117 boundary: 31 days old withholds the definitive verdict.
+        self.two_currency_store()
+        E.save_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                    "as_of": "2026-09-30", "source": "Bank of England spot"}],
+                  self.fx)
+        result = self.report(days=30, trend_months=0)
+        groups = {g["currency"]: g for g in result["groups"]}
+        self.assertEqual(groups["GBP"]["fx_age_days"], 31)
+        self.assertTrue(groups["GBP"]["fx_aged"])
+        self.assertEqual(result["headline"]["verdict"], "theoretical")
 
     def test_currencies_are_never_combined_without_fx(self):
         self.two_currency_store()

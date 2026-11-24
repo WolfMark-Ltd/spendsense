@@ -428,6 +428,56 @@ test('econVerdict explains the membership comparison without claiming cash savin
   assert.match(zhBoth.text, /完整比较不可用/)
 })
 
+test('econVerdict withholds a definitive verdict for theoretical and indicative headlines', () => {
+  const headline = (over = {}) => ({ status: 'ok', usage_usd: 5, difference_usd: -15,
+    fees_window_by_currency: [{ currency: 'USD', amount: 20 }],
+    verdict: 'theoretical', theoretical: true, fx_aged: false, ...over })
+  const lines = ['USD 20.00']
+  // F116: a negative theoretical comparison is never narrated as a loss.
+  const theoretical = S.econVerdict(headline(), lines, en)
+  assert.equal(theoretical.tone, 'partial')
+  assert.match(theoretical.text, /Theoretical comparison on observed usage/)
+  assert.match(theoretical.text, /USD 20\.00/)
+  assert.match(theoretical.text, /\$5\.00/)
+  assert.doesNotMatch(theoretical.text, /exceed|favours|matches fees/)
+  // F117: an aged FX rate alone reads as indicative, not theoretical.
+  const indicative = S.econVerdict(headline({ theoretical: false, fx_aged: true }), lines, en)
+  assert.equal(indicative.tone, 'partial')
+  assert.match(indicative.text, /Indicative comparison/)
+  assert.match(indicative.text, /over 30 days old/)
+  assert.doesNotMatch(indicative.text, /exceed|favours/)
+  // Theoretical wins when both apply; the headline notes carry the FX detail.
+  const both = S.econVerdict(headline({ fx_aged: true }), lines, en)
+  assert.match(both.text, /Theoretical comparison/)
+  // An explicit definitive verdict and a missing flag both narrate normally.
+  const definitive = S.econVerdict(headline({ verdict: 'definitive', theoretical: false }), lines, en)
+  assert.equal(definitive.tone, 'behind')
+  const legacy = S.econVerdict({ status: 'ok', usage_usd: 5, difference_usd: -15,
+    fees_window_by_currency: [{ currency: 'USD', amount: 20 }] }, lines, en)
+  assert.equal(legacy.tone, 'behind',
+    'an older backend without verdict flags keeps the previous behaviour')
+  const zhTheoretical = S.econVerdict(headline(), lines, zh)
+  assert.match(zhTheoretical.text, /理论比较/)
+  assert.doesNotMatch(zhTheoretical.text, /有利|超出/)
+  const zhIndicative = S.econVerdict(headline({ theoretical: false, fx_aged: true }), lines, zh)
+  assert.match(zhIndicative.text, /参考性比较/)
+})
+
+test('a failed provider call is explained neutrally and kept out of attention', () => {
+  // F110: the sentence names the failure, the counted usage and the
+  // unpriceable value — and the code never routes to attention or an action.
+  const sentence = S.econBlockerText({ code: 'call_failed' }, en)
+  assert.match(sentence, /provider call failed/)
+  assert.match(sentence, /still counted/)
+  assert.match(sentence, /cannot be priced/)
+  assert.doesNotMatch(sentence, /unresolved comparison blocker/)
+  assert.equal(S.econBlockerText({ code: 'call_failed' }, zh),
+    zh('econBlockCallFailed'))
+  assert.equal(S.econBlockerDestination({ code: 'call_failed' }), null,
+    'nothing about a past provider error links anywhere')
+  assert.ok(S.COSTS_NON_ATTENTION_CODES.has('call_failed'))
+})
+
 test('the Costs stylesheet gives every disclosure a state-changing chevron', () => {
   for (const selector of ['.wm-econ-disclosure>summary::before',
     '.wm-econ-disclosure[open]>summary::before',

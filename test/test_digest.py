@@ -1729,6 +1729,50 @@ class Wp21FxAndConfidenceTests(DigestCase):
         self.assertNotIn("Account test:mystery: no usage", notes)
         self.assertIn("fee(s) are unknown", notes)
 
+    def test_theoretical_zero_use_qualifies_the_export(self):
+        # F116: a paid zero-use account with unattributed usage elsewhere
+        # keeps its figures but the export withholds a value verdict.
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([
+            {"input_tokens": 10, "ts": NOW - 40 * DAY},
+            {"provider": "mystery", "model": "m", "input_tokens": 500_000,
+             "ts": NOW - 3 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(0)
+        result = self.report()
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("treat the comparison as theoretical on observed usage",
+                      notes)
+        self.assertIn("theoretical", result["markdown"])
+
+    def test_aged_fx_rate_qualifies_the_export(self):
+        # F117: an over-30-day rate still converts, but the export marks
+        # the converted comparison indicative.
+        fx = self.write_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                             "as_of": "2026-09-01",
+                             "source": "Bank of England spot"}])
+        self.write_store([
+            account("test:default", "test", plan_id="test.plus",
+                    route_slugs=["test"]),
+            account("other:default", "other", plan_id="other.plus",
+                    route_slugs=["other"]),
+        ])
+        self.write_profiles([])
+        self.create_events([
+            {"provider": "test", "model": "m", "input_tokens": 10,
+             "ts": NOW - 40 * DAY},
+            {"provider": "test", "model": "m", "input_tokens": 1_000_000,
+             "ts": NOW - 1 * DAY},
+            {"provider": "other", "model": "m", "input_tokens": 1_000_000,
+             "ts": NOW - 2 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(2_000_000)
+        result = self.report(plans=self.gbp_plans(),
+                             catalogue=self.two_provider_book(), fx_file=fx)
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("treat the converted comparison as indicative", notes)
+
     def test_zero_use_notes_in_chinese(self):
         self.write_store([account("test:default", "test", plan_id="test.plus")])
         self.write_profiles([])

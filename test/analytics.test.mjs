@@ -118,7 +118,7 @@ test('all explorer columns sort deterministically, preserve negative savings and
  assert.equal(T.analyticsPricing({tokens:0,calls:1,priced_tokens:0,unpriced_tokens:0,unpriced_calls:1,list_usd:null,
   pricing_gaps:{provider_not_recorded:1}}),'Provider unidentified · 1 call.')
  assert.equal(T.analyticsPricing({tokens:10,calls:2,priced_tokens:0,unpriced_tokens:10,unpriced_calls:2,list_usd:null,
-  pricing_gaps:{call_failed:2}}),'2 calls failed; cost cannot be estimated.')
+  pricing_gaps:{call_failed:2}}),'2 calls failed; usage is counted but cost cannot be estimated.')
  assert.equal(T.analyticsPricing({tokens:10,calls:1,priced_tokens:0,unpriced_tokens:10,unpriced_calls:1,list_usd:null,
   pricing_gaps:{usage_missing:1}}),'1 call has no usage data.')
  assert.equal(T.analyticsPricing({tokens:10,calls:1,priced_tokens:0,unpriced_tokens:10,unpriced_calls:1,list_usd:null,
@@ -423,7 +423,7 @@ test('Data coverage explains separate token and call denominators, reasons and e
  assert.match(enText,/70\.0% of tokens priced \(700 of 1,000\)/)
  assert.match(enText,/3 of 6 calls priced; 3 incomplete/)
  assert.match(enText,/Provider charges are not recorded/)
- assert.match(enText,/1 call failed; cost cannot be estimated/)
+ assert.match(enText,/1 call failed; usage is counted but cost cannot be estimated/)
  assert.match(enText,/1 call has no token data/)
  assert.match(enText,/1 call has no identified provider/)
  assert.match(enText,/1 call has no published provider rate/)
@@ -448,7 +448,7 @@ test('Data coverage explains separate token and call denominators, reasons and e
   assert.match(zhText,/700\/1,000/)
   assert.match(zhText,/6 次调用中 3 次已定价，3 次不完整/)
   assert.match(zhText,/未记录供应商实际费用/)
-  assert.match(zhText,/1 次调用失败，无法估算其成本/)
+  assert.match(zhText,/1 次调用失败，用量已统计，但无法估算其成本/)
   assert.match(zhText,/没有令牌数据/)
   assert.match(zhText,/没有已识别的供应商/)
   assert.match(zhText,/没有可用单价/)

@@ -232,6 +232,27 @@ test('Overview ranks recorded calls, names models plainly and keeps their exact 
   }
 })
 
+test('Overview carries a concise Subscription value headline that links to Costs, in both languages', async () => {
+  // F19: one flowing line — label, compact figures, status, inline link.
+  // The fixture headline is unreadable, so the fail-closed None line renders.
+  for (const locale of LOCALES) {
+    const container = await boot({ locale })
+    const strip = container.querySelector('[data-overview-econ]')
+    assert.ok(strip, `${locale}: the Subscription value strip renders`)
+    assert.equal(strip.tagName, 'P', `${locale}: the strip is one flowing paragraph`)
+    assert.equal(flat(strip.querySelector('strong')?.textContent),
+      T.I18N[locale].econOverviewLabel, `${locale}: the strip is labelled plainly`)
+    assert.match(flat(strip.textContent),
+      new RegExp(T.I18N[locale].econOverviewNone.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `${locale}: an unreadable headline says so instead of implying a comparison`)
+    const links = [...strip.querySelectorAll('button')]
+      .filter(button => flat(button.textContent) === T.I18N[locale].econOverviewSeeCosts)
+    assert.equal(links.length, 1, `${locale}: exactly one See Costs link`)
+    await React.act(async () => links[0].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })))
+    assert.equal(T.$ledgerTab.get(), 'costs', `${locale}: the link navigates to Costs`)
+  }
+})
+
 test('the charges methodology links once to the About FAQ, in both languages', async () => {
   for (const locale of LOCALES) {
     const container = await boot({ locale })

@@ -563,6 +563,26 @@ def fx_citation(rate: Mapping[str, Any]) -> str:
             f"dated {rate['as_of']} ({rate['source']})")
 
 
+#: F117: an FX rate older than this many calendar days before the
+#: comparison's valuation date (the window end) still converts figures, but
+#: the converted comparison cannot support a definitive worth-it verdict.
+FX_VERDICT_MAX_AGE_DAYS = 30
+
+
+def fx_age_days(as_of: Any, valuation_epoch: float | None) -> int | None:
+    """Calendar age of an FX rate at the valuation date, or None if either
+    date is unknown. A future-dated rate counts as zero days old, never
+    negative: it is odd, but not stale."""
+    if valuation_epoch is None:
+        return None
+    rate_epoch = mem._epoch(as_of)
+    if rate_epoch is None:
+        return None
+    valuation = datetime.fromtimestamp(float(valuation_epoch), timezone.utc).date()
+    rated = datetime.fromtimestamp(rate_epoch, timezone.utc).date()
+    return max(0, (valuation - rated).days)
+
+
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
@@ -909,6 +929,12 @@ def build_economics_report(
         else:
             usage_total = round(sum(group_usage), 6)
         rate = fx_by_currency.get(currency)
+        # F117: the converted figure stands whatever the rate's age; only the
+        # definitive verdict is gated. Unknown valuation or rate dates fail
+        # open to unflagged, exactly like the digest's stale note.
+        rate_age_days = fx_age_days((rate or {}).get("as_of"), window_until) \
+            if currency != "USD" and rate else None
+        rate_aged = rate_age_days is not None and rate_age_days > FX_VERDICT_MAX_AGE_DAYS
         differences = [r["difference_usd"] for r in known]
         if unknown or any(d is None for d in differences):
             difference: float | None = None
@@ -951,6 +977,12 @@ def build_economics_report(
                 and not recording_covers_window:
             group_notes.append("Recording does not cover the full comparison window.")
             group_codes.append({"code": "econ_group_insufficient_history", "params": {}})
+        if rate_aged:
+            group_notes.append(
+                f"The {currency} rate is {rate_age_days} days old; "
+                "the converted figure is indicative, not a definitive verdict.")
+            group_codes.append({"code": "econ_group_fx_aged",
+                                "params": {"currency": currency, "age_days": rate_age_days}})
         groups.append({
             "currency": currency, "monthly_fees": fees, "window_fees": window_fees,
             "fee_accounts": len(known), "fee_complete": fee_complete,
@@ -960,10 +992,18 @@ def build_economics_report(
             "window_fee_complete": window_fee_complete,
             "unallocated_window_accounts": unallocated_window,
             "difference_usd": difference, "converted": bool(rate) and currency != "USD",
-            "fx": rate, "status": status, "notes": group_notes,
+            "fx": rate, "fx_age_days": rate_age_days, "fx_aged": rate_aged,
+            "status": status, "notes": group_notes,
             "note_codes": group_codes,
             "blockers": blockers,
         })
+
+    # Unattributed and ambiguous usage is computed before the headline: it is
+    # the concrete incomplete-coverage signal behind the F116 verdict rule.
+    unattributed_usage = _sum_usage([by_route[r] for r in mapping["unattributed"] if r in by_route])
+    ambiguous_usage = _sum_usage([by_route[r] for r in mapping["ambiguous"] if r in by_route])
+    attributed_tokens = sum(r["usage"]["tokens"] for r in subscription_rows + other_rows)
+    total_tokens = (analytics.get("totals") or {}).get("tokens") or 0
 
     headline_fees = [{"currency": g["currency"], "amount": g["monthly_fees"]}
                      for g in groups]
@@ -1010,10 +1050,39 @@ def build_economics_report(
         headline_notes.append(f"FX rates could not be read ({fx_doc['error']}); no conversion applied.")
         headline_codes.append({"code": "econ_head_fx_error", "params": {"error": str(fx_doc["error"])}})
 
-    unattributed_usage = _sum_usage([by_route[r] for r in mapping["unattributed"] if r in by_route])
-    ambiguous_usage = _sum_usage([by_route[r] for r in mapping["ambiguous"] if r in by_route])
-    attributed_tokens = sum(r["usage"]["tokens"] for r in subscription_rows + other_rows)
-    total_tokens = (analytics.get("totals") or {}).get("tokens") or 0
+    # F117: an aged rate in any converted group withholds the definitive
+    # headline verdict. The figures stand; only the verdict is gated.
+    headline_fx_aged = any(g.get("fx_aged") for g in groups)
+    if headline_fx_aged:
+        aged = sorted({g["currency"] for g in groups if g.get("fx_aged")})
+        headline_notes.append(
+            "The " + ", ".join(aged) + " rate is over "
+            f"{FX_VERDICT_MAX_AGE_DAYS} days old; the converted comparison "
+            "is indicative, not a definitive verdict.")
+        headline_codes.append({"code": "econ_head_fx_aged",
+                               "params": {"currencies": aged,
+                                          "max_age_days": FX_VERDICT_MAX_AGE_DAYS}})
+
+    # F116 option 3: a paid subscription with zero observed usage is only a
+    # proven zero when nothing observed could belong to it. Unattributed or
+    # ambiguous usage is the concrete coverage gap: until it is attributed,
+    # the comparison stays theoretical and no definitive verdict is given.
+    # (Recording gaps and unpriced usage already force partial status above.)
+    zero_use_paid = [r["account_id"] for r in comparable
+                     if (r.get("usage") or {}).get("calls") == 0
+                     and (r.get("monthly_equivalent") or {}).get("amount") is not None]
+    coverage_gap = (unattributed_usage.get("tokens") or 0) > 0 \
+        or (ambiguous_usage.get("tokens") or 0) > 0
+    headline_theoretical = bool(zero_use_paid) and coverage_gap
+    if headline_theoretical:
+        headline_notes.append(
+            "At least one paid subscription shows no observed usage while "
+            "unattributed or ambiguous usage exists; the comparison is "
+            "theoretical on observed usage, not a verdict on value.")
+        headline_codes.append({"code": "econ_head_theoretical",
+                               "params": {"accounts": zero_use_paid}})
+    headline_verdict = "theoretical" if headline_theoretical or headline_fx_aged \
+        else "definitive" if headline_status == "ok" else "none"
 
     trend = _build_trend(accounts, plans, book, moment, trend_months,
                          recording_since, event_db_path, fx_by_currency,
@@ -1026,6 +1095,9 @@ def build_economics_report(
         "fees_basis": monthly_factor_note(),
         "headline": {
             "status": headline_status,
+            "verdict": headline_verdict,
+            "theoretical": headline_theoretical,
+            "fx_aged": headline_fx_aged,
             "fees_monthly_by_currency": headline_fees,
             "fees_window_by_currency": headline_window,
             "usage_usd": headline_usage,

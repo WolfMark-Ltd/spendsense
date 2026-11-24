@@ -135,6 +135,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_fee_window_missing_complete": "Account {label}: no usage was attributed to this account in the fully observed window. Its {monthly} fee is known but cannot be allocated to this window because historical fee evidence is missing, so it enters neither the window fee total nor the comparison.",
         "note_fee_window_missing_partial": "Account {label}: no usage was attributed to this account, but recording does not cover the full window, so usage may be unrecorded rather than unused. Its {monthly} fee is known but cannot be allocated to this window because historical fee evidence is missing, so it enters neither the window fee total nor the comparison.",
         "note_partial_comparison": "Some inputs are partial, so treat the comparison as approximate.",
+        "note_theoretical_comparison": "A paid subscription shows no observed usage while unattributed usage exists; treat the comparison as theoretical on observed usage, not a verdict on value.",
+        "note_fx_aged_comparison": "An FX rate over 30 days old was used; treat the converted comparison as indicative, not definitive.",
         "note_unavailable_comparison": "Comparison unavailable: fees, coverage or rates are missing.",
         "note_unattributed": "Usage on routes no account claims stays unattributed.",
         "note_ambiguous": "Usage on routes claimed by more than one account is counted once and attributed to nobody.",
@@ -264,6 +266,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "note_fee_window_missing_complete": "{label} 账号：在完整覆盖的周期内没有用量归因至本账号。其 {monthly} 费用已知，但因历史费用证据缺失而无法分配至本周期，因此既不计入周期费用小计，也不进入对比。",
         "note_fee_window_missing_partial": "{label} 账号：没有用量归因至本账号，但记录未覆盖整个周期，因此用量可能只是未被记录而非未使用。其 {monthly} 费用已知，但因历史费用证据缺失而无法分配至本周期，因此既不计入周期费用小计，也不进入对比。",
         "note_partial_comparison": "部分输入数据不完整，请将对比视为近似值。",
+        "note_theoretical_comparison": "某付费订阅无已观测用量，但存在未归属用量；请将对比视为基于已观测用量的理论比较，而非价值结论。",
+        "note_fx_aged_comparison": "使用了超过 30 天的汇率；请将折算后的对比视为参考，而非确定性结论。",
         "note_unavailable_comparison": "无法对比：缺少费用、覆盖率或汇率数据。",
         "note_unattributed": "无人认领路由上的用量保持未归因。",
         "note_ambiguous": "多人认领路由上的用量只计数一次，不归因给任何人。",
@@ -737,6 +741,13 @@ def _fees_section(S: Mapping[str, str], window_label: str,
     status = headline.get("status")
     if status == "partial":
         notes.append(S["note_partial_comparison"])
+    elif status == "ok" and headline.get("verdict") == "theoretical":
+        # F116/F117: the export states figures, never a worth-it verdict, so
+        # the gate lands as a qualifier note rather than withheld text.
+        if headline.get("theoretical"):
+            notes.append(S["note_theoretical_comparison"])
+        if headline.get("fx_aged"):
+            notes.append(S["note_fx_aged_comparison"])
     elif status != "ok":
         notes.append(S["note_unavailable_comparison"])
     # Fee lines lead the section (two per currency, or the USD pair when no
