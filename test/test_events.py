@@ -601,8 +601,11 @@ class ResponseModelTests(unittest.TestCase):
         store.bootstrap(path=self.db)
         conn = sqlite3.connect(self.db)
         conn.execute("ALTER TABLE calls DROP COLUMN response_model")
+        # Fresh timestamp: WP36 retention prunes rows past 180 days on the
+        # next write, and this test is about migration, not retention.
+        fresh = time.time() - 100
         conn.execute("INSERT INTO calls (event_id, ts, outcome, recorded_at)"
-                     " VALUES ('old', 1.0, 'ok', 1.0)")
+                     " VALUES ('old', ?, 'ok', ?)", (fresh, fresh))
         conn.commit()
         cols_before = {row[1] for row in conn.execute("PRAGMA table_info(calls)")}
         conn.close()
