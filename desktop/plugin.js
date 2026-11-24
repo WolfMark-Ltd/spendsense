@@ -708,30 +708,31 @@ function readUsage(u) {
       : combinedPrompt && !exactRaw ? Math.max(0, prompt - cached) : 0
     return { ...base, cacheSource: exactRaw ? 'exact' : 'unknown', cacheEstimated: false,
       cacheRead, cacheWrite, cacheReadEvidence: readReported ? 'reported' : 'unknown',
-      cacheWriteEvidence: writeReported ? 'reported' : 'unknown', input: fresh, cacheUnknown: residual }
+      cacheWriteEvidence: writeReported ? 'reported' : 'unknown', derivedCacheWrite: 0,
+      input: fresh, cacheUnknown: residual }
   }
 
   if (prompt > input) {
     const gap = prompt - input
     if (hitPct == null) return { ...base, cacheSource: 'unknown', cacheEstimated: false,
-      cacheRead: 0, cacheWrite: 0, cacheReadEvidence: 'unknown', cacheWriteEvidence: 'unknown', input,
-      cacheUnknown: gap }
+      cacheRead: 0, cacheWrite: 0, cacheReadEvidence: 'unknown', cacheWriteEvidence: 'unknown',
+      derivedCacheWrite: 0, input, cacheUnknown: gap }
     const cacheRead = Math.min(gap, Math.round((prompt * hitPct) / 100))
     return { ...base, cacheSource: 'estimated', cacheEstimated: true, cacheSplitMode: 'read_write',
       cacheRead, cacheWrite: gap - cacheRead, cacheReadEvidence: 'estimated',
-      cacheWriteEvidence: 'derived', input, cacheUnknown: 0 }
+      cacheWriteEvidence: 'derived', derivedCacheWrite: gap - cacheRead, input, cacheUnknown: 0 }
   }
 
   if (prompt && hitPct != null && hitPct > 0) {
     const cacheRead = Math.min(prompt, Math.round((prompt * hitPct) / 100))
     return { ...base, cacheSource: 'unknown', cacheEstimated: true, cacheSplitMode: 'fresh_read',
       cacheRead, cacheWrite: 0, cacheReadEvidence: 'estimated', cacheWriteEvidence: 'unknown',
-      input: 0, cacheUnknown: Math.max(0, prompt - cacheRead) }
+      derivedCacheWrite: 0, input: 0, cacheUnknown: Math.max(0, prompt - cacheRead) }
   }
 
   return { ...base, cacheSource: 'unknown', cacheEstimated: false,
-    cacheRead: 0, cacheWrite: 0, cacheReadEvidence: 'unknown', cacheWriteEvidence: 'unknown', input,
-    cacheUnknown: Math.max(0, prompt - input) }
+    cacheRead: 0, cacheWrite: 0, cacheReadEvidence: 'unknown', cacheWriteEvidence: 'unknown',
+    derivedCacheWrite: 0, input, cacheUnknown: Math.max(0, prompt - input) }
 }
 
 /** Prompt-cache hit rate of a bucket, in percent (null without prompt tokens). */
@@ -810,6 +811,7 @@ function newBucket({ legacy = false, model, profile = '', provider = '' }) {
     cacheReadEvidence: null,
     cacheWrite: 0,
     cacheWriteEvidence: null,
+    derivedCacheWrite: 0,
     calls: 0,
     cost: 0,
     input: 0,
@@ -1131,6 +1133,18 @@ function addDelta(prevBucket, init, { costDelta, cur, delta, deltaTokens, resolv
   b.cacheWriteEvidence = mergeCacheEvidence(prevBucket
     ? prevBucket.cacheWriteEvidence || oldEvidence.write : null,
   usageEvidence.cacheWriteEvidence ?? cur.cacheWriteEvidence)
+  // The reconstructed write portion stays separable from measured writes
+  // through every merge, so the sidebar never presents residuals as usage.
+  // A legacy bucket without the marker keeps an unknown portion (null)
+  // unless its history is provably clean or provably all-derived.
+  const prevMarker = prevBucket ? prevBucket.derivedCacheWrite : 0
+  const deltaWriteEvidence = usageEvidence.cacheWriteEvidence ?? cur.cacheWriteEvidence
+  const deltaDerived = deltaWriteEvidence === 'derived' ? num(delta.cacheWrite) : 0
+  const prevWriteEvidence = prevBucket ? prevBucket.cacheWriteEvidence || oldEvidence.write : null
+  const histDerived = prevMarker != null ? num(prevMarker)
+    : num(prevBucket.cacheWrite) === 0 || prevWriteEvidence === 'reported' ? 0
+      : prevWriteEvidence === 'derived' ? num(prevBucket.cacheWrite) : null
+  b.derivedCacheWrite = histDerived == null ? null : histDerived + deltaDerived
   b.calls += delta.calls
   b.missingUsageCalls = num(b.missingUsageCalls) + num(usageEvidence.missingCalls)
   const prompt = num(delta.input) + num(delta.cacheRead) + num(delta.cacheWrite)
@@ -2116,10 +2130,10 @@ function sessionSavingsState(envelope, expectedSessionId, expectedIdentity) {
 function backendSummaryBucket(state) {
   if (!state?.scopeProven) return null
   const totals = state.totals
-  // Measured totals always pass through, whatever the evidence state says:
-  // the rows show figures with a Partial chip while evidence is imperfect,
-  // and only a genuinely absent measurement renders as '—'. Evidence rides
-  // alongside, never by hiding.
+  // Measured totals pass through with their evidence states; the rows
+  // decide per state. The backend never reconstructs counters, so a
+  // partial backend total is a measured subtotal and its derived portion
+  // is known-zero — unlike a legacy local mix, which keeps no marker.
   const input = finiteValue(totals.input_tokens)
   const cacheRead = finiteValue(totals.cache_read_tokens)
   const cacheWrite = finiteValue(totals.cache_write_tokens)
@@ -2140,6 +2154,7 @@ function backendSummaryBucket(state) {
       ['derived', 'estimated', 'partial'].includes(state.evidence.write),
     cacheReadEvidence: state.evidence.read,
     cacheWriteEvidence: state.evidence.write,
+    derivedCacheWrite: 0,
     unpricedTokens: num(totals.unpriced_tokens),
     unpricedCalls: finiteValue(totals.unpriced_calls),
     missingUsageCalls: 0,
@@ -2562,6 +2577,7 @@ function useLive() {
     partial: cacheEvidenceIncomplete(bucket),
     costPartial: cacheEvidenceIncomplete(bucket),
     savedSource: 'local_run_estimate',
+    scopeReason,
     savedPopulation: 'unverified',
     savedEvidence: bucket ? { read: bucket.cacheReadEvidence, write: bucket.cacheWriteEvidence } : null,
     savedBasis: runBounds ? 'local_estimate' : null,
@@ -2630,36 +2646,34 @@ function scopeTotalsTitle(t, fromHistory) {
 }
 
 /** Token rows for the pane. Provider counters (input, output, calls) are shown
- *  exactly; only derived cache fields carry the ≈ marker and a `derived` tag,
- *  because a reconstructed cache-write is not provider-confirmed usage. */
+ *  exactly. A missing cache counter (null, or unknown evidence whatever the
+ *  accumulator holds) is never a measured zero: its row stays '—'. A
+ *  reconstructed (derived) counter is not provider usage either. Reported
+ *  figures show bare, including a reported 0; partial or estimated figures
+ *  show with a Partial chip while positive. Hidden streams never vanish:
+ *  they stay visible inside the unclassified segment, whose label and swatch
+ *  already qualify it, so it carries no marker. */
 function tokenRows(t, b, hasContext, u) {
   const evidence = localCacheEvidence(b)
-  // Measured figures always show; imperfect evidence rides a Partial chip,
-  // never a hidden dash or an ≈ prefix. Only a genuinely absent measurement
-  // (null) renders as '—'. Unclassified holds the true residual only —
-  // prompt tokens no stream accounts for — never values merely lacking
-  // provenance; its label and swatch already qualify it, so no marker.
-  // A derived value is a rounding residual, never a measurement: it stays
-  // unclassified and its row stays quiet, exactly as before. Every other
-  // measured figure shows, with a Partial chip while its evidence is
-  // anything but reported; only a genuinely absent measurement is '—'.
-  const cacheFigure = (value, state) => value == null || state === 'derived'
+  const cacheFigure = (value, state) => value == null || state === 'unknown' || state === 'derived'
     ? { text: '—', partial: false }
     : { text: fmtTokens(value), partial: state !== 'reported' && num(value) > 0 }
   const prompt = typeof b.prompt === 'number' && Number.isFinite(b.prompt) && b.prompt >= 0
     ? b.prompt : null
-  const shownRead = evidence.read === 'derived' ? 0 : num(b.cacheRead)
-  const shownWrite = evidence.write === 'derived' ? 0 : num(b.cacheWrite)
-  const knownPrompt = num(b.input) + shownRead + shownWrite
-  // Derived residuals never figure as measured streams, but they must not
-  // vanish either: without a prompt total there is no gap to absorb them,
-  // so they stay visible inside the unclassified segment.
-  const derivedHidden = (evidence.read === 'derived' ? num(b.cacheRead) : 0) +
-    (evidence.write === 'derived' ? num(b.cacheWrite) : 0)
-  const unclassifiedPrompt = Math.max(num(b.cacheUnknown) + derivedHidden,
-    prompt == null ? 0 : prompt - knownPrompt)
-  const read = cacheFigure(b.cacheRead, evidence.read)
-  const write = cacheFigure(b.cacheWrite, evidence.write)
+  // Unattributed (unknown) and reconstructed (derived) streams cannot figure
+  // as measurements. A merged bucket tracks its derived write portion
+  // through aggregation; without that marker a partial mix keeps its
+  // accepted figure-plus-chip presentation.
+  const readHidden = evidence.read === 'unknown' || evidence.read === 'derived' ? num(b.cacheRead) : 0
+  const writeDerived = evidence.write === 'derived' ? num(b.cacheWrite) : num(b?.derivedCacheWrite)
+  const writeHidden = evidence.write === 'unknown' ? num(b.cacheWrite) : writeDerived
+  const shownRead = b.cacheRead == null ? null : Math.max(0, num(b.cacheRead) - readHidden)
+  const shownWrite = b.cacheWrite == null ? null : Math.max(0, num(b.cacheWrite) - writeHidden)
+  const knownPrompt = num(b.input) + num(shownRead) + num(shownWrite)
+  const hiddenPrompt = num(b.cacheUnknown) + readHidden + writeHidden
+  const unclassifiedPrompt = Math.max(hiddenPrompt, prompt == null ? 0 : prompt - knownPrompt)
+  const read = cacheFigure(shownRead, evidence.read)
+  const write = cacheFigure(shownWrite, evidence.write)
   const rows = [
     { key: 'i', label: t('input'), value: fmtTokens(b.input) },
     { key: 'o', label: t('output'), value: fmtTokens(b.output) },
@@ -2804,20 +2818,20 @@ function CacheBar({ pct }) {
 const $ratesOpen = atom(false)
 const $infoOpen = atom(null)
 
-/** Fresh/read/write shares of prompt tokens for the composition bar. */
+/** Fresh/read/write shares of prompt tokens for the composition bar. Mirrors
+ *  tokenRows: unknown and derived streams sit in the unclassified slice,
+ *  never in a measured one, and a tracked derived write portion is split
+ *  out of a partial mix. */
 function compositionShares(bucket) {
   const evidence = localCacheEvidence(bucket)
   const fresh = num(bucket?.input)
-  // Derived residuals never figure as measured streams; they stay in the
-  // unclassified slice, exactly as tokenRows keeps them out of the rows.
-  const read = evidence.read === 'derived' ? 0 : num(bucket?.cacheRead)
-  const write = evidence.write === 'derived' ? 0 : num(bucket?.cacheWrite)
+  const readHidden = evidence.read === 'unknown' || evidence.read === 'derived' ? num(bucket?.cacheRead) : 0
+  const writeDerived = evidence.write === 'derived' ? num(bucket?.cacheWrite) : num(bucket?.derivedCacheWrite)
+  const writeHidden = evidence.write === 'unknown' ? num(bucket?.cacheWrite) : writeDerived
+  const read = Math.max(0, num(bucket?.cacheRead) - readHidden)
+  const write = Math.max(0, num(bucket?.cacheWrite) - writeHidden)
   const knownPrompt = fresh + read + write
-  // Derived residuals stay in the unclassified slice, never in a measured
-  // one — and never dropped, even without a prompt total to gap against.
-  const unknown = num(bucket?.cacheUnknown) +
-    (evidence.read === 'derived' ? num(bucket?.cacheRead) : 0) +
-    (evidence.write === 'derived' ? num(bucket?.cacheWrite) : 0)
+  const unknown = num(bucket?.cacheUnknown) + readHidden + writeHidden
   const prompt = typeof bucket?.prompt === 'number' && Number.isFinite(bucket.prompt) && bucket.prompt > knownPrompt
     ? bucket.prompt : knownPrompt + unknown
   const unclassified = Math.max(unknown, prompt - knownPrompt)
@@ -2882,7 +2896,9 @@ function mergeStableLive(prev, live, key) {
     return { view: live, stale: false, cache: cur ? { key, snapshot: cur } : null }
   }
   if (cur) return { view: live, stale: false, cache: { key, snapshot: cur } }
-  if (prev.snapshot) return { view: { ...live, ...prev.snapshot }, stale: true, cache: prev }
+  // Retained figures keep the CURRENT fallback reason: a saved reason would
+  // hide a new backend failure behind the old reading.
+  if (prev.snapshot) return { view: { ...live, ...prev.snapshot, scopeReason: live.scopeReason }, stale: true, cache: prev }
   return { view: live, stale: false, cache: prev }
 }
 
@@ -3102,10 +3118,6 @@ function MeterHeader({ presence, t, view }) {
       ? 'wm-scope-chip wm-scope-chip-session' : 'wm-scope-chip',
         children: scopeLabel }, 'scope')
     ] }, 'status'),
-    view.scopeReason
-      ? jsx('div', { className: 'wm-subtle', 'data-scope-reason': view.scopeReason,
-        children: view.scopeReason }, 'scope-reason')
-      : null,
     jsxs('div', { className: 'wm-meter-modelrow', children: [
       jsxs('div', { className: 'wm-model-name-row', children: [
         jsx('span', { className: 'wm-model', title: view.model || '', children: modelDisplayName(view.model) || '—' }, 'model'),
@@ -3160,7 +3172,9 @@ function CostKpi({ t, view }) {
         id: 'cost-source',
         label: t('infoLabel'),
         text: [sourceLabel(t, view.costSource, view.foreignSlug, view.providerUnknown),
-          t('costSourceInfo'), evidenceNote, ...completenessNotes].filter(Boolean).join(' · ')
+          t('costSourceInfo'), evidenceNote,
+          view.scopeReason ? t('scopeFallbackNote', view.scopeReason) : null,
+          ...completenessNotes].filter(Boolean).join(' · ')
       }, 'info')
     ] }, 'source'),
     jsxs('div', { className: 'wm-kpi-metrics', children: [
@@ -3368,6 +3382,10 @@ function CacheGauge({ t, view }) {
   const estimated = !!(view.savedEstimated || b.cacheEstimated)
   const hitLabel = pct == null ? '—' : `${Math.round(pct)}%`
   const readBenefit = view.readBenefit
+  // The chip qualifies a plain figure only, exactly as in CostKpi: bounds
+  // already carry their own wording.
+  const benefitChip = readBenefit?.available && readBenefit.partial &&
+    !['lower_bound', 'upper_bound'].includes(readBenefit.basis)
   const coverageScope = view.population === 'main' ? t('coverageScopeMainCalls')
     : view.savedSource === 'local_conversation_estimate' ? t('coverageScopeLocalConversation')
       : view.fromHistory ? t('coverageScopeConversation') : t('coverageScopeRun')
@@ -3413,9 +3431,8 @@ function CacheGauge({ t, view }) {
           ] }, 'l'),
           jsxs('span', { className: 'wm-metric-value', children: [
             readBenefit?.available ? readBenefitDisplay(t, readBenefit, true) : '—',
-            readBenefit?.available && readBenefit.partial ? ' ' : null,
-            readBenefit?.available && readBenefit.partial
-              ? certaintyChip('partial', t('meterPartial'), 'benefit-partial') : null,
+            benefitChip ? ' ' : null,
+            benefitChip ? certaintyChip('partial', t('meterPartial'), 'benefit-partial') : null,
           ].filter(Boolean) }, 'v')
         ] }, 'saved'),
       ].filter(Boolean) }, 'stats')
@@ -15235,6 +15252,7 @@ const I18N = {
     meterLive: 'Live',
     meterRecorded: 'Recorded',
     meterPartial: 'Partial',
+    scopeFallbackNote: reason => `Session scope unavailable (${reason})`,
     meterUpdating: 'Updating…',
     apiEquivalent: 'API equivalent',
     sidebarCostPartial: 'partial estimate',
@@ -17049,6 +17067,7 @@ const I18N = {
     meterLive: '实时',
     meterRecorded: '已记录',
     meterPartial: '部分',
+    scopeFallbackNote: reason => `会话范围不可用（${reason}）`,
     meterUpdating: '更新中…',
     apiEquivalent: 'API 等值',
     sidebarCostPartial: '部分估算',

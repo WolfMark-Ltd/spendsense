@@ -244,9 +244,10 @@ test('a recorded conversation stays selected when the current run has larger tot
   await flush()
   const before = sectionsOf(container)
   const figureEl = container.querySelector('.wm-kpi-figure')
-  assert.ok(figureEl.textContent.startsWith('$0.0010'), 'the cost figure renders bare')
+  assert.equal(figureEl.firstChild.textContent, '$0.0010', 'the cost figure renders bare')
   assert.equal(figureEl.querySelector('[data-certainty="partial"]')?.textContent, 'meterPartial',
     'partial coverage rides a chip, not a + suffix')
+  assert.doesNotMatch(figureEl.textContent, /[+≈]/, 'no legacy figure markers survive beside the chip')
   const figureBefore = figureEl.textContent
   assert.match(container.querySelector('.wm-kpi-source').textContent, /apiEquivalent/)
   assert.doesNotMatch(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/)
@@ -533,9 +534,10 @@ test('a proven session summary renders the cache-read benefit with coverage in i
     assert.equal(container.querySelector('.wm-provider-badge').textContent, 'openai',
       'the separately resolved active route provider remains visible')
     const benefitFigure = container.querySelector('[data-kind="saved"] .wm-metric-value')
-    assert.ok(benefitFigure.textContent.startsWith('$0.0050'), 'the benefit figure renders bare')
+    assert.equal(benefitFigure.firstChild.textContent, '$0.0050', 'the benefit figure renders bare')
     assert.equal(benefitFigure.querySelector('[data-certainty="partial"]')?.textContent,
       'Partial', 'partial coverage rides a chip, not a + suffix')
+    assert.doesNotMatch(benefitFigure.textContent, /[+≈]/, 'no legacy figure markers survive beside the chip')
     assert.equal(container.querySelectorAll('[data-kind="saved"]').length, 1,
       'the session read benefit appears once')
     assert.doesNotMatch(container.textContent, /1 of 1 calls|100 read tokens|readBenefitUsageLink/,
@@ -653,6 +655,76 @@ test('a refused session summary does not present unsupported local net savings',
   } finally {
     T.restoreRest(originalRest)
   }
+})
+
+test('a failed session summary explains the fallback inside the cost-source tip only', async () => {
+  resetHost()
+  const originalRest = T.getRest()
+  const previousTranslate = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const value = T.I18N.en[key]
+    return typeof value === 'function' ? value(...args) : value ?? key
+  }
+  T.setRest(async path => {
+    if (path.startsWith('/session/summary?')) throw new Error('boom-unreachable')
+    return { rate: null }
+  })
+  host.state.focusedSessionId.set('failed-session')
+  host.state.focusedStoredSessionId.set('failed-conversation')
+  const ledger = T.emptyLedger()
+  ledger.sessions['failed-conversation'] = histBucket({
+    input: 100, output: 10, cacheRead: 0, cacheWrite: 0, calls: 1,
+    pricedTokens: 110, unpricedTokens: 0, cost: 0.01, sources: { live: 110 },
+  })
+  T.$ledger.set(ledger)
+  const container = await renderMeter()
+  await flush()
+  try {
+    assert.equal(container.querySelector('.wm-scope-chip').textContent, 'conversation')
+    assert.match(await openTip(container, 'cost-source'),
+      /Session scope unavailable \(backend read failed: boom-unreachable\)/,
+      'the fallback reason lives in the existing info control')
+    assert.equal(container.querySelector('[data-scope-reason]'), null,
+      'no raw diagnostic line in the header')
+    assert.doesNotMatch(container.querySelector('.wm-meter-head').textContent, /boom-unreachable/,
+      'the header stays clean')
+  } finally {
+    T.restoreRest(originalRest)
+    i18nBackend.t = previousTranslate
+  }
+})
+
+test('a retained stale reading keeps the current fallback reason, not the saved one', () => {
+  const key = 'stale-reason-session'
+  const prev = { key,
+    snapshot: { bucket: { input: 100, calls: 1 }, cost: 0.01, scopeReason: 'summary_no_calls' } }
+  const live = { bucket: null, usage: null, scopeReason: 'backend read failed: boom-unreachable' }
+  const merged = T.mergeStableLive(prev, live, key)
+  assert.equal(merged.stale, true, 'the gap still retains the last reading')
+  assert.equal(merged.view.bucket, prev.snapshot.bucket, 'retained figures survive the gap')
+  assert.equal(merged.view.scopeReason, 'backend read failed: boom-unreachable',
+    'a saved reason never hides a new backend failure')
+})
+
+test('a bounded read benefit keeps its bound wording without a Partial chip', async () => {
+  resetHost()
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  const view = {
+    bucket: { input: 100, output: 10, cacheRead: 50, cacheWrite: 0, calls: 2 },
+    cacheHitPct: 50, savedSource: 'backend_summary', fromHistory: true,
+    readBenefit: { available: true, value: 1.5, basis: 'lower_bound',
+      calls: 1, tokens: 50, total: 2, partial: true },
+  }
+  await React.act(async () => {
+    root.render(React.createElement(T.CacheGauge, { t: key => key, view }))
+  })
+  const saved = container.querySelector('[data-kind="saved"] .wm-metric-value')
+  assert.match(saved.textContent, /savingsLowerBoundValue/, 'the bound wording is untouched')
+  assert.equal(saved.querySelector('[data-certainty="partial"]'), null,
+    'bounds carry their own meaning and take no chip')
 })
 
 test('a cache-only frame renders as valid live usage', async () => {
@@ -1135,10 +1207,10 @@ test('the composition bar labels every part with its share', async () => {
   const unknownLegend = [...container.querySelectorAll('.wm-legend-item')]
     .find(item => item.textContent.includes('unclassified prompt'))
   assert.ok(unknownLegend, 'a visible unknown segment has a compact legend label')
-  assert.match(unknownLegend.textContent, /unclassified prompt100/,
-    'the residual count renders bare: the label and swatch already qualify it')
-  assert.doesNotMatch(unknownLegend.textContent, /≈/,
-    'no approximation marker on the unclassified row')
+  assert.equal(unknownLegend.querySelector('.wm-legend-value').textContent, '100',
+    'the residual count renders bare and exact: the label and swatch already qualify it')
+  assert.doesNotMatch(unknownLegend.textContent, /[+≈]/,
+    'no legacy markers on the unclassified row')
   assert.equal(partialBar.querySelector('[data-part="unknown"]').style.width, '10%')
 })
 
