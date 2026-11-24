@@ -741,6 +741,30 @@ class CustomFixableTests(unittest.TestCase):
         self.assertEqual(report["totals"]["custom_fixable_tokens"], 0)
         self.assertEqual(report["totals"]["custom_fixable_calls"], 0)
 
+    def test_detail_names_largest_fixable_row(self):
+        from wolfmark_ledger.analytics import PRICING_FIXABLE_MISS_REASONS
+        self.create_events([{"model": "zzz", "input_tokens": 100},
+                            {"model": "aaa", "input_tokens": 300}])
+        detail = self.report(days=1)["totals"]["custom_fixable_detail"]
+        self.assertEqual(detail["provider"], "test")
+        self.assertEqual(detail["model"], "aaa")
+        self.assertEqual(detail["tokens"], 300)
+        self.assertEqual(detail["calls"], 1)
+        self.assertIn(detail["reason"], PRICING_FIXABLE_MISS_REASONS)
+
+    def test_detail_absent_when_nothing_fixable(self):
+        self.create_events([{"input_tokens": 100, "outcome": "error"}])
+        self.assertIsNone(self.report(days=1)["totals"]["custom_fixable_detail"])
+
+    def test_detail_clears_with_matching_custom_rule(self):
+        self.create_events([{"model": "zzz", "input_tokens": 100}])
+        profiles = self._profiles([{"id": "c1", "kind": "custom", "provider": "test",
+                                    "model": "zzz",
+                                    "rate_override": {"input": 1, "output": 2}}])
+        cleared = self.report(days=1, profiles_path=profiles)["totals"]
+        self.assertEqual(cleared["custom_fixable_tokens"], 0)
+        self.assertIsNone(cleared["custom_fixable_detail"])
+
 
 if __name__ == "__main__":
     unittest.main()

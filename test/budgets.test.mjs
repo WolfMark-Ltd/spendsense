@@ -89,7 +89,7 @@ test('actual Chip updates informational, amber and red on live session activity'
   const el = await mount(T.Chip)
   let amount = () => el.querySelector('[data-session-budget]')
   assert.equal(amount().dataset.sessionBudget, 'normal')
-  assert.equal(amount().textContent, '≈' + T.fmtUsd(.4))
+  assert.equal(amount().textContent, T.fmtUsd(.4))
   await usage(500000)
   assert.equal(amount().dataset.sessionBudget, 'info')
   await usage(800000)
@@ -100,7 +100,7 @@ test('actual Chip updates informational, amber and red on live session activity'
   await usage(1000000)
   assert.equal(amount().dataset.sessionBudget, 'exceeded')
   assert.equal(amount().style.color, 'var(--ui-error)')
-  assert.equal(amount().textContent, '≈' + T.fmtUsd(1))
+  assert.equal(amount().textContent, T.fmtUsd(1))
   assert.match(el.querySelector('[title]').title, /conversation/i)
   assert.equal(el.querySelectorAll('button').length, 1)
 })
@@ -134,10 +134,10 @@ test('partial estimates prove reached thresholds but cannot claim within limit',
   const bucket = { ...T.$ledger.get().sessions.conversation, usageValueMissing: 1000 }
   const partial = T.sessionBudgetStatus({ guardrailValue: bucket }, [b()])
   assert.equal(partial.level, 'warning')
-  assert.equal(T.sessionBudgetFigure(partial), `${T.fmtUsd(partial.spend)}+`,
-    'a partial session subtotal keeps its compact marker without combining it with approximation')
+  assert.equal(T.sessionBudgetFigure(partial), T.fmtUsd(partial.spend),
+    'rule 62: a partial session subtotal renders bare in the taskbar; the tooltip carries the qualifier')
   const complete = T.sessionBudgetStatus({ guardrailValue: T.$ledger.get().sessions.conversation }, [b()])
-  assert.equal(T.sessionBudgetFigure(complete), `≈${T.fmtUsd(complete.spend)}`)
+  assert.equal(T.sessionBudgetFigure(complete), T.fmtUsd(complete.spend))
   assert.equal(T.sessionBudgetStatus({ guardrailValue: bucket }, [b({ amount: 10 })]).level, 'unavailable')
   assert.equal(T.sessionBudgetStatus({ guardrailValue: bucket }, [b({ enabled: false })]), null)
 })
@@ -170,7 +170,7 @@ test('failed refresh keeps content and neutralises session and monthly warning c
   assert.equal(el.querySelector('[data-session-budget]').dataset.sessionBudget, 'unavailable')
   assert.equal(el.querySelector('[data-budget-monthly]').dataset.budgetMonthly, 'unavailable')
   assert.match(el.textContent, /Budget/)
-  assert.equal(el.querySelector('[data-session-budget]').textContent, '≈' + T.fmtUsd(.8))
+  assert.equal(el.querySelector('[data-session-budget]').textContent, T.fmtUsd(.8))
 })
 
 test('budget management renders labelled modes and sends a revision-checked create', async () => {

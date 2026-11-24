@@ -211,6 +211,8 @@ async function measure() {
     const stats = [...pane.querySelectorAll('.wm-usage-summary .wm-kpi')]
     const statOverflow = stats.filter(el => el.scrollWidth - el.clientWidth > 1).length
     const statTops = stats.map(el => Math.round(el.getBoundingClientRect().top))
+    const statHeights = stats.map(el => Math.round(el.getBoundingClientRect().height))
+    const statWidths = stats.map(el => Math.round(el.getBoundingClientRect().width))
     const trendPoints = [...pane.querySelectorAll('[data-trend-point]')]
     const legendRows = [...pane.querySelectorAll('.wm-legend .wm-legendrow')]
     const advanced = pane.querySelector('[data-filters-advanced]')
@@ -228,7 +230,7 @@ async function measure() {
       headingStart: pane.querySelector('.wm-topline > div > :first-child')?.textContent,
       sections: pane.querySelectorAll('section.wm-panel').length,
       stats: stats.length,
-      statTops,
+      statTops, statHeights, statWidths,
       readBenefit: pane.querySelector('#wm-usage-read-benefit .wm-kpi-figure')?.textContent || '',
       selects: pane.querySelectorAll('select').length,
       advancedFilters: !!advanced,

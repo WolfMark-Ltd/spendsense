@@ -98,8 +98,8 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         assert.ok(layout.ringWidth >= 68 && layout.ringWidth <= 88, `${id} scales the larger ring to ${layout.ringWidth}px`)
         assert.match(layout.savedLabel, locale === 'en' ? /Cache-read benefit/ : /缓存读取收益/,
           `${id} labels the supported figure`)
-        assert.equal(layout.savedValue, locale === 'en' ? '$12.35 Partial' : '$12.35 部分',
-          `${id} marks the partial backend benefit value with a chip, not a + suffix`)
+        assert.equal(layout.savedValue, '$12.35',
+          `${id} renders the partial backend benefit value bare; the tooltip carries the coverage`)
         assert.doesNotMatch(layout.readBenefitText, /30 calls|500k read tokens|80% covered/,
           `${id} keeps call, token and coverage details out of the normal view`)
         assert.equal(layout.savedNote, '', `${id} removes the inline coverage note`)

@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.38'
+const PLUGIN_VERSION = '0.6.39'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -2034,39 +2034,73 @@ function focusedSessionNow() {
   try { return host.state.focusedSessionId.get() || null } catch { return null }
 }
 
-/** Contract-4 all-recorded-calls summary for one exact Hermes runtime session. */
-function sessionSummaryQuery(identity, sessionId) {
-  const sid = String(sessionId || '')
+/** Contract-4 all-recorded-calls summary for the focused conversation.
+ *  Runtime session ids change on every resume while the stored id is
+ *  durable; rows may be keyed by either supported Hermes identity. Each leg
+ *  is an exact lookup — never a fuzzy match — and every candidate is
+ *  fully validated before selection, so a non-empty but invalid first
+ *  response never blocks a valid alternative identity. The first fully
+ *  available leg wins; otherwise the best-echoed envelope is returned so
+ *  the caller reports the most informative reason. Transport errors fail
+ *  fast: a second leg cannot succeed where the first leg's transport
+ *  failed. Selection runs the full contract validator per leg: a usable
+ *  scope needs proven population, recorded calls and a valuation block. */
+function sessionSummaryQuery(identity, sessionId, storedId = null) {
+  const runtimeSid = String(sessionId || '')
+  const storedSid = String(storedId || '')
+  const legs = storedSid && storedSid !== runtimeSid ? [storedSid, runtimeSid] : [runtimeSid]
   return {
-    queryKey: [ID, 'session-summary', identity, sid, 'all'],
+    queryKey: [ID, 'session-summary', identity, runtimeSid, storedSid, 'all'],
     retry: false,
     staleTime: 2500,
     refetchInterval: 5000,
     queryFn: async () => {
-      if (!sid || typeof rest !== 'function') throw new Error('Session summary unavailable.')
-      if (!membershipIdentityCurrent(identity) || String(focusedSessionNow() || '') !== sid) {
-        throw new Error('Stale session summary request.')
+      if (!runtimeSid || typeof rest !== 'function') throw new Error('Session summary unavailable.')
+      let first = null
+      let matched = null
+      for (const leg of legs) {
+        if (!membershipIdentityCurrent(identity) || String(focusedSessionNow() || '') !== runtimeSid) {
+          throw new Error('Stale session summary request.')
+        }
+        const payload = await rest(`/session/summary?session_id=${encodeURIComponent(leg)}&population=all`)
+        if (!membershipIdentityCurrent(identity) || String(focusedSessionNow() || '') !== runtimeSid) {
+          throw new Error('Stale session summary response.')
+        }
+        const envelope = { identity, sessionId: leg, payload }
+        if (!first) first = envelope
+        if (!payload || String(payload.session_id || '') !== leg) continue
+        matched = envelope
+        // A usable scope needs proven population, recorded calls and a
+        // valuation block — not a computable net figure. Indeterminate net
+        // savings with a supported read benefit (the common live case)
+        // still wins its leg here. The valuation must be an object, as
+        // the validator requires: a non-null false or string is malformed.
+        const state = sessionSavingsState(envelope, leg, identity)
+        const usableValuation = state.valuation != null && typeof state.valuation === 'object'
+        if (state.scopeProven && !state.empty && usableValuation) return envelope
       }
-      const payload = await rest(`/session/summary?session_id=${encodeURIComponent(sid)}&population=all`)
-      if (!membershipIdentityCurrent(identity) || String(focusedSessionNow() || '') !== sid) {
-        throw new Error('Stale session summary response.')
-      }
-      return { identity, sessionId: sid, payload }
+      return matched || first
     }
   }
 }
 
-/** Validate the exact runtime-session scope and normalize contract-4 fields.
+/** Validate the exact session scope and normalize contract-4 fields.
  *  A refused response's alternate block is ignored; only a requested `all`
- *  summary is eligible, so the scope shown to the owner is explicit. */
-function sessionSavingsState(envelope, expectedSessionId, expectedIdentity) {
+ *  summary is eligible, so the scope shown to the owner is explicit. The
+ *  envelope must echo the runtime id or the supported stored id exactly —
+ *  no fuzzy attribution. */
+function sessionSavingsState(envelope, expectedSessionId, expectedIdentity, alternateSessionId = null) {
   const sid = String(expectedSessionId || '')
   if (!sid) return { available: false, reason: 'summary_unavailable' }
-  if (!envelope || envelope.identity !== expectedIdentity || envelope.sessionId !== sid) {
+  const alt = String(alternateSessionId || '')
+  if (!envelope || envelope.identity !== expectedIdentity ||
+      (envelope.sessionId !== sid && (!alt || envelope.sessionId !== alt))) {
     return { available: false, reason: 'summary_stale' }
   }
   const summary = envelope.payload
-  if (!summary || summary.ok !== true || String(summary.session_id || '') !== sid) {
+  const echoed = String(summary?.session_id || '')
+  if (!summary || summary.ok !== true || (echoed !== sid && (!alt || echoed !== alt)) ||
+      echoed !== envelope.sessionId) {
     return { available: false, reason: 'summary_stale' }
   }
   const population = summary.population
@@ -2392,7 +2426,7 @@ function useLive() {
   const led = useValue($ledger)
   const allowRefresh = useValue($automaticModelOptions)
   const identity = useValue($membershipIdentity)
-  const summaryRead = useQuery({ ...sessionSummaryQuery(identity, sessionId),
+  const summaryRead = useQuery({ ...sessionSummaryQuery(identity, sessionId, storedId),
     enabled: !!sessionId && membershipIdentityCurrent(identity) })
   // After a restart the host seeds the focused session with an all-zero usage
   // object; treat that as "nothing yet" so the UI falls back to the ledger.
@@ -2426,7 +2460,7 @@ function useLive() {
 
   const hist = storedId && led.sessions ? led.sessions[storedId] : null
   const summaryCurrent = !!sessionId && membershipIdentityCurrent(identity)
-  const summaryState = sessionSavingsState(summaryCurrent ? summaryRead.data : undefined, sessionId, identity)
+  const summaryState = sessionSavingsState(summaryCurrent ? summaryRead.data : undefined, sessionId, identity, storedId)
   const summaryBucket = backendSummaryBucket(summaryState)
   const summaryActive = summaryState.scopeProven && !summaryState.empty && !!summaryBucket
   // Why the sidebar falls back to conversation scope, in one raw diagnostic
@@ -2650,11 +2684,11 @@ function scopeTotalsTitle(t, fromHistory) {
  *  accumulator holds) is never a measured zero: its row stays '—'. A
  *  reconstructed (derived) counter is not provider usage either. Reported
  *  figures show bare, including a reported 0; partial or estimated figures
- *  with a tracked derived portion show the measured remainder with a
- *  Partial chip, while a mix with an unknown portion stays unclassified.
- *  Hidden streams never vanish: they stay visible inside the unclassified
- *  segment, whose label and swatch already qualify it, so it carries no
- *  marker. */
+ *  with a tracked derived portion show the measured remainder bare, while
+ *  a mix with an unknown portion stays unclassified. The composition info
+ *  control names the partial streams. Hidden streams never vanish: they
+ *  stay visible inside the unclassified segment, whose label and swatch
+ *  already qualify it, so it carries no marker. */
 function tokenRows(t, b, hasContext, u) {
   const evidence = localCacheEvidence(b)
   const cacheFigure = (value, state) => value == null || state === 'unknown' || state === 'derived'
@@ -2698,7 +2732,7 @@ function tokenRows(t, b, hasContext, u) {
   return rows.filter(Boolean)
 }
 
-function analyticsListDisplay(totals) {
+function analyticsListDisplay(totals, plain = false) {
   const amount = finiteValue(totals?.list_usd)
   if (amount == null) return '—'
   const economics = totals?.economics || {}
@@ -2711,14 +2745,24 @@ function analyticsListDisplay(totals) {
     return high == null || high < amount ? '—' : `${value}–${analyticMoney(high)}`
   }
   if (basis && !['exact', 'incomplete'].includes(basis)) return '—'
-  const partial = num(totals?.unpriced_tokens) > 0 || num(totals?.unpriced_calls) > 0 ||
+  // Rule 62: default figures render bare; bounds keep their honest wording.
+  // The qualified form survives for tooltips only (plain === false).
+  if (plain) return value
+  return `${value}${analyticsListPartial(totals) ? '+' : ''}`
+}
+
+/** True when the API-equivalent figure is a priced subtotal rather than a
+ *  complete total. Shared by the qualified display and the KPI tooltip so
+ *  both agree on when the priced-subtotal note applies. */
+function analyticsListPartial(totals) {
+  const basis = totals?.economics?.api_equivalent_basis
+  return num(totals?.unpriced_tokens) > 0 || num(totals?.unpriced_calls) > 0 ||
     num(totals?.missing_usage_calls) > 0 || totals?.coverage_unknown === true ||
     basis === 'incomplete' || basis == null
-  return `${value}${partial ? '+' : ''}`
 }
 
 function desktopTodayText(report, t, filtered = false) {
-  return `${t(filtered ? 'desktopTodayFilteredScope' : 'desktopTodayScope')} ${analyticsListDisplay(report?.totals)}`
+  return `${t(filtered ? 'desktopTodayFilteredScope' : 'desktopTodayScope')} ${analyticsListDisplay(report?.totals, true)}`
 }
 
 function desktopTodayAmount(report) {
@@ -2775,11 +2819,17 @@ function Chip() {
   }
 
   const warn = live.costSource === 'foreign' || live.costSource === 'none'
+  // Rule 62: the visible chip renders bare figures; the dropped cost
+  // qualifier (partial/estimated) is preserved in this tooltip.
+  const costStatus = sidebarCostStatus(t, live)
+  const tipSource = guard?.spend != null ? t('budgetEstimated')
+    : [sourceLabel(t, live.costSource, live.foreignSlug, live.providerUnknown), costStatus]
+      .filter(Boolean).join(' · ')
   return jsx(Tip, {
     label: (guard ? budgetTooltip(guard, t) + (budgetRead.error ? ' · ' + t('budgetStale') : '') + ' · ' + t('scopeLocalBudget') + '\n' : '') + liveScopeLabel + '\n' + t(
       'chipTip',
       live.model || '—',
-      guard?.spend != null ? t('budgetEstimated') : sourceLabel(t, live.costSource, live.foreignSlug, live.providerUnknown),
+      tipSource,
       desktopTodayAmount(today)
     ) + [todayTooltip, monthlyTooltip].filter(Boolean).map(value => '\n' + value).join(''),
     children: jsxs('button', {
@@ -2801,7 +2851,7 @@ function Chip() {
           children: guard?.spend != null ? sessionBudgetFigure(guard) : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${apiEquivalentDisplay(live)}`
         }),
         live.cacheHitPct != null
-          ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ⚡${live.bucket?.cacheEstimated ? '≈' : ''}${Math.round(live.cacheHitPct)}%` })
+          ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ⚡${Math.round(live.cacheHitPct)}%` })
           : null,
         todayText ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ${todayText}` }) : null,
         monthlyIndicator
@@ -3164,18 +3214,13 @@ function CostKpi({ t, view }) {
     cacheEvidenceGap ? t('partialCacheEvidence') : null,
     view.excludedCalls > 0 ? t('savedPartialCallsNote', view.excludedCalls) : null
   ].filter(Boolean)
-  const totalsRow = tokenRows(t, view.bucket || {}, false, null).find(row => row.key === 'tt')
   const costText = sidebarCostDisplay(view)
-  // The chip qualifies a plain figure only: ranges, bounds and the dash
-  // already carry their own meaning.
-  const costChip = view.costPartial && costText !== '—'
-    && !['range', 'lower_bound', 'upper_bound'].includes(view.costBasis)
+  // Rule 62: the figure renders bare. Ranges, bounds and the dash carry
+  // their own meaning; partial coverage stays in the source info control.
   return jsxs('section', { className: 'wm-card', 'aria-label': t('cost'), children: [
     jsxs('div', {
       className: cn('wm-kpi-figure', warn && 'wm-warn'),
-      children: [costText, costChip ? ' ' : null,
-        costChip ? certaintyChip('partial', t('meterPartial'), 'cost-partial') : null]
-        .filter(Boolean)
+      children: [costText]
     }, 'figure'),
     jsxs('div', { className: 'wm-kpi-source', children: [
       jsx('span', { children: t('apiEquivalent') }, 'label'),
@@ -3191,10 +3236,7 @@ function CostKpi({ t, view }) {
     jsxs('div', { className: 'wm-kpi-metrics', children: [
       jsxs('div', { className: 'wm-metric', children: [
         jsx('span', { className: 'wm-metric-label', children: t('totalTokens') }, 'l'),
-        jsxs('span', { className: 'wm-metric-value', children: [fmtTokens(tokensOf(view.bucket)),
-          totalsRow?.partial ? ' ' : null,
-          totalsRow?.partial ? certaintyChip('partial', t('meterPartial'), 'tokens-partial') : null]
-          .filter(Boolean) }, 'v')
+        jsx('span', { className: 'wm-metric-value', children: fmtTokens(tokensOf(view.bucket)) }, 'v')
       ] }, 'tokens'),
       jsxs('div', { className: 'wm-metric', children: [
         jsx('span', { className: 'wm-metric-label', children: t('calls') }, 'l'),
@@ -3218,9 +3260,8 @@ function TokenComposition({ t, view }) {
   const legend = (key, label, swatch) => jsxs('div', { className: 'wm-legend-item', children: [
     jsx('span', { className: 'wm-swatch', 'data-part': swatch, 'aria-hidden': true }, 'sw'),
     jsx('span', { className: 'wm-legend-label', children: label }, 'label'),
-    jsx('span', { className: 'wm-legend-value', children: byKey[key] ? byKey[key].value : '—' }, 'value'),
-    byKey[key]?.partial ? certaintyChip('partial', t('meterPartial'), `${key}-partial`) : null
-  ].filter(Boolean) }, key)
+    jsx('span', { className: 'wm-legend-value', children: byKey[key] ? byKey[key].value : '—' }, 'value')
+  ] }, key)
   const u = view.usage
   const contextValue = u && typeof u.context_percent === 'number'
     ? `${Math.round(u.context_percent)}% · ${fmtTokens(u.context_used)}/${fmtTokens(u.context_max)}`
@@ -3229,7 +3270,8 @@ function TokenComposition({ t, view }) {
     jsxs('div', { className: 'wm-card-title', children: [
       jsx('span', { children: t('promptMix') }, 'text'),
       jsx(InfoTip, { id: 'prompt-mix', label: t('infoLabel'),
-        text: [t('cacheMethodInfo'), shares.unknown > 0 ? t('coverageUnknownNote') : null]
+        text: [t('cacheMethodInfo'), shares.unknown > 0 ? t('coverageUnknownNote') : null,
+          byKey.cr?.partial || byKey.cw?.partial ? t('partialCacheEvidence') : null]
           .filter(Boolean).join(' '), wide: true }, 'info')
     ] }, 'title'),
     jsxs('div', {
@@ -3267,19 +3309,18 @@ function TokenComposition({ t, view }) {
 }
 
 function apiEquivalentDisplay(view) {
+  // Rule 62: the taskbar figure renders bare. Bounds keep their honest
+  // wording; partial and estimate qualifiers stay in the chip tooltip.
   const value = finiteValue(view?.cost)
   if (value == null) return '—'
   const basis = view.costBasis
   const high = finiteValue(view.costHigh)
-  const approximate = view.costSource === 'backend_summary'
-    ? basis !== 'exact'
-    : ['local_conversation_estimate', 'local_run_estimate'].includes(view.savedSource) && view.costSource !== 'gateway'
   if (basis === 'range' && high != null && high >= value) {
-    return `${approximate ? '≈' : ''}${fmtUsd(value)}–${fmtUsd(high)}`
+    return `${fmtUsd(value)}–${fmtUsd(high)}`
   }
   if (basis === 'lower_bound') return `≥${fmtUsd(value)}`
   if (basis === 'upper_bound') return `≤${fmtUsd(value)}`
-  return view.costPartial ? `${fmtUsd(value)}+` : `${approximate ? '≈' : ''}${fmtUsd(value)}`
+  return fmtUsd(value)
 }
 
 function sidebarCostDisplay(view) {
@@ -3393,10 +3434,8 @@ function CacheGauge({ t, view }) {
   const estimated = !!(view.savedEstimated || b.cacheEstimated)
   const hitLabel = pct == null ? '—' : `${Math.round(pct)}%`
   const readBenefit = view.readBenefit
-  // The chip qualifies a plain figure only, exactly as in CostKpi: bounds
-  // already carry their own wording.
-  const benefitChip = readBenefit?.available && readBenefit.partial &&
-    !['lower_bound', 'upper_bound'].includes(readBenefit.basis)
+  // Rule 62: no certainty pill. Bounds carry their own wording; partial
+  // coverage stays in the read-benefit info control.
   const coverageScope = view.population === 'main' ? t('coverageScopeMainCalls')
     : view.savedSource === 'local_conversation_estimate' ? t('coverageScopeLocalConversation')
       : view.fromHistory ? t('coverageScopeConversation') : t('coverageScopeRun')
@@ -3440,11 +3479,8 @@ function CacheGauge({ t, view }) {
                 ? t('readBenefitCoverage', readBenefit.calls, readBenefit.total, fmtTokens(readBenefit.tokens)) : ''].filter(Boolean).join(' '),
               wide: true, dir: 'up' }, 'info')
           ] }, 'l'),
-          jsxs('span', { className: 'wm-metric-value', children: [
-            readBenefit?.available ? readBenefitDisplay(t, readBenefit, true) : '—',
-            benefitChip ? ' ' : null,
-            benefitChip ? certaintyChip('partial', t('meterPartial'), 'benefit-partial') : null,
-          ].filter(Boolean) }, 'v')
+          jsx('span', { className: 'wm-metric-value',
+            children: readBenefit?.available ? readBenefitDisplay(t, readBenefit, true) : '—' }, 'v')
         ] }, 'saved'),
       ].filter(Boolean) }, 'stats')
     ] }, 'row')
@@ -3977,18 +4013,6 @@ const ANALYTICS_CSS = SHARED_CSS + `
 .wm-usage .wm-subtle{font-size:13px}
 .wm-usage .wm-topline .wm-usage-scope{margin-top:7px;line-height:1.45}
 .wm-usage .wm-stat-with-info{display:inline-flex;align-items:center;gap:5px}
-.wm-usage .wm-nerd-mode{border-top:1px solid var(--ui-stroke-secondary);padding-top:2px}
-.wm-usage .wm-nerd-mode>summary{font-size:13px;font-weight:550;color:var(--ui-text-primary);padding:8px 0;min-height:38px}
-.wm-usage .wm-nerd-body{display:grid;gap:18px;padding:12px 0 4px}
-.wm-usage .wm-detail-charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
-.wm-usage .wm-usage-charts{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-.wm-usage .wm-usage-charts .wm-panel{padding:15px}
-.wm-usage .wm-usage-charts .wm-panelhead{margin-bottom:9px}
-.wm-usage .wm-usage-charts .wm-number{display:none}
-.wm-usage .wm-usage-charts .wm-paneltitle{margin-bottom:0}
-.wm-usage .wm-usage-charts .wm-paneltitle h2{font-size:14px}
-.wm-usage .wm-usage-charts .wm-chartdetail{font-size:11px}
-.wm-usage .wm-usage-charts .wm-composition{gap:12px}
 .wm-usage .wm-method-notes{display:grid;gap:9px}
 .wm-usage .wm-method-notes p{margin:0}
 .wm-usage .wm-button{font-size:12px;min-height:34px}
@@ -4033,12 +4057,27 @@ const ANALYTICS_CSS = SHARED_CSS + `
 .wm-usage .wm-coverageroute:hover{border-color:var(--ui-accent)}
 .wm-usage .wm-coverageroute small{color:var(--ui-text-secondary);font-size:12px}
 .wm-usage .wm-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-@container(max-width:1050px){.wm-usage .wm-usage-charts{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@container(max-width:720px){.wm-usage .wm-detail-charts{grid-template-columns:minmax(0,1fr)}.wm-usage .wm-usage-charts{grid-template-columns:minmax(0,1fr)}}
 @container(max-width:560px){.wm-usage .wm-tablewrap table{min-width:700px}.wm-usage .wm-modelbutton{max-width:180px}.wm-usage .wm-coverageroute{padding:10px}.wm-usage .wm-donutbody{grid-template-columns:minmax(120px,.85fr) minmax(0,1.15fr)}}
 @media(prefers-reduced-motion:reduce){.wm-analytics *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `
 const percent = v => finiteValue(v)==null ? '—' : `${(v*100).toFixed(1)}%`
+/** A priced share that never displays an incomplete population as 100%.
+ *  The calculation is unchanged (priced ÷ total); only the displayed
+ *  precision adapts, gaining decimals exactly when one decimal would
+ *  round an incomplete share up to a complete verdict. Chart slices keep
+ *  percent(); coverage claims must not contradict the incomplete-call
+ *  counts printed beside them. */
+function sharePercent(priced, total) {
+  const p = finiteValue(priced), n = finiteValue(total)
+  if (p == null || n == null || n <= 0) return null
+  if (p >= n) return '100.0%'
+  const pct = (p / n) * 100
+  for (let decimals = 1; decimals <= 9; decimals += 1) {
+    const text = pct.toFixed(decimals)
+    if (!/^100(\.0+)?$/.test(text)) return `${text}%`
+  }
+  return `${pct.toFixed(9)}%`
+}
 const exactTokens = value => finiteValue(value)==null ? '—' : value.toLocaleString('en-US')
 function analyticMoney(value) { return finiteValue(value)==null ? '—' : value<0 ? `−${fmtUsd(-value)}` : fmtUsd(value) }
 function analyticsSavingsDisplay(economics, t) {
@@ -4048,7 +4087,9 @@ function analyticsSavingsDisplay(economics, t) {
   if (basis === 'exact') return analyticMoney(value)
   if (basis === 'range') {
     const high = finiteValue(economics.savings_usd_high)
-    return high == null ? t('savingsBoundValue', analyticMoney(value))
+    // A range missing its high endpoint is an honest lower bound on the
+    // known low end — never an approximate point.
+    return high == null ? t('savingsLowerBoundValue', analyticMoney(value))
       : t('savingsRangeValue', analyticMoney(value), analyticMoney(high))
   }
   if (basis === 'upper_bound') return t('savingsUpperBoundValue', analyticMoney(value))
@@ -4196,8 +4237,10 @@ function AnalyticsPanel({number,title,subtitle,controls,children,footer,compact=
     children,footer&&(!compact||compactFooter)?compact&&compactFooter?footer:jsx('div',{className:'wm-footnote',children:footer}):null]})
 }
 function sessionBudgetFigure(guard) {
+  // Rule 62: the taskbar figure renders bare; budgetTooltip in the chip
+  // tooltip carries the partial/estimate qualification.
   if (guard?.spend == null) return null
-  return `${guard.partial ? '' : '≈'}${fmtUsd(guard.spend)}${guard.partial ? '+' : ''}`
+  return fmtUsd(guard.spend)
 }
 /** One Usage KPI card in the shared Overview card anatomy: rail accent by
  * data-kpi, eyebrow icon plus label, dominant figure. Tooltips ride on the
@@ -4487,17 +4530,15 @@ function AnalyticsCoverageSummary({data,dispatch,days}) {
     .map(([reason,count])=>t(ANALYTICS_GAP_LABELS[reason] || 'usageCoverageOtherReason', num(count)))
   const affected = (data.by_model || []).filter(row=>num(row.unpriced_tokens)||num(row.unpriced_calls))
     .sort((a,b)=>num(b.unpriced_calls)-num(a.unpriced_calls)||num(b.unpriced_tokens)-num(a.unpriced_tokens)||analyticsId(a).localeCompare(analyticsId(b)))
-  const tokenShare = tokens ? percent(num(totals.priced_tokens)/tokens) : null
+  const tokenShare = tokens ? sharePercent(num(totals.priced_tokens), tokens) : null
   const callShare = calls ? t('usageCoverageCallShare', num(totals.priced_calls), unpricedCalls, calls) : t('usageCoverageNoCalls')
   const cacheHitRate = finiteValue(totals.cache_hit_rate)
   const cachePromptCoverage = finiteValue(totals.cache_prompt_coverage)
   const cacheCoverage = cachePromptCoverage == null ? t('cacheCoverageUnavailable')
     : t('cacheCoverageLine', (cachePromptCoverage * 100).toFixed(1), t('cacheCoverageBasis'))
-  const partial = unpricedTokens > 0 || unpricedCalls > 0
   return jsxs('div',{id:'wm-usage-pricing-coverage',className:'wm-coverage',role:'region',tabIndex:-1,
     'aria-label':t('usagePricingCoverageLabel',days || data.window?.days || 30),children:[
-      jsxs('div',{className:'wm-coveragehead',children:[jsx('h2',{children:t('usageCoverageTitle')},'title'),
-        jsx('span',{className:cn('wm-badge',partial&&'wm-warn'),children:partial?t('usageCoveragePartial'):t('usageCoverageComplete')},'status')]},'header'),
+      jsxs('div',{className:'wm-coveragehead',children:[jsx('h2',{children:t('usageCoverageTitle')},'title')]},'header'),
       jsx('p',{className:'wm-coveragecopy',children:jsxs('span',{children:[
         tokenShare?t('usageCoverageTokenShare',tokenShare,exactTokens(totals.priced_tokens),exactTokens(tokens)):t('usageCoverageNoTokens',calls),
         ' ',callShare,' ',t('usageCoverageCharges')
@@ -4603,34 +4644,36 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const billingMix=totals?.billing_mix ? Object.entries(totals.billing_mix).map(([kind,value])=>`${kind}: ${typeof value==='number'?fmtTokens(value):String(value)}`).join(' · ') : ''
   const windowScope=data?.window?t('usageWindowDash',String(data.window.since_local || data.window.since || '').slice(0,10),String(data.window.until_local || data.window.until || '').slice(0,10),data.window.timezone || 'UTC'):null
   const subtitle=[t('usageSubtitle',profile || t('usageCurrentProfile')),windowScope].filter(Boolean).join(' · ')
-  const apiLabel=jsxs('span',{className:'wm-stat-with-info',children:[t('usageStatApiEquiv'),jsx(InfoTip,{id:'usage-api-equivalent',label:t('infoLabel'),text:t('usageStatApiInfo'),wide:true})]})
+  const apiPartial=totals?analyticsListPartial(totals):false
+  const apiLabel=jsxs('span',{className:'wm-stat-with-info',children:[t('usageStatApiEquiv'),jsx(InfoTip,{id:'usage-api-equivalent',label:t('infoLabel'),text:[t('usageStatApiInfo'),apiPartial?t('usageCoverageRateBasis'):null].filter(Boolean).join(' '),wide:true})]})
   const readBenefitLabel=jsxs('span',{className:'wm-stat-with-info',children:[t('readBenefitLabel'),jsx(InfoTip,{id:'usage-read-benefit',label:t('infoLabel'),text:[t('readBenefitExplanation'),readBenefit.available?t('readBenefitCoverage',readBenefit.calls,readBenefit.total,fmtTokens(readBenefit.tokens)):t('readBenefitUnavailable')].filter(Boolean).join(' '),wide:true})]})
   const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle wm-usage-scope',children:subtitle})]}),
     jsxs('div',{className:'wm-topactions',children:[jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')})]})]})
-  const detail=totals?jsxs('details',{className:'wm-nerd-mode',children:[jsx('summary',{children:t('usageMethodologyTitle')}),
-    jsxs('div',{className:'wm-nerd-body',children:[
-      analyticsInsights(data,t).length?jsx('div',{className:'wm-insights','aria-label':t('usageInsightsAria'),children:analyticsInsights(data,t).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{title:item.model?`${item.model} · ${item.provider||''}`:undefined,'aria-label':item.model?`${item.text} (${item.model} · ${item.provider||''})`:undefined,children:item.text})]},item.label))}):null,
-      jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:billingMix || t('usageBillingTitle'),children:[jsx('strong',{children:t('usageBillingLabel')}),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),' ',jsx('span',{className:cn('wm-badge',!totals.billed_complete&&'wm-warn'),children:totals.billed_complete?t('usageBillingComplete'):totals.billed_usd==null?t('usageUnknown'):t('usageBillingPartial')}),t('usageBillingNote')]}),jsx('span',{className:'wm-mono',children:windowScope || t('usageWindowPending')})]}),
-      totals&&num(totals.calls)?jsx(AnalyticsCoverageSummary,{data,dispatch,days:state.days}):null,
-      totals&&data.previous&&!data.previous.comparable?jsx('div',{className:'wm-alert',children:t(data.previous.reason==='no_previous_calls'?'usagePreviousNoCalls':data.previous.reason==='insufficient_history'?'usagePreviousInsufficient':'usagePreviousUnavailable')}):null,
-      jsxs('div',{className:'wm-detail-charts',children:[jsx(AnalyticsDelegation,{data,state,dispatch}),jsx(AnalyticsRanking,{data,state,dispatch})]}),
-      jsx(AnalyticsExplorer,{data,state,dispatch}),jsx(AnalyticsEconomics,{data}),
-      jsxs('div',{className:'wm-subtle wm-method-notes',children:[jsx('p',{children:t('usageRecordingLine', data.recording?.since || t('usageRecordingPending'), data.recording?.last || '—')}),jsx('p',{children:t('usageCacheFormula')}),...analyticsNotesText(data.notes, data.note_codes, t).map((note,i)=>jsx('p',{children:note},i))]}),
-      jsxs('details',{className:'wm-baseline',open:state.baselineOpen,onToggle:event=>dispatch({type:'set',key:'baselineOpen',value:event.currentTarget.open}),children:[jsx('summary',{children:t('usageBaselineSummaryTitle')}),state.baselineOpen?jsx(AnalyticsBaseline,{days:state.days,scope}):null]})
-    ].filter(Boolean)})
-  ]}):null
+  // Rule 62: the seven sections render openly in reading order, exactly as
+  // accepted — never buried under one disclosure. General methodology lives
+  // in the FAQ; report-specific evidence stays inline or in info controls.
+  const billedState=totals?(totals.billed_complete?t('usageBillingComplete'):totals.billed_usd==null?t('usageUnknown'):t('usageBillingPartial')):null
+  const insights=totals&&analyticsInsights(data,t).length?jsx('div',{className:'wm-insights','aria-label':t('usageInsightsAria'),children:analyticsInsights(data,t).map(item=>jsxs('div',{className:'wm-insight',children:[jsx('b',{children:item.label}),jsx('span',{title:item.model?`${item.model} · ${item.provider||''}`:undefined,'aria-label':item.model?`${item.text} (${item.model} · ${item.provider||''})`:undefined,children:item.text})]},item.label))}):null
+  const billing=totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:[billingMix || t('usageBillingTitle'),billedState].filter(Boolean).join(' · '),children:[jsx('strong',{children:t('usageBillingLabel')}),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),t('usageBillingNote')]}),jsx('span',{className:'wm-mono',children:windowScope || t('usageWindowPending')})]}):null
+  const coverage=totals&&num(totals.calls)?jsx(AnalyticsCoverageSummary,{data,dispatch,days:state.days}):null
+  const previous=totals&&data.previous&&!data.previous.comparable?jsx('div',{className:'wm-alert',children:t(data.previous.reason==='no_previous_calls'?'usagePreviousNoCalls':data.previous.reason==='insufficient_history'?'usagePreviousInsufficient':'usagePreviousUnavailable')}):null
+  const reportNotes=totals?analyticsNotesText(data.notes, data.note_codes, t):[]
+  const methodNotes=totals?jsxs('div',{className:'wm-subtle wm-method-notes',children:[jsx('p',{children:t('usageRecordingLine', data.recording?.since || t('usageRecordingPending'), data.recording?.last || '—')}),reportNotes.length?jsxs('details',{className:'wm-report-notes',children:[jsx('summary',{children:t('usageMethodologyTitle')}),...reportNotes.map((note,i)=>jsx('p',{children:note},i))]}):null,jsx('p',{children:jsx('button',{type:'button',className:'wm-source-link',onClick:goAboutCacheFaq,children:t('usageMethodFaqLink')})})].filter(Boolean)}):null
+  const baseline=totals?jsxs('details',{className:'wm-baseline',open:state.baselineOpen,onToggle:event=>dispatch({type:'set',key:'baselineOpen',value:event.currentTarget.open}),children:[jsx('summary',{children:t('usageBaselineSummaryTitle')}),state.baselineOpen?jsx(AnalyticsBaseline,{days:state.days,scope}):null]}):null
   const content = jsxs('div',{className:'wm-shell wm-usage',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
       query.error?jsxs('div',{id:'wm-usage-load-error',className:'wm-alert',role:'alert',tabIndex:-1,children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
     totals?jsxs('div',{className:'wm-product-summary wm-usage-grid wm-usage-summary',role:'group','aria-label':t('usageSummary'),children:[
-      jsx(AnalyticsKpiCard,{kpi:'usage-api',icon:'estimate',label:apiLabel,figure:analyticsListDisplay(totals)}),
-      jsx(AnalyticsKpiCard,{kpi:'usage-benefit',id:'wm-usage-read-benefit',icon:'recorded',label:readBenefitLabel,figure:readBenefitDisplay(t,readBenefit)}),
+      jsx(AnalyticsKpiCard,{kpi:'usage-api',icon:'estimate',label:apiLabel,figure:analyticsListDisplay(totals, true)}),
+      jsx(AnalyticsKpiCard,{kpi:'usage-benefit',id:'wm-usage-read-benefit',icon:'recorded',label:readBenefitLabel,figure:readBenefitDisplay(t,readBenefit,true)}),
       jsx(AnalyticsKpiCard,{kpi:'usage-tokens',icon:'models',label:t('usageStatTokens'),figure:fmtTokens(totals.tokens)}),
       jsx(AnalyticsKpiCard,{kpi:'usage-calls',icon:'calls',label:t('usageStatCalls'),figure:exactTokens(totals.calls)})]}):null,
+    insights,billing,coverage,previous,
     totals&&!num(totals.calls)?jsxs('div',{id:'wm-usage-pricing-summary',className:'wm-empty',role:'status',children:[jsx('h2',{children:t('usageEmptyTitle')}),jsx('p',{children:t('usageEmptyBody')}),jsx(AnalyticsButton,{label:t('usageEmptyShowDesktop'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageEmptyShowDesktop')}),jsx(AnalyticsButton,{label:t('usageEmptyClear'),onClick:()=>dispatch({type:'clear'})})]}):null,
     !totals&&!query.isLoading&&!query.error?jsx('div',{id:'wm-usage-no-data',className:'wm-empty',role:'status',tabIndex:-1,children:t('usageNoData')}):null,
-    totals?jsxs('div',{className:'wm-charts wm-usage-charts',children:[jsx(AnalyticsDistribution,{data,state,dispatch}),jsx(AnalyticsTrendChart,{data,state,dispatch}),jsx(AnalyticsComposition,{data,state,dispatch})]}):null,
-    detail]})
+    totals?jsxs('div',{className:'wm-charts',children:[jsx(AnalyticsDistribution,{data,state,dispatch}),jsx(AnalyticsTrendChart,{data,state,dispatch}),jsx(AnalyticsDelegation,{data,state,dispatch}),jsx(AnalyticsRanking,{data,state,dispatch}),jsx(AnalyticsComposition,{data,state,dispatch})]}):null,
+    totals?jsx(AnalyticsExplorer,{data,state,dispatch}):null,totals?jsx(AnalyticsEconomics,{data}):null,
+    methodNotes,baseline]})
   return productPage ? jsx(ProductShell, { children: content })
     : jsxs('div', { className: 'wm-analytics', children: [jsx('style', { children: ANALYTICS_CSS }), content] })
 }
@@ -4961,12 +5004,16 @@ const OV_GAP_REASON_KEYS = {
   model_unidentified: 'ovGapModelMissing',
   cache_provenance_unknown: 'ovGapCacheProvenance',
   provider_price_catalogue_missing: 'ovGapProviderPrice',
+  provider_not_in_catalogue: 'ovGapProviderPrice',
   price_evidence_missing: 'ovGapModelPrice',
+  model_not_in_catalogue: 'ovGapModelPrice',
   rate_unavailable: 'ovGapRateUnavailable',
   tier_rate_unavailable: 'ovGapTierRate',
   missing_base_rate: 'ovGapMissingBaseRate',
   missing_cache_read_rate: 'ovGapMissingCacheRead',
   missing_cache_write_rate: 'ovGapMissingCacheWrite',
+  missing_cache_rate: 'ovGapMissingCacheRate',
+  cache_rate_unavailable: 'ovGapMissingCacheRate',
 }
 
 function analyticsGapReasonLabel(reason, t) {
@@ -5240,6 +5287,18 @@ function scrollToCostsAttention() {
   if (!section) return
   try { section.scrollIntoView?.({ block: 'start' }) } catch {}
   section.querySelector('[data-costs-attention-heading]')?.focus?.()
+}
+
+/** Open the per-account blocker log and jump to it. Rows and verdicts use
+ *  this when nothing they describe is user-fixable, so the link never
+ *  lands on an empty attention summary. */
+function openCostsBlockerLog() {
+  if (typeof document === 'undefined') return
+  const log = document.getElementById('wm-cost-blocker-log')
+  if (!log) return
+  log.open = true
+  try { log.scrollIntoView?.({ block: 'start' }) } catch {}
+  log.querySelector('summary')?.focus?.()
 }
 
 function econBlockerActionLabel(destination, t) {
@@ -5903,6 +5962,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-overview-attention{margin:6px 0 4px;padding-left:18px;display:grid;gap:5px;font-size:13px;line-height:1.5;color:var(--ui-text-secondary)}',
   '.wm-product .wm-product-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:10px}',
   '.wm-product .wm-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:1fr;align-items:stretch}',
+  '.wm-product .wm-usage-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:1fr;align-items:stretch}',
   '.wm-product .wm-overview-panels{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(260px,1fr);gap:12px;align-items:start}',
   '.wm-product .wm-overview-panels>.wm-product-section{min-width:0}',
   '.wm-product .wm-product-card,.wm-product .wm-product-section,.wm-product .wm-product-stat{border:1px solid var(--wm-border);border-radius:var(--wm-radius-card);background:var(--wm-surface);min-width:0}',
@@ -5915,6 +5975,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-kpi-scope{margin:0;color:var(--ui-text-tertiary);font-size:10.5px;line-height:1.35}',
   '.wm-product .wm-kpi-prov{margin:0}',
   '.wm-product .wm-overview-grid .wm-kpi,.wm-product .wm-usage-grid .wm-kpi{display:grid;align-content:start;gap:7px;min-height:156px;align-items:start;padding:13px 14px 12px;border:1px solid var(--wm-border);border-left:3px solid var(--wm-kpi-accent,var(--ui-accent));border-radius:var(--wm-radius-card);background:var(--wm-surface)}',
+  '.wm-product .wm-usage-grid .wm-kpi{min-height:0}',
   '.wm-product .wm-overview-grid .wm-kpi[data-kpi="recorded-usage"]{--wm-kpi-accent:var(--ui-success)}.wm-product .wm-overview-grid .wm-kpi[data-kpi="actual-charges"]{--wm-kpi-accent:var(--ui-warning)}.wm-product .wm-overview-grid .wm-kpi[data-kpi="api-equivalent-estimate"]{--wm-kpi-accent:var(--ui-accent)}.wm-product .wm-overview-grid .wm-kpi[data-kpi="saved-fees"]{--wm-kpi-accent:var(--ui-accent)}',
   '.wm-product .wm-usage-grid .wm-kpi[data-kpi="usage-api"]{--wm-kpi-accent:var(--ui-accent)}.wm-product .wm-usage-grid .wm-kpi[data-kpi="usage-benefit"]{--wm-kpi-accent:var(--ui-success)}.wm-product .wm-usage-grid .wm-kpi[data-kpi="usage-tokens"]{--wm-kpi-accent:var(--ui-accent)}.wm-product .wm-usage-grid .wm-kpi[data-kpi="usage-calls"]{--wm-kpi-accent:var(--ui-accent)}',
   '.wm-product .wm-overview-grid .wm-kpi-foot{margin-top:auto;gap:4px}',
@@ -6043,7 +6104,7 @@ const PRODUCT_CSS = [
   '@media(prefers-reduced-motion:reduce){.wm-product .wm-product-tab,.wm-product .wm-button,.wm-product .wm-account-chip,.wm-product .wm-about-action,.wm-product .wm-about-kofi{transition:none!important}.wm-product .wm-button:active:not(:disabled){transform:none}}',
   '@container(max-width:760px){.wm-product .wm-overview-panels{grid-template-columns:1fr}}',
   '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;flex-wrap:wrap;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}.wm-product .wm-method-grid{grid-template-columns:1fr}}',
-  '@container(max-width:340px){.wm-product .wm-overview-grid{grid-template-columns:1fr}}',
+  '@container(max-width:340px){.wm-product .wm-overview-grid,.wm-product .wm-usage-grid{grid-template-columns:1fr}}',
   // The pairing notice is shown by the shell on every tab, so its type rules
   // live with the shell rather than in a page stylesheet.
   '.wm-product .wm-backend-compatibility strong{display:block;font-weight:600;font-size:12px}',
@@ -6138,6 +6199,13 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   const cache = totals?.economics || {}
   const savings = analyticsSavingsValue(cache)
   const savingsDisplay = analyticsSavingsDisplay(cache, t)
+  // F79: one cache card shows the supported figure — the signed net
+  // impact when calculable, otherwise the supported cache-read benefit.
+  // The label always names the figure shown; the other measure stays in
+  // the evidence details. Same backend evidence, no blending.
+  const readBenefit = readBenefitState(cache, totals?.calls)
+  const netShown = savings !== null
+  const benefitShown = !netShown && readBenefit.available
   const excludedCalls = finiteValue(cache.excluded_calls)
   const coveredCalls = finiteValue(cache.covered_calls)
   const cacheCoverage = finiteValue(cache.coverage)
@@ -6146,14 +6214,18 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   const cacheBounded = savings !== null && cache.savings_basis !== 'exact'
   const cacheTone = analyticsSavingsTone(cache)
   const unreadable = !summaryReady && !summaryLoading
+  // Rule 62: no routine uncertainty badge on the card. The value wording
+  // (bounds, dash) plus the note below carry the state; only a genuinely
+  // complete subtotal keeps its confirmation.
+  const cacheComplete = netShown
+    ? !cacheBounded && !cachePartial && cacheCoverage !== null
+    : benefitShown && !readBenefit.partial
   const cacheStatus = summaryLoading ? t('costsLoadingShort')
-    : savings === null ? t('costsUnknownTag')
-    : cacheBounded && cacheCoverage === null ? t('costsCacheBoundedCoverageUnknownTag')
-    : cacheBounded ? t('costsCacheBoundedTag')
-    : cachePartial ? null
-    : cacheCoverage === null ? t('costsCoverageUnknownTag') : t('costsCompleteTag')
+    : cacheComplete ? t('costsCompleteTag') : null
   const cacheNote = summaryLoading ? t('costsEvidenceLoading')
     : unreadable ? t('costsEvidenceUnavailable')
+    : benefitShown
+      ? t('readBenefitCoverage', readBenefit.calls, readBenefit.total, fmtTokens(readBenefit.tokens))
     : savings === null ? t('costsCacheUnknown')
     : cacheBounded ? t('costsCacheBoundNote')
     : savings < 0 ? t('costsCacheNegative')
@@ -6188,10 +6260,8 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   const apiBasis = api.billingBasis
   const apiBounded = apiBasis != null && apiBasis !== 'exact'
   const apiStatus = summaryLoading ? t('costsLoadingShort')
-    : api.usd == null ? t('costsUnknownTag')
-    : apiPartial ? null
-    : apiCoverageUnknown ? t('costsCoverageUnknownTag')
-    : apiBounded ? null : t('costsCompleteTag')
+    : api.usd == null || apiPartial || apiCoverageUnknown || apiBounded ? null
+    : t('costsCompleteTag')
   const apiNote = summaryLoading ? t('costsEvidenceLoading')
     : unreadable ? t('costsEvidenceUnavailable')
     : api.usd == null ? apiPartial ? t('costsApiNoPricedSubtotal') : api.empty
@@ -6225,7 +6295,12 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
     jsx(CostsEvidenceDetail, { label: t('costsActualCharges'), value: t('ovNotRecorded'),
       children: jsx('p', { children: t('costsActualChargesDetail') }) }, 'charges'),
     jsx(CostsEvidenceDetail, { label: t('costsCacheLabel'),
-      value: savings === null ? t('costsUnknownTag') : savingsDisplay, children: cacheDetails }, 'cache'),
+      value: savings === null ? '—' : savingsDisplay, children: cacheDetails }, 'cache'),
+    jsx(CostsEvidenceDetail, { label: t('readBenefitLabel'),
+      value: readBenefit.available ? readBenefitDisplay(t, readBenefit, true) : '—',
+      children: jsx('p', { children: [t('readBenefitExplanation'), readBenefit.available
+        ? t('readBenefitCoverage', readBenefit.calls, readBenefit.total, fmtTokens(readBenefit.tokens))
+        : t('readBenefitUnavailable')].filter(Boolean).join(' ') }) }, 'readbenefit'),
     jsx(CostsEvidenceDetail, { label: t('costsFeesLabel'), value: feeValue,
       children: jsx('p', { children: t('costsFeesDetails') }) }, 'fees'),
     jsx(CostsEvidenceDetail, { label: t('costsAllowancesLabel'),
@@ -6245,7 +6320,6 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
     : Number.isFinite(Number(summaryWindow?.days)) ? Number(summaryWindow.days) : null
   return jsxs('section', { className: 'wm-product-section wm-cost-overview', 'aria-label': t('costsOverviewTitle'), children: [
     jsx('h2', { children: t('costsOverviewTitle') }),
-    jsx('p', { children: t('costsOverviewIntro') }),
     summaryReady
       ? jsx('p', { className: 'wm-cost-evidence-scope', children: t('costsEvidenceScope') + (windowDays != null ? ` ${t('costsEvidenceWindow', windowDays)}` : '') }) : null,
     summaryLoading ? jsx('p', { className: 'wm-subtle', children: t('costsEvidenceLoading') }) : null,
@@ -6260,11 +6334,13 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
         status: t('costsReportedTag'), note: t('costsReportedShort') }),
       jsx(CostsEvidenceCard, { kind: 'charges', label: t('costsActualCharges'),
         value: summaryLoading ? '—' : summaryReady ? t('ovNotRecorded') : t('costsEvidenceUnavailable'),
-        status: summaryReady ? t('costsUnknownTag') : summaryLoading ? t('costsLoadingShort') : t('costsUnknownTag'),
-        note: summaryReady ? t('costsActualChargesShort') : unreadable ? t('costsEvidenceUnavailable') : t('costsEvidenceLoading') }),
+        status: summaryLoading ? t('costsLoadingShort') : null,
+        note: unreadable ? t('costsEvidenceUnavailable') : summaryLoading ? t('costsEvidenceLoading') : null }),
       jsx(CostsEvidenceCard, { kind: cacheTone === 'wm-warn' ? 'cache-negative' : 'cache',
-        label: t('costsCacheLabel'), value: summaryLoading ? '—'
-          : savings === null ? t('costsUnknownTag') : savingsDisplay,
+        label: benefitShown ? t('readBenefitLabel') : t('costsCacheLabel'),
+        value: summaryLoading ? '—'
+          : netShown ? savingsDisplay
+          : benefitShown ? readBenefitDisplay(t, readBenefit, true) : '—',
         status: cacheStatus, note: cacheNote }),
       jsx(CostsEvidenceCard, { kind: 'fees', label: t('costsFeesLabel'),
         value: !accountsReady ? accountsFailed && !accountsLoading ? t('costsEvidenceUnavailable') : '—' : feeLines.length
@@ -6289,7 +6365,10 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
     ] }),
     summaryReady ? jsxs('details', { className: 'wm-econ-disclosure wm-cost-other-billing', children: [
       jsx('summary', { children: t('costsEvidenceDetails') }),
-      jsx('div', { className: 'wm-cost-evidence-details', children: evidenceDetails })
+      jsx('div', { className: 'wm-cost-evidence-details', children: [
+        jsx('p', { className: 'wm-subtle', children: t('costsOverviewIntro') }, 'intro'),
+        ...evidenceDetails
+      ] })
     ] }) : null,
     !accountsReady && !accountsLoading && !accountsFailed
       ? jsx('p', { className: 'wm-subtle', children: t('costsLoading') }) : null
@@ -6583,24 +6662,19 @@ function EconomicsFx({ fxError, fxReady, identity, rates, fxRev, onRetry, onSave
 function CostsAttention({ groups, econAccounts, unknownFees, fxError, onRetryFx, onOpenFx, onOpenLog, t }) {
   const collected = collectCostsBlockers(groups, econAccounts)
   const labels = new Map((econAccounts || []).map(row => [row.account_id, row.label || row.family || row.account_id]))
+  // Rule 62: attention holds ONLY issues the user can meaningfully resolve.
+  // History and unavailable evidence stay in the per-account blocker log,
+  // which renders every collected blocker with its code.
   const items = []
   if (unknownFees?.count > 0 && !collected.some(entry => entry.code === 'subscription_fee_missing')) {
     items.push({ code: 'subscription_fee_missing', currency: null, accountIds: [], accountLabels: unknownFees.labels || [] })
   }
   for (const entry of collected) {
     if (COSTS_NON_ATTENTION_CODES.has(entry.code)) continue
+    if (costsBlockerCategory(entry.code) !== 'fix') continue
     items.push(entry)
   }
   if (fxError) items.push({ code: 'fx_read_error', currency: null, accountIds: [] })
-  const byCategory = { fix: [], history: [], unavailable: [] }
-  for (const item of items) {
-    const category = item.code === 'fx_read_error' ? 'fix' : costsBlockerCategory(item.code)
-    byCategory[category].push(item)
-  }
-  const categoryTitle = category => category === 'fix' ? t('costsAttentionFix')
-    : category === 'history' ? t('costsAttentionHistory') : t('costsAttentionUnavailable')
-  const categoryHint = category => category === 'fix' ? t('costsAttentionFixHint')
-    : category === 'history' ? t('costsAttentionHistoryHint') : t('costsAttentionUnavailableHint')
   const rowText = item => {
     if (item.code === 'fx_read_error') return fxError
     if (!COSTS_KNOWN_BLOCKER_CODES.has(item.code)) return t('econBlockGenericShort')
@@ -6639,13 +6713,9 @@ function CostsAttention({ groups, econAccounts, unknownFees, fxError, onRetryFx,
       items.length ? jsx('span', { className: 'wm-cost-attn-count', children: String(items.length) }) : null
     ].filter(Boolean) }),
     jsx('p', { className: 'wm-cost-attn-hint', children: t('costsAttentionHint') }),
-    items.length ? ['fix', 'history', 'unavailable'].filter(category => byCategory[category].length).map(category =>
-      jsxs('div', { className: 'wm-cost-attn-cat', children: [
-        jsx('h3', { className: 'wm-cost-attn-cat-title', children: categoryTitle(category) }),
-        jsx('p', { className: 'wm-cost-attn-cat-hint', children: categoryHint(category) }),
-        jsx('ul', { className: 'wm-cost-attn-rows', children: byCategory[category].map(item => row(item, category)) })
-      ] }, category))
-    : jsx('p', { className: 'wm-subtle', children: t('costsAttentionEmpty') })
+    items.length
+      ? jsx('ul', { className: 'wm-cost-attn-rows', children: items.map(item => row(item, 'fix')) })
+      : jsx('p', { className: 'wm-subtle', children: t('costsAttentionEmpty') })
   ].filter(Boolean) })
 }
 
@@ -6658,6 +6728,10 @@ function EconomicsGroupRow({ group, t }) {
   const difference = finiteValue(group.difference_usd)
   const notes = econNotesText(group.notes, group.note_codes, t)
   const blockers = group.blockers || []
+  // Attention holds fixable rows only; history, unavailable evidence and
+  // notes live in the blocker log. The link counts fixable items and goes
+  // to the log when nothing on the row can be fixed.
+  const fixable = blockers.filter(entry => costsBlockerCategory(entry.code) === 'fix')
   const scope = econGroupFeeScope(group)
   const bare = usage == null && difference == null && group.status === 'unavailable'
     && !notes.length && !blockers.length
@@ -6679,11 +6753,14 @@ function EconomicsGroupRow({ group, t }) {
               children: t('econGroupFeeScope', scope.known, scope.total, scope.unknown, scope.unallocated) })
           : null,
         difference == null
-          ? (blockers.length || notes.length
+          ? (fixable.length
             ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-see-attention',
                 onClick: scrollToCostsAttention,
-                children: t('econGroupSeeAttention', blockers.length + notes.length) })
-            : jsx('p', { className: 'wm-subtle', children: t('econNoComparison') }))
+                children: t('econGroupSeeAttention', fixable.length) })
+            : (blockers.length || notes.length
+              ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-see-log',
+                  onClick: openCostsBlockerLog, children: t('costsAttentionViewLog') })
+              : jsx('p', { className: 'wm-subtle', children: t('econNoComparison') })))
           : jsx(EconomicsBars, { group, t })
       ].filter(Boolean) })
   ].filter(Boolean) })
@@ -6706,6 +6783,18 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, fxRev, on
   const verdict = econVerdict(headline, windowLines, t)
   const logGroups = groups.filter(group => (group.blockers || []).length || (group.notes || []).length)
   const logAccounts = accounts.filter(row => (row.blockers || []).length)
+  // The verdict link follows the same split as attention itself: fixable
+  // causes (collected blockers, unknown-fee scope, a failed FX read) go to
+  // attention; anything else goes to the blocker log; nothing renders when
+  // neither surface has content to show.
+  const verdictFixable = Boolean(fxError) ||
+    collectCostsBlockers(groups, accounts).some(entry =>
+      !COSTS_NON_ATTENTION_CODES.has(entry.code) && costsBlockerCategory(entry.code) === 'fix') ||
+    groups.some(group => {
+      const feeScope = econGroupFeeScope(group)
+      return feeScope && feeScope.total > 0 && feeScope.unknown > 0
+    })
+  const verdictLoggable = logGroups.length > 0 || logAccounts.length > 0
   const trendInline = trendWarrantsInline(data?.trend)
   const trendMonths = data?.trend?.months || []
   const inlineMonths = trendInline ? trendMonths.filter(trendMonthComparable) : []
@@ -6737,8 +6826,13 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, fxRev, on
       verdict.text,
       verdict.tone === 'partial' ? ' ' : null,
       verdict.tone === 'partial'
-        ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-verdict-link',
-            onClick: scrollToCostsAttention, children: t('econVerdictSeeAttention') })
+        ? (verdictFixable
+          ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-verdict-link',
+              onClick: scrollToCostsAttention, children: t('econVerdictSeeAttention') })
+          : verdictLoggable
+            ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-verdict-log',
+                onClick: openCostsBlockerLog, children: t('econVerdictSeeAttention') })
+            : null)
         : null
     ].filter(part => part !== null) }) : null,
     (headline.notes || []).length
@@ -7186,6 +7280,15 @@ function OverviewPage() {
   // fix; anything else keeps the honest Usage review. Older backends
   // omit the counts and keep the previous review-only row.
   const unpricedFixable = num(result.custom_fixable_tokens) > 0 || num(result.custom_fixable_calls) > 0
+  // The backend names the largest fixable gap so the row states the exact
+  // route, model and missing rate. Older backends omit the detail and keep
+  // the generic sentence. Raw ids: the Settings form matches them exactly.
+  const fixableDetail = result.custom_fixable_detail && typeof result.custom_fixable_detail === 'object'
+    ? result.custom_fixable_detail : null
+  const fixableNamed = fixableDetail && typeof fixableDetail.model === 'string' && fixableDetail.model
+    && typeof fixableDetail.provider === 'string' && fixableDetail.provider
+    ? t('ovUnpricedFixableDetail', fixableDetail.model, fixableDetail.provider,
+      analyticsGapReasonLabel(fixableDetail.reason, t)) : null
   // The backend's own bound on this subtotal. A lower_bound/range/incomplete
   // figure with fully priced rows still omits evidence, so it carries the
   // Partial chip — the same qualifier Usage and the taskbar chip express with
@@ -7336,7 +7439,7 @@ function OverviewPage() {
                 jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
                 jsxs('div', { className: 'wm-attn-main', children: [
                   jsx('strong', { children: t('ovPricingTitle') }),
-                  jsx('span', { children: unpricedFixable ? t('ovUnpricedFixable') : t('ovUnpriced') })
+                  jsx('span', { children: unpricedFixable ? (fixableNamed || t('ovUnpricedFixable')) : t('ovUnpriced') })
                 ] }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
                   onClick: unpricedFixable ? () => goLedgerTab('settings') : openUsagePricingCoverage,
@@ -7851,8 +7954,16 @@ function SettingsPage() {
  * Numbered like the news-focus nonce so a repeat click replays the reveal. */
 let aboutFaqRequest = 0
 let aboutFaqConsumed = 0
+let aboutCacheFaqRequest = 0
+let aboutCacheFaqConsumed = 0
 function goAboutFaq() {
   aboutFaqRequest += 1
+  goLedgerTab('about')
+}
+/** The Usage method-notes link targets the cache-methodology answer, not
+ *  the billing-mismatch one. Separate nonce, same reveal mechanics. */
+function goAboutCacheFaq() {
+  aboutCacheFaqRequest += 1
   goLedgerTab('about')
 }
 
@@ -7976,24 +8087,32 @@ const CONTACT_URL = 'https://wolfmark.co.uk/contact'
 function AboutPage() {
   const t = usePluginI18n(ID)
   useEffect(() => {
-    if (aboutFaqRequest === aboutFaqConsumed) return
-    aboutFaqConsumed = aboutFaqRequest
-    try {
-      if (typeof document === 'undefined') return
-      const faq = document.getElementById('about-faq')
-      if (faq) faq.open = true
-      const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-      faq?.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
-      const summary = faq?.querySelector('summary')
-      // A native summary is focusable, so any fallback tabindex is transient:
-      // it is removed right after focusing to keep sequential Tab order.
-      const addedTabIndex = summary && !summary.hasAttribute('tabindex')
-      if (addedTabIndex) summary.setAttribute('tabindex', '-1')
-      try { summary?.focus({ preventScroll: true }) } catch {
-        try { summary?.focus() } catch {}
-      }
-      if (addedTabIndex) summary.removeAttribute('tabindex')
-    } catch {}
+    const reveal = id => {
+      try {
+        if (typeof document === 'undefined') return
+        const faq = document.getElementById(id)
+        if (faq) faq.open = true
+        const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+        faq?.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+        const summary = faq?.querySelector('summary')
+        // A native summary is focusable, so any fallback tabindex is transient:
+        // it is removed right after focusing to keep sequential Tab order.
+        const addedTabIndex = summary && !summary.hasAttribute('tabindex')
+        if (addedTabIndex) summary.setAttribute('tabindex', '-1')
+        try { summary?.focus({ preventScroll: true }) } catch {
+          try { summary?.focus() } catch {}
+        }
+        if (addedTabIndex) summary.removeAttribute('tabindex')
+      } catch {}
+    }
+    if (aboutFaqRequest !== aboutFaqConsumed) {
+      aboutFaqConsumed = aboutFaqRequest
+      reveal('about-faq')
+    }
+    if (aboutCacheFaqRequest !== aboutCacheFaqConsumed) {
+      aboutCacheFaqConsumed = aboutCacheFaqRequest
+      reveal('about-faq-cache')
+    }
   }, [])
   return jsx(ProductShell, { children:
     jsxs('main', { className: 'wm-shell', children: [
@@ -8040,6 +8159,10 @@ function AboutPage() {
           jsx('p', { children: t('aboutFaqMismatchA2') }),
           jsx('p', { children: jsx('a', { ...externalLinkProps(TROUBLESHOOTING_URL),
             className: 'wm-source-link', children: t('aboutFaqTroubleshooting') }) })
+        ] }),
+        jsxs('details', { id: 'about-faq-cache', className: 'wm-about-faq', children: [
+          jsx('summary', { children: t('aboutFaqCacheQ') }),
+          jsx('p', { children: t('usageCacheFormula') })
         ] })
       ] }),
       jsxs('section', { className: 'wm-product-section wm-about-more', children: [
@@ -15819,6 +15942,7 @@ const I18N = {
     ovPricingTitle: 'Usage pricing',
     ovUnpriced: 'Pricing evidence is incomplete for some backend usage in the last 30 days.',
     ovUnpricedFixable: 'Some backend usage has no catalogue price; a custom token rate you set can price it.',
+    ovUnpricedFixableDetail: (model, provider, reason) => `${model} via ${provider} has no catalogue price (${reason}); a custom token rate you set can price it.`,
     ovWeatherStale: 'Refresh failed — weather warnings may be stale.',
     ovStrip: n => `${n} need attention`,
     ovStripReview: 'Review',
@@ -16138,6 +16262,7 @@ const I18N = {
     ovGapMissingBaseRate: 'Base input or output rate is missing',
     ovGapMissingCacheRead: 'Cache-read rate is missing',
     ovGapMissingCacheWrite: 'Cache-write rate is missing',
+    ovGapMissingCacheRate: 'No cache rate is available for this model',
     econHeadNoFees: 'No subscription has a known fee; declare fees in Memberships.',
     econHeadUnpriced: count => `${count} subscription(s) have no fee; the headline cannot be compared.`,
     econHeadIncomparable: 'At least one subscription cannot be compared (missing price, coverage or FX rate); see the rows.',
@@ -16452,14 +16577,14 @@ const I18N = {
     costsEvidenceLoading: 'Reading usage evidence…',
     costsFooterNote: 'Desktop-recorded values keep the rates captured at the time. Backend API-equivalent estimates use the current available catalogue and can change; they are not historical charges.',
     costsAttentionTitle: 'What needs attention?',
-    costsAttentionHint: 'Fixable problems first, then items waiting on history, then evidence that is unavailable.',
+    costsAttentionHint: 'Only problems you can resolve appear here; history and unavailable evidence stay in the blocker log.',
     costsAttentionFix: 'Fix now',
     costsAttentionHistory: 'Needs more history',
     costsAttentionUnavailable: 'Not recorded / unavailable',
     costsAttentionFixHint: 'These have a fix — use the action on each row.',
     costsAttentionHistoryHint: 'These resolve as recording history accumulates — nothing to fix.',
     costsAttentionUnavailableHint: 'This evidence is not reported — the blocker log holds the detail.',
-    costsAttentionEmpty: 'Nothing needs attention. Every comparison is supported by the available evidence.',
+    costsAttentionEmpty: 'No problems need your attention.',
     costsAttentionAccounts: count => `${count} account${count === 1 ? '' : 's'}`,
     costsAttentionViewLog: 'View blocker log',
     costsEntAllowance: money => ` · ${money} allowance`,
@@ -16681,6 +16806,7 @@ const I18N = {
     aboutFaqMismatchQ: 'Why don’t my SpendSense figures match my provider’s usage or billing dashboard?',
     aboutFaqMismatchA1: 'The windows rarely match. The Desktop figure covers the calendar month to date across every profile in this ledger, while the backend estimate covers timestamped calls for the active profile over the rolling last 30 days at current catalogue rates. Provider dashboards may use a billing cycle, a different timezone, or a subscription allowance period instead.',
     aboutFaqMismatchA2: 'The money is measured differently too. SpendSense figures are API-equivalent estimates, not payments: captured costs keep the rates applied when recorded, backend values are recalculated estimates, and actual provider charges are not recorded. Calls with missing usage or pricing are reported separately rather than guessed, and provider credits, discounts and subscription billing sit outside this accounting.',
+    aboutFaqCacheQ: 'How is the cache hit rate calculated?',
     aboutFaqTroubleshooting: 'Still stuck? See the troubleshooting guide.',
     aboutPrivacyHeading: 'Privacy',
     aboutPrivacyBody: 'SpendSense processes usage on your own machines. It does not collect prompts, responses or telemetry, and optional network features stay off until you enable them.',
@@ -16880,10 +17006,10 @@ const I18N = {
     usageEconBenefit: 'NET CACHE BENEFIT',
     usageEconBound: 'QUALIFIED ESTIMATE',
     usageEconNetSavings: 'theoretical net savings',
-    savingsRangeValue: (low, high) => '≈' + low + '–' + high,
+    savingsRangeValue: (low, high) => low + '–' + high,
     savingsUpperBoundValue: value => '≤' + value,
     savingsLowerBoundValue: value => '≥' + value,
-    savingsBoundValue: value => '≈' + value,
+    savingsBoundValue: value => value,
     usageEconWithoutCache: 'Without cache',
     usageEconWithCache: 'With cache',
     usageEconBarAria: (label, money) => `${label}: ${money}`,
@@ -16982,6 +17108,7 @@ const I18N = {
     rpEvidenceNote: 'Report totals cover timestamped captured backend calls in this period. Population depends on recorded call classification; unknown cache evidence and unpriced routes remain disclosed in Coverage and Methodology. API-equivalent valuation is not a provider charge or subscription saving.',
     usageRecordingPending: 'not yet available',
     usageCacheFormula: 'Cache hit = reported read tokens ÷ prompt tokens for calls with a reported read count, weighted across calls. Missing reads are excluded; missing writes remain unknown, not zero, and do not exclude a call. Estimated or derived counters are labelled. Legacy zero-cache rows are ambiguous.',
+    usageMethodFaqLink: 'How is the cache hit rate calculated? See the FAQ.',
     usageMethodologyTitle: 'More details',
     usageBaselineSummaryTitle: 'Historical baseline & reconciliation — separate cumulative estimate',
   },
@@ -17632,6 +17759,7 @@ const I18N = {
     ovPricingTitle: '用量定价',
     ovUnpriced: '过去 30 天的部分后端用量缺少完整定价证据。',
     ovUnpricedFixable: '部分后端用量缺少目录价格；您设置的自定义令牌单价可以为其定价。',
+    ovUnpricedFixableDetail: (model, provider, reason) => `${model}（经 ${provider}）缺少目录价格（${reason}）；您设置的自定义令牌单价可以为其定价。`,
     ovWeatherStale: '刷新失败——额度预警可能已过期。',
     ovStrip: n => `有 ${n} 项需要注意`,
     ovStripReview: '查看',
@@ -17947,6 +18075,7 @@ const I18N = {
     ovGapMissingBaseRate: '缺少基础输入或输出费率',
     ovGapMissingCacheRead: '缺少缓存读取费率',
     ovGapMissingCacheWrite: '缺少缓存写入费率',
+    ovGapMissingCacheRate: '缺少此模型的缓存费率',
     econHeadNoFees: '没有订阅登记了已知费用；请在“会员”中登记费用。',
     econHeadUnpriced: count => `${count} 个订阅没有费用；无法对比汇总数字。`,
     econHeadIncomparable: '至少一个订阅无法对比（缺失价格、覆盖或汇率）；请查看各行。',
@@ -18261,14 +18390,14 @@ const I18N = {
     costsEvidenceLoading: '正在读取用量证据…',
     costsFooterNote: '桌面记录值保留记录时的单价。后端 API 等值估算使用当前可用目录，可能变化；并非历史费用。',
     costsAttentionTitle: '哪些事项需要注意？',
-    costsAttentionHint: '可修复的问题在前，其次是等待历史记录的事项，最后是不可用的证据。',
+    costsAttentionHint: '此处仅显示您可以解决的问题；历史记录和不可用证据保留在问题日志中。',
     costsAttentionFix: '立即处理',
     costsAttentionHistory: '需要更多历史记录',
     costsAttentionUnavailable: '未记录/不可用',
     costsAttentionFixHint: '这些问题可以修复——请按每行的操作处理。',
     costsAttentionHistoryHint: '这些问题会随着记录历史的积累而解决——无需修复。',
     costsAttentionUnavailableHint: '此类证据未被报告——详情见问题日志。',
-    costsAttentionEmpty: '没有需要注意的事项。现有证据支持所有比较。',
+    costsAttentionEmpty: '没有需要您注意的问题。',
     costsAttentionAccounts: count => `${count} 个帐户`,
     costsAttentionViewLog: '查看问题日志',
     costsEntAllowance: money => ` · ${money} 额度`,
@@ -18490,6 +18619,7 @@ const I18N = {
     aboutFaqMismatchQ: '为什么 SpendSense 的数据与服务商的用量或账单面板对不上？',
     aboutFaqMismatchA1: '统计口径常常不同。桌面数据覆盖本日历月至今、此账本中所有配置文件；后端估算仅涵盖当前配置文件滚动 30 天内带时间戳的调用，按当前目录价格计算。而服务商面板可能按账单周期、不同时区或订阅额度周期统计。',
     aboutFaqMismatchA2: '金额的计量方式也不同。SpendSense 数据是 API 等值估算，而非实际付款：已捕获成本保留记录时的单价，后端数值为重算估算，且不记录实际服务商费用。缺失用量或价格的调用会单独报告而不猜测；服务商的抵扣、折扣与订阅计费不在此记账范围内。',
+    aboutFaqCacheQ: '缓存命中率是如何计算的？',
     aboutFaqTroubleshooting: '仍未解决？请参阅故障排除指南。',
     aboutPrivacyHeading: '隐私',
     aboutPrivacyBody: 'SpendSense 在您自己的机器上处理用量数据。不收集提示词、回复或遥测数据，可选的联网功能在您开启之前保持关闭。',
@@ -18689,10 +18819,10 @@ const I18N = {
     usageEconBenefit: '净缓存收益',
     usageEconBound: '有条件估算',
     usageEconNetSavings: '理论净节省',
-    savingsRangeValue: (low, high) => '≈' + low + '–' + high,
+    savingsRangeValue: (low, high) => low + '–' + high,
     savingsUpperBoundValue: value => '≤' + value,
     savingsLowerBoundValue: value => '≥' + value,
-    savingsBoundValue: value => '≈' + value,
+    savingsBoundValue: value => value,
     usageEconWithoutCache: '无缓存',
     usageEconWithCache: '有缓存',
     usageEconBarAria: (label, money) => `${label}：${money}`,
@@ -18791,6 +18921,7 @@ const I18N = {
     rpEvidenceNote: '报告合计涵盖此期间带时间戳的后端调用记录。总体范围取决于已记录的调用分类；覆盖率和方法说明会披露未知缓存证据和未定价线路。API 等值估价不是供应商费用或订阅节省。',
     usageRecordingPending: '暂不可用',
     usageCacheFormula: '缓存命中 = 已报告的读取令牌 ÷ 报告了读取计数的调用的提示令牌，按调用加权。缺失读取的调用不计入；缺失写入保持未知而非零，不影响调用计入。估算或推算的计数会明确标注。旧零缓存行含义不明。',
+    usageMethodFaqLink: '缓存命中率如何计算？查看常见问题。',
     usageMethodologyTitle: '更多详情',
     usageBaselineSummaryTitle: '历史基线与对账——独立累计估算',
   }
@@ -18899,7 +19030,7 @@ export default {
 /** Pure internals, exported for the node test-suite (the host only reads `default`). */
 export const __test = {
   Chip, BudgetPanel, BudgetStatusIndicator, budgetLevel, budgetColour, sessionBudgetStatus, usageValueDelta, budgetQuery, budgetWrite, budgetPayload, newBudgetDraft, budgetTooltip, $budgetDraft, $budgetBusy, $budgetNotice, BUDGET_CSS,
-  analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS, CHART_COLORS,
+  analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS, CHART_COLORS, sharePercent, analyticsListPartial,
   AnalyticsPage, AnalyticsDashboard, AnalyticsCoverageSummary, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
   AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS, AnalyticsSegments,
   usageFilterChipName, USAGE_FILTER_CHIP_KEYS, usageFilterChipValue, USAGE_FILTER_SCOPE_KEYS,
@@ -18967,12 +19098,12 @@ export const __test = {
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   EconomicsGroupRow, CostsAttention, costsBlockerCategory, costsAttentionActionFor, collectCostsBlockers,
-  econBlockerText, econBlockerDestination, openPricingCatalogue, COSTS_NON_ATTENTION_CODES,
+  econBlockerText, econBlockerDestination, openPricingCatalogue, openCostsBlockerLog, COSTS_NON_ATTENTION_CODES,
   econGroupFeeScope, econVerdict,
   costsUnknownFeeAccounts, trendMonthComparable, trendWarrantsInline, costsPricingSourceLabel, scrollToCostsAttention,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
-  CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, AboutPage, goAboutFaq, CopyableDiagnostic, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
+  CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, AboutPage, goAboutFaq, goAboutCacheFaq, CopyableDiagnostic, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
   $settingsConfirmation, $modelRefreshState, $ledgerEraseState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, analyticsListDisplay, desktopTodayText, desktopTodayAmount, desktopTodayTooltip, overviewTopModels, OverviewEconomics, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,

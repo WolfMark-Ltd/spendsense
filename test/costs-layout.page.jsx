@@ -44,6 +44,8 @@ const billingSummary = {
     uncached_usd: 4, cached_usd: 4, savings_usd: 0, savings_basis: 'exact', coverage: 0.5,
     covered_tokens: 50, covered_calls: 1, excluded_calls: 1,
     gap_reasons: { missing_cache_read_rate: 1 },
+    read_benefit_usd: 12.5, read_benefit_basis: 'exact',
+    read_benefit_calls: 1, read_benefit_tokens: 50000,
   } },
 }
 
@@ -68,7 +70,9 @@ const economics = {
   groups: [
     { currency: 'USD', monthly_fees: 0, window_fees: 0, fee_complete: true,
       window_fee_complete: true, usage_usd: 0, difference_usd: 0, converted: false,
-      fx: null, status: 'ok', notes: [], blockers: [] },
+      fx: null, status: 'ok', notes: [],
+      blockers: [{ account_id: 'fixture-usd', code: 'insufficient_comparison_history' },
+        { account_id: 'fixture-usd', code: 'missing_cache_write_rate' }] },
     { currency: 'GBP', monthly_fees: 20, window_fees: 20, fee_complete: true,
       window_fee_complete: true, usage_usd: 0, difference_usd: null, converted: false,
       fx: null, status: 'unavailable', notes: [],
@@ -141,6 +145,9 @@ setTimeout(() => {
       attention: pane.querySelector('[data-cost-attention]')?.textContent,
       attentionCount: pane.querySelector('.wm-cost-attn-count')?.textContent,
       catHints: [...pane.querySelectorAll('.wm-cost-attn-cat-hint')].map(el => el.textContent),
+      attnHint: pane.querySelector('.wm-cost-attn-hint')?.textContent,
+      attnRows: [...pane.querySelectorAll('[data-attn-category]')].map(el => el.getAttribute('data-attn-category')),
+      logText: pane.querySelector('#wm-cost-blocker-log')?.textContent,
       verdict: pane.querySelector('[data-econ-verdict]')?.dataset.econVerdict,
       verdictText: pane.querySelector('[data-econ-verdict]')?.textContent,
       seeAttention: [...pane.querySelectorAll('.wm-econ-see-attention')].map(button => button.textContent),

@@ -72,9 +72,17 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.equal(layout.usageScrollDelta, 0, `${id} has no nested Usage vertical scroll range`)
         assert.ok(layout.mainScrollDelta > 0, `${id} lets the main host scroll the full Usage page`)
         assert.equal(layout.stats, 4, `${id} keeps only four primary figures`)
-        assert.equal(layout.readBenefit, '$4.20+', `${id} shows the partial backend cache-read benefit`)
-        assert.equal(new Set(layout.statTops).size, layout.id.startsWith('wide') ? 1 : 4,
-          `${id} lays the KPI cards in one row when wide and wraps them when narrow (${layout.statTops})`)
+        assert.equal(layout.readBenefit, '$4.20', `${id} shows the partial backend cache-read benefit bare`)
+        assert.equal(new Set(layout.statTops).size, 2,
+          `${id} lays the KPI cards in the shared 2x2 grid (${layout.statTops})`)
+        assert.ok(layout.statHeights.every(height => height < 260),
+          `${id} keeps KPI cards compact (${layout.statHeights.join(', ')})`)
+        assert.ok(layout.statHeights.every(height => height < 150),
+          `${id} sizes KPI cards to content, below the old 156px floor (${layout.statHeights.join(', ')})`)
+        assert.ok(Math.max(...layout.statHeights) - Math.min(...layout.statHeights) <= 1,
+          `${id} keeps KPI cards at equal heights (${layout.statHeights.join(', ')})`)
+        assert.ok(Math.max(...layout.statWidths) - Math.min(...layout.statWidths) <= 1,
+          `${id} keeps KPI cards at equal widths (${layout.statWidths.join(', ')})`)
         assert.equal(layout.selects, 7, `${id} keeps all seven filters`)
         assert.equal(layout.advancedFilters, true, `${id} discloses advanced filters`)
         assert.ok(layout.advancedRowHeight > 0,
@@ -163,10 +171,10 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.equal(result.layouts.length, 4, `${locale}/${fixtureState} paints narrow/wide light/dark layouts`)
         for (const layout of result.layouts) {
           assert.equal(layout.stats, 4, `${locale}/${fixtureState}/${layout.id} keeps four summary figures`)
-          assert.equal(new Set(layout.statTops).size, layout.id.startsWith('wide') ? 1 : 4,
-            `${locale}/${fixtureState}/${layout.id} lays cards in one row when wide, stacked when narrow`)
-          assert.equal(layout.readBenefit, fixtureState === 'unavailable' ? '—' : fixtureState === 'partial' ? '$196.99+' : '$196.99',
-            `${locale}/${fixtureState}/${layout.id} shows the backend evidence state`)
+          assert.equal(new Set(layout.statTops).size, 2,
+            `${locale}/${fixtureState}/${layout.id} lays cards in the shared 2x2 grid`)
+          assert.equal(layout.readBenefit, fixtureState === 'unavailable' ? '—' : '$196.99',
+            `${locale}/${fixtureState}/${layout.id} shows the backend evidence state bare`)
         }
       }
     }

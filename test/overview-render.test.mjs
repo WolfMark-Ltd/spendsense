@@ -217,6 +217,25 @@ test('Overview routes fixable pricing gaps to custom rates and keeps review for 
       const reviewButton = [...reviewRow.querySelectorAll('button')]
         .find(button => button.textContent === T.I18N[locale].ovPricingAction)
       assert.ok(reviewButton, `${locale}: the unfixable row keeps Usage review`)
+
+      // A named fixable gap states the exact route, model and missing rate.
+      T.setRest(variantTransport({ unpriced_tokens: 1500, unpriced_calls: 3,
+        custom_fixable_tokens: 1500, custom_fixable_calls: 3,
+        custom_fixable_detail: { provider: 'xai-oauth', model: 'grok-4',
+          reason: 'model_not_in_catalogue', tokens: 1500, calls: 3 } }))
+      const named = await boot({ locale })
+      const namedRow = [...named.querySelectorAll('.wm-overview-attention li')]
+        .find(li => li.textContent.includes(T.I18N[locale].ovPricingTitle))
+      assert.ok(namedRow, `${locale}: the pricing row renders for a named gap`)
+      assert.ok(namedRow.textContent.includes('grok-4'),
+        `${locale}: the row names the model`)
+      assert.ok(namedRow.textContent.includes('xai-oauth'),
+        `${locale}: the row names the provider route`)
+      assert.ok(namedRow.textContent.includes(T.I18N[locale].ovGapModelPrice),
+        `${locale}: the row names the missing rate`)
+      const namedButton = [...namedRow.querySelectorAll('button')]
+        .find(button => button.textContent === T.I18N[locale].econActionPricing)
+      assert.ok(namedButton, `${locale}: the named row keeps pricing settings`)
     }
   } finally {
     T.restoreRest(raw)
