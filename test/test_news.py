@@ -685,6 +685,73 @@ class FeedValidationTests(NewsTestCase):
         feed, _ = news.validate_feed(["not", "an", "object"])
         self.assertIsNone(feed)
 
+    def test_non_finite_params_dropped_item_kept(self):
+        # F120: Python's json accepts NaN/Infinity, so a hostile or buggy
+        # feed could smuggle them in. The params are dropped; the item stays.
+        news = news_module()
+        feed, problems = news.validate_feed(feed_doc([
+            feed_item("good", summary_params={"pct": float("nan"),
+                                              "note": "kept",
+                                              "big": float("inf")}),
+        ]))
+        self.assertIsNotNone(feed)
+        params = feed["items"][0]["summary_params"]
+        self.assertNotIn("pct", params)
+        self.assertNotIn("big", params)
+        self.assertEqual(params["note"], "kept")
+
+    def test_non_finite_change_numbers_degrade_to_none(self):
+        # F120: the change block is display-layer data, so bad numbers degrade
+        # to None in place (keeping the shape) rather than rejecting the item.
+        news = news_module()
+        feed, problems = news.validate_feed(feed_doc([
+            feed_item("good", change={
+                "direction": "down", "dominant": "input",
+                "max_abs_pct": float("inf"), "max_abs_delta": -1.0,
+                "rates": {"input": {"before": 3.0, "after": 2.0,
+                                    "delta": -1.0, "pct": float("nan")},
+                          "output": {"before": "cheap", "after": 10.0,
+                                     "delta": 0.0, "pct": 0.0}}}),
+        ]))
+        self.assertIsNotNone(feed)
+        change = feed["items"][0]["change"]
+        self.assertIsNone(change["max_abs_pct"])
+        self.assertEqual(change["max_abs_delta"], -1.0)
+        self.assertEqual(change["rates"]["input"],
+                         {"before": 3.0, "after": 2.0,
+                          "delta": -1.0, "pct": None})
+        self.assertIsNone(change["rates"]["output"]["before"])
+
+    def test_oversized_change_integer_degrades_to_none(self):
+        # An integer beyond the float range degrades rather than aborting
+        # the whole feed: math.isfinite would raise OverflowError on it.
+        news = news_module()
+        feed, _ = news.validate_feed(feed_doc([
+            feed_item("huge", change={"max_abs_pct": 10 ** 400,
+                                      "max_abs_delta": 2.5}),
+        ]))
+        self.assertIsNotNone(feed)
+        change = feed["items"][0]["change"]
+        self.assertIsNone(change["max_abs_pct"])
+        self.assertEqual(change["max_abs_delta"], 2.5)
+
+    def test_non_finite_money_renders_unknown(self):
+        news = news_module()
+        self.assertEqual(news._money(float("inf")), "—")
+        self.assertEqual(news._money(float("nan")), "—")
+        self.assertEqual(news._fee_text({"amount": float("inf"), "currency": "USD"}),
+                         "fee unpublished")
+        self.assertEqual(news._money(1.5), "$1.5")
+
+    def test_non_finite_impact_degrades_to_unavailable(self):
+        news = news_module()
+        item = {"category": "price_reduction",
+                "previous": {"input": 1.0, "output": 1.0},
+                "current": {"input": float("inf"), "output": 1.0}}
+        tokens = {"input": 1000, "output": 100, "cache_read": 0, "cache_write": 0}
+        impact = news.estimate_impact(item, tokens)
+        self.assertEqual(impact["basis"], "unavailable")
+
     def test_feed_truncated_to_cap(self):
         news = news_module()
         feed, problems = news.validate_feed(feed_doc(

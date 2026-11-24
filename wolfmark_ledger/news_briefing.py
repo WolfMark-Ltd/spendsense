@@ -1003,18 +1003,28 @@ def _text(value: Any, limit: int = _MAX_TEXT) -> str:
     return value.strip()[:limit] if isinstance(value, str) else ""
 
 
+def _finite_scalar(item: Any) -> bool:
+    # F120: NaN/Infinity must never reach the saved briefing or the UI.
+    # Only floats reach math.isfinite here, so no OverflowError is possible
+    # (unlike _finite_number in news.py, which also classifies ints).
+    return not (isinstance(item, float) and not math.isfinite(item))
+
+
 def _scalar_map(value: Any, limit: int = 16) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if not isinstance(value, Mapping):
         return out
     for key, item in list(value.items())[:limit]:
         if isinstance(item, bool) or isinstance(item, (int, float)):
-            out[str(key)[:64]] = item
+            if _finite_scalar(item):
+                out[str(key)[:64]] = item
         elif isinstance(item, str):
             out[str(key)[:64]] = item[:_MAX_TEXT]
         elif isinstance(item, list) and len(item) <= limit:
-            out[str(key)[:64]] = [sub[:64] if isinstance(sub, str) else sub
-                                  for sub in item if isinstance(sub, (str, int, float))]
+            cleaned = [sub[:64] if isinstance(sub, str) else sub
+                       for sub in item
+                       if isinstance(sub, (str, int, float)) and _finite_scalar(sub)]
+            out[str(key)[:64]] = cleaned
     return out
 
 
@@ -1026,7 +1036,8 @@ def _sanitise_entry(raw: Any, depth: int = 0) -> Optional[dict[str, Any]]:
         return None
     for key in _ENTRY_NUMBER:
         value = raw.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, (int, float)) and not isinstance(value, bool) \
+                and _finite_scalar(value):
             entry[key] = value
     if isinstance(raw.get("personal"), bool):
         entry["personal"] = raw["personal"]
