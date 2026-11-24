@@ -3866,9 +3866,7 @@ const ANALYTICS_CSS = SHARED_CSS + `
 .wm-analytics option{background:var(--ui-fill-primary);color:var(--ui-text-primary)}
 .wm-analytics .wm-advancedfilters{flex:1 1 100%;min-width:0}.wm-analytics .wm-advancedfilters summary{font-size:11px;color:var(--ui-text-secondary);padding:2px 0;cursor:pointer}.wm-analytics .wm-advancedfilters summary::marker{color:var(--ui-accent)}.wm-analytics .wm-advancedrow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;padding-top:12px}
 .wm-analytics .wm-scopechips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.wm-analytics .wm-scopechips button{border:1px solid color-mix(in srgb,var(--ui-accent) 35%,var(--ui-stroke-secondary));background:color-mix(in srgb,var(--ui-accent) 7%,transparent);color:var(--ui-accent);border-radius:4px;padding:3px 7px;font-size:10px;min-height:24px;max-width:100%;overflow-wrap:anywhere}
-.wm-analytics .wm-stats{display:flex;gap:0;border:1px solid var(--ui-stroke-secondary);border-radius:9px;overflow:hidden}
 .wm-analytics .wm-insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}.wm-analytics .wm-insight{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:12px 14px;display:grid;gap:5px}.wm-analytics .wm-insight b{font-size:11px}.wm-analytics .wm-insight span{font-size:11.5px;color:var(--ui-text-secondary);line-height:1.5}
-.wm-analytics .wm-stat{padding:19px 21px;min-width:0;border-right:1px solid var(--ui-stroke-secondary)}.wm-analytics .wm-stat:last-child{border:0}.wm-analytics .wm-statlabel{font-size:11px;color:var(--ui-text-tertiary);margin-bottom:10px}.wm-analytics .wm-statvalue{font-size:29px;line-height:1.2;font-weight:550;letter-spacing:-1.2px;overflow-wrap:anywhere;margin-bottom:10px}.wm-analytics .wm-statvalue small{font-size:11px;letter-spacing:0;margin-left:6px;font-weight:400}
 .wm-analytics .wm-badge{display:inline-block;font-size:10px;line-height:1.4;letter-spacing:.15px;border:1px solid var(--ui-stroke-secondary);border-radius:4px;padding:2px 5px;vertical-align:middle;color:var(--ui-text-secondary)}
 .wm-analytics .wm-warn{color:var(--ui-warning)}.wm-analytics .wm-good{color:var(--ui-success)}.wm-analytics .wm-accent{color:var(--ui-accent)}
 .wm-analytics .wm-charts{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);gap:16px}.wm-analytics .wm-charts > section:nth-child(5){grid-column:1/-1}.wm-analytics .wm-panel{border:1px solid var(--ui-stroke-secondary);border-radius:9px;padding:20px;min-width:0;background:color-mix(in srgb,var(--ui-fill-secondary) 15%,transparent)}
@@ -3888,8 +3886,8 @@ const ANALYTICS_CSS = SHARED_CSS + `
 .wm-analytics .wm-economics{display:grid;grid-template-columns:1fr 1fr;gap:28px}.wm-analytics .wm-comparison{display:grid;gap:15px;margin-top:20px}.wm-analytics .wm-comparerow{display:grid;gap:7px}.wm-analytics .wm-comparelabel{display:flex;justify-content:space-between;font-size:11px}.wm-analytics .wm-comparetrack{height:9px;background:var(--wm-chart-track);border-radius:3px;overflow:hidden}.wm-analytics .wm-comparetrack span{display:block;height:100%;border-radius:3px}
 .wm-analytics .wm-explanation{border-left:1px solid var(--ui-stroke-secondary);padding-left:26px;color:var(--ui-text-tertiary);font-size:11px}.wm-analytics .wm-explanation p+p{margin-top:9px}.wm-analytics details summary{cursor:pointer;font-size:11px;color:var(--ui-text-tertiary)}.wm-analytics .wm-bars{display:grid;gap:10px;margin-top:14px}.wm-analytics .wm-bar{display:grid;grid-template-columns:150px minmax(0,1fr) 90px;gap:10px;align-items:center;font-size:11px}.wm-analytics .wm-bartrack{height:10px;border-radius:5px;background:var(--ui-fill-secondary,var(--wm-chart-track));overflow:hidden}.wm-analytics .wm-barfill{height:100%;border-radius:5px;background:var(--ui-accent)}.wm-analytics .wm-barfill.wm-cash{background:var(--ui-warning)}.wm-analytics .wm-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}.wm-analytics .wm-card{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:12px;display:grid;gap:6px;min-width:0}.wm-analytics .wm-card b{font-weight:600}.wm-analytics .wm-baseline{border-top:1px solid var(--ui-stroke-secondary);padding-top:15px}.wm-analytics .wm-empty{padding:36px 20px;border:1px dashed var(--ui-stroke-secondary);border-radius:8px;text-align:center;display:grid;justify-items:center;gap:10px;color:var(--ui-text-tertiary)}.wm-analytics .wm-alert{border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));padding:14px;border-radius:6px;color:var(--ui-warning)}
 @container(max-width:1050px){.wm-analytics .wm-shell{padding:22px}.wm-analytics .wm-charts{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.wm-analytics .wm-donutbody{grid-template-columns:1fr;gap:10px}.wm-analytics .wm-donut{max-width:165px}}
-@container(max-width:720px){.wm-analytics .wm-shell{padding:18px 14px;gap:17px}.wm-analytics .wm-charts{grid-template-columns:minmax(0,1fr)}.wm-analytics h1{font-size:24px}.wm-analytics .wm-economics{grid-template-columns:minmax(0,1fr);gap:18px}.wm-analytics .wm-explanation{border-left:0;border-top:1px solid var(--ui-stroke-secondary);padding:16px 0 0}.wm-analytics .wm-panel{padding:16px}.wm-analytics .wm-tablewrap{margin:0 -16px}.wm-analytics .wm-donutbody{grid-template-columns:minmax(120px,.85fr) minmax(0,1.15fr)}.wm-analytics .wm-stat{padding:16px}.wm-analytics .wm-statvalue{font-size:25px}.wm-analytics .wm-filter{max-width:none;min-width:125px}}
-@container(max-width:560px){.wm-analytics .wm-stat{border-right:0;border-bottom:1px solid var(--ui-stroke-secondary)}.wm-analytics .wm-modelbutton{max-width:45cqi}}
+@container(max-width:720px){.wm-analytics .wm-shell{padding:18px 14px;gap:17px}.wm-analytics .wm-charts{grid-template-columns:minmax(0,1fr)}.wm-analytics h1{font-size:24px}.wm-analytics .wm-economics{grid-template-columns:minmax(0,1fr);gap:18px}.wm-analytics .wm-explanation{border-left:0;border-top:1px solid var(--ui-stroke-secondary);padding:16px 0 0}.wm-analytics .wm-panel{padding:16px}.wm-analytics .wm-tablewrap{margin:0 -16px}.wm-analytics .wm-donutbody{grid-template-columns:minmax(120px,.85fr) minmax(0,1.15fr)}.wm-analytics .wm-filter{max-width:none;min-width:125px}}
+@container(max-width:560px){.wm-analytics .wm-modelbutton{max-width:45cqi}}
 @container(max-width:380px){.wm-analytics .wm-donutbody{grid-template-columns:1fr}.wm-analytics .wm-compositionkey{grid-template-columns:1fr}}
 /* Usage overrides belong to the dashboard, not the shared product shell. */
 .wm-usage{font-size:14px;line-height:1.55}
@@ -3916,7 +3914,7 @@ const ANALYTICS_CSS = SHARED_CSS + `
 .wm-usage .wm-filter span{font-size:12px}
 .wm-usage select{font-size:13px;min-height:38px}
 .wm-usage .wm-scopechips button{font-size:12px;min-height:30px;padding:4px 8px}
-.wm-usage .wm-statlabel,.wm-usage .wm-insight b{font-size:12px}
+.wm-usage .wm-insight b{font-size:12px}
 .wm-usage .wm-badge{font-size:11px}
 .wm-usage .wm-paneltitle h2{font-size:15px}
 .wm-usage .wm-number{font-size:11px}
@@ -3953,10 +3951,8 @@ const ANALYTICS_CSS = SHARED_CSS + `
 .wm-usage .wm-coverageroute:hover{border-color:var(--ui-accent)}
 .wm-usage .wm-coverageroute small{color:var(--ui-text-secondary);font-size:12px}
 .wm-usage .wm-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-.wm-usage .wm-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
-.wm-usage .wm-stat{border-right:1px solid var(--ui-stroke-secondary);border-bottom:0}
 @container(max-width:1050px){.wm-usage .wm-usage-charts{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@container(max-width:720px){.wm-usage .wm-stats{grid-template-columns:minmax(0,1fr)}.wm-usage .wm-stat{border-right:0;border-bottom:1px solid var(--ui-stroke-secondary)}.wm-usage .wm-detail-charts{grid-template-columns:minmax(0,1fr)}.wm-usage .wm-usage-charts{grid-template-columns:minmax(0,1fr)}}
+@container(max-width:720px){.wm-usage .wm-detail-charts{grid-template-columns:minmax(0,1fr)}.wm-usage .wm-usage-charts{grid-template-columns:minmax(0,1fr)}}
 @container(max-width:560px){.wm-usage .wm-tablewrap table{min-width:700px}.wm-usage .wm-modelbutton{max-width:180px}.wm-usage .wm-coverageroute{padding:10px}.wm-usage .wm-donutbody{grid-template-columns:minmax(120px,.85fr) minmax(0,1.15fr)}}
 @media(prefers-reduced-motion:reduce){.wm-analytics *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 `
@@ -4121,8 +4117,13 @@ function sessionBudgetFigure(guard) {
   if (guard?.spend == null) return null
   return `${guard.partial ? '' : '≈'}${fmtUsd(guard.spend)}${guard.partial ? '+' : ''}`
 }
-function AnalyticsStat({id,tabIndex,label,value,hint,extra,tone}) {
-  return jsxs('div',{id,tabIndex,className:'wm-stat',children:[jsx('div',{className:'wm-statlabel',children:label}),jsx('div',{className:cn('wm-statvalue wm-mono',tone),children:value}),hint?jsx('div',{className:'wm-subtle',children:hint}):null,extra?jsx('div',{className:'wm-subtle',style:{marginTop:5},children:extra}):null]})
+/** One Usage KPI card in the shared Overview card anatomy: rail accent by
+ * data-kpi, eyebrow icon plus label, dominant figure. Tooltips ride on the
+ * labels exactly as the old stats row carried them. */
+function AnalyticsKpiCard({kpi,id,icon,label,figure}) {
+  return jsxs(ProductCard,{as:'article',id,className:'wm-product-stat wm-kpi','data-kpi':kpi,children:[
+    jsxs('div',{className:'wm-kpi-eyebrow',children:[jsx(OverviewIcon,{name:icon}),jsx('span',{children:label})]}),
+    jsx('div',{className:'wm-kpi-figure',children:figure})]})
 }
 function AnalyticsDonut({items,total,label,format,exact=format,onSelect,chart='distribution',t}) {
   const radius=72,circumference=2*Math.PI*radius
@@ -4539,10 +4540,11 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const content = jsxs('div',{className:'wm-shell wm-usage',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
       query.error?jsxs('div',{id:'wm-usage-load-error',className:'wm-alert',role:'alert',tabIndex:-1,children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
-    totals?jsxs('div',{className:'wm-stats wm-usage-summary',role:'group','aria-label':t('usageSummary'),children:[
-      jsx(AnalyticsStat,{label:apiLabel,value:analyticsListDisplay(totals),tone:'wm-accent'}),
-      jsx(AnalyticsStat,{id:'wm-usage-read-benefit',label:readBenefitLabel,value:readBenefitDisplay(t,readBenefit),tone:'wm-good'}),
-      jsx(AnalyticsStat,{label:t('usageStatTokens'),value:fmtTokens(totals.tokens),hint:t('usageStatTokensHint',exactTokens(totals.calls))})]}):null,
+    totals?jsxs('div',{className:'wm-product-summary wm-usage-grid wm-usage-summary',role:'group','aria-label':t('usageSummary'),children:[
+      jsx(AnalyticsKpiCard,{kpi:'usage-api',icon:'estimate',label:apiLabel,figure:analyticsListDisplay(totals)}),
+      jsx(AnalyticsKpiCard,{kpi:'usage-benefit',id:'wm-usage-read-benefit',icon:'recorded',label:readBenefitLabel,figure:readBenefitDisplay(t,readBenefit)}),
+      jsx(AnalyticsKpiCard,{kpi:'usage-tokens',icon:'models',label:t('usageStatTokens'),figure:fmtTokens(totals.tokens)}),
+      jsx(AnalyticsKpiCard,{kpi:'usage-calls',icon:'calls',label:t('usageStatCalls'),figure:exactTokens(totals.calls)})]}):null,
     totals&&!num(totals.calls)?jsxs('div',{id:'wm-usage-pricing-summary',className:'wm-empty',role:'status',children:[jsx('h2',{children:t('usageEmptyTitle')}),jsx('p',{children:t('usageEmptyBody')}),jsx(AnalyticsButton,{label:t('usageEmptyShowDesktop'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageEmptyShowDesktop')}),jsx(AnalyticsButton,{label:t('usageEmptyClear'),onClick:()=>dispatch({type:'clear'})})]}):null,
     !totals&&!query.isLoading&&!query.error?jsx('div',{id:'wm-usage-no-data',className:'wm-empty',role:'status',tabIndex:-1,children:t('usageNoData')}):null,
     totals?jsxs('div',{className:'wm-charts wm-usage-charts',children:[jsx(AnalyticsDistribution,{data,state,dispatch}),jsx(AnalyticsTrendChart,{data,state,dispatch}),jsx(AnalyticsComposition,{data,state,dispatch})]}):null,
@@ -5830,8 +5832,9 @@ const PRODUCT_CSS = [
   '.wm-product .wm-kpi-eyebrow span{min-width:0;overflow-wrap:anywhere}',
   '.wm-product .wm-kpi-scope{margin:0;color:var(--ui-text-tertiary);font-size:10.5px;line-height:1.35}',
   '.wm-product .wm-kpi-prov{margin:0}',
-  '.wm-product .wm-overview-grid .wm-kpi{display:grid;align-content:start;gap:7px;min-height:156px;align-items:start;padding:13px 14px 12px;border:1px solid var(--wm-border);border-left:3px solid var(--wm-kpi-accent,var(--ui-accent));border-radius:var(--wm-radius-card);background:var(--wm-surface)}',
+  '.wm-product .wm-overview-grid .wm-kpi,.wm-product .wm-usage-grid .wm-kpi{display:grid;align-content:start;gap:7px;min-height:156px;align-items:start;padding:13px 14px 12px;border:1px solid var(--wm-border);border-left:3px solid var(--wm-kpi-accent,var(--ui-accent));border-radius:var(--wm-radius-card);background:var(--wm-surface)}',
   '.wm-product .wm-overview-grid .wm-kpi[data-kpi="recorded-usage"]{--wm-kpi-accent:var(--ui-success)}.wm-product .wm-overview-grid .wm-kpi[data-kpi="actual-charges"]{--wm-kpi-accent:var(--ui-warning)}.wm-product .wm-overview-grid .wm-kpi[data-kpi="api-equivalent-estimate"]{--wm-kpi-accent:var(--ui-accent)}.wm-product .wm-overview-grid .wm-kpi[data-kpi="saved-fees"]{--wm-kpi-accent:var(--ui-accent)}',
+  '.wm-product .wm-usage-grid .wm-kpi[data-kpi="usage-api"]{--wm-kpi-accent:var(--ui-accent)}.wm-product .wm-usage-grid .wm-kpi[data-kpi="usage-benefit"]{--wm-kpi-accent:var(--ui-success)}.wm-product .wm-usage-grid .wm-kpi[data-kpi="usage-tokens"]{--wm-kpi-accent:var(--ui-accent)}.wm-product .wm-usage-grid .wm-kpi[data-kpi="usage-calls"]{--wm-kpi-accent:var(--ui-accent)}',
   '.wm-product .wm-overview-grid .wm-kpi-foot{margin-top:auto;gap:4px}',
   '.wm-product .wm-overview-grid .wm-kpi-foot .wm-certainty{padding-left:6px;padding-right:6px}',
   '.wm-product .wm-overview-icon{display:block;width:15px;height:15px;flex:0 0 auto;color:var(--ui-accent)}',
@@ -5842,7 +5845,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-overview-model-name>.wm-info{align-self:center}',
   '.wm-product .wm-overview-model-name .wm-info-btn{font-size:12px}',
   '.wm-product .wm-kpi-figure{font-size:var(--wm-font-kpi,20px);line-height:1.25;font-weight:620;letter-spacing:-.3px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
-  '.wm-product .wm-overview-grid .wm-kpi-figure{font-size:clamp(22px,3.4cqi,29px);line-height:1.16;font-weight:640;letter-spacing:-.35px;color:var(--ui-text-primary)}',
+  '.wm-product .wm-overview-grid .wm-kpi-figure,.wm-product .wm-usage-grid .wm-kpi-figure{font-size:clamp(22px,3.4cqi,29px);line-height:1.16;font-weight:640;letter-spacing:-.35px;color:var(--ui-text-primary)}',
   '.wm-product .wm-kpi-prov{font-size:11.5px;line-height:1.45;color:var(--ui-text-tertiary)}',
   '.wm-product .wm-kpi-foot{margin-top:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
   '.wm-product .wm-attn-strip{display:none}',
@@ -7056,7 +7059,8 @@ function OverviewIcon({ name }) {
     estimate: 'M3 15l4-4 3 2 6-8 M12 5h4v4',
     fees: 'M4 6.5h12a1.5 1.5 0 0 1 1.5 1.5v7.5H4a2 2 0 0 1-2-2V5.5a2 2 0 0 1 2-2h11v3 M13 10h3',
     attention: 'M10 2.5l8 14H2z M10 7v4 M10 13.5v.5',
-    models: 'M3 15h3V8H3z M8.5 15h3V4h-3z M14 15h3V6h-3z'
+    models: 'M3 15h3V8H3z M8.5 15h3V4h-3z M14 15h3V6h-3z',
+    calls: 'M8 4v12 M12 4v12 M4 8h12 M4 12h12'
   }
   return jsx('svg', { className: 'wm-overview-icon', width: 16, height: 16, viewBox: '0 0 20 20',
     fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round',
@@ -16788,7 +16792,7 @@ const I18N = {
     usageStatSavingsBoundHint: 'Qualified range or bound · theoretical API-equivalent value',
     usageStatSavingsExtra: coverage => `${coverage} of tokens included`,
     usageStatTokens: 'Tokens',
-    usageStatTokensHint: calls => `${calls} calls`,
+    usageStatCalls: 'Calls',
     usageStatApiInfo: 'Backend API-equivalent value for the selected period and filters; not actual charges.',
     usageSummary: 'Usage summary',
     usageStatTokensExtra: (input, output) => `${input} in · ${output} out`,
@@ -18594,7 +18598,7 @@ const I18N = {
     usageStatSavingsBoundHint: '有条件的区间或界限 · 理论 API 等值',
     usageStatSavingsExtra: coverage => `${coverage} 的令牌已纳入`,
     usageStatTokens: '令牌',
-    usageStatTokensHint: calls => `${calls} 次调用`,
+    usageStatCalls: '调用',
     usageStatApiInfo: '所选周期和筛选条件下的后端 API 等值，不是实际费用。',
     usageSummary: '用量摘要',
     usageStatTokensExtra: (input, output) => `${input} 输入 · ${output} 输出`,

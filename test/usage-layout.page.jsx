@@ -44,7 +44,7 @@ for (const id of cases) {
   container.classList.add(theme)
   container.style.width = `${width}px`
   if (selected) document.body.dataset.single = theme
-  createRoot(container).render(React.createElement(T.AnalyticsPage))
+  createRoot(container).render(React.createElement(T.AnalyticsPage, { productPage: true }))
 }
 
 const tick = (ms = 25) => new Promise(resolve => setTimeout(resolve, ms))
@@ -152,7 +152,7 @@ async function measure() {
     const pane = document.getElementById(id)
     if (!pane?.querySelector('.wm-shell')) return false
     return pane.querySelectorAll('section.wm-panel').length === 7
-      && pane.querySelectorAll('.wm-stat').length === 3
+      && pane.querySelectorAll('.wm-usage-summary .wm-kpi').length === 4
       && pane.querySelectorAll('.wm-scopechips button').length === 3
       && pane.querySelectorAll('[data-trend-point]').length > 0
       && pane.querySelectorAll('.wm-tablewrap thead th').length === 7
@@ -208,8 +208,9 @@ async function measure() {
       sample.remove()
       return fg && bg ? { color: computed, ratio: +contrast(fg, bg).toFixed(2) } : null
     })
-    const stats = [...pane.querySelectorAll('.wm-stat')]
+    const stats = [...pane.querySelectorAll('.wm-usage-summary .wm-kpi')]
     const statOverflow = stats.filter(el => el.scrollWidth - el.clientWidth > 1).length
+    const statTops = stats.map(el => Math.round(el.getBoundingClientRect().top))
     const trendPoints = [...pane.querySelectorAll('[data-trend-point]')]
     const legendRows = [...pane.querySelectorAll('.wm-legend .wm-legendrow')]
     const advanced = pane.querySelector('[data-filters-advanced]')
@@ -227,7 +228,8 @@ async function measure() {
       headingStart: pane.querySelector('.wm-topline > div > :first-child')?.textContent,
       sections: pane.querySelectorAll('section.wm-panel').length,
       stats: stats.length,
-      readBenefit: pane.querySelector('#wm-usage-read-benefit .wm-statvalue')?.textContent || '',
+      statTops,
+      readBenefit: pane.querySelector('#wm-usage-read-benefit .wm-kpi-figure')?.textContent || '',
       selects: pane.querySelectorAll('select').length,
       advancedFilters: !!advanced,
       // The advanced row's own height: a collapsed `<details>` measures zero

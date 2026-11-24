@@ -705,7 +705,7 @@ test('every usage panel string exists in English and Chinese', () => {
     'usageBaselineUnavailable', 'usageBaselineLoading', 'usageBaselineEstimateNote', 'usageBaselineTotals',
     'usageBaselineEmpty', 'usageLoadTitle', 'usageLoadStale', 'usageLoadFallback', 'usageRetryTip',
     'usageLoading', 'usageStatApiEquiv', 'usageKpiMoney', 'usageKpiActivity', 'usageStatApiExtra', 'usageStatSavings', 'usageStatSavingsHint',
-    'usageStatSavingsExtra', 'usageStatTokens', 'usageStatTokensHint', 'usageStatTokensExtra',
+    'usageStatSavingsExtra', 'usageStatTokens', 'usageStatCalls', 'usageStatTokensExtra',
     'usageStatCoverage', 'usageStatCoverageHint', 'usageInsightsAria', 'usageBillingTitle',
     'usageBillingLabel', 'usageBillingComplete', 'usageBillingPartial', 'usageBillingNote', 'usageWindowDash',
     'usageWindowPending', 'usageUnpricedAlert', 'usageEmptyTitle', 'usageEmptyBody',
