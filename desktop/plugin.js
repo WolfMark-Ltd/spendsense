@@ -2037,9 +2037,14 @@ function focusedSessionNow() {
 /** Contract-4 all-recorded-calls summary for the focused conversation.
  *  Runtime session ids change on every resume while the stored id is
  *  durable; rows may be keyed by either supported Hermes identity. Each leg
- *  is an exact lookup — never a fuzzy match — and the first leg that
- *  proves a matching non-empty population wins. Transport errors fail fast:
- *  a second leg cannot succeed where the first leg's transport failed. */
+ *  is an exact lookup — never a fuzzy match — and every candidate is
+ *  fully validated before selection, so a non-empty but invalid first
+ *  response never blocks a valid alternative identity. The first fully
+ *  available leg wins; otherwise the best-echoed envelope is returned so
+ *  the caller reports the most informative reason. Transport errors fail
+ *  fast: a second leg cannot succeed where the first leg's transport
+ *  failed. Selection runs the full contract validator per leg: a usable
+ *  scope needs proven population, recorded calls and a valuation block. */
 function sessionSummaryQuery(identity, sessionId, storedId = null) {
   const runtimeSid = String(sessionId || '')
   const storedSid = String(storedId || '')
@@ -2065,8 +2070,12 @@ function sessionSummaryQuery(identity, sessionId, storedId = null) {
         if (!first) first = envelope
         if (!payload || String(payload.session_id || '') !== leg) continue
         matched = envelope
-        const calls = payload.totals?.calls
-        if (Number.isSafeInteger(calls) && calls > 0) return envelope
+        // A usable scope needs proven population, recorded calls and a
+        // valuation block — not a computable net figure. Indeterminate net
+        // savings with a supported read benefit (the common live case)
+        // still wins its leg here.
+        const state = sessionSavingsState(envelope, leg, identity)
+        if (state.scopeProven && !state.empty && state.valuation != null) return envelope
       }
       return matched || first
     }
@@ -4646,7 +4655,8 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const billing=totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:[billingMix || t('usageBillingTitle'),billedState].filter(Boolean).join(' · '),children:[jsx('strong',{children:t('usageBillingLabel')}),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),t('usageBillingNote')]}),jsx('span',{className:'wm-mono',children:windowScope || t('usageWindowPending')})]}):null
   const coverage=totals&&num(totals.calls)?jsx(AnalyticsCoverageSummary,{data,dispatch,days:state.days}):null
   const previous=totals&&data.previous&&!data.previous.comparable?jsx('div',{className:'wm-alert',children:t(data.previous.reason==='no_previous_calls'?'usagePreviousNoCalls':data.previous.reason==='insufficient_history'?'usagePreviousInsufficient':'usagePreviousUnavailable')}):null
-  const methodNotes=totals?jsxs('div',{className:'wm-subtle wm-method-notes',children:[jsx('p',{children:t('usageRecordingLine', data.recording?.since || t('usageRecordingPending'), data.recording?.last || '—')}),...analyticsNotesText(data.notes, data.note_codes, t).map((note,i)=>jsx('p',{children:note},i)),jsx('p',{children:jsx('button',{type:'button',className:'wm-source-link',onClick:goAboutCacheFaq,children:t('usageMethodFaqLink')})})]}):null
+  const reportNotes=totals?analyticsNotesText(data.notes, data.note_codes, t):[]
+  const methodNotes=totals?jsxs('div',{className:'wm-subtle wm-method-notes',children:[jsx('p',{children:t('usageRecordingLine', data.recording?.since || t('usageRecordingPending'), data.recording?.last || '—')}),reportNotes.length?jsxs('details',{className:'wm-report-notes',children:[jsx('summary',{children:t('usageMethodologyTitle')}),...reportNotes.map((note,i)=>jsx('p',{children:note},i))]}):null,jsx('p',{children:jsx('button',{type:'button',className:'wm-source-link',onClick:goAboutCacheFaq,children:t('usageMethodFaqLink')})})].filter(Boolean)}):null
   const baseline=totals?jsxs('details',{className:'wm-baseline',open:state.baselineOpen,onToggle:event=>dispatch({type:'set',key:'baselineOpen',value:event.currentTarget.open}),children:[jsx('summary',{children:t('usageBaselineSummaryTitle')}),state.baselineOpen?jsx(AnalyticsBaseline,{days:state.days,scope}):null]}):null
   const content = jsxs('div',{className:'wm-shell wm-usage',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
       query.error?jsxs('div',{id:'wm-usage-load-error',className:'wm-alert',role:'alert',tabIndex:-1,children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,

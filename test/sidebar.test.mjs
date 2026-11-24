@@ -1513,6 +1513,60 @@ test('a runtime-keyed session restores Session scope through the runtime fallbac
   }
 })
 
+test('a non-empty but invalid first leg never blocks a valid alternative identity', async () => {
+  resetHost()
+  const requests = []
+  const originalRest = T.getRest()
+  T.setRest(async path => {
+    requests.push(path)
+    if (path.startsWith('/session/summary?')) {
+      const sid = new URL(path, 'http://test').searchParams.get('session_id')
+      if (sid === 'stored-poisoned') {
+        return { ok: true, session_id: sid,
+          population: { requested: 'main', satisfied: false, separable: false },
+          totals: { calls: 5, input_tokens: 100, output_tokens: 10, prompt_tokens: 200,
+            cache_read_tokens: 100, cache_write_tokens: 0,
+            cache_read_state: 'reported', cache_write_state: 'reported' },
+          valuation: { api_equivalent_usd: .001, api_equivalent_basis: 'exact',
+            read_benefit_usd: .005, read_benefit_basis: 'exact',
+            read_benefit_calls: 5, read_benefit_tokens: 100,
+            savings_usd: 0, savings_basis: 'exact', coverage: 1,
+            covered_calls: 5, excluded_calls: 0, cache_hit_rate: 0, cache_hit_rate_basis: 'all_calls' } }
+      }
+      if (sid === 'runtime-clean') {
+        return { ok: true, session_id: sid,
+          population: { requested: 'all', satisfied: true, separable: false },
+          totals: { calls: 2, input_tokens: 100, output_tokens: 10, prompt_tokens: 200,
+            cache_read_tokens: 100, cache_write_tokens: 0,
+            cache_read_state: 'reported', cache_write_state: 'reported', unpriced_tokens: 0 },
+          valuation: { api_equivalent_usd: .001, api_equivalent_basis: 'exact',
+            read_benefit_usd: .005, read_benefit_basis: 'exact',
+            read_benefit_calls: 2, read_benefit_tokens: 100,
+            savings_usd: 0, savings_basis: 'exact', coverage: 1,
+            covered_calls: 2, excluded_calls: 0, cache_hit_rate: 0, cache_hit_rate_basis: 'all_calls' } }
+      }
+    }
+    return { rate: null }
+  })
+  host.state.focusedSessionId.set('runtime-clean')
+  host.state.focusedStoredSessionId.set('stored-poisoned')
+  host.state.model.set('gpt-4o')
+  queryClient.setQueryData(T.catalogQuery('runtime-clean', 'gpt-4o', false).queryKey,
+    { model: 'gpt-4o', provider: 'openai' })
+  const container = await renderMeter()
+  await flush()
+  try {
+    assert.equal(requests.filter(path => path.startsWith('/session/summary?')).length, 2,
+      `both identities are tried: ${requests}`)
+    assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeSession',
+      'the valid runtime leg wins over the non-empty invalid stored leg')
+    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '$0.0050',
+      'the valid leg restores the session read benefit')
+  } finally {
+    T.restoreRest(originalRest)
+  }
+})
+
 test('a brand-new conversation queries only the runtime session id', async () => {
   resetHost()
   const requests = []

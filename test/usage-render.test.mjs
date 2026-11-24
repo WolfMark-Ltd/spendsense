@@ -362,6 +362,15 @@ test('Usage keeps coverage open with billing, method notes and a collapsed basel
       `${locale}: the general formula left the page for the FAQ`)
     assert.ok(notes?.textContent.includes(dict.usageMethodFaqLink),
       `${locale}: the method notes link to the FAQ`)
+    const reportNotes = notes.querySelector('details.wm-report-notes')
+    assert.ok(reportNotes, `${locale}: backend notes sit in the optional disclosure`)
+    assert.equal(reportNotes.open, false, `${locale}: the notes disclosure starts collapsed`)
+    assert.equal(flat(reportNotes.querySelector('summary')?.textContent), dict.usageMethodologyTitle)
+    assert.ok(reportNotes.textContent.includes('Recorded calls only. Synthetic fixture note.'),
+      `${locale}: the backend note stays available inside the disclosure`)
+    const inlineParas = [...notes.querySelectorAll(':scope > p')].map(el => flat(el.textContent))
+    assert.ok(inlineParas.every(text => !text.includes('Recorded calls only.')),
+      `${locale}: only recording scope and the FAQ link stay inline`)
   }
 })
 
