@@ -410,3 +410,124 @@ test('the charges methodology links once to the About FAQ, in both languages', a
     assert.equal(T.$ledgerTab.get(), 'about', `${locale}: the link navigates to About & Support`)
   }
 })
+
+test('a failed Overview read names its cause, and a transient failure recovers', async () => {
+  // UAT: backend timeouts latched the failure banner with retry:false and
+  // no cause. The idempotent read retries once; a persistent failure names
+  // its underlying message in the banner.
+  const base = overviewTransport({ requiredContract: T.REQUIRED_BACKEND_CONTRACT })
+  const raw = T.getRest()
+  try {
+    for (const locale of LOCALES) {
+      let attempts = 0
+      T.setRest(async path => {
+        if (path === '/analytics?days=30' && ++attempts === 1) {
+          throw new Error('Timed out connecting to Hermes backend after 30000ms')
+        }
+        return base(path)
+      })
+      const recovered = await boot({ locale })
+      await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 2500)) })
+      await flush()
+      assert.equal(attempts, 2, `${locale}: the read retries once after a transient failure`)
+      assert.equal(recovered.querySelectorAll('.wm-alert[role="alert"]').length, 0,
+        `${locale}: no failure banner after recovery`)
+      T.setRest(async path => {
+        if (path === '/analytics?days=30') {
+          throw new Error('Timed out connecting to Hermes backend after 30000ms')
+        }
+        return base(path)
+      })
+      const failed = await boot({ locale })
+      await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 2500)) })
+      await flush()
+      const alert = failed.querySelector('.wm-alert[role="alert"]')
+      assert.ok(alert, `${locale}: the failure banner renders while the read keeps failing`)
+      assert.match(flat(alert.textContent), /Timed out connecting to Hermes backend/,
+        `${locale}: the banner names the underlying failure`)
+    }
+  } finally {
+    T.restoreRest(raw)
+  }
+})
+
+test('a mid-fetch identity change keeps the tagged result and never shows it elsewhere', async () => {
+  // The UAT latch: gateway-activation churn reads as a connection change
+  // mid-fetch. The old post-fetch throw discarded the good result and
+  // latched the banner; the tagged result must survive and render only
+  // under its own identity.
+  const base = overviewTransport({ requiredContract: T.REQUIRED_BACKEND_CONTRACT })
+  const raw = T.getRest()
+  const connection = T.$scopeConnection.get()
+  let release = null
+  const gate = new Promise(resolve => { release = resolve })
+  let calls = 0
+  T.setRest(async path => {
+    if (path !== '/analytics?days=30') return base(path)
+    calls += 1
+    const n = calls
+    await gate
+    const analytics = overviewAnalytics()
+    // First fetch belongs to identity A, later ones to B: distinct figures
+    // prove which result renders where. The number is captured before the
+    // gate: both fetches resolve together after release.
+    const listUsd = n === 1 ? 11.11 : 22.22
+    return { ...analytics, totals: { ...analytics.totals, list_usd: listUsd } }
+  })
+  // Mount per identity without clearing the cache between mounts: each
+  // mount reads the current identity exactly as a re-rendered page would,
+  // and the shared cache proves results land under their own identity.
+  const mount = async () => {
+    while (roots.length) {
+      const previous = roots.pop()
+      try { await React.act(async () => { previous.unmount() }) } catch { /* already gone */ }
+    }
+    T.$ledgerTab.set('overview')
+    T.$infoOpen.set(null)
+    T.$ledger.set({ ...T.emptyLedger(), days: overviewLedgerDays() })
+    i18nBackend.t = translatorFor(T.I18N, 'en')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = ReactDOMClient.createRoot(container)
+    roots.push(root)
+    await React.act(async () => {
+      root.render(React.createElement(QueryClientProvider, { client: queryClient },
+        React.createElement(T.OverviewPage)))
+    })
+    await flush()
+    return container
+  }
+  try {
+    queryClient.clear()
+    const identityA = T.membershipIdentityNow()
+    await mount()
+    T.$scopeConnection.set('conn-b')
+    const container = await mount()
+    release()
+    await flush()
+    const figure = () => cardOf(container, 'api-equivalent-estimate').figure
+    assert.equal(figure(), '$22.22', "B renders its own fetch, never A's tagged result")
+    assert.equal(container.querySelectorAll('.wm-alert[role="alert"]').length, 0,
+      'no banner while the current identity reads cleanly')
+    const cachedA = queryClient.getQueryCache().findAll({
+      predicate: query => query.queryKey?.[1] === 'overview-analytics'
+        && query.queryKey.includes(identityA),
+    })
+    assert.equal(cachedA.length, 1, 'one cached read for the first identity')
+    assert.equal(cachedA[0].state.data?.identity, identityA,
+      'the successful read keeps its captured identity tag')
+    assert.equal(cachedA[0].state.error, null, 'no misthrow latched onto it')
+    // Churn settles back: the tagged result renders again, still no banner.
+    T.$scopeConnection.set(connection)
+    const settled = await mount()
+    await flush()
+    assert.equal(cardOf(settled, 'api-equivalent-estimate').figure, '$11.11',
+      "A renders its own tagged result after churn settles")
+    assert.equal(settled.querySelectorAll('.wm-alert[role="alert"]').length, 0,
+      'no latched banner from the mid-fetch identity change')
+    assert.equal(calls, 2, 'no refetch storm: one read per identity')
+  } finally {
+    T.$scopeConnection.set(connection)
+    T.restoreRest(raw)
+  }
+})
