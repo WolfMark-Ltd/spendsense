@@ -4646,7 +4646,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const billing=totals?jsxs('div',{className:'wm-topline wm-subtle',children:[jsxs('span',{title:[billingMix || t('usageBillingTitle'),billedState].filter(Boolean).join(' · '),children:[jsx('strong',{children:t('usageBillingLabel')}),jsx('span',{className:'wm-mono',children:analyticMoney(totals.billed_usd)}),t('usageBillingNote')]}),jsx('span',{className:'wm-mono',children:windowScope || t('usageWindowPending')})]}):null
   const coverage=totals&&num(totals.calls)?jsx(AnalyticsCoverageSummary,{data,dispatch,days:state.days}):null
   const previous=totals&&data.previous&&!data.previous.comparable?jsx('div',{className:'wm-alert',children:t(data.previous.reason==='no_previous_calls'?'usagePreviousNoCalls':data.previous.reason==='insufficient_history'?'usagePreviousInsufficient':'usagePreviousUnavailable')}):null
-  const methodNotes=totals?jsxs('div',{className:'wm-subtle wm-method-notes',children:[jsx('p',{children:t('usageRecordingLine', data.recording?.since || t('usageRecordingPending'), data.recording?.last || '—')}),...analyticsNotesText(data.notes, data.note_codes, t).map((note,i)=>jsx('p',{children:note},i)),jsx('p',{children:jsx('button',{type:'button',className:'wm-source-link',onClick:goAboutFaq,children:t('usageMethodFaqLink')})})]}):null
+  const methodNotes=totals?jsxs('div',{className:'wm-subtle wm-method-notes',children:[jsx('p',{children:t('usageRecordingLine', data.recording?.since || t('usageRecordingPending'), data.recording?.last || '—')}),...analyticsNotesText(data.notes, data.note_codes, t).map((note,i)=>jsx('p',{children:note},i)),jsx('p',{children:jsx('button',{type:'button',className:'wm-source-link',onClick:goAboutCacheFaq,children:t('usageMethodFaqLink')})})]}):null
   const baseline=totals?jsxs('details',{className:'wm-baseline',open:state.baselineOpen,onToggle:event=>dispatch({type:'set',key:'baselineOpen',value:event.currentTarget.open}),children:[jsx('summary',{children:t('usageBaselineSummaryTitle')}),state.baselineOpen?jsx(AnalyticsBaseline,{days:state.days,scope}):null]}):null
   const content = jsxs('div',{className:'wm-shell wm-usage',children:[header,jsx(AnalyticsFilters,{data,state,dispatch}),
       query.error?jsxs('div',{id:'wm-usage-load-error',className:'wm-alert',role:'alert',tabIndex:-1,children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
@@ -5271,6 +5271,18 @@ function scrollToCostsAttention() {
   if (!section) return
   try { section.scrollIntoView?.({ block: 'start' }) } catch {}
   section.querySelector('[data-costs-attention-heading]')?.focus?.()
+}
+
+/** Open the per-account blocker log and jump to it. Rows and verdicts use
+ *  this when nothing they describe is user-fixable, so the link never
+ *  lands on an empty attention summary. */
+function openCostsBlockerLog() {
+  if (typeof document === 'undefined') return
+  const log = document.getElementById('wm-cost-blocker-log')
+  if (!log) return
+  log.open = true
+  try { log.scrollIntoView?.({ block: 'start' }) } catch {}
+  log.querySelector('summary')?.focus?.()
 }
 
 function econBlockerActionLabel(destination, t) {
@@ -5935,7 +5947,6 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:10px}',
   '.wm-product .wm-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:1fr;align-items:stretch}',
   '.wm-product .wm-usage-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:1fr;align-items:stretch}',
-  '.wm-product .wm-usage-grid .wm-kpi{min-height:0}',
   '.wm-product .wm-overview-panels{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(260px,1fr);gap:12px;align-items:start}',
   '.wm-product .wm-overview-panels>.wm-product-section{min-width:0}',
   '.wm-product .wm-product-card,.wm-product .wm-product-section,.wm-product .wm-product-stat{border:1px solid var(--wm-border);border-radius:var(--wm-radius-card);background:var(--wm-surface);min-width:0}',
@@ -5948,6 +5959,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-kpi-scope{margin:0;color:var(--ui-text-tertiary);font-size:10.5px;line-height:1.35}',
   '.wm-product .wm-kpi-prov{margin:0}',
   '.wm-product .wm-overview-grid .wm-kpi,.wm-product .wm-usage-grid .wm-kpi{display:grid;align-content:start;gap:7px;min-height:156px;align-items:start;padding:13px 14px 12px;border:1px solid var(--wm-border);border-left:3px solid var(--wm-kpi-accent,var(--ui-accent));border-radius:var(--wm-radius-card);background:var(--wm-surface)}',
+  '.wm-product .wm-usage-grid .wm-kpi{min-height:0}',
   '.wm-product .wm-overview-grid .wm-kpi[data-kpi="recorded-usage"]{--wm-kpi-accent:var(--ui-success)}.wm-product .wm-overview-grid .wm-kpi[data-kpi="actual-charges"]{--wm-kpi-accent:var(--ui-warning)}.wm-product .wm-overview-grid .wm-kpi[data-kpi="api-equivalent-estimate"]{--wm-kpi-accent:var(--ui-accent)}.wm-product .wm-overview-grid .wm-kpi[data-kpi="saved-fees"]{--wm-kpi-accent:var(--ui-accent)}',
   '.wm-product .wm-usage-grid .wm-kpi[data-kpi="usage-api"]{--wm-kpi-accent:var(--ui-accent)}.wm-product .wm-usage-grid .wm-kpi[data-kpi="usage-benefit"]{--wm-kpi-accent:var(--ui-success)}.wm-product .wm-usage-grid .wm-kpi[data-kpi="usage-tokens"]{--wm-kpi-accent:var(--ui-accent)}.wm-product .wm-usage-grid .wm-kpi[data-kpi="usage-calls"]{--wm-kpi-accent:var(--ui-accent)}',
   '.wm-product .wm-overview-grid .wm-kpi-foot{margin-top:auto;gap:4px}',
@@ -6700,6 +6712,10 @@ function EconomicsGroupRow({ group, t }) {
   const difference = finiteValue(group.difference_usd)
   const notes = econNotesText(group.notes, group.note_codes, t)
   const blockers = group.blockers || []
+  // Attention holds fixable rows only; history, unavailable evidence and
+  // notes live in the blocker log. The link counts fixable items and goes
+  // to the log when nothing on the row can be fixed.
+  const fixable = blockers.filter(entry => costsBlockerCategory(entry.code) === 'fix')
   const scope = econGroupFeeScope(group)
   const bare = usage == null && difference == null && group.status === 'unavailable'
     && !notes.length && !blockers.length
@@ -6721,11 +6737,14 @@ function EconomicsGroupRow({ group, t }) {
               children: t('econGroupFeeScope', scope.known, scope.total, scope.unknown, scope.unallocated) })
           : null,
         difference == null
-          ? (blockers.length || notes.length
+          ? (fixable.length
             ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-see-attention',
                 onClick: scrollToCostsAttention,
-                children: t('econGroupSeeAttention', blockers.length + notes.length) })
-            : jsx('p', { className: 'wm-subtle', children: t('econNoComparison') }))
+                children: t('econGroupSeeAttention', fixable.length) })
+            : (blockers.length || notes.length
+              ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-see-log',
+                  onClick: openCostsBlockerLog, children: t('costsAttentionViewLog') })
+              : jsx('p', { className: 'wm-subtle', children: t('econNoComparison') })))
           : jsx(EconomicsBars, { group, t })
       ].filter(Boolean) })
   ].filter(Boolean) })
@@ -6748,6 +6767,18 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, fxRev, on
   const verdict = econVerdict(headline, windowLines, t)
   const logGroups = groups.filter(group => (group.blockers || []).length || (group.notes || []).length)
   const logAccounts = accounts.filter(row => (row.blockers || []).length)
+  // The verdict link follows the same split as attention itself: fixable
+  // causes (collected blockers, unknown-fee scope, a failed FX read) go to
+  // attention; anything else goes to the blocker log; nothing renders when
+  // neither surface has content to show.
+  const verdictFixable = Boolean(fxError) ||
+    collectCostsBlockers(groups, accounts).some(entry =>
+      !COSTS_NON_ATTENTION_CODES.has(entry.code) && costsBlockerCategory(entry.code) === 'fix') ||
+    groups.some(group => {
+      const feeScope = econGroupFeeScope(group)
+      return feeScope && feeScope.total > 0 && feeScope.unknown > 0
+    })
+  const verdictLoggable = logGroups.length > 0 || logAccounts.length > 0
   const trendInline = trendWarrantsInline(data?.trend)
   const trendMonths = data?.trend?.months || []
   const inlineMonths = trendInline ? trendMonths.filter(trendMonthComparable) : []
@@ -6779,8 +6810,13 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, fxRev, on
       verdict.text,
       verdict.tone === 'partial' ? ' ' : null,
       verdict.tone === 'partial'
-        ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-verdict-link',
-            onClick: scrollToCostsAttention, children: t('econVerdictSeeAttention') })
+        ? (verdictFixable
+          ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-verdict-link',
+              onClick: scrollToCostsAttention, children: t('econVerdictSeeAttention') })
+          : verdictLoggable
+            ? jsx('button', { type: 'button', className: 'wm-source-link wm-econ-verdict-log',
+                onClick: openCostsBlockerLog, children: t('econVerdictSeeAttention') })
+            : null)
         : null
     ].filter(part => part !== null) }) : null,
     (headline.notes || []).length
@@ -7893,8 +7929,16 @@ function SettingsPage() {
  * Numbered like the news-focus nonce so a repeat click replays the reveal. */
 let aboutFaqRequest = 0
 let aboutFaqConsumed = 0
+let aboutCacheFaqRequest = 0
+let aboutCacheFaqConsumed = 0
 function goAboutFaq() {
   aboutFaqRequest += 1
+  goLedgerTab('about')
+}
+/** The Usage method-notes link targets the cache-methodology answer, not
+ *  the billing-mismatch one. Separate nonce, same reveal mechanics. */
+function goAboutCacheFaq() {
+  aboutCacheFaqRequest += 1
   goLedgerTab('about')
 }
 
@@ -8018,24 +8062,32 @@ const CONTACT_URL = 'https://wolfmark.co.uk/contact'
 function AboutPage() {
   const t = usePluginI18n(ID)
   useEffect(() => {
-    if (aboutFaqRequest === aboutFaqConsumed) return
-    aboutFaqConsumed = aboutFaqRequest
-    try {
-      if (typeof document === 'undefined') return
-      const faq = document.getElementById('about-faq')
-      if (faq) faq.open = true
-      const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-      faq?.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
-      const summary = faq?.querySelector('summary')
-      // A native summary is focusable, so any fallback tabindex is transient:
-      // it is removed right after focusing to keep sequential Tab order.
-      const addedTabIndex = summary && !summary.hasAttribute('tabindex')
-      if (addedTabIndex) summary.setAttribute('tabindex', '-1')
-      try { summary?.focus({ preventScroll: true }) } catch {
-        try { summary?.focus() } catch {}
-      }
-      if (addedTabIndex) summary.removeAttribute('tabindex')
-    } catch {}
+    const reveal = id => {
+      try {
+        if (typeof document === 'undefined') return
+        const faq = document.getElementById(id)
+        if (faq) faq.open = true
+        const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+        faq?.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+        const summary = faq?.querySelector('summary')
+        // A native summary is focusable, so any fallback tabindex is transient:
+        // it is removed right after focusing to keep sequential Tab order.
+        const addedTabIndex = summary && !summary.hasAttribute('tabindex')
+        if (addedTabIndex) summary.setAttribute('tabindex', '-1')
+        try { summary?.focus({ preventScroll: true }) } catch {
+          try { summary?.focus() } catch {}
+        }
+        if (addedTabIndex) summary.removeAttribute('tabindex')
+      } catch {}
+    }
+    if (aboutFaqRequest !== aboutFaqConsumed) {
+      aboutFaqConsumed = aboutFaqRequest
+      reveal('about-faq')
+    }
+    if (aboutCacheFaqRequest !== aboutCacheFaqConsumed) {
+      aboutCacheFaqConsumed = aboutCacheFaqRequest
+      reveal('about-faq-cache')
+    }
   }, [])
   return jsx(ProductShell, { children:
     jsxs('main', { className: 'wm-shell', children: [
@@ -8083,7 +8135,7 @@ function AboutPage() {
           jsx('p', { children: jsx('a', { ...externalLinkProps(TROUBLESHOOTING_URL),
             className: 'wm-source-link', children: t('aboutFaqTroubleshooting') }) })
         ] }),
-        jsxs('details', { className: 'wm-about-faq', children: [
+        jsxs('details', { id: 'about-faq-cache', className: 'wm-about-faq', children: [
           jsx('summary', { children: t('aboutFaqCacheQ') }),
           jsx('p', { children: t('usageCacheFormula') })
         ] })
@@ -16505,7 +16557,7 @@ const I18N = {
     costsAttentionFixHint: 'These have a fix — use the action on each row.',
     costsAttentionHistoryHint: 'These resolve as recording history accumulates — nothing to fix.',
     costsAttentionUnavailableHint: 'This evidence is not reported — the blocker log holds the detail.',
-    costsAttentionEmpty: 'Nothing needs attention. Every comparison is supported by the available evidence.',
+    costsAttentionEmpty: 'No problems need your attention.',
     costsAttentionAccounts: count => `${count} account${count === 1 ? '' : 's'}`,
     costsAttentionViewLog: 'View blocker log',
     costsEntAllowance: money => ` · ${money} allowance`,
@@ -18316,7 +18368,7 @@ const I18N = {
     costsAttentionFixHint: '这些问题可以修复——请按每行的操作处理。',
     costsAttentionHistoryHint: '这些问题会随着记录历史的积累而解决——无需修复。',
     costsAttentionUnavailableHint: '此类证据未被报告——详情见问题日志。',
-    costsAttentionEmpty: '没有需要注意的事项。现有证据支持所有比较。',
+    costsAttentionEmpty: '没有需要您注意的问题。',
     costsAttentionAccounts: count => `${count} 个帐户`,
     costsAttentionViewLog: '查看问题日志',
     costsEntAllowance: money => ` · ${money} 额度`,
@@ -19017,12 +19069,12 @@ export const __test = {
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   EconomicsGroupRow, CostsAttention, costsBlockerCategory, costsAttentionActionFor, collectCostsBlockers,
-  econBlockerText, econBlockerDestination, openPricingCatalogue, COSTS_NON_ATTENTION_CODES,
+  econBlockerText, econBlockerDestination, openPricingCatalogue, openCostsBlockerLog, COSTS_NON_ATTENTION_CODES,
   econGroupFeeScope, econVerdict,
   costsUnknownFeeAccounts, trendMonthComparable, trendWarrantsInline, costsPricingSourceLabel, scrollToCostsAttention,
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
-  CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, AboutPage, goAboutFaq, CopyableDiagnostic, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
+  CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, AboutPage, goAboutFaq, goAboutCacheFaq, CopyableDiagnostic, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
   $settingsConfirmation, $modelRefreshState, $ledgerEraseState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, analyticsListDisplay, desktopTodayText, desktopTodayAmount, desktopTodayTooltip, overviewTopModels, OverviewEconomics, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,

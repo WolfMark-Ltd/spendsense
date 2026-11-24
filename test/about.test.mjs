@@ -203,6 +203,21 @@ test('goAboutFaq reveals and focuses the FAQ exactly once', async () => {
   assert.equal(replay.querySelector('#about-faq').open, false, 'a satisfied request never replays itself')
 })
 
+test('goAboutCacheFaq reveals and focuses the cache answer, leaving mismatch closed', async () => {
+  const plain = await boot()
+  assert.equal(plain.querySelector('#about-faq-cache').open, false)
+  T.goAboutCacheFaq()
+  assert.equal(T.$ledgerTab.get(), 'about')
+  const revealed = await boot()
+  const cache = revealed.querySelector('#about-faq-cache')
+  assert.equal(cache.open, true)
+  assert.equal(document.activeElement, cache.querySelector('summary'))
+  assert.equal(revealed.querySelector('#about-faq').open, false,
+    'the cache link opens its own answer, not the mismatch one')
+  const replay = await boot()
+  assert.equal(replay.querySelector('#about-faq-cache').open, false, 'a satisfied request never replays itself')
+})
+
 test('the hero showcases the WolfMark company lockup beside the SpendSense marque', async () => {
   const container = await boot()
   const hero = container.querySelector('.wm-about-hero')

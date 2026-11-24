@@ -6,10 +6,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 // into force-exit only for React/jsdom harnesses with lingering handles.
 const suites = {
   browserless: [
-    ['about', 17, true],
+    ['about', 18, true],
     ['analytics', 53], ['budgets', 30, true], ['cache-savings', 37],
     ['compatibility', 16], ['dashboard-entry', 1], ['digest', 2],
-    ['digest-render', 24, true], ['economics', 32], ['economics-render', 59, true],
+    ['digest-render', 24, true], ['economics', 32], ['economics-render', 62, true],
     ['membership', 38], ['membership-scope', 99, true], ['memberships-reading', 7, true],
     ['news', 24],
     ['news-editorial', 51], ['news-groups', 52], ['news-layout.chromium', 16],

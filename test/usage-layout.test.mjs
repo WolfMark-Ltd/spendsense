@@ -77,6 +77,8 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
           `${id} lays the KPI cards in the shared 2x2 grid (${layout.statTops})`)
         assert.ok(layout.statHeights.every(height => height < 260),
           `${id} keeps KPI cards compact (${layout.statHeights.join(', ')})`)
+        assert.ok(layout.statHeights.every(height => height < 150),
+          `${id} sizes KPI cards to content, below the old 156px floor (${layout.statHeights.join(', ')})`)
         assert.ok(Math.max(...layout.statHeights) - Math.min(...layout.statHeights) <= 1,
           `${id} keeps KPI cards at equal heights (${layout.statHeights.join(', ')})`)
         assert.ok(Math.max(...layout.statWidths) - Math.min(...layout.statWidths) <= 1,

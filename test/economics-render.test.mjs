@@ -1129,9 +1129,9 @@ test('unknown-currency fee blockers render once with their account', async () =>
 
 test('an empty comparison shows the quiet attention state', async () => {
   const { text } = await renderAttention({})
-  assert.match(text(), /Nothing needs attention/)
+  assert.match(text(), /No problems need your attention/)
   const { text: zhText } = await renderAttention({}, 'zh')
-  assert.match(zhText(), /没有需要注意的事项/)
+  assert.match(zhText(), /没有需要您注意的问题/)
 })
 
 test('the attention summary translates its fixable rows', async () => {
@@ -1390,7 +1390,26 @@ test('a failed provider call is logged neutrally and kept out of attention', asy
     econAccounts: [{ account_id: 'test:default', label: 'Test account', family: 'test' }] })
   assert.equal(attention.container.querySelector('.wm-cost-attn-count'), null,
     'no attention item is raised for a failed provider call')
-  assert.match(attention.text(), /Nothing needs attention/)
+  assert.match(attention.text(), /No problems need your attention/)
+})
+
+test('empty attention claims no support when only history or unavailable evidence exists', async () => {
+  for (const language of ['en', 'zh']) {
+    const dict = T.I18N[language]
+    const attention = await renderAttention({
+      groups: [{ currency: 'USD', blockers: [
+        { account_id: 'a', code: 'no_usage_recorded' },
+        { account_id: 'b', code: 'missing_cache_write_rate' },
+      ] }],
+      econAccounts: [],
+    }, language)
+    assert.equal(attention.container.querySelector('.wm-cost-attn-count'), null,
+      `${language}: no count without fixable rows`)
+    assert.ok(attention.text().includes(dict.costsAttentionEmpty),
+      `${language}: the empty state names attention, not evidence support`)
+    assert.doesNotMatch(attention.text(), /supported by the available evidence|现有证据支持所有比较/,
+      `${language}: no claim that every comparison is supported`)
+  }
 })
 
 test('a comparable headline tells the worth-it story in Simplified Chinese', async () => {
@@ -1472,6 +1491,10 @@ test('the partial verdict points at what blocks the full comparison', async () =
   data.headline = { status: 'unavailable', fees_monthly_by_currency: [{ currency: 'USD', amount: 20 }],
     fees_window_by_currency: [{ currency: 'USD', amount: 19.37 }], usage_usd: 5,
     difference_usd: null, notes: [], note_codes: [] }
+  data.groups = [{ currency: 'USD', monthly_fees: 20, window_fees: 19.37, fee_complete: false,
+    window_fee_complete: false, usage_usd: 5, difference_usd: null, converted: false,
+    fx: null, status: 'unavailable', notes: [], note_codes: [],
+    blockers: [{ account_id: 'a', code: 'subscription_fee_missing' }] }]
   const { container } = await renderSection(data)
   const link = container.querySelector('.wm-econ-verdict-link')
   assert.ok(link)
@@ -1479,6 +1502,47 @@ test('the partial verdict points at what blocks the full comparison', async () =
   assert.equal(document.activeElement,
     attention.container.querySelector('[data-costs-attention-heading]'),
     'the verdict link focuses the attention summary it points at')
+})
+
+test('rows and verdicts without fixable causes link to the blocker log', async () => {
+  const data = econFixture()
+  data.headline = { status: 'unavailable', fees_monthly_by_currency: [{ currency: 'USD', amount: 20 }],
+    fees_window_by_currency: [{ currency: 'USD', amount: 19.37 }], usage_usd: 5,
+    difference_usd: null, notes: [], note_codes: [] }
+  data.groups = [{ currency: 'USD', monthly_fees: 20, window_fees: 19.37, fee_complete: true,
+    window_fee_complete: true, usage_usd: 5, difference_usd: null, converted: false,
+    fx: null, status: 'unavailable', notes: [], note_codes: [],
+    blockers: [{ account_id: 'a', code: 'insufficient_comparison_history' },
+      { account_id: 'b', code: 'tier_rate_unavailable' }] }]
+  data.accounts = []
+  const { container } = await renderSection(data)
+  const row = container.querySelector('[data-econ-group="USD"]')
+  assert.equal(row.querySelector('.wm-econ-see-attention'), null,
+    'no fixable cause, no attention link on the row')
+  const rowLog = row.querySelector('.wm-econ-see-log')
+  assert.ok(rowLog, 'the row links to the blocker log instead')
+  assert.equal(rowLog.textContent, 'View blocker log')
+  assert.equal(container.querySelector('.wm-econ-verdict-link'), null,
+    'no fixable cause, no attention link on the verdict')
+  const verdictLog = container.querySelector('.wm-econ-verdict-log')
+  assert.ok(verdictLog, 'the verdict links to the blocker log instead')
+  assert.equal(verdictLog.textContent, 'See what blocks it')
+})
+
+test('openCostsBlockerLog opens and focuses the log disclosure', async () => {
+  const host = document.createElement('div')
+  host.innerHTML = '<details id="wm-cost-blocker-log"><summary>Blocker log</summary><p>detail</p></details>'
+  document.body.appendChild(host)
+  try {
+    const log = host.querySelector('#wm-cost-blocker-log')
+    assert.equal(log.open, false)
+    await React.act(async () => { T.openCostsBlockerLog() })
+    assert.equal(log.open, true)
+    assert.equal(document.activeElement, log.querySelector('summary'))
+  } finally {
+    host.remove()
+  }
+  await React.act(async () => { T.openCostsBlockerLog() })
 })
 
 test('incomplete groups name their window-fee scope', async () => {
