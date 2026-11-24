@@ -201,6 +201,50 @@ const renderCostsSummary = async ({ billing = {}, totals = {}, accounts = [], su
   return { container, text: () => container.textContent }
 }
 
+test('Costs shows the supported cache figure on one card, net or read benefit', async () => {
+  for (const language of ['en', 'zh']) {
+    const dict = T.I18N[language]
+    const { container } = await renderCostsSummary({ totals: { calls: 4, tokens: 1000, economics: {
+      savings_usd: null, savings_basis: 'indeterminate', coverage: null,
+      covered_calls: 0, excluded_calls: 4,
+      read_benefit_usd: 12.5, read_benefit_basis: 'exact',
+      read_benefit_calls: 3, read_benefit_tokens: 50000,
+    } } }, language)
+    const cards = container.querySelectorAll('[data-cost-kind="cache"], [data-cost-kind="cache-negative"]')
+    assert.equal(cards.length, 1, `${language}: one cache card, never a second alongside a dash`)
+    const card = cards[0]
+    assert.equal(card.querySelector('.wm-cost-card-label').textContent, dict.readBenefitLabel,
+      `${language}: the label names the supported read benefit`)
+    assert.equal(card.querySelector('.wm-cost-card-value').textContent, '$12.50',
+      `${language}: the supported benefit is recovered on the existing card`)
+    assert.equal(card.querySelector('.wm-cost-card-status'), null,
+      `${language}: rule 62 keeps the routine badge off the card`)
+    assert.ok(card.textContent.includes(dict.readBenefitCoverage(3, 4, T.fmtTokens(50000))),
+      `${language}: coverage stays in the card note`)
+
+    const net = await renderCostsSummary({ totals: { calls: 4, tokens: 1000, economics: {
+      savings_usd: 2.5, savings_basis: 'exact', coverage: 1,
+      covered_calls: 4, excluded_calls: 0,
+      read_benefit_usd: 12.5, read_benefit_basis: 'exact',
+      read_benefit_calls: 4, read_benefit_tokens: 50000,
+    } } }, language)
+    const netCard = net.container.querySelector('[data-cost-kind="cache"]')
+    assert.equal(netCard.querySelector('.wm-cost-card-label').textContent, dict.costsCacheLabel,
+      `${language}: a calculable net keeps the cache-impact card`)
+    assert.equal(netCard.querySelector('.wm-cost-card-value').textContent, '$2.50',
+      `${language}: the net figure stays prominent when supported`)
+
+    const missing = await renderCostsSummary({ totals: { calls: 4, tokens: 1000, economics: {
+      savings_usd: null, savings_basis: 'indeterminate',
+    } } }, language)
+    const missingCard = missing.container.querySelector('[data-cost-kind="cache"]')
+    assert.equal(missingCard.querySelector('.wm-cost-card-value').textContent, '—',
+      `${language}: nothing supported stays a dash, never zero`)
+    assert.ok(missingCard.textContent.includes(dict.costsCacheUnknown),
+      `${language}: the note names the gap plainly`)
+  }
+})
+
 test('Costs treats indeterminate savings consistently as unknown', async () => {
   for (const language of ['en', 'zh']) {
     const { container } = await renderCostsSummary({ totals: { economics: {
@@ -209,8 +253,10 @@ test('Costs treats indeterminate savings consistently as unknown', async () => {
     } } }, language)
     const card = container.querySelector('[data-cost-kind="cache"]')
     assert.ok(card)
-    assert.equal(card.querySelector('.wm-cost-card-value').textContent, T.I18N[language].costsUnknownTag)
-    assert.equal(card.querySelector('.wm-cost-card-status').textContent, T.I18N[language].costsUnknownTag)
+    assert.equal(card.querySelector('.wm-cost-card-value').textContent, '—',
+      `${language}: indeterminate savings keep an honest empty state, never zero`)
+    assert.equal(card.querySelector('.wm-cost-card-status'), null,
+      `${language}: rule 62 keeps the routine badge off the card`)
     assert.equal(card.querySelector('.wm-cost-card-note').textContent, T.I18N[language].costsCacheUnknown)
   }
 })
@@ -283,8 +329,8 @@ test('Costs keeps signed savings ranges and marks bounded coverage in English an
     const completeCard = complete.container.querySelector('[data-cost-kind="cache"]')
     assert.equal(completeCard.querySelector('.wm-cost-card-value').textContent, endpoints,
       `${language}: the full signed range retains both endpoints`)
-    assert.equal(completeCard.querySelector('.wm-cost-card-status').textContent, dict.costsCacheBoundedTag,
-      `${language}: full coverage remains bounded, never labelled complete`)
+    assert.equal(completeCard.querySelector('.wm-cost-card-status'), null,
+      `${language}: rule 62 keeps the routine badge off the card; the range wording carries the bound`)
     assert.match(completeCard.querySelector('.wm-cost-card-note').textContent, /API/)
     const detail = [...complete.container.querySelectorAll('.wm-cost-detail-row')].find(row =>
       row.querySelector('h3')?.textContent === dict.costsCacheLabel)
@@ -293,8 +339,8 @@ test('Costs keeps signed savings ranges and marks bounded coverage in English an
 
     const partial = await render(2)
     const partialCard = partial.container.querySelector('[data-cost-kind="cache"]')
-    assert.equal(partialCard.querySelector('.wm-cost-card-status').textContent, dict.costsCacheBoundedTag,
-      `${language}: the card identifies its valuation as bounded without repeating global coverage`)
+    assert.equal(partialCard.querySelector('.wm-cost-card-status'), null,
+      `${language}: rule 62 keeps the routine badge off the card; the range wording carries the bound`)
   }
 })
 
@@ -517,11 +563,11 @@ test('Costs states the actual evidence window days in the scope line, in both la
 })
 
 test('Costs states population and valuation scope once globally instead of repeating Partial pills on evidence cards', async () => {
-  for (const [language, scope, neverZero, partialPill, pricedNote, unknownTag, savedTag] of [
+  for (const [language, scope, neverZero, partialPill, pricedNote, notRecorded, savedTag] of [
     ['en', 'timestamped backend calls', 'not a provider charge or subscription saving', 'Partial',
-      'Priced subtotal', 'Unknown', 'Saved'],
+      'Priced subtotal', 'Not recorded', 'Saved'],
     ['zh', '所选报告窗口内带时间戳的后端调用', '不是供应商费用或订阅节省', '部分',
-      '已定价小计', '未知', '已保存'],
+      '已定价小计', '未记录', '已保存'],
   ]) {
     const { container } = await renderCostsSummary({
       billing: { evidence: {
@@ -549,7 +595,10 @@ test('Costs states population and valuation scope once globally instead of repea
     assert.equal(container.querySelector('[data-cost-kind="api"] .wm-cost-card-value').textContent, '$1.25')
     assert.match(container.querySelector('[data-cost-kind="api"]').textContent, new RegExp(pricedNote))
     assert.equal(container.querySelector('[data-cost-kind="cache"] .wm-cost-card-value').textContent, '$0.500')
-    assert.match(container.querySelector('[data-cost-kind="charges"]').textContent, new RegExp(unknownTag))
+    assert.equal(container.querySelector('[data-cost-kind="charges"] .wm-cost-card-value').textContent, notRecorded,
+      `${language}: missing charges keep a minimal honest empty state`)
+    assert.equal(container.querySelector('[data-cost-kind="charges"] .wm-cost-card-status'), null,
+      `${language}: rule 62 keeps the routine badge off the charges card`)
     assert.match(container.querySelector('[data-cost-kind="fees"]').textContent, new RegExp(savedTag))
   }
 })
@@ -587,7 +636,8 @@ test('Costs treats missing API-equivalent coverage as unknown, even when an amou
   } } })
   const card = container.querySelector('[data-cost-kind="api"]')
   assert.equal(card.querySelector('.wm-cost-card-value').textContent, '$0.00')
-  assert.match(card.textContent, /Coverage unknown/)
+  assert.equal(card.querySelector('.wm-cost-card-status'), null,
+    'rule 62 keeps the routine badge off the card')
   assert.match(card.textContent, /amount may be partial/)
   assert.doesNotMatch(card.textContent, /Fully priced/)
 
@@ -596,7 +646,9 @@ test('Costs treats missing API-equivalent coverage as unknown, even when an amou
       pricing_coverage: { priced_tokens: 0, unpriced_tokens: 50, priced_calls: 0, unpriced_calls: 1 } },
   } } })
   const unpricedCard = unpriced.container.querySelector('[data-cost-kind="api"]')
-  assert.match(unpricedCard.textContent, /Unknown/)
+  assert.equal(unpricedCard.querySelector('.wm-cost-card-value').textContent, 'Not priced')
+  assert.equal(unpricedCard.querySelector('.wm-cost-card-status'), null,
+    'rule 62 keeps the routine badge off the card')
   assert.match(unpricedCard.textContent, /No priced subtotal/)
 })
 
@@ -653,9 +705,10 @@ test('Costs keeps negative cache savings and unknown coverage distinct in both l
         covered_calls: 1, excluded_calls: 0 } },
     }, language)
     const partialCard = partialCoverage.container.querySelector('[data-cost-kind="cache"]')
-    assert.equal(partialCard.querySelector('.wm-cost-card-status').textContent,
-      T.I18N[language].costsCacheBoundedTag,
-      'a supported lower bound and partial coverage remain separate disclosures')
+    assert.equal(partialCard.querySelector('.wm-cost-card-status'), null,
+      'rule 62: the bound wording on the value replaces the routine badge')
+    assert.match(partialCard.querySelector('.wm-cost-card-value').textContent, /^≥/,
+      'a supported lower bound keeps its honest wording')
     assert.equal(partialCoverage.container.querySelectorAll('.wm-cost-evidence-scope').length, 1,
       'known coverage below 100% is still disclosed once globally even with no excluded calls')
 
@@ -664,7 +717,10 @@ test('Costs keeps negative cache savings and unknown coverage distinct in both l
         covered_calls: 1, excluded_calls: 0 } },
     }, language)
     const unknownCoverageCard = unknownCoverage.container.querySelector('[data-cost-kind="cache"]')
-    assert.match(unknownCoverageCard.textContent, new RegExp(coverageUnknown, 'i'))
+    assert.equal(unknownCoverageCard.querySelector('.wm-cost-card-status'), null,
+      'rule 62: the bound wording on the value replaces the routine badge')
+    assert.match(unknownCoverageCard.querySelector('.wm-cost-card-value').textContent, /^≥/,
+      'a bounded value keeps its honest wording without a coverage badge')
     assert.doesNotMatch(unknownCoverageCard.textContent, new RegExp(partial))
   }
 })
@@ -960,7 +1016,7 @@ test('membership edits invalidate the cached economics comparison', async () => 
   assert.equal(queryClient.getQueryState(keyFor(other))?.isInvalidated, false)
 })
 
-test('the attention summary groups blockers into fix, history and unavailable', async () => {
+test('the attention summary lists only fixable blockers', async () => {
   const econAccounts = [
     { account_id: 'a:one', label: 'First account', family: 'a' },
     { account_id: 'a:two', label: 'Second account', family: 'a' },
@@ -975,9 +1031,10 @@ test('the attention summary groups blockers into fix, history and unavailable', 
   ] }]
   const { container, text } = await renderAttention({ groups, econAccounts })
   assert.match(text(), /What needs attention\?/)
-  assert.equal(container.querySelector('.wm-cost-attn-count').textContent, '4')
-  const titles = [...container.querySelectorAll('.wm-cost-attn-cat-title')].map(el => el.textContent)
-  assert.deepEqual(titles, ['Fix now', 'Needs more history', 'Not recorded / unavailable'])
+  assert.equal(container.querySelector('.wm-cost-attn-count').textContent, '1',
+    'rule 62: history and unavailable evidence stay out of the count')
+  assert.equal(container.querySelectorAll('.wm-cost-attn-cat-title').length, 0,
+    'rule 62: no history or unavailable categories in attention')
   const fix = container.querySelector('[data-attn-category="fix"]')
   assert.match(fix.textContent, /Set or confirm this account’s subscription fee/)
   assert.match(fix.textContent, /2 accounts/)
@@ -986,17 +1043,12 @@ test('the attention summary groups blockers into fix, history and unavailable', 
   assert.doesNotMatch(fix.textContent, /a:one|a:two/,
     'friendly labels replace raw account ids in standard view')
   assert.equal(fix.querySelector('button').textContent, 'Review in Memberships')
-  const history = container.querySelector('[data-attn-category="history"]')
-  assert.match(history.textContent, /No calls were recorded/)
-  assert.equal(history.querySelector('button'), null, 'history items carry guidance, not actions')
-  const unavailable = [...container.querySelectorAll('[data-attn-category="unavailable"]')]
-  assert.equal(unavailable.length, 2)
-  assert.doesNotMatch(text(), /mystery_future_code|route-x/,
-    'raw codes and slugs stay out of the attention summary')
-  assert.match(text(), /exact code is in the blocker log/)
-  for (const row of unavailable) {
-    assert.equal(row.querySelector('button').textContent, 'View blocker log')
-  }
+  assert.equal(container.querySelector('[data-attn-category="history"]'), null,
+    'rule 62: history items stay in the blocker log, not attention')
+  assert.equal(container.querySelector('[data-attn-category="unavailable"]'), null,
+    'rule 62: unavailable evidence stays in the blocker log, not attention')
+  assert.doesNotMatch(text(), /mystery_future_code|route-x|No calls were recorded/,
+    'raw codes, slugs and history guidance stay out of the attention summary')
   const unlabeled = await renderAttention({ groups: [{ currency: 'USD',
     blockers: [{ account_id: 'raw:slug', code: 'subscription_fee_missing' }] }], econAccounts: [] })
   assert.doesNotMatch(unlabeled.container.querySelector('.wm-cost-attn-text').textContent, /raw:slug/,
@@ -1022,15 +1074,14 @@ test('attention actions navigate, open FX and retry the failed read', async () =
   })
   const buttons = [...container.querySelectorAll('.wm-cost-attn-action')]
   assert.deepEqual(buttons.map(button => button.textContent), [
-    'Add dated FX rate', 'Review in Usage', 'Review in Memberships', 'Retry', 'View blocker log',
-  ])
+    'Add dated FX rate', 'Review in Usage', 'Review in Memberships', 'Retry',
+  ], 'rule 62: the unavailable cache-rate row stays out of attention')
   T.$ledgerTab.set('costs')
   await React.act(async () => { buttons[2].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
   assert.equal(T.$ledgerTab.get(), 'memberships')
   await React.act(async () => { buttons[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
   await React.act(async () => { buttons[3].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
-  await React.act(async () => { buttons[4].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
-  assert.deepEqual(calls, ['fx', 'retry', 'log'])
+  assert.deepEqual(calls, ['fx', 'retry'])
   await React.act(async () => { buttons[1].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
   assert.equal(T.$ledgerTab.get(), 'usage')
 })
@@ -1083,7 +1134,7 @@ test('an empty comparison shows the quiet attention state', async () => {
   assert.match(zhText(), /没有需要注意的事项/)
 })
 
-test('the attention summary translates its categories and actions', async () => {
+test('the attention summary translates its fixable rows', async () => {
   const { container, text } = await renderAttention({
     groups: [{ currency: 'GBP', blockers: [
       { account_id: 'a', code: 'dated_fx_rate_missing', currency: 'GBP' },
@@ -1093,10 +1144,11 @@ test('the attention summary translates its categories and actions', async () => 
     econAccounts: [{ account_id: 'a', label: '测试帐户' }],
   }, 'zh')
   assert.match(text(), /哪些事项需要注意？/)
-  const titles = [...container.querySelectorAll('.wm-cost-attn-cat-title')].map(el => el.textContent)
-  assert.deepEqual(titles, ['立即处理', '需要更多历史记录', '未记录/不可用'])
+  assert.equal(container.querySelectorAll('.wm-cost-attn-cat-title').length, 0,
+    'rule 62: no history or unavailable categories in attention')
   const buttons = [...container.querySelectorAll('.wm-cost-attn-action')].map(button => button.textContent)
-  assert.deepEqual(buttons, ['添加注明日期的汇率', '查看问题日志'])
+  assert.deepEqual(buttons, ['添加注明日期的汇率'])
+  assert.equal(container.querySelector('.wm-cost-attn-count').textContent, '1')
   assert.doesNotMatch(text(), /undefined/)
 })
 
@@ -1459,8 +1511,8 @@ test('incomplete groups name their window-fee scope', async () => {
     'a complete group needs no scope line')
 })
 
-test('attention categories explain whether an action helps', async () => {
-  const { container } = await renderAttention({
+test('attention explains that only resolvable problems appear', async () => {
+  const { container, text } = await renderAttention({
     groups: [{ currency: 'GBP', blockers: [
       { account_id: 'a', code: 'subscription_fee_missing' },
       { account_id: 'a', code: 'no_usage_recorded' },
@@ -1468,13 +1520,14 @@ test('attention categories explain whether an action helps', async () => {
     ] }],
     econAccounts: [],
   })
-  const hints = [...container.querySelectorAll('.wm-cost-attn-cat-hint')].map(el => el.textContent)
-  assert.deepEqual(hints, [
-    'These have a fix — use the action on each row.',
-    'These resolve as recording history accumulates — nothing to fix.',
-    'This evidence is not reported — the blocker log holds the detail.',
-  ])
-  const { container: zhContainer } = await renderAttention({
+  assert.equal(container.querySelector('.wm-cost-attn-hint').textContent,
+    'Only problems you can resolve appear here; history and unavailable evidence stay in the blocker log.')
+  assert.equal(container.querySelectorAll('.wm-cost-attn-cat-hint').length, 0,
+    'rule 62: no history or unavailable categories in attention')
+  assert.equal(container.querySelectorAll('[data-attn-category="fix"]').length, 1)
+  assert.doesNotMatch(text(), /No calls were recorded/,
+    'rule 62: history guidance stays in the blocker log')
+  const { container: zhContainer, text: zhText } = await renderAttention({
     groups: [{ currency: 'GBP', blockers: [
       { account_id: 'a', code: 'subscription_fee_missing' },
       { account_id: 'a', code: 'no_usage_recorded' },
@@ -1482,12 +1535,11 @@ test('attention categories explain whether an action helps', async () => {
     ] }],
     econAccounts: [],
   }, 'zh')
-  const zhHints = [...zhContainer.querySelectorAll('.wm-cost-attn-cat-hint')].map(el => el.textContent)
-  assert.deepEqual(zhHints, [
-    '这些问题可以修复——请按每行的操作处理。',
-    '这些问题会随着记录历史的积累而解决——无需修复。',
-    '此类证据未被报告——详情见问题日志。',
-  ])
+  assert.equal(zhContainer.querySelector('.wm-cost-attn-hint').textContent,
+    '此处仅显示您可以解决的问题；历史记录和不可用证据保留在问题日志中。')
+  assert.equal(zhContainer.querySelectorAll('[data-attn-category="fix"]').length, 1)
+  assert.doesNotMatch(zhText(), /所选窗口内没有此账户的调用记录/,
+    'rule 62: history guidance stays in the blocker log')
 })
 
 test('unknown blocker codes stay out of the account table', async () => {

@@ -244,14 +244,16 @@ test('a recorded conversation stays selected when the current run has larger tot
   await flush()
   const before = sectionsOf(container)
   const figureEl = container.querySelector('.wm-kpi-figure')
-  assert.equal(figureEl.firstChild.textContent, '$0.0010', 'the cost figure renders bare')
-  assert.equal(figureEl.querySelector('[data-certainty="partial"]')?.textContent, 'meterPartial',
-    'partial coverage rides a chip, not a + suffix')
-  assert.doesNotMatch(figureEl.textContent, /[+≈]/, 'no legacy figure markers survive beside the chip')
+  assert.equal(figureEl.textContent, '$0.0010', 'the cost figure renders bare with no qualifier')
+  assert.equal(figureEl.querySelector('[data-certainty]'), null,
+    'rule 62: no certainty pill beside the figure')
+  assert.doesNotMatch(figureEl.textContent, /[+≈]/, 'no legacy figure markers survive')
   const figureBefore = figureEl.textContent
   assert.match(container.querySelector('.wm-kpi-source').textContent, /apiEquivalent/)
   assert.doesNotMatch(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/)
   assert.match(await openTip(container, 'cost-source'), /localEstimateScopeNote/)
+  assert.match(await openTip(container, 'cost-source'), /coverageUnknownNote/,
+    'the coverage gap stays in the existing info control')
   assert.deepEqual([...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
     .map(el => el.textContent), ['350', '1'])
   assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeLocalConversationEstimate')
@@ -335,13 +337,15 @@ test('recorded conversation figures stay simple while scope details remain avail
   T.$ledger.set(ledger)
   const container = await renderMeter()
   await flush()
-  assert.equal(container.querySelector('.wm-kpi-figure').firstChild.textContent, '$1.23',
-    'the cost figure renders bare')
-  assert.equal(container.querySelector('.wm-kpi-figure [data-certainty="partial"]')?.textContent,
-    'meterPartial', 'partial coverage rides a chip, not a + suffix')
+  assert.equal(container.querySelector('.wm-kpi-figure').textContent, '$1.23',
+    'the cost figure renders bare with no qualifier')
+  assert.equal(container.querySelector('.wm-kpi-figure [data-certainty]'), null,
+    'rule 62: no certainty pill beside the figure')
   assert.match(container.querySelector('.wm-kpi-source').textContent, /apiEquivalent/)
   assert.doesNotMatch(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/)
   assert.match(await openTip(container, 'cost-source'), /localEstimateScopeNote/)
+  assert.match(await openTip(container, 'cost-source'), /coverageUnknownNote/,
+    'the coverage gap stays in the existing info control')
   assert.match(container.textContent, /meterRecorded/)
   assert.match(container.textContent, /scopeLocalConversationEstimate/)
   const metrics = [...container.querySelectorAll('.wm-metric-value')].map(el => el.textContent)
@@ -387,7 +391,11 @@ test('a cache coverage change redraws the gauge in place', async () => {
     'reconstructed coverage dims the ring')
   const estMetrics = [...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
     .map(el => el.textContent)
-  assert.match(estMetrics[0], /^2\.1k meterPartial$/, `reconstructed totals carry a Partial chip: ${estMetrics}`)
+  assert.equal(estMetrics[0], '2.1k', `reconstructed totals render bare: ${estMetrics}`)
+  assert.equal(container.querySelector('.wm-kpi-metrics [data-certainty]'), null,
+    'rule 62: no certainty pill on the reconstructed totals')
+  assert.match(await openTip(container, 'prompt-mix'), /partialCacheEvidence/,
+    'the partial streams stay in the composition info control')
   // Rounded hit percentages cannot establish the backend cache-read benefit.
   assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '—')
   assert.doesNotMatch(container.textContent, /readBenefitUsageLink/)
@@ -534,10 +542,10 @@ test('a proven session summary renders the cache-read benefit with coverage in i
     assert.equal(container.querySelector('.wm-provider-badge').textContent, 'openai',
       'the separately resolved active route provider remains visible')
     const benefitFigure = container.querySelector('[data-kind="saved"] .wm-metric-value')
-    assert.equal(benefitFigure.firstChild.textContent, '$0.0050', 'the benefit figure renders bare')
-    assert.equal(benefitFigure.querySelector('[data-certainty="partial"]')?.textContent,
-      'Partial', 'partial coverage rides a chip, not a + suffix')
-    assert.doesNotMatch(benefitFigure.textContent, /[+≈]/, 'no legacy figure markers survive beside the chip')
+    assert.equal(benefitFigure.textContent, '$0.0050', 'the benefit figure renders bare with no qualifier')
+    assert.equal(benefitFigure.querySelector('[data-certainty]'), null,
+      'rule 62: no certainty pill beside the benefit')
+    assert.doesNotMatch(benefitFigure.textContent, /[+≈]/, 'no legacy figure markers survive')
     assert.equal(container.querySelectorAll('[data-kind="saved"]').length, 1,
       'the session read benefit appears once')
     assert.doesNotMatch(container.textContent, /1 of 1 calls|100 read tokens|readBenefitUsageLink/,
@@ -610,12 +618,12 @@ test('a backend API-equivalent range keeps both endpoints in the pane and chip f
   await flush()
   try {
     assert.match(meter.querySelector('.wm-kpi-figure').textContent, /^\$0\.202–\$0\.502$/)
-    assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'backend_summary', costBasis: 'indeterminate', costPartial: true }), '$2.00+')
-    assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'local', costPartial: true }), '$2.00+')
+    assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'backend_summary', costBasis: 'indeterminate', costPartial: true }), '$2.00')
+    assert.equal(T.apiEquivalentDisplay({ cost: 2, costSource: 'local', costPartial: true }), '$2.00')
     assert.equal(T.sidebarCostDisplay({cost: 0, costHigh: 1, costBasis: 'range', costPartial: true}), '$0.00–$1.00')
     assert.equal(T.sidebarCostDisplay({cost: 0, costPartial: true}), '—')
     assert.match(T.apiEquivalentDisplay({ cost: .202, costHigh: .502, costSource: 'backend_summary',
-      costBasis: 'range', costPartial: true }), /^≈\$0\.202–\$0\.502$/)
+      costBasis: 'range', costPartial: true }), /^\$0\.202–\$0\.502$/)
   } finally {
     T.restoreRest(originalRest)
   }
@@ -1376,4 +1384,194 @@ test('the meter stylesheet pins the compact container rules', () => {
   assert.match(T.METER_CSS, /wm-gauge-stat\[data-kind="saved"\]/, 'the savings value has its own responsive row')
   assert.match(T.METER_CSS, /--wm-gauge-ring:68px/, 'the narrow gauge keeps the larger legible ring')
   assert.match(T.METER_CSS, /\.wm-open-ledger/, 'the ledger button is styled')
+})
+
+test('the default pane carries no certainty pills; provenance stays in the info controls', async () => {
+  resetHost()
+  host.state.focusedSessionId.set('rule62-session')
+  host.state.focusedStoredSessionId.set('rule62-conversation')
+  const ledger = T.emptyLedger()
+  ledger.sessions['rule62-conversation'] = histBucket({
+    input: 400000, output: 50000, cacheRead: 600000, cacheWrite: 0, calls: 10,
+    pricedTokens: 1050000, cost: 1.5, sources: { bundled: 1050000 },
+  })
+  T.$ledger.set(ledger)
+  host.state.focusedUsage.set(liveUsage())
+  const container = await renderMeter()
+  await flush()
+  assert.equal(container.querySelectorAll('[data-certainty]').length, 0,
+    'rule 62: no Partial/Unknown pill in the default pane')
+  for (const figure of container.querySelectorAll('.wm-kpi-figure, .wm-metric-value, .wm-legend-value, .wm-ring-text')) {
+    assert.doesNotMatch(figure.textContent, /[+≈]/, `rule 62: bare figure (${figure.textContent})`)
+  }
+  assert.match(await openTip(container, 'cost-source'), /coverageUnknownNote|partialCacheEvidence/,
+    'the fallback detail stays reachable in the existing info control')
+})
+
+test('a resumed conversation restores Session scope through the stored session id', async () => {
+  resetHost()
+  const requests = []
+  const originalRest = T.getRest()
+  const summaryFor = sid => ({
+    ok: true, session_id: sid,
+    population: { requested: 'all', satisfied: true, separable: false },
+    totals: { calls: 11, input_tokens: 90000, output_tokens: 20000, prompt_tokens: 737200,
+      cache_read_tokens: 467900, cache_write_tokens: 0,
+      cache_read_state: 'reported', cache_write_state: 'unknown', unpriced_tokens: 0 },
+    valuation: { api_equivalent_usd: .5, api_equivalent_basis: 'exact',
+      read_benefit_usd: 1.149055, read_benefit_basis: 'exact',
+      read_benefit_calls: 9, read_benefit_tokens: 467900,
+      savings_usd: 0, savings_basis: 'indeterminate', coverage: null,
+      covered_calls: 0, excluded_calls: 11, cache_hit_rate: .63, cache_hit_rate_basis: 'all_calls' },
+  })
+  T.setRest(async path => {
+    requests.push(path)
+    if (path.startsWith('/session/summary?')) {
+      const sid = new URL(path, 'http://test').searchParams.get('session_id')
+      if (sid === 'runtime-new') {
+        return { ok: true, session_id: sid,
+          population: { requested: 'all', satisfied: true, separable: false },
+          totals: { calls: 0, input_tokens: 0, output_tokens: 0, prompt_tokens: 0,
+            cache_read_tokens: 0, cache_write_tokens: 0,
+            cache_read_state: 'reported', cache_write_state: 'reported' },
+          valuation: { savings_basis: 'indeterminate', covered_calls: 0, excluded_calls: 0 } }
+      }
+      if (sid === 'stored-durable') return summaryFor(sid)
+    }
+    return { rate: null }
+  })
+  host.state.focusedSessionId.set('runtime-new')
+  host.state.focusedStoredSessionId.set('stored-durable')
+  host.state.model.set('gpt-4o')
+  queryClient.setQueryData(T.catalogQuery('runtime-new', 'gpt-4o', false).queryKey,
+    { model: 'gpt-4o', provider: 'openai' })
+  const container = await renderMeter()
+  await flush()
+  try {
+    assert.ok(requests.some(path => path.includes('session_id=stored-durable')),
+      `the stored id is tried exactly: ${requests}`)
+    assert.ok(!requests.some(path => path.includes('session_id=runtime-new')),
+      `the winning first leg short-circuits: ${requests}`)
+    assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeSession',
+      'the durable identity restores Session scope after a resume')
+    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '$1.15',
+      'the session read benefit returns with the restored scope')
+  } finally {
+    T.restoreRest(originalRest)
+  }
+})
+
+test('a runtime-keyed session restores Session scope through the runtime fallback leg', async () => {
+  resetHost()
+  const requests = []
+  const originalRest = T.getRest()
+  T.setRest(async path => {
+    requests.push(path)
+    if (path.startsWith('/session/summary?')) {
+      const sid = new URL(path, 'http://test').searchParams.get('session_id')
+      if (sid === 'stored-empty') {
+        return { ok: true, session_id: sid,
+          population: { requested: 'all', satisfied: true, separable: false },
+          totals: { calls: 0, input_tokens: 0, output_tokens: 0, prompt_tokens: 0,
+            cache_read_tokens: 0, cache_write_tokens: 0,
+            cache_read_state: 'reported', cache_write_state: 'reported' },
+          valuation: { savings_basis: 'indeterminate', covered_calls: 0, excluded_calls: 0 } }
+      }
+      if (sid === 'runtime-live') {
+        return { ok: true, session_id: sid,
+          population: { requested: 'all', satisfied: true, separable: false },
+          totals: { calls: 2, input_tokens: 100, output_tokens: 10, prompt_tokens: 200,
+            cache_read_tokens: 100, cache_write_tokens: 0,
+            cache_read_state: 'reported', cache_write_state: 'reported', unpriced_tokens: 0 },
+          valuation: { api_equivalent_usd: .001, api_equivalent_basis: 'exact',
+            read_benefit_usd: .005, read_benefit_basis: 'exact',
+            read_benefit_calls: 2, read_benefit_tokens: 100,
+            savings_usd: 0, savings_basis: 'exact', coverage: 1,
+            covered_calls: 2, excluded_calls: 0, cache_hit_rate: 0, cache_hit_rate_basis: 'all_calls' } }
+      }
+    }
+    return { rate: null }
+  })
+  host.state.focusedSessionId.set('runtime-live')
+  host.state.focusedStoredSessionId.set('stored-empty')
+  host.state.model.set('gpt-4o')
+  queryClient.setQueryData(T.catalogQuery('runtime-live', 'gpt-4o', false).queryKey,
+    { model: 'gpt-4o', provider: 'openai' })
+  const container = await renderMeter()
+  await flush()
+  try {
+    assert.ok(requests.some(path => path.includes('session_id=stored-empty')),
+      `the stored leg is tried first: ${requests}`)
+    assert.ok(requests.some(path => path.includes('session_id=runtime-live')),
+      `the empty stored leg falls through to the runtime id: ${requests}`)
+    assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeSession',
+      'the runtime fallback restores Session scope with exact evidence')
+    assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '$0.0050',
+      'the runtime benefit renders bare with no qualifier')
+  } finally {
+    T.restoreRest(originalRest)
+  }
+})
+
+test('a brand-new conversation queries only the runtime session id', async () => {
+  resetHost()
+  const requests = []
+  const originalRest = T.getRest()
+  T.setRest(async path => {
+    requests.push(path)
+    if (path.startsWith('/session/summary?')) {
+      return { ok: true, session_id: 'runtime-only',
+        population: { requested: 'all', satisfied: true, separable: false },
+        totals: { calls: 0, input_tokens: 0, output_tokens: 0, prompt_tokens: 0,
+          cache_read_tokens: 0, cache_write_tokens: 0,
+          cache_read_state: 'reported', cache_write_state: 'reported' },
+        valuation: { savings_basis: 'indeterminate', covered_calls: 0, excluded_calls: 0 } }
+    }
+    return { rate: null }
+  })
+  host.state.focusedSessionId.set('runtime-only')
+  host.state.focusedStoredSessionId.set(null)
+  const container = await renderMeter()
+  await flush()
+  try {
+    const summaryPaths = requests.filter(path => path.startsWith('/session/summary?'))
+    assert.equal(summaryPaths.length, 1, `one exact request: ${summaryPaths}`)
+    assert.ok(summaryPaths[0].includes('session_id=runtime-only'))
+    assert.doesNotMatch(container.textContent, /scopeSession/,
+      'an empty session keeps the honest fallback scope')
+  } finally {
+    T.restoreRest(originalRest)
+  }
+})
+
+test('a backend error does not trigger a second-leg session request', async () => {
+  resetHost()
+  const requests = []
+  const originalRest = T.getRest()
+  const previousTranslate = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const value = T.I18N.en[key]
+    return typeof value === 'function' ? value(...args) : value ?? key
+  }
+  T.setRest(async path => {
+    requests.push(path)
+    if (path.startsWith('/session/summary?')) throw new Error('boom-unreachable')
+    return { rate: null }
+  })
+  host.state.focusedSessionId.set('runtime-err')
+  host.state.focusedStoredSessionId.set('stored-err')
+  const ledger = T.emptyLedger()
+  ledger.sessions['stored-err'] = histBucket({ cost: 1.5 })
+  T.$ledger.set(ledger)
+  const container = await renderMeter()
+  await flush()
+  try {
+    assert.equal(requests.filter(path => path.startsWith('/session/summary?')).length, 1,
+      `transport errors fail fast: ${requests}`)
+    assert.match(await openTip(container, 'cost-source'), /backend read failed: boom-unreachable/,
+      'the error reason stays in the existing info control')
+  } finally {
+    T.restoreRest(originalRest)
+    i18nBackend.t = previousTranslate
+  }
 })

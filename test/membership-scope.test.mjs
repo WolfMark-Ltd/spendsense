@@ -1420,10 +1420,10 @@ test('conversation cost keeps unknown call-level coverage in its tooltip', async
     partial: true, costPartial: true
   }
   await React.act(async () => root.render(React.createElement(T.CostKpi, { t: i18nBackend.t, view })))
-  assert.equal(container.querySelector('.wm-kpi-figure').firstChild.textContent, '$0.420',
-    'the cost figure renders bare')
-  assert.equal(container.querySelector('.wm-kpi-figure [data-certainty="partial"]')?.textContent,
-    'Partial', 'partial coverage rides a chip, not a + suffix')
+  assert.equal(container.querySelector('.wm-kpi-figure').textContent, '$0.420',
+    'the cost figure renders bare with no qualifier')
+  assert.equal(container.querySelector('.wm-kpi-figure [data-certainty]'), null,
+    'rule 62: no certainty pill beside the figure')
   assert.match(container.querySelector('.wm-kpi-source').textContent, /API equivalent/i)
   assert.equal(container.querySelector('.wm-partial-chip'), null,
     'the normal card uses the figure marker instead of a technical warning block')

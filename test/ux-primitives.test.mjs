@@ -654,9 +654,11 @@ test('every Overview (ov*) string exists in both en and zh', () => {
 
 test('Overview keeps four equal financial cards and adapts panels to compact panes', () => {
   assert.match(T.PRODUCT_CSS, /\.wm-overview-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);grid-auto-rows:1fr;align-items:stretch\}/)
+  assert.match(T.PRODUCT_CSS, /\.wm-usage-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\);grid-auto-rows:1fr;align-items:stretch\}/,
+    'Usage shares the Overview 2x2 grid at normal widths')
   assert.doesNotMatch(T.PRODUCT_CSS, /@container\(min-width:1020px\).*wm-overview-grid/)
-  assert.match(T.PRODUCT_CSS, /@container\(max-width:340px\)\{\.wm-product \.wm-overview-grid\{grid-template-columns:1fr\}\}/,
-    'only truly narrow panes stack the Overview cards')
+  assert.match(T.PRODUCT_CSS, /@container\(max-width:340px\)\{\.wm-product \.wm-overview-grid,\.wm-product \.wm-usage-grid\{grid-template-columns:1fr\}\}/,
+    'only truly narrow panes stack the Overview and Usage cards')
   assert.match(T.PRODUCT_CSS, /\.wm-overview-grid \.wm-kpi,.wm-product \.wm-usage-grid \.wm-kpi\{display:grid;align-content:start;gap:7px;min-height:156px/,
     'Usage KPI cards share the Overview card anatomy')
   assert.match(T.PRODUCT_CSS, /border-left:3px solid var\(--wm-kpi-accent,var\(--ui-accent\)\)/,

@@ -194,6 +194,18 @@ test('a bundled table rate carries the evidence its row publishes', () => {
     'so a saving is computable when the backend card is unavailable')
 })
 
+test('commandcode deepseek-v4.1-flash keeps its exact row with no borrowed write price', () => {
+  const hit = T.resolveRates({ model: 'deepseek/deepseek-v4.1-flash', provider: 'commandcode',
+    payload: null, remembered: {} })
+  assert.equal(hit.origin, 'bundled', 'the exact route row resolves')
+  assert.equal(hit.rates.input, 0.15)
+  assert.equal(hit.rates.output, 0.6)
+  assert.equal(hit.rates.cache, 0.003)
+  assert.equal(hit.rates.write, null, 'the commandcode route publishes no cache-write price')
+  assert.equal(T.cacheSavings(1_000_000, hit.rates, 500), null,
+    'a positive exact write stays unvalued rather than borrowing another route’s write price')
+})
+
 test('a provider-reported zero write needs no write price', () => {
   // Zero writes are a measurement, not an unknown price: no premium exists to
   // value, so the read discount is the whole saving.
@@ -656,6 +668,15 @@ test('refused, stale, tier-unknown and unpriced summaries never consume all-call
 
   const stale = T.sessionSavingsState(provenMainEnvelope(), 'session-b', 'profile-a')
   assert.equal(stale.reason, 'summary_stale')
+
+  const stored = provenMainEnvelope()
+  stored.sessionId = 'stored-durable'
+  stored.payload.session_id = 'stored-durable'
+  const durable = T.sessionSavingsState(stored, 'runtime-new', 'profile-a', 'stored-durable')
+  assert.equal(durable.available, true, 'the supported stored identity is accepted exactly')
+  assert.equal(durable.scopeProven, true)
+  const wrongAlternate = T.sessionSavingsState(provenMainEnvelope(), 'runtime-new', 'profile-a', 'stored-other')
+  assert.equal(wrongAlternate.reason, 'summary_stale', 'no fuzzy attribution: only the two exact ids match')
 
   const tierUnknown = T.sessionSavingsState(provenMainEnvelope({ savings_usd: 0,
     savings_basis: 'exact', savings_bound_reason: 'context_tier_unknown' }),

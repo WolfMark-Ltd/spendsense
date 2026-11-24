@@ -676,7 +676,7 @@ test('every settings string exists in English and Chinese', () => {
     'aboutActionsHelpGroup', 'aboutActionsContributeGroup', 'aboutActionsWolfmarkGroup',
     'aboutFaqHeading',
     'aboutMoreHeading', 'aboutFaqMismatchQ', 'aboutFaqMismatchA1', 'aboutFaqMismatchA2',
-    'aboutFaqTroubleshooting', 'aboutPrivacyHeading', 'aboutPrivacyBody',
+    'aboutFaqCacheQ', 'aboutFaqTroubleshooting', 'aboutPrivacyHeading', 'aboutPrivacyBody',
     'ovMethodChargesFaqLink', 'settingsPanePlacement']
   for (const key of keys) {
     assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
@@ -812,7 +812,7 @@ test('every usage panel string exists in English and Chinese', () => {
     'usageBillingLabel', 'usageBillingComplete', 'usageBillingPartial', 'usageBillingNote', 'usageWindowDash',
     'usageWindowPending', 'usageUnpricedAlert', 'usageEmptyTitle', 'usageEmptyBody',
     'usageEmptyShowDesktop', 'usageEmptyClear', 'usageNoData', 'usageRecordingLine', 'usageRecordingPending',
-    'usageCacheFormula', 'usageMethodologyTitle', 'usageBaselineSummaryTitle']
+    'usageCacheFormula', 'usageMethodFaqLink', 'usageMethodologyTitle', 'usageBaselineSummaryTitle']
   for (const key of panelKeys) {
     assert.ok(en[key] !== undefined && en[key] !== key, `en has ${key}`)
     assert.ok(zh[key] !== undefined && zh[key] !== key, `zh has ${key}`)

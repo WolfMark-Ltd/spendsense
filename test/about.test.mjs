@@ -101,7 +101,7 @@ test('the hero introduces SpendSense and names WolfMark as the developer', async
   const container = await boot()
   assert.equal(flat(container.querySelector('main h1')?.textContent), 'About & Support')
   assert.ok(container.querySelector('.wm-about-hero svg'), 'the approved marque renders in the hero')
-  assert.equal(flat(container.querySelector('.wm-about-name')?.textContent), 'SpendSense 0.6.38')
+  assert.equal(flat(container.querySelector('.wm-about-name')?.textContent), 'SpendSense 0.6.39')
   assert.match(flat(container.querySelector('.wm-about-developer')?.textContent), /WolfMark Ltd/)
   assert.match(flat(container.querySelector('.wm-about-hero > p')?.textContent), /usage accounting for Hermes/)
 })
@@ -311,4 +311,18 @@ test('clicks keep native navigation when no host door exists', async () => {
   const event = new MouseEvent('click', { bubbles: true, cancelable: true })
   await React.act(async () => { link.dispatchEvent(event) })
   assert.equal(event.defaultPrevented, false)
+})
+
+test('the FAQ answers the cache-hit question with the shared formula, in both languages', async () => {
+  for (const locale of ['en', 'zh']) {
+    const container = await boot({ locale })
+    const dict = T.I18N[locale]
+    const entries = [...container.querySelectorAll('.wm-about-faq-section .wm-about-faq')]
+    assert.equal(entries.length, 2, `${locale}: mismatch plus cache methodology`)
+    const cache = entries[1]
+    assert.equal(cache.open, false, `${locale}: the cache entry starts collapsed`)
+    assert.equal(flat(cache.querySelector('summary')?.textContent), dict.aboutFaqCacheQ)
+    assert.ok(flat(cache.textContent).includes(dict.usageCacheFormula),
+      `${locale}: the FAQ carries the general methodology`)
+  }
 })

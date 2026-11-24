@@ -6,10 +6,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 // into force-exit only for React/jsdom harnesses with lingering handles.
 const suites = {
   browserless: [
-    ['about', 16, true],
-    ['analytics', 53], ['budgets', 30, true], ['cache-savings', 36],
+    ['about', 17, true],
+    ['analytics', 53], ['budgets', 30, true], ['cache-savings', 37],
     ['compatibility', 16], ['dashboard-entry', 1], ['digest', 2],
-    ['digest-render', 24, true], ['economics', 32], ['economics-render', 58, true],
+    ['digest-render', 24, true], ['economics', 32], ['economics-render', 59, true],
     ['membership', 38], ['membership-scope', 99, true], ['memberships-reading', 7, true],
     ['news', 24],
     ['news-editorial', 51], ['news-groups', 52], ['news-layout.chromium', 16],
@@ -17,8 +17,8 @@ const suites = {
     ['news-render', 61, true], ['node-runner', 5], ['plugin', 70], ['recount', 16],
     ['overview-render', 11, true],
     ['reports-layout.chromium', 19], ['reports-layout.devtools', 11],
-    ['sidebar', 49, true], ['ui-labels', 57],
-    ['usage-render', 11, true],
+    ['sidebar', 54, true], ['ui-labels', 57],
+    ['usage-render', 12, true],
     ['ux-primitives', 35, true], ['weather', 11], ['weather-render', 9, true],
     ['wp14-fixes', 9],
   ],

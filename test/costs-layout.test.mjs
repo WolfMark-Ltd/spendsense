@@ -18,21 +18,25 @@ const LAYOUT_STRINGS = {
     partial: /fee unknown/, cachePartial: /Partial/,
     scope: /timestamped backend calls.*unclassified calls are not assumed to be main.*unknown cache evidence stay out of priced subtotals.*not a provider charge or subscription saving/,
     limit: /1 limit/,
-    groups: /Fees vs usage by currency/, attention: /What needs attention\?/, fix: /Fix now/,
+    groups: /Fees vs usage by currency/, attention: /What needs attention\?/, fix: /Add dated FX rate/,
     seeAttention: /1 issue needs attention/, blocker: /Add a dated user-supplied/,
     feeAction: /Set or confirm this account’s subscription fee/,
     moneyFee: /GBP 20\.00 fees in window/, moneyUsage: /\$0\.00 usage/,
     verdict: /Partial evidence: .* in known fees vs .* of attributed usage/,
-    fixHint: /use the action on each row/ },
-  zh: { charges: /无法获取逐次调用/, gbpFee: /GBP 20\.00\/月/, usdFee: /USD 0\.00\/月/,
+    fixHint: /Only problems you can resolve appear here/,
+    history: /Continue recording before comparing/,
+    unavailable: /A cache rate is unavailable/ },
+  zh: { charges: /未记录/, gbpFee: /GBP 20\.00\/月/, usdFee: /USD 0\.00\/月/,
     partial: /项费用未知/, cachePartial: /部分/,
     scope: /所选报告窗口内带时间戳的后端调用.*未分类调用不会被假设为主调用.*未知缓存证据不计入已定价小计.*不是供应商费用或订阅节省/,
     limit: /1 项限额/,
-    groups: /按货币对比费用与用量/, attention: /哪些事项需要注意？/, fix: /立即处理/,
+    groups: /按货币对比费用与用量/, attention: /哪些事项需要注意？/, fix: /添加注明日期的汇率/,
     seeAttention: /1 个问题需要注意/, blocker: /添加注明日期的.*汇率/,
     feeAction: /设置或确认此账户的订阅费用/,
     moneyFee: /GBP 20\.00 窗口内费用/, moneyUsage: /\$0\.00 用量/,
-    verdict: /部分证据/, fixHint: /按每行的操作处理/ },
+    verdict: /部分证据/, fixHint: /此处仅显示您可以解决的问题/,
+    history: /延长记录时间后再比较/,
+    unavailable: /缓存费率不可用/ },
 }
 
 test('Costs keeps mixed financial evidence scannable at 380px and 1200px in both themes and languages', {
@@ -93,11 +97,16 @@ const name=new URLSearchParams(location.search).get('case');if(name){document.bo
         assert.equal(layout.comparisons, 2, `${id} renders labelled fee and API-equivalent bars`)
         assert.equal(layout.closedDetails, true, `${id} keeps detailed evidence in closed disclosures`)
         assert.match(layout.attention, expected.attention, `${id} summarises what needs attention`)
-        assert.match(layout.attention, expected.fix, `${id} classifies the dated-FX gap as fixable`)
+        assert.match(layout.attention, expected.fix, `${id} offers the dated-FX fix action`)
         assert.match(layout.attention, expected.feeAction, `${id} raises the unknown membership fee once`)
-        assert.equal(layout.attentionCount, '2', `${id} counts each material cause once`)
-        assert.equal(layout.catHints.length, 1, `${id} explains the single fixable category`)
-        assert.match(layout.catHints[0], expected.fixHint, `${id} points each row at its fix action`)
+        assert.equal(layout.attentionCount, '2', `${id} counts each fixable cause once`)
+        assert.deepEqual(layout.attnRows, ['fix', 'fix'], `${id} lists only resolvable rows`)
+        assert.equal(layout.catHints.length, 0, `${id} drops the history and unavailable categories`)
+        assert.match(layout.attnHint, expected.fixHint, `${id} explains that only resolvable problems appear`)
+        assert.doesNotMatch(layout.attention, expected.history, `${id} keeps history out of attention`)
+        assert.doesNotMatch(layout.attention, expected.unavailable, `${id} keeps unavailable evidence out of attention`)
+        assert.match(layout.logText, expected.history, `${id} keeps history in the blocker log`)
+        assert.match(layout.logText, expected.unavailable, `${id} keeps unavailable evidence in the blocker log`)
         assert.equal(layout.verdict, 'partial', `${id} narrates the partial comparison`)
         assert.match(layout.verdictText, expected.verdict, `${id} scopes known fees and usage`)
         assert.deepEqual(layout.seeAttention.length, 1, `${id} links the unavailable group to attention`)

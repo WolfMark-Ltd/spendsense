@@ -170,7 +170,9 @@ test('taskbar Today uses the same one-day filtered analytics query as Usage', as
  assert.deepEqual(todayQuery.queryKey,usageQuery.queryKey,'period, scope, filters and source match Usage')
  const todayButton=nodes(tree,node=>node.type==='button'&&text(node).includes('Today · filtered'))[0]
  assert.ok(todayButton)
- assert.match(text(todayButton),/Today · filtered \$0\.949\+/)
+ assert.match(text(todayButton),/Today · filtered \$0\.949/,'rule 62: the taskbar figure renders bare')
+ assert.doesNotMatch(text(todayButton),/Today · filtered \$0\.949\+/,'rule 62: no + suffix in the taskbar')
+ assert.equal(T.desktopTodayAmount(report),'$0.949+','the tooltip helper keeps the qualified amount')
  assert.match(tree.props.label,/Filtered Usage · 2026-11-22 → 2026-11-23 · Europe\/London · API-equivalent/)
 
  const previousRest=T.getRest()
@@ -203,6 +205,11 @@ test('API-equivalent figures preserve backend bounds and mark incomplete totals'
  assert.equal(value({api_equivalent_basis:'incomplete'}),'$1.25+')
  assert.equal(value({api_equivalent_basis:'exact'},{unpriced_calls:1}),'$1.25+')
  assert.equal(value({}), '$1.25+', 'an absent basis is treated as incomplete')
+ const plain=(economics,extra={})=>T.analyticsListDisplay({list_usd:1.25,economics,...extra},true)
+ assert.equal(plain({api_equivalent_basis:'exact'},{unpriced_calls:1}),'$1.25','rule 62: default figures render bare')
+ assert.equal(plain({}), '$1.25', 'rule 62: an absent basis renders bare in the default view')
+ assert.equal(plain({api_equivalent_basis:'lower_bound'}),'≥$1.25','bounds keep their honest wording')
+ assert.equal(plain({api_equivalent_basis:'range',api_equivalent_usd_high:1.75}),'$1.25–$1.75')
 })
 
 const metric = (i=0) => ({tokens:10000-i*100,calls:12-i,input_tokens:2000,output_tokens:1000,cache_read_tokens:6000-i*100,cache_write_tokens:1000,cache_write_state:'reported',
@@ -255,7 +262,7 @@ test('usage header follows the selected language', () => {
     const view = text(page())
     assert.match(view, /用量分析/)
     assert.match(view, /后端调用 · default · 所有来源/)
-    assert.match(view, new RegExp(T.I18N.zh.usageMethodologyTitle))
+    assert.match(view, new RegExp(T.I18N.zh.usageMethodFaqLink.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
     assert.match(view, /↻ 刷新/)
     assert.match(view, /此桌面/)
     assert.doesNotMatch(view, /× 关闭/, 'the redundant header Close is gone; Esc and tabs navigate')
@@ -265,7 +272,7 @@ test('usage header follows the selected language', () => {
   const english = text(page())
   assert.match(english, /Usage analytics/)
   assert.match(english, /Backend calls · default · all surfaces/)
-  assert.match(english, new RegExp(T.I18N.en.usageMethodologyTitle))
+  assert.match(english, new RegExp(T.I18N.en.usageMethodFaqLink.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   assert.doesNotMatch(english, /× Close/, 'the redundant header Close is gone; Esc and tabs navigate')
   assert.equal(T.I18N.en.usageCurrentProfile, 'current profile')
   assert.equal(T.I18N.zh.usageCurrentProfile, '当前配置文件')
@@ -474,7 +481,10 @@ test('dashboard renders three SVG analytics, honest pricing/billing/cache covera
   'the primary figures omit secondary estimates and coverage copy')
  assert.equal(summary.props.role,'group')
  assert.equal(summary.props['aria-label'],'Usage summary')
- assert.ok(text(tree).includes('Partial'))
+ const coverageHead=nodes(tree,n=>n.type==='div'&&n.props.className==='wm-coveragehead')[0]
+ assert.ok(coverageHead,'the coverage header renders')
+ assert.equal(nodes(coverageHead,n=>String(n.props.className||'').split(/\s+/).includes('wm-badge')).length,0,
+  'rule 62: no certainty badge on the coverage header')
  assert.ok(text(tree).includes('Billing classification'))
  assert.ok(text(tree).includes('Provider charges are not recorded'))
  assert.equal(nodes(tree,n=>n.type==='svg' && !!n.props['data-chart']).length,3,'distribution is bars; trend, ranking and composition stay SVG')
@@ -484,7 +494,10 @@ test('dashboard renders three SVG analytics, honest pricing/billing/cache covera
  const labels=nodes(tree,n=>n.type==='th').map(text)
  for(const label of ['Model','Provider','Calls','Tokens','Cache %','API cost','Pricing']) assert.ok(labels.some(value=>value.includes(label)),label)
  assert.ok(text(tree).includes('Reasoning is already included in output'))
- assert.ok(nodes(tree,n=>n.type==='details' && nodes(n,x=>x.type==='summary' && text(x)===T.I18N.en.usageMethodologyTitle).length>0).some(n=>!n.props.open))
+ assert.equal(nodes(tree,n=>n.type==='details' && String(n.props.className||'').split(/\s+/).includes('wm-nerd-mode')).length,0,
+  'rule 62: no single disclosure buries the sections')
+ assert.ok(nodes(tree,n=>n.type==='details' && String(n.props.className||'').split(/\s+/).includes('wm-baseline')).some(n=>!n.props.open),
+  'the historical baseline stays collapsed')
  assert.equal(nodes(tree,n=>n.type==='div'&&n.props.className==='wm-coverage'&&n.props.role==='region').length,1,
   'the page presents one Data coverage summary')
  assert.ok(nodes(tree,n=>n.type==='th').every(n=>!!n.props['aria-sort']))
