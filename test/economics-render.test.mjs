@@ -179,7 +179,8 @@ const renderSection = async (data, extra = {}) => {
   return { container, saved, text: () => container.textContent }
 }
 
-const renderCostsSummary = async ({ billing = {}, totals = {}, accounts = [], summaryReady = true } = {}, language = 'en') => {
+const renderCostsSummary = async ({ billing = {}, totals = {}, accounts = [], summaryReady = true,
+  summaryWindow = null, summaryScope = null } = {}, language = 'en') => {
   i18nCalls.length = 0
   const t = (key, ...args) => {
     const entry = T.I18N[language][key]
@@ -194,6 +195,7 @@ const renderCostsSummary = async ({ billing = {}, totals = {}, accounts = [], su
     root.render(React.createElement(T.CostsEvidenceSummary, {
       billing, totals, accounts, fees: T.membershipSummary(accounts), accountsReady: true,
       summaryLoading: false, accountsLoading: false, summaryReady: ready, accountsFailed: false, t,
+      summaryWindow, summaryScope,
     }))
   })
   return { container, text: () => container.textContent }
@@ -449,6 +451,68 @@ test('Costs labels API-equivalent subtotals as partial and discloses exact cover
     const apiDetails = container.querySelector('.wm-cost-detail-row')
     assert.match(apiDetails.textContent, new RegExp(customPhrase))
     assert.match(apiDetails.textContent, new RegExp(counts))
+  }
+})
+
+test('Costs withholds Fully priced when the backend bounds the API-equivalent subtotal, in both languages', async () => {
+  for (const language of ['en', 'zh']) {
+    // Fully priced rows, but billing bounded its own subtotal (unreported
+    // cache counters over exactly the rows summed): the card keeps the
+    // measured figure while the note names the bound, like the Overview
+    // Partial chip.
+    const { container } = await renderCostsSummary({ billing: { evidence: {
+      api_equivalent: { usd: 1.25, basis: 'estimated', source: 'Published catalogue',
+        billing_basis: 'lower_bound', billing_bound_reason: 'write_not_reported',
+        pricing_coverage: { priced_tokens: 100, unpriced_tokens: 0, priced_calls: 1, unpriced_calls: 0 } },
+    } } }, language)
+    const card = container.querySelector('[data-cost-kind="api"]')
+    assert.equal(card.querySelector('.wm-cost-card-value').textContent, '$1.25')
+    assert.doesNotMatch(card.textContent, new RegExp(T.I18N[language].costsCompleteTag
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    `${language}: a bounded subtotal is never Fully priced`)
+    assert.equal(card.querySelector('.wm-cost-card-note').textContent, T.I18N[language].costsApiBoundShort)
+    container.querySelector('.wm-cost-other-billing').open = true
+    assert.match(container.querySelector('.wm-cost-detail-row').textContent,
+      new RegExp(T.I18N[language].costsApiBoundExplain.slice(0, 24).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `${language}: the disclosure explains the bound`)
+  }
+})
+
+test('Costs never borrows the analytics basis for the billing subtotal, in both languages', async () => {
+  for (const language of ['en', 'zh']) {
+    // The analytics basis describes the catalogue valuation over all rows;
+    // billing can value the same rows differently (custom overrides) or sum
+    // fewer rows (cycle exclusions). An older backend omits billing_basis,
+    // and the card must keep its previous verdict rather than mix bases.
+    const { container } = await renderCostsSummary({ billing: { evidence: {
+      api_equivalent: { usd: 1.25, basis: 'estimated', source: 'Configured custom rate overrides',
+        pricing_coverage: { priced_tokens: 100, unpriced_tokens: 0, priced_calls: 1, unpriced_calls: 0 } },
+    } },
+    totals: { economics: { api_equivalent_basis: 'incomplete' } } }, language)
+    const card = container.querySelector('[data-cost-kind="api"]')
+    assert.match(card.textContent, new RegExp(T.I18N[language].costsCompleteTag
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    `${language}: without a billing basis the analytics basis is ignored`)
+  }
+})
+
+test('Costs states the actual evidence window days in the scope line, in both languages', async () => {
+  for (const language of ['en', 'zh']) {
+    // The backend extends 30 → 32 days when a billing profile carries a
+    // billing cycle; the scope line states the actual window it served.
+    const extended = await renderCostsSummary({ billing: { evidence: {} },
+      summaryScope: { window_days: 32, cycle_basis: 'Memberships fee period and account cycle' },
+      summaryWindow: { days: 32 } }, language)
+    const scopeLine = extended.container.querySelector('.wm-cost-evidence-scope').textContent
+    assert.equal(extended.container.querySelectorAll('.wm-cost-evidence-scope').length, 1)
+    assert.match(scopeLine, new RegExp(T.I18N[language].costsEvidenceWindow(32)
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    `${language}: the scope line states the extended window`)
+    // Older backends send no scope block: the static scope sentence stands
+    // alone rather than printing an unknown window.
+    const legacy = await renderCostsSummary({ billing: { evidence: {} } }, language)
+    assert.equal(legacy.container.querySelector('.wm-cost-evidence-scope').textContent,
+      T.I18N[language].costsEvidenceScope)
   }
 })
 

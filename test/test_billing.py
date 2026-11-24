@@ -97,6 +97,78 @@ class BillingTests(unittest.TestCase):
         self.assertEqual(billing.classify([], {}, "spend")["presentation"], "spend")
         self.assertEqual(billing.classify([], {}, "nonsense")["presentation"], "both")
 
+    def test_billing_basis_exact_for_complete_catalogue_rows(self):
+        loaded = self.profiles({"profiles": [
+            {"id": "payg", "provider": "commandcode", "kind": "api"}]})
+        report = billing.classify([row(value=1.5), row(value=2.5)], loaded)
+        evidence = report["evidence"]["api_equivalent"]
+        self.assertEqual((evidence["billing_basis"], evidence["billing_bound_reason"]),
+                         ("exact", None))
+
+    def test_billing_basis_lower_bound_from_catalogue_row_bounds(self):
+        loaded = self.profiles({"profiles": [
+            {"id": "payg", "provider": "commandcode", "kind": "api"}]})
+        report = billing.classify(
+            [row(value=1.5, _cost_bounds=("lower",), _cost_causes=("write",))],
+            loaded)
+        evidence = report["evidence"]["api_equivalent"]
+        self.assertEqual((evidence["billing_basis"], evidence["billing_bound_reason"]),
+                         ("lower_bound", "write_not_reported"))
+
+    def test_billing_basis_exact_for_complete_custom_override(self):
+        # Review case: an unlisted model with known token counts and
+        # configured rates is exact under its own rates, whatever the
+        # catalogue basis says about the same rows.
+        loaded = self.profiles({"profiles": [
+            {"id": "contract", "provider": "commandcode", "kind": "custom",
+             "rate_override": {"input": 1, "output": 2}}]})
+        report = billing.classify([row(value=None, _input=1_000_000, _output=1_000_000,
+                                       _cache_read_reported=True, _cache_write_reported=True)],
+                                  loaded)
+        evidence = report["evidence"]["api_equivalent"]
+        self.assertEqual(evidence["source"], "configured custom rate overrides")
+        self.assertEqual((evidence["billing_basis"], evidence["billing_bound_reason"]),
+                         ("exact", None))
+
+    def test_billing_basis_lower_bound_for_override_with_unproven_write(self):
+        loaded = self.profiles({"profiles": [
+            {"id": "contract", "provider": "commandcode", "kind": "custom",
+             "rate_override": {"input": 1, "output": 2}}]})
+        report = billing.classify([row(value=None, _input=1_000_000, _output=1_000_000,
+                                       _cache_read_reported=True,
+                                       _cache_write_reported=False)],
+                                  loaded)
+        evidence = report["evidence"]["api_equivalent"]
+        self.assertEqual((evidence["billing_basis"], evidence["billing_bound_reason"]),
+                         ("lower_bound", "write_not_reported"))
+
+    def test_billing_basis_ignores_cycle_excluded_rows(self):
+        # Review case: an excluded call's missing counters must not bound
+        # the displayed subtotal, which sums only in-cycle rows.
+        import time
+        now = time.time()
+        loaded = self.profiles({"profiles": [
+            {"id": "cycle", "provider": "commandcode", "kind": "api",
+             "billing_cycle": {"day": 1}}]})
+        report = billing.classify([
+            row(value=1.5, when=now),
+            row(value=99.0, when=now - 60 * 86400,
+                _cost_bounds=("lower",), _cost_causes=("write",)),
+        ], loaded)
+        self.assertEqual(report["excluded_out_of_cycle"], 1)
+        self.assertAlmostEqual(report["api_equivalent_usd"], 1.5)
+        evidence = report["evidence"]["api_equivalent"]
+        self.assertEqual((evidence["billing_basis"], evidence["billing_bound_reason"]),
+                         ("exact", None))
+
+    def test_billing_basis_incomplete_with_unpriced_tokens(self):
+        loaded = self.profiles({"profiles": [
+            {"id": "payg", "provider": "commandcode", "kind": "api"}]})
+        report = billing.classify([row(value=1.5), row(value=None, tokens=50)], loaded)
+        evidence = report["evidence"]["api_equivalent"]
+        self.assertEqual((evidence["billing_basis"], evidence["billing_bound_reason"]),
+                         ("incomplete", "unpriced_tokens"))
+
     def test_legacy_subscription_kinds_cannot_be_saved_as_advanced_rules(self):
         errors = billing.validation_errors({"id": "plus", "provider": "openai-codex",
                                             "kind": "subscription_included"})

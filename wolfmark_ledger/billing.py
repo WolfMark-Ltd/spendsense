@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from .aggregate import _reported
 from .filelock import locked as _locked
 
 PRESENTATIONS = ("both", "spend", "api", "accounting")
@@ -239,24 +240,15 @@ def custom_rates_for(profiles: dict[str, Any], provider: str, model: str,
     profile, _source = select(profiles, provider or "", model or "", when)
     if not profile or profile.get("kind") != "custom":
         return None
-    override = profile.get("rate_override")
-    if not isinstance(override, dict):
-        return None
-
-    def num(key: str) -> Optional[float]:
-        value = override.get(key)
-        return float(value) if isinstance(value, (int, float)) else None
-
-    inp, out = num("input"), num("output")
-    if inp is None or out is None:
-        return None
-    cache_in = num("cache_read")
-    cache_write = num("cache_write")
-    return (inp, out, inp if cache_in is None else cache_in,
-            inp if cache_write is None else cache_write)
+    return _override_rates(profile)
 
 
-def _rate_override(profile: dict[str, Any], row: dict[str, Any]) -> Optional[float]:
+def _override_rates(profile: dict[str, Any]) -> Optional[tuple[float, float, float, float]]:
+    """Configured custom rates as (input, output, cache_read, cache_write).
+
+    Cache prices default to the input price when the profile does not set
+    them. None unless input and output are both configured.
+    """
     override = profile.get("rate_override") if isinstance(profile.get("rate_override"), dict) else None
     if not override:
         return None
@@ -272,6 +264,14 @@ def _rate_override(profile: dict[str, Any], row: dict[str, Any]) -> Optional[flo
     cache_in = inp if cache_in is None else cache_in
     cache_write = num("cache_write")
     cache_write = inp if cache_write is None else cache_write
+    return (inp, out, cache_in, cache_write)
+
+
+def _rate_override(profile: dict[str, Any], row: dict[str, Any]) -> Optional[float]:
+    rates = _override_rates(profile)
+    if rates is None:
+        return None
+    inp, out, cache_in, cache_write = rates
     tokens = row.get("_tokens") or 0
     return (
         row.get("_input", 0) * inp
@@ -279,6 +279,29 @@ def _rate_override(profile: dict[str, Any], row: dict[str, Any]) -> Optional[flo
         + row.get("_cache_read", 0) * cache_in
         + row.get("_cache_write", 0) * cache_write
     ) / 1_000_000 if tokens else None
+
+
+def _override_cost_bounds(rates: tuple[float, float, float, float],
+                          row: dict[str, Any]) -> tuple[set[str], set[str]]:
+    """Bound direction for a custom-override row.
+
+    Override rates are complete by construction, so only unproven counters
+    can bound the value: an unproven counter at a positive override price
+    can only add cost. Mirrors aggregate.py's lower-bound rules; overrides
+    are scalar, so tiers and retention ranges never apply.
+    """
+    bounds: set[str] = set()
+    causes: set[str] = set()
+    _, _, cache_in, cache_write = rates
+    if not _reported(row.get("_cache_write_reported"), row.get("_cache_write", 0)) \
+            and cache_write > 0:
+        bounds.add("lower")
+        causes.add("write")
+    if not _reported(row.get("_cache_read_reported"), row.get("_cache_read", 0)) \
+            and cache_in > 0:
+        bounds.add("lower")
+        causes.add("read")
+    return bounds, causes
 
 
 def _cumulative_overage(usage_by_rule, profiles):
@@ -364,6 +387,8 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
     api_unpriced_tokens = 0
     api_unpriced_calls = 0
     api_sources: set[str] = set()
+    api_bounds: set[str] = set()
+    api_causes: set[str] = set()
     unknown_seen = False
     seen_calls: set[str] = set()
     _defaults = profiles.get("defaults") or {}
@@ -416,6 +441,19 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
             api_priced += 1
             api_priced_tokens += row.get("_tokens") or 0
             api_sources.add("custom" if override is not None else "published")
+            # The basis describes exactly the rows summed above: cycle-excluded
+            # rows never reach this point, and override rows are bounded by
+            # their own configured rates rather than the catalogue bounds the
+            # analytics totals carry.
+            if override is not None:
+                rates = _override_rates(profile or {})
+                if rates is not None:
+                    bounds, causes = _override_cost_bounds(rates, row)
+                    api_bounds |= bounds
+                    api_causes |= causes
+            else:
+                api_bounds.update(row.get("_cost_bounds") or ())
+                api_causes.update(row.get("_cost_causes") or ())
         else:
             api_unpriced_tokens += row.get("_tokens") or 0
             api_unpriced_calls += 1
@@ -494,6 +532,26 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
 
     final_incremental = round(incremental + _cumulative_overage(usage_by_rule, profiles), 6)
     final_api = round(total_api, 6) if api_priced else None
+    # Basis of the billing api_equivalent subtotal itself, aggregated over
+    # exactly the rows summed above. Mirrors the analytics aggregation
+    # (analytics.py): unpriced tokens force incomplete, then per-row bounds.
+    if api_unpriced_tokens:
+        api_basis, api_reason = "incomplete", "unpriced_tokens"
+    elif "incomplete" in api_bounds:
+        api_basis = "incomplete"
+        api_reason = ("context_tier_unknown" if "tier" in api_causes
+                      else "write_rate_missing" if "write" in api_causes
+                      else "read_rate_missing")
+    elif "lower" in api_bounds:
+        api_basis = "lower_bound"
+        api_reason = ("read_and_write_not_reported"
+                      if {"read", "write"} <= api_causes
+                      else "read_not_reported" if "read" in api_causes
+                      else "write_not_reported")
+    elif "range" in api_bounds:
+        api_basis, api_reason = "range", "retention_unknown"
+    else:
+        api_basis, api_reason = "exact", None
     api_source = ("published catalogue / official overlay and configured custom rate overrides"
                   if api_sources == {"published", "custom"}
                   else "configured custom rate overrides" if api_sources == {"custom"}
@@ -534,6 +592,8 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
             "api_equivalent": {"usd": final_api,
                                "basis": "estimated" if final_api is not None else "unpriced",
                                "source": api_source,
+                               "billing_basis": api_basis,
+                               "billing_bound_reason": api_reason,
                                "pricing_coverage": {
                                    "priced_tokens": api_priced_tokens,
                                    "unpriced_tokens": api_unpriced_tokens,

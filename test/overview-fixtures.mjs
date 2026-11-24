@@ -47,12 +47,13 @@ export const overviewAccounts = () => [
 ]
 
 /** 30-day backend analytics: priced, partly unpriced, no provider charge evidence. */
-export const overviewAnalytics = () => ({
+export const overviewAnalytics = ({ totals: totalsOverride = {} } = {}) => ({
   ok: true,
   totals: {
     list_usd: 12.34, billed_usd: null, billed_complete: false,
     billing_mix: { actual: 1, estimated: 1, included: 0, unknown: 2 },
     calls: 24, unpriced_tokens: 1500,
+    ...totalsOverride,
   },
   by_model: [
     { provider: 'openai-codex', model: 'openai/gpt-5.1-codex-super-long-model-name-for-wrapping', calls: 15 },
@@ -94,8 +95,8 @@ export const overviewHealth = contract => ({
  * The transport both renderers register. One mapping, so a browser case and a
  * browserless case cannot be answered differently.
  */
-export const overviewTransport = ({ requiredContract } = {}) => async path => {
-  if (path === '/analytics?days=30') return overviewAnalytics()
+export const overviewTransport = ({ requiredContract, analyticsTotals } = {}) => async path => {
+  if (path === '/analytics?days=30') return overviewAnalytics({ totals: analyticsTotals || {} })
   if (path === '/membership/accounts') {
     return { ok: true, accounts: overviewAccounts(), store: { loaded: true, error: '' }, notes: [] }
   }

@@ -223,6 +223,37 @@ test('Overview routes fixable pricing gaps to custom rates and keeps review for 
   }
 })
 
+test('Overview marks a bounded backend subtotal Partial while the figure stays unprefixed, in both languages', async () => {
+  // Fully priced rows, but the backend bounds the subtotal (unreported
+  // cache counters, retention-unknown rates): the same qualifier Usage and
+  // the taskbar chip print as ≥/range/+ must reach the Overview chip layer,
+  // without prefixing the accepted prominent figure and without inventing
+  // an unpriced-calls attention row.
+  const raw = T.getRest()
+  T.setRest(overviewTransport({ requiredContract: T.REQUIRED_BACKEND_CONTRACT,
+    analyticsTotals: {
+      unpriced_tokens: 0, unpriced_calls: 0,
+      economics: { api_equivalent_basis: 'lower_bound' },
+    } }))
+  try {
+    for (const locale of LOCALES) {
+      const container = await boot({ locale })
+      const { figure, chips } = cardOf(container, 'api-equivalent-estimate')
+      assert.match(figure, /^\$/,
+        `${locale}: the bounded estimate still leads with the amount (${figure})`)
+      assert.doesNotMatch(figure, /at least|至少|≥/i,
+        `${locale}: the bounded estimate keeps the figure prominent (${figure})`)
+      assert.ok(chips.includes(T.I18N[locale].ovCertPartial),
+        `${locale}: a bounded basis marks the estimate Partial (${chips})`)
+      const attention = flat(container.querySelector('.wm-overview-attention')?.textContent)
+      assert.doesNotMatch(attention, new RegExp(T.I18N[locale].ovPricingAction.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+        `${locale}: a bounded basis adds no pricing-coverage attention row`)
+    }
+  } finally {
+    T.restoreRest(raw)
+  }
+})
+
 test('Overview keeps five named methodology sections behind one collapsed disclosure, in both languages', async () => {
   for (const locale of LOCALES) {
     const container = await boot({ locale })
