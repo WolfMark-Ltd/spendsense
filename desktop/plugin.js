@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.34'
+const PLUGIN_VERSION = '0.6.38'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
