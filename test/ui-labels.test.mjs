@@ -138,16 +138,19 @@ test('the totals heading follows the bucket scope', () => {
   assert.ok(rows.every(r => r.label !== 'This session'))
 })
 
-test('estimated reads carry ≈ and unknown writes stay unknown', () => {
+test('estimated reads stay visible with a partial flag and zero writes stay quiet', () => {
   const rows = T.tokenRows(rawT, bucket(), false, null)
   const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
-  assert.equal(byKey.i.value, '328.5k', 'exact input counter, unrounded by ≈')
-  assert.doesNotMatch(byKey.i.value, /≈/)
-  assert.equal(byKey.cr.value.startsWith('≈'), true)
-  assert.equal(byKey.cr.label, 'Cache read', 'the figure carries the estimate marker without a second caveat')
-  assert.equal(byKey.cw.value, '—', 'unknown cache writes stay visually quiet')
+  assert.equal(byKey.i.value, '328.5k', 'exact input counter stays bare')
+  assert.ok(!byKey.i.partial)
+  assert.equal(byKey.cr.value, '1.00M', 'a measured estimate shows bare')
+  assert.equal(byKey.cr.partial, true, 'imperfect evidence rides a partial flag, not an ≈ prefix')
+  assert.equal(byKey.cr.label, 'Cache read', 'the figure carries no second caveat')
+  assert.equal(byKey.cw.value, '0', 'a zero write counter reads as zero, not unknown')
+  assert.ok(!byKey.cw.partial, 'zero needs no partial flag')
   assert.equal(byKey.tt.label, 'Total', 'the total label stays short')
-  assert.equal(byKey.tt.value.startsWith('≈'), true, 'the total carries an estimated cache component')
+  assert.equal(byKey.tt.value, '1.39M', 'the total shows bare')
+  assert.equal(byKey.tt.partial, true, 'the total flags an estimated cache component')
   assert.doesNotMatch(byKey.c.label, /≈/)
 })
 
@@ -156,6 +159,7 @@ test('exact provider cache fields are shown without an estimate marker', () => {
     cacheReadEvidence: 'reported', cacheWriteEvidence: 'reported' }), false, null)
   const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
   assert.ok(rows.every(r => !r.value.includes('≈')))
+  assert.ok(rows.every(r => !r.partial), 'reported evidence needs no partial flags')
   assert.doesNotMatch(byKey.cr.label, /derived/)
   assert.doesNotMatch(byKey.tt.label, /derived/)
 })
@@ -168,8 +172,8 @@ test('a reconstructed cache write never reads as confirmed usage', () => {
   assert.equal(cw.label, 'Cache write')
   const unclassified = rows.find(row => row.key === 'cu')
   assert.equal(unclassified.label, rawT('unclassifiedPromptTokens'))
-  assert.equal(unclassified.value, `≈${T.fmtTokens(216_795)}`,
-    'a derived write stays visibly approximate in the unclassified prompt segment')
+  assert.equal(unclassified.value, T.fmtTokens(216_795),
+    'a derived write stays visible in the unclassified segment, bare: the label already qualifies it')
 })
 
 test('context is shown only when the gateway supplies it', () => {
@@ -329,7 +333,7 @@ test('meter presence distinguishes live, recorded, updating and empty', () => {
 })
 
 test('every sidebar string exists in English and Chinese', () => {
-  const keys = ['meterLive', 'meterRecorded', 'meterUpdating', 'apiEquivalent', 'costSourceInfo',
+  const keys = ['meterLive', 'meterRecorded', 'meterUpdating', 'meterPartial', 'apiEquivalent', 'costSourceInfo',
     'totalTokens', 'promptMix', 'cacheFresh', 'cacheMethodInfo', 'exactLabel', 'estimatedLabel',
     'infoLabel', 'coverageLabel', 'coverageHelpLabel', 'coverageScopeRun', 'coverageScopeConversation',
     'savingsInfo', 'savedGauge', 'modelIdInfoLabel', 'modelIdInfo']

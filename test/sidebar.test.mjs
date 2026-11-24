@@ -243,8 +243,11 @@ test('a recorded conversation stays selected when the current run has larger tot
   const container = await renderMeter()
   await flush()
   const before = sectionsOf(container)
-  const figureBefore = container.querySelector('.wm-kpi-figure').textContent
-  assert.equal(figureBefore, '$0.0010+')
+  const figureEl = container.querySelector('.wm-kpi-figure')
+  assert.ok(figureEl.textContent.startsWith('$0.0010'), 'the cost figure renders bare')
+  assert.equal(figureEl.querySelector('[data-certainty="partial"]')?.textContent, 'meterPartial',
+    'partial coverage rides a chip, not a + suffix')
+  const figureBefore = figureEl.textContent
   assert.match(container.querySelector('.wm-kpi-source').textContent, /apiEquivalent/)
   assert.doesNotMatch(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/)
   assert.match(await openTip(container, 'cost-source'), /localEstimateScopeNote/)
@@ -331,7 +334,10 @@ test('recorded conversation figures stay simple while scope details remain avail
   T.$ledger.set(ledger)
   const container = await renderMeter()
   await flush()
-  assert.equal(container.querySelector('.wm-kpi-figure').textContent, '$1.23+')
+  assert.equal(container.querySelector('.wm-kpi-figure').firstChild.textContent, '$1.23',
+    'the cost figure renders bare')
+  assert.equal(container.querySelector('.wm-kpi-figure [data-certainty="partial"]')?.textContent,
+    'meterPartial', 'partial coverage rides a chip, not a + suffix')
   assert.match(container.querySelector('.wm-kpi-source').textContent, /apiEquivalent/)
   assert.doesNotMatch(container.querySelector('.wm-kpi-source').textContent, /sidebarCostPartial/)
   assert.match(await openTip(container, 'cost-source'), /localEstimateScopeNote/)
@@ -380,7 +386,7 @@ test('a cache coverage change redraws the gauge in place', async () => {
     'reconstructed coverage dims the ring')
   const estMetrics = [...container.querySelectorAll('.wm-kpi-metrics .wm-metric-value')]
     .map(el => el.textContent)
-  assert.ok(estMetrics[0].startsWith('≈'), `reconstructed totals carry ≈: ${estMetrics}`)
+  assert.match(estMetrics[0], /^2\.1k meterPartial$/, `reconstructed totals carry a Partial chip: ${estMetrics}`)
   // Rounded hit percentages cannot establish the backend cache-read benefit.
   assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '—')
   assert.doesNotMatch(container.textContent, /readBenefitUsageLink/)
@@ -527,7 +533,9 @@ test('a proven session summary renders the cache-read benefit with coverage in i
     assert.equal(container.querySelector('.wm-provider-badge').textContent, 'openai',
       'the separately resolved active route provider remains visible')
     const benefitFigure = container.querySelector('[data-kind="saved"] .wm-metric-value')
-    assert.equal(benefitFigure.textContent, '$0.0050+')
+    assert.ok(benefitFigure.textContent.startsWith('$0.0050'), 'the benefit figure renders bare')
+    assert.equal(benefitFigure.querySelector('[data-certainty="partial"]')?.textContent,
+      'Partial', 'partial coverage rides a chip, not a + suffix')
     assert.equal(container.querySelectorAll('[data-kind="saved"]').length, 1,
       'the session read benefit appears once')
     assert.doesNotMatch(container.textContent, /1 of 1 calls|100 read tokens|readBenefitUsageLink/,
@@ -1127,7 +1135,10 @@ test('the composition bar labels every part with its share', async () => {
   const unknownLegend = [...container.querySelectorAll('.wm-legend-item')]
     .find(item => item.textContent.includes('unclassified prompt'))
   assert.ok(unknownLegend, 'a visible unknown segment has a compact legend label')
-  assert.match(unknownLegend.textContent, /≈100/, 'the residual count stays visibly approximate')
+  assert.match(unknownLegend.textContent, /unclassified prompt100/,
+    'the residual count renders bare: the label and swatch already qualify it')
+  assert.doesNotMatch(unknownLegend.textContent, /≈/,
+    'no approximation marker on the unclassified row')
   assert.equal(partialBar.querySelector('[data-part="unknown"]').style.width, '10%')
 })
 

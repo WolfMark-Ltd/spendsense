@@ -2116,11 +2116,13 @@ function sessionSavingsState(envelope, expectedSessionId, expectedIdentity) {
 function backendSummaryBucket(state) {
   if (!state?.scopeProven) return null
   const totals = state.totals
-  const readKnown = state.evidence.read !== 'unknown'
-  const writeKnown = state.evidence.write !== 'unknown'
+  // Measured totals always pass through, whatever the evidence state says:
+  // the rows show figures with a Partial chip while evidence is imperfect,
+  // and only a genuinely absent measurement renders as '—'. Evidence rides
+  // alongside, never by hiding.
   const input = finiteValue(totals.input_tokens)
-  const cacheRead = readKnown ? finiteValue(totals.cache_read_tokens) : null
-  const cacheWrite = writeKnown ? finiteValue(totals.cache_write_tokens) : null
+  const cacheRead = finiteValue(totals.cache_read_tokens)
+  const cacheWrite = finiteValue(totals.cache_write_tokens)
   const prompt = finiteValue(totals.prompt_tokens)
   const unknownPrompt = prompt == null ? 0 : Math.max(0,
     prompt - (input || 0) - (cacheRead || 0) - (cacheWrite || 0))
@@ -2411,7 +2413,17 @@ function useLive() {
   const summaryCurrent = !!sessionId && membershipIdentityCurrent(identity)
   const summaryState = sessionSavingsState(summaryCurrent ? summaryRead.data : undefined, sessionId, identity)
   const summaryBucket = backendSummaryBucket(summaryState)
-  if (summaryState.scopeProven && !summaryState.empty && summaryBucket) {
+  const summaryActive = summaryState.scopeProven && !summaryState.empty && !!summaryBucket
+  // Why the sidebar falls back to conversation scope, in one raw diagnostic
+  // line (English by design, like backend error text). Silent fallbacks
+  // hide backend outages and session mismatches; this photographs.
+  const scopeReason = summaryActive ? null
+    : !sessionId ? 'no focused session'
+    : summaryRead.error ? `backend read failed: ${summaryRead.error?.message || summaryRead.error}`
+    : summaryRead.isLoading || summaryRead.isFetching ? null
+    : !membershipIdentityCurrent(identity) ? 'identity changed'
+    : summaryState.reason || 'unknown'
+  if (summaryActive) {
     const valuation = summaryState.valuation || {}
     const savings = summaryState.available ? summaryState : null
     const apiValue = finiteValue(valuation.api_equivalent_usd)
@@ -2502,6 +2514,7 @@ function useLive() {
       savedPartial: savings.partial,
       savedReason: savings.reason,
       savedSource: 'local_conversation_estimate',
+      scopeReason,
       savedPopulation: 'unverified',
       savedEvidence: evidence,
       savedBasis: savings.range ? 'range' : savings.value == null ? null : 'local_estimate',
@@ -2621,27 +2634,41 @@ function scopeTotalsTitle(t, fromHistory) {
  *  because a reconstructed cache-write is not provider-confirmed usage. */
 function tokenRows(t, b, hasContext, u) {
   const evidence = localCacheEvidence(b)
-  if (evidence.write !== 'reported') evidence.write = 'unknown'
-  const tokenValue = (value, state) => value == null || state === 'unknown' ? '—'
-    : `${['partial', 'derived', 'estimated'].includes(state) ? '≈' : ''}${fmtTokens(value)}`
+  // Measured figures always show; imperfect evidence rides a Partial chip,
+  // never a hidden dash or an ≈ prefix. Only a genuinely absent measurement
+  // (null) renders as '—'. Unclassified holds the true residual only —
+  // prompt tokens no stream accounts for — never values merely lacking
+  // provenance; its label and swatch already qualify it, so no marker.
+  // A derived value is a rounding residual, never a measurement: it stays
+  // unclassified and its row stays quiet, exactly as before. Every other
+  // measured figure shows, with a Partial chip while its evidence is
+  // anything but reported; only a genuinely absent measurement is '—'.
+  const cacheFigure = (value, state) => value == null || state === 'derived'
+    ? { text: '—', partial: false }
+    : { text: fmtTokens(value), partial: state !== 'reported' && num(value) > 0 }
   const prompt = typeof b.prompt === 'number' && Number.isFinite(b.prompt) && b.prompt >= 0
     ? b.prompt : null
-  const knownPrompt = num(b.input) + (evidence.read === 'unknown' ? 0 : num(b.cacheRead)) +
-    (evidence.write === 'unknown' ? 0 : num(b.cacheWrite))
-  const unclassifiedPrompt = Math.max(num(b.cacheUnknown) + (localCacheEvidence(b).write !== 'reported' ? num(b.cacheWrite) : 0), prompt == null ? 0 : prompt - knownPrompt)
-  const cacheEstimated = ['partial', 'derived', 'estimated'].includes(evidence.read) ||
-    ['partial', 'derived', 'estimated'].includes(evidence.write)
+  const shownRead = evidence.read === 'derived' ? 0 : num(b.cacheRead)
+  const shownWrite = evidence.write === 'derived' ? 0 : num(b.cacheWrite)
+  const knownPrompt = num(b.input) + shownRead + shownWrite
+  // Derived residuals never figure as measured streams, but they must not
+  // vanish either: without a prompt total there is no gap to absorb them,
+  // so they stay visible inside the unclassified segment.
+  const derivedHidden = (evidence.read === 'derived' ? num(b.cacheRead) : 0) +
+    (evidence.write === 'derived' ? num(b.cacheWrite) : 0)
+  const unclassifiedPrompt = Math.max(num(b.cacheUnknown) + derivedHidden,
+    prompt == null ? 0 : prompt - knownPrompt)
+  const read = cacheFigure(b.cacheRead, evidence.read)
+  const write = cacheFigure(b.cacheWrite, evidence.write)
   const rows = [
     { key: 'i', label: t('input'), value: fmtTokens(b.input) },
     { key: 'o', label: t('output'), value: fmtTokens(b.output) },
-    { key: 'cr', dim: true, label: t('cacheRead'),
-      value: tokenValue(b.cacheRead, evidence.read) },
-    { key: 'cw', dim: true, label: t('cacheWrite'),
-      value: tokenValue(b.cacheWrite, evidence.write) },
+    { key: 'cr', dim: true, label: t('cacheRead'), value: read.text, partial: read.partial },
+    { key: 'cw', dim: true, label: t('cacheWrite'), value: write.text, partial: write.partial },
     unclassifiedPrompt ? { key: 'cu', dim: true, label: t('unclassifiedPromptTokens'),
-      value: `≈${fmtTokens(unclassifiedPrompt)}` } : null,
-    { key: 'tt', label: t('total'),
-      value: `${cacheEstimated || b.cacheEstimated || unclassifiedPrompt ? '≈' : ''}${fmtTokens(tokensOf(b))}` },
+      value: fmtTokens(unclassifiedPrompt) } : null,
+    { key: 'tt', label: t('total'), value: fmtTokens(tokensOf(b)),
+      partial: read.partial || write.partial || !!b.cacheEstimated || unclassifiedPrompt > 0 },
     { key: 'c', dim: true, label: t('calls'), value: String(b.calls ?? 0) }
   ]
   if (hasContext) {
@@ -2779,11 +2806,18 @@ const $infoOpen = atom(null)
 
 /** Fresh/read/write shares of prompt tokens for the composition bar. */
 function compositionShares(bucket) {
+  const evidence = localCacheEvidence(bucket)
   const fresh = num(bucket?.input)
-  const read = num(bucket?.cacheRead)
-  const write = localCacheEvidence(bucket).write !== 'reported' ? 0 : num(bucket?.cacheWrite)
+  // Derived residuals never figure as measured streams; they stay in the
+  // unclassified slice, exactly as tokenRows keeps them out of the rows.
+  const read = evidence.read === 'derived' ? 0 : num(bucket?.cacheRead)
+  const write = evidence.write === 'derived' ? 0 : num(bucket?.cacheWrite)
   const knownPrompt = fresh + read + write
-  const unknown = num(bucket?.cacheUnknown) + (localCacheEvidence(bucket).write !== 'reported' ? num(bucket?.cacheWrite) : 0)
+  // Derived residuals stay in the unclassified slice, never in a measured
+  // one — and never dropped, even without a prompt total to gap against.
+  const unknown = num(bucket?.cacheUnknown) +
+    (evidence.read === 'derived' ? num(bucket?.cacheRead) : 0) +
+    (evidence.write === 'derived' ? num(bucket?.cacheWrite) : 0)
   const prompt = typeof bucket?.prompt === 'number' && Number.isFinite(bucket.prompt) && bucket.prompt > knownPrompt
     ? bucket.prompt : knownPrompt + unknown
   const unclassified = Math.max(unknown, prompt - knownPrompt)
@@ -2823,6 +2857,7 @@ function snapshotLive(live) {
     savedEvidence: live.savedEvidence,
     savedBasis: live.savedBasis,
     readBenefit: live.readBenefit,
+    scopeReason: live.scopeReason,
     population: live.population,
     evidence: live.evidence,
     costBasis: live.costBasis,
@@ -3067,6 +3102,10 @@ function MeterHeader({ presence, t, view }) {
       ? 'wm-scope-chip wm-scope-chip-session' : 'wm-scope-chip',
         children: scopeLabel }, 'scope')
     ] }, 'status'),
+    view.scopeReason
+      ? jsx('div', { className: 'wm-subtle', 'data-scope-reason': view.scopeReason,
+        children: view.scopeReason }, 'scope-reason')
+      : null,
     jsxs('div', { className: 'wm-meter-modelrow', children: [
       jsxs('div', { className: 'wm-model-name-row', children: [
         jsx('span', { className: 'wm-model', title: view.model || '', children: modelDisplayName(view.model) || '—' }, 'model'),
@@ -3102,10 +3141,18 @@ function CostKpi({ t, view }) {
     cacheEvidenceGap ? t('partialCacheEvidence') : null,
     view.excludedCalls > 0 ? t('savedPartialCallsNote', view.excludedCalls) : null
   ].filter(Boolean)
+  const totalsRow = tokenRows(t, view.bucket || {}, false, null).find(row => row.key === 'tt')
+  const costText = sidebarCostDisplay(view)
+  // The chip qualifies a plain figure only: ranges, bounds and the dash
+  // already carry their own meaning.
+  const costChip = view.costPartial && costText !== '—'
+    && !['range', 'lower_bound', 'upper_bound'].includes(view.costBasis)
   return jsxs('section', { className: 'wm-card', 'aria-label': t('cost'), children: [
-    jsx('div', {
+    jsxs('div', {
       className: cn('wm-kpi-figure', warn && 'wm-warn'),
-      children: sidebarCostDisplay(view)
+      children: [costText, costChip ? ' ' : null,
+        costChip ? certaintyChip('partial', t('meterPartial'), 'cost-partial') : null]
+        .filter(Boolean)
     }, 'figure'),
     jsxs('div', { className: 'wm-kpi-source', children: [
       jsx('span', { children: t('apiEquivalent') }, 'label'),
@@ -3119,8 +3166,10 @@ function CostKpi({ t, view }) {
     jsxs('div', { className: 'wm-kpi-metrics', children: [
       jsxs('div', { className: 'wm-metric', children: [
         jsx('span', { className: 'wm-metric-label', children: t('totalTokens') }, 'l'),
-        jsx('span', { className: 'wm-metric-value',
-          children: `${view.bucket?.cacheEstimated || num(view.bucket?.cacheUnknown) ? '≈' : ''}${fmtTokens(tokensOf(view.bucket))}` }, 'v')
+        jsxs('span', { className: 'wm-metric-value', children: [fmtTokens(tokensOf(view.bucket)),
+          totalsRow?.partial ? ' ' : null,
+          totalsRow?.partial ? certaintyChip('partial', t('meterPartial'), 'tokens-partial') : null]
+          .filter(Boolean) }, 'v')
       ] }, 'tokens'),
       jsxs('div', { className: 'wm-metric', children: [
         jsx('span', { className: 'wm-metric-label', children: t('calls') }, 'l'),
@@ -3144,8 +3193,9 @@ function TokenComposition({ t, view }) {
   const legend = (key, label, swatch) => jsxs('div', { className: 'wm-legend-item', children: [
     jsx('span', { className: 'wm-swatch', 'data-part': swatch, 'aria-hidden': true }, 'sw'),
     jsx('span', { className: 'wm-legend-label', children: label }, 'label'),
-    jsx('span', { className: 'wm-legend-value', children: byKey[key] ? byKey[key].value : '—' }, 'value')
-  ] }, key)
+    jsx('span', { className: 'wm-legend-value', children: byKey[key] ? byKey[key].value : '—' }, 'value'),
+    byKey[key]?.partial ? certaintyChip('partial', t('meterPartial'), `${key}-partial`) : null
+  ].filter(Boolean) }, key)
   const u = view.usage
   const contextValue = u && typeof u.context_percent === 'number'
     ? `${Math.round(u.context_percent)}% · ${fmtTokens(u.context_used)}/${fmtTokens(u.context_max)}`
@@ -3215,7 +3265,7 @@ function sidebarCostDisplay(view) {
   if (value === 0 && view.costPartial) return '—'
   if (view.costBasis === 'lower_bound') return `≥${fmtUsd(value)}`
   if (view.costBasis === 'upper_bound') return `≤${fmtUsd(value)}`
-  return `${fmtUsd(value)}${view.costPartial ? '+' : ''}`
+  return fmtUsd(value)
 }
 
 function sidebarCostStatus(t, view) {
@@ -3361,8 +3411,12 @@ function CacheGauge({ t, view }) {
                 ? t('readBenefitCoverage', readBenefit.calls, readBenefit.total, fmtTokens(readBenefit.tokens)) : ''].filter(Boolean).join(' '),
               wide: true, dir: 'up' }, 'info')
           ] }, 'l'),
-          jsx('span', { className: 'wm-metric-value',
-            children: readBenefit?.available ? readBenefitDisplay(t, readBenefit) : '—' }, 'v')
+          jsxs('span', { className: 'wm-metric-value', children: [
+            readBenefit?.available ? readBenefitDisplay(t, readBenefit, true) : '—',
+            readBenefit?.available && readBenefit.partial ? ' ' : null,
+            readBenefit?.available && readBenefit.partial
+              ? certaintyChip('partial', t('meterPartial'), 'benefit-partial') : null,
+          ].filter(Boolean) }, 'v')
         ] }, 'saved'),
       ].filter(Boolean) }, 'stats')
     ] }, 'row')
@@ -3991,11 +4045,11 @@ function readBenefitState(economics, totalCalls) {
   return valid ? { available: true, value, basis, calls, tokens, total: totalCalls,
     partial: calls < totalCalls } : { available: false }
 }
-function readBenefitDisplay(t, benefit) {
+function readBenefitDisplay(t, benefit, plain = false) {
   if (!benefit?.available) return '—'
   if (benefit.basis === 'lower_bound') return t('savingsLowerBoundValue', analyticMoney(benefit.value))
   if (benefit.basis === 'upper_bound') return t('savingsUpperBoundValue', analyticMoney(benefit.value))
-  return `${analyticMoney(benefit.value)}${benefit.partial ? '+' : ''}`
+  return `${analyticMoney(benefit.value)}${benefit.partial && !plain ? '+' : ''}`
 }
 function analyticsSavingsTone(economics) {
   const value = analyticsSavingsValue(economics)
@@ -15180,6 +15234,7 @@ const I18N = {
     modelIdInfo: id => `Exact model ID: ${id}`,
     meterLive: 'Live',
     meterRecorded: 'Recorded',
+    meterPartial: 'Partial',
     meterUpdating: 'Updating…',
     apiEquivalent: 'API equivalent',
     sidebarCostPartial: 'partial estimate',
@@ -16993,6 +17048,7 @@ const I18N = {
     modelIdInfo: id => `精确模型 ID：${id}`,
     meterLive: '实时',
     meterRecorded: '已记录',
+    meterPartial: '部分',
     meterUpdating: '更新中…',
     apiEquivalent: 'API 等值',
     sidebarCostPartial: '部分估算',
