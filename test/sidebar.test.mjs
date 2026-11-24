@@ -1500,10 +1500,10 @@ test('a runtime-keyed session restores Session scope through the runtime fallbac
   const container = await renderMeter()
   await flush()
   try {
-    assert.ok(requests.some(path => path.includes('session_id=stored-empty')),
-      `the stored leg is tried first: ${requests}`)
-    assert.ok(requests.some(path => path.includes('session_id=runtime-live')),
-      `the empty stored leg falls through to the runtime id: ${requests}`)
+    const tried = requests.filter(path => path.startsWith('/session/summary?'))
+      .map(path => new URL(path, 'http://test').searchParams.get('session_id'))
+    assert.deepEqual(tried, ['stored-empty', 'runtime-live'],
+      'the empty stored leg falls through to the runtime id in order')
     assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeSession',
       'the runtime fallback restores Session scope with exact evidence')
     assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '$0.0050',
@@ -1556,8 +1556,10 @@ test('a non-empty but invalid first leg never blocks a valid alternative identit
   const container = await renderMeter()
   await flush()
   try {
-    assert.equal(requests.filter(path => path.startsWith('/session/summary?')).length, 2,
-      `both identities are tried: ${requests}`)
+    const tried = requests.filter(path => path.startsWith('/session/summary?'))
+      .map(path => new URL(path, 'http://test').searchParams.get('session_id'))
+    assert.deepEqual(tried, ['stored-poisoned', 'runtime-clean'],
+      'the rejected stored leg precedes the runtime fallback')
     assert.equal(container.querySelector('.wm-scope-chip').textContent, 'scopeSession',
       'the valid runtime leg wins over the non-empty invalid stored leg')
     assert.equal(container.querySelector('[data-kind="saved"] .wm-metric-value').textContent, '$0.0050',
