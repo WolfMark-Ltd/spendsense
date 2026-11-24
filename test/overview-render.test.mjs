@@ -410,3 +410,43 @@ test('the charges methodology links once to the About FAQ, in both languages', a
     assert.equal(T.$ledgerTab.get(), 'about', `${locale}: the link navigates to About & Support`)
   }
 })
+
+test('a failed Overview read names its cause, and a transient failure recovers', async () => {
+  // UAT: backend timeouts latched the failure banner with retry:false and
+  // no cause. The idempotent read retries once; a persistent failure names
+  // its underlying message in the banner.
+  const base = overviewTransport({ requiredContract: T.REQUIRED_BACKEND_CONTRACT })
+  const raw = T.getRest()
+  try {
+    for (const locale of LOCALES) {
+      let attempts = 0
+      T.setRest(async path => {
+        if (path === '/analytics?days=30' && ++attempts === 1) {
+          throw new Error('Timed out connecting to Hermes backend after 30000ms')
+        }
+        return base(path)
+      })
+      const recovered = await boot({ locale })
+      await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 2500)) })
+      await flush()
+      assert.equal(attempts, 2, `${locale}: the read retries once after a transient failure`)
+      assert.equal(recovered.querySelectorAll('.wm-alert[role="alert"]').length, 0,
+        `${locale}: no failure banner after recovery`)
+      T.setRest(async path => {
+        if (path === '/analytics?days=30') {
+          throw new Error('Timed out connecting to Hermes backend after 30000ms')
+        }
+        return base(path)
+      })
+      const failed = await boot({ locale })
+      await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 2500)) })
+      await flush()
+      const alert = failed.querySelector('.wm-alert[role="alert"]')
+      assert.ok(alert, `${locale}: the failure banner renders while the read keeps failing`)
+      assert.match(flat(alert.textContent), /Timed out connecting to Hermes backend/,
+        `${locale}: the banner names the underlying failure`)
+    }
+  } finally {
+    T.restoreRest(raw)
+  }
+})
