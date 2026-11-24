@@ -73,6 +73,8 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.ok(layout.mainScrollDelta > 0, `${id} lets the main host scroll the full Usage page`)
         assert.equal(layout.stats, 4, `${id} keeps only four primary figures`)
         assert.equal(layout.readBenefit, '$4.20+', `${id} shows the partial backend cache-read benefit`)
+        assert.equal(new Set(layout.statTops).size, layout.id.startsWith('wide') ? 1 : 4,
+          `${id} lays the KPI cards in one row when wide and wraps them when narrow (${layout.statTops})`)
         assert.equal(layout.selects, 7, `${id} keeps all seven filters`)
         assert.equal(layout.advancedFilters, true, `${id} discloses advanced filters`)
         assert.ok(layout.advancedRowHeight > 0,
@@ -161,6 +163,8 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.equal(result.layouts.length, 4, `${locale}/${fixtureState} paints narrow/wide light/dark layouts`)
         for (const layout of result.layouts) {
           assert.equal(layout.stats, 4, `${locale}/${fixtureState}/${layout.id} keeps four summary figures`)
+          assert.equal(new Set(layout.statTops).size, layout.id.startsWith('wide') ? 1 : 4,
+            `${locale}/${fixtureState}/${layout.id} lays cards in one row when wide, stacked when narrow`)
           assert.equal(layout.readBenefit, fixtureState === 'unavailable' ? '—' : fixtureState === 'partial' ? '$196.99+' : '$196.99',
             `${locale}/${fixtureState}/${layout.id} shows the backend evidence state`)
         }
