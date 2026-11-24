@@ -6919,11 +6919,15 @@ function overviewAnalyticsQuery(identity = membershipIdentityNow()) {
       if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
       if (typeof rest !== 'function') throw new Error('Analytics is unavailable.')
       const result = await rest('/analytics?days=30')
-      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
       if (!result?.ok || !result.totals) throw new Error(result?.error || 'Analytics is unavailable.')
-      return result
+      // A successful read-only result is never discarded for a mid-fetch
+      // identity change (gateway-activation churn reads as one): it is
+      // tagged and the render gates on the tag, so a misthrow cannot latch
+      // the failure banner over good data. One retry absorbs a transient
+      // transport timeout on this idempotent GET.
+      return { ...result, identity }
     },
-    retry: false, staleTime: 30_000
+    retry: 1, staleTime: 30_000
   }
 }
 
@@ -7052,7 +7056,8 @@ function OverviewPage() {
   // same identity-guarded pattern as Memberships.
   const weatherStale = weatherById.size > 0 && !!(weather.error && membershipIdentityCurrent(identity))
   const local = settledDesktopMonth(ledger)
-  const result = analytics.data?.totals || {}
+  const analyticsCurrent = analytics.data?.identity === identity && membershipIdentityCurrent(identity)
+  const result = analyticsCurrent ? analytics.data?.totals || {} : {}
   const unpricedTokens = Number(result.unpriced_tokens || 0)
   const unpricedCalls = Number(result.unpriced_calls || 0)
   const unpriced = unpricedTokens > 0 || unpricedCalls > 0
@@ -7071,7 +7076,7 @@ function OverviewPage() {
   // to genuinely unpriced calls.
   const estimateBasis = result.economics?.api_equivalent_basis
   const estimateBounded = estimateBasis != null && estimateBasis !== 'exact'
-  const topModels = overviewTopModels(analytics.data?.by_model)
+  const topModels = overviewTopModels(analyticsCurrent ? analytics.data?.by_model : null)
   const topModelMax = topModels[0]?.calls || 1
   // Accounts that could carry a recurring fee but have no known amount —
   // unpriced subscriptions, unconfirmed arrangements and plan-less
@@ -7108,6 +7113,7 @@ function OverviewPage() {
       jsx(ProductHeader, { title: t('ovTitle'), subtitle: t('ovSubtitle') }),
       analytics.error ? jsxs('div', { className: 'wm-alert', role: 'alert', children: [
         jsx('p', { children: t('ovBackendReadFailure') }),
+        jsx('p', { className: 'wm-subtle', children: String(analytics.error?.message || analytics.error || '') }),
         jsx(ProductButton, { type: 'button', disabled: analytics.isFetching,
           onClick: () => analytics.refetch?.(), children: t('econRetry') })
       ] }) : null,
