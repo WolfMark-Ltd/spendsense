@@ -439,5 +439,189 @@ class BaselineTests(EventLedgerCase):
         self.assertEqual(report["baseline"]["tier_mode"], "average_estimate")
 
 
+class MoaAdvisorTests(EventLedgerCase):
+    """F129: per-slot MoA advisor spend is attributed, never dropped."""
+
+    def _parent(self, **overrides):
+        record = {
+            "event_id": "api:req-1", "ts": NOW, "started_at": NOW - 1,
+            "ended_at": NOW, "session_id": "s1", "task_id": "t1",
+            "turn_id": "turn1", "platform": "desktop", "model": "agg-model",
+            "provider": "openrouter", "call_class": "main",
+        }
+        record.update(overrides)
+        return record
+
+    def _refs(self):
+        return [
+            {"label": "advisor-a", "model": "deepseek/deepseek-v4.1-flash",
+             "provider": "commandcode", "temperature": 0.2,
+             "usage": {"input_tokens": 1000, "output_tokens": 200,
+                       "cache_read_tokens": 0, "cache_write_tokens": 0,
+                       "reasoning_tokens": 0},
+             "cost_usd": 0.001, "cost_status": "estimated",
+             "output": "SECRET ADVISOR TEXT MUST NEVER BE STORED"},
+            {"label": "advisor-b", "model": "gpt-6.1-sol",
+             "provider": "openai-codex",
+             "usage": {"input_tokens": 500, "output_tokens": 100,
+                       "cache_read_tokens": 0, "cache_write_tokens": 0,
+                       "reasoning_tokens": 0}},
+        ]
+
+    def test_advisor_slots_become_priced_rows(self):
+        rows = collector._advisor_records(self._parent(), {"moa_references": self._refs()})
+        self.assertEqual(len(rows), 2)
+        first, second = rows
+        self.assertEqual(first["event_id"], "api:req-1:moa:0")
+        self.assertEqual(second["event_id"], "api:req-1:moa:1")
+        self.assertEqual((first["provider"], first["model"]),
+                         ("commandcode", "deepseek/deepseek-v4.1-flash"))
+        self.assertEqual(first["input_tokens"], 1000)
+        self.assertEqual(first["output_tokens"], 200)
+        self.assertEqual(first["total_tokens"], 1200)
+        self.assertEqual(first["outcome"], "ok")
+        self.assertEqual(first["call_class"], "main")
+        self.assertEqual(first["session_id"], "s1")
+        self.assertEqual(first["turn_id"], "turn1")
+        self.assertNotIn("SECRET ADVISOR TEXT", str(rows))
+
+    def test_empty_route_or_zero_tokens_are_skipped(self):
+        refs = [
+            {"label": "no-route", "model": "", "provider": "",
+             "usage": {"input_tokens": 10, "output_tokens": 0,
+                       "cache_read_tokens": 0, "cache_write_tokens": 0,
+                       "reasoning_tokens": 0}},
+            {"label": "no-spend", "model": "m", "provider": "p",
+             "usage": {"input_tokens": 0, "output_tokens": 0,
+                       "cache_read_tokens": 0, "cache_write_tokens": 0,
+                       "reasoning_tokens": 0}},
+            "not-a-dict",
+        ]
+        rows = collector._advisor_records(self._parent(), {"moa_references": refs})
+        self.assertEqual(rows, [])
+
+    def test_missing_references_means_no_rows(self):
+        self.assertEqual(collector._advisor_records(self._parent(), {}), [])
+        self.assertEqual(collector._advisor_records(self._parent(), {"moa_references": None}), [])
+
+    def test_advisor_rows_persist_with_slot_routes(self):
+        parent = self._parent()
+        rows = collector._advisor_records(parent, {"moa_references": self._refs()})
+        for row in rows:
+            self.put(row)
+        conn = sqlite3.connect(self.event_db)
+        try:
+            found = conn.execute(
+                "SELECT event_id, model, provider, total_tokens FROM calls ORDER BY event_id"
+            ).fetchall()
+        finally:
+            conn.close()
+        self.assertEqual([(r[0], r[1], r[2], r[3]) for r in found], [
+            ("api:req-1:moa:0", "deepseek/deepseek-v4.1-flash", "commandcode", 1200),
+            ("api:req-1:moa:1", "gpt-6.1-sol", "openai-codex", 600),
+        ])
+
+    def test_advisor_spend_prices_at_advisor_rates_in_reports(self):
+        from wolfmark_ledger.aggregate import build_event_period
+        from wolfmark_ledger.pricing import Catalogue, Rate
+        book = Catalogue({"agg": {"big": Rate(10.0, 20.0, 1.0)},
+                          "adv": {"small": Rate(1.0, 2.0, 0.1)}}, "f", "t", "", "1")
+        at = NOW - 3600
+        self.put(_record("turn-1", at, provider="agg", model="big", input_tokens=1_000_000))
+        self.put(_record("turn-1:moa:0", at, provider="adv", model="small",
+                         input_tokens=1_000_000))
+        result = build_event_period(self.event_db, days=2, catalogue=book, now=NOW)
+        models = {(r["provider"], r["model"]): r for r in result["by_model"]}
+        agg, adv = models[("agg", "big")], models[("adv", "small")]
+        # Advisor tokens stay on the advisor route: nothing is folded into
+        # the aggregator, and each side prices at its own card.
+        self.assertEqual(agg["tokens"], 1_000_000)
+        self.assertEqual(adv["tokens"], 1_000_000)
+        self.assertAlmostEqual(agg["list_usd"], 10.0)
+        self.assertAlmostEqual(adv["list_usd"], 1.0)
+
+
+class ResponseModelTests(unittest.TestCase):
+    """F130: the served model is recorded as provenance; pricing is unchanged."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.db = str(self.dir / "usage.db")
+        self.addCleanup(self._reset_writer)
+
+    def _reset_writer(self):
+        try:
+            if store._WRITER is not None:
+                store._WRITER.close()
+        except Exception:
+            pass
+        store._WRITER = None
+        store._WRITER_PATH = None
+
+    def test_base_record_carries_response_model(self):
+        record = collector._base_record("main", {"model": "requested", "response_model": "served-1"})
+        self.assertEqual(record["model"], "requested")
+        self.assertEqual(record["response_model"], "served-1")
+        record = collector._base_record("main", {"model": "requested"})
+        self.assertIsNone(record["response_model"])
+
+    def test_response_model_round_trips_and_updates_on_retry(self):
+        record = _record("e1", NOW, input_tokens=100)
+        record["response_model"] = "served-1"
+        store.record(record, path=self.db)
+        conn = sqlite3.connect(self.db)
+        try:
+            value = conn.execute(
+                "SELECT response_model FROM calls WHERE event_id='e1'").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(value, "served-1")
+        # The retry UPDATE path: an error stub first, then the successful
+        # attempt with the same id and a different served model.
+        failed = _record("e2", NOW, input_tokens=0)
+        failed["outcome"] = "error"
+        failed["response_model"] = None
+        store.record(failed, path=self.db)
+        retry = _record("e2", NOW, input_tokens=100)
+        retry["response_model"] = "served-2"
+        store.record(retry, path=self.db)
+        conn = sqlite3.connect(self.db)
+        try:
+            row = conn.execute(
+                "SELECT outcome, total_tokens, response_model FROM calls"
+                " WHERE event_id='e2'").fetchone()
+        finally:
+            conn.close()
+        self.assertEqual((row[0], row[1], row[2]), ("ok", 100, "served-2"))
+
+    def test_pre_column_stores_migrate_additively(self):
+        # A store written before the column existed: full old schema, one row.
+        store.bootstrap(path=self.db)
+        conn = sqlite3.connect(self.db)
+        conn.execute("ALTER TABLE calls DROP COLUMN response_model")
+        # Fresh timestamp: WP36 retention prunes rows past 180 days on the
+        # next write, and this test is about migration, not retention.
+        fresh = time.time() - 100
+        conn.execute("INSERT INTO calls (event_id, ts, outcome, recorded_at)"
+                     " VALUES ('old', ?, 'ok', ?)", (fresh, fresh))
+        conn.commit()
+        cols_before = {row[1] for row in conn.execute("PRAGMA table_info(calls)")}
+        conn.close()
+        self.assertNotIn("response_model", cols_before)
+        self._reset_writer()
+        store.record(_record("new", NOW, input_tokens=10), path=self.db)
+        conn = sqlite3.connect(self.db)
+        try:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(calls)")}
+            old = conn.execute(
+                "SELECT response_model FROM calls WHERE event_id='old'").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertIn("response_model", cols)
+        self.assertIsNone(old, "pre-migration rows read NULL, never a guessed model")
+
+
 if __name__ == "__main__":
     unittest.main()

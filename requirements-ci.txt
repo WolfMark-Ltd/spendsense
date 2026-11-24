@@ -1,0 +1,4 @@
+# Pinned CI/test API dependencies (F128). Verified against the local suite;
+# bump deliberately and re-run the full suite on all three CI platforms.
+fastapi==0.162.0
+httpx==0.28.1

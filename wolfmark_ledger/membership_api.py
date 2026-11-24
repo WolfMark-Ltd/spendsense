@@ -196,6 +196,8 @@ def accounts_payload(*, native: bool = False, path: Optional[Path | str] = None,
                 notes.append(f"{family}: Hermes reported no account usage.")
             elif probe["state"] == "error":
                 notes.append(f"{family}: usage read failed ({probe['reason']}).")
+            elif probe["state"] == "unsupported":
+                notes.append(f"{family}: {probe.get('reason') or 'Hermes has no usage endpoint for this provider'}.")
     cards = [account_card(a, book, snapshots.get(str(a.get("family") or "")), at=at,
                           probe=probes.get(str(a.get("family") or "")))
              for a in resolved.get("accounts", [])]

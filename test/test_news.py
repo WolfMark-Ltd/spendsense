@@ -685,6 +685,73 @@ class FeedValidationTests(NewsTestCase):
         feed, _ = news.validate_feed(["not", "an", "object"])
         self.assertIsNone(feed)
 
+    def test_non_finite_params_dropped_item_kept(self):
+        # F120: Python's json accepts NaN/Infinity, so a hostile or buggy
+        # feed could smuggle them in. The params are dropped; the item stays.
+        news = news_module()
+        feed, problems = news.validate_feed(feed_doc([
+            feed_item("good", summary_params={"pct": float("nan"),
+                                              "note": "kept",
+                                              "big": float("inf")}),
+        ]))
+        self.assertIsNotNone(feed)
+        params = feed["items"][0]["summary_params"]
+        self.assertNotIn("pct", params)
+        self.assertNotIn("big", params)
+        self.assertEqual(params["note"], "kept")
+
+    def test_non_finite_change_numbers_degrade_to_none(self):
+        # F120: the change block is display-layer data, so bad numbers degrade
+        # to None in place (keeping the shape) rather than rejecting the item.
+        news = news_module()
+        feed, problems = news.validate_feed(feed_doc([
+            feed_item("good", change={
+                "direction": "down", "dominant": "input",
+                "max_abs_pct": float("inf"), "max_abs_delta": -1.0,
+                "rates": {"input": {"before": 3.0, "after": 2.0,
+                                    "delta": -1.0, "pct": float("nan")},
+                          "output": {"before": "cheap", "after": 10.0,
+                                     "delta": 0.0, "pct": 0.0}}}),
+        ]))
+        self.assertIsNotNone(feed)
+        change = feed["items"][0]["change"]
+        self.assertIsNone(change["max_abs_pct"])
+        self.assertEqual(change["max_abs_delta"], -1.0)
+        self.assertEqual(change["rates"]["input"],
+                         {"before": 3.0, "after": 2.0,
+                          "delta": -1.0, "pct": None})
+        self.assertIsNone(change["rates"]["output"]["before"])
+
+    def test_oversized_change_integer_degrades_to_none(self):
+        # An integer beyond the float range degrades rather than aborting
+        # the whole feed: math.isfinite would raise OverflowError on it.
+        news = news_module()
+        feed, _ = news.validate_feed(feed_doc([
+            feed_item("huge", change={"max_abs_pct": 10 ** 400,
+                                      "max_abs_delta": 2.5}),
+        ]))
+        self.assertIsNotNone(feed)
+        change = feed["items"][0]["change"]
+        self.assertIsNone(change["max_abs_pct"])
+        self.assertEqual(change["max_abs_delta"], 2.5)
+
+    def test_non_finite_money_renders_unknown(self):
+        news = news_module()
+        self.assertEqual(news._money(float("inf")), "—")
+        self.assertEqual(news._money(float("nan")), "—")
+        self.assertEqual(news._fee_text({"amount": float("inf"), "currency": "USD"}),
+                         "fee unpublished")
+        self.assertEqual(news._money(1.5), "$1.5")
+
+    def test_non_finite_impact_degrades_to_unavailable(self):
+        news = news_module()
+        item = {"category": "price_reduction",
+                "previous": {"input": 1.0, "output": 1.0},
+                "current": {"input": float("inf"), "output": 1.0}}
+        tokens = {"input": 1000, "output": 100, "cache_read": 0, "cache_write": 0}
+        impact = news.estimate_impact(item, tokens)
+        self.assertEqual(impact["basis"], "unavailable")
+
     def test_feed_truncated_to_cap(self):
         news = news_module()
         feed, problems = news.validate_feed(feed_doc(
@@ -1083,6 +1150,82 @@ class PayloadTests(NewsTestCase):
         opener.assert_not_called()
         self.assertTrue(payload["local"]["baseline"])
         self.assertEqual(payload["central"]["state"], "disabled")
+
+    def test_payload_withholds_plan_changes_that_prove_no_change(self):
+        # F139/WP46: pre-structural-diff stores recorded "allowances/terms
+        # changed" from raw terms drift with identical fees and no field
+        # list. The payload withholds those records; the store file itself
+        # is untouched and genuine items still flow.
+        news = news_module()
+        phantom = {"id": "phantom-1", "origin": "local", "category": "subscription",
+                   "summary_code": "news_sum_plan_change",
+                   "summary": "Demo plan: allowances/terms changed.",
+                   "summary_params": {"plan": "Demo plan", "fee_before": "USD 20/month",
+                                      "fee_after": "USD 20/month", "fee_changed": False,
+                                      "terms_changed": True},
+                   "observed_at": "2026-11-20T00:37:13+00:00"}
+        genuine = {"id": "genuine-1", "origin": "local", "category": "subscription",
+                   "summary_code": "news_sum_plan_change",
+                   "summary": "Demo plan: fee USD 20/month → USD 25/month.",
+                   "summary_params": {"plan": "Demo plan", "fee_before": "USD 20/month",
+                                      "fee_after": "USD 25/month", "fee_changed": True,
+                                      "terms_changed": False, "field_changes": []},
+                   "observed_at": "2026-11-20T00:37:13+00:00"}
+        listed = {"id": "listed-1", "origin": "local", "category": "subscription",
+                  "summary_code": "news_sum_new_plan",
+                  "summary": "New plan listed: Demo plan (USD 20/month).",
+                  "summary_params": {"plan": "Demo plan", "fee": "USD 20/month"},
+                  "observed_at": "2026-11-20T00:37:13+00:00"}
+        rated = {"id": "rated-1", "origin": "local", "category": "price_reduction",
+                 "provider": "acme", "model": "alpha",
+                 "summary_code": "news_sum_price_change", "summary_params": {},
+                 "previous": {"input": 5.0}, "current": {"input": 4.0},
+                 "observed_at": "2026-11-20T00:37:13+00:00"}
+        self.data.mkdir(parents=True, exist_ok=True)
+        target = news.items_path(self.data)
+        target.write_text(json.dumps(
+            {"version": 1, "items": [phantom, genuine, listed, rated]}))
+        before = target.read_text()
+        payload = news.news_payload(data_dir=self.data, event_db=self.events,
+                                    home=self.home, now=NOW)
+        # The payload sorts newest-first; the phantom is gone, the rest stay.
+        self.assertEqual(sorted(i["id"] for i in payload["local"]["items"]),
+                         ["genuine-1", "listed-1", "rated-1"])
+        self.assertEqual(target.read_text(), before,
+                         "withholding never rewrites the store")
+
+    def test_item_proves_change_keeps_central_and_new_plan_semantics(self):
+        news = news_module()
+        central = {"origin": "central", "category": "subscription",
+                   "summary_code": "news_sum_plan_change", "summary_params": {}}
+        self.assertTrue(news.item_proves_change(central))
+        self.assertTrue(news.item_proves_change({"category": "price_reduction"}))
+        fields = {"origin": "local", "category": "subscription",
+                  "summary_code": "news_sum_plan_change",
+                  "summary_params": {"fee_changed": False, "field_changes": [
+                      {"kind": "changed", "field": "allowance"}]}}
+        self.assertTrue(news.item_proves_change(fields))
+
+    def test_item_proves_change_keeps_flag_less_legacy_records(self):
+        # Review case: records without fee_changed predate machine
+        # comparison, so differing fee strings prove a fee change there and
+        # equal ones prove nothing either way — both are kept rather than
+        # risk hiding a real change. Only an explicit False with no field
+        # evidence is withheld.
+        news = news_module()
+        base = {"origin": "local", "category": "subscription",
+                "summary_code": "news_sum_plan_change"}
+        differing = dict(base, summary_params={"plan": "Plus", "fee_before": "$20/mo",
+                                               "fee_after": "$25/mo", "terms_changed": False})
+        self.assertTrue(news.item_proves_change(differing))
+        equal = dict(base, summary_params={"plan": "Plus", "fee_before": "$20/mo",
+                                           "fee_after": "$20/mo", "terms_changed": True})
+        self.assertTrue(news.item_proves_change(equal))
+        explicit_empty = dict(
+            base, summary_params={"plan": "Plus", "fee_before": "$20/mo",
+                                  "fee_after": "$20/mo", "fee_changed": False,
+                                  "terms_changed": True})
+        self.assertFalse(news.item_proves_change(explicit_empty))
 
 
 # ------------------------------------------------------------------ eligibility

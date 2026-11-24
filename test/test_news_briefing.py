@@ -623,6 +623,27 @@ class SanitiseTests(unittest.TestCase):
         self.assertEqual(len(cleaned["sections"][0]["entries"][0]["headline"]),
                          nb._MAX_TEXT)
 
+    def test_non_finite_numbers_dropped_from_entries_and_maps(self):
+        # F120: a buggy feed can smuggle NaN/Infinity through entry numbers,
+        # scalar maps and their list members. All are dropped; the entry stays.
+        raw = {"version": 1, "sections": [{"id": "s", "entries": [{
+            "provider": "acme", "headline": "ok", "score": float("nan"),
+            "family_event_count": float("inf"),
+            "headline_params": {"pct": float("nan"), "note": "kept"},
+            "magnitude": {"max_abs_pct": float("inf")},
+        }]}],
+            "counts": {"headlined": float("nan"), "total": 1},
+            "all_updates": {"totals": [1, float("inf")]},
+        }
+        cleaned = nb.sanitise_briefing(raw)
+        (entry,) = cleaned["sections"][0]["entries"]
+        self.assertNotIn("score", entry)
+        self.assertNotIn("family_event_count", entry)
+        self.assertEqual(entry["headline_params"], {"note": "kept"})
+        self.assertNotIn("magnitude", entry)
+        self.assertEqual(cleaned["counts"], {"total": 1})
+        self.assertEqual(cleaned["all_updates"], {"totals": [1]})
+
     def test_keeps_a_valid_briefing_intact(self):
         briefing = nb.build_briefing(
             [price_item("acme", "alpha", {"input": 4.0, "output": 4.0},

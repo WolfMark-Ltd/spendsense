@@ -296,6 +296,33 @@ class RouteFailureTest(unittest.TestCase):
         self.assertEqual(self.path.read_text(), '{"accounts": false}')
 
 
+class LockContentionTest(unittest.TestCase):
+    """F124: a contended read answers 503 store_busy, never hangs or 500s."""
+
+    def setUp(self) -> None:
+        try:
+            from fastapi import FastAPI
+            from fastapi.testclient import TestClient
+            from dashboard import plugin_api
+            from wolfmark_ledger import filelock as flock
+        except Exception as exc:  # pragma: no cover - interpreter dependent
+            self.skipTest(f"FastAPI/test client unavailable: {exc}")
+        app = FastAPI()
+        app.include_router(plugin_api.router, prefix="/api/plugins/spend-sense")
+        self.client = TestClient(app)
+        self.addCleanup(self.client.close)
+        self.plugin_api = plugin_api
+        self.flock = flock
+
+    def test_busy_store_is_503_with_retry_marker(self) -> None:
+        with unittest.mock.patch.object(
+                self.plugin_api.members, "accounts_payload",
+                side_effect=self.flock.LockUnavailable("timed out")):
+            response = self.client.get("/api/plugins/spend-sense/membership/accounts")
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertIn("store_busy", response.text)
+
+
 class NonFinitePutTest(unittest.TestCase):
     """F120 over HTTP: a NaN fee override is a 422, and the store is untouched."""
 

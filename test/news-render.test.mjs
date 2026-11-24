@@ -2110,6 +2110,35 @@ test('an empty archive still names the source limitation for Subscription Update
     'an unsupported category is never reported as an empty result set')
 })
 
+test('story bodies show the friendly model name while Details keeps the exact id', async () => {
+  // F54/WP46: visible story text uses the verified friendly name; the exact
+  // stored slug stays one disclosure away, never rewritten.
+  const items = [eligibilityItem('keep-1', 'z-ai/glm-5.3-flash', true, true)]
+  const flagged = { version: 1, generated_at: '2026-11-10T00:00:00Z',
+    sections: [{ id: 'biggest_reductions', total: 1, entries: [{
+      event_type: 'price_reduction', headline_code: 'news_head_single_rate',
+      headline_params: { provider: 'acme', model: 'z-ai/glm-5.3-flash', rate: 'news_rate_input',
+        pct: -50, direction: 'down', before: '$1', after: '$0.5' },
+      headline: 'acme cuts z-ai/glm-5.3-flash input ($1 → $0.5 per 1M tokens)',
+      provider: 'acme', model: 'z-ai/glm-5.3-flash',
+      observed_at: '2026-11-09T00:00:00Z', personal: true,
+      event_ids: ['keep-1'],
+    }] }], counts: {}, unsupported: [] }
+  const container = await renderNewsPageItems(items, 'foryou', flagged)
+  const story = container.querySelector('[data-news-story]')
+  assert.ok(story, 'the story renders')
+  const headline = story.querySelector('[data-news-story-headline]').textContent
+  assert.match(headline, /GLM 5\.3 Flash/,
+    `the story body names the model plainly: ${headline}`)
+  assert.doesNotMatch(headline, /z-ai\/glm-5\.3-flash/,
+    'the story body never shows the raw slug')
+  await openStoryDetails(story)
+  const records = [...story.querySelectorAll('[data-news-story-record]')]
+    .map(el => el.textContent)
+  assert.ok(records.some(text => text.includes('z-ai/glm-5.3-flash')),
+    `Details keeps the exact stored id: ${JSON.stringify(records)}`)
+})
+
 test('a merged headline lists both source records, not just the one its id resolved to', async () => {
   // One change with two sources: a local diff and a publish-side record with
   // different ids and timestamps. Details must list both — resolving the id to

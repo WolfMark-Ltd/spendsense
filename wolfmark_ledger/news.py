@@ -533,6 +533,8 @@ def _money(value: Any) -> str:
         number = float(value)
     except (TypeError, ValueError):
         return "—"
+    if not math.isfinite(number):
+        return "—"
     text = f"{number:.4f}".rstrip("0").rstrip(".")
     return f"${text}" if text else "$0"
 
@@ -544,6 +546,8 @@ def _fee_text(price: Mapping[str, Any]) -> str:
     try:
         number = float(amount)
     except (TypeError, ValueError):
+        return "fee unpublished"
+    if not math.isfinite(number):
         return "fee unpublished"
     per = f"/{period}" if period else ""
     if currency:
@@ -1068,6 +1072,36 @@ def _is_cache_source(source: Any) -> bool:
     return str(source or "").startswith("models.dev cache")
 
 
+def item_proves_change(item: Mapping[str, Any]) -> bool:
+    """Stored plan-change items must name a fee or field change (F139).
+
+    Pre-structural-diff stores recorded ``allowances/terms changed`` from raw
+    terms-string drift (e.g. verification metadata) with identical fees and
+    no field list. Those records prove no change and are withheld from the
+    payload; the store itself is untouched and current diffs cannot emit
+    them. Central items keep the publisher's own semantics.
+
+    Records without the ``fee_changed`` flag predate machine comparison
+    entirely (or are foreign): they are kept, since differing fee strings
+    prove a fee change there and equal ones prove nothing either way. Only
+    an explicit ``False`` with no field evidence is withheld.
+    """
+    if item.get("origin") == "central":
+        return True
+    if item.get("category") != "subscription":
+        return True
+    if item.get("summary_code") == "news_sum_new_plan":
+        return True
+    params = item.get("summary_params")
+    if not isinstance(params, dict):
+        return True
+    fee_changed = params.get("fee_changed")
+    if fee_changed is True or not isinstance(fee_changed, bool):
+        return True
+    fields = params.get("field_changes")
+    return isinstance(fields, list) and len(fields) > 0
+
+
 def load_items(path: Optional[Path | str] = None) -> dict[str, Any]:
     target = Path(path) if path else items_path()
     raw, error = _read_json(target)
@@ -1212,6 +1246,18 @@ def _valid_rate_block(value: Any) -> Optional[dict[str, Any]]:
     return out
 
 
+def _finite_number(value: Any) -> Optional[float]:
+    # F120: display-layer numbers degrade to None rather than rejecting the
+    # item. NaN/Infinity (and non-numbers) must never reach JSON or the UI.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return value if math.isfinite(value) else None
+    except OverflowError:
+        # Integers beyond the float range cannot be classified as finite.
+        return None
+
+
 def _valid_text(value: Any, limit: int) -> str:
     if not isinstance(value, str):
         return ""
@@ -1297,6 +1343,8 @@ def validate_feed(raw: Any, *,
         params: dict[str, Any] = {}
         if isinstance(raw_params, dict):
             for key, value in list(raw_params.items())[:16]:
+                if isinstance(value, float) and not math.isfinite(value):
+                    continue  # F120: NaN/Infinity must never reach JSON or the UI
                 if value is None or isinstance(value, (str, int, float, bool)):
                     params[str(key)[:64]] = value[:256] if isinstance(value, str) else value
         item = {
@@ -1339,8 +1387,10 @@ def validate_feed(raw: Any, *,
             rates = change.get("rates")
             cleaned_rates = {
                 str(key)[:16]: {
-                    "before": sub.get("before"), "after": sub.get("after"),
-                    "delta": sub.get("delta"), "pct": sub.get("pct"),
+                    "before": _finite_number(sub.get("before")),
+                    "after": _finite_number(sub.get("after")),
+                    "delta": _finite_number(sub.get("delta")),
+                    "pct": _finite_number(sub.get("pct")),
                 }
                 for key, sub in (rates.items() if isinstance(rates, dict) else [])
                 if isinstance(sub, dict) and str(key) in ("input", "output",
@@ -1349,10 +1399,8 @@ def validate_feed(raw: Any, *,
             item["change"] = {
                 "direction": _valid_text(change.get("direction"), 16),
                 "dominant": _valid_text(change.get("dominant"), 16),
-                "max_abs_pct": change.get("max_abs_pct")
-                if isinstance(change.get("max_abs_pct"), (int, float)) else None,
-                "max_abs_delta": change.get("max_abs_delta")
-                if isinstance(change.get("max_abs_delta"), (int, float)) else None,
+                "max_abs_pct": _finite_number(change.get("max_abs_pct")),
+                "max_abs_delta": _finite_number(change.get("max_abs_delta")),
                 "rates": cleaned_rates,
             }
         items.append(item)
@@ -1731,6 +1779,10 @@ def _cost(tokens: Mapping[str, int], rates: Mapping[str, Any],
             total += count * float(rate) / 1_000_000
         except (TypeError, ValueError):
             return None, False
+    if not math.isfinite(total):
+        # F120: absurd magnitudes or hostile rates must degrade to the
+        # existing unavailable path, never Infinity/NaN in JSON.
+        return None, False
     return total, complete
 
 
@@ -1812,7 +1864,8 @@ def news_payload(*, data_dir: Optional[Path | str] = None,
         providers_configured = []
     recent = usage_summary(event_db, days=IMPACT_DAYS, now=now)
     evidence = usage_summary(event_db, days=EVIDENCE_DAYS, now=now)
-    local_items = [item for item in stored["items"] if isinstance(item, dict)]
+    local_items = [item for item in stored["items"]
+                   if isinstance(item, dict) and item_proves_change(item)]
     central_items: list[dict[str, Any]] = []
     # Disabled means local-only: a retained cache speeds re-enabling but is
     # never surfaced, so the off state shows exactly what it claims.

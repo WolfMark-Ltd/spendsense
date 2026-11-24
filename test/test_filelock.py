@@ -341,5 +341,86 @@ class FailClosedTests(unittest.TestCase):
         self.assertEqual(calls, ["LK_LOCK"])
 
 
+class SharedLockTests(unittest.TestCase):
+    """F124: consistent-snapshot reads share the lock and never hang a worker."""
+
+    def setUp(self) -> None:
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = Path(self.dir.name) / "store.json"
+
+    @unittest.skipUnless(sys.platform != "win32", "POSIX flock path")
+    def test_readers_share_the_lock(self) -> None:
+        entered = []
+        with filelock.shared(self.path, timeout=2):
+            entered.append("outer")
+            with filelock.shared(self.path, timeout=2):
+                entered.append("inner")
+        self.assertEqual(entered, ["outer", "inner"])
+
+    @unittest.skipUnless(sys.platform != "win32", "POSIX flock path")
+    def test_a_held_writer_makes_readers_fail_loudly_not_hang(self) -> None:
+        with filelock.locked(self.path):
+            start = time.monotonic()
+            with self.assertRaises(filelock.LockUnavailable):
+                with filelock.shared(self.path, timeout=0.2):
+                    pass
+            self.assertLess(time.monotonic() - start, 10,
+                            "a contended read must time out, never hang")
+
+    def test_unknown_platform_raises_without_running_body(self) -> None:
+        ran = []
+        with patch("os.name", "riscos"):
+            with self.assertRaises(filelock.LockUnavailable):
+                with filelock.shared(self.path, timeout=0.1):
+                    ran.append(True)
+        self.assertEqual(ran, [])
+
+    def test_windows_dispatch_uses_nonblocking_probe(self) -> None:
+        import sys as _sys
+
+        calls: list = []
+
+        class FakeMsvcrt:
+            LK_NBLCK = "LK_NBLCK"
+            LK_UNLCK = "LK_UNLCK"
+
+            @staticmethod
+            def locking(fd: int, mode: str, nbytes: int) -> None:
+                calls.append((mode, nbytes))
+
+        with patch("os.name", "nt"):
+            with patch.dict(_sys.modules, {"msvcrt": FakeMsvcrt}):
+                with filelock.shared(self.path, timeout=0.1):
+                    pass
+        self.assertEqual(calls, [("LK_NBLCK", 1), ("LK_UNLCK", 1)])
+
+    def test_windows_contention_times_out_loudly(self) -> None:
+        import errno as _errno
+        import sys as _sys
+
+        class ContendedMsvcrt:
+            LK_NBLCK = "LK_NBLCK"
+            LK_UNLCK = "LK_UNLCK"
+
+            @staticmethod
+            def locking(fd: int, mode: str, nbytes: int) -> None:
+                raise OSError(_errno.EDEADLK, "lock contention")
+
+        with patch("os.name", "nt"):
+            with patch.dict(_sys.modules, {"msvcrt": ContendedMsvcrt}):
+                with self.assertRaises(filelock.LockUnavailable) as raised:
+                    with filelock.shared(self.path, timeout=0.1):
+                        pass
+        self.assertIn("timed out", str(raised.exception))
+
+    def test_snapshot_reads_use_the_shared_lock(self) -> None:
+        with patch("wolfmark_ledger.membership_store._shared") as shared:
+            shared.side_effect = filelock.LockUnavailable("busy")
+            with self.assertRaises(filelock.LockUnavailable):
+                membership_store.load_with_seats(self.path)
+        shared.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

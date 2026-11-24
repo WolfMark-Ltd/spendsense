@@ -111,7 +111,7 @@ const flush = async (times = 6) => {
 }
 
 /** Render the real MembershipsPage over the shared account matrix. */
-const boot = async ({ locale = 'en' } = {}) => {
+const boot = async ({ locale = 'en', accounts = null } = {}) => {
   queryClient.clear()
   T.$membershipSnapshot.set(null)
   T.$membershipDraft.set(null)
@@ -122,7 +122,9 @@ const boot = async ({ locale = 'en' } = {}) => {
   T.$membershipExpanded.set({ origin: null, ids: [] })
   T.$membershipAttentionOnly.set(false)
   T.$ledgerTab.set('memberships')
-  respond = () => clarityResponse()
+  // An accounts override renders a focused matrix for states the shared
+  // clarity matrix does not cover; the shared fixtures stay untouched.
+  respond = accounts ? () => ({ ...clarityResponse(), accounts }) : () => clarityResponse()
   i18nBackend.t = translator(locale)
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -424,6 +426,34 @@ test('accounts group by arrangement, and each heading states its own count', asy
       `${locale}: a route slug is replaced by a friendly name`)
     assert.equal(rowOf(container, 'memb:stored').getAttribute('data-arrangement'), 'unconfirmed',
       `${locale}: an unconfirmed account is not called "no current plan"`)
+  }
+})
+
+test('a withheld anonymous reading explains itself on the card, in both languages', async () => {
+  // F119: a named account whose provider reading arrived without an account
+  // identity keeps its own state, and the rendered card says why the reading
+  // was withheld — the chip alone must never be the whole story.
+  const account = {
+    id: 'memb:unverified', family: 'anthropic', label: 'main',
+    billing_arrangement: 'subscription', effective_arrangement: 'subscription',
+    plan_id: 'anthropic.claude-max', plan: { name: 'Claude Max 20x' },
+    fee: { basis: 'catalogue', effective: { amount: 100, currency: 'USD', period: 'month' } },
+    quota: { provider_state: 'identity_unverified', age_seconds: null, has_provider_reporting: true,
+      windows: [{ id: 'weekly', label: 'Weekly', used_percent: null, state: 'no_data',
+        scope: 'account', basis: ['none'] }] },
+    native_probe: { state: 'ok', reason: '' },
+    manual_exhaustions: [], fee_overrides: [], plan_choices: [], excluded_plans: [],
+    rev: 'r1', route_entitlement_rev: 'route-r1', credential_present: true,
+  }
+  const note = { en: /withheld rather than shown/, zh: /暂不显示/ }
+  for (const locale of LOCALES) {
+    const container = await boot({ locale, accounts: [account] })
+    const reading = readingOf(container, 'memb:unverified')
+    assert.equal(reading.state, 'unverified', `${locale}: the chip names the withheld reading`)
+    const explained = reading.notes.filter(entry => entry.state === 'unverified')
+    assert.equal(explained.length, 1, `${locale}: the card renders exactly one unverified note`)
+    assert.match(explained[0].text, note[locale],
+      `${locale}: the note says why Hermes' reading was withheld`)
   }
 })
 

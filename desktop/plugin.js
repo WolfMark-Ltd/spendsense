@@ -118,6 +118,26 @@ function num(v) {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
+/** External URLs may only become links over http(s) (F126). Anything else —
+ *  javascript:, data:, protocol-relative, relative paths, garbage — returns
+ *  null so the caller renders plain text: a compromised feed or a hand-edited
+ *  catalogue can never inject a link target. Returns the trimmed URL or null.
+ */
+function safeHttpUrl(value) {
+  const url = String(value || '').trim()
+  if (!/^https?:\/\//i.test(url)) return null
+  return url
+}
+
+/** Feed-supplied source link (F126): an http(s) anchor, else nothing. A
+ *  missing or unsafe URL renders no anchor at all — the provenance text
+ *  beside it still names the origin, so no evidence label is lost. */
+function NewsSourceLink({ url, t }) {
+  const href = safeHttpUrl(url)
+  return href ? jsx('a', { href, target: '_blank', rel: 'noreferrer',
+    className: 'wm-source-link', children: t('newsSource') }) : null
+}
+
 function tokensOf(b) {
   const streams = num(b.input) + num(b.cacheRead) + num(b.cacheWrite) + num(b.cacheUnknown)
   const prompt = typeof b.prompt === 'number' && Number.isFinite(b.prompt) && b.prompt >= 0
@@ -4581,6 +4601,7 @@ function billingEvidence(billing, t = needsAttentionEn) {
     usd: ev[key]?.usd ?? null,
     basis: ev[key]?.basis || 'none',
     source: ev[key]?.source || '',
+    billingBasis: ev[key]?.billing_basis ?? null,
     pricingCoverage: ev[key]?.pricing_coverage || null
   }))
 }
@@ -4762,9 +4783,10 @@ function fxQuery(identity = membershipIdentityNow()) {
   }
 }
 
-async function fxWrite(rates, transport = rest) {
+async function fxWrite(rates, rev, transport = rest) {
   if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
-  const result = await transport('/membership/fx', { method: 'PUT', body: { rates } })
+  const result = await transport(`/membership/fx?if_rev=${encodeURIComponent(rev || '')}`,
+    { method: 'PUT', body: { rates } })
   if (!result || result.ok === false) throw new Error(result?.detail || result?.error || 'The rates were not saved.')
   return result
 }
@@ -5988,7 +6010,7 @@ function CostsEvidenceDetail({ label, value, children }) {
   ].filter(Boolean) })
 }
 
-function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, summaryLoading, accountsLoading, summaryReady, accountsFailed, t }) {
+function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, summaryLoading, accountsLoading, summaryReady, accountsFailed, t, summaryWindow = null, summaryScope = null }) {
   const rows = billingEvidence(billing, t)
   const evidence = Object.fromEntries(rows.map(row => [row.key, row]))
   const unknownFees = accountsReady ? costsUnknownFeeCount(accounts) : null
@@ -6037,22 +6059,34 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   const apiUnpricedCalls = finiteValue(apiCoverage?.unpriced_calls)
   const apiPartial = apiCoverageKnown && (apiUnpricedTokens > 0 || apiUnpricedCalls > 0)
   const apiCoverageUnknown = !apiCoverageKnown
+  // The billing-native basis of the displayed subtotal itself, aggregated
+  // by the backend over exactly the rows it sums: cycle-excluded rows never
+  // reach it, and custom-override rows are bounded by their own configured
+  // rates rather than the catalogue bounds the analytics totals carry. A
+  // non-exact basis with fully priced rows withholds the Fully priced
+  // verdict. Unpriced-row and coverage-unknown wording stays more specific
+  // and wins. Older backends omit the field and keep the previous verdicts.
+  const apiBasis = api.billingBasis
+  const apiBounded = apiBasis != null && apiBasis !== 'exact'
   const apiStatus = summaryLoading ? t('costsLoadingShort')
     : api.usd == null ? t('costsUnknownTag')
     : apiPartial ? null
-    : apiCoverageUnknown ? t('costsCoverageUnknownTag') : t('costsCompleteTag')
+    : apiCoverageUnknown ? t('costsCoverageUnknownTag')
+    : apiBounded ? null : t('costsCompleteTag')
   const apiNote = summaryLoading ? t('costsEvidenceLoading')
     : unreadable ? t('costsEvidenceUnavailable')
     : api.usd == null ? apiPartial ? t('costsApiNoPricedSubtotal') : api.empty
     : apiPartial ? t('costsApiPartialShort')
-    : apiCoverageUnknown ? t('costsApiCoverageUnknownShort') : t('costsApiShort')
+    : apiCoverageUnknown ? t('costsApiCoverageUnknownShort')
+    : apiBounded ? t('costsApiBoundShort') : t('costsApiShort')
   const apiCoverageDetails = apiCoverageKnown
     ? t('costsApiCoverageCounts', exactTokens(apiCoverage.priced_tokens), exactTokens(apiCoverage.priced_calls),
       exactTokens(apiCoverage.unpriced_tokens), exactTokens(apiCoverage.unpriced_calls))
     : t('costsApiCoverageUnavailable')
   const apiExplanation = api.usd == null ? t('costsApiNoPricedExplain')
     : apiPartial ? t('costsApiPartialExplain')
-    : apiCoverageUnknown ? t('costsApiCoverageUnknownExplain') : api.explanation
+    : apiCoverageUnknown ? t('costsApiCoverageUnknownExplain')
+    : apiBounded ? t('costsApiBoundExplain') : api.explanation
   const additional = ['credits_consumed', 'incremental_cash'].map(key => evidence[key])
   const feeValue = feeLines.length ? jsx('ul', { className: 'wm-cost-detail-fees', children: feeLines.map(line =>
     jsx('li', { children: line.label }, `${line.currency}/${line.period}`)) })
@@ -6085,11 +6119,16 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
         row.source ? jsx('p', { children: `${t('costsSourceLabel')}: ${row.source}` }) : null
       ].filter(Boolean) }) }, row.key))
   ]
+  // The backend extends the trailing window (30 → 32 days) when a billing
+  // profile carries a billing cycle, so the scope line states the actual
+  // window the figures cover instead of a nominal one.
+  const windowDays = Number.isFinite(Number(summaryScope?.window_days)) ? Number(summaryScope.window_days)
+    : Number.isFinite(Number(summaryWindow?.days)) ? Number(summaryWindow.days) : null
   return jsxs('section', { className: 'wm-product-section wm-cost-overview', 'aria-label': t('costsOverviewTitle'), children: [
     jsx('h2', { children: t('costsOverviewTitle') }),
     jsx('p', { children: t('costsOverviewIntro') }),
     summaryReady
-      ? jsx('p', { className: 'wm-cost-evidence-scope', children: t('costsEvidenceScope') }) : null,
+      ? jsx('p', { className: 'wm-cost-evidence-scope', children: t('costsEvidenceScope') + (windowDays != null ? ` ${t('costsEvidenceWindow', windowDays)}` : '') }) : null,
     summaryLoading ? jsx('p', { className: 'wm-subtle', children: t('costsEvidenceLoading') }) : null,
     jsxs('div', { className: 'wm-cost-summary-grid', children: [
       jsx(CostsEvidenceCard, { kind: 'api', label: api.label,
@@ -6174,7 +6213,9 @@ function CostsPage() {
         : null,
       jsx(CostsEvidenceSummary, { billing, totals, fees, accounts: list, accountsReady,
         summaryLoading: summary.isPending, accountsLoading: accounts.isPending,
-        summaryReady, accountsFailed: !!accounts.error, t }),
+        summaryReady, accountsFailed: !!accounts.error, t,
+        summaryWindow: summaryReady ? summary.data?.window ?? null : null,
+        summaryScope: summaryReady ? summary.data?.scope ?? null : null }),
       jsx(EconomicsPanel, { identity,
         unknownFees: accountsReady
           ? { count: unknownFeeAccounts.length,
@@ -6335,13 +6376,24 @@ const $fxNotice = atom(null)
  * The editor stays disabled until the saved document has loaded for this
  * connection: replacing rates that were never read would silently drop them.
  */
-function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave, t }) {
+
+/**
+ * The draft pins the saved revision it was staged from (F125 review). Later
+ * edits keep the original revision, so a save after someone else's change
+ * 409s instead of silently replacing their rates; only discarding the
+ * draft (reload) starts a new one against fresh saved rates.
+ */
+function stageFxDraft(prev, identity, rates, savedRev) {
+  const rev = prev && prev.origin === identity && 'rev' in prev ? prev.rev : (savedRev ?? null)
+  return { origin: identity, rates, rev }
+}
+function EconomicsFx({ fxError, fxReady, identity, rates, fxRev, onRetry, onSave, t }) {
   const rawDraft = useValue($fxDraft)
   const saving = useValue($fxSaving)?.origin === identity
   const notice = useValue($fxNotice)
   const saved = rates || []
   const draft = rawDraft?.origin === identity ? rawDraft.rates : saved
-  const stage = next => $fxDraft.set({ origin: identity, rates: next })
+  const stage = next => $fxDraft.set(stageFxDraft($fxDraft.get(), identity, next, fxRev))
   const add = event => {
     event.preventDefault()
     const read = name => (new FormData(event.target).get(name) || '').toString().trim()
@@ -6392,9 +6444,14 @@ function EconomicsFx({ fxError, fxReady, identity, rates, onRetry, onSave, t }) 
     ] }),
     notice?.origin === identity ? jsx('p', { className: notice.tone === 'good' ? 'wm-subtle' : 'wm-warn-note',
       role: notice.tone === 'good' ? 'status' : 'alert', children: notice.text }) : null,
-    jsx('div', { className: 'wm-setting-action', children:
+    jsx('div', { className: 'wm-setting-action', children: [
       jsx(ProductButton, { type: 'button', className: 'wm-button', disabled: !fxReady || !dirty || saving,
-        onClick: () => onSave(draft), children: saving ? t('fxSaving') : t('fxSave') }) })
+        onClick: () => onSave(draft), children: saving ? t('fxSaving') : t('fxSave') }),
+      dirty && !saving
+        ? jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $fxDraft.set(null),
+            children: t('fxReloadSaved') })
+        : null
+    ].filter(Boolean) })
   ].filter(Boolean) })
 }
 
@@ -6517,7 +6574,7 @@ function EconomicsGroupRow({ group, t }) {
  * Subscription economics, rendered from one report payload. Pure presentation:
  * the container owns the queries, so the harness can drive this with fixtures.
  */
-function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx, onSaveFx, onOpenFx }) {
+function EconomicsSection({ data, fxError, fxReady, identity, fxRates, fxRev, onRetryFx, onSaveFx, onOpenFx }) {
   const t = usePluginI18n(ID)
   const headline = data?.headline || {}
   const groups = data?.groups || []
@@ -6640,7 +6697,7 @@ function EconomicsSection({ data, fxError, fxReady, identity, fxRates, onRetryFx
     jsxs('details', { id: 'wm-cost-fx-details', className: 'wm-econ-disclosure', children: [
       jsx('summary', { children: t('econFxTitle') }),
       jsx('p', { className: 'wm-subtle', children: t('econFxHint') }),
-      jsx(EconomicsFx, { fxError, fxReady, identity, rates: fxRates || [], onRetry: onRetryFx, onSave: onSaveFx, t })
+      jsx(EconomicsFx, { fxError, fxReady, identity, rates: fxRates || [], fxRev, onRetry: onRetryFx, onSave: onSaveFx, t })
     ] })
   ].filter(Boolean) })
 }
@@ -6675,8 +6732,12 @@ function EconomicsPanel({ identity, unknownFees = null }) {
     if (!membershipIdentityCurrent(captured)) return
     $fxSaving.set({ origin: captured })
     $fxNotice.set(null)
+    // The draft's own pinned revision, never the latest fetched one: after
+    // someone else's save, a retry must 409 again until the user reloads.
+    const draft = $fxDraft.get()
+    const draftRev = draft?.origin === captured && 'rev' in draft ? draft.rev : null
     try {
-      await fxWrite(rates)
+      await fxWrite(rates, draftRev)
       await queryClient.invalidateQueries({ queryKey: [ID, 'budget-status', captured] })
       if (!membershipIdentityCurrent(captured) || $fxDraft.get()?.origin !== captured) return
       $fxDraft.set(null)
@@ -6685,6 +6746,9 @@ function EconomicsPanel({ identity, unknownFees = null }) {
     } catch (error) {
       if (membershipIdentityCurrent(captured)) {
         $fxNotice.set({ tone: 'warn', origin: captured, text: fxErrorMessage(t, error) })
+        // A conflict means someone else saved first: reload silently so a
+        // retry carries the fresh revision; the staged draft is untouched.
+        if (/409|conflict/i.test(String(error?.message || ''))) await fx.refetch?.()
       }
     } finally {
       // Release this save's flag even after a connection switch, so the new
@@ -6716,7 +6780,7 @@ function EconomicsPanel({ identity, unknownFees = null }) {
     jsx(CostsAttention, { groups: economics.data?.groups || [], econAccounts: economics.data?.accounts || [],
       unknownFees, fxError, onRetryFx: () => fx.refetch?.(), onOpenFx: openFx, onOpenLog: openLog, t }, 'attention'),
     jsx(EconomicsSection, { data: economics.data, identity,
-      fxRates: fxReady ? fx.data?.rates || [] : [], fxReady, fxError,
+      fxRates: fxReady ? fx.data?.rates || [] : [], fxRev: fxReady ? fx.data?.rev ?? null : null, fxReady, fxError,
       onRetryFx: () => fx.refetch?.(), onSaveFx: saveFx, onOpenFx: openFx }, 'economics')
   ]
 }
@@ -6843,6 +6907,7 @@ const ECONOMICS_CSS = [
 
 const $settingsConfirmation = atom(null)
 const $modelRefreshState = atom(null)
+const $ledgerEraseState = atom(null)
 const $membershipClock = atom(Date.now())
 
 function overviewAnalyticsQuery(identity = membershipIdentityNow()) {
@@ -6989,6 +7054,21 @@ function OverviewPage() {
   const unpricedTokens = Number(result.unpriced_tokens || 0)
   const unpricedCalls = Number(result.unpriced_calls || 0)
   const unpriced = unpricedTokens > 0 || unpricedCalls > 0
+  // Cause-aware pricing action (WP48/F109): the backend counts unpriced
+  // usage a custom rate could still price (fixable catalogue gaps whose
+  // routes have no custom rule yet). Saving the matching rate clears
+  // exactly that remainder, so the fix action can never nag after the
+  // fix; anything else keeps the honest Usage review. Older backends
+  // omit the counts and keep the previous review-only row.
+  const unpricedFixable = num(result.custom_fixable_tokens) > 0 || num(result.custom_fixable_calls) > 0
+  // The backend's own bound on this subtotal. A lower_bound/range/incomplete
+  // figure with fully priced rows still omits evidence, so it carries the
+  // Partial chip — the same qualifier Usage and the taskbar chip express with
+  // ≥/range/+ markers. The figure itself stays unprefixed per the accepted
+  // Overview hierarchy, and the pricing-coverage attention row stays scoped
+  // to genuinely unpriced calls.
+  const estimateBasis = result.economics?.api_equivalent_basis
+  const estimateBounded = estimateBasis != null && estimateBasis !== 'exact'
   const topModels = overviewTopModels(analytics.data?.by_model)
   const topModelMax = topModels[0]?.calls || 1
   // Accounts that could carry a recurring fee but have no known amount —
@@ -7071,7 +7151,7 @@ function OverviewPage() {
             : result.calls === 0 ? t('ovBackendEmpty') : t('ovBackendProv') }),
           jsxs('div', { className: 'wm-kpi-foot', children: [
             certaintyChip('estimated', t('ovCertEstimated'), 'est'),
-            unpriced ? certaintyChip('partial', t('ovCertPartial'), 'part') : null
+            unpriced || estimateBounded ? certaintyChip('partial', t('ovCertPartial'), 'part') : null
           ].filter(Boolean) })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'saved-fees', children: [
@@ -7130,10 +7210,11 @@ function OverviewPage() {
                 jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
                 jsxs('div', { className: 'wm-attn-main', children: [
                   jsx('strong', { children: t('ovPricingTitle') }),
-                  jsx('span', { children: t('ovUnpriced') })
+                  jsx('span', { children: unpricedFixable ? t('ovUnpricedFixable') : t('ovUnpriced') })
                 ] }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
-                  onClick: openUsagePricingCoverage, children: t('ovPricingAction') })
+                  onClick: unpricedFixable ? () => goLedgerTab('settings') : openUsagePricingCoverage,
+                  children: unpricedFixable ? t('econActionPricing') : t('ovPricingAction') })
               ] }, 'unpriced') : null
             ].filter(Boolean) })
           : null,
@@ -7246,6 +7327,8 @@ function SettingsPage() {
   const automaticModelOptions = useValue($automaticModelOptions)
   const liveConfirmation = confirmation?.origin === identity ? confirmation : null
   const liveRefresh = refreshState?.origin === identity ? refreshState : null
+  const eraseState = useValue($ledgerEraseState)
+  const liveErase = eraseState?.origin === identity ? eraseState : null
   const [clock] = [useValue($membershipClock)]
   const newsSettings = useQuery(newsSettingsQuery(identity))
   const liveNewsState = useValue($newsLiveState)
@@ -7323,6 +7406,44 @@ function SettingsPage() {
     }
   }
 
+  const eraseUsageLedger = async () => {
+    if (!liveConfirmation || liveConfirmation.stage !== 'erase-ledger' ||
+        !membershipIdentityCurrent(identity)) {
+      $settingsConfirmation.set({ origin: identity, stage: 'erase-ledger' })
+      $ledgerEraseState.set(null)
+      return
+    }
+    const captured = identity
+    try {
+      const result = await rest('/settings/erase-usage-ledger', {
+        method: 'POST', body: { confirm: 'ERASE_CAPTURED_USAGE' }
+      })
+      if (!membershipIdentityCurrent(captured)) return
+      // A destructive action must never fail silently: an ok:false result
+      // raises into the same notice path as a transport failure.
+      if (!result?.ok) throw new Error(result?.detail || result?.error || 'The ledger was not erased.')
+      $settingsConfirmation.set(null)
+      await queryClient.invalidateQueries({ queryKey: [ID, 'overview-analytics', captured] })
+      await queryClient.invalidateQueries({ queryKey: [ID, 'analytics'] })
+      await queryClient.invalidateQueries({ queryKey: [ID, 'session-summary'] })
+      await queryClient.invalidateQueries({ queryKey: [ID, 'billing-summary', captured] })
+      await queryClient.invalidateQueries({ queryKey: [ID, 'digest-report'] })
+      await queryClient.invalidateQueries({ queryKey: [ID, 'ledger'] })
+      await queryClient.invalidateQueries({ queryKey: [ID, 'budget-status', captured] })
+      await queryClient.invalidateQueries({ queryKey: [ID, 'model-news', captured] })
+      await queryClient.invalidateQueries({ queryKey: [ID, 'news-settings', captured] })
+      await invalidateEconomicsFor(captured)
+      await invalidateWeatherFor(captured)
+      $ledgerEraseState.set({ origin: captured, tone: 'good',
+        text: t('settingsNotifyLedgerErased', result.calls_deleted ?? 0) })
+    } catch (error) {
+      if (membershipIdentityCurrent(captured)) $ledgerEraseState.set({
+        origin: captured, tone: 'warn',
+        text: t('settingsNotifyLedgerEraseFailed', String(error.message || error))
+      })
+    }
+  }
+
   const resetUserData = async () => {
     if (!liveConfirmation || liveConfirmation.stage !== 'data-copied' ||
         !membershipIdentityCurrent(identity)) return
@@ -7331,7 +7452,8 @@ function SettingsPage() {
       const result = await rest('/settings/reset-user-data', {
         method: 'POST', body: { confirm: 'RESET_USER_ENTERED_DATA' }
       })
-      if (!membershipIdentityCurrent(captured) || !result?.ok) return
+      if (!membershipIdentityCurrent(captured)) return
+      if (!result?.ok) throw new Error(result?.detail || result?.error || 'User-entered data was not reset.')
       $settingsConfirmation.set(null)
       $membershipSnapshot.set({ identity: captured, accounts: [], store: { loaded: true, error: '' }, notes: [] })
       await queryClient.invalidateQueries({ queryKey: [ID, 'membership-accounts', captured] })
@@ -7455,10 +7577,14 @@ function SettingsPage() {
             jsx('details', { children: [
               jsx('summary', { children: t('settingsSourceRegister',
                 membershipBook.source === 'live' ? t('settingsCatalogueLive') : t('settingsCatalogueBundled')) }),
-              jsx('ul', { children: (membershipBook.sources || []).map(source => jsx('li', { children: [
-                source.id + ' · ' + source.evidence_kind + ' · ' + (source.retrieved_at || t('settingsSourceNoDate')) + ' · ',
-                jsx('a', { href: source.url, target: '_blank', rel: 'noreferrer', children: source.url })
-              ] }, source.id)) })
+              jsx('ul', { children: (membershipBook.sources || []).map(source => {
+                const href = safeHttpUrl(source.url)
+                return jsx('li', { children: [
+                  source.id + ' · ' + source.evidence_kind + ' · ' + (source.retrieved_at || t('settingsSourceNoDate')) + ' · ',
+                  href ? jsx('a', { href, target: '_blank', rel: 'noreferrer', children: source.url })
+                    : String(source.url || '')
+                ] }, source.id)
+              }) })
             ] })
           ] }) : planCatalogue.error ? jsx('p', { className: 'wm-warn-note', children: t('settingsCatalogueProvenanceUnavailable') }) : null
         ] }),
@@ -7542,7 +7668,18 @@ function SettingsPage() {
                 jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: t('settingsCancel') })
               ] })
             : jsx(ProductButton, { type: 'button', className: 'wm-button',
-                onClick: copyRecovery, children: t('settingsCopyBackup') })
+                onClick: copyRecovery, children: t('settingsCopyBackup') }),
+          jsx('p', { children: t('settingsRecoveryLedgerExplain') }),
+          liveConfirmation?.stage === 'erase-ledger'
+            ? jsx('div', { className: 'wm-confirm-box', children: [
+                jsx('p', { role: 'alert', children: t('settingsRecoveryLedgerConfirmText') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: eraseUsageLedger, children: t('settingsRecoveryLedgerConfirm') }),
+                jsx(ProductButton, { type: 'button', className: 'wm-button', onClick: () => $settingsConfirmation.set(null), children: t('settingsCancel') })
+              ] })
+            : jsx(ProductButton, { type: 'button', className: 'wm-button',
+                onClick: eraseUsageLedger, children: t('settingsEraseLedger') }),
+          liveErase?.text ? jsx('p', { className: liveErase.tone === 'warn' ? 'wm-warn-note' : 'wm-subtle',
+            role: 'status', children: liveErase.text }) : null
         ] }),
         jsxs('section', { id: 'settings-diagnostics', className: 'wm-product-section', children: [
           jsx('h2', { children: t('settingsDiagnosticsHeading') }),
@@ -8597,7 +8734,7 @@ function membershipErrorKind(error) {
   const status = Number((raw.match(/\b([45][0-9]{2})\b/) || [])[1] || 0)
   if (/seat_write_uncertain/i.test(raw)) return { kind: 'seat_write_uncertain', status }
   if (/entitlement_write_uncertain/i.test(raw)) return { kind: 'entitlement_write_uncertain', status }
-  if (/store_unreadable/i.test(raw)) return { kind: 'storage', status }
+  if (/store_unreadable|store_busy/i.test(raw)) return { kind: 'storage', status }
   if (status === 401 || /unauthori|sign in/i.test(raw)) return { kind: 'auth', status }
   if (/plugin not found|no such plugin/i.test(raw)) return { kind: 'namespace', status }
   if (status === 409 || /conflict/i.test(raw)) return { kind: 'conflict', status }
@@ -8726,7 +8863,9 @@ function quotaRows(account, now = Date.now(), t = needsAttentionEn, context = {}
         ? { reading: t('memQuotaNoHermesReading'), state: t('memQuotaNoHermesReadingShort') }
         : context.readState === 'unreported'
           ? { reading: t('memQuotaNotReported'), state: t('memQuotaNotReportedShort') }
-          : { reading: t('memQuotaNoReading'), state: t('memQuotaUnrecorded') }
+          : context.readState === 'unverified'
+            ? { reading: t('memQuotaUnverified'), state: t('memQuotaUnverifiedShort') }
+            : { reading: t('memQuotaNoReading'), state: t('memQuotaUnrecorded') }
   return windows.map(window => {
     // Whole-account marks persist a language-neutral label; the translated
     // scope name applies at display time from the synthetic row's own scope,
@@ -8806,6 +8945,12 @@ function allowanceReadState(account, context = {}) {
   if (provider === 'identity_mismatch') {
     return { state: 'failed', provider, probeState, reason: t('memReadIdentity') }
   }
+  // An anonymous reading for a named account is withheld, not misattributed.
+  // It keeps its own state (F119) so the UI can say why instead of showing a
+  // generic "not reported" that hides a reading Hermes did send.
+  if (provider === 'identity_unverified') {
+    return { state: 'unverified', provider, probeState }
+  }
   if (provider === 'unavailable') return { state: 'no_reading', provider, probeState }
   if (provider === 'live' || provider === 'stale') return { state: 'unreported', provider, probeState }
   // No probe metadata and no reading: say "not read" only when nothing was
@@ -8822,6 +8967,7 @@ function allowanceReadNoteKey(state) {
     : state === 'not_read' ? 'memReadingNoteNotRead'
     : state === 'unreported' ? 'memReadingNoteUnreported'
     : state === 'stale' ? 'memReadingNoteStale'
+    : state === 'unverified' ? 'memReadingNoteUnverified'
     : ''
 }
 
@@ -8860,9 +9006,10 @@ function membershipReadingStatus(rows, t = needsAttentionEn, context = null) {
     // Only a read Hermes could not do, or one that failed, changes the chip.
     // "Nothing asked for yet" and "asked, nothing reported" keep the existing
     // Unreported vocabulary; the group note says which it was.
-    if (read && ['unsupported', 'no_reading', 'failed'].includes(read.state)) {
+    if (read && ['unsupported', 'no_reading', 'failed', 'unverified'].includes(read.state)) {
       const key = read.state === 'failed' ? 'memAllowanceFailed'
-        : read.state === 'unsupported' ? 'memAllowanceNotAvailable' : 'memAllowanceNoHermesReading'
+        : read.state === 'unsupported' ? 'memAllowanceNotAvailable'
+        : read.state === 'unverified' ? 'memAllowanceUnverified' : 'memAllowanceNoHermesReading'
       return { state: read.state, reason: read.reason || '', label: t(key) }
     }
     return { state: 'unreported', label: t('memAllowanceUnreported') }
@@ -9736,7 +9883,7 @@ function MembershipCard({ account, accounts, plans, busy, onAction, draft, saveF
   const readingStatus = membershipReadingStatus(rows, t, { account, native: !!native })
   // The page explains the Hermes data limitation once. A card repeats only the
   // states the reader must act on, never the normal limitation again.
-  const readNoteKey = ['failed', 'stale'].includes(read.state) ? allowanceReadNoteKey(read.state) : ''
+  const readNoteKey = ['failed', 'stale', 'unverified'].includes(read.state) ? allowanceReadNoteKey(read.state) : ''
   // A provider reading is only trustworthy with its age beside it, and the age
   // keeps counting after the answer arrives.
   const readAge = ['reported', 'stale', 'partial'].includes(readingStatus.state)
@@ -10251,6 +10398,7 @@ function membershipReadFailures(accounts) {
   const missing = list.filter(account => {
     const state = String(account?.native_probe?.state || '')
     return state === 'unsupported' || state === 'unavailable'
+      || account?.quota?.provider_state === 'identity_unverified'
   })
   return { failed: failed.length, missing: missing.length, total: list.length }
 }
@@ -11727,6 +11875,16 @@ function newsSameTransition(a, b) {
 }
 
 /**
+ * Both sides name a source URL and they differ: distinct observations that
+ * must never merge, with or without other proof. A missing URL never
+ * conflicts — live local items carry none while central items do.
+ */
+function newsUrlsConflict(a, b) {
+  const urlA = String(a?.source_url || ''), urlB = String(b?.source_url || '')
+  return urlA !== '' && urlB !== '' && urlA !== urlB
+}
+
+/**
  * Explicit same-event proof between two items with identical transitions:
  * a shared non-empty event/provenance link field; or an exactly equal
  * non-empty effective_at plus an equal non-empty source_url; or an exactly
@@ -11745,9 +11903,8 @@ function newsSameEventProof(a, b) {
   const urlA = String(a.source_url || ''), urlB = String(b.source_url || '')
   if (effectiveA && effectiveA === effectiveB && urlA && urlA === urlB) return true
   const observedA = String(a.observed_at || '')
-  const urlsConflict = urlA !== '' && urlB !== '' && urlA !== urlB
   return !!observedA && observedA === String(b.observed_at || '') &&
-    effectiveA === effectiveB && !urlsConflict
+    effectiveA === effectiveB && !newsUrlsConflict(a, b)
 }
 
 /**
@@ -11764,11 +11921,18 @@ function newsEvidenceRecords(event) {
 
 /**
  * Cross-origin dedupe beyond exact ids: a local item and a central item with
- * DIFFERENT ids merge into one event only when both hold an identical
- * transition (newsTransitionKey) and an explicit same-event proof
- * (newsSameEventProof). Pairing is 1:1 local↔central, never within one
- * origin, never by nearby time; without proof the items stay distinct events.
- * A merged event keeps both items as evidence sources (merged_sources) and is
+ * DIFFERENT ids merge into one event when both hold an identical transition
+ * (newsSameTransition) and either an explicit same-event proof
+ * (newsSameEventProof) or a transition seen exactly once on each side.
+ * Neither origin emits link fields or effective_at in practice and each
+ * observes the shared upstream on its own schedule, so proof alone left
+ * every cross-origin pair unmerged (131 duplicate pairs on one live store).
+ * The 1:1-unique fallback resolves that proven duplication; any transition
+ * either side repeats — a possible A→B→A→B recurrence — still needs proof
+ * and otherwise stays separate, and conflicting source URLs veto the
+ * fallback (explicit proof keeps its own semantics). Pairing is 1:1
+ * local↔central, never within one origin, never by nearby time. A merged
+ * event keeps both items as evidence sources (merged_sources) and is
  * observed at the newest of the two observations. Originals stay untouched.
  */
 function newsMergeEvents(events) {
@@ -11777,11 +11941,24 @@ function newsMergeEvents(events) {
   const centrals = list.filter(item => String(item.origin || 'local') === 'central')
   const taken = new Set()
   const out = []
+  const localBases = new Map()
+  const centralBases = new Map()
+  for (const item of locals) {
+    const base = newsTransitionBase(item)
+    if (base) localBases.set(base, (localBases.get(base) || 0) + 1)
+  }
+  for (const item of centrals) {
+    const base = newsTransitionBase(item)
+    if (base) centralBases.set(base, (centralBases.get(base) || 0) + 1)
+  }
+  const uniquePair = key => !!key && localBases.get(key) === 1 && centralBases.get(key) === 1
   for (const event of locals) {
     const key = newsTransitionBase(event)
     const partner = key
       ? centrals.find(central => !taken.has(central) &&
-          newsSameTransition(event, central) && newsSameEventProof(event, central))
+          newsSameTransition(event, central) &&
+          (newsSameEventProof(event, central) ||
+            (uniquePair(key) && !newsUrlsConflict(event, central))))
       : null
     if (partner) {
       taken.add(partner)
@@ -12973,7 +13150,10 @@ function newsHeadlineText(entry, t) {
     ? entry.headline_params : {}
   const code = String(entry?.headline_code || '')
   const provider = String(params.provider || entry?.provider || '')
-  const model = String(params.model || entry?.model || '')
+  // Visible story bodies use the friendly verified model name (F54); the
+  // exact stored id stays in Details records, search and archive targeting.
+  const rawModel = String(params.model || entry?.model || '')
+  const model = modelDisplayName(rawModel) || rawModel
   switch (code) {
     case 'news_head_single_rate': {
       // A published headline is display data: an empty or malformed percentage
@@ -13128,10 +13308,9 @@ function NewsStoryEntryEvidence({ entry, t }) {
           t('newsObserved', entry?.observed_at || '—'),
           entry?.effective_at ? ` · ${t('newsEffective', entry.effective_at)}` : '',
         ] }),
-        entry?.source_url
-          ? jsx('p', { className: 'wm-news-meta', children: jsx('a', { href: entry.source_url,
-              target: '_blank', rel: 'noreferrer', className: 'wm-source-link',
-              children: t('newsSource') }) })
+        safeHttpUrl(entry?.source_url)
+          ? jsx('p', { className: 'wm-news-meta',
+              children: jsx(NewsSourceLink, { url: entry.source_url, t }) })
           : null,
       ] }, 'entry') }),
   ] })
@@ -13276,9 +13455,8 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
               jsx(NewsTierBlocks, { event: item, t }),
               jsxs('p', { className: 'wm-news-meta', children: [
                 `${item?.provenance || ''} · ${item?.confidence || ''}`,
-                item?.source_url
-                  ? jsxs('span', { children: [' · ', jsx('a', { href: item.source_url, target: '_blank',
-                      rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
+                safeHttpUrl(item?.source_url)
+                  ? jsxs('span', { children: [' · ', jsx(NewsSourceLink, { url: item.source_url, t })] })
                   : null,
               ] }),
               jsxs('p', { className: 'wm-news-dates', children: [
@@ -13307,10 +13485,9 @@ function NewsStory({ entry, t, itemsById, connectionKey = '', lead = false }) {
                   : null,
                 jsx('p', { className: 'wm-news-dates', children:
                   t('newsObserved', variant?.observed_at || '—') }),
-                variant?.source_url
-                  ? jsx('p', { className: 'wm-news-meta', children: jsx('a', {
-                      href: variant.source_url, target: '_blank', rel: 'noreferrer',
-                      className: 'wm-source-link', children: t('newsSource') }) })
+                safeHttpUrl(variant?.source_url)
+                  ? jsx('p', { className: 'wm-news-meta',
+                      children: jsx(NewsSourceLink, { url: variant.source_url, t }) })
                   : null,
               ] }, `uv-${index}`)) }),
           ] })
@@ -13782,10 +13959,7 @@ function NewsEvidenceRow({ source, t }) {
     jsx('span', { children: t('newsObserved', source?.observed_at || '—') }),
     source?.effective_at ? jsx('span', { children: t('newsEffective', source.effective_at) }) : null,
     source?.provenance ? jsx('span', { children: source.provenance }) : null,
-    source?.source_url
-      ? jsx('a', { href: source.source_url, target: '_blank', rel: 'noreferrer',
-          className: 'wm-source-link', children: t('newsSource') })
-      : null,
+    jsx(NewsSourceLink, { url: source?.source_url, t }),
     jsx(NewsRateTable, { previous: source?.previous, current: source?.current, t, exact: true }),
     jsx(NewsTierBlocks, { event: source, t }),
   ] })
@@ -13885,9 +14059,8 @@ function NewsCard({ item, impact, t, flat = false }) {
       : null,
     jsxs('p', { className: 'wm-news-meta', children: [
       `${item.provenance || ''} · ${item.confidence || ''}`,
-      item.source_url
-        ? jsxs('span', { children: [' · ', jsx('a', { href: item.source_url, target: '_blank',
-            rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
+      safeHttpUrl(item.source_url)
+        ? jsxs('span', { children: [' · ', jsx(NewsSourceLink, { url: item.source_url, t })] })
         : null,
     ] }),
     // Compact exact-evidence disclosure: the card's own original record —
@@ -14049,9 +14222,8 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
         jsx('p', { className: 'wm-news-dates', children: dates.join(' · ') }),
         jsxs('p', { className: 'wm-news-meta', children: [
           `${latest?.provenance || ''} · ${latest?.confidence || ''}`,
-          latest?.source_url
-            ? jsxs('span', { children: [' · ', jsx('a', { href: latest.source_url, target: '_blank',
-                rel: 'noreferrer', className: 'wm-source-link', children: t('newsSource') })] })
+          safeHttpUrl(latest?.source_url)
+            ? jsxs('span', { children: [' · ', jsx(NewsSourceLink, { url: latest.source_url, t })] })
             : null,
         ] }),
         // Tier rows are listed one by one when they are known; never averaged.
@@ -14108,10 +14280,7 @@ function NewsOfferRow({ offer, matched, impacts, t, panelId, open }) {
             jsx('span', { className: 'wm-news-historycode', children: event?.id || '' }),
             jsx('span', { children: t('newsObserved', fmtDay(event?.observed_at)) }),
             jsx('span', { children: newsSummaryText(event, t) }),
-            event?.source_url
-              ? jsx('a', { href: event.source_url, target: '_blank', rel: 'noreferrer',
-                  className: 'wm-source-link', children: t('newsSource') })
-              : null,
+            jsx(NewsSourceLink, { url: event?.source_url, t }),
             // The full audit trail of one historical event: the exact
             // was/now rates, the raw tier rows and every original source
             // record with its exact id, dates, provenance and URL — nested
@@ -15170,6 +15339,7 @@ const I18N = {
     memAllowanceNotAvailable: 'Not available from Hermes',
     memAllowanceFailed: 'Read failed',
     memAllowanceNoHermesReading: 'No reading from Hermes',
+    memAllowanceUnverified: 'Unverified reading',
     memGroupPlan: 'Plan & billing',
     memSeats: 'Seats',
     memSaveSeats: 'Save seats',
@@ -15214,6 +15384,7 @@ const I18N = {
     memReadingNoteFailed: 'The provider reading could not be fetched. Saved plans, fees and marks are unchanged.',
     memReadingNoteNoReading: 'Hermes returned no allowance reading for this route: no credential, no usage endpoint, or the read failed. That is a data limitation, not zero usage; your own marks still apply. Try Refresh provider usage.',
     memReadingNoteUnreported: 'Hermes read this account and reported no allowance windows.',
+    memReadingNoteUnverified: 'Hermes did not say which account this reading came from, so it is withheld rather than shown as this account\u2019s.',
     memReadingNoteStale: 'The provider reading is older than the freshness window, so it is not shown as current.',
     memReadAgeNow: 'Provider reading from just now.',
     memReadAgeMins: n => `Provider reading from ${n} min ago.`,
@@ -15329,6 +15500,8 @@ const I18N = {
     memQuotaNotAvailableShort: 'not available',
     memQuotaNotReported: 'Not reported by the provider',
     memQuotaNotReportedShort: 'not reported',
+    memQuotaUnverified: 'Withheld: unverified account',
+    memQuotaUnverifiedShort: 'unverified',
     memQuotaReadFailed: 'Read failed',
     memQuotaReadFailedShort: 'read failed',
     memQuotaNoHermesReading: 'No reading from Hermes',
@@ -15446,6 +15619,7 @@ const I18N = {
     ovNothingToDo: 'Nothing needs confirming right now.',
     ovPricingTitle: 'Usage pricing',
     ovUnpriced: 'Pricing evidence is incomplete for some backend usage in the last 30 days.',
+    ovUnpricedFixable: 'Some backend usage has no catalogue price; a custom token rate you set can price it.',
     ovWeatherStale: 'Refresh failed — weather warnings may be stale.',
     ovStrip: n => `${n} need attention`,
     ovStripReview: 'Review',
@@ -15813,6 +15987,7 @@ const I18N = {
     fxAdd: 'Add rate',
     fxSave: 'Save rates',
     fxSaving: 'Saving…',
+    fxReloadSaved: 'Reload saved rates',
     fxStaged: c => `A rate for ${c} is already staged.`,
     fxSaved: 'Rates saved.',
     fxReadError: 'Saved FX rates could not be read for this connection.',
@@ -16013,6 +16188,9 @@ const I18N = {
     costsApiShort: 'Current rates · not provider charges',
     costsApiPartialShort: 'Priced subtotal · some usage is unpriced; not provider charges.',
     costsApiCoverageUnknownShort: 'Pricing coverage for this value is unknown; the amount may be partial.',
+    costsApiBoundShort: 'Bounded subtotal · cache or rate evidence is incomplete; not provider charges.',
+    costsApiBoundExplain: 'The backend reports this subtotal as a bound rather than an exact value because cache-counter or rate evidence is incomplete. It is not a charge.',
+    costsEvidenceWindow: days => `Evidence window: ${days} days of timestamped backend calls.`,
     costsApiNoPricedSubtotal: 'No priced subtotal; unpriced usage is not zero.',
     costsApiPartialExplain: 'Only rows with published API rates or configured custom rates contribute to this subtotal; unpriced rows are excluded. It is not a charge.',
     costsApiCoverageUnknownExplain: 'Coverage counts for the rows behind this value are unavailable, so completeness cannot be confirmed.',
@@ -16260,6 +16438,12 @@ const I18N = {
     settingsRecoveryBackupText: 'A backup was copied to your clipboard. Save it somewhere secure before clearing profile membership, seat history, route entitlement relationships, budget and advanced-rule data.',
     settingsRecoveryDataConfirm: 'Confirm and clear user-entered data',
     settingsCopyBackup: 'Copy recovery backup before reset',
+    settingsRecoveryLedgerExplain: 'Erase the captured backend usage ledger and its reconciliation baseline. Memberships, plans, fees, billing rules, budgets, FX rates, news and display preferences stay. This cannot be undone.',
+    settingsRecoveryLedgerConfirmText: 'This permanently deletes every captured backend usage call and the reconciliation baseline. Back up first if you may need the history.',
+    settingsRecoveryLedgerConfirm: 'Erase captured backend usage',
+    settingsEraseLedger: 'Erase captured backend usage',
+    settingsNotifyLedgerErased: count => `Captured backend usage erased (${count} calls).`,
+    settingsNotifyLedgerEraseFailed: error => `Could not erase captured backend usage: ${error}`,
     settingsAboutVersion: v => `SpendSense ${v}`,
     settingsAboutCredit: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.',
     settingsAboutContact: 'Contact WolfMark support',
@@ -16961,6 +17145,7 @@ const I18N = {
     memAllowanceNotAvailable: 'Hermes 无法提供',
     memAllowanceFailed: '读取失败',
     memAllowanceNoHermesReading: 'Hermes 未提供读数',
+    memAllowanceUnverified: '未验证的读数',
     memGroupPlan: '方案与账单',
     memSeats: '席位数',
     memSaveSeats: '保存席位数',
@@ -17005,6 +17190,7 @@ const I18N = {
     memReadingNoteFailed: '无法获取提供方读数。已保存的方案、费用与标记均未改变。',
     memReadingNoteNoReading: 'Hermes 未返回此线路的额度读数：无凭据、无用量端点或读取失败。这是数据限制，并非零用量；您自己的标记仍然有效。可尝试“刷新提供方用量”。',
     memReadingNoteUnreported: 'Hermes 已读取此账户，但没有上报额度窗口。',
+    memReadingNoteUnverified: 'Hermes 未说明此读数来自哪个账户，因此暂不显示为该账户的读数。',
     memReadingNoteStale: '提供方读数已超过新鲜度时限，因此不按当前读数显示。',
     memReadAgeNow: '提供方读数来自刚刚。',
     memReadAgeMins: n => `提供方读数来自 ${n} 分钟前。`,
@@ -17120,6 +17306,8 @@ const I18N = {
     memQuotaNotAvailableShort: '不可用',
     memQuotaNotReported: '提供方未上报',
     memQuotaNotReportedShort: '未上报',
+    memQuotaUnverified: '已暂扣：账户未验证',
+    memQuotaUnverifiedShort: '未验证',
     memQuotaReadFailed: '读取失败',
     memQuotaReadFailedShort: '读取失败',
     memQuotaNoHermesReading: 'Hermes 未提供读数',
@@ -17237,6 +17425,7 @@ const I18N = {
     ovNothingToDo: '目前没有需要确认的事项。',
     ovPricingTitle: '用量定价',
     ovUnpriced: '过去 30 天的部分后端用量缺少完整定价证据。',
+    ovUnpricedFixable: '部分后端用量缺少目录价格；您设置的自定义令牌单价可以为其定价。',
     ovWeatherStale: '刷新失败——额度预警可能已过期。',
     ovStrip: n => `有 ${n} 项需要注意`,
     ovStripReview: '查看',
@@ -17600,6 +17789,7 @@ const I18N = {
     fxAdd: '添加费率',
     fxSave: '保存费率',
     fxSaving: '保存中…',
+    fxReloadSaved: '重新加载已保存的费率',
     fxStaged: c => `已暂存 ${c} 的费率。`,
     fxSaved: '费率已保存。',
     fxReadError: '无法读取此连接已保存的外汇汇率。',
@@ -17800,6 +17990,9 @@ const I18N = {
     costsApiShort: '当前费率 · 非供应商费用',
     costsApiPartialShort: '已定价小计 · 部分用量未定价；并非供应商收费。',
     costsApiCoverageUnknownShort: '此值的定价覆盖情况未知；金额可能仅为部分小计。',
+    costsApiBoundShort: '受限小计 · 缓存或费率证据不完整；并非供应商收费。',
+    costsApiBoundExplain: '由于缓存计数或费率证据不完整，后端将此小计报告为界限值而非精确值。它不是实际收费。',
+    costsEvidenceWindow: days => `证据窗口：${days} 天的带时间戳后端调用。`,
     costsApiNoPricedSubtotal: '没有可显示的已定价小计；未定价用量不代表零。',
     costsApiPartialExplain: '此小计仅包含使用公开 API 费率或已配置自定义费率的记录；未定价记录已排除。它不是实际收费。',
     costsApiCoverageUnknownExplain: '此金额所依据记录的覆盖计数不可用，因此无法确认是否完整。',
@@ -18047,6 +18240,12 @@ const I18N = {
     settingsRecoveryBackupText: '备份已复制到剪贴板。在清除配置文件会员、席位历史、线路权益关系、预算与高级规则数据前，请将其保存到安全位置。',
     settingsRecoveryDataConfirm: '确认并清除用户输入的数据',
     settingsCopyBackup: '重置前复制恢复备份',
+    settingsRecoveryLedgerExplain: '清除已采集的后端用量账本及其对账基线。成员资格、方案、费用、计费规则、预算、汇率、新闻和显示偏好不受影响。此操作无法撤销。',
+    settingsRecoveryLedgerConfirmText: '这将永久删除所有已采集的后端用量调用和对账基线。如可能需要历史记录，请先备份。',
+    settingsRecoveryLedgerConfirm: '清除已采集的后端用量',
+    settingsEraseLedger: '清除已采集的后端用量',
+    settingsNotifyLedgerErased: count => `已清除已采集的后端用量（${count} 次调用）。`,
+    settingsNotifyLedgerEraseFailed: error => `无法清除已采集的后端用量：${error}`,
     settingsAboutVersion: v => `SpendSense ${v}`,
     settingsAboutCredit: '© 2026 WolfMark Ltd. Includes software by AFei (IT-dreamer/token-cost-meter), under Apache License 2.0. See the bundled NOTICE and licences.',
     settingsAboutContact: '联系 WolfMark 支持',
@@ -18519,7 +18718,7 @@ export const __test = {
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
   membershipEntitlementSummary,
   billingNumberStep, $billingDraft, $billingNotice,
-  economicsQuery, fxQuery, fxWrite, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
+  economicsQuery, fxQuery, fxWrite, stageFxDraft, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
   econWindowLines, windowSpanLabel, invalidateEconomicsFor,
   weatherQuery, invalidateWeatherFor, invalidateBillingDependentsFor,
   wxVerdictLabel, wxLimitLabel, wxCycleSummary, wxWindowRow, wxRuleRow,
@@ -18551,7 +18750,8 @@ export const __test = {
   NewsStory, NewsHeadlineSection, NewsBriefing, NEWS_HEADLINE_KEYS,
   NEWS_FOR_YOU_INITIAL, NEWS_EVENT_LINK_FIELDS, NEWS_RATE_CLASS_BY_CODE,
   newsUsedRecently, newsLastUsedMs, newsItemReasonCodes, newsGroupReasonCodes,
-  newsMergeEvents, newsSameEventProof, newsTransitionKey, newsTransitionBase, newsSameTransition,
+  newsMergeEvents, newsSameEventProof, newsTransitionKey, newsTransitionBase, newsSameTransition, newsUrlsConflict,
+  safeHttpUrl, NewsSourceLink,
   newsEvidenceRecords, NewsEvidenceRow, NewsTierBlocks,
   analyticsNoteText, analyticsNotesText, ANALYTICS_NOTE_KEYS, analyticsGapReasonLabel, OV_GAP_REASON_KEYS,
   econNoteText, econNotesText, econSingularNoteText, econExplanationText, ECON_NOTE_KEYS, ECON_EXPLANATION_KEYS,
@@ -18564,7 +18764,7 @@ export const __test = {
   $fxDraft, $fxSaving, $fxNotice,
   AdvancedBillingRules, profileDraft, billingQuery, billingSummaryQuery, pricingStatusQuery, membershipPlansQuery,
   CostsPage, CostsEvidenceSummary, OverviewPage, SettingsPage, AboutPage, goAboutFaq, CopyableDiagnostic, LedgerPage, LedgerTabs, LEDGER_TABS, goLedgerTab, $ledgerTab, ledgerTabForHash, jumpToSettingsSection, $billingPresentation, BrandMark, PRODUCT_CSS,
-  $settingsConfirmation, $modelRefreshState,
+  $settingsConfirmation, $modelRefreshState, $ledgerEraseState,
   SHARED_CSS, ProductShell, ProductCard, StatusChip, ProductButton, ProductHeader, AsyncButton, feeBasisMix, certaintyChip,
   settledDesktopMonth, analyticsListDisplay, desktopTodayText, desktopTodayAmount, desktopTodayTooltip, overviewTopModels, OverviewEconomics, customPlanDraftFor, customPlanDraftErrors, customPlanPayload, fmtCountdown,
   analyticsInitialState, analyticsReduce, analyticsQuery, analyticsScope, analyticsDispatch, openUsagePricingCoverage, $analytics, $analyticsFocus,
