@@ -634,30 +634,52 @@ def _row_key(entry: Mapping[str, Any]) -> str:
     # desktop builder exactly.
     params = {key: value for key, value in params.items()
               if key not in ("observed_at", "effective_at", "also_moved",
-                             "raised_pct", "cut_pct", "raised_values", "cut_values")}
+                             "raised_pct", "cut_pct", "raised_values", "cut_values",
+                             "confidence")}
     return json.dumps([entry.get("event_type") or "", entry.get("provider") or "",
                        entry.get("model") or "", entry.get("headline_code") or "",
                        entry.get("headline") or "", params],
                       sort_keys=True, default=str)
 
 
+def _urls_conflict(first: Mapping[str, Any], second: Mapping[str, Any]) -> bool:
+    """Two non-empty source URLs that differ are distinct observations."""
+    url_a = str(first.get("source_url") or "")
+    url_b = str(second.get("source_url") or "")
+    return bool(url_a) and bool(url_b) and url_a != url_b
+
+
 def _collapse(members: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Collapse same-row members, representative first; every id survives."""
-    runs: dict[str, list[dict[str, Any]]] = {}
+    """Collapse same-row members, representative first; every id survives.
+
+    Members whose non-empty source URLs conflict stay separate, mirroring
+    the desktop merge layer: distinct observations must never collapse
+    away each other's evidence links. A missing URL never conflicts.
+    """
+    runs: dict[str, list[list[dict[str, Any]]]] = {}
     for member in members:
-        runs.setdefault(_row_key(member), []).append(member)
+        buckets = runs.setdefault(_row_key(member), [])
+        open_run = next(
+            (run for run in buckets
+             if all(not _urls_conflict(other, member) for other in run)),
+            None)
+        if open_run is None:
+            buckets.append([member])
+        else:
+            open_run.append(member)
     collapsed = []
-    for run in runs.values():
-        first = run[0]
-        if len(run) < 2:
-            collapsed.append(_variant(first))
-            continue
-        collapsed.append({
-            **_variant(first),
-            "event_ids": [event_id for row in run for event_id in row["event_ids"]],
-            "observed_at": _newest_observed(run) or first["observed_at"],
-            "observed_count": len(run),
-        })
+    for buckets in runs.values():
+        for run in buckets:
+            first = run[0]
+            if len(run) < 2:
+                collapsed.append(_variant(first))
+                continue
+            collapsed.append({
+                **_variant(first),
+                "event_ids": [event_id for row in run for event_id in row["event_ids"]],
+                "observed_at": _newest_observed(run) or first["observed_at"],
+                "observed_count": len(run),
+            })
     return collapsed
 
 

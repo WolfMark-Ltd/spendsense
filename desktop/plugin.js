@@ -12726,26 +12726,35 @@ function newsEditorialRowKey(entry) {
   const ordered = {}
   // newsHeadlineText never renders these params in a row; keying on them
   // would keep byte-identical rows (re-observations, recurrences, mixed
-  // moves whose percentages differ) separate. Every other param feeds
-  // the text, including first_seen, so distinct rows never collapse.
+  // moves whose percentages differ, launches whose confidence differs)
+  // separate. Every other param feeds the text, including first_seen, so
+  // distinct rows never collapse.
   for (const key of Object.keys(params).sort()) {
     if (['observed_at', 'effective_at', 'also_moved', 'raised_pct', 'cut_pct',
-      'raised_values', 'cut_values'].includes(key)) continue
+      'raised_values', 'cut_values', 'confidence'].includes(key)) continue
     ordered[key] = params[key]
   }
   return JSON.stringify([entry?.event_type || '', entry?.provider || '', entry?.model || '',
     entry?.headline_code || '', entry?.headline || '', ordered])
 }
 
-/** Collapse same-row members, representative first; every id survives. */
+/**
+ * Collapse same-row members, representative first; every id survives.
+ * Members whose non-empty source URLs conflict stay separate (the merge
+ * layer's own rule): distinct observations must never collapse away each
+ * other's evidence links. A missing URL never conflicts.
+ */
 function newsEditorialCollapse(sorted) {
   const runs = new Map()
   for (const member of sorted) {
     const key = newsEditorialRowKey(member)
     if (!runs.has(key)) runs.set(key, [])
-    runs.get(key).push(member)
+    const buckets = runs.get(key)
+    const open = buckets.find(run => run.every(other => !newsUrlsConflict(other, member)))
+    if (open) open.push(member)
+    else buckets.push([member])
   }
-  return [...runs.values()].map(members => {
+  return [...runs.values()].flatMap(buckets => buckets).map(members => {
     const [first] = members
     if (members.length < 2) return newsEditorialVariant(first)
     return {

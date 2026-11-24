@@ -306,6 +306,38 @@ test('a collapsed variant row names its observed count in both languages', () =>
   }
 })
 
+test('members with conflicting source URLs never collapse away evidence', () => {
+  // Same displayed row, but two non-empty source URLs that differ are
+  // distinct observations (the merge layer's own rule): each keeps its
+  // own row and evidence link. A missing URL never conflicts.
+  const same = (id, source_url) => S.newsEditorialEntry(item({ id, provider: 'acme',
+    model: 'acme-1', source_url,
+    previous: { input: 10 }, current: { input: 5 } }))
+  const clashing = S.newsEditorialGroup([
+    same('md-u1', 'https://example.com/a'), same('md-u2', 'https://example.com/b')])
+  assert.equal(clashing[0].variants.length, 2, 'conflicting URLs stay separate')
+  assert.ok(clashing[0].variants.every(variant => variant.observed_count === undefined))
+  const missing = S.newsEditorialGroup([
+    same('md-u3', 'https://example.com/a'), same('md-u4', '')])
+  assert.equal(missing[0].variants.length, 1, 'a missing URL collapses')
+  assert.equal(missing[0].variants[0].observed_count, 2)
+})
+
+test('the collapse key mirrors exactly what the row renders', () => {
+  const keyOf = overrides => S.newsEditorialRowKey(S.newsEditorialEntry(item({
+    id: 'md-k', provider: 'acme', model: 'acme-1',
+    previous: { input: 10 }, current: { input: 5 }, ...overrides })))
+  assert.equal(keyOf({ observed_at: '2026-11-01T00:00:00Z' }),
+    keyOf({ observed_at: '2026-11-02T00:00:00Z' }), 'stamps never split rows')
+  const launched = confidence => S.newsEditorialRowKey(S.newsEditorialEntry(item({
+    id: 'md-L', category: 'new_model', provider: 'acme', model: 'acme-9',
+    confidence, first_seen_at: '2026-11-03T00:00:00Z' })))
+  assert.equal(launched('verified'), launched('curated'),
+    'launch confidence is unrendered, so it never splits rows')
+  assert.notEqual(keyOf({}), keyOf({ previous: { input: 10 }, current: { input: 6 } }),
+    'a different move keeps its own row')
+})
+
 test('mixed rows collapse when only unrendered percentages differ', () => {
   // The mixed row names raised/cut rates, never their percentages: two
   // members with the same rate lists but different pcts render identically.

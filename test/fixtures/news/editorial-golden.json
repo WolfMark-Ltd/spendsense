@@ -110,7 +110,29 @@
               "provenance": "SpendSense announcements",
               "confidence": "curated",
               "event_ids": [
-                "central-2026-11-10-google-gemini-3-flash-cut-0843",
+                "central-2026-11-10-google-gemini-3-flash-cut-0843"
+              ]
+            },
+            {
+              "event_type": "price_reduction",
+              "headline_code": "news_head_all_rates",
+              "headline_params": {
+                "provider": "google",
+                "model": "gemini-3-flash",
+                "pct": -40.0,
+                "rates": [
+                  "news_rate_input",
+                  "news_rate_output",
+                  "news_rate_cache_read"
+                ]
+              },
+              "provider": "google",
+              "model": "gemini-3-flash",
+              "observed_at": "2026-11-10T07:59:50Z",
+              "source_url": "https://announcements.spend-sense.example/feed/gemini-3-flash-cut-a",
+              "provenance": "Hermes models.dev cache",
+              "confidence": "observed",
+              "event_ids": [
                 "local-price-reduction-google-gemini-3-flash--r-----cache-read---0-05--65896e02e5"
               ]
             }
@@ -432,12 +454,33 @@
               },
               "provider": "mistral",
               "model": "mistral-large-3",
-              "observed_at": "2026-11-06T12:00:30Z",
+              "observed_at": "2026-11-06T12:00:00Z",
               "source_url": "https://announcements.spend-sense.example/feed/mistral-large-3-pricing-update",
               "provenance": "SpendSense announcements",
               "confidence": "curated",
               "event_ids": [
-                "central-2026-11-06-mistral-large-3-pricing-update",
+                "central-2026-11-06-mistral-large-3-pricing-update"
+              ]
+            },
+            {
+              "event_type": "price_increase",
+              "headline_code": "news_head_all_rates",
+              "headline_params": {
+                "provider": "mistral",
+                "model": "mistral-large-3",
+                "pct": 20.0,
+                "rates": [
+                  "news_rate_input",
+                  "news_rate_output"
+                ]
+              },
+              "provider": "mistral",
+              "model": "mistral-large-3",
+              "observed_at": "2026-11-06T12:00:30Z",
+              "source_url": "https://announcements.spend-sense.example/feed/mistral-large-3-pricing-update-2",
+              "provenance": "SpendSense announcements",
+              "confidence": "curated",
+              "event_ids": [
                 "central-2026-11-06-mistral-large-3-pricing-update-2"
               ]
             }

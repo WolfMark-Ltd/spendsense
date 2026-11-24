@@ -484,6 +484,41 @@ class BriefingTests(unittest.TestCase):
         lone = next(v for v in group["variants"] if "observed_count" not in v)
         self.assertEqual(lone["event_ids"], ["md-other"])
 
+    def test_conflicting_source_urls_stay_separate(self):
+        # Same displayed row, but two non-empty source URLs that differ are
+        # distinct observations: each keeps its own row and evidence link.
+        # A missing URL never conflicts.
+        def same(item_id, source_url):
+            return price_item(
+                "acme", "acme-1", {"input": 10.0}, {"input": 5.0},
+                item_id=item_id, source_url=source_url)
+        clashing = self.section(self.build([
+            same("md-u1", "https://example.com/a"),
+            same("md-u2", "https://example.com/b"),
+        ]), "biggest_reductions")["entries"][0]
+        self.assertEqual(len(clashing["variants"]), 2)
+        self.assertTrue(all("observed_count" not in v for v in clashing["variants"]))
+        missing = self.section(self.build([
+            same("md-u3", "https://example.com/a"),
+            same("md-u4", ""),
+        ]), "biggest_reductions")["entries"][0]
+        (collapsed,) = missing["variants"]
+        self.assertEqual(collapsed["observed_count"], 2)
+
+    def test_collapse_key_ignores_unrendered_params(self):
+        base = dict(provider="acme", model="acme-1", event_type="price_reduction",
+                    headline_code="news_head_single_rate", headline="row",
+                    headline_params={"provider": "acme", "pct": -50.0,
+                                     "direction": "down"})
+        stamp = dict(base, headline_params={**base["headline_params"],
+                                            "observed_at": "2026-11-02"})
+        self.assertEqual(nb._row_key(base), nb._row_key(stamp))
+        confident = dict(base, headline_params={**base["headline_params"],
+                                                "confidence": "verified"})
+        self.assertEqual(nb._row_key(base), nb._row_key(confident))
+        moved = dict(base, headline_params={**base["headline_params"], "pct": -40.0})
+        self.assertNotEqual(nb._row_key(base), nb._row_key(moved))
+
     def test_mixed_rows_collapse_when_only_percentages_differ(self):
         # The mixed row names raised/cut rates, never their percentages.
         def mixed(item_id, observed, after):
