@@ -710,6 +710,32 @@ def billing_profiles() -> dict[str, Any]:
             "error": data.get("error") or "", "loaded": bool(data.get("loaded"))}
 
 
+@router.post("/settings/erase-usage-ledger")
+def erase_usage_ledger(body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Erase the captured usage ledger and its baseline after exact confirmation.
+
+    Removes usage.db plus WAL/SHM/journal sidecars; the next recorded call
+    recreates a fresh store and recaptures the baseline. Memberships, plans,
+    billing rules, budgets, FX rates, news and display preferences are
+    untouched — this erases captured usage only.
+    """
+    if (body or {}).get("confirm") != store.ERASE_CONFIRMATION:
+        raise HTTPException(status_code=400, detail="explicit confirmation is required")
+    try:
+        result = store.erase_ledger()
+    except store.EraseBusy as exc:
+        raise HTTPException(status_code=503, detail=f"erase_busy: {exc}") from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="erase_uncertain: reload and verify usage data before retrying",
+        ) from exc
+    return {"ok": True, **result,
+            "retained": ["memberships", "plans and fees", "billing rules", "budgets",
+                         "FX rates", "news", "display preferences", "Hermes profile data",
+                         "provider credentials", "catalogue"]}
+
+
 @router.post("/settings/reset-user-data")
 def reset_user_data(body: dict[str, Any]) -> dict[str, Any]:
     """Clear plugin-entered settings only after explicit recovery confirmation."""
