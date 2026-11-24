@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.25'
+const PLUGIN_VERSION = '0.6.33'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -4918,6 +4918,7 @@ const ECON_NOTE_KEYS = {
   econ_head_partial: 'econHeadPartial',
   econ_head_ok: 'econHeadOk',
   econ_head_theoretical: 'econHeadTheoretical',
+  econ_head_unattributed: 'econHeadUnattributed',
   econ_group_unknown_currency: 'econGroupUnknownCurrency',
   econ_group_missing: 'econGroupMissing',
   econ_group_partial: 'econGroupPartial',
@@ -5259,11 +5260,12 @@ function econVerdict(headline, windowLines, t) {
   }
   if (usage == null || !knownFees.length) return null
   // F116/F117: a theoretical or indicative headline keeps its figures but
-  // never a definitive verdict. Theoretical wins when both apply; the
-  // headline notes carry the FX-age detail either way.
+  // never a definitive verdict. Quiet-subscription theoretical wins, then
+  // indicative (aged FX), then unattributed; the headline notes carry
+  // every detail either way.
   if (headline.verdict === 'theoretical') {
-    const key = headline.theoretical === false && headline.fx_aged
-      ? 'econVerdictIndicative' : 'econVerdictTheoretical'
+    const key = headline.theoretical ? 'econVerdictTheoretical'
+      : headline.fx_aged ? 'econVerdictIndicative' : 'econVerdictUnattributed'
     return { tone: 'partial', text: t(key, knownFees.join(' · '), analyticMoney(usage)) }
   }
   const rows = Array.isArray(headline.fees_window_by_currency) ? headline.fees_window_by_currency : []
@@ -15130,6 +15132,8 @@ const I18N = {
       `Theoretical comparison on observed usage: ${fees} in known fees vs ${usage} of attributed usage — unattributed usage may belong to a quiet subscription, so no value verdict is given.`,
     econVerdictIndicative: (fees, usage) =>
       `Indicative comparison: ${fees} in known fees vs ${usage} of attributed usage — the FX rate is over 30 days old, so no definitive verdict is given.`,
+    econVerdictUnattributed: (fees, usage) =>
+      `Theoretical comparison on observed usage: ${fees} in known fees vs ${usage} of attributed usage — unattributed usage is not counted, so no value verdict is given.`,
     econVerdictSeeAttention: 'See what blocks it',
     econWorthEven: (usage, fees) =>
       `${usage} of API-equivalent usage attributed to memberships, against ${fees} in fees — usage value matches fees this window. Estimated value, not cash saved.`,
@@ -15945,6 +15949,7 @@ const I18N = {
     econHeadOk: 'Estimated value comparison of recorded usage against fees.',
     econHeadFxError: error => `FX rates could not be read (${error}); no conversion applied.`,
     econHeadTheoretical: 'A paid subscription shows no observed usage while unattributed usage exists; the comparison is theoretical on observed usage, not a verdict on value.',
+    econHeadUnattributed: 'Unattributed or ambiguous usage exists; the comparison covers attributed usage only and stays theoretical until it is attributed.',
     econHeadFxAged: (currencies, maxAge) => `The ${currencies} rate is over ${maxAge} days old; the converted comparison is indicative, not a definitive verdict.`,
     econGroupFxAged: (currency, age) => `The ${currency} rate is ${age} days old; the converted figure is indicative, not a definitive verdict.`,
     econGroupUnknownCurrency: 'Fee currency is unknown.',
@@ -16937,6 +16942,8 @@ const I18N = {
       `基于已观测用量的理论比较：已知费用 ${fees}，归属用量 ${usage}——未归属用量可能属于某个无用量订阅，因此不给出价值结论。`,
     econVerdictIndicative: (fees, usage) =>
       `参考性比较：已知费用 ${fees}，归属用量 ${usage}——汇率已超过 30 天，因此不给出确定性结论。`,
+    econVerdictUnattributed: (fees, usage) =>
+      `基于已观测用量的理论比较：已知费用 ${fees}，归属用量 ${usage}——未归属用量未计入，因此不给出价值结论。`,
     econVerdictSeeAttention: '查看受阻原因',
     econWorthEven: (usage, fees) =>
       `归属会员的 API 等值用量为 ${usage}，费用为 ${fees}——本窗口用量价值与费用持平。仅为估算价值，不是实际节省的现金。`,
@@ -17747,6 +17754,7 @@ const I18N = {
     econHeadOk: '已记录用量与费用的估算价值对比。',
     econHeadFxError: error => `无法读取汇率（${error}）；未做换算。`,
     econHeadTheoretical: '某付费订阅无已观测用量，但存在未归属用量；请将对比视为基于已观测用量的理论比较，而非价值结论。',
+    econHeadUnattributed: '存在未归属或多归属用量；对比仅覆盖已归属用量，在完成归属前保持为理论比较。',
     econHeadFxAged: (currencies, maxAge) => `${currencies} 汇率已超过 ${maxAge} 天；请将折算后的对比视为参考，而非确定性结论。`,
     econGroupFxAged: (currency, age) => `${currency} 汇率为 ${age} 天前；折算数字仅供参考，而非确定性结论。`,
     econGroupUnknownCurrency: '费用币种未知。',

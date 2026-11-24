@@ -1307,6 +1307,15 @@ test('a theoretical headline states components without a value verdict', async (
   const fxVerdict = (await renderSection(fx)).container.querySelector('[data-econ-verdict]')
   assert.match(fxVerdict.textContent, /Indicative comparison/)
   assert.match(fxVerdict.textContent, /over 30 days old/)
+  const unattr = econFixture()
+  unattr.headline.verdict = 'theoretical'
+  unattr.headline.theoretical = false
+  unattr.headline.unattributed_gap = true
+  unattr.headline.fx_aged = false
+  const unattrVerdict = (await renderSection(unattr)).container.querySelector('[data-econ-verdict]')
+  assert.equal(unattrVerdict.dataset.econVerdict, 'partial')
+  assert.match(unattrVerdict.textContent, /unattributed usage is not counted/)
+  assert.doesNotMatch(unattrVerdict.textContent, /quiet subscription/)
 })
 
 test('a failed provider call is logged neutrally and kept out of attention', async () => {

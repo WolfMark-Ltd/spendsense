@@ -1799,6 +1799,24 @@ class Wp21FxAndConfidenceTests(DigestCase):
         self.assertIn("treat the comparison as approximate", notes)
         self.assertIn("treat the converted comparison as indicative", notes)
 
+    def test_unattributed_gap_qualifies_the_export(self):
+        # F116 audit: every paid account shows usage, but unattributed
+        # usage keeps the export theoretical.
+        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_profiles([])
+        self.create_events([
+            {"input_tokens": 10, "ts": NOW - 40 * DAY},
+            {"provider": "test", "model": "m", "input_tokens": 1_000_000,
+             "ts": NOW - 1 * DAY},
+            {"provider": "mystery", "model": "m", "input_tokens": 500_000,
+             "ts": NOW - 3 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(0)
+        result = self.report()
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("covers attributed usage only and stays theoretical",
+                      notes)
+
     def test_zero_use_notes_in_chinese(self):
         self.write_store([account("test:default", "test", plan_id="test.plus")])
         self.write_profiles([])

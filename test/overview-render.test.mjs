@@ -376,6 +376,11 @@ test('the Subscription value strip states figures, currencies and no-verdict lab
     assert.match(flat(theoretical.textContent),
       new RegExp(T.I18N[locale].econOverviewTheoretical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
       `${locale}: a theoretical comparison names its no-verdict label`)
+    const unattributed = await strip(locale,
+      headline({ verdict: 'theoretical', theoretical: false, fx_aged: false, unattributed_gap: true }))
+    assert.match(flat(unattributed.textContent),
+      new RegExp(T.I18N[locale].econOverviewTheoretical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `${locale}: an unattributed gap reads Theoretical, never a verdict`)
     const indicative = await strip(locale,
       headline({ verdict: 'theoretical', theoretical: false, fx_aged: true }))
     assert.match(flat(indicative.textContent),

@@ -572,7 +572,9 @@ class ComparisonTests(EconomicsCase):
 
     def test_free_zero_use_account_does_not_force_theoretical(self):
         # A $0 free plan contributes no negative, so it must not trigger
-        # the paid-subscription qualifier on its own.
+        # the quiet-subscription qualifier. (The verdict here is still
+        # theoretical, but via the unattributed-usage rule, not the free
+        # account: the mystery usage could belong to the paid account.)
         plans = plans_doc(
             {"id": "test.free", "provider_family": "test", "name": "Test Free",
              "kind": "free",
@@ -592,7 +594,30 @@ class ComparisonTests(EconomicsCase):
         headline = result["headline"]
         self.assertEqual(headline["status"], "ok")
         self.assertFalse(headline["theoretical"])
-        self.assertEqual(headline["verdict"], "definitive")
+        self.assertTrue(headline["unattributed_gap"])
+        self.assertEqual(headline["verdict"], "theoretical")
+        codes = [c["code"] for c in headline["note_codes"]]
+        self.assertIn("econ_head_unattributed", codes)
+        self.assertNotIn("econ_head_theoretical", codes)
+
+    def test_unattributed_usage_withholds_verdict_without_zero_use(self):
+        # F116 audit: every paid account shows usage, but unattributed
+        # usage leaves attributed value a lower bound. Figures stand;
+        # the behind verdict is withheld.
+        self.anchor_coverage()
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        self.create_events([
+            {"ts": NOW - 100, "input_tokens": 1_000_000},
+            {"ts": NOW - 90, "provider": "mystery", "model": "m",
+             "input_tokens": 500_000},
+        ])
+        result = self.report(days=30, trend_months=0)
+        headline = result["headline"]
+        self.assertEqual(headline["status"], "ok")
+        self.assertLess(headline["difference_usd"], 0)
+        self.assertFalse(headline["theoretical"])
+        self.assertTrue(headline["unattributed_gap"])
+        self.assertEqual(headline["verdict"], "theoretical")
 
     def test_zero_use_paid_with_full_attribution_stays_definitive(self):
         # F116: a zero nothing observed could belong to is a proven zero.

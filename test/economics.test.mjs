@@ -218,6 +218,9 @@ test('economics notes render backend-identical English from codes', () => {
      ['The GBP rate is over 30 days old; the converted comparison is indicative, not a definitive verdict.']],
     [[{ code: 'econ_group_fx_aged', params: { currency: 'GBP', age_days: 60 } }],
      ['The GBP rate is 60 days old; the converted figure is indicative, not a definitive verdict.']],
+    [[{ code: 'econ_head_unattributed',
+        params: { unattributed_tokens: 10, ambiguous_tokens: 0 } }],
+     ['Unattributed or ambiguous usage exists; the comparison covers attributed usage only and stays theoretical until it is attributed.']],
   ]
   for (const [codes, notes] of cases) {
     assert.deepEqual(S.econNotesText(notes, codes, en), notes, codes[0].code)
@@ -242,6 +245,8 @@ test('economics notes translate to Chinese and fall back per entry', () => {
     { code: 'econ_group_fx_aged', params: { currency: 'GBP', age_days: 60 } }, 'fallback', zh),
     zh('econGroupFxAged', 'GBP', 60))
   assert.equal(S.econNoteText({ code: 'econ_head_fx_aged', params: {} }, notes[1], en), notes[1])
+  assert.equal(S.econNoteText({ code: 'econ_head_unattributed', params: {} }, 'fallback', zh),
+    zh('econHeadUnattributed'))
 })
 
 test('attribution notes and arrangement explanations render from stable keys', () => {
@@ -469,6 +474,16 @@ test('econVerdict withholds a definitive verdict for theoretical and indicative 
   // Theoretical wins when both apply; the headline notes carry the FX detail.
   const both = S.econVerdict(headline({ fx_aged: true }), lines, en)
   assert.match(both.text, /Theoretical comparison/)
+  // F116 audit: unattributed usage without a quiet subscription names the
+  // unattributed gap, never a quiet account; indicative still wins over it.
+  const unattributed = S.econVerdict(
+    headline({ theoretical: false, fx_aged: false, unattributed_gap: true }), lines, en)
+  assert.equal(unattributed.tone, 'partial')
+  assert.match(unattributed.text, /unattributed usage is not counted/)
+  assert.doesNotMatch(unattributed.text, /quiet subscription|exceed|favours/)
+  const fxOverUnattributed = S.econVerdict(
+    headline({ theoretical: false, fx_aged: true, unattributed_gap: true }), lines, en)
+  assert.match(fxOverUnattributed.text, /Indicative comparison/)
   // An explicit definitive verdict and a missing flag both narrate normally.
   const definitive = S.econVerdict(headline({ verdict: 'definitive', theoretical: false }), lines, en)
   assert.equal(definitive.tone, 'behind')
@@ -481,6 +496,9 @@ test('econVerdict withholds a definitive verdict for theoretical and indicative 
   assert.doesNotMatch(zhTheoretical.text, /有利|超出/)
   const zhIndicative = S.econVerdict(headline({ theoretical: false, fx_aged: true }), lines, zh)
   assert.match(zhIndicative.text, /参考性比较/)
+  const zhUnattributed = S.econVerdict(
+    headline({ theoretical: false, fx_aged: false, unattributed_gap: true }), lines, zh)
+  assert.match(zhUnattributed.text, /未归属用量未计入/)
 })
 
 test('a failed provider call is explained neutrally and kept out of attention', () => {

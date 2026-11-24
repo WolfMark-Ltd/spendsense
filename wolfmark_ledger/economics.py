@@ -1125,7 +1125,21 @@ def build_economics_report(
             "theoretical on observed usage, not a verdict on value.")
         headline_codes.append({"code": "econ_head_theoretical",
                                "params": {"accounts": zero_use_paid}})
+    # F116 audit: unattributed or ambiguous usage withholds the verdict even
+    # when every paid account shows usage. Attributed value is then a lower
+    # bound, so a behind (or even) verdict could point the wrong way; only
+    # a fully attributed comparison is definitive.
+    headline_unattributed = coverage_gap and not zero_use_paid
+    if headline_unattributed:
+        headline_notes.append(
+            "Unattributed or ambiguous usage exists; the comparison covers "
+            "attributed usage only and stays theoretical until it is attributed.")
+        headline_codes.append({
+            "code": "econ_head_unattributed",
+            "params": {"unattributed_tokens": unattributed_usage.get("tokens") or 0,
+                       "ambiguous_tokens": ambiguous_usage.get("tokens") or 0}})
     headline_verdict = "theoretical" if headline_theoretical or headline_fx_aged \
+        or headline_unattributed \
         else "definitive" if headline_status == "ok" else "none"
 
     trend = _build_trend(accounts, plans, book, moment, trend_months,
@@ -1141,6 +1155,7 @@ def build_economics_report(
             "status": headline_status,
             "verdict": headline_verdict,
             "theoretical": headline_theoretical,
+            "unattributed_gap": headline_unattributed,
             "fx_aged": headline_fx_aged,
             "fees_monthly_by_currency": headline_fees,
             "fees_window_by_currency": headline_window,

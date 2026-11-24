@@ -58,6 +58,13 @@ and no definitive value verdict when coverage is incomplete. The declared
 fee stays visible, hypothetical value stays separate from cash spend, and
 no absent usage is silently coerced to zero.
 
+**Integration audit (24 Nov 2026):** "coverage incomplete" covers any
+unattributed/ambiguous usage, not just the quiet-subscription case.
+Attributed value is then a lower bound, so a behind/even verdict could
+point the wrong way: the headline goes theoretical with an
+`econ_head_unattributed` qualifier until the usage is attributed.
+Only a fully attributed comparison is definitive.
+
 ## F117 — stale FX driving comparisons (freshness policy)
 
 **Finding (WP29 U8).** A dated but disclosed FX rate can drive a
