@@ -253,6 +253,63 @@ test('Overview carries a concise Subscription value headline that links to Costs
   }
 })
 
+test('the Subscription value strip states figures, currencies and no-verdict labels, in both languages', async () => {
+  // F19 main display path: readable headlines render compact figures with
+  // a status, mixed currencies stay separate, and theoretical/indicative
+  // comparisons name their no-verdict label instead of a worth-it story.
+  const strip = async (locale, headline) => {
+    const identity = T.membershipIdentityNow()
+    i18nBackend.t = translatorFor(T.I18N, locale)
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = ReactDOMClient.createRoot(container)
+    roots.push(root)
+    await React.act(async () => {
+      root.render(React.createElement(QueryClientProvider, { client: queryClient },
+        React.createElement(T.OverviewEconomics, {
+          economics: { data: { identity, headline, groups: headline.groups || [] },
+            isPending: false },
+          identity,
+        })))
+    })
+    await flush()
+    return container.querySelector('[data-overview-econ]')
+  }
+  const headline = (over = {}) => ({
+    status: 'ok', verdict: 'definitive', usage_usd: 2.0,
+    fees_window_by_currency: [{ currency: 'USD', amount: 19.37 }],
+    groups: [{ currency: 'USD', window_fee_complete: true }], ...over,
+  })
+  for (const locale of LOCALES) {
+    const ok = await strip(locale, headline())
+    assert.match(flat(ok.textContent), /USD 19\.37/, `${locale}: the window fee renders`)
+    assert.match(flat(ok.textContent), /\$2\.00/, `${locale}: the attributed usage renders`)
+    assert.match(flat(ok.textContent),
+      new RegExp(T.I18N[locale].econStatusOk), `${locale}: a definitive comparison reads Complete`)
+    const partial = await strip(locale, headline({ status: 'partial', verdict: 'none' }))
+    assert.match(flat(partial.textContent),
+      new RegExp(T.I18N[locale].econStatusPartial), `${locale}: a partial comparison reads Partial`)
+    const theoretical = await strip(locale,
+      headline({ verdict: 'theoretical', theoretical: true, fx_aged: false }))
+    assert.match(flat(theoretical.textContent),
+      new RegExp(T.I18N[locale].econOverviewTheoretical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `${locale}: a theoretical comparison names its no-verdict label`)
+    const indicative = await strip(locale,
+      headline({ verdict: 'theoretical', theoretical: false, fx_aged: true }))
+    assert.match(flat(indicative.textContent),
+      new RegExp(T.I18N[locale].econOverviewIndicative.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `${locale}: an aged-FX comparison names its no-verdict label`)
+    const mixed = await strip(locale, headline({
+      fees_window_by_currency: [{ currency: 'USD', amount: 19.37 }, { currency: 'EUR', amount: 9.99 }],
+      groups: [{ currency: 'USD', window_fee_complete: true }, { currency: 'EUR', window_fee_complete: true }],
+    }))
+    assert.match(flat(mixed.textContent), /USD 19\.37/, `${locale}: the USD fee renders`)
+    assert.match(flat(mixed.textContent), /EUR 9\.99/, `${locale}: the EUR fee renders beside it`)
+    assert.doesNotMatch(flat(mixed.textContent), /29\.36/,
+      `${locale}: mixed currencies are never summed`)
+  }
+})
+
 test('the charges methodology links once to the About FAQ, in both languages', async () => {
   for (const locale of LOCALES) {
     const container = await boot({ locale })

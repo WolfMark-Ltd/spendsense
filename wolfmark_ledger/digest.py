@@ -741,15 +741,17 @@ def _fees_section(S: Mapping[str, str], window_label: str,
     status = headline.get("status")
     if status == "partial":
         notes.append(S["note_partial_comparison"])
-    elif status == "ok" and headline.get("verdict") == "theoretical":
-        # F116/F117: the export states figures, never a worth-it verdict, so
-        # the gate lands as a qualifier note rather than withheld text.
+    elif status != "ok":
+        notes.append(S["note_unavailable_comparison"])
+    # F116/F117: independent of the status branch above — a partial report
+    # can also carry an aged rate or a quiet subscription, and the export
+    # states figures, never a worth-it verdict, so each gate lands as its
+    # own qualifier note.
+    if headline.get("verdict") == "theoretical":
         if headline.get("theoretical"):
             notes.append(S["note_theoretical_comparison"])
         if headline.get("fx_aged"):
             notes.append(S["note_fx_aged_comparison"])
-    elif status != "ok":
-        notes.append(S["note_unavailable_comparison"])
     # Fee lines lead the section (two per currency, or the USD pair when no
     # currency group exists); whether any shows a bound tells the coverage
     # summary to include the fee-specific ≥ note.

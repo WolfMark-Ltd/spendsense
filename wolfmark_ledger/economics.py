@@ -1070,9 +1070,12 @@ def build_economics_report(
     # (Recording gaps and unpriced usage already force partial status above.)
     zero_use_paid = [r["account_id"] for r in comparable
                      if (r.get("usage") or {}).get("calls") == 0
-                     and (r.get("monthly_equivalent") or {}).get("amount") is not None]
-    coverage_gap = (unattributed_usage.get("tokens") or 0) > 0 \
-        or (ambiguous_usage.get("tokens") or 0) > 0
+                     and (r.get("monthly_equivalent") or {}).get("amount") not in (None, 0)]
+    # A call counts as a gap even with zero tokens: missing-usage and
+    # failed calls keep one call with no token evidence, and that usage
+    # is unknown, not zero.
+    coverage_gap = any((usage.get("tokens") or 0) > 0 or (usage.get("calls") or 0) > 0
+                     for usage in (unattributed_usage, ambiguous_usage))
     headline_theoretical = bool(zero_use_paid) and coverage_gap
     if headline_theoretical:
         headline_notes.append(

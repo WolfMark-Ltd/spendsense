@@ -1773,6 +1773,32 @@ class Wp21FxAndConfidenceTests(DigestCase):
         notes = " ".join(self.section(result, "fees")["notes"])
         self.assertIn("treat the converted comparison as indicative", notes)
 
+    def test_partial_report_keeps_the_aged_fx_warning(self):
+        # F117: a partial report with an aged rate carries both the generic
+        # approximate note and the specific indicative warning.
+        fx = self.write_fx([{"currency": "GBP", "usd_per_unit": 1.25,
+                             "as_of": "2026-09-01",
+                             "source": "Bank of England spot"}])
+        self.write_store([
+            account("test:default", "test", plan_id="test.plus",
+                    route_slugs=["test"]),
+            account("other:default", "other", plan_id="other.plus",
+                    route_slugs=["other"]),
+        ])
+        self.write_profiles([])
+        self.create_events([
+            {"provider": "test", "model": "m", "input_tokens": 1_000_000,
+             "ts": NOW - 1 * DAY},
+            {"provider": "other", "model": "m", "input_tokens": 1_000_000,
+             "ts": NOW - 2 * DAY},
+        ], baseline_at=NOW - 40 * DAY)
+        self.create_state(2_000_000)
+        result = self.report(plans=self.gbp_plans(),
+                             catalogue=self.two_provider_book(), fx_file=fx)
+        notes = " ".join(self.section(result, "fees")["notes"])
+        self.assertIn("treat the comparison as approximate", notes)
+        self.assertIn("treat the converted comparison as indicative", notes)
+
     def test_zero_use_notes_in_chinese(self):
         self.write_store([account("test:default", "test", plan_id="test.plus")])
         self.write_profiles([])

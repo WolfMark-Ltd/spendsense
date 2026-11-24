@@ -208,6 +208,12 @@ test('economics notes render backend-identical English from codes', () => {
     [[{ code: 'econ_group_missing', params: {} }], ['Usage or fees are missing for this group.']],
     [[{ code: 'econ_group_partial', params: {} }],
      ['At least one account comparison is partial; see the rows.']],
+    [[{ code: 'econ_head_theoretical', params: { accounts: ['a'] } }],
+     ['A paid subscription shows no observed usage while unattributed usage exists; the comparison is theoretical on observed usage, not a verdict on value.']],
+    [[{ code: 'econ_head_fx_aged', params: { currencies: ['GBP'], max_age_days: 30 } }],
+     ['The GBP rate is over 30 days old; the converted comparison is indicative, not a definitive verdict.']],
+    [[{ code: 'econ_group_fx_aged', params: { currency: 'GBP', age_days: 60 } }],
+     ['The GBP rate is 60 days old; the converted figure is indicative, not a definitive verdict.']],
   ]
   for (const [codes, notes] of cases) {
     assert.deepEqual(S.econNotesText(notes, codes, en), notes, codes[0].code)
@@ -222,6 +228,16 @@ test('economics notes translate to Chinese and fall back per entry', () => {
   assert.equal(out[1], 'custom note kept')
   assert.deepEqual(S.econNotesText(notes, null, zh), notes)
   assert.equal(S.econNoteText({ code: 'econ_group_no_fx', params: {} }, notes[1], en), notes[1])
+  // The F116/F117 warnings translate; unmapped params still fall back.
+  assert.equal(S.econNoteText({ code: 'econ_head_theoretical', params: {} }, 'fallback', zh),
+    zh('econHeadTheoretical'))
+  assert.equal(S.econNoteText(
+    { code: 'econ_head_fx_aged', params: { currencies: ['GBP'], max_age_days: 30 } }, 'fallback', zh),
+    zh('econHeadFxAged', 'GBP', 30))
+  assert.equal(S.econNoteText(
+    { code: 'econ_group_fx_aged', params: { currency: 'GBP', age_days: 60 } }, 'fallback', zh),
+    zh('econGroupFxAged', 'GBP', 60))
+  assert.equal(S.econNoteText({ code: 'econ_head_fx_aged', params: {} }, notes[1], en), notes[1])
 })
 
 test('attribution notes and arrangement explanations render from stable keys', () => {

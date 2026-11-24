@@ -4895,6 +4895,7 @@ const ECON_NOTE_KEYS = {
   econ_head_incomparable: 'econHeadIncomparable',
   econ_head_partial: 'econHeadPartial',
   econ_head_ok: 'econHeadOk',
+  econ_head_theoretical: 'econHeadTheoretical',
   econ_group_unknown_currency: 'econGroupUnknownCurrency',
   econ_group_missing: 'econGroupMissing',
   econ_group_partial: 'econGroupPartial',
@@ -4914,6 +4915,11 @@ function econNoteText(entry, fallback, t) {
     return t('econGroupNoFx', params.currency)
   if (code === 'econ_head_fx_error' && params.error !== undefined)
     return t('econHeadFxError', params.error)
+  if (code === 'econ_head_fx_aged' && Array.isArray(params.currencies)
+      && params.max_age_days !== undefined)
+    return t('econHeadFxAged', params.currencies.join(', '), params.max_age_days)
+  if (code === 'econ_group_fx_aged' && params.currency !== undefined && params.age_days !== undefined)
+    return t('econGroupFxAged', params.currency, params.age_days)
   if (code === 'econ_group_window_history_missing')
     return t('econGroupWindowHistory', Number.isSafeInteger(params.count) && params.count >= 0
       ? params.count : null)
@@ -15764,6 +15770,9 @@ const I18N = {
     econHeadPartial: 'Estimated value comparison; at least one input is partial.',
     econHeadOk: 'Estimated value comparison of recorded usage against fees.',
     econHeadFxError: error => `FX rates could not be read (${error}); no conversion applied.`,
+    econHeadTheoretical: 'A paid subscription shows no observed usage while unattributed usage exists; the comparison is theoretical on observed usage, not a verdict on value.',
+    econHeadFxAged: (currencies, maxAge) => `The ${currencies} rate is over ${maxAge} days old; the converted comparison is indicative, not a definitive verdict.`,
+    econGroupFxAged: (currency, age) => `The ${currency} rate is ${age} days old; the converted figure is indicative, not a definitive verdict.`,
     econGroupUnknownCurrency: 'Fee currency is unknown.',
     econGroupUnpriced: count => `${count} subscription(s) have no fee; the group cannot be compared.`,
     econGroupNoFx: currency => `Fees are in ${currency} with no FX rate; add a dated rate to compare against USD-valued usage.`,
@@ -17548,6 +17557,9 @@ const I18N = {
     econHeadPartial: '估算价值对比；至少一项输入为部分数据。',
     econHeadOk: '已记录用量与费用的估算价值对比。',
     econHeadFxError: error => `无法读取汇率（${error}）；未做换算。`,
+    econHeadTheoretical: '某付费订阅无已观测用量，但存在未归属用量；请将对比视为基于已观测用量的理论比较，而非价值结论。',
+    econHeadFxAged: (currencies, maxAge) => `${currencies} 汇率已超过 ${maxAge} 天；请将折算后的对比视为参考，而非确定性结论。`,
+    econGroupFxAged: (currency, age) => `${currency} 汇率为 ${age} 天前；折算数字仅供参考，而非确定性结论。`,
     econGroupUnknownCurrency: '费用币种未知。',
     econGroupUnpriced: count => `${count} 个订阅没有费用；无法对比该分组。`,
     econGroupNoFx: currency => `费用为 ${currency} 但没有汇率；请添加带日期的汇率以便与按 USD 计价的用量对比。`,

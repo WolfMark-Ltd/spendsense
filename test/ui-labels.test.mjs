@@ -1045,8 +1045,8 @@ test('every PR28 generated-content key exists in English and Chinese', () => {
     'ovGapMissingBaseRate', 'ovGapMissingCacheRead', 'ovGapMissingCacheWrite',
     'usagePricingPartialCalls',
     'econHeadNoFees', 'econHeadUnpriced', 'econHeadIncomparable', 'econHeadPartial',
-    'econHeadOk', 'econHeadFxError',
-    'econGroupUnknownCurrency', 'econGroupUnpriced', 'econGroupNoFx',
+    'econHeadOk', 'econHeadFxError', 'econHeadTheoretical', 'econHeadFxAged',
+    'econGroupUnknownCurrency', 'econGroupUnpriced', 'econGroupNoFx', 'econGroupFxAged',
     'econGroupMissing', 'econGroupPartial',
     'econUnattributed', 'econAmbiguous',
     'econExplApiOnly', 'econExplPrepaid', 'econExplUnconfirmed']

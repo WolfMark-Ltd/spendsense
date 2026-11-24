@@ -558,6 +558,42 @@ class ComparisonTests(EconomicsCase):
         codes = [c["code"] for c in headline["note_codes"]]
         self.assertIn("econ_head_theoretical", codes)
 
+    def test_zero_token_unattributed_call_is_still_a_coverage_gap(self):
+        # A missing-usage call keeps one call with zero tokens; its usage
+        # is unknown, so a paid zero-use account stays theoretical.
+        self.anchor_coverage()
+        self.write_store([account("a", "test", plan_id="test.plus")])
+        self.create_events([{"ts": NOW - 90, "provider": "mystery", "model": "m",
+                             "outcome": "missing_usage"}])
+        result = self.report(days=30, trend_months=0)
+        headline = result["headline"]
+        self.assertEqual(headline["status"], "ok")
+        self.assertEqual(headline["verdict"], "theoretical")
+
+    def test_free_zero_use_account_does_not_force_theoretical(self):
+        # A $0 free plan contributes no negative, so it must not trigger
+        # the paid-subscription qualifier on its own.
+        plans = plans_doc(
+            {"id": "test.free", "provider_family": "test", "name": "Test Free",
+             "kind": "free",
+             "price": {"amount": 0.0, "currency": "USD", "period": "month"}},
+            {"id": "other.team", "provider_family": "other", "name": "Other Team",
+             "price": {"amount": 240.0, "currency": "USD", "period": "year"}},
+        )
+        self.anchor_coverage()
+        self.write_store([account("free", "test", plan_id="test.free"),
+                          account("paid", "other", plan_id="other.team")])
+        self.create_events([
+            {"ts": NOW - 100, "provider": "other", "input_tokens": 1_000_000},
+            {"ts": NOW - 90, "provider": "mystery", "model": "m",
+             "input_tokens": 500_000},
+        ])
+        result = self.report(days=30, trend_months=0, plans=plans)
+        headline = result["headline"]
+        self.assertEqual(headline["status"], "ok")
+        self.assertFalse(headline["theoretical"])
+        self.assertEqual(headline["verdict"], "definitive")
+
     def test_zero_use_paid_with_full_attribution_stays_definitive(self):
         # F116: a zero nothing observed could belong to is a proven zero.
         self.anchor_coverage()
