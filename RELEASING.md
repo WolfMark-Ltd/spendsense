@@ -31,10 +31,12 @@ assets have separate terms in BRANDING.md.
 
 ## Release identity and the pairing contract
 
-The current source declares `0.6.25` in `plugin.yaml`, `PLUGIN_VERSION`,
+The current source declares `0.6.33` in `plugin.yaml`, `PLUGIN_VERSION`,
 `dashboard/manifest.json`, `plugin_api.VERSION` and the README version badge.
-The coordinated correction wave advances from `0.6.22` by one patch for each
-of PR #94, PR #95 and this final WP49 PR.
+The coordinated release wave advances from `0.6.25` by one patch for each
+of PRs #97 through #104, with the bump landing in the final WP31 PR.
+The preceding wave advanced from `0.6.22` by one patch for each
+of PR #94, PR #95 and the WP49 PR.
 The wave advances from `0.6.9` by one patch for each of PRs #72, #73 and #74.
 The preceding wave advanced from `0.6.7` to `0.6.9` for PRs #70 and #71.
 
