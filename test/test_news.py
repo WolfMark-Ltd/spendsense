@@ -1084,6 +1084,82 @@ class PayloadTests(NewsTestCase):
         self.assertTrue(payload["local"]["baseline"])
         self.assertEqual(payload["central"]["state"], "disabled")
 
+    def test_payload_withholds_plan_changes_that_prove_no_change(self):
+        # F139/WP46: pre-structural-diff stores recorded "allowances/terms
+        # changed" from raw terms drift with identical fees and no field
+        # list. The payload withholds those records; the store file itself
+        # is untouched and genuine items still flow.
+        news = news_module()
+        phantom = {"id": "phantom-1", "origin": "local", "category": "subscription",
+                   "summary_code": "news_sum_plan_change",
+                   "summary": "Demo plan: allowances/terms changed.",
+                   "summary_params": {"plan": "Demo plan", "fee_before": "USD 20/month",
+                                      "fee_after": "USD 20/month", "fee_changed": False,
+                                      "terms_changed": True},
+                   "observed_at": "2026-11-20T00:37:13+00:00"}
+        genuine = {"id": "genuine-1", "origin": "local", "category": "subscription",
+                   "summary_code": "news_sum_plan_change",
+                   "summary": "Demo plan: fee USD 20/month → USD 25/month.",
+                   "summary_params": {"plan": "Demo plan", "fee_before": "USD 20/month",
+                                      "fee_after": "USD 25/month", "fee_changed": True,
+                                      "terms_changed": False, "field_changes": []},
+                   "observed_at": "2026-11-20T00:37:13+00:00"}
+        listed = {"id": "listed-1", "origin": "local", "category": "subscription",
+                  "summary_code": "news_sum_new_plan",
+                  "summary": "New plan listed: Demo plan (USD 20/month).",
+                  "summary_params": {"plan": "Demo plan", "fee": "USD 20/month"},
+                  "observed_at": "2026-11-20T00:37:13+00:00"}
+        rated = {"id": "rated-1", "origin": "local", "category": "price_reduction",
+                 "provider": "acme", "model": "alpha",
+                 "summary_code": "news_sum_price_change", "summary_params": {},
+                 "previous": {"input": 5.0}, "current": {"input": 4.0},
+                 "observed_at": "2026-11-20T00:37:13+00:00"}
+        self.data.mkdir(parents=True, exist_ok=True)
+        target = news.items_path(self.data)
+        target.write_text(json.dumps(
+            {"version": 1, "items": [phantom, genuine, listed, rated]}))
+        before = target.read_text()
+        payload = news.news_payload(data_dir=self.data, event_db=self.events,
+                                    home=self.home, now=NOW)
+        # The payload sorts newest-first; the phantom is gone, the rest stay.
+        self.assertEqual(sorted(i["id"] for i in payload["local"]["items"]),
+                         ["genuine-1", "listed-1", "rated-1"])
+        self.assertEqual(target.read_text(), before,
+                         "withholding never rewrites the store")
+
+    def test_item_proves_change_keeps_central_and_new_plan_semantics(self):
+        news = news_module()
+        central = {"origin": "central", "category": "subscription",
+                   "summary_code": "news_sum_plan_change", "summary_params": {}}
+        self.assertTrue(news.item_proves_change(central))
+        self.assertTrue(news.item_proves_change({"category": "price_reduction"}))
+        fields = {"origin": "local", "category": "subscription",
+                  "summary_code": "news_sum_plan_change",
+                  "summary_params": {"fee_changed": False, "field_changes": [
+                      {"kind": "changed", "field": "allowance"}]}}
+        self.assertTrue(news.item_proves_change(fields))
+
+    def test_item_proves_change_keeps_flag_less_legacy_records(self):
+        # Review case: records without fee_changed predate machine
+        # comparison, so differing fee strings prove a fee change there and
+        # equal ones prove nothing either way — both are kept rather than
+        # risk hiding a real change. Only an explicit False with no field
+        # evidence is withheld.
+        news = news_module()
+        base = {"origin": "local", "category": "subscription",
+                "summary_code": "news_sum_plan_change"}
+        differing = dict(base, summary_params={"plan": "Plus", "fee_before": "$20/mo",
+                                               "fee_after": "$25/mo", "terms_changed": False})
+        self.assertTrue(news.item_proves_change(differing))
+        equal = dict(base, summary_params={"plan": "Plus", "fee_before": "$20/mo",
+                                           "fee_after": "$20/mo", "terms_changed": True})
+        self.assertTrue(news.item_proves_change(equal))
+        explicit_empty = dict(
+            base, summary_params={"plan": "Plus", "fee_before": "$20/mo",
+                                  "fee_after": "$20/mo", "fee_changed": False,
+                                  "terms_changed": True})
+        self.assertFalse(news.item_proves_change(explicit_empty))
+
 
 # ------------------------------------------------------------------ eligibility
 

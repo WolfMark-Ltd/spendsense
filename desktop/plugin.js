@@ -11698,6 +11698,16 @@ function newsSameTransition(a, b) {
 }
 
 /**
+ * Both sides name a source URL and they differ: distinct observations that
+ * must never merge, with or without other proof. A missing URL never
+ * conflicts — live local items carry none while central items do.
+ */
+function newsUrlsConflict(a, b) {
+  const urlA = String(a?.source_url || ''), urlB = String(b?.source_url || '')
+  return urlA !== '' && urlB !== '' && urlA !== urlB
+}
+
+/**
  * Explicit same-event proof between two items with identical transitions:
  * a shared non-empty event/provenance link field; or an exactly equal
  * non-empty effective_at plus an equal non-empty source_url; or an exactly
@@ -11716,9 +11726,8 @@ function newsSameEventProof(a, b) {
   const urlA = String(a.source_url || ''), urlB = String(b.source_url || '')
   if (effectiveA && effectiveA === effectiveB && urlA && urlA === urlB) return true
   const observedA = String(a.observed_at || '')
-  const urlsConflict = urlA !== '' && urlB !== '' && urlA !== urlB
   return !!observedA && observedA === String(b.observed_at || '') &&
-    effectiveA === effectiveB && !urlsConflict
+    effectiveA === effectiveB && !newsUrlsConflict(a, b)
 }
 
 /**
@@ -11735,11 +11744,18 @@ function newsEvidenceRecords(event) {
 
 /**
  * Cross-origin dedupe beyond exact ids: a local item and a central item with
- * DIFFERENT ids merge into one event only when both hold an identical
- * transition (newsTransitionKey) and an explicit same-event proof
- * (newsSameEventProof). Pairing is 1:1 local↔central, never within one
- * origin, never by nearby time; without proof the items stay distinct events.
- * A merged event keeps both items as evidence sources (merged_sources) and is
+ * DIFFERENT ids merge into one event when both hold an identical transition
+ * (newsSameTransition) and either an explicit same-event proof
+ * (newsSameEventProof) or a transition seen exactly once on each side.
+ * Neither origin emits link fields or effective_at in practice and each
+ * observes the shared upstream on its own schedule, so proof alone left
+ * every cross-origin pair unmerged (131 duplicate pairs on one live store).
+ * The 1:1-unique fallback resolves that proven duplication; any transition
+ * either side repeats — a possible A→B→A→B recurrence — still needs proof
+ * and otherwise stays separate, and conflicting source URLs veto the
+ * fallback (explicit proof keeps its own semantics). Pairing is 1:1
+ * local↔central, never within one origin, never by nearby time. A merged
+ * event keeps both items as evidence sources (merged_sources) and is
  * observed at the newest of the two observations. Originals stay untouched.
  */
 function newsMergeEvents(events) {
@@ -11748,11 +11764,24 @@ function newsMergeEvents(events) {
   const centrals = list.filter(item => String(item.origin || 'local') === 'central')
   const taken = new Set()
   const out = []
+  const localBases = new Map()
+  const centralBases = new Map()
+  for (const item of locals) {
+    const base = newsTransitionBase(item)
+    if (base) localBases.set(base, (localBases.get(base) || 0) + 1)
+  }
+  for (const item of centrals) {
+    const base = newsTransitionBase(item)
+    if (base) centralBases.set(base, (centralBases.get(base) || 0) + 1)
+  }
+  const uniquePair = key => !!key && localBases.get(key) === 1 && centralBases.get(key) === 1
   for (const event of locals) {
     const key = newsTransitionBase(event)
     const partner = key
       ? centrals.find(central => !taken.has(central) &&
-          newsSameTransition(event, central) && newsSameEventProof(event, central))
+          newsSameTransition(event, central) &&
+          (newsSameEventProof(event, central) ||
+            (uniquePair(key) && !newsUrlsConflict(event, central))))
       : null
     if (partner) {
       taken.add(partner)
@@ -12944,7 +12973,10 @@ function newsHeadlineText(entry, t) {
     ? entry.headline_params : {}
   const code = String(entry?.headline_code || '')
   const provider = String(params.provider || entry?.provider || '')
-  const model = String(params.model || entry?.model || '')
+  // Visible story bodies use the friendly verified model name (F54); the
+  // exact stored id stays in Details records, search and archive targeting.
+  const rawModel = String(params.model || entry?.model || '')
+  const model = modelDisplayName(rawModel) || rawModel
   switch (code) {
     case 'news_head_single_rate': {
       // A published headline is display data: an empty or malformed percentage
@@ -18506,7 +18538,7 @@ export const __test = {
   NewsStory, NewsHeadlineSection, NewsBriefing, NEWS_HEADLINE_KEYS,
   NEWS_FOR_YOU_INITIAL, NEWS_EVENT_LINK_FIELDS, NEWS_RATE_CLASS_BY_CODE,
   newsUsedRecently, newsLastUsedMs, newsItemReasonCodes, newsGroupReasonCodes,
-  newsMergeEvents, newsSameEventProof, newsTransitionKey, newsTransitionBase, newsSameTransition,
+  newsMergeEvents, newsSameEventProof, newsTransitionKey, newsTransitionBase, newsSameTransition, newsUrlsConflict,
   newsEvidenceRecords, NewsEvidenceRow, NewsTierBlocks,
   analyticsNoteText, analyticsNotesText, ANALYTICS_NOTE_KEYS, analyticsGapReasonLabel, OV_GAP_REASON_KEYS,
   econNoteText, econNotesText, econSingularNoteText, econExplanationText, ECON_NOTE_KEYS, ECON_EXPLANATION_KEYS,

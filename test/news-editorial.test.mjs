@@ -412,7 +412,7 @@ test('an unusable price parameter falls back to the published headline', () => {
   // The valid shape still renders the template with its exact values.
   const rendered = S.newsHeadlineText({ ...base, headline_params: { ...base.headline_params,
     pct: -50, direction: 'down', before: '$1', after: '$0.5' } }, en)
-  assert.match(rendered, /cuts m1 input by 50\.0% \(\$1 → \$0\.5/)
+  assert.match(rendered, /cuts M1 input by 50\.0% \(\$1 → \$0\.5/)
 })
 
 test('the removal window rejects a record dated after publication', () => {
@@ -594,7 +594,7 @@ test('headlines localise from codes and keep the verified numbers verbatim', () 
     provider: 'kilo', model: 'google/gemma-4-31b-it',
   }
   const english = S.newsHeadlineText(entry, en)
-  assert.match(english, /kilo cuts google\/gemma-4-31b-it output by 54\.7% \(\$0\.34 → \$0\.154/)
+  assert.match(english, /kilo cuts Gemma 4 31b It output by 54\.7% \(\$0\.34 → \$0\.154/)
   const chinese = S.newsHeadlineText(entry, zh)
   assert.match(chinese, /输出价格/)
   assert.match(chinese, /54\.7%/)

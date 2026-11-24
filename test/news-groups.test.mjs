@@ -489,31 +489,48 @@ test('a local and a central item merge only with an explicit same-event proof', 
   assert.deepEqual(viaLink.events[0].merged_sources.map(s => s.id), ['l3', 'c3'])
 })
 
-test('without proof, same transitions stay distinct events', () => {
-  // Identical transition, different observed_at, no shared url/effective pair.
+test('a transition seen exactly once on each side merges without proof; repeats stay distinct', () => {
+  // Identical transition, different observed_at, no shared url/effective
+  // pair: live origins emit no link fields or effective_at and observe on
+  // independent schedules, so proof alone never fires and every pair
+  // rendered twice. The 1:1-unique fallback merges them. The local record
+  // carries no source URL, exactly like live local items.
   const offer = S.newsGroupModels([
     twin({ id: 'l1', origin: 'local', observed_at: '2026-11-03T00:00:00Z',
-      effective_at: '2026-11-03T00:00:00Z', source_url: 'https://example.com/a' }),
+      effective_at: '', source_url: '' }),
     twin({ id: 'c1', origin: 'central', observed_at: '2026-11-03T06:00:00Z' }),
   ]).groups[0].offers[0]
-  assert.equal(offer.events.length, 2, 'no proof, no merge — even 6h apart')
-  assert.deepEqual(offer.events.map(e => e.id), ['c1', 'l1'])
-  assert.equal(offer.latest.id, 'c1', 'the newest event drives the offer')
-  assert.deepEqual(offer.history.map(e => e.id), ['l1'], 'the older event is History only')
+  assert.equal(offer.events.length, 1, 'a unique cross-origin transition merges without proof')
+  assert.deepEqual(offer.events[0].merged_sources.map(s => s.id), ['l1', 'c1'])
+  assert.equal(offer.events[0].observed_at, '2026-11-03T06:00:00Z',
+    'the merged event keeps the newest observation')
+  assert.equal(offer.latest.id, 'l1', 'the local item stays the primary')
+
+  // The same transition twice locally — a possible A→B→A→B recurrence —
+  // stays separate from the single central observation without proof. The
+  // central record carries no url, so the effective_at+source_url proof
+  // cannot fire either.
+  const repeated = S.newsGroupModels([
+    twin({ id: 'l1', origin: 'local', observed_at: '2026-11-03T00:00:00Z' }),
+    twin({ id: 'l2', origin: 'local', observed_at: '2026-11-03T06:00:00Z' }),
+    twin({ id: 'c1', origin: 'central', observed_at: '2026-11-03T12:00:00Z', source_url: '' }),
+  ]).groups[0].offers[0]
+  assert.equal(repeated.events.length, 3, 'a repeated transition still needs proof to merge')
+
+  // Conflicting source URLs veto the 1:1-unique fallback: both sides name a
+  // different observation, so the pair stays two events.
+  const conflicted = S.newsGroupModels([
+    twin({ id: 'l1', origin: 'local', observed_at: '2026-11-03T00:00:00Z',
+      source_url: 'https://example.com/local' }),
+    twin({ id: 'c1', origin: 'central', observed_at: '2026-11-03T06:00:00Z',
+      source_url: 'https://example.com/central' }),
+  ]).groups[0].offers[0]
+  assert.equal(conflicted.events.length, 2, 'conflicting URLs veto the fallback merge')
 })
 
-test('repeats under 48h and A→B→A→B recurrences stay separate events', () => {
-  // A repeat 2h later with the same transition: no proof -> separate. The
-  // central item carries a different source, so the effective_at+source_url
-  // proof does not fire either.
-  const repeat = S.newsGroupModels([
-    twin({ id: 'l1', origin: 'local', observed_at: '2026-11-03T00:00:00Z' }),
-    twin({ id: 'c1', origin: 'central', observed_at: '2026-11-03T02:00:00Z', source_url: 'https://example.com/other' }),
-  ]).groups[0].offers[0]
-  assert.equal(repeat.events.length, 2, 'a gap under 48h is not proof')
-
+test('A→B→A→B recurrences within one origin stay separate events', () => {
   // A→B→A→B recurrence with different dates and no shared evidence: every
-  // event stays its own.
+  // event stays its own. Merging never happens within one origin.
   const up = { current: { input: 6.0, output: 30.0, cache_read: 0.6, cache_write: 7.0 } }
   const items = [
     twin({ id: 'e1', observed_at: '2026-11-01T00:00:00Z', source_url: '' }),
