@@ -17,7 +17,7 @@ const suites = {
     ['news-render', 61, true], ['node-runner', 5], ['plugin', 70], ['recount', 16],
     ['overview-render', 11, true],
     ['reports-layout.chromium', 19], ['reports-layout.devtools', 11],
-    ['sidebar', 49, true], ['ui-labels', 55],
+    ['sidebar', 49, true], ['ui-labels', 57],
     ['usage-render', 11, true],
     ['ux-primitives', 35, true], ['weather', 11], ['weather-render', 9, true],
     ['wp14-fixes', 9],

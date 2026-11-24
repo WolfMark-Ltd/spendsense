@@ -2650,9 +2650,11 @@ function scopeTotalsTitle(t, fromHistory) {
  *  accumulator holds) is never a measured zero: its row stays '—'. A
  *  reconstructed (derived) counter is not provider usage either. Reported
  *  figures show bare, including a reported 0; partial or estimated figures
- *  show with a Partial chip while positive. Hidden streams never vanish:
- *  they stay visible inside the unclassified segment, whose label and swatch
- *  already qualify it, so it carries no marker. */
+ *  with a tracked derived portion show the measured remainder with a
+ *  Partial chip, while a mix with an unknown portion stays unclassified.
+ *  Hidden streams never vanish: they stay visible inside the unclassified
+ *  segment, whose label and swatch already qualify it, so it carries no
+ *  marker. */
 function tokenRows(t, b, hasContext, u) {
   const evidence = localCacheEvidence(b)
   const cacheFigure = (value, state) => value == null || state === 'unknown' || state === 'derived'
@@ -2662,13 +2664,18 @@ function tokenRows(t, b, hasContext, u) {
     ? b.prompt : null
   // Unattributed (unknown) and reconstructed (derived) streams cannot figure
   // as measurements. A merged bucket tracks its derived write portion
-  // through aggregation; without that marker a partial mix keeps its
-  // accepted figure-plus-chip presentation.
+  // through aggregation; a null marker means that portion is unknown, so a
+  // partial or estimated mix with no marker keeps none of its writes in the
+  // measured row — an unknown portion is never converted to zero.
   const readHidden = evidence.read === 'unknown' || evidence.read === 'derived' ? num(b.cacheRead) : 0
-  const writeDerived = evidence.write === 'derived' ? num(b.cacheWrite) : num(b?.derivedCacheWrite)
+  const writeUnseparated = b?.derivedCacheWrite == null &&
+    (evidence.write === 'partial' || evidence.write === 'estimated')
+  const writeDerived = evidence.write === 'derived' || writeUnseparated ? num(b.cacheWrite)
+    : num(b?.derivedCacheWrite)
   const writeHidden = evidence.write === 'unknown' ? num(b.cacheWrite) : writeDerived
   const shownRead = b.cacheRead == null ? null : Math.max(0, num(b.cacheRead) - readHidden)
-  const shownWrite = b.cacheWrite == null ? null : Math.max(0, num(b.cacheWrite) - writeHidden)
+  const shownWrite = b.cacheWrite == null || writeUnseparated ? null
+    : Math.max(0, num(b.cacheWrite) - writeHidden)
   const knownPrompt = num(b.input) + num(shownRead) + num(shownWrite)
   const hiddenPrompt = num(b.cacheUnknown) + readHidden + writeHidden
   const unclassifiedPrompt = Math.max(hiddenPrompt, prompt == null ? 0 : prompt - knownPrompt)
@@ -2820,13 +2827,17 @@ const $infoOpen = atom(null)
 
 /** Fresh/read/write shares of prompt tokens for the composition bar. Mirrors
  *  tokenRows: unknown and derived streams sit in the unclassified slice,
- *  never in a measured one, and a tracked derived write portion is split
- *  out of a partial mix. */
+ *  never in a measured one; a tracked derived write portion is split out
+ *  of a partial mix, and an unknown (null) portion keeps the whole mix
+ *  unclassified. */
 function compositionShares(bucket) {
   const evidence = localCacheEvidence(bucket)
   const fresh = num(bucket?.input)
   const readHidden = evidence.read === 'unknown' || evidence.read === 'derived' ? num(bucket?.cacheRead) : 0
-  const writeDerived = evidence.write === 'derived' ? num(bucket?.cacheWrite) : num(bucket?.derivedCacheWrite)
+  const writeUnseparated = bucket?.derivedCacheWrite == null &&
+    (evidence.write === 'partial' || evidence.write === 'estimated')
+  const writeDerived = evidence.write === 'derived' || writeUnseparated ? num(bucket?.cacheWrite)
+    : num(bucket?.derivedCacheWrite)
   const writeHidden = evidence.write === 'unknown' ? num(bucket?.cacheWrite) : writeDerived
   const read = Math.max(0, num(bucket?.cacheRead) - readHidden)
   const write = Math.max(0, num(bucket?.cacheWrite) - writeHidden)
