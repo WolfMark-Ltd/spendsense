@@ -193,12 +193,22 @@ test('a tracked derived write portion stays unclassified inside a partial mix', 
   assert.equal(unclassified.value, '100', 'the reconstructed portion stays visible, not measured')
 })
 
-test('a partial mix without a tracked portion keeps its figure-plus-chip presentation', () => {
+test('a partial mix with an unknown portion stays unclassified, never measured', () => {
   const rows = T.tokenRows(rawT, bucket({ input: 0, output: 0, cacheRead: 0, cacheWrite: 110,
     cacheReadEvidence: 'reported', cacheWriteEvidence: 'partial', cacheEstimated: false }), false, null)
   const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
-  assert.equal(byKey.cw.value, '110', 'an inseparable legacy mix keeps its accepted figure')
-  assert.equal(byKey.cw.partial, true, 'the chip discloses the imperfect evidence')
+  assert.equal(byKey.cw.value, '—', 'an inseparable mix cannot figure as usage')
+  assert.ok(!byKey.cw.partial, 'a missing measurement takes no chip')
+  assert.equal(rows.find(r => r.key === 'cu').value, '110',
+    'the inseparable tokens stay visible, not measured')
+})
+
+test('a reported stream needs no tracked portion to figure as usage', () => {
+  const rows = T.tokenRows(rawT, bucket({ input: 0, output: 0, cacheRead: 0, cacheWrite: 50,
+    cacheReadEvidence: 'reported', cacheWriteEvidence: 'reported', cacheEstimated: false }), false, null)
+  const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
+  assert.equal(byKey.cw.value, '50', 'reported evidence means every write was measured')
+  assert.ok(!byKey.cw.partial)
   assert.equal(rows.find(r => r.key === 'cu'), undefined, 'nothing is hidden, so nothing is unclassified')
 })
 
