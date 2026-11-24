@@ -71,7 +71,7 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.equal(layout.usageOverflowY, 'visible', `${id} leaves vertical scrolling to the main host`)
         assert.equal(layout.usageScrollDelta, 0, `${id} has no nested Usage vertical scroll range`)
         assert.ok(layout.mainScrollDelta > 0, `${id} lets the main host scroll the full Usage page`)
-        assert.equal(layout.stats, 3, `${id} keeps only three primary figures`)
+        assert.equal(layout.stats, 4, `${id} keeps only four primary figures`)
         assert.equal(layout.readBenefit, '$4.20+', `${id} shows the partial backend cache-read benefit`)
         assert.equal(layout.selects, 7, `${id} keeps all seven filters`)
         assert.equal(layout.advancedFilters, true, `${id} discloses advanced filters`)
@@ -160,7 +160,7 @@ body[data-single] .case{height:auto;min-height:100vh;overflow:visible;margin:0 a
         assert.equal(result.readiness?.ready, true, `the ${fixtureState} fixture reaches the final structure (${locale})`)
         assert.equal(result.layouts.length, 4, `${locale}/${fixtureState} paints narrow/wide light/dark layouts`)
         for (const layout of result.layouts) {
-          assert.equal(layout.stats, 3, `${locale}/${fixtureState}/${layout.id} keeps three summary figures`)
+          assert.equal(layout.stats, 4, `${locale}/${fixtureState}/${layout.id} keeps four summary figures`)
           assert.equal(layout.readBenefit, fixtureState === 'unavailable' ? '—' : fixtureState === 'partial' ? '$196.99+' : '$196.99',
             `${locale}/${fixtureState}/${layout.id} shows the backend evidence state`)
         }

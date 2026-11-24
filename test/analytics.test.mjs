@@ -226,7 +226,7 @@ test('Usage and taskbar share the backend valuation bound', () => {
  const data={...fixture,totals:{...fixture.totals,list_usd:1.25,unpriced_tokens:0,unpriced_calls:0,
   economics:{...fixture.totals.economics,api_equivalent_basis:'range',api_equivalent_usd_high:1.75}}}
  const usage=page(data)
- const usageAmount=nodes(usage,node=>node.type==='div'&&String(node.props.className||'').split(/\s+/).includes('wm-statvalue'))[0]
+ const usageAmount=nodes(usage,node=>node.type==='div'&&String(node.props.className||'').split(/\s+/).includes('wm-kpi-figure'))[0]
  assert.equal(text(usageAmount),'$1.25–$1.75')
  globalThis.analyticsQueries=[]
  const chip=render(T.Chip())
@@ -461,14 +461,15 @@ test('dashboard renders three SVG analytics, honest pricing/billing/cache covera
  assert.equal(typeof T.AnalyticsPage,'function','analytics page is exported')
  T.$analytics.set({})
  const tree=page()
- for(const title of ['Usage analytics','API-equivalent','Cache-read benefit','Tokens','Model Explorer','Cache economics']) assert.ok(text(tree).includes(title),title)
+ for(const title of ['Usage analytics','API-equivalent','Cache-read benefit','Tokens','Calls','Model Explorer','Cache economics']) assert.ok(text(tree).includes(title),title)
  const summary=nodes(tree,n=>n.type==='div'&&String(n.props.className||'').split(/\s+/).includes('wm-usage-summary'))[0]
  assert.ok(summary,'the Usage summary renders')
- const summaryStats=nodes(summary,n=>n.type==='div'&&String(n.props.className||'').split(/\s+/).includes('wm-stat'))
- assert.equal(summaryStats.length,3,'the normal summary has three figures')
+ const summaryStats=nodes(summary,n=>n.type==='article'&&String(n.props.className||'').split(/\s+/).includes('wm-kpi'))
+ assert.equal(summaryStats.length,4,'the normal summary has four figures')
  assert.ok(text(summaryStats[0]).includes('API-equivalent'))
  assert.ok(text(summaryStats[1]).includes('Cache-read benefit'))
  assert.ok(text(summaryStats[2]).includes('Tokens'))
+ assert.ok(text(summaryStats[3]).includes('Calls'))
  assert.doesNotMatch(text(summary),/Theoretical net savings|Pricing coverage|Weighted cache hit/,
   'the primary figures omit secondary estimates and coverage copy')
  assert.equal(summary.props.role,'group')
@@ -532,7 +533,7 @@ test('legend exact-selection, Other inspection, sorting and keyboard chart detai
  assert.equal(T.$analytics.get()[scope].compositionFocus,'cache_read_tokens')
 })
 
-test('usage sections number 01–07 and group three core figures in one accessible summary', () => {
+test('usage sections number 01–07 and group four core figures in one accessible summary', () => {
  T.$analytics.set({})
  const tree=page()
  assert.deepEqual(nodes(tree,n=>n.type==='span' && n.props.className==='wm-number').map(text).sort(),
@@ -541,11 +542,12 @@ test('usage sections number 01–07 and group three core figures in one accessib
  assert.equal(summaries.length,1)
  assert.equal(summaries[0].props.role,'group')
  assert.equal(summaries[0].props['aria-label'],'Usage summary')
- const stats=nodes(summaries[0],n=>n.type==='div'&&String(n.props.className||'').split(/\s+/).includes('wm-stat'))
- assert.equal(stats.length,3)
+ const stats=nodes(summaries[0],n=>n.type==='article'&&String(n.props.className||'').split(/\s+/).includes('wm-kpi'))
+ assert.equal(stats.length,4)
  assert.ok(text(stats[0]).includes('API-equivalent'))
  assert.ok(text(stats[1]).includes('Cache-read benefit'))
  assert.ok(text(stats[2]).includes('Tokens'))
+ assert.ok(text(stats[3]).includes('Calls'))
 })
 
 test('token streams keep four distinct colours with a dedicated theme-aware cache-read', () => {

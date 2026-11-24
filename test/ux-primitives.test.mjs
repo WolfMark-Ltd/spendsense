@@ -479,8 +479,8 @@ test('cached Usage data does not consume the pending pricing focus before refres
       'the one-shot focus remains pending while the cached report is being refreshed')
     const staleSummary = container.querySelector('.wm-usage-summary')
     assert.ok(staleSummary, 'the cached report keeps its primary figures while its refresh is pending')
-    assert.equal(staleSummary.querySelectorAll('.wm-stat').length, 3,
-      'the cached summary stays limited to its three primary figures')
+    assert.equal(staleSummary.querySelectorAll('.wm-kpi').length, 4,
+      'the cached summary stays limited to its four primary figures')
     assert.notEqual(document.activeElement, staleSummary,
       'the stale figures do not steal focus from the incoming pricing evidence')
 
@@ -657,7 +657,8 @@ test('Overview keeps four equal financial cards and adapts panels to compact pan
   assert.doesNotMatch(T.PRODUCT_CSS, /@container\(min-width:1020px\).*wm-overview-grid/)
   assert.match(T.PRODUCT_CSS, /@container\(max-width:340px\)\{\.wm-product \.wm-overview-grid\{grid-template-columns:1fr\}\}/,
     'only truly narrow panes stack the Overview cards')
-  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid \.wm-kpi\{display:grid;align-content:start;gap:7px;min-height:156px/)
+  assert.match(T.PRODUCT_CSS, /\.wm-overview-grid \.wm-kpi,.wm-product \.wm-usage-grid \.wm-kpi\{display:grid;align-content:start;gap:7px;min-height:156px/,
+    'Usage KPI cards share the Overview card anatomy')
   assert.match(T.PRODUCT_CSS, /border-left:3px solid var\(--wm-kpi-accent,var\(--ui-accent\)\)/,
     'Overview financial cards follow the accepted Costs accent rail treatment')
   assert.match(T.PRODUCT_CSS,
