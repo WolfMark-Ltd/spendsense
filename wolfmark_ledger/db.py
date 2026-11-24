@@ -18,9 +18,11 @@ class LedgerUnavailable(RuntimeError):
     """The usage database cannot be read (missing, locked, or unsupported schema)."""
 
 
-# Columns we rely on. ``profile_name``/``title`` are additive; the core usage
-# columns are required. Kept explicit so a future Hermes schema change fails
-# loudly instead of silently producing wrong totals.
+# Columns we rely on. ``profile_name`` is additive; the core usage columns
+# are required. Kept explicit so a future Hermes schema change fails loudly
+# instead of silently producing wrong totals. Session ``title`` is
+# deliberately never selected (F121): it is free-form Hermes content the
+# UI does not need, so it must not enter any payload.
 _USAGE_COLUMNS = {
     "session_id",
     "model",
@@ -41,7 +43,7 @@ _USAGE_COLUMNS = {
     "first_seen",
     "last_seen",
 }
-_SESSION_COLUMNS = {"id", "source", "started_at", "title", "profile_name"}
+_SESSION_COLUMNS = {"id", "source", "started_at", "profile_name"}
 
 
 def default_db_path() -> Path:
@@ -143,7 +145,6 @@ def fetch_usage_rows(
                    u.first_seen,
                    u.last_seen,
                    s.source AS surface,
-                   s.title AS title,
                    s.started_at AS started_at,
                    s.profile_name AS profile
               FROM session_model_usage AS u

@@ -17,6 +17,17 @@ from .pricing import (Catalogue, Rate, _effective_rate, load_catalogue,
                       reaches_unapplied_tier)
 
 SCOPES = ("direct", "subagent", "auxiliary", "unattributed")
+
+#: Pricing-gap reasons a user-configured custom rate can resolve (WP48).
+#: The route identity exists but the catalogue lacks rates. Failed, missing
+#: and unrecorded-provider usage can only be reviewed, never priced by the
+#: user; unknown reasons stay on the review path.
+PRICING_FIXABLE_MISS_REASONS = frozenset({
+    "model_not_in_catalogue", "provider_not_in_catalogue",
+    "price_evidence_missing", "missing_base_rate", "tier_rate_unavailable",
+    "cache_rate_unavailable", "missing_cache_rate", "missing_cache_read_rate",
+    "missing_cache_write_rate",
+})
 _MAX_ANCESTRY = 32
 
 _TOTAL_FIELDS = (
@@ -614,6 +625,29 @@ def _scope_of(session_id: str, task: str, child_of: dict[str, str], known: set[s
     return "unattributed"
 
 
+def _custom_fixable(rows: list[dict[str, Any]], profiles: dict[str, Any]) -> tuple[int, int]:
+    """Unpriced tokens/calls a custom rate could still price (WP48).
+
+    A row counts when the catalogue cannot price it for a fixable reason
+    AND no custom rule already matches its route. Saving the matching
+    custom rate clears exactly this remainder, so a fix action gated on
+    it can never nag after the fix.
+    """
+    tokens = calls = 0
+    for row in rows:
+        if row.get("list_usd") is not None:
+            continue
+        miss = row.get("pricing_miss") or "price_evidence_missing"
+        if miss not in PRICING_FIXABLE_MISS_REASONS:
+            continue
+        if billing.custom_rates_for(profiles, row.get("provider", ""),
+                                    row.get("model", "")) is not None:
+            continue
+        tokens += int(row.get("_tokens") or 0)
+        calls += int(row.get("_calls") or 0)
+    return tokens, calls
+
+
 def build_analytics_report(
     event_db_path: Path | str | None = None, *,
     state_db_path: Path | str | None = None,
@@ -781,7 +815,11 @@ def build_analytics_report(
                  "against the provider's own documentation; estimated covers the opt-in "
                  "third-party and cross-provider tiers. None of these is an invoice."),
     }
-    billing_report = billing.classify(results_kept, billing.load_profiles(profiles_path), presentation)
+    billing_profiles = billing.load_profiles(profiles_path)
+    billing_report = billing.classify(results_kept, billing_profiles, presentation)
+    fixable_tokens, fixable_calls = _custom_fixable(results_kept, billing_profiles)
+    totals["custom_fixable_tokens"] = fixable_tokens
+    totals["custom_fixable_calls"] = fixable_calls
     buckets = [{"ts": _iso(ts), "ts_local": datetime.fromtimestamp(ts).astimezone().isoformat(),
                 **acc.as_dict()} for ts, acc in bucket_accs.items()]
     by_scope = [{"scope": name, **scope_accs[name].as_dict()}

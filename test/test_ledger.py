@@ -10,6 +10,7 @@ exercised, not mocked.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import tempfile
 import time
@@ -327,6 +328,24 @@ class AggregationTests(LedgerTestCase):
         names = {r["name"] for r in report["by_surface"]}
         self.assertIn("desktop", names)
         self.assertIn("cron", names)
+
+
+class SessionTitlePrivacyTests(LedgerTestCase):
+    """F121: free-form Hermes session titles must not enter any payload."""
+
+    def test_session_titles_are_absent_from_reports(self):
+        self.insert(input_tokens=1_000_000, api_call_count=10)
+        self.insert(session_id="s2", input_tokens=500_000, api_call_count=5)
+        report = self.report()
+        blob = json.dumps(report, default=str)
+        self.assertNotIn("A session", blob)
+        self.assertNotIn("Nightly", blob)
+        self.assertIn("recent_sessions", report)
+        for session in report["recent_sessions"]:
+            self.assertNotIn("title", session)
+        # Session identity and metrics survive; only the free-form title goes.
+        ids = {session["session_id"] for session in report["recent_sessions"]}
+        self.assertEqual(ids, {"s1", "s2"})
 
 
 if __name__ == "__main__":

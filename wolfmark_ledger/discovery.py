@@ -40,6 +40,12 @@ CONNECTOR_SLOTS = ("photon", "photon_project", "photon_user")
 _CACHE: dict[str, tuple[float, Any]] = {}
 CACHE_SECONDS = 60.0
 
+#: How long a usage-capability verdict stands without re-verification. The
+#: fetcher set only changes with Hermes itself, which restarts the backend;
+#: the TTL bounds the skew when it does not.
+SUPPORT_CACHE_SECONDS = 6 * 3600.0
+_SUPPORT_CACHE: dict[str, tuple[float, str]] = {}
+
 
 def hermes_home(home: Optional[Path | str] = None) -> Path:
     if home:
@@ -109,6 +115,75 @@ def _hermes_binary() -> Optional[str]:
 PROBE_TIMEOUT = 8.0
 
 
+def _usage_fetchers() -> Optional[set[str]]:
+    """Slugs the running Hermes can read usage for, or None when unknowable.
+
+    Read from Hermes' own fetcher registry, so the set tracks the installed
+    Hermes instead of a hardcoded list. Any import or shape problem answers
+    None: capability is then unknown and probes run as before (fail-open).
+    """
+    try:
+        from agent.account_usage import _USAGE_FETCHERS
+    except Exception:
+        return None
+    try:
+        return {str(slug).strip().lower() for slug in _USAGE_FETCHERS
+                if str(slug).strip()}
+    except Exception:
+        return None
+
+
+def _provider_has_usage_hook(slug: str) -> Optional[bool]:
+    """True when the provider profile overrides the usage hook.
+
+    None when the provider registry cannot be read (fail-open: the family
+    is probed). False covers both "no such profile" and "profile without a
+    hook": neither can serve a usage read.
+    """
+    try:
+        from providers import get_provider_profile
+        from providers.base import ProviderProfile
+    except Exception:
+        return None
+    try:
+        profile = get_provider_profile(slug)
+    except Exception:
+        return None
+    if profile is None:
+        return False
+    try:
+        return type(profile).fetch_account_usage is not ProviderProfile.fetch_account_usage
+    except Exception:
+        return None
+
+
+def usage_support(provider: str) -> str:
+    """'supported', 'unsupported' or 'unknown' for native usage reads.
+
+    'supported' means Hermes has a usage fetcher or a provider-hook override
+    for this slug, so a probe is worth running. 'unsupported' means neither
+    exists and a probe would only burn seconds (and discovery budget)
+    relearning that. 'unknown' means the running Hermes could not be
+    introspected, or this is not a Hermes host at all: probes run exactly
+    as before.
+    """
+    slug = str(provider or "").strip().lower()
+    now = time.time()
+    cached = _SUPPORT_CACHE.get(slug)
+    if cached and now - cached[0] < SUPPORT_CACHE_SECONDS:
+        return cached[1]
+    fetchers = _usage_fetchers()
+    if fetchers is None:
+        verdict = "unknown"
+    elif slug in fetchers:
+        verdict = "supported"
+    else:
+        hook = _provider_has_usage_hook(slug)
+        verdict = "unknown" if hook is None else ("supported" if hook else "unsupported")
+    _SUPPORT_CACHE[slug] = (now, verdict)
+    return verdict
+
+
 def native_snapshot(provider: str, *, home: Optional[Path | str] = None,
                     timeout: float = PROBE_TIMEOUT, cache_seconds: float = CACHE_SECONDS) -> dict[str, Any]:
     """One bounded ``hermes usage`` read for ``provider``.
@@ -132,6 +207,14 @@ def native_snapshot(provider: str, *, home: Optional[Path | str] = None,
     cached = _CACHE.get(key)
     if cached and now - cached[0] < cache_seconds:
         return cached[1]
+    if usage_support(provider) == "unsupported":
+        # No subprocess: Hermes has no usage endpoint for this family, so a
+        # probe would only burn seconds (and discovery budget) relearning
+        # that. The verdict itself re-verifies when its own TTL expires.
+        result = {"state": "unsupported", "snapshot": None,
+                  "reason": "Hermes has no usage endpoint for this provider"}
+        _CACHE[key] = (now, result)
+        return result
     env = {**os.environ, "HERMES_HOME": str(hermes_home(home)), "NO_COLOR": "1"}
     try:
         proc = subprocess.run([binary, "usage", "--provider", provider, "--json"],
@@ -187,16 +270,24 @@ def _slot_only(family: str, slots: Mapping[str, Any], catalogue: Mapping[str, An
 
 
 def probe_providers(providers: Iterable[str], *, home: Optional[Path | str] = None,
-                    budget_seconds: float = 10.0) -> dict[str, dict[str, Any]]:
-    """Bound the whole Desktop request and retain per-provider partial results."""
+                    budget_seconds: float = 12.0) -> dict[str, dict[str, Any]]:
+    """Bound the whole Desktop request and retain per-provider partial results.
+
+    Twelve seconds stays inside the 15 s transport call while giving the
+    (usually two or three) eligible families room for slow-but-working
+    reads; unsupported families never consume the budget at all.
+    """
     deadline = time.monotonic() + budget_seconds
     results = {}
     for provider in providers:
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        if remaining <= 0 and usage_support(provider) != "unsupported":
             results[provider] = {"state": "unavailable", "snapshot": None,
                                  "reason": "discovery time budget exhausted"}
         else:
+            # Unsupported families cost nothing (no subprocess), so they
+            # report their true state even after the budget is gone; only
+            # families worth probing can exhaust it.
             results[provider] = native_snapshot(provider, home=home,
                                                  timeout=min(PROBE_TIMEOUT, remaining))
     return results
@@ -234,6 +325,8 @@ def discover(catalogue: Mapping[str, Any] | None, *, include_native: bool = True
                 notes.append(f"{family}: Hermes reported no account usage ({probe['reason']}).")
             elif probe["state"] == "error":
                 notes.append(f"{family}: account usage could not be read ({probe['reason']}).")
+            elif probe["state"] == "unsupported":
+                notes.append(f"{family}: {probe['reason']}.")
         if snapshot:
             account = mem.member_from_native(snapshot, label=snapshot.get("title") or family,
                                              route_slugs=slots[family]["route_slugs"], discovered_at=now)
