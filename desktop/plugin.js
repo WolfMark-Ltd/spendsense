@@ -6953,6 +6953,13 @@ function OverviewPage() {
   const unpricedTokens = Number(result.unpriced_tokens || 0)
   const unpricedCalls = Number(result.unpriced_calls || 0)
   const unpriced = unpricedTokens > 0 || unpricedCalls > 0
+  // Cause-aware pricing action (WP48/F109): the backend counts unpriced
+  // usage a custom rate could still price (fixable catalogue gaps whose
+  // routes have no custom rule yet). Saving the matching rate clears
+  // exactly that remainder, so the fix action can never nag after the
+  // fix; anything else keeps the honest Usage review. Older backends
+  // omit the counts and keep the previous review-only row.
+  const unpricedFixable = num(result.custom_fixable_tokens) > 0 || num(result.custom_fixable_calls) > 0
   // The backend's own bound on this subtotal. A lower_bound/range/incomplete
   // figure with fully priced rows still omits evidence, so it carries the
   // Partial chip — the same qualifier Usage and the taskbar chip express with
@@ -7101,10 +7108,11 @@ function OverviewPage() {
                 jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
                 jsxs('div', { className: 'wm-attn-main', children: [
                   jsx('strong', { children: t('ovPricingTitle') }),
-                  jsx('span', { children: t('ovUnpriced') })
+                  jsx('span', { children: unpricedFixable ? t('ovUnpricedFixable') : t('ovUnpriced') })
                 ] }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
-                  onClick: openUsagePricingCoverage, children: t('ovPricingAction') })
+                  onClick: unpricedFixable ? () => goLedgerTab('settings') : openUsagePricingCoverage,
+                  children: unpricedFixable ? t('econActionPricing') : t('ovPricingAction') })
               ] }, 'unpriced') : null
             ].filter(Boolean) })
           : null,
@@ -15441,6 +15449,7 @@ const I18N = {
     ovNothingToDo: 'Nothing needs confirming right now.',
     ovPricingTitle: 'Usage pricing',
     ovUnpriced: 'Pricing evidence is incomplete for some backend usage in the last 30 days.',
+    ovUnpricedFixable: 'Some backend usage has no catalogue price; a custom token rate you set can price it.',
     ovWeatherStale: 'Refresh failed — weather warnings may be stale.',
     ovStrip: n => `${n} need attention`,
     ovStripReview: 'Review',
@@ -17224,6 +17233,7 @@ const I18N = {
     ovNothingToDo: '目前没有需要确认的事项。',
     ovPricingTitle: '用量定价',
     ovUnpriced: '过去 30 天的部分后端用量缺少完整定价证据。',
+    ovUnpricedFixable: '部分后端用量缺少目录价格；您设置的自定义令牌单价可以为其定价。',
     ovWeatherStale: '刷新失败——额度预警可能已过期。',
     ovStrip: n => `有 ${n} 项需要注意`,
     ovStripReview: '查看',

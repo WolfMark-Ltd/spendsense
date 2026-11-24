@@ -228,6 +228,21 @@ def select(profiles: dict[str, Any], provider: str, model: str,
     return None, "unknown"
 
 
+def custom_rates_for(profiles: dict[str, Any], provider: str, model: str,
+                     when: Optional[float] = None) -> Optional[tuple[float, float, float, float]]:
+    """Configured custom rates matching a route, or None (WP48).
+
+    The coverage twin of the value-side override in classify(): same
+    profile selection (including active dates), rates only. Cycle
+    membership is deliberately ignored: coverage answers whether a rule
+    exists for the route, not whether one historical row fell in-cycle.
+    """
+    profile, _source = select(profiles, provider or "", model or "", when)
+    if not profile or profile.get("kind") != "custom":
+        return None
+    return _override_rates(profile)
+
+
 def _override_rates(profile: dict[str, Any]) -> Optional[tuple[float, float, float, float]]:
     """Configured custom rates as (input, output, cache_read, cache_write).
 

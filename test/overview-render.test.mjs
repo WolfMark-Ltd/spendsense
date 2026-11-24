@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict'
 import { after, test } from 'node:test'
 import { flat, loadPageHarness, translatorFor } from './render-harness.mjs'
-import { overviewLedgerDays, overviewTransport } from './overview-fixtures.mjs'
+import { overviewAnalytics, overviewLedgerDays, overviewTransport } from './overview-fixtures.mjs'
 
 const harness = await loadPageHarness()
 const { T, React, ReactDOMClient, QueryClientProvider, queryClient, i18nBackend, plugin, dom, flush } = harness
@@ -169,6 +169,57 @@ test('Overview never prefixes a measured figure with a lower-bound qualifier, in
       assert.doesNotMatch(figure, /at least|至少|≥/i,
         `${locale}: ${kind} keeps the figure prominent and puts the qualifier in a chip`)
     }
+  }
+})
+
+test('Overview routes fixable pricing gaps to custom rates and keeps review for the rest, in both languages', async () => {
+  // WP48/F109: the backend counts unpriced usage a custom rate could still
+  // price (fixable catalogue gaps with no matching rule). That remainder
+  // earns the Settings fix; anything else keeps the honest Usage review,
+  // and a cleared remainder never nags again.
+  const variantTransport = totals => {
+    const base = overviewTransport({ requiredContract: T.REQUIRED_BACKEND_CONTRACT })
+    const analytics = overviewAnalytics()
+    return async path => path === '/analytics?days=30'
+      ? { ...analytics, totals: { ...analytics.totals, ...totals } }
+      : base(path)
+  }
+  const raw = T.getRest()
+  try {
+    for (const locale of LOCALES) {
+      T.setRest(variantTransport({ unpriced_tokens: 1500, unpriced_calls: 0,
+        custom_fixable_tokens: 1500, custom_fixable_calls: 0 }))
+      const fixed = await boot({ locale })
+      const fixRow = [...fixed.querySelectorAll('.wm-overview-attention li')]
+        .find(li => li.textContent.includes(T.I18N[locale].ovPricingTitle))
+      assert.ok(fixRow, `${locale}: the pricing row renders for catalogue gaps`)
+      assert.ok(fixRow.textContent.includes(T.I18N[locale].ovUnpricedFixable),
+        `${locale}: the row names the custom-rate fix`)
+      const fixButton = [...fixRow.querySelectorAll('button')]
+        .find(button => button.textContent === T.I18N[locale].econActionPricing)
+      assert.ok(fixButton, `${locale}: the fixable row offers pricing settings`)
+      await React.act(async () => {
+        fixButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+      assert.equal(T.$ledgerTab.get(), 'settings',
+        `${locale}: the fix action lands on Settings`)
+
+      // Unpriced usage with nothing left to fix (failed calls, or routes a
+      // custom rate already covers): review wording, Usage destination.
+      T.setRest(variantTransport({ unpriced_tokens: 1500, unpriced_calls: 3,
+        custom_fixable_tokens: 0, custom_fixable_calls: 0 }))
+      const review = await boot({ locale })
+      const reviewRow = [...review.querySelectorAll('.wm-overview-attention li')]
+        .find(li => li.textContent.includes(T.I18N[locale].ovPricingTitle))
+      assert.ok(reviewRow, `${locale}: the pricing row renders for unfixable gaps`)
+      assert.ok(reviewRow.textContent.includes(T.I18N[locale].ovUnpriced),
+        `${locale}: unfixable gaps keep the review wording`)
+      const reviewButton = [...reviewRow.querySelectorAll('button')]
+        .find(button => button.textContent === T.I18N[locale].ovPricingAction)
+      assert.ok(reviewButton, `${locale}: the unfixable row keeps Usage review`)
+    }
+  } finally {
+    T.restoreRest(raw)
   }
 })
 
