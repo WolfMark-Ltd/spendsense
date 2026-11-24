@@ -212,6 +212,35 @@ test('a reported stream needs no tracked portion to figure as usage', () => {
   assert.equal(rows.find(r => r.key === 'cu'), undefined, 'nothing is hidden, so nothing is unclassified')
 })
 
+test('rows and composition agree on unknown, null and zero derived portions', () => {
+  const cases = [
+    // [label, marker value (undefined = absent key), evidence, row value, unclassified]
+    ['absent marker, partial', undefined, 'partial', '—', 110],
+    ['explicit null marker, partial', null, 'partial', '—', 110],
+    ['absent marker, estimated', undefined, 'estimated', '—', 110],
+    ['explicit null marker, estimated', null, 'estimated', '—', 110],
+    ['zero marker, partial', 0, 'partial', '110', 0],
+  ]
+  for (const [label, marker, evidence, rowValue, unclassified] of cases) {
+    const over = { input: 0, output: 0, cacheRead: 0, cacheWrite: 110,
+      cacheReadEvidence: 'reported', cacheWriteEvidence: evidence, cacheEstimated: false }
+    if (marker !== undefined) over.derivedCacheWrite = marker
+    const b = bucket(over)
+    const rows = T.tokenRows(rawT, b, false, null)
+    const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
+    assert.equal(byKey.cw.value, rowValue, `${label}: the row keeps the rule`)
+    const cu = rows.find(r => r.key === 'cu')
+    assert.equal(cu?.value ?? 'none', unclassified ? T.fmtTokens(unclassified) : 'none',
+      `${label}: the residual stays visible in the rows`)
+    if (!unclassified) {
+      assert.equal(byKey.cw.partial, true, `${label}: the measured subtotal keeps its chip`)
+    }
+    const shares = T.compositionShares(b)
+    assert.equal(shares.write, unclassified ? 0 : 110, `${label}: the bar mirrors the rows`)
+    assert.equal(shares.unknown, unclassified, `${label}: the unknown slice mirrors the rows`)
+  }
+})
+
 test('a reconstructed cache write never reads as confirmed usage', () => {
   const rows = T.tokenRows(rawT, bucket({ cacheRead: 0, cacheWrite: 216_795,
     cacheReadEvidence: 'unknown', cacheWriteEvidence: 'derived' }), false, null)
