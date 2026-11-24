@@ -516,6 +516,22 @@ test('a failed provider call is explained neutrally and kept out of attention', 
   assert.ok(S.COSTS_NON_ATTENTION_CODES.has('call_failed'))
 })
 
+test('catalogue-only blockers link to catalogue info, never to custom rates', () => {
+  // Custom overrides cannot feed the catalogue-driven comparison, so the
+  // per-account rows must not route there: catalogue gaps link to the
+  // pricing section, where a refresh can genuinely resolve a stale
+  // snapshot or the staleness display explains the wait.
+  const catalogue = ['provider_price_catalogue_missing', 'provider_not_in_catalogue',
+    'price_evidence_missing', 'model_not_in_catalogue', 'missing_base_rate',
+    'tier_rate_unavailable', 'cache_rate_unavailable', 'missing_cache_rate',
+    'missing_cache_read_rate', 'missing_cache_write_rate']
+  for (const code of catalogue) {
+    assert.equal(S.econBlockerDestination({ code }), 'pricing', code)
+  }
+  assert.equal(en('econActionCatalogue'), 'View pricing catalogue info')
+  assert.equal(zh('econActionCatalogue'), '查看价格目录信息')
+})
+
 test('the Costs stylesheet gives every disclosure a state-changing chevron', () => {
   for (const selector of ['.wm-econ-disclosure>summary::before',
     '.wm-econ-disclosure[open]>summary::before',

@@ -685,7 +685,7 @@ test('blocked comparison reasons provide Memberships, Usage, pricing and FX acti
   assert.match(text(), /\$0\.00 usage/, 'a valid zero is not mistaken for missing usage')
   const actions = [...container.querySelectorAll('.wm-econ-action')]
   assert.deepEqual(actions.map(button => button.textContent), [
-    'Review in Memberships', 'Add dated FX rate', 'Review in Usage', 'Check pricing settings',
+    'Review in Memberships', 'Add dated FX rate', 'Review in Usage', 'View pricing catalogue info',
   ])
   await React.act(async () => { actions[1].dispatchEvent(new window.MouseEvent('click', { bubbles: true })) })
   assert.deepEqual(fxOpened, [true])
