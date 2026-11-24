@@ -26,6 +26,7 @@ Everything in this module is pure: no I/O, no network, no clock reads.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from datetime import datetime, timedelta, timezone
@@ -600,7 +601,7 @@ def _entry(item: Mapping[str, Any], *, providers: int = 1) -> dict[str, Any]:
 #: provenance would attribute one record's evidence to another.
 _VARIANT_FIELDS = ("event_type", "headline_code", "headline_params", "headline",
                    "provider", "model", "observed_at", "event_ids",
-                   "source_url", "provenance", "confidence")
+                   "source_url", "provenance", "confidence", "observed_count")
 
 
 def _variant(entry: Mapping[str, Any]) -> dict[str, Any]:
@@ -620,11 +621,54 @@ def _variant(entry: Mapping[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _row_key(entry: Mapping[str, Any]) -> str:
+    """Identity of one member's DISPLAYED row: the provider and model printed
+    beside it plus everything the row text is computed from. Members that
+    share it would render byte-identical rows, so the group collapses them
+    into one row with an observed count. Mirrors the desktop builder."""
+    params = entry.get("headline_params")
+    if not isinstance(params, Mapping):
+        params = {}
+    # These params never render in a row (see the desktop newsHeadlineText);
+    # keying on them would keep byte-identical rows separate. Mirrors the
+    # desktop builder exactly.
+    params = {key: value for key, value in params.items()
+              if key not in ("observed_at", "effective_at", "also_moved",
+                             "raised_pct", "cut_pct", "raised_values", "cut_values")}
+    return json.dumps([entry.get("event_type") or "", entry.get("provider") or "",
+                       entry.get("model") or "", entry.get("headline_code") or "",
+                       entry.get("headline") or "", params],
+                      sort_keys=True, default=str)
+
+
+def _collapse(members: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse same-row members, representative first; every id survives."""
+    runs: dict[str, list[dict[str, Any]]] = {}
+    for member in members:
+        runs.setdefault(_row_key(member), []).append(member)
+    collapsed = []
+    for run in runs.values():
+        first = run[0]
+        if len(run) < 2:
+            collapsed.append(_variant(first))
+            continue
+        collapsed.append({
+            **_variant(first),
+            "event_ids": [event_id for row in run for event_id in row["event_ids"]],
+            "observed_at": _newest_observed(run) or first["observed_at"],
+            "observed_count": len(run),
+        })
+    return collapsed
+
+
 def _group(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group entries under their model family without merging identity.
 
     One grouped row per family; ``variants`` keeps every exact provider/model
-    event, so no tier, version or provider detail is lost.
+    event, so no tier, version or provider detail is lost. Members that
+    would render byte-identical rows collapse into one row with an
+    observed count (every event id survives); distinct transitions —
+    however similar their figures — never collapse.
     """
     buckets: dict[str, list[dict[str, Any]]] = {}
     loose: list[dict[str, Any]] = []
@@ -651,7 +695,9 @@ def _group(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "providers": providers,
             "event_ids": [event_id for row in members for event_id in row["event_ids"]],
             "score": max(row["score"] for row in members),
-            "variants": [_variant(row) for row in members[:_MAX_VARIANTS]],
+            # Collapse precedes truncation: identical rows must never crowd
+            # a distinct transition out of the visible variant list.
+            "variants": _collapse(members)[:_MAX_VARIANTS],
         }
         if len(members) > 1:
             label = head["family_label"] or head["model"]
@@ -996,7 +1042,7 @@ _MAX_TEXT = 500
 _ENTRY_TEXT = ("event_type", "headline_code", "headline", "provider", "model",
                "model_family", "family_label", "observed_at", "effective_at",
                "source_url", "confidence", "provenance")
-_ENTRY_NUMBER = ("score", "family_event_count")
+_ENTRY_NUMBER = ("score", "family_event_count", "observed_count")
 
 
 def _text(value: Any, limit: int = _MAX_TEXT) -> str:

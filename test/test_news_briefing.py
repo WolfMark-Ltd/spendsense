@@ -456,6 +456,50 @@ class BriefingTests(unittest.TestCase):
                          "exact model ids survive grouping")
         self.assertEqual(len(group["event_ids"]), 2)
 
+    def test_identical_rows_collapse_into_one_observed_count(self):
+        # UAT: one transition re-observed (recurrence plus central echo)
+        # rendered three identical rows. Same displayed row collapses with
+        # every id surviving; a distinct transition stays its own row.
+        same = lambda item_id, observed: price_item(
+            "openrouter", "z-ai/glm-5.3-flash",
+            {"input": 0.15, "output": 0.5}, {"input": 0.0399, "output": 0.0784},
+            item_id=item_id, observed_at=observed)
+        items = [same("md-1", "2026-11-22T10:40:00+00:00"),
+                 price_item("openrouter", "z-ai/glm-5.3-flash",
+                            {"input": 0.15, "output": 0.5},
+                            {"input": 0.12, "output": 0.38},
+                            item_id="md-other",
+                            observed_at="2026-11-23T00:00:00+00:00"),
+                 same("md-2", "2026-11-22T21:08:00+00:00"),
+                 same("md-3", "2026-11-22T22:29:00+00:00")]
+        group = self.section(self.build(items), "biggest_reductions")["entries"][0]
+        self.assertEqual(group["family_event_count"], 4)
+        self.assertEqual(sorted(group["event_ids"]),
+                         ["md-1", "md-2", "md-3", "md-other"])
+        self.assertEqual(len(group["variants"]), 2)
+        collapsed = next(v for v in group["variants"]
+                         if v.get("observed_count") == 3)
+        self.assertEqual(sorted(collapsed["event_ids"]), ["md-1", "md-2", "md-3"])
+        self.assertEqual(collapsed["observed_at"], "2026-11-22T22:29:00+00:00")
+        lone = next(v for v in group["variants"] if "observed_count" not in v)
+        self.assertEqual(lone["event_ids"], ["md-other"])
+
+    def test_mixed_rows_collapse_when_only_percentages_differ(self):
+        # The mixed row names raised/cut rates, never their percentages.
+        def mixed(item_id, observed, after):
+            return price_item(
+                "openrouter", "z-ai/glm-5.3-flash",
+                {"input": 0.15, "output": 0.5, "cache_read": 0.03}, after,
+                item_id=item_id, observed_at=observed)
+        items = [mixed("md-x", "2026-11-24T05:46:00+00:00",
+                       {"input": 0.77, "output": 2.5, "cache_read": 0.02}),
+                 mixed("md-y", "2026-11-24T07:41:00+00:00",
+                       {"input": 0.73, "output": 2.4, "cache_read": 0.02})]
+        group = self.section(self.build(items), "mixed_price_changes")["entries"][0]
+        (variant,) = group["variants"]
+        self.assertEqual(variant["observed_count"], 2)
+        self.assertEqual(sorted(variant["event_ids"]), ["md-x", "md-y"])
+
     def test_grouped_rows_stay_localisable(self):
         items = [
             price_item("p1", "kimi-k3", {"input": 3.0, "output": 15.0},
@@ -643,6 +687,15 @@ class SanitiseTests(unittest.TestCase):
         self.assertNotIn("magnitude", entry)
         self.assertEqual(cleaned["counts"], {"total": 1})
         self.assertEqual(cleaned["all_updates"], {"totals": [1]})
+
+    def test_observed_count_survives_sanitising(self):
+        raw = {"version": 1, "sections": [{"id": "s", "entries": [{
+            "provider": "acme", "headline": "ok",
+            "variants": [{"provider": "acme", "headline": "row",
+                          "observed_count": 3}]}]}]}
+        cleaned = nb.sanitise_briefing(raw)
+        (variant,) = cleaned["sections"][0]["entries"][0]["variants"]
+        self.assertEqual(variant["observed_count"], 3)
 
     def test_keeps_a_valid_briefing_intact(self):
         briefing = nb.build_briefing(
