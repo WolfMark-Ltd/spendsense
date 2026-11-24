@@ -625,27 +625,39 @@ def _scope_of(session_id: str, task: str, child_of: dict[str, str], known: set[s
     return "unattributed"
 
 
-def _custom_fixable(rows: list[dict[str, Any]], profiles: dict[str, Any]) -> tuple[int, int]:
+def _custom_fixable(rows: list[dict[str, Any]], profiles: dict[str, Any]
+                  ) -> tuple[int, int, dict[str, Any] | None]:
     """Unpriced tokens/calls a custom rate could still price (WP48).
 
     A row counts when the catalogue cannot price it for a fixable reason
     AND no custom rule already matches its route. Saving the matching
     custom rate clears exactly this remainder, so a fix action gated on
-    it can never nag after the fix.
+    it can never nag after the fix. Also returns the largest fixable row
+    (provider, model, reason, tokens, calls) so the UI can name the gap;
+    ties break on provider/model for determinism.
     """
     tokens = calls = 0
+    best: tuple[tuple, dict[str, Any]] | None = None
     for row in rows:
         if row.get("list_usd") is not None:
             continue
         miss = row.get("pricing_miss") or "price_evidence_missing"
         if miss not in PRICING_FIXABLE_MISS_REASONS:
             continue
-        if billing.custom_rates_for(profiles, row.get("provider", ""),
-                                    row.get("model", "")) is not None:
+        provider = str(row.get("provider") or "")
+        model = str(row.get("model") or "")
+        if billing.custom_rates_for(profiles, provider, model) is not None:
             continue
-        tokens += int(row.get("_tokens") or 0)
-        calls += int(row.get("_calls") or 0)
-    return tokens, calls
+        row_tokens = int(row.get("_tokens") or 0)
+        row_calls = int(row.get("_calls") or 0)
+        tokens += row_tokens
+        calls += row_calls
+        key = (-row_tokens, provider, model)
+        if best is None or key < best[0]:
+            best = (key, {"provider": provider, "model": model,
+                           "reason": miss, "tokens": row_tokens,
+                           "calls": row_calls})
+    return tokens, calls, (best[1] if best else None)
 
 
 def build_analytics_report(
@@ -817,9 +829,10 @@ def build_analytics_report(
     }
     billing_profiles = billing.load_profiles(profiles_path)
     billing_report = billing.classify(results_kept, billing_profiles, presentation)
-    fixable_tokens, fixable_calls = _custom_fixable(results_kept, billing_profiles)
+    fixable_tokens, fixable_calls, fixable_detail = _custom_fixable(results_kept, billing_profiles)
     totals["custom_fixable_tokens"] = fixable_tokens
     totals["custom_fixable_calls"] = fixable_calls
+    totals["custom_fixable_detail"] = fixable_detail
     buckets = [{"ts": _iso(ts), "ts_local": datetime.fromtimestamp(ts).astimezone().isoformat(),
                 **acc.as_dict()} for ts, acc in bucket_accs.items()]
     by_scope = [{"scope": name, **scope_accs[name].as_dict()}

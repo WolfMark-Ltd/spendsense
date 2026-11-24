@@ -2073,9 +2073,11 @@ function sessionSummaryQuery(identity, sessionId, storedId = null) {
         // A usable scope needs proven population, recorded calls and a
         // valuation block — not a computable net figure. Indeterminate net
         // savings with a supported read benefit (the common live case)
-        // still wins its leg here.
+        // still wins its leg here. The valuation must be an object, as
+        // the validator requires: a non-null false or string is malformed.
         const state = sessionSavingsState(envelope, leg, identity)
-        if (state.scopeProven && !state.empty && state.valuation != null) return envelope
+        const usableValuation = state.valuation != null && typeof state.valuation === 'object'
+        if (state.scopeProven && !state.empty && usableValuation) return envelope
       }
       return matched || first
     }
@@ -5002,12 +5004,16 @@ const OV_GAP_REASON_KEYS = {
   model_unidentified: 'ovGapModelMissing',
   cache_provenance_unknown: 'ovGapCacheProvenance',
   provider_price_catalogue_missing: 'ovGapProviderPrice',
+  provider_not_in_catalogue: 'ovGapProviderPrice',
   price_evidence_missing: 'ovGapModelPrice',
+  model_not_in_catalogue: 'ovGapModelPrice',
   rate_unavailable: 'ovGapRateUnavailable',
   tier_rate_unavailable: 'ovGapTierRate',
   missing_base_rate: 'ovGapMissingBaseRate',
   missing_cache_read_rate: 'ovGapMissingCacheRead',
   missing_cache_write_rate: 'ovGapMissingCacheWrite',
+  missing_cache_rate: 'ovGapMissingCacheRate',
+  cache_rate_unavailable: 'ovGapMissingCacheRate',
 }
 
 function analyticsGapReasonLabel(reason, t) {
@@ -7274,6 +7280,15 @@ function OverviewPage() {
   // fix; anything else keeps the honest Usage review. Older backends
   // omit the counts and keep the previous review-only row.
   const unpricedFixable = num(result.custom_fixable_tokens) > 0 || num(result.custom_fixable_calls) > 0
+  // The backend names the largest fixable gap so the row states the exact
+  // route, model and missing rate. Older backends omit the detail and keep
+  // the generic sentence. Raw ids: the Settings form matches them exactly.
+  const fixableDetail = result.custom_fixable_detail && typeof result.custom_fixable_detail === 'object'
+    ? result.custom_fixable_detail : null
+  const fixableNamed = fixableDetail && typeof fixableDetail.model === 'string' && fixableDetail.model
+    && typeof fixableDetail.provider === 'string' && fixableDetail.provider
+    ? t('ovUnpricedFixableDetail', fixableDetail.model, fixableDetail.provider,
+      analyticsGapReasonLabel(fixableDetail.reason, t)) : null
   // The backend's own bound on this subtotal. A lower_bound/range/incomplete
   // figure with fully priced rows still omits evidence, so it carries the
   // Partial chip — the same qualifier Usage and the taskbar chip express with
@@ -7424,7 +7439,7 @@ function OverviewPage() {
                 jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
                 jsxs('div', { className: 'wm-attn-main', children: [
                   jsx('strong', { children: t('ovPricingTitle') }),
-                  jsx('span', { children: unpricedFixable ? t('ovUnpricedFixable') : t('ovUnpriced') })
+                  jsx('span', { children: unpricedFixable ? (fixableNamed || t('ovUnpricedFixable')) : t('ovUnpriced') })
                 ] }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
                   onClick: unpricedFixable ? () => goLedgerTab('settings') : openUsagePricingCoverage,
@@ -15927,6 +15942,7 @@ const I18N = {
     ovPricingTitle: 'Usage pricing',
     ovUnpriced: 'Pricing evidence is incomplete for some backend usage in the last 30 days.',
     ovUnpricedFixable: 'Some backend usage has no catalogue price; a custom token rate you set can price it.',
+    ovUnpricedFixableDetail: (model, provider, reason) => `${model} via ${provider} has no catalogue price (${reason}); a custom token rate you set can price it.`,
     ovWeatherStale: 'Refresh failed — weather warnings may be stale.',
     ovStrip: n => `${n} need attention`,
     ovStripReview: 'Review',
@@ -16246,6 +16262,7 @@ const I18N = {
     ovGapMissingBaseRate: 'Base input or output rate is missing',
     ovGapMissingCacheRead: 'Cache-read rate is missing',
     ovGapMissingCacheWrite: 'Cache-write rate is missing',
+    ovGapMissingCacheRate: 'No cache rate is available for this model',
     econHeadNoFees: 'No subscription has a known fee; declare fees in Memberships.',
     econHeadUnpriced: count => `${count} subscription(s) have no fee; the headline cannot be compared.`,
     econHeadIncomparable: 'At least one subscription cannot be compared (missing price, coverage or FX rate); see the rows.',
@@ -17742,6 +17759,7 @@ const I18N = {
     ovPricingTitle: '用量定价',
     ovUnpriced: '过去 30 天的部分后端用量缺少完整定价证据。',
     ovUnpricedFixable: '部分后端用量缺少目录价格；您设置的自定义令牌单价可以为其定价。',
+    ovUnpricedFixableDetail: (model, provider, reason) => `${model}（经 ${provider}）缺少目录价格（${reason}）；您设置的自定义令牌单价可以为其定价。`,
     ovWeatherStale: '刷新失败——额度预警可能已过期。',
     ovStrip: n => `有 ${n} 项需要注意`,
     ovStripReview: '查看',
@@ -18057,6 +18075,7 @@ const I18N = {
     ovGapMissingBaseRate: '缺少基础输入或输出费率',
     ovGapMissingCacheRead: '缺少缓存读取费率',
     ovGapMissingCacheWrite: '缺少缓存写入费率',
+    ovGapMissingCacheRate: '缺少此模型的缓存费率',
     econHeadNoFees: '没有订阅登记了已知费用；请在“会员”中登记费用。',
     econHeadUnpriced: count => `${count} 个订阅没有费用；无法对比汇总数字。`,
     econHeadIncomparable: '至少一个订阅无法对比（缺失价格、覆盖或汇率）；请查看各行。',
