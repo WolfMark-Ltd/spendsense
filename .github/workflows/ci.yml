@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install fastapi httpx
+      - run: python -m pip install -r requirements-ci.txt
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -61,7 +61,9 @@ jobs:
         with:
           python-version: '3.12'
       # tzdata: Windows ships no system zoneinfo database; the DST tests need it.
-      - run: python -m pip install fastapi httpx tzdata
+      # It is data-only (IANA database, no API surface), so it stays floating
+      # while the API dependencies stay pinned in requirements-ci.txt (F128).
+      - run: python -m pip install -r requirements-ci.txt tzdata
       - run: python scripts/managed-tests.py python
   test-safety-macos:
     runs-on: macos-latest

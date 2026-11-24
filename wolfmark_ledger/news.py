@@ -1072,6 +1072,36 @@ def _is_cache_source(source: Any) -> bool:
     return str(source or "").startswith("models.dev cache")
 
 
+def item_proves_change(item: Mapping[str, Any]) -> bool:
+    """Stored plan-change items must name a fee or field change (F139).
+
+    Pre-structural-diff stores recorded ``allowances/terms changed`` from raw
+    terms-string drift (e.g. verification metadata) with identical fees and
+    no field list. Those records prove no change and are withheld from the
+    payload; the store itself is untouched and current diffs cannot emit
+    them. Central items keep the publisher's own semantics.
+
+    Records without the ``fee_changed`` flag predate machine comparison
+    entirely (or are foreign): they are kept, since differing fee strings
+    prove a fee change there and equal ones prove nothing either way. Only
+    an explicit ``False`` with no field evidence is withheld.
+    """
+    if item.get("origin") == "central":
+        return True
+    if item.get("category") != "subscription":
+        return True
+    if item.get("summary_code") == "news_sum_new_plan":
+        return True
+    params = item.get("summary_params")
+    if not isinstance(params, dict):
+        return True
+    fee_changed = params.get("fee_changed")
+    if fee_changed is True or not isinstance(fee_changed, bool):
+        return True
+    fields = params.get("field_changes")
+    return isinstance(fields, list) and len(fields) > 0
+
+
 def load_items(path: Optional[Path | str] = None) -> dict[str, Any]:
     target = Path(path) if path else items_path()
     raw, error = _read_json(target)
@@ -1834,7 +1864,8 @@ def news_payload(*, data_dir: Optional[Path | str] = None,
         providers_configured = []
     recent = usage_summary(event_db, days=IMPACT_DAYS, now=now)
     evidence = usage_summary(event_db, days=EVIDENCE_DAYS, now=now)
-    local_items = [item for item in stored["items"] if isinstance(item, dict)]
+    local_items = [item for item in stored["items"]
+                   if isinstance(item, dict) and item_proves_change(item)]
     central_items: list[dict[str, Any]] = []
     # Disabled means local-only: a retained cache speeds re-enabling but is
     # never surfaced, so the off state shows exactly what it claims.

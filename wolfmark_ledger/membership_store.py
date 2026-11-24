@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
 from . import membership as mem
-from .filelock import locked as _locked
+from .filelock import locked as _locked, shared as _shared
 
 STORE_NAME = "memberships.json"
 STORE_VERSION = 1
@@ -533,9 +533,14 @@ def _write_seat_store(seats: Mapping[str, Any], target: Path) -> None:
 
 
 def load_with_seats(path: Optional[Path | str] = None) -> dict[str, Any]:
-    """Read a consistent membership and seat-history snapshot under one lock."""
+    """Read a consistent membership and seat-history snapshot under one lock.
+
+    Shared, not exclusive (F124): readers must never block each other, and
+    a contended read fails loudly after a bounded wait instead of hanging
+    an API worker past the transport timeout.
+    """
     target = Path(path) if path else store_path()
-    with _locked(target):
+    with _shared(target):
         data = load_store(target, strict=True)
         seats = load_seat_store(target)
         entitlements = load_entitlement_store(target)

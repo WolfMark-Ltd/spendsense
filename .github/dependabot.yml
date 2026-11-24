@@ -1,0 +1,11 @@
+# F128: surface security updates for CI and test dependencies.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/test/harness"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"

@@ -160,7 +160,7 @@ def main() -> int:
 
     # Namespace every copied backend store as well as the Desktop and routes.
     # Refuse to produce a misleading build if the source layout has changed.
-    for relative, expected in (("wolfmark_ledger/store.py", 3),
+    for relative, expected in (("wolfmark_ledger/store.py", 4),
                                ("wolfmark_ledger/membership_store.py", 2),
                                ("wolfmark_ledger/billing.py", 2),
                                ("wolfmark_ledger/news.py", 2)):
