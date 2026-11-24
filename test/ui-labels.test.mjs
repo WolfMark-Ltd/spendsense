@@ -138,16 +138,20 @@ test('the totals heading follows the bucket scope', () => {
   assert.ok(rows.every(r => r.label !== 'This session'))
 })
 
-test('estimated reads carry ≈ and unknown writes stay unknown', () => {
+test('estimated reads stay visible with a partial flag and unknown writes stay missing', () => {
   const rows = T.tokenRows(rawT, bucket(), false, null)
   const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
-  assert.equal(byKey.i.value, '328.5k', 'exact input counter, unrounded by ≈')
-  assert.doesNotMatch(byKey.i.value, /≈/)
-  assert.equal(byKey.cr.value.startsWith('≈'), true)
-  assert.equal(byKey.cr.label, 'Cache read', 'the figure carries the estimate marker without a second caveat')
-  assert.equal(byKey.cw.value, '—', 'unknown cache writes stay visually quiet')
+  assert.equal(byKey.i.value, '328.5k', 'exact input counter stays bare')
+  assert.ok(!byKey.i.partial)
+  assert.equal(byKey.cr.value, '1.00M', 'a measured estimate shows bare')
+  assert.equal(byKey.cr.partial, true, 'imperfect evidence rides a partial flag, not an ≈ prefix')
+  assert.equal(byKey.cr.label, 'Cache read', 'the figure carries no second caveat')
+  assert.equal(byKey.cw.value, '—', 'an unknown-evidence counter is missing, never a measured zero')
+  assert.ok(!byKey.cw.partial, 'a missing counter needs no partial flag')
+  assert.equal(byKey.cu, undefined, 'nothing hidden, nothing unclassified')
   assert.equal(byKey.tt.label, 'Total', 'the total label stays short')
-  assert.equal(byKey.tt.value.startsWith('≈'), true, 'the total carries an estimated cache component')
+  assert.equal(byKey.tt.value, '1.39M', 'the total shows bare')
+  assert.equal(byKey.tt.partial, true, 'the total flags an estimated cache component')
   assert.doesNotMatch(byKey.c.label, /≈/)
 })
 
@@ -156,8 +160,46 @@ test('exact provider cache fields are shown without an estimate marker', () => {
     cacheReadEvidence: 'reported', cacheWriteEvidence: 'reported' }), false, null)
   const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
   assert.ok(rows.every(r => !r.value.includes('≈')))
+  assert.ok(rows.every(r => !r.partial), 'reported evidence needs no partial flags')
+  assert.equal(byKey.cr.value, '1.00M', 'a reported read shows bare')
+  assert.equal(byKey.cw.value, '0', 'a reported zero is a measured zero, distinct from missing')
   assert.doesNotMatch(byKey.cr.label, /derived/)
   assert.doesNotMatch(byKey.tt.label, /derived/)
+})
+
+test('an unattributed cache counter stays a dash and its tokens stay unclassified', () => {
+  const rows = T.tokenRows(rawT, bucket({ cacheRead: 50_000, cacheWrite: 179_400,
+    cacheReadEvidence: 'reported', cacheWriteEvidence: 'unknown' }), false, null)
+  const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
+  assert.equal(byKey.cw.value, '—', 'unknown evidence cannot figure as a measurement')
+  assert.ok(!byKey.cw.partial)
+  assert.equal(byKey.cr.value, '50.0k', 'the reported stream is unaffected')
+  assert.ok(!byKey.cr.partial)
+  const unclassified = rows.find(r => r.key === 'cu')
+  assert.equal(unclassified.value, T.fmtTokens(179_400), 'unattributed tokens stay visible, bare')
+  assert.equal(byKey.tt.value, '615.0k', 'the total still accounts every counter')
+  assert.equal(byKey.tt.partial, true, 'hidden streams flag the total')
+})
+
+test('a tracked derived write portion stays unclassified inside a partial mix', () => {
+  const rows = T.tokenRows(rawT, bucket({ input: 0, output: 0, cacheRead: 0, cacheWrite: 110,
+    cacheReadEvidence: 'reported', cacheWriteEvidence: 'partial', derivedCacheWrite: 100,
+    cacheEstimated: false }), false, null)
+  const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
+  assert.equal(byKey.cw.value, '10', 'only the measured portion figures as usage')
+  assert.equal(byKey.cw.partial, true, 'the mix keeps its partial flag')
+  assert.equal(byKey.cr.value, '0', 'a reported zero beside the mix stays a measured zero')
+  const unclassified = rows.find(r => r.key === 'cu')
+  assert.equal(unclassified.value, '100', 'the reconstructed portion stays visible, not measured')
+})
+
+test('a partial mix without a tracked portion keeps its figure-plus-chip presentation', () => {
+  const rows = T.tokenRows(rawT, bucket({ input: 0, output: 0, cacheRead: 0, cacheWrite: 110,
+    cacheReadEvidence: 'reported', cacheWriteEvidence: 'partial', cacheEstimated: false }), false, null)
+  const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
+  assert.equal(byKey.cw.value, '110', 'an inseparable legacy mix keeps its accepted figure')
+  assert.equal(byKey.cw.partial, true, 'the chip discloses the imperfect evidence')
+  assert.equal(rows.find(r => r.key === 'cu'), undefined, 'nothing is hidden, so nothing is unclassified')
 })
 
 test('a reconstructed cache write never reads as confirmed usage', () => {
@@ -168,8 +210,8 @@ test('a reconstructed cache write never reads as confirmed usage', () => {
   assert.equal(cw.label, 'Cache write')
   const unclassified = rows.find(row => row.key === 'cu')
   assert.equal(unclassified.label, rawT('unclassifiedPromptTokens'))
-  assert.equal(unclassified.value, `≈${T.fmtTokens(216_795)}`,
-    'a derived write stays visibly approximate in the unclassified prompt segment')
+  assert.equal(unclassified.value, T.fmtTokens(216_795),
+    'a derived write stays visible in the unclassified segment, bare: the label already qualifies it')
 })
 
 test('context is shown only when the gateway supplies it', () => {
@@ -248,6 +290,27 @@ test('composition shares stay zero without prompt tokens', () => {
     assert.equal(shares.readFrac, 0)
     assert.equal(shares.writeFrac, 0)
   }
+})
+
+test('composition shares split a tracked derived portion into the unknown slice', () => {
+  const shares = T.compositionShares({ input: 100, cacheRead: 0, cacheWrite: 110, output: 0,
+    cacheReadEvidence: 'reported', cacheWriteEvidence: 'partial', derivedCacheWrite: 100 })
+  assert.equal(shares.prompt, 210)
+  assert.equal(shares.read, 0)
+  assert.equal(shares.write, 10, 'only the measured portion figures as usage')
+  assert.equal(shares.unknown, 100, 'the reconstructed portion stays visible, not measured')
+  assert.ok(Math.abs(shares.writeFrac - 10 / 210) < 1e-9)
+  assert.ok(Math.abs(shares.unknownFrac - 100 / 210) < 1e-9)
+})
+
+test('composition shares keep unknown streams out of the measured slices', () => {
+  const shares = T.compositionShares({ input: 100, cacheRead: 300, cacheWrite: 100, output: 50,
+    cacheReadEvidence: 'unknown', cacheWriteEvidence: 'unknown' })
+  assert.equal(shares.prompt, 500)
+  assert.equal(shares.read, 0, 'an unattributed read is not a measurement')
+  assert.equal(shares.write, 0, 'an unattributed write is not a measurement')
+  assert.equal(shares.unknown, 400, 'unattributed tokens stay visible in one slice')
+  assert.ok(Math.abs(shares.freshFrac + shares.unknownFrac - 1) < 1e-9)
 })
 
 const stableLive = over => ({
@@ -329,7 +392,7 @@ test('meter presence distinguishes live, recorded, updating and empty', () => {
 })
 
 test('every sidebar string exists in English and Chinese', () => {
-  const keys = ['meterLive', 'meterRecorded', 'meterUpdating', 'apiEquivalent', 'costSourceInfo',
+  const keys = ['meterLive', 'meterRecorded', 'meterUpdating', 'meterPartial', 'scopeFallbackNote', 'apiEquivalent', 'costSourceInfo',
     'totalTokens', 'promptMix', 'cacheFresh', 'cacheMethodInfo', 'exactLabel', 'estimatedLabel',
     'infoLabel', 'coverageLabel', 'coverageHelpLabel', 'coverageScopeRun', 'coverageScopeConversation',
     'savingsInfo', 'savedGauge', 'modelIdInfoLabel', 'modelIdInfo']

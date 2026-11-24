@@ -194,6 +194,33 @@ test('pre-upgrade aggregate evidence stays mixed after new reported cache counte
   assert.deepEqual(row.slice(19, 21), ['partial', 'partial'])
 })
 
+test('merged estimated and reported writes keep the derived portion separable', () => {
+  const model = 'm', provider = 'p'
+  const estUsage = { model, input: 100, prompt: 1300, output: 0, calls: 1, cache_hit_pct: 15 }
+  const repUsage = { model, input: 100, prompt: 1300, output: 0, calls: 1, cache_read: 200, cache_write: 1000 }
+  const est = T.readUsage(estUsage)
+  assert.equal(est.cacheWriteEvidence, 'derived')
+  assert.equal(est.cacheWrite, 1005, 'the estimated call reconstructs its write residual')
+  const rep = T.readUsage(repUsage)
+  assert.equal(rep.cacheWriteEvidence, 'reported')
+  assert.equal(rep.cacheWrite, 1000)
+  const opts = { provider, storedId: 'conv' }
+  let ledger = T.applyUsage(T.emptyLedger(), { ...opts, now: NOW, sessionId: 'est-runtime', usage: estUsage })
+  ledger = T.applyUsage(ledger, { ...opts, now: NOW + 1, sessionId: 'rep-runtime', usage: repUsage })
+  const conv = ledger.sessions.conv
+  assert.equal(conv.cacheWriteEvidence, 'partial')
+  assert.equal(conv.cacheWrite, 2005)
+  assert.equal(conv.derivedCacheWrite, 1005, 'the reconstructed portion is tracked, not merged away')
+  const rows = T.tokenRows(key => key, conv, false, null)
+  const byKey = Object.fromEntries(rows.map(r => [r.key, r]))
+  assert.equal(byKey.cw.value, '1.0k', 'only the measured portion figures as usage')
+  assert.equal(byKey.cw.partial, true, 'the mix keeps its partial flag')
+  assert.equal(byKey.cr.value, '395', 'estimated and reported reads mix visibly with a flag')
+  assert.equal(byKey.cr.partial, true)
+  assert.equal(rows.find(r => r.key === 'cu').value, T.fmtTokens(1005),
+    'the reconstructed portion stays visible, not measured')
+})
+
 test('net savings include write premiums and require prices for used buckets', () => {
   const rates = { input: 2, output: 4, cache: .5, write: 3, inputKnown: true, outputKnown: true, cacheKnown: true }
   assert.equal(T.cacheSavings(200, rates, 1000), -.0007)
