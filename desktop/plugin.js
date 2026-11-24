@@ -4581,6 +4581,7 @@ function billingEvidence(billing, t = needsAttentionEn) {
     usd: ev[key]?.usd ?? null,
     basis: ev[key]?.basis || 'none',
     source: ev[key]?.source || '',
+    billingBasis: ev[key]?.billing_basis ?? null,
     pricingCoverage: ev[key]?.pricing_coverage || null
   }))
 }
@@ -5969,7 +5970,7 @@ function CostsEvidenceDetail({ label, value, children }) {
   ].filter(Boolean) })
 }
 
-function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, summaryLoading, accountsLoading, summaryReady, accountsFailed, t }) {
+function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, summaryLoading, accountsLoading, summaryReady, accountsFailed, t, summaryWindow = null, summaryScope = null }) {
   const rows = billingEvidence(billing, t)
   const evidence = Object.fromEntries(rows.map(row => [row.key, row]))
   const unknownFees = accountsReady ? costsUnknownFeeCount(accounts) : null
@@ -6018,22 +6019,34 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
   const apiUnpricedCalls = finiteValue(apiCoverage?.unpriced_calls)
   const apiPartial = apiCoverageKnown && (apiUnpricedTokens > 0 || apiUnpricedCalls > 0)
   const apiCoverageUnknown = !apiCoverageKnown
+  // The billing-native basis of the displayed subtotal itself, aggregated
+  // by the backend over exactly the rows it sums: cycle-excluded rows never
+  // reach it, and custom-override rows are bounded by their own configured
+  // rates rather than the catalogue bounds the analytics totals carry. A
+  // non-exact basis with fully priced rows withholds the Fully priced
+  // verdict. Unpriced-row and coverage-unknown wording stays more specific
+  // and wins. Older backends omit the field and keep the previous verdicts.
+  const apiBasis = api.billingBasis
+  const apiBounded = apiBasis != null && apiBasis !== 'exact'
   const apiStatus = summaryLoading ? t('costsLoadingShort')
     : api.usd == null ? t('costsUnknownTag')
     : apiPartial ? null
-    : apiCoverageUnknown ? t('costsCoverageUnknownTag') : t('costsCompleteTag')
+    : apiCoverageUnknown ? t('costsCoverageUnknownTag')
+    : apiBounded ? null : t('costsCompleteTag')
   const apiNote = summaryLoading ? t('costsEvidenceLoading')
     : unreadable ? t('costsEvidenceUnavailable')
     : api.usd == null ? apiPartial ? t('costsApiNoPricedSubtotal') : api.empty
     : apiPartial ? t('costsApiPartialShort')
-    : apiCoverageUnknown ? t('costsApiCoverageUnknownShort') : t('costsApiShort')
+    : apiCoverageUnknown ? t('costsApiCoverageUnknownShort')
+    : apiBounded ? t('costsApiBoundShort') : t('costsApiShort')
   const apiCoverageDetails = apiCoverageKnown
     ? t('costsApiCoverageCounts', exactTokens(apiCoverage.priced_tokens), exactTokens(apiCoverage.priced_calls),
       exactTokens(apiCoverage.unpriced_tokens), exactTokens(apiCoverage.unpriced_calls))
     : t('costsApiCoverageUnavailable')
   const apiExplanation = api.usd == null ? t('costsApiNoPricedExplain')
     : apiPartial ? t('costsApiPartialExplain')
-    : apiCoverageUnknown ? t('costsApiCoverageUnknownExplain') : api.explanation
+    : apiCoverageUnknown ? t('costsApiCoverageUnknownExplain')
+    : apiBounded ? t('costsApiBoundExplain') : api.explanation
   const additional = ['credits_consumed', 'incremental_cash'].map(key => evidence[key])
   const feeValue = feeLines.length ? jsx('ul', { className: 'wm-cost-detail-fees', children: feeLines.map(line =>
     jsx('li', { children: line.label }, `${line.currency}/${line.period}`)) })
@@ -6066,11 +6079,16 @@ function CostsEvidenceSummary({ billing, totals, fees, accounts, accountsReady, 
         row.source ? jsx('p', { children: `${t('costsSourceLabel')}: ${row.source}` }) : null
       ].filter(Boolean) }) }, row.key))
   ]
+  // The backend extends the trailing window (30 → 32 days) when a billing
+  // profile carries a billing cycle, so the scope line states the actual
+  // window the figures cover instead of a nominal one.
+  const windowDays = Number.isFinite(Number(summaryScope?.window_days)) ? Number(summaryScope.window_days)
+    : Number.isFinite(Number(summaryWindow?.days)) ? Number(summaryWindow.days) : null
   return jsxs('section', { className: 'wm-product-section wm-cost-overview', 'aria-label': t('costsOverviewTitle'), children: [
     jsx('h2', { children: t('costsOverviewTitle') }),
     jsx('p', { children: t('costsOverviewIntro') }),
     summaryReady
-      ? jsx('p', { className: 'wm-cost-evidence-scope', children: t('costsEvidenceScope') }) : null,
+      ? jsx('p', { className: 'wm-cost-evidence-scope', children: t('costsEvidenceScope') + (windowDays != null ? ` ${t('costsEvidenceWindow', windowDays)}` : '') }) : null,
     summaryLoading ? jsx('p', { className: 'wm-subtle', children: t('costsEvidenceLoading') }) : null,
     jsxs('div', { className: 'wm-cost-summary-grid', children: [
       jsx(CostsEvidenceCard, { kind: 'api', label: api.label,
@@ -6155,7 +6173,9 @@ function CostsPage() {
         : null,
       jsx(CostsEvidenceSummary, { billing, totals, fees, accounts: list, accountsReady,
         summaryLoading: summary.isPending, accountsLoading: accounts.isPending,
-        summaryReady, accountsFailed: !!accounts.error, t }),
+        summaryReady, accountsFailed: !!accounts.error, t,
+        summaryWindow: summaryReady ? summary.data?.window ?? null : null,
+        summaryScope: summaryReady ? summary.data?.scope ?? null : null }),
       jsx(EconomicsPanel, { identity,
         unknownFees: accountsReady
           ? { count: unknownFeeAccounts.length,
@@ -6934,6 +6954,21 @@ function OverviewPage() {
   const unpricedTokens = Number(result.unpriced_tokens || 0)
   const unpricedCalls = Number(result.unpriced_calls || 0)
   const unpriced = unpricedTokens > 0 || unpricedCalls > 0
+  // Cause-aware pricing action (WP48/F109): the backend counts unpriced
+  // usage a custom rate could still price (fixable catalogue gaps whose
+  // routes have no custom rule yet). Saving the matching rate clears
+  // exactly that remainder, so the fix action can never nag after the
+  // fix; anything else keeps the honest Usage review. Older backends
+  // omit the counts and keep the previous review-only row.
+  const unpricedFixable = num(result.custom_fixable_tokens) > 0 || num(result.custom_fixable_calls) > 0
+  // The backend's own bound on this subtotal. A lower_bound/range/incomplete
+  // figure with fully priced rows still omits evidence, so it carries the
+  // Partial chip — the same qualifier Usage and the taskbar chip express with
+  // ≥/range/+ markers. The figure itself stays unprefixed per the accepted
+  // Overview hierarchy, and the pricing-coverage attention row stays scoped
+  // to genuinely unpriced calls.
+  const estimateBasis = result.economics?.api_equivalent_basis
+  const estimateBounded = estimateBasis != null && estimateBasis !== 'exact'
   const topModels = overviewTopModels(analytics.data?.by_model)
   const topModelMax = topModels[0]?.calls || 1
   // Accounts that could carry a recurring fee but have no known amount —
@@ -7016,7 +7051,7 @@ function OverviewPage() {
             : result.calls === 0 ? t('ovBackendEmpty') : t('ovBackendProv') }),
           jsxs('div', { className: 'wm-kpi-foot', children: [
             certaintyChip('estimated', t('ovCertEstimated'), 'est'),
-            unpriced ? certaintyChip('partial', t('ovCertPartial'), 'part') : null
+            unpriced || estimateBounded ? certaintyChip('partial', t('ovCertPartial'), 'part') : null
           ].filter(Boolean) })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'saved-fees', children: [
@@ -7074,10 +7109,11 @@ function OverviewPage() {
                 jsx('span', { className: 'wm-attn-dot', 'data-tone': 'info', 'aria-hidden': true }),
                 jsxs('div', { className: 'wm-attn-main', children: [
                   jsx('strong', { children: t('ovPricingTitle') }),
-                  jsx('span', { children: t('ovUnpriced') })
+                  jsx('span', { children: unpricedFixable ? t('ovUnpricedFixable') : t('ovUnpriced') })
                 ] }),
                 jsx(ProductButton, { type: 'button', className: 'wm-button',
-                  onClick: openUsagePricingCoverage, children: t('ovPricingAction') })
+                  onClick: unpricedFixable ? () => goLedgerTab('settings') : openUsagePricingCoverage,
+                  children: unpricedFixable ? t('econActionPricing') : t('ovPricingAction') })
               ] }, 'unpriced') : null
             ].filter(Boolean) })
           : null,
@@ -11723,6 +11759,16 @@ function newsSameTransition(a, b) {
 }
 
 /**
+ * Both sides name a source URL and they differ: distinct observations that
+ * must never merge, with or without other proof. A missing URL never
+ * conflicts — live local items carry none while central items do.
+ */
+function newsUrlsConflict(a, b) {
+  const urlA = String(a?.source_url || ''), urlB = String(b?.source_url || '')
+  return urlA !== '' && urlB !== '' && urlA !== urlB
+}
+
+/**
  * Explicit same-event proof between two items with identical transitions:
  * a shared non-empty event/provenance link field; or an exactly equal
  * non-empty effective_at plus an equal non-empty source_url; or an exactly
@@ -11741,9 +11787,8 @@ function newsSameEventProof(a, b) {
   const urlA = String(a.source_url || ''), urlB = String(b.source_url || '')
   if (effectiveA && effectiveA === effectiveB && urlA && urlA === urlB) return true
   const observedA = String(a.observed_at || '')
-  const urlsConflict = urlA !== '' && urlB !== '' && urlA !== urlB
   return !!observedA && observedA === String(b.observed_at || '') &&
-    effectiveA === effectiveB && !urlsConflict
+    effectiveA === effectiveB && !newsUrlsConflict(a, b)
 }
 
 /**
@@ -11760,11 +11805,18 @@ function newsEvidenceRecords(event) {
 
 /**
  * Cross-origin dedupe beyond exact ids: a local item and a central item with
- * DIFFERENT ids merge into one event only when both hold an identical
- * transition (newsTransitionKey) and an explicit same-event proof
- * (newsSameEventProof). Pairing is 1:1 local↔central, never within one
- * origin, never by nearby time; without proof the items stay distinct events.
- * A merged event keeps both items as evidence sources (merged_sources) and is
+ * DIFFERENT ids merge into one event when both hold an identical transition
+ * (newsSameTransition) and either an explicit same-event proof
+ * (newsSameEventProof) or a transition seen exactly once on each side.
+ * Neither origin emits link fields or effective_at in practice and each
+ * observes the shared upstream on its own schedule, so proof alone left
+ * every cross-origin pair unmerged (131 duplicate pairs on one live store).
+ * The 1:1-unique fallback resolves that proven duplication; any transition
+ * either side repeats — a possible A→B→A→B recurrence — still needs proof
+ * and otherwise stays separate, and conflicting source URLs veto the
+ * fallback (explicit proof keeps its own semantics). Pairing is 1:1
+ * local↔central, never within one origin, never by nearby time. A merged
+ * event keeps both items as evidence sources (merged_sources) and is
  * observed at the newest of the two observations. Originals stay untouched.
  */
 function newsMergeEvents(events) {
@@ -11773,11 +11825,24 @@ function newsMergeEvents(events) {
   const centrals = list.filter(item => String(item.origin || 'local') === 'central')
   const taken = new Set()
   const out = []
+  const localBases = new Map()
+  const centralBases = new Map()
+  for (const item of locals) {
+    const base = newsTransitionBase(item)
+    if (base) localBases.set(base, (localBases.get(base) || 0) + 1)
+  }
+  for (const item of centrals) {
+    const base = newsTransitionBase(item)
+    if (base) centralBases.set(base, (centralBases.get(base) || 0) + 1)
+  }
+  const uniquePair = key => !!key && localBases.get(key) === 1 && centralBases.get(key) === 1
   for (const event of locals) {
     const key = newsTransitionBase(event)
     const partner = key
       ? centrals.find(central => !taken.has(central) &&
-          newsSameTransition(event, central) && newsSameEventProof(event, central))
+          newsSameTransition(event, central) &&
+          (newsSameEventProof(event, central) ||
+            (uniquePair(key) && !newsUrlsConflict(event, central))))
       : null
     if (partner) {
       taken.add(partner)
@@ -12969,7 +13034,10 @@ function newsHeadlineText(entry, t) {
     ? entry.headline_params : {}
   const code = String(entry?.headline_code || '')
   const provider = String(params.provider || entry?.provider || '')
-  const model = String(params.model || entry?.model || '')
+  // Visible story bodies use the friendly verified model name (F54); the
+  // exact stored id stays in Details records, search and archive targeting.
+  const rawModel = String(params.model || entry?.model || '')
+  const model = modelDisplayName(rawModel) || rawModel
   switch (code) {
     case 'news_head_single_rate': {
       // A published headline is display data: an empty or malformed percentage
@@ -15434,6 +15502,7 @@ const I18N = {
     ovNothingToDo: 'Nothing needs confirming right now.',
     ovPricingTitle: 'Usage pricing',
     ovUnpriced: 'Pricing evidence is incomplete for some backend usage in the last 30 days.',
+    ovUnpricedFixable: 'Some backend usage has no catalogue price; a custom token rate you set can price it.',
     ovWeatherStale: 'Refresh failed — weather warnings may be stale.',
     ovStrip: n => `${n} need attention`,
     ovStripReview: 'Review',
@@ -15998,6 +16067,9 @@ const I18N = {
     costsApiShort: 'Current rates · not provider charges',
     costsApiPartialShort: 'Priced subtotal · some usage is unpriced; not provider charges.',
     costsApiCoverageUnknownShort: 'Pricing coverage for this value is unknown; the amount may be partial.',
+    costsApiBoundShort: 'Bounded subtotal · cache or rate evidence is incomplete; not provider charges.',
+    costsApiBoundExplain: 'The backend reports this subtotal as a bound rather than an exact value because cache-counter or rate evidence is incomplete. It is not a charge.',
+    costsEvidenceWindow: days => `Evidence window: ${days} days of timestamped backend calls.`,
     costsApiNoPricedSubtotal: 'No priced subtotal; unpriced usage is not zero.',
     costsApiPartialExplain: 'Only rows with published API rates or configured custom rates contribute to this subtotal; unpriced rows are excluded. It is not a charge.',
     costsApiCoverageUnknownExplain: 'Coverage counts for the rows behind this value are unavailable, so completeness cannot be confirmed.',
@@ -17220,6 +17292,7 @@ const I18N = {
     ovNothingToDo: '目前没有需要确认的事项。',
     ovPricingTitle: '用量定价',
     ovUnpriced: '过去 30 天的部分后端用量缺少完整定价证据。',
+    ovUnpricedFixable: '部分后端用量缺少目录价格；您设置的自定义令牌单价可以为其定价。',
     ovWeatherStale: '刷新失败——额度预警可能已过期。',
     ovStrip: n => `有 ${n} 项需要注意`,
     ovStripReview: '查看',
@@ -17780,6 +17853,9 @@ const I18N = {
     costsApiShort: '当前费率 · 非供应商费用',
     costsApiPartialShort: '已定价小计 · 部分用量未定价；并非供应商收费。',
     costsApiCoverageUnknownShort: '此值的定价覆盖情况未知；金额可能仅为部分小计。',
+    costsApiBoundShort: '受限小计 · 缓存或费率证据不完整；并非供应商收费。',
+    costsApiBoundExplain: '由于缓存计数或费率证据不完整，后端将此小计报告为界限值而非精确值。它不是实际收费。',
+    costsEvidenceWindow: days => `证据窗口：${days} 天的带时间戳后端调用。`,
     costsApiNoPricedSubtotal: '没有可显示的已定价小计；未定价用量不代表零。',
     costsApiPartialExplain: '此小计仅包含使用公开 API 费率或已配置自定义费率的记录；未定价记录已排除。它不是实际收费。',
     costsApiCoverageUnknownExplain: '此金额所依据记录的覆盖计数不可用，因此无法确认是否完整。',
@@ -18537,7 +18613,7 @@ export const __test = {
   NewsStory, NewsHeadlineSection, NewsBriefing, NEWS_HEADLINE_KEYS,
   NEWS_FOR_YOU_INITIAL, NEWS_EVENT_LINK_FIELDS, NEWS_RATE_CLASS_BY_CODE,
   newsUsedRecently, newsLastUsedMs, newsItemReasonCodes, newsGroupReasonCodes,
-  newsMergeEvents, newsSameEventProof, newsTransitionKey, newsTransitionBase, newsSameTransition,
+  newsMergeEvents, newsSameEventProof, newsTransitionKey, newsTransitionBase, newsSameTransition, newsUrlsConflict,
   newsEvidenceRecords, NewsEvidenceRow, NewsTierBlocks,
   analyticsNoteText, analyticsNotesText, ANALYTICS_NOTE_KEYS, analyticsGapReasonLabel, OV_GAP_REASON_KEYS,
   econNoteText, econNotesText, econSingularNoteText, econExplanationText, ECON_NOTE_KEYS, ECON_EXPLANATION_KEYS,
