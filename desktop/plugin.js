@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.33'
+const PLUGIN_VERSION = '0.6.34'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -5030,9 +5030,13 @@ function econBlockerDestination(blocker) {
   if (code === 'dated_fx_rate_missing') return 'fx'
   if (['no_usage_recorded', 'insufficient_comparison_history', 'provider_unidentified',
     'provider_not_recorded', 'model_unidentified', 'usage_price_incomplete', 'usage_unknown', 'usage_missing'].includes(code)) return 'usage'
+  // Catalogue-only gaps never route to custom rates: overrides cannot feed
+  // the catalogue-driven comparison, so that link nagged forever. They
+  // route to the catalogue info itself, where a refresh can genuinely
+  // resolve a stale snapshot or the staleness display explains the wait.
   if (['provider_price_catalogue_missing', 'provider_not_in_catalogue', 'price_evidence_missing',
     'model_not_in_catalogue', 'missing_base_rate', 'tier_rate_unavailable', 'cache_rate_unavailable',
-    'missing_cache_rate', 'missing_cache_read_rate', 'missing_cache_write_rate'].includes(code)) return 'settings'
+    'missing_cache_rate', 'missing_cache_read_rate', 'missing_cache_write_rate'].includes(code)) return 'pricing'
   return null
 }
 
@@ -5160,11 +5164,39 @@ function econBlockerActionLabel(destination, t) {
   return destination === 'memberships' ? t('econActionMemberships')
     : destination === 'fx' ? t('econActionFx')
     : destination === 'usage' ? t('econActionUsage')
-    : destination === 'settings' ? t('econActionPricing') : null
+    : destination === 'pricing' ? t('econActionCatalogue') : null
+}
+
+/**
+ * Jump to the Settings pricing-catalogue section. Same contract as
+ * openCostsValue: the tab switch is the promise, the scroll is a bounded
+ * enhancement for after the destination mounts.
+ */
+function openPricingCatalogue() {
+  goLedgerTab('settings')
+  try {
+    if (typeof document === 'undefined') return
+    const deadline = Date.now() + 2500
+    const land = () => {
+      const anchor = document.getElementById('settings-pricing')
+      if (!anchor) {
+        if (Date.now() < deadline) setTimeout(land, 60)
+        return
+      }
+      const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+      anchor.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+      if (!anchor.hasAttribute('tabindex')) anchor.setAttribute('tabindex', '-1')
+      try { anchor.focus({ preventScroll: true }) } catch {
+        try { anchor.focus() } catch {}
+      }
+    }
+    setTimeout(land, 60)
+  } catch {}
 }
 
 function openEconomicsDestination(destination, onOpenFx) {
   if (destination === 'fx') return onOpenFx?.()
+  if (destination === 'pricing') return openPricingCatalogue()
   if (destination) goLedgerTab(destination)
 }
 
@@ -15156,6 +15188,7 @@ const I18N = {
     econActionFx: 'Add dated FX rate',
     econActionUsage: 'Review in Usage',
     econActionPricing: 'Check pricing settings',
+    econActionCatalogue: 'View pricing catalogue info',
     econColAccount: 'Account',
     econColMembership: 'Membership',
     econColMonthly: 'Monthly equiv.',
@@ -16966,6 +16999,7 @@ const I18N = {
     econActionFx: '添加注明日期的汇率',
     econActionUsage: '在“用量”中查看',
     econActionPricing: '检查价格设置',
+    econActionCatalogue: '查看价格目录信息',
     econColAccount: '账户',
     econColMembership: '会员',
     econColMonthly: '月均费用',
@@ -18770,7 +18804,7 @@ export const __test = {
   NEWS_CATEGORIES, $newsScope, $newsCategory, $newsLiveState,
   EconomicsPanel, EconomicsSection, EconomicsBars, EconomicsAccountRow, EconomicsTrend, EconomicsFx, ECONOMICS_CSS,
   EconomicsGroupRow, CostsAttention, costsBlockerCategory, costsAttentionActionFor, collectCostsBlockers,
-  econBlockerText, econBlockerDestination, COSTS_NON_ATTENTION_CODES,
+  econBlockerText, econBlockerDestination, openPricingCatalogue, COSTS_NON_ATTENTION_CODES,
   econGroupFeeScope, econVerdict,
   costsUnknownFeeAccounts, trendMonthComparable, trendWarrantsInline, costsPricingSourceLabel, scrollToCostsAttention,
   $fxDraft, $fxSaving, $fxNotice,
