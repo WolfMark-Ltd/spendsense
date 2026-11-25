@@ -477,7 +477,7 @@ class CommandCodeCatalogueCoverage(ProviderNativeTestCase):
     """
 
     def test_muse_ember_prices_from_the_official_overlay(self):
-        self.inject_book({"commandcode": {}})
+        self.inject({"commandcode": {}})
         hit, _native = resolve_rate(load_catalogue(), "commandcode", "meta/muse-ember")
         self.assertIsNotNone(hit)
         if hit is not None:  # pragma: no cover - narrows for the type checker
@@ -490,7 +490,7 @@ class CommandCodeCatalogueCoverage(ProviderNativeTestCase):
     def test_no_borrowed_rates_for_unpublished_cache_writes(self):
         # The models.dev openrouter row for the same model carries a cache
         # write price; the commandcode route must not inherit it.
-        self.inject_book({"commandcode": {}})
+        self.inject({"commandcode": {}})
         hit, _native = resolve_rate(load_catalogue(), "commandcode", "meta/muse-ember")
         if hit is not None:  # pragma: no cover - narrows for the type checker
             self.assertEqual(hit.rate.cache_write, None)
