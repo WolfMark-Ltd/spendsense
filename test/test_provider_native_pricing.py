@@ -450,8 +450,8 @@ class NousCreditsDayFixture(unittest.TestCase):
             effective = ((Decimal(fresh) * NOUS_EFF[0] + Decimal(read) * NOUS_EFF[2]
                           + Decimal(out) * NOUS_EFF[1]) / M)
             self.assertEqual(effective, debit, f"row {requests} requests")
-            listed = ((Decimal(fresh) * NOUS_LIST[0] + Decimal(read) * NOUS_LIST[2]
-                       + Decimal(out) * NOUS_LIST[1]) / M)
+            listed = ((Decimal(fresh) * NOUS_LIST_D[0] + Decimal(read) * NOUS_LIST_D[2]
+                       + Decimal(out) * NOUS_LIST_D[1]) / M)
             self.assertGreater(listed, debit)
             total += debit
         self.assertEqual(total, self.DAY_DEBIT)
@@ -460,7 +460,7 @@ class NousCreditsDayFixture(unittest.TestCase):
         fresh = sum(inp - read for _, inp, _, read, _ in self.DAY_ROWS)
         out = sum(out for _, _, out, _, _ in self.DAY_ROWS)
         read = sum(read for *_, read, _ in self.DAY_ROWS)
-        listed = ((Decimal(fresh) * NOUS_LIST[0] + Decimal(read) * NOUS_LIST[2]
-                   + Decimal(out) * NOUS_LIST[1]) / M)
+        listed = ((Decimal(fresh) * NOUS_LIST_D[0] + Decimal(read) * NOUS_LIST_D[2]
+                   + Decimal(out) * NOUS_LIST_D[1]) / M)
         self.assertEqual(listed, Decimal("0.225058716"))
         self.assertGreater(listed, self.DAY_DEBIT)
