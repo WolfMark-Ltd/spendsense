@@ -2751,9 +2751,10 @@ function tokenRows(t, b, hasContext, u) {
 function analyticsUsageCost(totals = {}) {
   const exp = finiteValue(totals?.api_expenditure_usd)
   if (exp != null && totals?.api_expenditure_basis != null) {
-    return { usd: exp, basis: 'expenditure' }
+    const high = finiteValue(totals?.api_expenditure_usd_high)
+    return { usd: exp, basis: 'expenditure', high: high != null && high >= exp ? high : null }
   }
-  return { usd: finiteValue(totals?.list_usd), basis: 'list' }
+  return { usd: finiteValue(totals?.list_usd), basis: 'list', high: null }
 }
 
 function analyticsListDisplay(totals, plain = false) {
@@ -4706,7 +4707,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
       query.error?jsxs('div',{id:'wm-usage-load-error',className:'wm-alert',role:'alert',tabIndex:-1,children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
     totals?jsxs('div',{className:'wm-product-summary wm-usage-grid wm-usage-summary',role:'group','aria-label':t('usageSummary'),children:[
-      jsx(AnalyticsKpiCard,{kpi:'usage-api',icon:'estimate',label:apiLabel,figure:usageCostEffective&&usageCost.usd!=null?analyticMoney(usageCost.usd):analyticsListDisplay(totals, true)}),
+      jsx(AnalyticsKpiCard,{kpi:'usage-api',icon:'estimate',label:apiLabel,figure:usageCostEffective&&usageCost.usd!=null?(usageCost.high!=null?`${analyticMoney(usageCost.usd)}–${analyticMoney(usageCost.high)}`:analyticMoney(usageCost.usd)):analyticsListDisplay(totals, true)}),
       jsx(AnalyticsKpiCard,{kpi:'usage-benefit',id:'wm-usage-read-benefit',icon:'recorded',label:readBenefitLabel,figure:readBenefitDisplay(t,readBenefit,true)}),
       jsx(AnalyticsKpiCard,{kpi:'usage-tokens',icon:'models',label:t('usageStatTokens'),figure:fmtTokens(totals.tokens)}),
       jsx(AnalyticsKpiCard,{kpi:'usage-calls',icon:'calls',label:t('usageStatCalls'),figure:exactTokens(totals.calls)})]}):null,

@@ -36,6 +36,7 @@ _TOTAL_FIELDS = (
     "priced_calls", "unpriced_calls", "coverage", "billed_usd", "billed_complete", "billing_mix",
     "failures", "missing_usage",
     "api_expenditure_usd", "expenditure_calls", "expenditure_tokens", "api_expenditure_basis",
+    "api_expenditure_usd_high",
 )
 
 
@@ -355,6 +356,8 @@ class _AnalyticsAcc:
         self.expenditure_usd = 0.0
         self.expenditure_tokens = 0
         self.expenditure_calls = 0
+        self.expenditure_high_usd = 0.0
+        self.expenditure_bases: set[str] = set()
 
     def add(self, row: dict[str, Any]) -> None:
         pricing = row.get("pricing") or {}
@@ -428,6 +431,9 @@ class _AnalyticsAcc:
             self.expenditure_usd += float(expenditure)
             self.expenditure_tokens += int(row.get("_tokens") or 0)
             self.expenditure_calls += 1
+            high = row.get("expenditure_usd_high")
+            self.expenditure_high_usd += float(high) if high is not None else float(expenditure)
+            self.expenditure_bases.add(row.get("expenditure_basis") or "unknown")
         high = row.get("_cost_high")
         if high is None:
             high = row.get("effective_usd")
@@ -476,6 +482,10 @@ class _AnalyticsAcc:
             covered_calls=exp_covered, calls=int(base.get("calls") or 0),
             covered_tokens=self.expenditure_tokens,
             total_tokens=int(base.get("tokens") or 0))
+        if any(basis == "range" for basis in self.expenditure_bases):
+            base["api_expenditure_usd_high"] = round(self.expenditure_high_usd, 6)
+        else:
+            base["api_expenditure_usd_high"] = None
         read_state, read_reason = self.read_prov.state(self.known_read_tokens)
         write_state, write_reason = self.write_prov.state(self.known_write_tokens)
         basis, bound_reason, premium = _savings_basis(
@@ -904,7 +914,8 @@ def build_analytics_report(
                  "third-party and cross-provider tiers. None of these is an invoice."),
     }
     billing_profiles = billing.load_profiles(profiles_path)
-    billing_report = billing.classify(results_kept, billing_profiles, presentation)
+    billing_report = billing.classify(results_kept, billing_profiles, presentation,
+                                      route_arrangements=route_arrangements)
     fixable_tokens, fixable_calls, fixable_detail = _custom_fixable(results_kept, billing_profiles)
     totals["custom_fixable_tokens"] = fixable_tokens
     totals["custom_fixable_calls"] = fixable_calls
@@ -1119,6 +1130,7 @@ def build_session_summary(
                 "expenditure_calls": totals_raw["expenditure_calls"],
                 "expenditure_tokens": totals_raw["expenditure_tokens"],
                 "api_expenditure_basis": totals_raw["api_expenditure_basis"],
+                "api_expenditure_usd_high": totals_raw["api_expenditure_usd_high"],
                 "uncached_usd": economics["uncached_usd"],
                 "cached_usd": economics["cached_usd"],
                 "read_benefit_usd": economics["read_benefit_usd"],
@@ -1151,6 +1163,7 @@ def build_session_summary(
                 "expenditure_calls": totals_raw["expenditure_calls"],
                 "expenditure_tokens": totals_raw["expenditure_tokens"],
                 "api_expenditure_basis": totals_raw["api_expenditure_basis"],
+                "api_expenditure_usd_high": totals_raw["api_expenditure_usd_high"],
             },
         }
 

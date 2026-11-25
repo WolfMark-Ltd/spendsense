@@ -563,14 +563,20 @@ def route_billing_status(state_db_path: Path | str | None = None) -> dict[str, d
 
 
 def _billing_class(statuses: dict[str, dict], provider: str, model: str) -> str:
-    # Exact route/model only: an unknown new model must not inherit a sibling's
-    # billing class and appear as confirmed $0. Route-level membership
-    # arrangements (statuses["routes"]) are a separate, authoritative source:
-    # a validly-owned included route covers every model served through it.
+    # Membership-resolved route arrangements are authoritative: a validly-owned
+    # included route's usage is exempt from expenditure no matter what a legacy
+    # recorded session status said — the legacy classifications are
+    # route/model-level session records, not per-call debits. Recorded exact
+    # statuses then apply for routes the membership layer does not classify,
+    # and an 'unknown' recorded entry never hides the arrangement.
+    routes = statuses.get("routes", {})
+    route_class = routes.get(provider)
+    if route_class == "included":
+        return "included"
     exact = statuses.get("exact", {}).get((provider, model))
-    if exact:
+    if exact and exact != "unknown":
         return exact
-    return statuses.get("routes", {}).get(provider) or "unknown"
+    return route_class or "unknown"
 
 
 def _reported(flag: Any, value: Any) -> bool:
@@ -683,6 +689,7 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     expenditure_usd, expenditure_basis = call_expenditure(
         billing_class=billing_class, native_effective_usd=native_effective_usd,
         catalogue_usd=catalogue_price)
+    expenditure_usd_high = None
     billed_usd = 0.0 if billing_class == "included" else None
     if mode == "billed":
         basis_usd = 0.0 if billing_class == "included" else None
@@ -709,6 +716,12 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         base_usd = float(effective_usd or 0.0)
         cost_low = base_usd + cache_write * (write_options[0] - scalar_write) / 1_000_000
         cost_high = base_usd + cache_write * (write_options[-1] - scalar_write) / 1_000_000
+    # Expenditure keeps its known bounds: a cache write with several published
+    # retention prices is a range, never a single amount pretending to be one.
+    if expenditure_usd is not None and retention_range:
+        expenditure_usd = cost_low
+        expenditure_usd_high = cost_high
+        expenditure_basis = "range"
     # An unproven counter whose price is positive can only add cost, so the
     # priced amount is a lower bound; an unknown price cannot be bounded at all.
     # Price completeness is a separate question from provenance: a positive
@@ -796,6 +809,7 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         "native_effective_tokens": tokens if native_effective_usd is not None else 0,
         "expenditure_usd": expenditure_usd,
         "expenditure_basis": expenditure_basis,
+        "expenditure_usd_high": expenditure_usd_high,
         "tier_possible": tier_applied,
         "basis_usd": basis_usd,
         "basis_kind": basis_kind,
