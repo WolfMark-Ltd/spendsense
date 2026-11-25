@@ -961,10 +961,16 @@ test('explorer CSV keeps price coverage beside the unit costs', () => {
 
 test('explorer CSV appends the effective and expenditure columns', () => {
  const csv=T.analyticsExplorerCsv([{model:'m',provider:'nous',calls:10,tokens:100,list_usd:1,per_call:null,per_million:null,
-   priced_tokens:100,unpriced_tokens:0,cache_hit_rate:.5,provider_effective_usd:0.038529,api_expenditure_usd:0.038529}])
+   priced_tokens:100,unpriced_tokens:0,cache_hit_rate:.5,provider_effective_usd:0.038529,
+   api_expenditure_usd:0.038529,api_expenditure_basis:'exact'}])
  const [head,line]=csv.trim().split('\n')
  assert.ok(head.endsWith('expenditure_usd'),head)
  assert.deepEqual(line.split(',').slice(-2),['0.038529','0.038529'])
+ // A partial subtotal exports empty, never an unqualified figure.
+ const partial=T.analyticsExplorerCsv([{model:'m',provider:'nous',calls:10,tokens:100,list_usd:1,per_call:null,per_million:null,
+   priced_tokens:100,unpriced_tokens:0,cache_hit_rate:.5,provider_effective_usd:null,
+   api_expenditure_usd:0.02,api_expenditure_basis:'partial'}])
+ assert.equal(partial.trim().split('\n')[1].split(',').slice(-1)[0],'')
 })
 
 // --- PR28: analytics note_codes ------------------------------------------------

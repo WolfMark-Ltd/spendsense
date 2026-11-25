@@ -4489,10 +4489,15 @@ function explorerUnitCosts(row) {
 }
 function analyticsExplorerCsv(rows) {
   const head = ['model','provider','calls','tokens','api_usd','usd_per_call','usd_per_1m_tokens','cache_hit_rate','priced_tokens','unpriced_tokens','effective_usd','expenditure_usd']
+  // The exported expenditure figure follows the same gate as the display:
+  // published only when the row's basis covers the whole population exactly;
+  // a partial subtotal or an all-included zero exports empty, never an
+  // unqualified `0`.
   const line = row => [row.model || '',row.provider || '',row.calls ?? '',row.tokens ?? '',row.list_usd ?? '',
     row.per_call == null ? '' : row.per_call.toFixed(6),row.per_million == null ? '' : row.per_million.toFixed(4),
     row.cache_hit_rate == null ? '' : row.cache_hit_rate.toFixed(4),
-    row.priced_tokens ?? '',row.unpriced_tokens ?? '',row.provider_effective_usd ?? '',row.api_expenditure_usd ?? ''].map(v => csvCell(v)).join(',')
+    row.priced_tokens ?? '',row.unpriced_tokens ?? '',row.provider_effective_usd ?? '',
+    row.api_expenditure_basis === 'exact' ? (row.api_expenditure_usd ?? '') : ''].map(v => csvCell(v)).join(',')
   return [head.join(','), ...rows.map(line)].join('\n') + '\n'
 }
 function downloadAnalyticsCsv(rows) {
