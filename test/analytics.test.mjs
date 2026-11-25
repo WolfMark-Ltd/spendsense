@@ -1055,3 +1055,19 @@ test('known gap reasons translate in both languages and unknown ids pass through
  assert.equal(T.analyticsNoteText(entry('future_reason'), 'x', noteEn),
   'Economics excluded 4 calls: future_reason.')
 })
+
+test('the Usage KPI publishes the expenditure figure only on an exact basis', () => {
+  // Rule 62/skill 21: the primary cost figure needs complete coverage.
+  // Partial coverage keeps the complete list valuation as the primary figure.
+  const partial = { list_usd: 1.5, api_expenditure_usd: 0.9, api_expenditure_basis: 'partial' }
+  const exact = { list_usd: 1.5, api_expenditure_usd: 0.9, api_expenditure_basis: 'exact' }
+  const none = { list_usd: 1.5 }
+  assert.deepEqual(T.analyticsUsageCost(partial), { usd: 1.5, basis: 'list', high: null })
+  assert.deepEqual(T.analyticsUsageCost(none), { usd: 1.5, basis: 'list', high: null })
+  assert.equal(T.analyticsUsageCost(exact).usd, 0.9)
+  assert.equal(T.analyticsUsageCost(exact).basis, 'expenditure')
+  // A retention-range estimate keeps its known bounds.
+  const ranged = { list_usd: 1.5, api_expenditure_usd: 0.9, api_expenditure_usd_high: 1.2,
+    api_expenditure_basis: 'exact' }
+  assert.equal(T.analyticsUsageCost(ranged).high, 1.2)
+})

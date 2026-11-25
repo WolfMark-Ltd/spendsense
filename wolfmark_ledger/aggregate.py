@@ -571,6 +571,15 @@ def _billing_class(statuses: dict[str, dict], provider: str, model: str) -> str:
     # and an 'unknown' recorded entry never hides the arrangement.
     routes = statuses.get("routes", {})
     route_class = routes.get(provider)
+    if route_class is None:
+        # A suffixed route slug (a wire family of one provider) may claim only
+        # the models that belong to that family.
+        from . import membership_api as _ma
+
+        for slug, cls in routes.items():
+            if cls == "included" and _ma.route_matches(slug, provider, model):
+                route_class = cls
+                break
     if route_class == "included":
         return "included"
     exact = statuses.get("exact", {}).get((provider, model))
@@ -684,9 +693,15 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     # defaulted call keeps its theoretical list valuation but no expenditure.
     # The amount is the call's own band-selected effective figure — the same
     # one session valuation uses — never the legacy cumulative upper base.
+    # A provisional bucket (an official overlay's active-window read price)
+    # is likewise not an established expenditure basis.
     catalogue_price = None
-    if effective_usd is not None and priced and not (priced.cache_read_defaulted
-                                                     or priced.cache_write_defaulted):
+    provisional_buckets = set(getattr(lookup, "provisional", ()) or ())
+    bucket_counts = {"cache_read": cache_read, "cache_write": cache_write}
+    if (effective_usd is not None and priced
+            and not (priced.cache_read_defaulted or priced.cache_write_defaulted)
+            and not any(bucket in provisional_buckets and count > 0
+                        for bucket, count in bucket_counts.items())):
         catalogue_price = effective_usd
     expenditure_usd, expenditure_basis = call_expenditure(
         billing_class=billing_class, native_effective_usd=native_effective_usd,
@@ -720,7 +735,9 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         cost_high = base_usd + cache_write * (write_options[-1] - scalar_write) / 1_000_000
     # Expenditure keeps its known bounds: a cache write with several published
     # retention prices is a range, never a single amount pretending to be one.
-    if expenditure_usd is not None and retention_range:
+    # The gate excludes included usage — its measured zero must never be
+    # replaced by the catalogue's band amount.
+    if expenditure_usd is not None and retention_range and expenditure_basis != "included":
         expenditure_usd = cost_low
         expenditure_usd_high = cost_high
         expenditure_basis = "range"

@@ -2482,8 +2482,13 @@ function useLive() {
     // session's money figure keeps each call's own basis. The list
     // API-equivalent stays the comparative valuation.
     const usageCostUsd = (finiteValue(valuation.api_expenditure_usd) != null
-      && valuation.api_expenditure_basis != null)
+      && valuation.api_expenditure_basis === 'exact')
       ? finiteValue(valuation.api_expenditure_usd) : null
+    // The expenditure figure carries its known bounds when any call priced
+    // at a retention range; the session cost keeps the same low–high pair
+    // the Usage KPI shows.
+    const usageCostHigh = usageCostUsd != null
+      ? finiteValue(valuation.api_expenditure_usd_high) : null
     return {
       bucket: summaryBucket,
       guardrailValue: sessionGuardrailValue(hist, led.snapshots, sessionId),
@@ -2526,6 +2531,8 @@ function useLive() {
       evidence: summaryState.evidence,
       apiEquivalent: true,
       usageCostUsd,
+      usageCostUsdHigh: usageCostHigh != null && usageCostHigh >= (usageCostUsd || 0)
+        ? usageCostHigh : null,
       usageCostBasis: usageCostUsd != null ? 'provider_effective' : null,
       cacheHitRateBasis: valuation.cache_hit_rate_basis || null
     }
@@ -2749,10 +2756,16 @@ function tokenRows(t, b, hasContext, u) {
  *  calls already recorded. Falls back to the list valuation only when no
  *  expenditure data exists at all (older payloads). */
 function analyticsUsageCost(totals = {}) {
-  const exp = finiteValue(totals?.api_expenditure_usd)
-  if (exp != null && totals?.api_expenditure_basis != null) {
-    const high = finiteValue(totals?.api_expenditure_usd_high)
-    return { usd: exp, basis: 'expenditure', high: high != null && high >= exp ? high : null }
+  // The expenditure figure is published as the primary cost only when its
+  // basis covers the whole recorded population exactly; partial coverage
+  // keeps the complete list valuation as the primary figure (Rule 62: the
+  // applicable figure for the covered population stays available in Usage).
+  if (totals?.api_expenditure_basis === 'exact') {
+    const exp = finiteValue(totals?.api_expenditure_usd)
+    if (exp != null) {
+      const high = finiteValue(totals?.api_expenditure_usd_high)
+      return { usd: exp, basis: 'expenditure', high: high != null && high >= exp ? high : null }
+    }
   }
   return { usd: finiteValue(totals?.list_usd), basis: 'list', high: null }
 }
@@ -2879,7 +2892,7 @@ function Chip() {
           'aria-label': guard ? budgetTooltip(guard, t) : undefined,
           role: guard ? 'img' : undefined,
           children: guard?.spend != null ? sessionBudgetFigure(guard)
-            : finiteValue(live.usageCostUsd) != null ? `${warn ? '⚠ ' : ''}${fmtUsd(finiteValue(live.usageCostUsd))}`
+            : finiteValue(live.usageCostUsd) != null ? `${warn ? '⚠ ' : ''}${fmtUsd(finiteValue(live.usageCostUsd))}${finiteValue(live.usageCostUsdHigh) != null ? `–${fmtUsd(finiteValue(live.usageCostUsdHigh))}` : ''}`
             : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${apiEquivalentDisplay(live)}`
         }),
         live.cacheHitPct != null
@@ -2971,6 +2984,7 @@ function snapshotLive(live) {
     costPartial: live.costPartial,
     apiEquivalent: live.apiEquivalent,
     usageCostUsd: live.usageCostUsd,
+    usageCostUsdHigh: live.usageCostUsdHigh,
     usageCostBasis: live.usageCostBasis,
     cacheHitRateBasis: live.cacheHitRateBasis,
     sinceAt: live.sinceAt
@@ -3235,6 +3249,7 @@ function CostKpi({ t, view }) {
   const unknownCoverage = coverageUnknown(view.bucket)
   const cacheEvidenceGap = cacheEvidenceIncomplete(view.bucket)
   const usageCost = finiteValue(view.usageCostUsd)
+  const usageCostHigh = finiteValue(view.usageCostUsdHigh)
   const evidenceNote = view.savedSource === 'backend_summary'
     ? t('sessionEvidenceNote', t('scopeSession'),
       t(`tokenEvidence_${view.evidence?.read || 'unknown'}`),
@@ -3249,7 +3264,13 @@ function CostKpi({ t, view }) {
     cacheEvidenceGap ? t('partialCacheEvidence') : null,
     view.excludedCalls > 0 ? t('savedPartialCallsNote', view.excludedCalls) : null
   ].filter(Boolean)
-  const costText = usageCost != null ? fmtUsd(usageCost) : sidebarCostDisplay(view)
+  // Rule 62: the figure renders bare. Ranges, bounds and the dash carry
+  // their own meaning; partial coverage stays in the source info control.
+  // An expenditure range keeps the same low–high pair the Usage KPI shows.
+  const costText = usageCost != null
+    ? (usageCostHigh != null && usageCostHigh > usageCost
+      ? `${fmtUsd(usageCost)}–${fmtUsd(usageCostHigh)}` : fmtUsd(usageCost))
+    : sidebarCostDisplay(view)
   // Rule 62: the figure renders bare. Ranges, bounds and the dash carry
   // their own meaning; partial coverage stays in the source info control.
   return jsxs('section', { className: 'wm-card', 'aria-label': t('cost'), children: [
@@ -7424,7 +7445,9 @@ function OverviewPage() {
           jsx('div', { className: 'wm-kpi-foot', children:
             ledgerPaused ? certaintyChip('unknown', t('ovCertChargesUnknown'), 'charge-unknown')
             : chargesRecorded != null ? certaintyChip('recorded', t('ovCertChargesRecorded'), 'charge-recorded')
-            : meteredEstimate != null ? null
+            : meteredEstimate != null
+              ? (Number(result.calls || 0) > Number(billingReport?.metered_calls || 0)
+                ? certaintyChip('partial', t('ovCertPartial'), 'charge-part') : null)
             : certaintyChip('unknown', t('ovCertChargesUnknown'), 'charge-unknown') })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'api-equivalent-estimate', children: [
@@ -19102,6 +19125,7 @@ export default {
 export const __test = {
   Chip, BudgetPanel, BudgetStatusIndicator, budgetLevel, budgetColour, sessionBudgetStatus, usageValueDelta, budgetQuery, budgetWrite, budgetPayload, newBudgetDraft, budgetTooltip, $budgetDraft, $budgetBusy, $budgetNotice, BUDGET_CSS,
   analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS, CHART_COLORS, sharePercent, analyticsListPartial,
+  analyticsUsageCost,
   AnalyticsPage, AnalyticsDashboard, AnalyticsCoverageSummary, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
   AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS, AnalyticsSegments,
   usageFilterChipName, USAGE_FILTER_CHIP_KEYS, usageFilterChipValue, USAGE_FILTER_SCOPE_KEYS,

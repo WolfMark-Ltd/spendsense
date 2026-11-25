@@ -492,6 +492,46 @@ def clear_payload(account_id: str, entry_id: str, *, reason: str = "user",
     return {"ok": True, "account": result["account"]}
 
 
+#: Route-slug suffix → recorded model-family prefixes that wire family covers.
+#: Kept explicit and small: a suffixed slug claims usage only when the
+#: recorded models belong to that family.
+ROUTE_MODEL_FAMILIES: dict[str, tuple[str, ...]] = {
+    "anthropic": ("claude",),
+    "claude": ("claude",),
+}
+
+
+def route_matches(slug: Any, provider: Any, model: Any) -> bool:
+    """Does a membership route slug govern this recorded provider/model?
+
+    A route slug equals the recorded provider name in the simple case
+    (``nous``). Suffixed slugs name a wire family of one provider
+    (``commandcode-anthropic``, ``commandcode-claude`` → ``commandcode``) and
+    may only claim the usage whose models actually belong to that family —
+    never the provider's other routes, or a whole provider's other models
+    would be silently exempted from expenditure.
+    """
+    from .discovery import canonical_provider
+
+    s = canonical_provider(slug)
+    p = canonical_provider(provider)
+    if not p:
+        return False
+    if s == p:
+        return True
+    if not s.startswith(p + "-"):
+        return False
+    fam = ROUTE_MODEL_FAMILIES.get(s[len(p) + 1:])
+    if not fam:
+        return False
+    m = str(model or "").strip().lower()
+    if not m:
+        return False
+    seg = m.split("/", 1)[0]
+    return any(seg == f or m.startswith(f + "/") or m.startswith(f + "-")
+               for f in fam)
+
+
 def route_arrangements_payload(*, path: Optional[Path | str] = None,
                                catalogue: Optional[Mapping[str, Any]] = None,
                                at: Any = None) -> dict[str, str]:
@@ -510,6 +550,6 @@ def route_arrangements_payload(*, path: Optional[Path | str] = None,
             data.get("accounts", []), data.get("entitlement_store") or {}, book, at)
     except Exception:
         return {}
-    return {str(route): "included"
+    return {str(route).strip().lower(): "included"
             for route, relation in (resolved.get("included_by_route") or {}).items()
             if relation.get("status") == "valid"}

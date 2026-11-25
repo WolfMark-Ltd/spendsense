@@ -459,6 +459,110 @@ class SharedExpenditureFixture(unittest.TestCase):
         # The nous call's own expenditure is unchanged: composition is per call.
         self.assertAlmostEqual(after["metered_usd"] - before["metered_usd"], 0.50, places=6)
 
+    def test_classify_consumes_the_shared_row_expenditure(self):
+        # One accounting path: when rows carry the expenditure the aggregate
+        # already computed, classification consumes that figure instead of
+        # recomputing from the list/legacy legs. An included row priced by a
+        # catalogue card with a retention range stays a measured zero even
+        # though the classification sees no arrangement of its own.
+        rows = [row(provider="commandcode", model="claude/x", value=0.528,
+                    tokens=1_000_000, expenditure_usd=0.0,
+                    expenditure_basis="included")]
+        report = billing.classify(rows, self.profiles({}))
+        self.assertAlmostEqual(report["metered_usd"], 0.0, places=6)
+        self.assertAlmostEqual(report["api_equivalent_usd"], 0.528, places=6)
+        # The same row without the included class meters the row's own
+        # figure — never the legacy list leg.
+        rows = [row(provider="nous", model="deepseek/x", value=0.30,
+                    tokens=1_000_000, expenditure_usd=0.06,
+                    expenditure_basis="exact")]
+        report = billing.classify(rows, self.profiles({}))
+        self.assertAlmostEqual(report["metered_usd"], 0.06, places=6)
+
+    def test_suffixed_route_slug_matches_only_its_model_family(self):
+        # A wire-family slug (commandcode-anthropic) claims only the models
+        # of that family — never the provider's other routes.
+        from wolfmark_ledger.membership_api import route_matches
+        self.assertTrue(route_matches("nous", "nous", "deepseek/x"))
+        self.assertTrue(route_matches("commandcode-anthropic", "commandcode",
+                                      "claude/fable-5"))
+        self.assertTrue(route_matches("commandcode-anthropic", "commandcode",
+                                      "claude-fable-5"))
+        # Other families of the same provider are NOT governed by the slug.
+        self.assertFalse(route_matches("commandcode-anthropic", "commandcode",
+                                       "deepseek/deepseek-v4.1"))
+        self.assertFalse(route_matches("commandcode-anthropic", "commandcode",
+                                       "z-ai/glm-5"))
+        # An unknown family suffix claims nothing.
+        self.assertFalse(route_matches("commandcode-mystery", "commandcode",
+                                       "claude/fable-5"))
+
+    def test_family_slug_classification_zeroes_only_family_models(self):
+        # commandcode-anthropic included: claude models measure zero, the
+        # provider's other models stay metered at their applicable rates.
+        rows = [
+            row(provider="commandcode", model="claude/fable-5", value=1.0,
+                tokens=1_000_000, expenditure_usd=0.02, expenditure_basis="exact"),
+            row(provider="commandcode", model="deepseek/deepseek-v4.1", value=1.0,
+                tokens=1_000_000, expenditure_usd=0.02, expenditure_basis="exact"),
+        ]
+        report = billing.classify(rows, self.profiles({}),
+                                  route_arrangements={"commandcode-anthropic": "included"})
+        self.assertAlmostEqual(report["metered_usd"], 0.02, places=6)
+        self.assertAlmostEqual(report["api_equivalent_usd"], 2.0, places=6)
+
+    def test_arrangement_map_keys_are_normalised(self):
+        from wolfmark_ledger.membership_api import route_arrangements_payload
+        # The lookup is lowercase on both sides; an uppercase map key still
+        # classifies the route.
+        rows = [row(provider="openrouter", model="or/x", value=0.5,
+                    tokens=1_000_000, expenditure_usd=0.5,
+                    expenditure_basis="exact")]
+        report = billing.classify(rows, self.profiles({}),
+                                  route_arrangements={"OpenRouter": "included"})
+        self.assertAlmostEqual(report["metered_usd"], 0.0, places=6)
+
+    def test_analytics_and_billing_agree_on_the_same_rows(self):
+        # One accounting path, pinned by execution: the same recorded calls
+        # through the analytics pipeline (aggregate → totals) and through
+        # billing.classify produce the same expenditure figure.
+        import time
+        from contextlib import closing
+        import sqlite3
+        from unittest.mock import patch
+        from wolfmark_ledger import store
+        from wolfmark_ledger.analytics import build_analytics_report
+        from wolfmark_ledger.pricing import Catalogue, Rate
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as scratch:
+            events = Path(scratch) / "usage.db"
+            with closing(sqlite3.connect(events)) as conn, conn:
+                conn.executescript(store._SCHEMA)
+                ts = time.time() - 1
+                conn.executemany(
+                    "INSERT INTO calls (event_id,ts,model,provider,platform,aux_task,"
+                    "outcome,input_tokens,cache_read_tokens,recorded_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    [("a", ts, "deepseek/x", "nous", "desktop", "", "ok", 100, 200, 1),
+                     ("b", ts, "or/x", "openrouter", "desktop", "", "ok", 300, 0, 1)],
+                )
+            book = Catalogue({"nous": {"deepseek/x": Rate(2, 4, .5, 3)},
+                              "openrouter": {"or/x": Rate(1, 2, .5, 3)}},
+                             "fixture", "test", "", "1")
+            with patch.object(store, "event_db_path", return_value=events), \
+                 patch.object(store, "default_db_path", return_value=Path(scratch) / "none.db"):
+                report = build_analytics_report(days=30, catalogue=book,
+                                                profiles_path=Path("/nonexistent/profiles.json"))
+            rows = None
+            with closing(sqlite3.connect(events)) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = store.query_calls(conn, since=0, until=time.time() + 60)
+            from wolfmark_ledger.aggregate import _event_result
+            enriched = [_event_result(r, book, "hybrid", {}, at=r.get("ts")) for r in rows]
+            billing_report = billing.classify(enriched, self.profiles({}))
+            analytics_exp = report["totals"].get("api_expenditure_usd")
+            self.assertIsNotNone(analytics_exp)
+            self.assertAlmostEqual(billing_report["metered_usd"], analytics_exp, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()

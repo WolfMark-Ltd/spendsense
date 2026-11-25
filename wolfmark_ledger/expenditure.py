@@ -39,8 +39,3 @@ def call_expenditure(*, billing_class: str = "unknown", reported_usd: Optional[f
     if catalogue_usd is not None:
         return catalogue_usd, "catalogue"
     return None, "unpriced"
-
-
-def expenditure_basis(basis: str) -> str:
-    """The basis label the surfaces publish for an expenditure figure."""
-    return basis

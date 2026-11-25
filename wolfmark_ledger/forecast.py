@@ -287,19 +287,20 @@ def _per_call_value(item: dict, book) -> float | None:
 def _metered_per_call_value(item: dict, book) -> float | None:
     """One recorded attempt at the provider's own billed (effective) rates.
 
-    The effective leg of the shared expenditure calculation: the provider's
-    own native rows — the applicable account-level rates even when a
-    catalogue card lists the same model. The catalogue fallback, the
-    subscription-included class and recorded-debit precedence are applied by
-    ``expenditure.call_expenditure`` so every surface shares one result.
+    The native leg of the shared expenditure calculation — the provider's
+    own rows, the applicable account-level rates even when a catalogue card
+    lists the same model. Native rows publish no cache-write price, so calls
+    with write tokens stay unpriced here and fall to the catalogue leg
+    through ``expenditure.call_expenditure`` — exactly as the aggregate
+    resolves them. The catalogue fallback, the subscription-included class
+    and recorded-debit precedence are applied there so every surface shares
+    one result.
     """
     if str(item.get('outcome') or 'ok') in ('error', 'missing_usage'):
         return None
     fields = ('input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens')
     if any(type(item.get(key)) is not int or item[key] < 0 for key in fields):
         return None
-    provider = str(item.get('provider') or '').strip()
-    model = str(item.get('model') or '').strip()
     prompt = item['input_tokens'] + item['cache_read_tokens'] + item['cache_write_tokens']
     total = prompt + item['output_tokens']
     # The same counter-consistency refusal as the list valuation: old stores
@@ -308,30 +309,22 @@ def _metered_per_call_value(item: dict, book) -> float | None:
             or item.get('total_tokens') not in (None, 0, total)):
         return None
     from . import provider_native
-    native = provider_native.lookup(provider, model, allow_fetch=True)
+    native = provider_native.lookup(str(item.get('provider') or '').strip(),
+                                    str(item.get('model') or '').strip(),
+                                    allow_fetch=True)
     if native is None:
-        lookup = book.lookup(provider, model, at=item['ts'])
-        if lookup is None:
-            return None
-        provisional_tokens = {'cache_read': item['cache_read_tokens'],
-                              'cache_write': item['cache_write_tokens']}
-        if any(bucket in getattr(lookup, 'provisional', ()) and count > 0
-               for bucket, count in provisional_tokens.items()):
-            return None
-        # The applicable context-band rate, exactly as the list valuation
-        # selects it — never the base rate across a whole-context tier.
-        rate, _ = _effective_rate(lookup.rate, prompt)
-    else:
-        rate = native.effective_rate()
-    if rate.input is None or rate.output is None:
         return None
-    # A positive cache-read count with no published read price, or a positive
-    # cache-write count, leaves the call out of the measured estimate.
-    if item['cache_read_tokens'] > 0 and rate.cache_read is None:
+    erate = native.effective_rate()
+    # The native leg prices only what the provider's own rates establish: a
+    # positive cache-read count with no published read price, or any
+    # cache-write tokens (native rows publish no write price), leaves the
+    # native leg empty — the catalogue leg covers those calls.
+    if (item['cache_read_tokens'] > 0 and erate.cache_read is None) \
+            or item['cache_write_tokens'] > 0:
         return None
-    if item['cache_write_tokens'] > 0:
+    if erate.input is None or erate.output is None:
         return None
-    amount, _ = _per_mtok_amount(rate, item['input_tokens'], item['output_tokens'],
+    amount, _ = _per_mtok_amount(erate, item['input_tokens'], item['output_tokens'],
                                  item['cache_read_tokens'], item['cache_write_tokens'])
     return amount
 
