@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.39'
+const PLUGIN_VERSION = '0.6.40'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -3747,7 +3747,13 @@ function Meter() {
           jsx(CostKpi, { t, view }, 'cost'),
           jsx(TokenComposition, { t, view }, 'mix'),
           jsx(CacheGauge, { t, view }, 'cache'),
-          view.savedSource === 'backend_summary' ? null : jsx(RatesPanel, { t, view }, 'rates'),
+          // Shared layout rule: the Rates panel renders in every scope.
+          // RatesPanel reads view.rates, which all three useLive branches
+          // populate identically; suppressing it in Session scope was an
+          // inconsistent guard added with #86 (conversations span models
+          // too). The panel stays collapsed by default and names its own
+          // unavailable state when no rates resolve.
+          jsx(RatesPanel, { t, view }, 'rates'),
           jsx('button', { type: 'button', className: 'wm-open-ledger',
             onClick: openLedger, children: t('openLedger') }, 'open')
         ] }, 'body'),

@@ -31,6 +31,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from wolfmark_ledger import LedgerUnavailable, build_ledger_report, default_db_path, load_catalogue  # noqa: E402
+from wolfmark_ledger.pricing import resolve_rate  # noqa: E402
 from wolfmark_ledger import store  # noqa: E402
 from wolfmark_ledger.analytics import build_analytics_report, build_session_summary  # noqa: E402
 from wolfmark_ledger import allowance_weather  # noqa: E402
@@ -50,7 +51,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-VERSION = "0.6.39"
+VERSION = "0.6.40"
 
 #: Pairing level between the two halves of one release. A ``VERSION`` string
 #: alone does not establish build compatibility; this integer is what a Desktop
@@ -347,7 +348,7 @@ def rates(provider: str | None = Query(None), model: str | None = Query(None),
         "fallback": {"bundled": True, "note": "Desktop uses its bundled snapshot if this endpoint is unavailable"},
     }
     if provider and model:
-        hit = book.lookup(provider, model, at=at)
+        hit, native = resolve_rate(book, provider, model, at=at)
         payload["rate"] = None if not hit else {
             "provider": hit.provider, "model": hit.model, "route_provider": hit.route_provider,
             "input": hit.rate.input, "output": hit.rate.output,
@@ -367,6 +368,15 @@ def rates(provider: str | None = Query(None), model: str | None = Query(None),
             "provenance": hit.provenance, "source": hit.source,
             "provisional": list(getattr(hit, "provisional", ())),
         }
+        if native is not None:
+            # The provider's own billed rates, kept apart from the list basis
+            # above: an estimated effective cost, never a reported charge.
+            payload["effective_rate"] = {
+                "input": native.input, "output": native.output,
+                "cache_read": native.cache_read, "basis": "effective",
+                "list_input": native.list_input, "list_output": native.list_output,
+                "list_cache_read": native.list_cache_read, "as_of": native.as_of,
+            }
     return payload
 
 

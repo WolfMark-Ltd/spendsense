@@ -18,7 +18,8 @@ from typing import Any, Optional
 from . import store
 from .db import default_db_path, fetch_usage_rows
 from .pricing import (PROVIDER_ALIASES, Catalogue, _amount, _effective_rate,
-                      load_catalogue, price, reachable_band_lowers_cost)
+                      load_catalogue, price, reachable_band_lowers_cost,
+                      resolve_rate)
 
 
 BASIS_MODES = ("billed", "list", "hybrid")
@@ -585,8 +586,9 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     reasoning = _int(row.get("reasoning_tokens"))
     tokens = input_tokens + output_tokens + cache_read + cache_write
 
-    lookup = catalogue.lookup(provider, model, allow_third_party=allow_third_party,
-                              allow_approximate=allow_approximate, at=at)
+    lookup, native = resolve_rate(catalogue, provider, model, at=at,
+                                  allow_third_party=allow_third_party,
+                                  allow_approximate=allow_approximate)
     provenance = getattr(lookup, "provenance", "provider_catalogue") if lookup else "unpriced"
     priced = (
         price(
@@ -626,6 +628,13 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         miss = _miss_reason(catalogue, provider, model)
     else:
         miss = ""
+    # Estimated effective provider cost: the provider's own billed rates where
+    # it publishes them. A different claim from the list valuation above and
+    # never a provider-reported charge.
+    native_effective_usd = None
+    if native is not None and not failure and not missing:
+        native_effective_usd = _amount(native.effective_rate(), input_tokens,
+                                       output_tokens, cache_read, cache_write)[0]
     if failure:
         miss = "call_failed"
     elif missing:
@@ -741,6 +750,8 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         "billed_kind": billing_class,
         "list_usd": list_usd,
         "list_usd_upper": list_usd,
+        "native_effective_usd": native_effective_usd,
+        "native_effective_tokens": tokens if native_effective_usd is not None else 0,
         "tier_possible": tier_applied,
         "basis_usd": basis_usd,
         "basis_kind": basis_kind,
