@@ -682,10 +682,12 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     # The catalogue leg must be an *applicable* price: price()'s input-rate
     # fallback for an unreported cache counter fabricates a cache price, so a
     # defaulted call keeps its theoretical list valuation but no expenditure.
+    # The amount is the call's own band-selected effective figure — the same
+    # one session valuation uses — never the legacy cumulative upper base.
     catalogue_price = None
-    if list_usd is not None and priced and not (priced.cache_read_defaulted
-                                                or priced.cache_write_defaulted):
-        catalogue_price = list_usd
+    if effective_usd is not None and priced and not (priced.cache_read_defaulted
+                                                     or priced.cache_write_defaulted):
+        catalogue_price = effective_usd
     expenditure_usd, expenditure_basis = call_expenditure(
         billing_class=billing_class, native_effective_usd=native_effective_usd,
         catalogue_usd=catalogue_price)
