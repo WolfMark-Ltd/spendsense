@@ -380,6 +380,7 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
     unclassified_rule_state_unknown_calls = 0
     applied: dict[str, int] = {}
     total_api = metered = incremental = credits = 0.0
+    metered_rows = 0
     confirmed_total = 0.0
     confirmed_calls = 0
     api_priced = 0
@@ -420,7 +421,11 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                                                       "missing_usage", "usage_missing"})
         override = (_rate_override(profile, row)
                     if profile and profile.get("kind") == "custom" and not ineligible_call else None)
-        if value is None and provider_cost is None and override is None:
+        # A native effective rate is pricing evidence in its own right: a call
+        # the catalogue cannot price at list is still metered at the
+        # provider's applicable rates, never dropped as unpriced.
+        if value is None and provider_cost is None and override is None \
+                and row.get("native_effective_usd") is None:
             unclassified_tokens += row.get("_tokens") or 0
             unclassified_calls += 1
             api_unpriced_tokens += row.get("_tokens") or 0
@@ -528,6 +533,8 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
             allowance_meta[str(profile.get("id"))] = profile["allowances"]
         total_api += api_arith
         metered += metered_row
+        if metered_row is not None:
+            metered_rows += 1
         incremental += incremental_row
         credits += credit_row
         bucket = by_kind.setdefault(kind, {"api_equivalent_usd": 0.0, "metered_usd": 0.0,
@@ -581,6 +588,9 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
         "profiles_error": profiles.get("error") or "",
         "api_equivalent_usd": final_api,
         "metered_usd": round(metered, 6),
+        # How many rows actually carry a metered value: a zero total with zero
+        # coverage is "no estimate", not a measured $0.00.
+        "metered_calls": metered_rows,
         "incremental_usd": final_incremental,
         "credits_consumed_usd": round(credits, 6),
         "subscription_fees_usd": round(sum(fees.values()), 6),

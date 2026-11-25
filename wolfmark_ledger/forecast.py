@@ -348,9 +348,10 @@ def build_report(*, path: Path | str | None = None, event_db_path=None, now=None
                     # Applicable metered expenditure: the provider's own billed
                     # (effective) rates where it publishes them; otherwise the
                     # catalogue rate, which for catalogue-priced providers is
-                    # their public API price.
-                    metered_usd = (_metered_per_call_value(item, book) if cache_prices
-                                   else None)
+                    # their public API price. Computed for every row regardless
+                    # of the list-price cache: resolve_rate caches per provider,
+                    # so busy accounts keep their effective pricing.
+                    metered_usd = _metered_per_call_value(item, book)
                     if metered_usd is None:
                         metered_usd = list_usd
                     rows.append({**item, 'list_usd': list_usd,

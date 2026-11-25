@@ -7312,7 +7312,11 @@ function OverviewPage() {
   // provider rates where published, else the catalogue rate).
   const billingReport = analyticsCurrent ? analytics.data?.billing || {} : {}
   const chargesRecorded = finiteValue(billingReport?.evidence?.provider_reported?.usd)
-  const meteredEstimate = chargesRecorded == null ? finiteValue(billingReport?.metered_usd) : null
+  // A metered estimate is evidence only when rows actually carry one: a
+  // zero total with zero coverage is "no estimate", never a measured $0.00.
+  const meteredEstimate = chargesRecorded == null
+    && Number(billingReport?.metered_calls || 0) > 0
+    ? finiteValue(billingReport?.metered_usd) : null
   const unpricedTokens = Number(result.unpriced_tokens || 0)
   const unpricedCalls = Number(result.unpriced_calls || 0)
   const unpriced = unpricedTokens > 0 || unpricedCalls > 0
