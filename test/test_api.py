@@ -452,7 +452,7 @@ class VersionConsistencyTests(unittest.TestCase):
         desktop_version = re.search(r"^const PLUGIN_VERSION = '([^']+)'", desktop_source, re.M)
         self.assertIsNotNone(yaml_version)
         self.assertIsNotNone(desktop_version, "Desktop release version declaration is missing")
-        self.assertEqual(yaml_version, "0.6.39", "plugin.yaml does not identify this release")
+        self.assertEqual(yaml_version, "0.6.40", "plugin.yaml does not identify this release")
         self.assertEqual(manifest["version"], yaml_version, "manifest.json drifted from plugin.yaml")
         self.assertEqual(plugin_api.VERSION, yaml_version, "the API reports a different version")
         self.assertEqual(desktop_version.group(1), yaml_version,

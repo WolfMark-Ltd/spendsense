@@ -554,8 +554,26 @@ test('a proven session summary renders the cache-read benefit with coverage in i
     assert.match(benefitTip, /API-equivalent cache-read benefit for this runtime session/)
     assert.match(benefitTip, /1 of 2 calls · 100 read tokens/)
     assert.match(container.querySelector('.wm-kpi-figure').textContent, /\$0\.0010/)
-    assert.equal(container.querySelector('.wm-rates-toggle'), null,
-      'a multi-route session summary does not present a single-route Rates panel')
+    // Shared layout rule (#Rates-panel): the panel renders in Session scope
+    // too, from the same view.rates all scopes populate. It starts collapsed
+    // and opens to the same input/output/cache cells (a multi-route summary
+    // resolves route rates like any other scope; the panel names its own
+    // unavailable state when nothing resolves).
+    const ratesToggle = container.querySelector('.wm-rates-toggle')
+    assert.ok(ratesToggle, 'the Rates panel renders in Session scope')
+    assert.equal(ratesToggle.getAttribute('aria-expanded'), 'false',
+      'the Rates panel starts collapsed in Session scope')
+    await React.act(async () => {
+      ratesToggle.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    })
+    await flush(2)
+    const ratesBody = container.querySelector('#wm-rates-body')
+    assert.ok(ratesBody, 'the Rates panel opens in Session scope')
+    const rateCells = [...ratesBody.querySelectorAll('.wm-rate-cell .wm-metric-value')]
+      .map(el => el.textContent)
+    assert.equal(rateCells.length, 3, `input/output/cache cells: ${rateCells}`)
+    assert.ok(rateCells.every(v => v.startsWith('$') || v === '—'),
+      `cells carry values: ${rateCells}`)
     assert.equal(container.querySelector('.wm-ring').getAttribute('aria-label'), 'Weighted cache hit: 0%',
       'the zero hit rate is exposed to assistive technology')
   } finally {
@@ -840,6 +858,69 @@ test('a fresh session shows the stable empty state', async () => {
 })
 
 // --- rates panel ---------------------------------------------------------------
+// --- context legend -------------------------------------------------------------
+test('the context usage row renders in both scopes when the runtime frame carries it', async () => {
+  resetHost()
+  const originalRest = T.getRest()
+  const previousTranslate = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const value = T.I18N.en[key]
+    return typeof value === 'function' ? value(...args) : value ?? key
+  }
+  // Conversation scope: the frame's own context figure.
+  host.state.focusedSessionId.set('ctx-session')
+  host.state.focusedUsage.set(liveUsage({
+    context_percent: 10, context_used: 105000, context_max: 1048576 }))
+  let container = await renderMeter()
+  await flush()
+  try {
+    // Locate by the rendered figure (the harness passes i18n keys through,
+    // so a label-string match would not be translation-independent).
+    const convRow = [...container.querySelectorAll('.wm-legend-item')]
+      .find(el => /105\.0k\/1\.05M/.test(el.textContent))
+    assert.ok(convRow, 'the context legend row renders in Conversation scope')
+    assert.match(convRow.textContent, /10% · 105\.0k\/1\.05M/,
+      `the agent's context usage: ${convRow.textContent}`)
+  } finally {
+    resetHost()
+  }
+  // Session scope: the same row must survive the backend-summary view, which
+  // passes the runtime frame straight through as view.usage.
+  T.setRest(async path => {
+    if (path.startsWith('/session/summary?')) return {
+      ok: true, session_id: 'ctx-session',
+      population: { requested: 'all', satisfied: true, separable: false },
+      totals: { calls: 2, input_tokens: 1200, output_tokens: 300,
+        cache_read_tokens: 4800, cache_write_tokens: 0,
+        cache_read_state: 'reported', cache_write_state: 'unknown', unpriced_tokens: 0,
+        prompt_tokens: 6000 },
+      valuation: { api_equivalent_usd: .001, api_equivalent_basis: 'exact',
+        read_benefit_usd: .005, read_benefit_basis: 'exact', read_benefit_calls: 1,
+        read_benefit_tokens: 4800, savings_usd: null, savings_basis: 'indeterminate',
+        savings_bound_reason: 'write_rate_missing', covered_calls: 1, excluded_calls: 0,
+        cache_hit_rate: .8, cache_hit_rate_basis: 'reported_calls' }
+    }
+    return { rate: null }
+  })
+  host.state.focusedSessionId.set('ctx-session')
+  host.state.focusedUsage.set(liveUsage({
+    context_percent: 10, context_used: 105000, context_max: 1048576 }))
+  try {
+    container = await renderMeter()
+    await flush()
+    assert.equal(container.querySelector('.wm-scope-chip').textContent,
+      'This session · all recorded calls')
+    const sessRow = [...container.querySelectorAll('.wm-legend-item')]
+      .find(el => /105\.0k\/1\.05M/.test(el.textContent))
+    assert.ok(sessRow, 'the context legend row renders in Session scope too')
+    assert.match(sessRow.textContent, /10% · 105\.0k\/1\.05M/,
+      `the agent's context usage survives the backend summary: ${sessRow.textContent}`)
+  } finally {
+    T.restoreRest(originalRest)
+    i18nBackend.t = previousTranslate
+  }
+})
+
 test('rates stay collapsed by default and survive refreshes once open', async () => {
   resetHost()
   host.state.focusedSessionId.set('s1')

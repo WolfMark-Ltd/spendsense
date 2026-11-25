@@ -8,13 +8,13 @@ from bisect import bisect_right
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from . import billing, store
 from .aggregate import Acc, _event_result, _iso, _local_window, route_billing_status
 from .db import default_db_path
 from .pricing import (Catalogue, Rate, _effective_rate, load_catalogue,
-                      reaches_unapplied_tier)
+                      reaches_unapplied_tier, resolve_rate)
 
 SCOPES = ("direct", "subagent", "auxiliary", "unattributed")
 
@@ -34,6 +34,7 @@ _TOTAL_FIELDS = (
     "tokens", "calls", "input_tokens", "output_tokens", "cache_read_tokens",
     "cache_write_tokens", "reasoning_tokens", "list_usd", "priced_tokens", "unpriced_tokens",
     "priced_calls", "unpriced_calls", "coverage", "billed_usd", "billed_complete", "billing_mix",
+    "failures", "missing_usage",
 )
 
 
@@ -42,6 +43,24 @@ def _reported(flag: bool | None, value: int) -> bool:
     if flag is not None:
         return flag
     return value > 0
+
+
+def _effective_basis(*, covered_calls: int, calls: int, covered_tokens: int,
+                    total_tokens: int) -> Optional[str]:
+    """Basis of the estimated effective provider cost subtotal.
+
+    ``exact`` only when the native rates covered the whole recorded
+    population — every call, including zero-token ones — and every recorded
+    token. A failed or missing-usage call contributes nothing and cannot be
+    accounted, so any population holding one stays ``partial`` rather than
+    claiming a whole-population figure. ``None`` when nothing was covered, so
+    no figure is published for a zero-coverage estimate.
+    """
+    if not covered_calls:
+        return None
+    call_complete = calls >= 0 and covered_calls >= calls
+    token_complete = total_tokens == 0 or covered_tokens >= total_tokens
+    return "exact" if (call_complete and token_complete) else "partial"
 
 
 class _MetricProvenance:
@@ -185,9 +204,10 @@ def _call_economics(row: dict[str, Any], book: Catalogue, *,
     write_known = _reported(row.get("_cache_write_reported"), row["_cache_write"])
     if not read_known and not write_known:
         return None, "cache_provenance_unknown"
-    lookup = book.lookup(row["provider"], row["model"], allow_third_party=allow_third_party,
-                         allow_approximate=allow_approximate,
-                         at=row.get("last_seen"))
+    lookup, _native = resolve_rate(book, row["provider"], row["model"],
+                                   allow_third_party=allow_third_party,
+                                   allow_approximate=allow_approximate,
+                                   at=row.get("last_seen"))
     if lookup is None:
         if row.get("pricing_miss") == "provider_not_in_catalogue":
             return None, "provider_price_catalogue_missing"
@@ -328,6 +348,9 @@ class _AnalyticsAcc:
         self.premiums: set[float] = set()
         self.economics_gaps: Counter[str] = Counter()
         self.pricing_gaps: Counter[str] = Counter()
+        self.native_effective_usd = 0.0
+        self.native_effective_tokens = 0
+        self.native_effective_calls = 0
 
     def add(self, row: dict[str, Any]) -> None:
         pricing = row.get("pricing") or {}
@@ -388,6 +411,11 @@ class _AnalyticsAcc:
         list_usd = row.get("list_usd")
         if list_usd is not None:
             self.priced_calls += 1
+        native_effective = row.get("native_effective_usd")
+        if native_effective is not None:
+            self.native_effective_usd += float(native_effective)
+            self.native_effective_tokens += int(row.get("native_effective_tokens") or 0)
+            self.native_effective_calls += 1
         high = row.get("_cost_high")
         if high is None:
             high = row.get("effective_usd")
@@ -411,7 +439,19 @@ class _AnalyticsAcc:
                             row["basis_usd"], row["basis_kind"])
 
     def as_dict(self) -> dict[str, Any]:
-        base = self.accounting.as_dict()
+        base = dict(self.accounting.as_dict())
+        # Estimated effective provider cost: the provider's own billed rates.
+        # One named set of fields everywhere (totals, groups and sessions), a
+        # measured subtotal with its own coverage, never a reported charge.
+        covered = self.native_effective_calls
+        base["provider_effective_usd"] = (round(self.native_effective_usd, 6)
+                                          if covered else None)
+        base["provider_effective_calls"] = covered
+        base["provider_effective_tokens"] = self.native_effective_tokens
+        base["provider_effective_basis"] = _effective_basis(
+            covered_calls=covered, calls=int(base.get("calls") or 0),
+            covered_tokens=self.native_effective_tokens,
+            total_tokens=int(base.get("tokens") or 0))
         read_state, read_reason = self.read_prov.state(self.known_read_tokens)
         write_state, write_reason = self.write_prov.state(self.known_write_tokens)
         basis, bound_reason, premium = _savings_basis(
@@ -495,6 +535,10 @@ class _AnalyticsAcc:
             # indeterminate basis is not a bound).
             read_benefit_basis, read_benefit_usd = "indeterminate", None
         return {**{key: base[key] for key in _TOTAL_FIELDS},
+                "provider_effective_usd": base["provider_effective_usd"],
+                "provider_effective_calls": base["provider_effective_calls"],
+                "provider_effective_tokens": base["provider_effective_tokens"],
+                "provider_effective_basis": base["provider_effective_basis"],
                 "pricing_provenance": base.get("pricing_provenance", "unpriced"),
                 "pricing_mix": base.get("pricing_mix", {}),
                 "pricing_gaps": dict(self.pricing_gaps),
@@ -993,8 +1037,9 @@ def build_session_summary(
         unpriced_tokens = totals_raw["unpriced_tokens"]
         thresholds: set[int] = set()
         for route, name in {(str(r.get("provider") or ""), str(r.get("model") or "")) for r in selected}:
-            hit = book.lookup(route, name, allow_third_party=mode in ("third_party", "approximate"),
-                              allow_approximate=mode == "approximate")
+            hit, _native = resolve_rate(book, route, name,
+                                        allow_third_party=mode in ("third_party", "approximate"),
+                                        allow_approximate=mode == "approximate")
             if hit is not None:
                 thresholds.update(int(tier.threshold) for tier in hit.rate.tiers)
         # Monetary completeness is not the same fact as a known price band.
@@ -1049,6 +1094,15 @@ def build_session_summary(
                 "cache_hit_rate": totals_raw["cache_hit_rate"],
                 "cache_hit_rate_all": totals_raw["cache_hit_rate_all"],
                 "cache_hit_rate_basis": totals_raw["cache_hit_rate_basis"],
+                # Estimated effective provider cost at the provider's own
+                # billed rates — a separate claim from the list valuation and
+                # never a reported charge. Covered counts name its population;
+                # the basis is computed once in the accumulator so every
+                # surface publishes the same contract.
+                "provider_effective_usd": totals_raw["provider_effective_usd"],
+                "provider_effective_calls": totals_raw["provider_effective_calls"],
+                "provider_effective_tokens": totals_raw["provider_effective_tokens"],
+                "provider_effective_basis": totals_raw["provider_effective_basis"],
             },
         }
 

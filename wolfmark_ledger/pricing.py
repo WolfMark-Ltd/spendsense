@@ -215,6 +215,7 @@ class Catalogue:
                     return other
         return None
 
+
     def meta(self) -> dict[str, Any]:
         models = sum(len(v) for v in self.providers.values())
         return {
@@ -227,6 +228,76 @@ class Catalogue:
             "providers": len(self.providers),
             "models": models,
         }
+
+
+def resolve_rate(
+    book: Catalogue,
+    route_provider: str,
+    model: str,
+    *,
+    at: Optional[float] = None,
+    allow_third_party: bool = False,
+    allow_approximate: bool = False,
+    native_fetch: bool = True,
+) -> tuple[Optional[Lookup], Optional[Any]]:
+    """Resolve a rate for the serving route, falling back to provider-native rows.
+
+    Precedence: (1) the catalogue's own chain — official verified overlay >
+    route card — without foreign fallbacks; (2) provider-native rows (Hermes'
+    per-credential resolver); (3) the requested opt-in third-party/approximate
+    borrow. A foreign borrow must never displace an available provider-native
+    valuation, so it only applies when both nearer sources miss. The native
+    row is returned second so callers can value the *effective* basis
+    separately. Returns ``(lookup, native)``; either may be ``None``.
+    """
+    hit = book.lookup(route_provider, model, at=at)
+    if hit is not None:
+        return hit, None
+    from . import provider_native as _provider_native
+
+    native = _provider_native.lookup(route_provider, model, allow_fetch=native_fetch)
+    if native is None:
+        if allow_third_party or allow_approximate:
+            hit = book.lookup(route_provider, model, allow_third_party=allow_third_party,
+                              allow_approximate=allow_approximate, at=at)
+        return hit, None
+    rate = native.list_rate()
+    basis = "list"
+    if rate is None:
+        # A row without "original" backs the standard list valuation only for
+        # sources whose native rows are verifiably standard public prices.
+        # Credential-scoped sources (nous, novita, kilocode) discount or scope
+        # their rates, so without that block they price the effective basis
+        # only and the standard list valuation stays an honest gap.
+        if _provider_native.is_public_list_source(route_provider):
+            rate = native.effective_rate()
+            source = (f"{_provider_native.SOURCE_LABEL} ({native.provider}, "
+                      "effective basis, standard public rates)")
+            hit = Lookup(
+                provider=route_provider,
+                route_provider=route_provider,
+                model=native.model,
+                rate=rate,
+                alias_used=False,
+                confidence="provider_native",
+                source=source,
+                provenance="provider_native",
+            )
+            return hit, native
+        return None, native
+    source = f"{_provider_native.SOURCE_LABEL} ({native.provider}, {basis} basis)"
+    return Lookup(
+        provider=route_provider,
+        route_provider=route_provider,
+        model=native.model,
+        rate=rate,
+        alias_used=False,
+        confidence="provider_native",
+        source=source,
+        provenance="provider_native",
+    ), native
+
+
 
 
 def _num(value: Any) -> Optional[float]:
