@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 
 from . import budgets, economics, membership, store
 from .db import LedgerUnavailable
-from .pricing import _effective_rate, load_catalogue, price
+from .pricing import _amount as _per_mtok_amount, _effective_rate, load_catalogue, price, resolve_rate
 
 RANK = {'normal': 0, 'info': 1, 'warning': 2, 'exceeded': 3}
 _PRICE_CACHE_MAX_ENTRIES = 8192
@@ -282,6 +282,39 @@ def _per_call_value(item: dict, book) -> float | None:
     return priced.usd
 
 
+def _metered_per_call_value(item: dict, book) -> float | None:
+    """One recorded attempt at the provider's own billed (effective) rates.
+
+    The applicable metered expenditure for rows without a provider-reported
+    debit: effective rates where the provider publishes them, else the
+    catalogue rate (which is the provider's public API price). A free or
+    promotional credits plan is a metered API account — its usage is never
+    valued at the undiscounted list price.
+    """
+    if str(item.get('outcome') or 'ok') in ('error', 'missing_usage'):
+        return None
+    fields = ('input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens')
+    if any(type(item.get(key)) is not int or item[key] < 0 for key in fields):
+        return None
+    provider = str(item.get('provider') or '').strip()
+    model = str(item.get('model') or '').strip()
+    _hit, native = resolve_rate(book, provider, model, native_fetch=True)
+    if native is None:
+        return None
+    rate = native.effective_rate()
+    if rate.input is None or rate.output is None:
+        return None
+    # A positive cache-read count with no published read price, or a positive
+    # cache-write count, leaves the call out of the measured estimate.
+    if item['cache_read_tokens'] > 0 and rate.cache_read is None:
+        return None
+    if item['cache_write_tokens'] > 0:
+        return None
+    amount, _ = _per_mtok_amount(rate, item['input_tokens'], item['output_tokens'],
+                                 item['cache_read_tokens'], item['cache_write_tokens'])
+    return amount
+
+
 def build_report(*, path: Path | str | None = None, event_db_path=None, now=None,
                  catalogue=None, fx_path=None) -> dict:
     """Build monthly status from local evidence, skipping ledger work for session-only limits."""
@@ -312,8 +345,17 @@ def build_report(*, path: Path | str | None = None, event_db_path=None, now=None
                 for item in raw:
                     list_usd = (_cached_per_call_value(item, book, revision) if cache_prices
                                 else _per_call_value(item, book))
+                    # Applicable metered expenditure: the provider's own billed
+                    # (effective) rates where it publishes them; otherwise the
+                    # catalogue rate, which for catalogue-priced providers is
+                    # their public API price.
+                    metered_usd = (_metered_per_call_value(item, book) if cache_prices
+                                   else None)
+                    if metered_usd is None:
+                        metered_usd = list_usd
                     rows.append({**item, 'list_usd': list_usd,
-                                 'actual_metered_usd': None, 'measurement': 'unknown'})
+                                 'actual_metered_usd': metered_usd,
+                                 'measurement': 'actual_metered' if metered_usd is not None else 'unknown'})
                 available = True
         finally:
             if conn is not None:

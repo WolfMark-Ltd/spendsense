@@ -67,6 +67,14 @@ class BillingTests(unittest.TestCase):
         self.assertAlmostEqual(report["incremental_usd"], 4.0)
         self.assertAlmostEqual(report["credits_consumed_usd"], 0.0)
 
+    def test_api_plan_counts_effective_rates_as_spend(self):
+        loaded = self.profiles({"profiles": [{"id": "payg", "provider": "nous", "kind": "api"}]})
+        rows = [row(provider="nous", model="deepseek/x", value=0.193,
+                    native_effective_usd=0.039)]
+        report = billing.classify(rows, loaded)
+        self.assertAlmostEqual(report["incremental_usd"], 0.039)
+        self.assertAlmostEqual(report["credits_consumed_usd"], 0.0)
+
     def test_custom_override_replaces_the_catalogue_value(self):
         loaded = self.profiles({"profiles": [
             {"id": "contract", "provider": "commandcode", "kind": "custom",
@@ -310,3 +318,67 @@ class EvidenceBasisTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MeteredBasisTests(unittest.TestCase):
+    """Applicable metered expenditure: effective provider rates first.
+
+    A free or promotional credits plan is a metered API account, not a
+    subscription: without a provider-reported debit, its metered cost is the
+    estimate at the provider's own billed (effective) rates — never the
+    undiscounted list price. Subscription-included routes keep the list
+    API-equivalent as the value the membership received.
+    """
+
+    def profiles(self, data):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump(data, handle)
+        handle.close()
+        self.addCleanup(lambda: os.unlink(handle.name))
+        return billing.load_profiles(Path(handle.name))
+
+    def test_metered_uses_effective_rates_not_list(self):
+        # The `free` profile kind is a legacy membership copy (Memberships
+        # owns subscription arrangements); credits accounts are `prepaid`.
+        loaded = self.profiles({"profiles": [{"id": "nous", "provider": "nous", "kind": "prepaid"}]})
+        rows = [row(provider="nous", model="deepseek/x", value=0.193,
+                    native_effective_usd=0.039)]
+        report = billing.classify(rows, loaded)
+        self.assertAlmostEqual(report["by_kind"]["prepaid"]["metered_usd"], 0.039)
+        self.assertAlmostEqual(report["metered_usd"], 0.039)
+        # The list API-equivalent is untouched: it stays the comparator.
+        self.assertAlmostEqual(report["by_kind"]["prepaid"]["api_equivalent_usd"], 0.193)
+
+    def test_legacy_free_profile_still_meters_effective_as_unknown(self):
+        # A free credits plan is a metered API account, not a subscription:
+        # with the legacy kind ignored, the route is unclassified — and an
+        # unclassified route is still metered at the applicable rates.
+        rows = [row(provider="nous", model="deepseek/x", value=0.193,
+                    native_effective_usd=0.039)]
+        report = billing.classify(rows, self.profiles({}))
+        self.assertAlmostEqual(report["by_kind"]["unknown"]["metered_usd"], 0.039)
+        self.assertAlmostEqual(report["api_equivalent_usd"], 0.193)
+
+    def test_unclassified_routes_are_metered_effective_too(self):
+        rows = [row(provider="nous", model="deepseek/x", value=0.193,
+                    native_effective_usd=0.039)]
+        report = billing.classify(rows, self.profiles({}))
+        self.assertAlmostEqual(report["by_kind"]["unknown"]["metered_usd"], 0.039)
+        self.assertAlmostEqual(report["api_equivalent_usd"], 0.193)
+
+    def test_metered_falls_back_to_list_without_effective_rates(self):
+        # Catalogue-priced providers publish no separate effective rates: their
+        # public catalogue price IS the applicable rate, so the metered figure
+        # is unchanged.
+        rows = [row(provider="commandcode", model="deepseek/y", value=0.5)]
+        report = billing.classify(rows, self.profiles({}))
+        self.assertAlmostEqual(report["by_kind"]["unknown"]["metered_usd"], 0.5)
+
+    def test_provider_reported_evidence_wins_over_the_estimate(self):
+        # A real provider-reported debit is the strongest evidence for the
+        # metered figure; the effective-rate estimate is only the fallback.
+        loaded = self.profiles({"profiles": [{"id": "nous", "provider": "nous", "kind": "prepaid"}]})
+        rows = [row(provider="nous", model="deepseek/x", value=0.193,
+                    native_effective_usd=0.039, _provider_cost_usd=0.045)]
+        report = billing.classify(rows, loaded)
+        self.assertAlmostEqual(report["by_kind"]["prepaid"]["metered_usd"], 0.045)

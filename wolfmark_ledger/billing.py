@@ -468,6 +468,15 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                 allowance = float(allowances[row["model"]])
             elif isinstance(profile.get("allowance_usd"), (int, float)):
                 allowance = float(profile["allowance_usd"])
+        # Applicable metered rates: the provider's own billed (effective) rates
+        # where it publishes them, else the catalogue rate — which for
+        # catalogue-priced providers *is* their public API price. A free or
+        # promotional credits plan is a metered API account, not a subscription:
+        # its metered expenditure is estimated at the applicable provider rates,
+        # never at the undiscounted list price. The list API-equivalent stays
+        # the subscription-value figure for subscription-included routes.
+        applicable_usd = (float(row["native_effective_usd"])
+                          if row.get("native_effective_usd") is not None else api_arith)
         if metered_evidence is not None:
             # Metered usage value is the provider's own figure; API-equivalent
             # stays a separate theoretical number (when the catalogue has one).
@@ -481,21 +490,25 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
             else:
                 billable = max(0.0, metered_evidence - allowance)
                 incremental_row = billable if (kind == "api" or (profile or {}).get("overage_paid")) else 0.0
-        elif kind in ("subscription_included", "free"):
+        elif kind == "subscription_included":
+            # Subscription usage: the standard API-equivalent (list) is the
+            # value the membership received.
             metered_row, incremental_row, credit_row = api_arith, 0.0, api_arith
+        elif kind == "free":
+            metered_row, incremental_row, credit_row = applicable_usd, 0.0, applicable_usd
         elif kind in _CREDIT_KINDS:
-            metered_row, incremental_row, credit_row = api_arith, 0.0, api_arith
+            metered_row, incremental_row, credit_row = applicable_usd, 0.0, applicable_usd
             if (profile or {}).get("count_credits_as_spend"):
                 incremental_row = 0.0  # explicit user view; reported separately
         elif kind == "custom":
             metered_row, incremental_row, credit_row = api_arith, api_arith, 0.0
         else:
-            metered_row, credit_row = api_arith, 0.0
+            metered_row, credit_row = applicable_usd, 0.0
             if kind == "unknown":
                 unknown_seen = True
                 incremental_row = 0.0
             else:
-                incremental_row = api_arith
+                incremental_row = applicable_usd
 
         model_allowances = (profile or {}).get("allowances")
         model_allowances = model_allowances if isinstance(model_allowances, dict) else {}

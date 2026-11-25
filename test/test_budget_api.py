@@ -129,3 +129,56 @@ class BudgetApiTests(unittest.TestCase):
             self.assertTrue(item['dismissed'])
             self.assertEqual(item['spend'], 8)
             self.assertEqual(item['level'], 'warning')
+
+
+@unittest.skipUnless(FastAPI is not None and TestClient is not None,
+                     "FastAPI/httpx not installed in this interpreter")
+class MeteredBudgetTests(unittest.TestCase):
+    """Actual-metered budgets measure the provider's applicable rates.
+
+    Without a provider-reported debit, the metered expenditure is the
+    effective-rate estimate where the provider publishes one — never the
+    undiscounted list price — and it feeds budgets and forecasts.
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / 'budgets.json'
+        self.events = Path(tmp.name) / 'usage.db'
+        self.addCleanup(patch.stopall)
+        patch.object(budgets, 'store_path', return_value=self.path).start()
+        patch.object(plugin_api.store, 'event_db_path', return_value=self.events).start()
+        app = FastAPI()
+        app.include_router(plugin_api.router)
+        self.client = TestClient(app)
+        self.addCleanup(self.client.close)
+
+    def test_actual_metered_budget_measures_effective_rates(self):
+        with closing(sqlite3.connect(self.events)) as conn, conn:
+            conn.executescript(plugin_api.store._SCHEMA)
+            conn.execute('INSERT INTO baseline VALUES (1, ?, 0, 0, 0)', (START,))
+            for i in range(4):
+                conn.execute('INSERT INTO calls(event_id, ts, model, provider, outcome, input_tokens, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                             (str(i), START + (i + 1) * 86400, 'm', 'nous', 'ok', 1000000, NOW))
+        book = Catalogue({'nous': {'m': Rate(0.15, 0.6, .003, None)}}, 'fixture', 'test', '', '1')
+
+        class FakeNative:
+            def effective_rate(self):
+                return Rate(0.03, 0.12, .0006, None)
+
+        with patch.object(plugin_api.forecast, 'load_catalogue', return_value=book), \
+                patch.object(plugin_api.forecast, 'resolve_rate',
+                             return_value=(None, FakeNative())), \
+                patch('time.time', return_value=NOW):
+            doc = self.client.get('/budgets').json()
+            saved = self.client.put('/budgets/x', params={'if_rev': doc['rev']},
+                                    json=budget(id='x', amount=10, measurement='actual_metered'))
+            self.assertEqual(saved.status_code, 200)
+            report = self.client.get('/budgets/status').json()
+            item = report['statuses'][0]
+            # 4 calls at the effective rates: 1M fresh input each
+            # (1,000,000 * 0.03e-6) = 0.03/call, output counters are 0.
+            self.assertEqual(item['measurement'], 'actual_metered')
+            self.assertAlmostEqual(item['spend'], 0.12, places=5)
+            self.assertTrue(item['forecast']['available'])

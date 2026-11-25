@@ -51,7 +51,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-VERSION = "0.6.40"
+VERSION = "0.6.41"
 
 #: Pairing level between the two halves of one release. A ``VERSION`` string
 #: alone does not establish build compatibility; this integer is what a Desktop
