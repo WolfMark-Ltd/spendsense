@@ -464,3 +464,34 @@ class NousCreditsDayFixture(unittest.TestCase):
                    + Decimal(out) * NOUS_LIST_D[1]) / M)
         self.assertEqual(listed, Decimal("0.225058716"))
         self.assertGreater(listed, self.DAY_DEBIT)
+
+
+class CommandCodeCatalogueCoverage(unittest.TestCase):
+    """Command Code's own published model page prices, via the official overlay.
+
+    Command Code publishes muse-ember on its model page ($0.10/M input,
+    $0.50/M output, cache reads $0.004/M; cache-write pricing not published)
+    but the models.dev commandcode listing omitted the model. The overlay
+    carries only Command Code's own published rates — no borrowed provider
+    rates, no invented cache-write price.
+    """
+
+    def test_muse_ember_prices_from_the_official_overlay(self):
+        self.inject_book({"commandcode": {}})
+        hit, _native = resolve_rate(load_catalogue(), "commandcode", "meta/muse-ember")
+        self.assertIsNotNone(hit)
+        if hit is not None:  # pragma: no cover - narrows for the type checker
+            self.assertEqual(hit.provenance, "official_verified")
+            self.assertEqual((hit.rate.input, hit.rate.output, hit.rate.cache_read),
+                             (0.10, 0.50, 0.004))
+            self.assertIsNone(hit.rate.cache_write,
+                              "cache-write pricing is not published — never asserted")
+
+    def test_no_borrowed_rates_for_unpublished_cache_writes(self):
+        # The models.dev openrouter row for the same model carries a cache
+        # write price; the commandcode route must not inherit it.
+        self.inject_book({"commandcode": {}})
+        hit, _native = resolve_rate(load_catalogue(), "commandcode", "meta/muse-ember")
+        if hit is not None:  # pragma: no cover - narrows for the type checker
+            self.assertEqual(hit.rate.cache_write, None)
+            self.assertNotIn("openrouter", (hit.source or "").lower())
