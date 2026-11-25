@@ -342,6 +342,11 @@
       "source_url": "https://docs.x.ai/developers/pricing",
       "verified_at": "2026-11-21",
       "note": "Long-context pricing applies to ALL tokens once the prompt reaches 200K (>=, inclusive). xAI publishes no cache-write price, so writes stay unknown rather than zero."
-    }
+    },
+    {"provider": "commandcode", "model": "meta/muse-ember",
+     "input": 0.10, "output": 0.50, "cache_read": 0.004,
+     "source_url": "https://commandcode.ai/models/muse-ember",
+     "verified_at": "2026-11-25",
+     "note": "Command Code's own published model page: $0.10/M input, $0.50/M output, cache reads $0.004/M; cache-write pricing not published, so no write rate is asserted."}
   ]
 }

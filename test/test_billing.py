@@ -67,6 +67,14 @@ class BillingTests(unittest.TestCase):
         self.assertAlmostEqual(report["incremental_usd"], 4.0)
         self.assertAlmostEqual(report["credits_consumed_usd"], 0.0)
 
+    def test_api_plan_counts_effective_rates_as_spend(self):
+        loaded = self.profiles({"profiles": [{"id": "payg", "provider": "nous", "kind": "api"}]})
+        rows = [row(provider="nous", model="deepseek/x", value=0.193,
+                    native_effective_usd=0.039)]
+        report = billing.classify(rows, loaded)
+        self.assertAlmostEqual(report["incremental_usd"], 0.039)
+        self.assertAlmostEqual(report["credits_consumed_usd"], 0.0)
+
     def test_custom_override_replaces_the_catalogue_value(self):
         loaded = self.profiles({"profiles": [
             {"id": "contract", "provider": "commandcode", "kind": "custom",
@@ -306,6 +314,254 @@ class EvidenceBasisTests(unittest.TestCase):
                "_cache_read": 0, "_cache_write": 0, "last_seen": None}
         report = billing.classify([row], loaded)
         self.assertAlmostEqual(report["incremental_usd"], 0.20, msg="only the overage is extra cash")
+
+
+
+
+class MeteredBasisTests(unittest.TestCase):
+    """Applicable metered expenditure: effective provider rates first.
+
+    A free or promotional credits plan is a metered API account, not a
+    subscription: without a provider-reported debit, its metered cost is the
+    estimate at the provider's own billed (effective) rates — never the
+    undiscounted list price. Subscription-included routes keep the list
+    API-equivalent as the value the membership received.
+    """
+
+    def profiles(self, data):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump(data, handle)
+        handle.close()
+        self.addCleanup(lambda: os.unlink(handle.name))
+        return billing.load_profiles(Path(handle.name))
+
+    def test_metered_uses_effective_rates_not_list(self):
+        # The `free` profile kind is a legacy membership copy (Memberships
+        # owns subscription arrangements); credits accounts are `prepaid`.
+        loaded = self.profiles({"profiles": [{"id": "nous", "provider": "nous", "kind": "prepaid"}]})
+        rows = [row(provider="nous", model="deepseek/x", value=0.193,
+                    native_effective_usd=0.039)]
+        report = billing.classify(rows, loaded)
+        self.assertAlmostEqual(report["by_kind"]["prepaid"]["metered_usd"], 0.039)
+        self.assertAlmostEqual(report["metered_usd"], 0.039)
+        # The list API-equivalent is untouched: it stays the comparator.
+        self.assertAlmostEqual(report["by_kind"]["prepaid"]["api_equivalent_usd"], 0.193)
+
+    def test_legacy_free_profile_still_meters_effective_as_unknown(self):
+        # A free credits plan is a metered API account, not a subscription:
+        # with the legacy kind ignored, the route is unclassified — and an
+        # unclassified route is still metered at the applicable rates.
+        rows = [row(provider="nous", model="deepseek/x", value=0.193,
+                    native_effective_usd=0.039)]
+        report = billing.classify(rows, self.profiles({}))
+        self.assertAlmostEqual(report["by_kind"]["unknown"]["metered_usd"], 0.039)
+        self.assertAlmostEqual(report["api_equivalent_usd"], 0.193)
+
+    def test_unclassified_routes_are_metered_effective_too(self):
+        rows = [row(provider="nous", model="deepseek/x", value=0.193,
+                    native_effective_usd=0.039)]
+        report = billing.classify(rows, self.profiles({}))
+        self.assertAlmostEqual(report["by_kind"]["unknown"]["metered_usd"], 0.039)
+        self.assertAlmostEqual(report["api_equivalent_usd"], 0.193)
+
+    def test_metered_falls_back_to_list_without_effective_rates(self):
+        # Catalogue-priced providers publish no separate effective rates: their
+        # public catalogue price IS the applicable rate, so the metered figure
+        # is unchanged.
+        rows = [row(provider="commandcode", model="deepseek/y", value=0.5)]
+        report = billing.classify(rows, self.profiles({}))
+        self.assertAlmostEqual(report["by_kind"]["unknown"]["metered_usd"], 0.5)
+
+    def test_provider_reported_evidence_wins_over_the_estimate(self):
+        # A real provider-reported debit is the strongest evidence for the
+        # metered figure; the effective-rate estimate is only the fallback.
+        loaded = self.profiles({"profiles": [{"id": "nous", "provider": "nous", "kind": "prepaid"}]})
+        rows = [row(provider="nous", model="deepseek/x", value=0.193,
+                    native_effective_usd=0.039, _provider_cost_usd=0.045)]
+        report = billing.classify(rows, loaded)
+        self.assertAlmostEqual(report["by_kind"]["prepaid"]["metered_usd"], 0.045)
+
+    def test_custom_rule_without_override_meters_the_effective_rate(self):
+        # A saved custom rule that omits rate_override must not measure a
+        # known positive cost as zero: the applicable effective rate applies.
+        loaded = self.profiles({"profiles": [{"id": "r", "provider": "nous", "kind": "custom"}]})
+        rows = [row(provider="nous", model="deepseek/x", value=None,
+                    native_effective_usd=0.039)]
+        report = billing.classify(rows, loaded)
+        self.assertAlmostEqual(report["by_kind"]["custom"]["metered_usd"], 0.039)
+
+    def test_custom_override_still_wins_over_the_effective_estimate(self):
+        loaded = self.profiles({"profiles": [{"id": "r", "provider": "nous", "kind": "custom",
+                                              "rate_override": {"input": 0.9, "output": 4.5}}]})
+        rows = [row(provider="nous", model="deepseek/x", value=0.193,
+                    native_effective_usd=0.039, _tokens=1_000_000, _input=1_000_000)]
+        report = billing.classify(rows, loaded)
+        # The explicit user rate (0.9/MTok input) replaces both the list and
+        # the provider estimate for this route.
+        self.assertAlmostEqual(report["by_kind"]["custom"]["metered_usd"], 0.9)
+        self.assertAlmostEqual(report["by_kind"]["custom"]["api_equivalent_usd"], 0.9)
+
+
+class SharedExpenditureFixture(unittest.TestCase):
+    """The agreed billing-model regression fixture.
+
+    One population, three billing models, one shared expenditure result:
+
+    - Subscription-included usage: $10 list, $0 expenditure.
+    - Nous credits: $0.30 list, $0.06 expenditure (applicable effective
+      rates — purchased credits are real expenditure as consumed).
+    - OpenRouter: $0.50 list, $0.50 expenditure (its public catalogue rate
+      IS the applicable price).
+
+    Expected combined totals: API-equivalent value $10.80; API expenditure
+    $0.56. Adding another provider never changes the pricing basis of
+    previously recorded calls: the figure is composed per call.
+    """
+
+    def profiles(self, data):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump(data, handle)
+        handle.close()
+        self.addCleanup(lambda: os.unlink(handle.name))
+        return billing.load_profiles(Path(handle.name))
+
+    def test_agreed_fixture_totals(self):
+        # The codex route carries a membership-resolved 'included' arrangement
+        # (the authoritative classification source), so its usage is exempt.
+        rows = [
+            # Subscription-included: priced at list by the route card, no
+            # native effective rates — expenditure $0.
+            row(provider="codex", model="gpt/x", value=10.0, tokens=10_000_000),
+            # Nous credits: native effective rates apply ($0.06), list $0.30.
+            row(provider="nous", model="deepseek/x", value=0.30, tokens=1_000_000,
+                native_effective_usd=0.06),
+            # OpenRouter: catalogue price IS the applicable price.
+            row(provider="openrouter", model="or/x", value=0.50, tokens=1_000_000),
+        ]
+        report = billing.classify(rows, self.profiles({}),
+                                  route_arrangements={"codex": "included"})
+        self.assertAlmostEqual(report["api_equivalent_usd"], 10.80, places=6)
+        self.assertAlmostEqual(report["metered_usd"], 0.56, places=6)
+        # The included allowance value stays visible as credits consumed,
+        # never as expenditure.
+        self.assertAlmostEqual(report["credits_consumed_usd"], 10.0, places=6)
+        self.assertAlmostEqual(report["incremental_usd"], 0.0, places=6)
+
+    def test_adding_a_provider_never_rebases_recorded_calls(self):
+        loaded = self.profiles({})
+        nous = row(provider="nous", model="deepseek/x", value=0.30, tokens=1_000_000,
+                   native_effective_usd=0.06)
+        before = billing.classify([nous], loaded)
+        after = billing.classify([nous, row(provider="openrouter", model="or/x",
+                                            value=0.50, tokens=1_000_000)], loaded)
+        self.assertAlmostEqual(before["by_kind"]["unknown"]["metered_usd"], 0.06, places=6)
+        self.assertAlmostEqual(after["by_kind"]["unknown"]["metered_usd"], 0.56, places=6)
+        # The nous call's own expenditure is unchanged: composition is per call.
+        self.assertAlmostEqual(after["metered_usd"] - before["metered_usd"], 0.50, places=6)
+
+    def test_classify_consumes_the_shared_row_expenditure(self):
+        # One accounting path: when rows carry the expenditure the aggregate
+        # already computed, classification consumes that figure instead of
+        # recomputing from the list/legacy legs. An included row priced by a
+        # catalogue card with a retention range stays a measured zero even
+        # though the classification sees no arrangement of its own.
+        rows = [row(provider="commandcode", model="claude/x", value=0.528,
+                    tokens=1_000_000, expenditure_usd=0.0,
+                    expenditure_basis="included")]
+        report = billing.classify(rows, self.profiles({}))
+        self.assertAlmostEqual(report["metered_usd"], 0.0, places=6)
+        self.assertAlmostEqual(report["api_equivalent_usd"], 0.528, places=6)
+        # The same row without the included class meters the row's own
+        # figure — never the legacy list leg.
+        rows = [row(provider="nous", model="deepseek/x", value=0.30,
+                    tokens=1_000_000, expenditure_usd=0.06,
+                    expenditure_basis="exact")]
+        report = billing.classify(rows, self.profiles({}))
+        self.assertAlmostEqual(report["metered_usd"], 0.06, places=6)
+
+    def test_suffixed_route_slug_matches_only_its_model_family(self):
+        # A wire-family slug (commandcode-anthropic) claims only the models
+        # of that family — never the provider's other routes.
+        from wolfmark_ledger.membership_api import route_matches
+        self.assertTrue(route_matches("nous", "nous", "deepseek/x"))
+        self.assertTrue(route_matches("commandcode-anthropic", "commandcode",
+                                      "claude/fable-5"))
+        self.assertTrue(route_matches("commandcode-anthropic", "commandcode",
+                                      "claude-fable-5"))
+        # Other families of the same provider are NOT governed by the slug.
+        self.assertFalse(route_matches("commandcode-anthropic", "commandcode",
+                                       "deepseek/deepseek-v4.1"))
+        self.assertFalse(route_matches("commandcode-anthropic", "commandcode",
+                                       "z-ai/glm-5"))
+        # An unknown family suffix claims nothing.
+        self.assertFalse(route_matches("commandcode-mystery", "commandcode",
+                                       "claude/fable-5"))
+
+    def test_family_slug_classification_zeroes_only_family_models(self):
+        # commandcode-anthropic included: claude models measure zero, the
+        # provider's other models stay metered at their applicable rates.
+        rows = [
+            row(provider="commandcode", model="claude/fable-5", value=1.0,
+                tokens=1_000_000, expenditure_usd=0.02, expenditure_basis="exact"),
+            row(provider="commandcode", model="deepseek/deepseek-v4.1", value=1.0,
+                tokens=1_000_000, expenditure_usd=0.02, expenditure_basis="exact"),
+        ]
+        report = billing.classify(rows, self.profiles({}),
+                                  route_arrangements={"commandcode-anthropic": "included"})
+        self.assertAlmostEqual(report["metered_usd"], 0.02, places=6)
+        self.assertAlmostEqual(report["api_equivalent_usd"], 2.0, places=6)
+
+    def test_arrangement_map_keys_are_normalised(self):
+        from wolfmark_ledger.membership_api import route_arrangements_payload
+        # The lookup is lowercase on both sides; an uppercase map key still
+        # classifies the route.
+        rows = [row(provider="openrouter", model="or/x", value=0.5,
+                    tokens=1_000_000, expenditure_usd=0.5,
+                    expenditure_basis="exact")]
+        report = billing.classify(rows, self.profiles({}),
+                                  route_arrangements={"OpenRouter": "included"})
+        self.assertAlmostEqual(report["metered_usd"], 0.0, places=6)
+
+    def test_analytics_and_billing_agree_on_the_same_rows(self):
+        # One accounting path, pinned by execution: the same recorded calls
+        # through the analytics pipeline (aggregate → totals) and through
+        # billing.classify produce the same expenditure figure.
+        import time
+        from contextlib import closing
+        import sqlite3
+        from unittest.mock import patch
+        from wolfmark_ledger import store
+        from wolfmark_ledger.analytics import build_analytics_report
+        from wolfmark_ledger.pricing import Catalogue, Rate
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as scratch:
+            events = Path(scratch) / "usage.db"
+            with closing(sqlite3.connect(events)) as conn, conn:
+                conn.executescript(store._SCHEMA)
+                ts = time.time() - 1
+                conn.executemany(
+                    "INSERT INTO calls (event_id,ts,model,provider,platform,aux_task,"
+                    "outcome,input_tokens,cache_read_tokens,recorded_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    [("a", ts, "deepseek/x", "nous", "desktop", "", "ok", 100, 200, 1),
+                     ("b", ts, "or/x", "openrouter", "desktop", "", "ok", 300, 0, 1)],
+                )
+            book = Catalogue({"nous": {"deepseek/x": Rate(2, 4, .5, 3)},
+                              "openrouter": {"or/x": Rate(1, 2, .5, 3)}},
+                             "fixture", "test", "", "1")
+            with patch.object(store, "event_db_path", return_value=events), \
+                 patch.object(store, "default_db_path", return_value=Path(scratch) / "none.db"):
+                report = build_analytics_report(days=30, catalogue=book,
+                                                profiles_path=Path("/nonexistent/profiles.json"))
+            rows = None
+            with closing(sqlite3.connect(events)) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = store.query_calls(conn, since=0, until=time.time() + 60)
+            from wolfmark_ledger.aggregate import _event_result
+            enriched = [_event_result(r, book, "hybrid", {}, at=r.get("ts")) for r in rows]
+            billing_report = billing.classify(enriched, self.profiles({}))
+            analytics_exp = report["totals"].get("api_expenditure_usd")
+            self.assertIsNotNone(analytics_exp)
+            self.assertAlmostEqual(billing_report["metered_usd"], analytics_exp, places=6)
 
 
 if __name__ == "__main__":

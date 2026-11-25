@@ -30,9 +30,10 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 from .aggregate import _reported
+from .expenditure import call_expenditure
 from .filelock import locked as _locked
 
 PRESENTATIONS = ("both", "spend", "api", "accounting")
@@ -357,7 +358,8 @@ def _allowance_report(usage_by_model, allowance_meta, profiles):
 
 
 def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
-             presentation: str = "both") -> dict[str, Any]:
+             presentation: str = "both",
+             route_arrangements: Optional[Mapping[str, str]] = None) -> dict[str, Any]:
     """Split API-equivalent value from metered, incremental and fee figures."""
     mode = presentation if presentation in PRESENTATIONS else "both"
     legacy_profiles = list((profiles or {}).get("profiles") or [])
@@ -380,6 +382,7 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
     unclassified_rule_state_unknown_calls = 0
     applied: dict[str, int] = {}
     total_api = metered = incremental = credits = 0.0
+    metered_rows = 0
     confirmed_total = 0.0
     confirmed_calls = 0
     api_priced = 0
@@ -420,7 +423,28 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                                                       "missing_usage", "usage_missing"})
         override = (_rate_override(profile, row)
                     if profile and profile.get("kind") == "custom" and not ineligible_call else None)
-        if value is None and provider_cost is None and override is None:
+        # Membership-resolved route arrangements resolve before the evidence
+        # guard: an included route's calls are measured zeros even with no
+        # catalogue, native or override price — never unclassified. A
+        # suffixed route slug (a wire family of one provider) may claim only
+        # the models that belong to that family.
+        provider_name = str(row.get("provider") or "").strip().lower()
+        route_class = None
+        if route_arrangements:
+            route_class = route_arrangements.get(provider_name)
+            if route_class is None and row.get("model"):
+                from .membership_api import route_matches
+                for slug, cls in route_arrangements.items():
+                    if cls == "included" and route_matches(
+                            slug, provider_name, row.get("model")):
+                        route_class = cls
+                        break
+        route_included = route_class == "included"
+        # A native effective rate is pricing evidence in its own right: a call
+        # the catalogue cannot price at list is still metered at the
+        # provider's applicable rates, never dropped as unpriced.
+        if value is None and provider_cost is None and override is None \
+                and row.get("native_effective_usd") is None and not route_included:
             unclassified_tokens += row.get("_tokens") or 0
             unclassified_calls += 1
             api_unpriced_tokens += row.get("_tokens") or 0
@@ -468,34 +492,70 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                 allowance = float(allowances[row["model"]])
             elif isinstance(profile.get("allowance_usd"), (int, float)):
                 allowance = float(profile["allowance_usd"])
-        if metered_evidence is not None:
-            # Metered usage value is the provider's own figure; API-equivalent
-            # stays a separate theoretical number (when the catalogue has one).
+        # ONE shared expenditure result: the row carries the figure the
+        # aggregate already computed (reported debit > applicable effective
+        # rates > applicable catalogue rate, with the included class and the
+        # defaulted-cache refusal applied once, in aggregate). Classification
+        # layers on top: a membership-resolved included route or a
+        # subscription-included profile measures zero (allowance value stays
+        # in the credits figure), and an explicit custom override — the
+        # user's own rate — wins over the estimate. Hybrid profiles keep
+        # allowance and paid overage in their own figures, and an
+        # unconfigured account is never assumed metered for cash impact.
+        row_exp = row.get("expenditure_usd")
+        row_exp_basis = row.get("expenditure_basis")
+        if route_included:
+            exp_usd, exp_basis = 0.0, "included"
+        elif row_exp is not None or row_exp_basis is not None:
+            exp_usd = float(row_exp) if row_exp is not None else None
+            exp_basis = row_exp_basis or ("included" if exp_usd == 0.0 else "unknown")
+        else:
+            exp_usd, exp_basis = call_expenditure(
+                billing_class=("included" if kind == "subscription_included" else "unknown"),
+                reported_usd=metered_evidence,
+                native_effective_usd=(row.get("native_effective_usd")
+                                      if not ineligible_call else None),
+                # The theoretical list value is not an eligible catalogue leg
+                # when the call's cache counters had to be guessed: the same
+                # refusal the aggregate applies to the catalogue leg.
+                catalogue_usd=None if (row.get("cache_read_defaulted")
+                                       or row.get("cache_write_defaulted"))
+                else (api if api is not None else None))
+        if route_included or kind == "subscription_included" or exp_basis == "included":
+            # Included usage: no additional expenditure; the allowance value
+            # consumed stays visible as the credits figure only.
+            metered_row, incremental_row, credit_row = 0.0, 0.0, api_arith
+        elif metered_evidence is not None:
+            # A provider-reported debit outranks any estimate.
             confirmed_total += metered_evidence
             confirmed_calls += 1
             metered_row = metered_evidence
-            credit_row = metered_evidence if kind in _CREDIT_KINDS or kind == "subscription_included" else 0.0
+            credit_row = metered_evidence if kind in _CREDIT_KINDS else 0.0
             if kind == "unknown":
                 unknown_seen = True
                 incremental_row = 0.0
             else:
                 billable = max(0.0, metered_evidence - allowance)
                 incremental_row = billable if (kind == "api" or (profile or {}).get("overage_paid")) else 0.0
-        elif kind in ("subscription_included", "free"):
-            metered_row, incremental_row, credit_row = api_arith, 0.0, api_arith
-        elif kind in _CREDIT_KINDS:
-            metered_row, incremental_row, credit_row = api_arith, 0.0, api_arith
-            if (profile or {}).get("count_credits_as_spend"):
-                incremental_row = 0.0  # explicit user view; reported separately
-        elif kind == "custom":
+        elif kind == "custom" and override is not None:
+            # An explicit user rate wins for the route.
             metered_row, incremental_row, credit_row = api_arith, api_arith, 0.0
         else:
-            metered_row, credit_row = api_arith, 0.0
+            # The shared figure: a genuinely free promotional tier prices at
+            # its own explicit zero rates — a measured zero, not a fabricated
+            # one — and an unconfigured account's expenditure stays an
+            # estimate with its incremental cash unknown. Credits
+            # consumption is an allowance-view figure for credit kinds only.
+            metered_row = exp_usd
+            credit_row = exp_usd if kind in _CREDIT_KINDS else 0.0
             if kind == "unknown":
                 unknown_seen = True
                 incremental_row = 0.0
+            elif (profile or {}).get("count_credits_as_spend") and kind in _CREDIT_KINDS:
+                incremental_row = 0.0  # explicit user view; reported separately
             else:
-                incremental_row = api_arith
+                incremental_row = max(0.0, (metered_row or 0.0) - allowance) \
+                    if kind == "api" or (profile or {}).get("overage_paid") else 0.0
 
         model_allowances = (profile or {}).get("allowances")
         model_allowances = model_allowances if isinstance(model_allowances, dict) else {}
@@ -514,16 +574,19 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
         if profile and isinstance(profile.get("allowances"), dict):
             allowance_meta[str(profile.get("id"))] = profile["allowances"]
         total_api += api_arith
-        metered += metered_row
-        incremental += incremental_row
-        credits += credit_row
+        if metered_row is not None:
+            metered += metered_row
+            metered_rows += 1
+        incremental += incremental_row or 0.0
+        if credit_row is not None:
+            credits += credit_row
         bucket = by_kind.setdefault(kind, {"api_equivalent_usd": 0.0, "metered_usd": 0.0,
                                            "incremental_usd": 0.0, "credits_usd": 0.0,
                                            "tokens": 0, "calls": 0})
         bucket["api_equivalent_usd"] += api_arith
-        bucket["metered_usd"] += metered_row
-        bucket["incremental_usd"] += incremental_row
-        bucket["credits_usd"] += credit_row
+        bucket["metered_usd"] += metered_row or 0.0
+        bucket["incremental_usd"] += incremental_row or 0.0
+        bucket["credits_usd"] += credit_row or 0.0
         bucket["tokens"] += row.get("_tokens") or 0
         bucket["calls"] += 1
         label = f"{source}:{(profile or {}).get('id', 'hermes')}"
@@ -568,6 +631,9 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
         "profiles_error": profiles.get("error") or "",
         "api_equivalent_usd": final_api,
         "metered_usd": round(metered, 6),
+        # How many rows actually carry a metered value: a zero total with zero
+        # coverage is "no estimate", not a measured $0.00.
+        "metered_calls": metered_rows,
         "incremental_usd": final_incremental,
         "credits_consumed_usd": round(credits, 6),
         "subscription_fees_usd": round(sum(fees.values()), 6),

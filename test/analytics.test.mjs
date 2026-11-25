@@ -951,10 +951,26 @@ test('unpriced zero-token calls withhold per-call cost and mark the API subtotal
 
 test('explorer CSV keeps price coverage beside the unit costs', () => {
  const csv=T.analyticsExplorerCsv([{model:'m',provider:'p',calls:10,tokens:100,list_usd:1,per_call:null,per_million:null,
-   priced_tokens:10,unpriced_tokens:90,cache_hit_rate:.5}])
+   priced_tokens:10,unpriced_tokens:90,cache_hit_rate:.5,provider_effective_usd:null,api_expenditure_usd:null}])
  const [head,line]=csv.trim().split('\n')
  assert.ok(head.includes('priced_tokens') && head.includes('unpriced_tokens'),head)
- assert.deepEqual(line.split(',').slice(-2),['10','90'])
+ // The trailing effective_usd and expenditure_usd columns are empty here.
+ assert.deepEqual(line.split(',').slice(-4,-2),['10','90'])
+ assert.deepEqual(line.split(',').slice(-2),['',''])
+})
+
+test('explorer CSV appends the effective and expenditure columns', () => {
+ const csv=T.analyticsExplorerCsv([{model:'m',provider:'nous',calls:10,tokens:100,list_usd:1,per_call:null,per_million:null,
+   priced_tokens:100,unpriced_tokens:0,cache_hit_rate:.5,provider_effective_usd:0.038529,
+   api_expenditure_usd:0.038529,api_expenditure_basis:'exact'}])
+ const [head,line]=csv.trim().split('\n')
+ assert.ok(head.endsWith('expenditure_usd'),head)
+ assert.deepEqual(line.split(',').slice(-2),['0.038529','0.038529'])
+ // A partial subtotal exports empty, never an unqualified figure.
+ const partial=T.analyticsExplorerCsv([{model:'m',provider:'nous',calls:10,tokens:100,list_usd:1,per_call:null,per_million:null,
+   priced_tokens:100,unpriced_tokens:0,cache_hit_rate:.5,provider_effective_usd:null,
+   api_expenditure_usd:0.02,api_expenditure_basis:'partial'}])
+ assert.equal(partial.trim().split('\n')[1].split(',').slice(-1)[0],'')
 })
 
 // --- PR28: analytics note_codes ------------------------------------------------
@@ -1044,4 +1060,20 @@ test('known gap reasons translate in both languages and unknown ids pass through
  assert.equal(T.analyticsGapReasonLabel('future_reason', noteZh), 'future_reason')
  assert.equal(T.analyticsNoteText(entry('future_reason'), 'x', noteEn),
   'Economics excluded 4 calls: future_reason.')
+})
+
+test('the Usage KPI publishes the expenditure figure only on an exact basis', () => {
+  // Rule 62/skill 21: the primary cost figure needs complete coverage.
+  // Partial coverage keeps the complete list valuation as the primary figure.
+  const partial = { list_usd: 1.5, api_expenditure_usd: 0.9, api_expenditure_basis: 'partial' }
+  const exact = { list_usd: 1.5, api_expenditure_usd: 0.9, api_expenditure_basis: 'exact' }
+  const none = { list_usd: 1.5 }
+  assert.deepEqual(T.analyticsUsageCost(partial), { usd: 1.5, basis: 'list', high: null })
+  assert.deepEqual(T.analyticsUsageCost(none), { usd: 1.5, basis: 'list', high: null })
+  assert.equal(T.analyticsUsageCost(exact).usd, 0.9)
+  assert.equal(T.analyticsUsageCost(exact).basis, 'expenditure')
+  // A retention-range estimate keeps its known bounds.
+  const ranged = { list_usd: 1.5, api_expenditure_usd: 0.9, api_expenditure_usd_high: 1.2,
+    api_expenditure_basis: 'exact' }
+  assert.equal(T.analyticsUsageCost(ranged).high, 1.2)
 })

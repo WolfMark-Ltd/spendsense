@@ -101,7 +101,7 @@ test('the hero introduces SpendSense and names WolfMark as the developer', async
   const container = await boot()
   assert.equal(flat(container.querySelector('main h1')?.textContent), 'About & Support')
   assert.ok(container.querySelector('.wm-about-hero svg'), 'the approved marque renders in the hero')
-  assert.equal(flat(container.querySelector('.wm-about-name')?.textContent), 'SpendSense 0.6.40')
+  assert.equal(flat(container.querySelector('.wm-about-name')?.textContent), 'SpendSense 0.6.41')
   assert.match(flat(container.querySelector('.wm-about-developer')?.textContent), /WolfMark Ltd/)
   assert.match(flat(container.querySelector('.wm-about-hero > p')?.textContent), /usage accounting for Hermes/)
 })

@@ -10,6 +10,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from decimal import Decimal
 from contextlib import closing
 from pathlib import Path
 
@@ -34,6 +35,10 @@ NOUS_ROW = {
 }
 NOUS_EFFECTIVE = (0.03, 0.12, 0.0006)
 NOUS_LIST = (0.15, 0.60, 0.003)
+# $/MTok Decimal tuples for the provider-CSV reconciliation fixtures.
+NOUS_LIST_D = (Decimal("0.15"), Decimal("0.6"), Decimal("0.003"))
+NOUS_EFF = (Decimal("0.03"), Decimal("0.12"), Decimal("0.0006"))
+M = Decimal(1_000_000)
 
 # Provider export totals (35 billed requests, session 2026-11-25).
 CSV_INPUT_TOKENS = 1_781_183
@@ -419,3 +424,74 @@ class ProviderNativeTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NousCreditsDayFixture(unittest.TestCase):
+    """The full 25 November Nous credits export, three key rows.
+
+    Independent provider evidence: every key row reconciles Decimal-exactly
+    at the effective (credits) rates, while the list valuation is a larger
+    comparative figure — money spent is never the undiscounted list price.
+    """
+
+    DAY_ROWS = (
+        # (requests, input incl cache, output, cache_read, debit USD)
+        (64, 9_244_240, 71_002, 8_773_760, Decimal("0.027898896")),
+        (28, 3_130_995, 39_390, 2_999_040, Decimal("0.010484874")),
+        (35, 1_781_183, 20_722, 1_676_672, Decimal("0.0066279732")),
+    )
+    DAY_DEBIT = Decimal("0.0450117432")
+
+    def test_every_key_row_reconciles_at_effective_rates(self):
+        total = Decimal(0)
+        for requests, inp, out, read, debit in self.DAY_ROWS:
+            fresh = inp - read
+            self.assertGreaterEqual(fresh, 0)
+            effective = ((Decimal(fresh) * NOUS_EFF[0] + Decimal(read) * NOUS_EFF[2]
+                          + Decimal(out) * NOUS_EFF[1]) / M)
+            self.assertEqual(effective, debit, f"row {requests} requests")
+            listed = ((Decimal(fresh) * NOUS_LIST_D[0] + Decimal(read) * NOUS_LIST_D[2]
+                       + Decimal(out) * NOUS_LIST_D[1]) / M)
+            self.assertGreater(listed, debit)
+            total += debit
+        self.assertEqual(total, self.DAY_DEBIT)
+
+    def test_list_valuation_is_never_the_money_spent(self):
+        fresh = sum(inp - read for _, inp, _, read, _ in self.DAY_ROWS)
+        out = sum(out for _, _, out, _, _ in self.DAY_ROWS)
+        read = sum(read for *_, read, _ in self.DAY_ROWS)
+        listed = ((Decimal(fresh) * NOUS_LIST_D[0] + Decimal(read) * NOUS_LIST_D[2]
+                   + Decimal(out) * NOUS_LIST_D[1]) / M)
+        self.assertEqual(listed, Decimal("0.225058716"))
+        self.assertGreater(listed, self.DAY_DEBIT)
+
+
+class CommandCodeCatalogueCoverage(ProviderNativeTestCase):
+    """Command Code's own published model page prices, via the official overlay.
+
+    Command Code publishes muse-ember on its model page ($0.10/M input,
+    $0.50/M output, cache reads $0.004/M; cache-write pricing not published)
+    but the models.dev commandcode listing omitted the model. The overlay
+    carries only Command Code's own published rates — no borrowed provider
+    rates, no invented cache-write price.
+    """
+
+    def test_muse_ember_prices_from_the_official_overlay(self):
+        self.inject({"commandcode": {}})
+        hit, _native = resolve_rate(load_catalogue(), "commandcode", "meta/muse-ember")
+        self.assertIsNotNone(hit)
+        if hit is not None:  # pragma: no cover - narrows for the type checker
+            self.assertEqual(hit.provenance, "official_verified")
+            self.assertEqual((hit.rate.input, hit.rate.output, hit.rate.cache_read),
+                             (0.10, 0.50, 0.004))
+            self.assertIsNone(hit.rate.cache_write,
+                              "cache-write pricing is not published — never asserted")
+
+    def test_no_borrowed_rates_for_unpublished_cache_writes(self):
+        # The models.dev openrouter row for the same model carries a cache
+        # write price; the commandcode route must not inherit it.
+        self.inject({"commandcode": {}})
+        hit, _native = resolve_rate(load_catalogue(), "commandcode", "meta/muse-ember")
+        if hit is not None:  # pragma: no cover - narrows for the type checker
+            self.assertEqual(hit.rate.cache_write, None)
+            self.assertNotIn("openrouter", (hit.source or "").lower())

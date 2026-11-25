@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.40'
+const PLUGIN_VERSION = '0.6.41'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -2477,6 +2477,18 @@ function useLive() {
     const savings = summaryState.available ? summaryState : null
     const apiValue = finiteValue(valuation.api_equivalent_usd)
     const apiValueHigh = finiteValue(valuation.api_equivalent_usd_high)
+    // Shared billing-aware expenditure: composed per call (reported debit >
+    // applicable effective rates > applicable catalogue rate), so the
+    // session's money figure keeps each call's own basis. The list
+    // API-equivalent stays the comparative valuation.
+    const usageCostUsd = (finiteValue(valuation.api_expenditure_usd) != null
+      && valuation.api_expenditure_basis === 'exact')
+      ? finiteValue(valuation.api_expenditure_usd) : null
+    // The expenditure figure carries its known bounds when any call priced
+    // at a retention range; the session cost keeps the same low–high pair
+    // the Usage KPI shows.
+    const usageCostHigh = usageCostUsd != null
+      ? finiteValue(valuation.api_expenditure_usd_high) : null
     return {
       bucket: summaryBucket,
       guardrailValue: sessionGuardrailValue(hist, led.snapshots, sessionId),
@@ -2518,6 +2530,10 @@ function useLive() {
       population: 'all',
       evidence: summaryState.evidence,
       apiEquivalent: true,
+      usageCostUsd,
+      usageCostUsdHigh: usageCostHigh != null && usageCostHigh >= (usageCostUsd || 0)
+        ? usageCostHigh : null,
+      usageCostBasis: usageCostUsd != null ? 'provider_effective' : null,
       cacheHitRateBasis: valuation.cache_hit_rate_basis || null
     }
   }
@@ -2732,6 +2748,28 @@ function tokenRows(t, b, hasContext, u) {
   return rows.filter(Boolean)
 }
 
+/** The applicable API usage cost for a totals population: the shared
+ *  billing-aware expenditure figure, composed per call (reported debit >
+ *  applicable effective rates > applicable catalogue rate; subscription-
+ *  included usage contributes a measured zero). Because each call keeps its
+ *  own basis, adding another provider never changes the pricing basis of
+ *  calls already recorded. Falls back to the list valuation only when no
+ *  expenditure data exists at all (older payloads). */
+function analyticsUsageCost(totals = {}) {
+  // The expenditure figure is published as the primary cost only when its
+  // basis covers the whole recorded population exactly; partial coverage
+  // keeps the complete list valuation as the primary figure (Rule 62: the
+  // applicable figure for the covered population stays available in Usage).
+  if (totals?.api_expenditure_basis === 'exact') {
+    const exp = finiteValue(totals?.api_expenditure_usd)
+    if (exp != null) {
+      const high = finiteValue(totals?.api_expenditure_usd_high)
+      return { usd: exp, basis: 'expenditure', high: high != null && high >= exp ? high : null }
+    }
+  }
+  return { usd: finiteValue(totals?.list_usd), basis: 'list', high: null }
+}
+
 function analyticsListDisplay(totals, plain = false) {
   const amount = finiteValue(totals?.list_usd)
   if (amount == null) return '—'
@@ -2762,10 +2800,22 @@ function analyticsListPartial(totals) {
 }
 
 function desktopTodayText(report, t, filtered = false) {
-  return `${t(filtered ? 'desktopTodayFilteredScope' : 'desktopTodayScope')} ${analyticsListDisplay(report?.totals, true)}`
+  const applicable = analyticsUsageCost(report?.totals)
+  const figure = applicable.basis === 'expenditure' && applicable.usd != null
+    ? (applicable.high != null && applicable.high > applicable.usd
+      ? `${analyticMoney(applicable.usd)}–${analyticMoney(applicable.high)}`
+      : analyticMoney(applicable.usd))
+    : analyticsListDisplay(report?.totals, true)
+  return `${t(filtered ? 'desktopTodayFilteredScope' : 'desktopTodayScope')} ${figure}`
 }
 
 function desktopTodayAmount(report) {
+  const applicable = analyticsUsageCost(report?.totals)
+  if (applicable.basis === 'expenditure' && applicable.usd != null) {
+    return applicable.high != null && applicable.high > applicable.usd
+      ? `${analyticMoney(applicable.usd)}–${analyticMoney(applicable.high)}`
+      : analyticMoney(applicable.usd)
+  }
   return analyticsListDisplay(report?.totals)
 }
 
@@ -2848,7 +2898,9 @@ function Chip() {
           style: { color: budgetColour(guard?.level) },
           'aria-label': guard ? budgetTooltip(guard, t) : undefined,
           role: guard ? 'img' : undefined,
-          children: guard?.spend != null ? sessionBudgetFigure(guard) : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${apiEquivalentDisplay(live)}`
+          children: guard?.spend != null ? sessionBudgetFigure(guard)
+            : finiteValue(live.usageCostUsd) != null ? `${warn ? '⚠ ' : ''}${fmtUsd(finiteValue(live.usageCostUsd))}${finiteValue(live.usageCostUsdHigh) != null ? `–${fmtUsd(finiteValue(live.usageCostUsdHigh))}` : ''}`
+            : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${apiEquivalentDisplay(live)}`
         }),
         live.cacheHitPct != null
           ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ⚡${Math.round(live.cacheHitPct)}%` })
@@ -2938,6 +2990,9 @@ function snapshotLive(live) {
     costBasis: live.costBasis,
     costPartial: live.costPartial,
     apiEquivalent: live.apiEquivalent,
+    usageCostUsd: live.usageCostUsd,
+    usageCostUsdHigh: live.usageCostUsdHigh,
+    usageCostBasis: live.usageCostBasis,
     cacheHitRateBasis: live.cacheHitRateBasis,
     sinceAt: live.sinceAt
   }
@@ -3200,6 +3255,8 @@ function CostKpi({ t, view }) {
   const warn = view.costSource === 'foreign' || view.costSource === 'none'
   const unknownCoverage = coverageUnknown(view.bucket)
   const cacheEvidenceGap = cacheEvidenceIncomplete(view.bucket)
+  const usageCost = finiteValue(view.usageCostUsd)
+  const usageCostHigh = finiteValue(view.usageCostUsdHigh)
   const evidenceNote = view.savedSource === 'backend_summary'
     ? t('sessionEvidenceNote', t('scopeSession'),
       t(`tokenEvidence_${view.evidence?.read || 'unknown'}`),
@@ -3214,7 +3271,13 @@ function CostKpi({ t, view }) {
     cacheEvidenceGap ? t('partialCacheEvidence') : null,
     view.excludedCalls > 0 ? t('savedPartialCallsNote', view.excludedCalls) : null
   ].filter(Boolean)
-  const costText = sidebarCostDisplay(view)
+  // Rule 62: the figure renders bare. Ranges, bounds and the dash carry
+  // their own meaning; partial coverage stays in the source info control.
+  // An expenditure range keeps the same low–high pair the Usage KPI shows.
+  const costText = usageCost != null
+    ? (usageCostHigh != null && usageCostHigh > usageCost
+      ? `${fmtUsd(usageCost)}–${fmtUsd(usageCostHigh)}` : fmtUsd(usageCost))
+    : sidebarCostDisplay(view)
   // Rule 62: the figure renders bare. Ranges, bounds and the dash carry
   // their own meaning; partial coverage stays in the source info control.
   return jsxs('section', { className: 'wm-card', 'aria-label': t('cost'), children: [
@@ -3223,11 +3286,11 @@ function CostKpi({ t, view }) {
       children: [costText]
     }, 'figure'),
     jsxs('div', { className: 'wm-kpi-source', children: [
-      jsx('span', { children: t('apiEquivalent') }, 'label'),
+      jsx('span', { children: usageCost != null ? t('apiUsage') : t('apiEquivalent') }, 'label'),
       jsx(InfoTip, {
         id: 'cost-source',
         label: t('infoLabel'),
-        text: [sourceLabel(t, view.costSource, view.foreignSlug, view.providerUnknown),
+        text: [usageCost != null ? t('apiUsageInfo') : sourceLabel(t, view.costSource, view.foreignSlug, view.providerUnknown),
           t('costSourceInfo'), evidenceNote,
           view.scopeReason ? t('scopeFallbackNote', view.scopeReason) : null,
           ...completenessNotes].filter(Boolean).join(' · ')
@@ -4425,11 +4488,16 @@ function explorerUnitCosts(row) {
   }
 }
 function analyticsExplorerCsv(rows) {
-  const head = ['model','provider','calls','tokens','api_usd','usd_per_call','usd_per_1m_tokens','cache_hit_rate','priced_tokens','unpriced_tokens']
+  const head = ['model','provider','calls','tokens','api_usd','usd_per_call','usd_per_1m_tokens','cache_hit_rate','priced_tokens','unpriced_tokens','effective_usd','expenditure_usd']
+  // The exported expenditure figure follows the same gate as the display:
+  // published only when the row's basis covers the whole population exactly;
+  // a partial subtotal or an all-included zero exports empty, never an
+  // unqualified `0`.
   const line = row => [row.model || '',row.provider || '',row.calls ?? '',row.tokens ?? '',row.list_usd ?? '',
     row.per_call == null ? '' : row.per_call.toFixed(6),row.per_million == null ? '' : row.per_million.toFixed(4),
     row.cache_hit_rate == null ? '' : row.cache_hit_rate.toFixed(4),
-    row.priced_tokens ?? '',row.unpriced_tokens ?? ''].map(v => csvCell(v)).join(',')
+    row.priced_tokens ?? '',row.unpriced_tokens ?? '',row.provider_effective_usd ?? '',
+    row.api_expenditure_basis === 'exact' ? (row.api_expenditure_usd ?? '') : ''].map(v => csvCell(v)).join(',')
   return [head.join(','), ...rows.map(line)].join('\n') + '\n'
 }
 function downloadAnalyticsCsv(rows) {
@@ -4651,7 +4719,9 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const windowScope=data?.window?t('usageWindowDash',String(data.window.since_local || data.window.since || '').slice(0,10),String(data.window.until_local || data.window.until || '').slice(0,10),data.window.timezone || 'UTC'):null
   const subtitle=[t('usageSubtitle',profile || t('usageCurrentProfile')),windowScope].filter(Boolean).join(' · ')
   const apiPartial=totals?analyticsListPartial(totals):false
-  const apiLabel=jsxs('span',{className:'wm-stat-with-info',children:[t('usageStatApiEquiv'),jsx(InfoTip,{id:'usage-api-equivalent',label:t('infoLabel'),text:[t('usageStatApiInfo'),apiPartial?t('usageCoverageRateBasis'):null].filter(Boolean).join(' '),wide:true})]})
+  const usageCost=totals?analyticsUsageCost(totals):{usd:null,basis:'list'}
+  const usageCostEffective=usageCost.basis==='expenditure'
+  const apiLabel=jsxs('span',{className:'wm-stat-with-info',children:[usageCostEffective?t('usageStatApiUsage'):t('usageStatApiEquiv'),jsx(InfoTip,{id:'usage-api-equivalent',label:t('infoLabel'),text:[usageCostEffective?t('usageStatApiUsageInfo'):t('usageStatApiInfo'),apiPartial?t('usageCoverageRateBasis'):null].filter(Boolean).join(' '),wide:true})]})
   const readBenefitLabel=jsxs('span',{className:'wm-stat-with-info',children:[t('readBenefitLabel'),jsx(InfoTip,{id:'usage-read-benefit',label:t('infoLabel'),text:[t('readBenefitExplanation'),readBenefit.available?t('readBenefitCoverage',readBenefit.calls,readBenefit.total,fmtTokens(readBenefit.tokens)):t('readBenefitUnavailable')].filter(Boolean).join(' '),wide:true})]})
   const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle wm-usage-scope',children:subtitle})]}),
     jsxs('div',{className:'wm-topactions',children:[jsx(AnalyticsButton,{label:t('usageRefreshTip'),disabled:query.isFetching,onClick:refresh,children:query.isFetching?t('usageRefreshing'):t('usageRefresh')}),jsx(AnalyticsButton,{label:t('usageThisDesktopTip'),onClick:()=>$view.set(VIEW_DESKTOP),children:t('usageThisDesktop')})]})]})
@@ -4670,7 +4740,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
       query.error?jsxs('div',{id:'wm-usage-load-error',className:'wm-alert',role:'alert',tabIndex:-1,children:[jsx('h2',{children:t('usageLoadTitle')}),jsx('p',{children:t('usageReadFailure')}),jsx('p',{children:data?t('usageLoadStale'):t('usageLoadFallback')}),jsx(AnalyticsButton,{label:t('usageRetryTip'),onClick:refresh})]}):null,
     query.isLoading&&!data?jsx('div',{className:'wm-empty',role:'status',children:t('usageLoading')}):null,
     totals?jsxs('div',{className:'wm-product-summary wm-usage-grid wm-usage-summary',role:'group','aria-label':t('usageSummary'),children:[
-      jsx(AnalyticsKpiCard,{kpi:'usage-api',icon:'estimate',label:apiLabel,figure:analyticsListDisplay(totals, true)}),
+      jsx(AnalyticsKpiCard,{kpi:'usage-api',icon:'estimate',label:apiLabel,figure:usageCostEffective&&usageCost.usd!=null?(usageCost.high!=null?`${analyticMoney(usageCost.usd)}–${analyticMoney(usageCost.high)}`:analyticMoney(usageCost.usd)):analyticsListDisplay(totals, true)}),
       jsx(AnalyticsKpiCard,{kpi:'usage-benefit',id:'wm-usage-read-benefit',icon:'recorded',label:readBenefitLabel,figure:readBenefitDisplay(t,readBenefit,true)}),
       jsx(AnalyticsKpiCard,{kpi:'usage-tokens',icon:'models',label:t('usageStatTokens'),figure:fmtTokens(totals.tokens)}),
       jsx(AnalyticsKpiCard,{kpi:'usage-calls',icon:'calls',label:t('usageStatCalls'),figure:exactTokens(totals.calls)})]}):null,
@@ -7276,6 +7346,17 @@ function OverviewPage() {
   const local = settledDesktopMonth(ledger)
   const analyticsCurrent = analytics.data?.identity === identity && membershipIdentityCurrent(identity)
   const result = analyticsCurrent ? analytics.data?.totals || {} : {}
+  // Actual-charges card: recorded provider debits when the provider reports
+  // them; otherwise the applicable metered expenditure estimate (effective
+  // provider rates where published, else the catalogue rate). The label
+  // names the basis — an estimate is never labelled an actual charge.
+  const billingReport = analyticsCurrent ? analytics.data?.billing || {} : {}
+  const chargesRecorded = finiteValue(billingReport?.evidence?.provider_reported?.usd)
+  // A metered estimate is evidence only when rows actually carry one: a
+  // zero total with zero coverage is "no estimate", never a measured $0.00.
+  const meteredEstimate = chargesRecorded == null
+    && Number(billingReport?.metered_calls || 0) > 0
+    ? finiteValue(billingReport?.metered_usd) : null
   const unpricedTokens = Number(result.unpriced_tokens || 0)
   const unpricedCalls = Number(result.unpriced_calls || 0)
   const unpriced = unpricedTokens > 0 || unpricedCalls > 0
@@ -7366,13 +7447,25 @@ function OverviewPage() {
               ? certaintyChip('partial', t('ovCertPartial'), 'rpart') : null
           ].filter(Boolean) })
         ] }),
-        jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'actual-charges', 'aria-label': t('ovChargesLabel'), children: [
+        jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'actual-charges', 'aria-label': chargesRecorded != null ? t('ovChargesLabel') : t('ovExpenditureLabel'), children: [
           jsxs('div', { className: 'wm-kpi-eyebrow', children: [
-            jsx(OverviewIcon, { name: 'charges' }), jsx('span', { children: t('ovChargesLabel') })
+            jsx(OverviewIcon, { name: 'charges' }), jsx('span', { children: chargesRecorded != null ? t('ovChargesLabel') : t('ovExpenditureLabel') })
           ] }),
-          jsx('div', { className: 'wm-kpi-figure', children: t('ovNotRecorded') }),
+          jsx('div', { className: 'wm-kpi-figure', children:
+            ledgerPaused && chargesRecorded == null && meteredEstimate == null
+              ? t('ledgerHistoryUnavailable')
+            : chargesRecorded != null ? fmtUsd(chargesRecorded)
+            : meteredEstimate != null ? fmtUsd(meteredEstimate)
+            : ledgerPaused ? t('ledgerHistoryUnavailable') : t('ovNotRecorded') }),
           jsx('div', { className: 'wm-kpi-foot', children:
-            certaintyChip('unknown', t('ovCertChargesUnknown'), 'charge-unknown') })
+            chargesRecorded != null
+              ? (Number(result.calls || 0) > Number(billingReport?.evidence?.provider_reported?.calls || 0)
+                ? certaintyChip('partial', t('ovCertPartial'), 'charge-part')
+                : certaintyChip('recorded', t('ovCertChargesRecorded'), 'charge-recorded'))
+            : meteredEstimate != null
+              ? (Number(result.calls || 0) > Number(billingReport?.metered_calls || 0)
+                ? certaintyChip('partial', t('ovCertPartial'), 'charge-part') : null)
+            : certaintyChip('unknown', t('ovCertChargesUnknown'), 'charge-unknown') })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'api-equivalent-estimate', children: [
           jsxs('div', { className: 'wm-kpi-eyebrow', children: [
@@ -15395,6 +15488,8 @@ const I18N = {
     scopeFallbackNote: reason => `Session scope unavailable (${reason})`,
     meterUpdating: 'Updating…',
     apiEquivalent: 'API equivalent',
+    apiUsage: 'API expenditure',
+    apiUsageInfo: 'Estimated expenditure at the provider’s applicable rates: reported debits first, otherwise its own billed (effective) rates where published, otherwise the applicable catalogue price.',
     sidebarCostPartial: 'partial estimate',
     sidebarEvidenceDetails: 'Evidence details',
     sidebarPartialCoverage: 'Partial coverage',
@@ -15585,6 +15680,8 @@ const I18N = {
     ovChargesLabel: 'Actual provider charges',
     ovNotRecorded: 'Not recorded',
     ovCertChargesUnknown: 'No per-call evidence',
+    ovCertChargesRecorded: 'Provider-recorded debits',
+    ovExpenditureLabel: 'Estimated API expenditure',
     ovFeesLabel: 'Saved account fees',
     ovFeesScope: 'Saved entries · original currencies and billing periods',
     ovPlansConfirmed: (w, t) => `${w} of ${t} plans confirmed`,
@@ -17075,6 +17172,8 @@ const I18N = {
     usageRetryTip: 'Retry analytics',
     usageLoading: 'Reading timestamped calls…',
     usageStatApiEquiv: 'API-equivalent',
+    usageStatApiUsage: 'API expenditure',
+    usageStatApiUsageInfo: 'Estimated expenditure at the provider’s applicable rates: reported debits first, otherwise its own billed (effective) rates where published, otherwise the applicable catalogue price. Subscription-included usage adds no expenditure.',
     usageKpiMoney: 'Cost & coverage',
     usageKpiActivity: 'Volume & cache',
     usageStatApiExtra: 'Priced per-call estimate · not an invoice',
@@ -17214,6 +17313,8 @@ const I18N = {
     scopeFallbackNote: reason => `会话范围不可用（${reason}）`,
     meterUpdating: '更新中…',
     apiEquivalent: 'API 等值',
+    apiUsage: 'API 支出',
+    apiUsageInfo: '按服务商适用费率估算的支出：优先已记录扣费，其次其自身计费（有效）费率（已发布时），否则为适用目录价。',
     sidebarCostPartial: '部分估算',
     sidebarEvidenceDetails: '证据详情',
     sidebarPartialCoverage: '部分覆盖',
@@ -17403,6 +17504,8 @@ const I18N = {
     ovChargesLabel: '实际服务商费用',
     ovNotRecorded: '未记录',
     ovCertChargesUnknown: '没有逐次费用证据',
+    ovCertChargesRecorded: '服务商记录的扣费',
+    ovExpenditureLabel: '预估 API 支出',
     ovFeesLabel: '已保存账户费用',
     ovFeesScope: '已保存条目 · 保留原币种和账单周期',
     ovPlansConfirmed: (w, t) => `${t} 个账户中 ${w} 个方案已确认`,
@@ -18888,6 +18991,8 @@ const I18N = {
     usageRetryTip: '重试分析',
     usageLoading: '正在读取带时间戳调用…',
     usageStatApiEquiv: 'API 等值',
+    usageStatApiUsage: 'API 支出',
+    usageStatApiUsageInfo: '按服务商适用费率估算支出：优先已记录扣费，其次其自身计费（有效）费率（已发布时），否则为适用目录价。订阅内含用量不产生额外支出。',
     usageKpiMoney: '成本与覆盖',
     usageKpiActivity: '用量与缓存',
     usageStatApiExtra: '已定价按次估算 · 非账单',
@@ -19037,6 +19142,7 @@ export default {
 export const __test = {
   Chip, BudgetPanel, BudgetStatusIndicator, budgetLevel, budgetColour, sessionBudgetStatus, usageValueDelta, budgetQuery, budgetWrite, budgetPayload, newBudgetDraft, budgetTooltip, $budgetDraft, $budgetBusy, $budgetNotice, BUDGET_CSS,
   analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS, CHART_COLORS, sharePercent, analyticsListPartial,
+  analyticsUsageCost,
   AnalyticsPage, AnalyticsDashboard, AnalyticsCoverageSummary, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
   AnalyticsExplorer, AnalyticsEconomics, AnalyticsBaseline, AnalyticsDelegation, ANALYTICS_CSS, ANALYTICS_COLUMNS, AnalyticsSegments,
   usageFilterChipName, USAGE_FILTER_CHIP_KEYS, usageFilterChipValue, USAGE_FILTER_SCOPE_KEYS,

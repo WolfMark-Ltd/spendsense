@@ -8,7 +8,7 @@ from bisect import bisect_right
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from . import billing, store
 from .aggregate import Acc, _event_result, _iso, _local_window, route_billing_status
@@ -35,6 +35,8 @@ _TOTAL_FIELDS = (
     "cache_write_tokens", "reasoning_tokens", "list_usd", "priced_tokens", "unpriced_tokens",
     "priced_calls", "unpriced_calls", "coverage", "billed_usd", "billed_complete", "billing_mix",
     "failures", "missing_usage",
+    "api_expenditure_usd", "expenditure_calls", "expenditure_tokens", "api_expenditure_basis",
+    "api_expenditure_usd_high",
 )
 
 
@@ -351,6 +353,11 @@ class _AnalyticsAcc:
         self.native_effective_usd = 0.0
         self.native_effective_tokens = 0
         self.native_effective_calls = 0
+        self.expenditure_usd = 0.0
+        self.expenditure_tokens = 0
+        self.expenditure_calls = 0
+        self.expenditure_high_usd = 0.0
+        self.expenditure_bases: set[str] = set()
 
     def add(self, row: dict[str, Any]) -> None:
         pricing = row.get("pricing") or {}
@@ -416,6 +423,17 @@ class _AnalyticsAcc:
             self.native_effective_usd += float(native_effective)
             self.native_effective_tokens += int(row.get("native_effective_tokens") or 0)
             self.native_effective_calls += 1
+        # Shared billing-aware expenditure: per-call composed, so adding
+        # another provider never changes the pricing basis of calls already
+        # recorded. Included calls contribute a measured zero.
+        expenditure = row.get("expenditure_usd")
+        if expenditure is not None:
+            self.expenditure_usd += float(expenditure)
+            self.expenditure_tokens += int(row.get("_tokens") or 0)
+            self.expenditure_calls += 1
+            high = row.get("expenditure_usd_high")
+            self.expenditure_high_usd += float(high) if high is not None else float(expenditure)
+            self.expenditure_bases.add(row.get("expenditure_basis") or "unknown")
         high = row.get("_cost_high")
         if high is None:
             high = row.get("effective_usd")
@@ -452,8 +470,32 @@ class _AnalyticsAcc:
             covered_calls=covered, calls=int(base.get("calls") or 0),
             covered_tokens=self.native_effective_tokens,
             total_tokens=int(base.get("tokens") or 0))
+        # Shared billing-aware expenditure: money spent, composed per call
+        # (reported debit > applicable effective rates > applicable catalogue
+        # rate; subscription-included usage contributes a measured zero).
+        exp_covered = self.expenditure_calls
+        base["api_expenditure_usd"] = (round(self.expenditure_usd, 6)
+                                       if exp_covered else None)
+        base["expenditure_calls"] = exp_covered
+        base["expenditure_tokens"] = self.expenditure_tokens
+        base["api_expenditure_basis"] = _effective_basis(
+            covered_calls=exp_covered, calls=int(base.get("calls") or 0),
+            covered_tokens=self.expenditure_tokens,
+            total_tokens=int(base.get("tokens") or 0))
         read_state, read_reason = self.read_prov.state(self.known_read_tokens)
         write_state, write_reason = self.write_prov.state(self.known_write_tokens)
+        # The retention-range high is only an established two-sided bound when
+        # both cache counters are proven for the population: unreported write
+        # counters price at zero in the native leg and would sit outside the
+        # published range. When they are not proven, publish no high and mark
+        # the figure as a lower amount instead.
+        if (any(basis == "range" for basis in self.expenditure_bases)
+                and read_state == "reported" and write_state == "reported"):
+            base["api_expenditure_usd_high"] = round(self.expenditure_high_usd, 6)
+        else:
+            base["api_expenditure_usd_high"] = None
+        if exp_covered and write_state != "reported":
+            base["api_expenditure_lower"] = True
         basis, bound_reason, premium = _savings_basis(
             self.bounds, self.premiums, self.bound_causes, self.covered_calls)
         low = round(self.savings_low_usd, 6) if self.covered_calls else None
@@ -707,6 +749,7 @@ def _custom_fixable(rows: list[dict[str, Any]], profiles: dict[str, Any]
 def build_analytics_report(
     event_db_path: Path | str | None = None, *,
     state_db_path: Path | str | None = None,
+    route_arrangements: Mapping[str, str] | None = None,
     days: int = 30, now: float | None = None, catalogue: Catalogue | None = None,
     model: str | None = None, provider: str | None = None,
     surface: str | None = None, task: str | None = None,
@@ -749,6 +792,13 @@ def build_analytics_report(
     allow_approximate = mode == "approximate"
     book = catalogue if catalogue is not None else load_catalogue()
     statuses = route_billing_status(state_db_path)
+    if route_arrangements:
+        # Membership-resolved route arrangements are authoritative for the
+        # expenditure class: a validly-owned 'included' route costs nothing
+        # extra, regardless of the model used on it.
+        statuses.setdefault("routes", {}).update(
+            {str(route).strip().lower(): str(cls)
+             for route, cls in route_arrangements.items() if cls == "included"})
     total_acc = _AnalyticsAcc()
     models: dict[tuple[str, str], _AnalyticsAcc] = {}
     routes: dict[str, _AnalyticsAcc] = {}
@@ -872,7 +922,8 @@ def build_analytics_report(
                  "third-party and cross-provider tiers. None of these is an invoice."),
     }
     billing_profiles = billing.load_profiles(profiles_path)
-    billing_report = billing.classify(results_kept, billing_profiles, presentation)
+    billing_report = billing.classify(results_kept, billing_profiles, presentation,
+                                      route_arrangements=route_arrangements)
     fixable_tokens, fixable_calls, fixable_detail = _custom_fixable(results_kept, billing_profiles)
     totals["custom_fixable_tokens"] = fixable_tokens
     totals["custom_fixable_calls"] = fixable_calls
@@ -969,6 +1020,7 @@ def build_session_summary(
     provider: str | None = None,
     model: str | None = None,
     state_db_path: Path | str | None = None,
+    route_arrangements: Mapping[str, str] | None = None,
     catalogue: Catalogue | None = None,
     pricing_mode: str = "strict",
     now: float | None = None,
@@ -1012,6 +1064,13 @@ def build_session_summary(
     mode = pricing_mode if pricing_mode in ("strict", "third_party", "approximate") else "strict"
     book = catalogue if catalogue is not None else load_catalogue()
     statuses = route_billing_status(state_db_path)
+    if route_arrangements:
+        # Membership-resolved route arrangements are authoritative for the
+        # expenditure class: a validly-owned 'included' route costs nothing
+        # extra, regardless of the model used on it.
+        statuses.setdefault("routes", {}).update(
+            {str(route).strip().lower(): str(cls)
+             for route, cls in route_arrangements.items() if cls == "included"})
 
     def block(selected: list[dict[str, Any]]) -> dict[str, Any]:
         acc = _AnalyticsAcc()
@@ -1075,6 +1134,11 @@ def build_session_summary(
                 "api_equivalent_usd_high": economics["api_equivalent_usd_high"],
                 "api_equivalent_basis": api_basis,
                 "api_equivalent_bound_reason": api_reason,
+                "api_expenditure_usd": totals_raw["api_expenditure_usd"],
+                "expenditure_calls": totals_raw["expenditure_calls"],
+                "expenditure_tokens": totals_raw["expenditure_tokens"],
+                "api_expenditure_basis": totals_raw["api_expenditure_basis"],
+                "api_expenditure_usd_high": totals_raw["api_expenditure_usd_high"],
                 "uncached_usd": economics["uncached_usd"],
                 "cached_usd": economics["cached_usd"],
                 "read_benefit_usd": economics["read_benefit_usd"],
@@ -1103,6 +1167,11 @@ def build_session_summary(
                 "provider_effective_calls": totals_raw["provider_effective_calls"],
                 "provider_effective_tokens": totals_raw["provider_effective_tokens"],
                 "provider_effective_basis": totals_raw["provider_effective_basis"],
+                "api_expenditure_usd": totals_raw["api_expenditure_usd"],
+                "expenditure_calls": totals_raw["expenditure_calls"],
+                "expenditure_tokens": totals_raw["expenditure_tokens"],
+                "api_expenditure_basis": totals_raw["api_expenditure_basis"],
+                "api_expenditure_usd_high": totals_raw["api_expenditure_usd_high"],
             },
         }
 

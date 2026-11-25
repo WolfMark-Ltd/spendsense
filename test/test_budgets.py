@@ -292,8 +292,8 @@ class ForecastTests(unittest.TestCase):
         result = self.evaluate(budget(amount=40 + rate / 2), evidence, now=now)
         self.assertEqual(result['forecast']['breach_date'], '2026-11-11')
 
-    def test_real_store_adapter_prices_estimates_and_refuses_actual_charges(self):
-        """Exercise real SQLite evidence, dismissals and refusal of unrecorded charges."""
+    def test_real_store_adapter_prices_estimates_and_meters_actual_spending(self):
+        """Exercise real SQLite evidence, dismissals and applicable metered spending."""
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'budgets.json'
             events = Path(tmp) / 'usage.db'
@@ -312,8 +312,12 @@ class ForecastTests(unittest.TestCase):
             self.assertEqual(est['spend'], 8)
             self.assertEqual(est['level'], 'warning')
             self.assertTrue(est['forecast']['available'])
-            self.assertIsNone(actual['spend'])
-            self.assertEqual(actual['forecast']['reason'], 'metered_unavailable')
+            # A catalogue-priced provider publishes no separate effective rates:
+            # its public catalogue rate IS the applicable metered rate, so the
+            # actual-metered budget measures the same applicable expenditure.
+            self.assertEqual(actual['spend'], 8)
+            self.assertEqual(actual['measurement'], 'actual_metered')
+            self.assertTrue(actual['forecast']['available'])
             B.mutate('total', if_rev=report['rev'], dismissal={'cycle': est['cycle']['id'], 'budget_rev': est['budget_rev'], 'level': 'warning'}, path=path)
             self.assertTrue(F.build_report(path=path, event_db_path=events, now=NOW, catalogue=book)['statuses'][0]['dismissed'])
             # A higher threshold is a new alert; a cycle reset is a new alert.

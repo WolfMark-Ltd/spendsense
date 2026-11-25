@@ -21,8 +21,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import budgets, economics, membership, store
+from .aggregate import _billing_class, route_billing_status
 from .db import LedgerUnavailable
-from .pricing import _effective_rate, load_catalogue, price
+from .expenditure import call_expenditure
+from .pricing import _amount as _per_mtok_amount, _effective_rate, load_catalogue, price, resolve_rate
 
 RANK = {'normal': 0, 'info': 1, 'warning': 2, 'exceeded': 3}
 _PRICE_CACHE_MAX_ENTRIES = 8192
@@ -282,11 +284,65 @@ def _per_call_value(item: dict, book) -> float | None:
     return priced.usd
 
 
+def _metered_per_call_value(item: dict, book) -> float | None:
+    """One recorded attempt at the provider's own billed (effective) rates.
+
+    The native leg of the shared expenditure calculation — the provider's
+    own rows, the applicable account-level rates even when a catalogue card
+    lists the same model. Native rows publish no cache-write price, so calls
+    with write tokens stay unpriced here and fall to the catalogue leg
+    through ``expenditure.call_expenditure`` — exactly as the aggregate
+    resolves them. The catalogue fallback, the subscription-included class
+    and recorded-debit precedence are applied there so every surface shares
+    one result.
+    """
+    if str(item.get('outcome') or 'ok') in ('error', 'missing_usage'):
+        return None
+    fields = ('input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens')
+    if any(type(item.get(key)) is not int or item[key] < 0 for key in fields):
+        return None
+    prompt = item['input_tokens'] + item['cache_read_tokens'] + item['cache_write_tokens']
+    total = prompt + item['output_tokens']
+    # The same counter-consistency refusal as the list valuation: old stores
+    # with conflicting aggregates are never repriced from partial buckets.
+    if (not total or item.get('prompt_tokens') not in (None, 0, prompt)
+            or item.get('total_tokens') not in (None, 0, total)):
+        return None
+    from . import provider_native
+    native = provider_native.lookup(str(item.get('provider') or '').strip(),
+                                    str(item.get('model') or '').strip(),
+                                    allow_fetch=True)
+    if native is None:
+        return None
+    erate = native.effective_rate()
+    # The native leg prices only what the provider's own rates establish: a
+    # positive cache-read count with no published read price, or any
+    # cache-write tokens (native rows publish no write price), leaves the
+    # native leg empty — the catalogue leg covers those calls.
+    if (item['cache_read_tokens'] > 0 and erate.cache_read is None) \
+            or item['cache_write_tokens'] > 0:
+        return None
+    if erate.input is None or erate.output is None:
+        return None
+    amount, _ = _per_mtok_amount(erate, item['input_tokens'], item['output_tokens'],
+                                 item['cache_read_tokens'], item['cache_write_tokens'])
+    return amount
+
+
 def build_report(*, path: Path | str | None = None, event_db_path=None, now=None,
-                 catalogue=None, fx_path=None) -> dict:
+                 catalogue=None, fx_path=None, state_db_path=None,
+                 route_arrangements=None) -> dict:
     """Build monthly status from local evidence, skipping ledger work for session-only limits."""
     now = time.time() if now is None else now
     doc = budgets.load(path)
+    statuses = route_billing_status(state_db_path)
+    if route_arrangements:
+        # Membership-resolved route arrangements are authoritative for the
+        # expenditure class: a validly-owned 'included' route costs nothing
+        # extra, regardless of the model used on it.
+        statuses.setdefault("routes", {}).update(
+            {str(route).strip().lower(): str(cls)
+             for route, cls in route_arrangements.items() if cls == "included"})
     monthly = [b for b in doc['budgets'] if b['scope'] != 'session']
     if not monthly:
         return {'ok': True, **doc, 'statuses': [],
@@ -312,8 +368,24 @@ def build_report(*, path: Path | str | None = None, event_db_path=None, now=None
                 for item in raw:
                     list_usd = (_cached_per_call_value(item, book, revision) if cache_prices
                                 else _per_call_value(item, book))
+                    # Shared billing-aware expenditure: the provider's own
+                    # billed (effective) rates first — computed for every row
+                    # regardless of the list-price cache, since resolve caches
+                    # per provider — the catalogue rate as the applicable
+                    # fallback for catalogue-priced providers, and a measured
+                    # zero for subscription-included routes.
+                    effective_usd = _metered_per_call_value(item, book)
+                    provider = str(item.get('provider') or '').strip()
+                    model = str(item.get('model') or '').strip()
+                    row_class = _billing_class(statuses, provider, model)
+                    metered_usd, metered_basis = call_expenditure(
+                        billing_class=row_class, native_effective_usd=effective_usd,
+                        catalogue_usd=list_usd)
                     rows.append({**item, 'list_usd': list_usd,
-                                 'actual_metered_usd': None, 'measurement': 'unknown'})
+                                 'expenditure_usd': metered_usd,
+                                 'expenditure_basis': metered_basis,
+                                 'actual_metered_usd': metered_usd,
+                                 'measurement': 'actual_metered' if metered_usd is not None else 'unknown'})
                 available = True
         finally:
             if conn is not None:

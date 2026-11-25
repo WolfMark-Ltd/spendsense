@@ -12,3 +12,6 @@ review/
 *.pem
 *.key
 *.zip
+
+# Shared symlink into the production checkout's installed deps — never commit.
+test/harness/node_modules

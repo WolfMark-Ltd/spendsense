@@ -292,6 +292,14 @@ def _row_result(row: dict[str, Any], catalogue: Catalogue, mode: str) -> dict[st
 
     billed_usd, billed_kind = _billed(row)
     basis_usd, basis_kind = _basis_amount(mode, billed_usd, billed_kind, list_usd)
+    from .expenditure import call_expenditure
+    # Session-level recorded amounts stay at session level — a session's
+    # actual cost is never allocated to an individual call, so only a
+    # definitive "actual" classification counts as reported evidence here,
+    # and only with the amount the provider recorded for it.
+    reported_usd = billed_usd if billed_kind == "actual" else None
+    expenditure_usd, expenditure_basis = call_expenditure(
+        billing_class=billed_kind, reported_usd=reported_usd, catalogue_usd=list_usd)
 
     return {
         "_session_id": str(row.get("session_id") or ""),
@@ -320,6 +328,8 @@ def _row_result(row: dict[str, Any], catalogue: Catalogue, mode: str) -> dict[st
         "billed_kind": billed_kind,
         "list_usd": list_usd,
         "list_usd_upper": list_upper,
+        "expenditure_usd": expenditure_usd,
+        "expenditure_basis": expenditure_basis,
         "tier_possible": tier_possible,
         "basis_usd": basis_usd,
         "basis_kind": basis_kind,
@@ -553,9 +563,29 @@ def route_billing_status(state_db_path: Path | str | None = None) -> dict[str, d
 
 
 def _billing_class(statuses: dict[str, dict], provider: str, model: str) -> str:
-    # Exact route/model only: an unknown new model must not inherit a sibling's
-    # billing class and appear as confirmed $0.
-    return statuses.get("exact", {}).get((provider, model)) or "unknown"
+    # Membership-resolved route arrangements are authoritative: a validly-owned
+    # included route's usage is exempt from expenditure no matter what a legacy
+    # recorded session status said — the legacy classifications are
+    # route/model-level session records, not per-call debits. Recorded exact
+    # statuses then apply for routes the membership layer does not classify,
+    # and an 'unknown' recorded entry never hides the arrangement.
+    routes = statuses.get("routes", {})
+    route_class = routes.get(provider)
+    if route_class is None:
+        # A suffixed route slug (a wire family of one provider) may claim only
+        # the models that belong to that family.
+        from . import membership_api as _ma
+
+        for slug, cls in routes.items():
+            if cls == "included" and _ma.route_matches(slug, provider, model):
+                route_class = cls
+                break
+    if route_class == "included":
+        return "included"
+    exact = statuses.get("exact", {}).get((provider, model))
+    if exact and exact != "unknown":
+        return exact
+    return route_class or "unknown"
 
 
 def _reported(flag: Any, value: Any) -> bool:
@@ -629,24 +659,54 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     else:
         miss = ""
     # Estimated effective provider cost: the provider's own billed rates where
-    # it publishes them, and only for tokens whose rates exist. A positive
-    # cache-read count with no published read price, or a positive cache-write
-    # count (native rows publish no write price), leaves the call out of the
-    # measured estimate instead of guessing an unsubstituted rate.
+    # it publishes them — looked up directly from the provider's own rows so a
+    # catalogue card can never shadow an account-level discount — and only for
+    # tokens whose rates exist. A positive cache-read count with no published
+    # read price, or a positive cache-write count (native rows publish no
+    # write price), leaves the call out of the measured estimate instead of
+    # guessing an unsubstituted rate.
     native_effective_usd = None
-    if native is not None and not failure and not missing:
-        erate = native.effective_rate()
-        reads_unpriced = cache_read > 0 and erate.cache_read is None
-        writes_unpriced = cache_write > 0
-        if not reads_unpriced and not writes_unpriced:
-            native_effective_usd = _amount(erate, input_tokens, output_tokens,
-                                           cache_read, cache_write)[0]
+    if not failure and not missing:
+        from . import provider_native as _pn
+        _native_row = _pn.lookup(provider, model, allow_fetch=True) if native is None else native
+        if _native_row is not None:
+            erate = _native_row.effective_rate()
+            reads_unpriced = cache_read > 0 and erate.cache_read is None
+            writes_unpriced = cache_write > 0
+            if not reads_unpriced and not writes_unpriced:
+                native_effective_usd = _amount(erate, input_tokens, output_tokens,
+                                               cache_read, cache_write)[0]
+    # Shared billing-aware expenditure (money spent), independent of the list
+    # valuation: included usage costs nothing extra; a recorded debit wins;
+    # then the provider's applicable effective rates; then the verified
+    # applicable catalogue rate. Computed after the route's billing class is
+    # resolved below.
     if failure:
         miss = "call_failed"
     elif missing:
         miss = "usage_missing"
 
     billing_class = _billing_class(statuses, provider, model)
+    from .expenditure import call_expenditure
+    # The catalogue leg must be an *applicable* price: price()'s input-rate
+    # fallback for an unreported cache counter fabricates a cache price, so a
+    # defaulted call keeps its theoretical list valuation but no expenditure.
+    # The amount is the call's own band-selected effective figure — the same
+    # one session valuation uses — never the legacy cumulative upper base.
+    # A provisional bucket (an official overlay's active-window read price)
+    # is likewise not an established expenditure basis.
+    catalogue_price = None
+    provisional_buckets = set(getattr(lookup, "provisional", ()) or ())
+    bucket_counts = {"cache_read": cache_read, "cache_write": cache_write}
+    if (effective_usd is not None and priced
+            and not (priced.cache_read_defaulted or priced.cache_write_defaulted)
+            and not any(bucket in provisional_buckets and count > 0
+                        for bucket, count in bucket_counts.items())):
+        catalogue_price = effective_usd
+    expenditure_usd, expenditure_basis = call_expenditure(
+        billing_class=billing_class, native_effective_usd=native_effective_usd,
+        catalogue_usd=catalogue_price)
+    expenditure_usd_high = None
     billed_usd = 0.0 if billing_class == "included" else None
     if mode == "billed":
         basis_usd = 0.0 if billing_class == "included" else None
@@ -673,6 +733,14 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         base_usd = float(effective_usd or 0.0)
         cost_low = base_usd + cache_write * (write_options[0] - scalar_write) / 1_000_000
         cost_high = base_usd + cache_write * (write_options[-1] - scalar_write) / 1_000_000
+    # Expenditure keeps its known bounds: a cache write with several published
+    # retention prices is a range, never a single amount pretending to be one.
+    # The gate excludes included usage — its measured zero must never be
+    # replaced by the catalogue's band amount.
+    if expenditure_usd is not None and retention_range and expenditure_basis != "included":
+        expenditure_usd = cost_low
+        expenditure_usd_high = cost_high
+        expenditure_basis = "range"
     # An unproven counter whose price is positive can only add cost, so the
     # priced amount is a lower bound; an unknown price cannot be bounded at all.
     # Price completeness is a separate question from provenance: a positive
@@ -758,6 +826,9 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         "list_usd_upper": list_usd,
         "native_effective_usd": native_effective_usd,
         "native_effective_tokens": tokens if native_effective_usd is not None else 0,
+        "expenditure_usd": expenditure_usd,
+        "expenditure_basis": expenditure_basis,
+        "expenditure_usd_high": expenditure_usd_high,
         "tier_possible": tier_applied,
         "basis_usd": basis_usd,
         "basis_kind": basis_kind,
