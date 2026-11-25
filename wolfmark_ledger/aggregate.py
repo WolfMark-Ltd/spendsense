@@ -629,12 +629,18 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     else:
         miss = ""
     # Estimated effective provider cost: the provider's own billed rates where
-    # it publishes them. A different claim from the list valuation above and
-    # never a provider-reported charge.
+    # it publishes them, and only for tokens whose rates exist. A positive
+    # cache-read count with no published read price, or a positive cache-write
+    # count (native rows publish no write price), leaves the call out of the
+    # measured estimate instead of guessing an unsubstituted rate.
     native_effective_usd = None
     if native is not None and not failure and not missing:
-        native_effective_usd = _amount(native.effective_rate(), input_tokens,
-                                       output_tokens, cache_read, cache_write)[0]
+        erate = native.effective_rate()
+        reads_unpriced = cache_read > 0 and erate.cache_read is None
+        writes_unpriced = cache_write > 0
+        if not reads_unpriced and not writes_unpriced:
+            native_effective_usd = _amount(erate, input_tokens, output_tokens,
+                                           cache_read, cache_write)[0]
     if failure:
         miss = "call_failed"
     elif missing:

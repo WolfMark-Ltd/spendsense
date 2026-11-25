@@ -31,10 +31,11 @@ provider metadata endpoint — no inference usage, no credential logging.
 """
 from __future__ import annotations
 
+import math
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .pricing import Rate
 
@@ -83,15 +84,17 @@ def unavailable() -> bool:
 
 
 def reset_for_tests() -> None:
-    """Clear module state (test isolation only)."""
-    global _import_failed
+    """Clear module state and restore the real resolver (test isolation only)."""
+    global _import_failed, _resolver
     with _lock:
         _import_failed = False
         _last_fetch_attempt.clear()
         _missing_provider.clear()
+        if _real_resolver is not None:
+            _resolver = _real_resolver
 
 
-def _resolver():
+def _resolver() -> Callable[..., dict[str, dict[str, Any]]]:
     """The Hermes pricing resolver, or None when the host app is absent."""
     global _import_failed
     try:
@@ -103,20 +106,66 @@ def _resolver():
         return None
 
 
+# The untouched module function, so reset_for_tests can undo test patches.
+_real_resolver: Optional[Callable[..., dict[str, dict[str, Any]]]] = None
+_real_resolver = _resolver
+
+
+def _has_native_fetcher(provider: str) -> bool:
+    """True when Hermes' resolver serves this provider at all.
+
+    Distinguishes "the provider publishes no native pricing" (permanent) from
+    "the fetch failed or returned nothing this time" (retryable): Hermes
+    returns ``{}`` for both, but only exposes a fetcher for supported
+    providers.
+    """
+    try:
+        from hermes_cli.models_pricing import _PRICING_FETCHERS, resolve_pricing_provider
+        normalized = resolve_pricing_provider(provider)
+        return bool(normalized) and normalized in _PRICING_FETCHERS
+    except Exception:
+        return False
+
+
 def _per_mtok(value: Any) -> Optional[float]:
-    """A provider per-token price string/number as $/MTok; None when absent."""
+    """A provider per-token price string/number as $/MTok; None when absent.
+
+    Non-finite and negative values are invalid metadata, not prices: they are
+    rejected so they can never reach a valuation or a serialised payload. An
+    explicit zero is a real rate (free tiers) and stays valid.
+    """
     if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value) * 1_000_000.0
+        rate = float(value) * 1_000_000.0
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(rate) or rate < 0:
+        return None
+    return rate
 
 
 def _native_rates(provider: str, *, allow_fetch: bool) -> dict[str, dict[str, Any]]:
-    """The provider's native price rows, or ``{}`` when unavailable."""
+    """The provider's native price rows, or ``{}`` when unavailable.
+
+    A provider Hermes' resolver does not serve at all is marked permanently
+    unsupported. A served provider whose fetch raised or returned nothing is
+    *not*: the result stays empty this window and the next TTL window retries,
+    so a transient failure or a credential becoming available later cannot
+    disable native pricing for the process lifetime.
+    """
     key = provider.strip().lower()
     if not key or key in _missing_provider:
+        return {}
+    # The fetcher verdict uses the real resolver only: a test-injected (or
+    # otherwise patched) resolver is authoritative for this process, and in
+    # processes without the host app nothing is fetchable, so everything
+    # degrades to unpriced exactly as before.
+    if _resolver is _real_resolver and not _has_native_fetcher(key):
+        # One permanent verdict per provider per process: get_pricing_for_provider
+        # serves no fetcher for it, so no future call can price this route.
+        with _lock:
+            _missing_provider.add(key)
         return {}
     resolver = _resolver()
     if resolver is None:
@@ -131,38 +180,56 @@ def _native_rates(provider: str, *, allow_fetch: bool) -> dict[str, dict[str, An
         try:
             rows = resolver(key, force_refresh=False) or {}
         except Exception:
-            rows = {}
+            # Transient: retried after the TTL window, never cached as absent.
+            return {}
     else:
         try:
             rows = resolver(key, cached_only=True) or {}
         except Exception:
-            rows = {}
-    if not rows:
-        # One probe per provider per process: get_pricing_for_provider
-        # returns {} for every provider without a native pricing source.
-        with _lock:
-            _missing_provider.add(key)
+            return {}
     return rows
 
 
 def _row_rate(provider: str, model: str, row: dict[str, Any], as_of: str) -> Optional[NativeRate]:
+    """Parse one provider row; ``None`` when it cannot price honestly.
+
+    Both base prices must be present and valid (an explicitly supplied zero is
+    a real free-tier rate; a missing side is not). An ``input_cache_read`` that
+    is present but invalid rejects the whole row: one piece of broken metadata
+    must not turn into an invented zero.
+    """
     if not isinstance(row, dict):
         return None
     eff_in = _per_mtok(row.get("prompt"))
     eff_out = _per_mtok(row.get("completion"))
-    if eff_in is None and eff_out is None:
+    if eff_in is None or eff_out is None:
+        return None
+    raw_read = row.get("input_cache_read")
+    cache_read = _per_mtok(raw_read)
+    if raw_read is not None and cache_read is None:
         return None
     raw_original = row.get("original")
     original: dict[str, Any] = raw_original if isinstance(raw_original, dict) else {}
+    list_in = _per_mtok(original.get("prompt"))
+    list_out = _per_mtok(original.get("completion"))
+    if list_in is None or list_out is None:
+        original = {}
+        list_in = list_out = None
+        list_read = None
+    else:
+        raw_list_read = original.get("input_cache_read")
+        list_read = _per_mtok(raw_list_read)
+        if raw_list_read is not None and list_read is None:
+            list_read = None
     return NativeRate(
         provider=provider,
         model=model,
-        input=eff_in if eff_in is not None else 0.0,
-        output=eff_out if eff_out is not None else 0.0,
-        cache_read=_per_mtok(row.get("input_cache_read")),
-        list_input=_per_mtok(original.get("prompt")),
-        list_output=_per_mtok(original.get("completion")),
-        list_cache_read=_per_mtok(original.get("input_cache_read")),
+        input=eff_in,
+        output=eff_out,
+        cache_read=cache_read,
+        list_input=list_in,
+        list_output=list_out,
+        list_cache_read=list_read,
         as_of=as_of,
     )
 

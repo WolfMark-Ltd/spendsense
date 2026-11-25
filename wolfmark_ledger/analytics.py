@@ -34,7 +34,7 @@ _TOTAL_FIELDS = (
     "tokens", "calls", "input_tokens", "output_tokens", "cache_read_tokens",
     "cache_write_tokens", "reasoning_tokens", "list_usd", "priced_tokens", "unpriced_tokens",
     "priced_calls", "unpriced_calls", "coverage", "billed_usd", "billed_complete", "billing_mix",
-    "native_effective_usd", "native_effective_tokens", "native_effective_calls",
+    "failures", "missing_usage",
 )
 
 
@@ -45,20 +45,22 @@ def _reported(flag: bool | None, value: int) -> bool:
     return value > 0
 
 
-def _effective_basis(totals: dict[str, Any], calls: int) -> Optional[str]:
+def _effective_basis(*, covered_calls: int, calls: int, covered_tokens: int,
+                    total_tokens: int) -> Optional[str]:
     """Basis of the estimated effective provider cost subtotal.
 
-    ``exact`` only when the native rates covered the whole recorded population;
-    ``partial`` names a measured subtotal; ``None`` when nothing was covered,
-    so no figure is published for a zero-coverage estimate.
+    ``exact`` only when the native rates covered the whole recorded
+    population — every call, including zero-token ones — and every recorded
+    token. A failed or missing-usage call contributes nothing and cannot be
+    accounted, so any population holding one stays ``partial`` rather than
+    claiming a whole-population figure. ``None`` when nothing was covered, so
+    no figure is published for a zero-coverage estimate.
     """
-    if not totals.get("native_effective_calls"):
+    if not covered_calls:
         return None
-    total = int(totals.get("tokens") or 0)
-    covered = int(totals.get("native_effective_tokens") or 0)
-    if total and covered >= total:
-        return "exact"
-    return "partial"
+    call_complete = calls >= 0 and covered_calls >= calls
+    token_complete = total_tokens == 0 or covered_tokens >= total_tokens
+    return "exact" if (call_complete and token_complete) else "partial"
 
 
 class _MetricProvenance:
@@ -438,12 +440,18 @@ class _AnalyticsAcc:
 
     def as_dict(self) -> dict[str, Any]:
         base = dict(self.accounting.as_dict())
-        # Estimated effective provider cost: a measured subtotal with its own
-        # coverage, published only where the provider supplies native rates.
-        base["native_effective_usd"] = (round(self.native_effective_usd, 6)
-                                        if self.native_effective_calls else None)
-        base["native_effective_tokens"] = self.native_effective_tokens
-        base["native_effective_calls"] = self.native_effective_calls
+        # Estimated effective provider cost: the provider's own billed rates.
+        # One named set of fields everywhere (totals, groups and sessions), a
+        # measured subtotal with its own coverage, never a reported charge.
+        covered = self.native_effective_calls
+        base["provider_effective_usd"] = (round(self.native_effective_usd, 6)
+                                          if covered else None)
+        base["provider_effective_calls"] = covered
+        base["provider_effective_tokens"] = self.native_effective_tokens
+        base["provider_effective_basis"] = _effective_basis(
+            covered_calls=covered, calls=int(base.get("calls") or 0),
+            covered_tokens=self.native_effective_tokens,
+            total_tokens=int(base.get("tokens") or 0))
         read_state, read_reason = self.read_prov.state(self.known_read_tokens)
         write_state, write_reason = self.write_prov.state(self.known_write_tokens)
         basis, bound_reason, premium = _savings_basis(
@@ -527,6 +535,10 @@ class _AnalyticsAcc:
             # indeterminate basis is not a bound).
             read_benefit_basis, read_benefit_usd = "indeterminate", None
         return {**{key: base[key] for key in _TOTAL_FIELDS},
+                "provider_effective_usd": base["provider_effective_usd"],
+                "provider_effective_calls": base["provider_effective_calls"],
+                "provider_effective_tokens": base["provider_effective_tokens"],
+                "provider_effective_basis": base["provider_effective_basis"],
                 "pricing_provenance": base.get("pricing_provenance", "unpriced"),
                 "pricing_mix": base.get("pricing_mix", {}),
                 "pricing_gaps": dict(self.pricing_gaps),
@@ -1084,12 +1096,13 @@ def build_session_summary(
                 "cache_hit_rate_basis": totals_raw["cache_hit_rate_basis"],
                 # Estimated effective provider cost at the provider's own
                 # billed rates — a separate claim from the list valuation and
-                # never a reported charge. Covered counts name its population.
-                "provider_effective_usd": (totals_raw["native_effective_usd"]
-                                           if totals_raw["native_effective_calls"] else None),
-                "provider_effective_calls": totals_raw["native_effective_calls"],
-                "provider_effective_tokens": totals_raw["native_effective_tokens"],
-                "provider_effective_basis": _effective_basis(totals_raw, len(selected)),
+                # never a reported charge. Covered counts name its population;
+                # the basis is computed once in the accumulator so every
+                # surface publishes the same contract.
+                "provider_effective_usd": totals_raw["provider_effective_usd"],
+                "provider_effective_calls": totals_raw["provider_effective_calls"],
+                "provider_effective_tokens": totals_raw["provider_effective_tokens"],
+                "provider_effective_basis": totals_raw["provider_effective_basis"],
             },
         }
 

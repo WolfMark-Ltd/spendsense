@@ -242,23 +242,25 @@ def resolve_rate(
 ) -> tuple[Optional[Lookup], Optional[Any]]:
     """Resolve a rate for the serving route, falling back to provider-native rows.
 
-    Precedence: the catalogue's own chain (official verified overlay > route
-    card > opt-in third-party/approximate) first, unchanged. When it misses and
-    the provider publishes native price rows (Hermes' per-credential resolver),
-    a row supplies the list basis for the standard valuation (``original`` when
-    published, otherwise the effective rates) and the native row itself is
-    returned second so callers can value the *effective* basis separately.
-    Returns ``(lookup, native)``; either may be ``None``.
+    Precedence: (1) the catalogue's own chain — official verified overlay >
+    route card — without foreign fallbacks; (2) provider-native rows (Hermes'
+    per-credential resolver); (3) the requested opt-in third-party/approximate
+    borrow. A foreign borrow must never displace an available provider-native
+    valuation, so it only applies when both nearer sources miss. The native
+    row is returned second so callers can value the *effective* basis
+    separately. Returns ``(lookup, native)``; either may be ``None``.
     """
-    hit = book.lookup(route_provider, model, allow_third_party=allow_third_party,
-                      allow_approximate=allow_approximate, at=at)
+    hit = book.lookup(route_provider, model, at=at)
     if hit is not None:
         return hit, None
     from . import provider_native as _provider_native
 
     native = _provider_native.lookup(route_provider, model, allow_fetch=native_fetch)
     if native is None:
-        return None, None
+        if allow_third_party or allow_approximate:
+            hit = book.lookup(route_provider, model, allow_third_party=allow_third_party,
+                              allow_approximate=allow_approximate, at=at)
+        return hit, None
     rate = native.list_rate()
     basis = "list"
     if rate is None:

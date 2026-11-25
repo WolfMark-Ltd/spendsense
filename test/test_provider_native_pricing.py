@@ -119,8 +119,57 @@ class ProviderNativeTestCase(unittest.TestCase):
     def test_absent_rates_are_absent_not_zero(self):
         self.inject({"nous": {"m": dict(NOUS_ROW)}})
         native = provider_native.lookup("nous", "m")
+        self.assertIsNotNone(native)
+        if native is None:  # pragma: no cover - narrows for the type checker
+            return
         self.assertIsNone(native.list_rate().cache_write)
-        self.assertIsNone(_rate_of(NOUS_ROW).cache_read if False else None)
+
+    def test_incomplete_and_invalid_rows_never_price(self):
+        # A missing base side is not a free rate; a negative or non-finite
+        # value is broken metadata, and a present-but-invalid cache-read rate
+        # rejects the row rather than inventing a zero.
+        self.inject({"nous": {
+            "half": {"prompt": "0.0000000300"},
+            "negative": {"prompt": "-0.0000000300", "completion": "0.0000001200"},
+            "nan": {"prompt": "NaN", "completion": "0.0000001200"},
+            "inf": {"prompt": "Infinity", "completion": "0.0000001200"},
+            "badread": {"prompt": "0.0000000300", "completion": "0.0000001200",
+                        "input_cache_read": "-0.0000000006"},
+            "free": {"prompt": "0", "completion": "0.0000001200",
+                     "input_cache_read": "0"},
+        }})
+        for model in ("half", "negative", "nan", "inf", "badread"):
+            self.assertIsNone(provider_native.lookup("nous", model), model)
+        free = provider_native.lookup("nous", "free")
+        self.assertIsNotNone(free)
+        if free is None:  # pragma: no cover - narrows for the type checker
+            return
+        self.assertEqual((free.input, free.output, free.cache_read), (0.0, 0.12, 0.0))
+
+    def test_transient_resolver_failure_retries_after_the_window(self):
+        calls = {"n": 0}
+
+        def flaky(provider, *, force_refresh=False, cached_only=False):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError("temporary failure")
+            return {"m": dict(NOUS_ROW)}
+
+        provider_native._resolver = lambda: flaky  # type: ignore[assignment]
+        self.assertIsNone(provider_native.lookup("nous", "m"),
+                          "a raised fetch must not price the window")
+        # The failure is not cached as permanent: the very next window (the
+        # test rewinds the marker) resolves the row.
+        with provider_native._lock:
+            provider_native._last_fetch_attempt.clear()
+        native = provider_native.lookup("nous", "m")
+        self.assertIsNotNone(native)
+
+    def test_empty_catalog_from_a_served_provider_is_not_permanent(self):
+        self.inject({"nous": {}})
+        self.assertIsNone(provider_native.lookup("nous", "m"))
+        # Still retryable: no _missing_provider verdict for a served provider.
+        self.assertNotIn("nous", provider_native._missing_provider)
 
     # -- 2. explicit model identity ---------------------------------------
     def test_exact_dated_variant_matches_exactly(self):
@@ -166,6 +215,29 @@ class ProviderNativeTestCase(unittest.TestCase):
         self.assertIsNone(hit)
         self.assertIsNone(native)
 
+    def test_native_rates_beat_an_opted_in_foreign_borrow(self):
+        # With third-party pricing enabled, a foreign catalogue card for the
+        # same model must not displace the provider's own row: the borrow
+        # applies only when the strict catalogue AND native pricing both miss.
+        book = Catalogue({"openrouter": {"m": Rate(input=0.075, output=0.3,
+                                                   cache_read=0.0015, cache_write=None),
+                                         "other-model": Rate(input=0.075, output=0.3,
+                                                             cache_read=0.0015, cache_write=None)}},
+                         "fixture", "test", "2026-11-25", "1")
+        self.inject({"nous": {"m": dict(NOUS_ROW)}})
+        hit, native = resolve_rate(book, "nous", "m",
+                                   allow_third_party=True, allow_approximate=False)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.provenance, "provider_native")
+        self.assertEqual((hit.rate.input, hit.rate.output, hit.rate.cache_read), NOUS_LIST)
+        self.assertIsNotNone(native)
+        # The borrow still rescues a route with no native row at all.
+        hit2, native2 = resolve_rate(book, "nous", "other-model",
+                                     allow_third_party=True, allow_approximate=False)
+        self.assertIsNotNone(hit2)
+        self.assertEqual(hit2.provenance, "third_party")
+        self.assertIsNone(native2)
+
     # -- 4. graceful degradation ------------------------------------------
     def test_missing_host_resolver_degrades_to_the_old_behaviour(self):
         # Simulate the process state _resolver() itself sets when the host app
@@ -206,10 +278,45 @@ class ProviderNativeTestCase(unittest.TestCase):
         self.assertEqual(valuation["provider_effective_tokens"], 1_050_500)
 
     def test_no_native_rates_publish_no_effective_figure(self):
+        self.inject({})  # a resolver with no rows for this provider
         self.add_call(fresh=1_000, output=10)
         payload = self.summary(population="all")
         self.assertIsNone(payload["valuation"]["provider_effective_usd"])
         self.assertIsNone(payload["valuation"]["provider_effective_basis"])
+
+    def test_unpriced_read_leaves_the_call_out_of_the_effective_estimate(self):
+        # A provider row without input_cache_read: reads are real tokens with
+        # no published rate, so the call cannot be a covered effective-cost
+        # population — a guessed cache rate would look exact.
+        self.inject({"nous": {"m": {"prompt": "0.0000000300",
+                                    "completion": "0.0000001200"}}})
+        self.add_call(provider="nous", model="m", fresh=1_000, cache_read=500, output=10)
+        payload = self.summary(population="all")
+        valuation = payload["valuation"]
+        self.assertIsNone(valuation["provider_effective_usd"])
+        self.assertIsNone(valuation["provider_effective_basis"])
+        self.assertEqual(valuation["provider_effective_calls"], 0)
+
+    def test_positive_cache_writes_are_never_an_effective_estimate(self):
+        # Native rows publish no write price: a call with recorded writes is
+        # excluded from the measured estimate rather than priced at the input
+        # rate by a substitution.
+        self.inject({"nous": {"deepseek/deepseek-v4.1-flash-1017": dict(NOUS_ROW)}})
+        self.add_call(fresh=1_000, cache_read=500, cache_write_tokens=300, output=10)
+        payload = self.summary(population="all")
+        valuation = payload["valuation"]
+        self.assertIsNone(valuation["provider_effective_usd"])
+        self.assertIsNone(valuation["provider_effective_basis"])
+
+    def test_effective_basis_demands_call_coverage_not_only_tokens(self):
+        # One covered call plus one missing-usage call with zero recorded
+        # tokens: token equality alone would claim exact over a population of
+        # two, so the basis must demand call coverage too.
+        self.inject({"nous": {"deepseek/deepseek-v4.1-flash-1017": dict(NOUS_ROW)}})
+        self.add_call(fresh=1_000, output=10)
+        self.add_call(fresh=0, cache_read=0, output=0, outcome="missing_usage")
+        payload = self.summary(population="all")
+        self.assertEqual(payload["valuation"]["provider_effective_basis"], "partial")
 
     # -- 6. the Nous UAT reconciliation (sanitised) ------------------------
     def test_nous_csv_reconciles_to_the_token_and_the_tenth_decimal(self):
@@ -270,10 +377,6 @@ class ProviderNativeTestCase(unittest.TestCase):
         # commandcode has no native pricing source: no effective estimate.
         self.assertEqual(valuation["provider_effective_calls"], 0)
         self.assertIsNone(valuation["provider_effective_usd"])
-
-
-def _rate_of(row):  # pragma: no cover - helper kept for symmetry with the fixture
-    return Rate(input=0.0, output=0.0, cache_read=None, cache_write=None)
 
 
 if __name__ == "__main__":
