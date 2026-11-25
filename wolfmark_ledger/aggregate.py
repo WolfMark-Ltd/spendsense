@@ -620,6 +620,12 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
                                   allow_third_party=allow_third_party,
                                   allow_approximate=allow_approximate)
     provenance = getattr(lookup, "provenance", "provider_catalogue") if lookup else "unpriced"
+    # One native lookup per call, shared by the list fallback and the
+    # expenditure leg below.
+    from . import provider_native as _pn
+    _native_row = (native if native is not None
+                   else (_pn.lookup(provider, model, allow_fetch=True)
+                         if not failure and not missing else None))
     priced = (
         price(
             lookup.rate,
@@ -658,6 +664,22 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         miss = _miss_reason(catalogue, provider, model)
     else:
         miss = ""
+    # The native row's original block is the provider's own published list
+    # price: when the catalogue does not carry the route at all (models.dev
+    # dropped `nous`), it still evidences the undiscounted valuation. The
+    # #119 gate applies unchanged — only a row with `original` backs the
+    # standard list valuation, never the effective basis.
+    if list_usd is None and not failure and not missing and _native_row is not None:
+        _list_rate = _native_row.list_rate()
+        if _list_rate is not None:
+            _list_priced = price(
+                _list_rate, input_tokens=input_tokens, output_tokens=output_tokens,
+                cache_read_tokens=cache_read, cache_write_tokens=cache_write, calls=1)
+            if (_list_priced is not None and _list_priced.usd_upper is not None
+                    and not (_list_priced.cache_read_defaulted
+                             or _list_priced.cache_write_defaulted)):
+                list_usd = _list_priced.usd_upper
+                miss = ""
     # Estimated effective provider cost: the provider's own billed rates where
     # it publishes them — looked up directly from the provider's own rows so a
     # catalogue card can never shadow an account-level discount — and only for
@@ -667,8 +689,6 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     # guessing an unsubstituted rate.
     native_effective_usd = None
     if not failure and not missing:
-        from . import provider_native as _pn
-        _native_row = _pn.lookup(provider, model, allow_fetch=True) if native is None else native
         if _native_row is not None:
             erate = _native_row.effective_rate()
             reads_unpriced = cache_read > 0 and erate.cache_read is None

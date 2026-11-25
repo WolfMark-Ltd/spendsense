@@ -37,6 +37,12 @@ def local_zone(name):
         time.tzset()
 
 
+def _fake_resolver_rows(rows_by_provider):
+    def resolver(provider, *, force_refresh=False, cached_only=False, base_url=""):
+        return dict(rows_by_provider.get(provider) or {})
+    return resolver
+
+
 class AnalyticsTests(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR"))
@@ -733,6 +739,29 @@ class CustomFixableTests(unittest.TestCase):
                                     "rate_override": {"input": 1, "output": 2}}])
         report = self.report(days=1, profiles_path=profiles)
         self.assertEqual(report["totals"]["custom_fixable_tokens"], 100)
+
+    def test_native_priced_route_is_not_a_fixable_gap(self):
+        # A provider-native row prices the call: expenditure exists even
+        # though the catalogue cannot list-price it (models.dev dropped the
+        # provider). A "set a custom rate" suggestion here would replace the
+        # provider's own rates with a guess.
+        from unittest.mock import patch as _patch
+        from wolfmark_ledger import provider_native as _pn
+        row = {"prompt": "0.0000000300", "completion": "0.0000001200",
+               "input_cache_read": "0.0000000006",
+               "original": {"prompt": "0.0000001500", "completion": "0.0000006000",
+                            "input_cache_read": "0.0000000030"}}
+        self.create_events([{"model": "deepseek/x", "provider": "nous",
+                             "input_tokens": 100}])
+        resolver_rows = {"nous": {"deepseek/x": dict(row)}}
+        with _patch.object(_pn, "_resolver", lambda: _fake_resolver_rows(resolver_rows)):
+            report = self.report(days=1)
+        totals = report["totals"]
+        self.assertIsNotNone(totals["api_expenditure_usd"],
+                             "native rates price the call")
+        self.assertEqual(totals["custom_fixable_tokens"], 0)
+        self.assertEqual(totals["custom_fixable_calls"], 0)
+        self.assertIsNone(totals.get("custom_fixable_detail"))
 
     def test_failed_calls_are_never_fixable(self):
         self.create_events([{"input_tokens": 100, "outcome": "error"}])

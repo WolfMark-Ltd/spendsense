@@ -371,8 +371,12 @@ async function ensureBackendRate(provider, model) {
   try {
     const result = await rest(`/rates?provider=${encodeURIComponent(p)}&model=${encodeURIComponent(m)}`)
     if (!membershipIdentityCurrent(identity)) { delete backendRateBook[key]; return }
-    if (!result?.rate) throw new Error('unpriced')
-    const entry = { at: Date.now(), rates: { input: result.rate.input, output: result.rate.output, cache: result.rate.cache_read ?? result.rate.input, write: result.rate.cache_write,
+    if (!result?.rate && !result?.effective_rate) throw new Error('unpriced')
+    const entry = { at: Date.now(),
+      // The catalogue card may be absent (the provider dropped from
+      // models.dev) while the provider's own billed rates still serve; keep
+      // each basis independently instead of discarding both.
+      rates: result.rate ? { input: result.rate.input, output: result.rate.output, cache: result.rate.cache_read ?? result.rate.input, write: result.rate.cache_write,
       inputKnown: result.rate.input != null && result.rate.has_tiers === false, outputKnown: result.rate.output != null, cacheKnown: result.rate.cache_read != null,
       writeKnown: result.rate.cache_write != null,
       hasTiers: result.rate.has_tiers === true,
@@ -381,9 +385,17 @@ async function ensureBackendRate(provider, model) {
       ...usagePriceEvidence(result.rate.input, result.rate.output,
         (result.rate.provisional || []).includes('cache_read') ? null : result.rate.cache_read,
         (result.rate.provisional || []).includes('cache_write') ? null : result.rate.cache_write,
-        result.rate.has_tiers === false, result.rate.provenance || 'backend_catalogue') },
-      provenance: result.rate.provenance, provisional: result.rate.provisional || [],
+        result.rate.has_tiers === false, result.rate.provenance || 'backend_catalogue') } : null,
+      provenance: result.rate?.provenance || 'unpriced', provisional: result.rate?.provisional || [],
       stale: Boolean(result.catalogue?.stale), asOf: result.catalogue?.as_of || '', age: result.catalogue?.age_seconds ?? null }
+    // The provider's own billed (effective) rates, kept apart from the list
+    // basis: the metered account's real price, with the original comparison.
+    if (result.effective_rate && result.effective_rate.input != null && result.effective_rate.output != null) {
+      entry.effective = { input: result.effective_rate.input, output: result.effective_rate.output,
+        cache: result.effective_rate.cache_read,
+        listInput: result.effective_rate.list_input, listOutput: result.effective_rate.list_output,
+        listCache: result.effective_rate.list_cache_read, asOf: result.effective_rate.as_of || '' }
+    }
     backendRateBook[key] = entry
     $backendRates.set({ ...backendRateBook })
   } catch {
@@ -398,8 +410,9 @@ function resolveRates({ model, provider, payload, remembered }) {
   const base = { foreignSlug: null, provider: p || null, providerUnknown: !p }
   if (!model) return { ...base, origin: 'none', rates: null }
   const served = backendRateBook[JSON.stringify([membershipIdentityNow(), rateKey(p, model)])]
-  if (p && served && validRates(served.rates)) {
+  if (p && served && (validRates(served.rates) || served.effective)) {
     return { ...base, origin: 'backend', rates: served.rates, provenance: served.provenance,
+      effective: served.effective || null,
       provisional: served.provisional || [], stale: served.stale, asOf: served.asOf, age: served.age }
   }
 
@@ -2509,6 +2522,7 @@ function useLive() {
       provider: provider || null,
       providerUnknown: !provider,
       rates: resolved.rates,
+      effective: resolved.effective || null,
       saved: savings?.kind === 'value' ? savings.value : null,
       savedRange: savings?.kind === 'range' ? savings.range : null,
       savedBound: savings && ['upper', 'lower'].includes(savings.kind)
@@ -2571,6 +2585,7 @@ function useLive() {
       provider: provider || (!usage ? (hist.provider || null) : null),
       providerUnknown: !(provider || (!usage && hist.provider)),
       rates: histRates.rates,
+      effective: histRates.effective || null,
       saved: savings.value,
       savedRange: savings.range,
       savedBound: null,
@@ -2614,6 +2629,7 @@ function useLive() {
     provider: provider || null,
     providerUnknown: !provider,
     rates: resolved.rates,
+    effective: resolved.effective || null,
     // A cumulative run can span models; one current price cannot value it.
     saved: runState,
     savedRange: runBounds && !runBounds.exact ? { min: runBounds.min, max: runBounds.max } : null,
@@ -3553,13 +3569,26 @@ function CacheGauge({ t, view }) {
 /** Section E: model pricing, collapsed by default and stable across refresh. */
 function RatesPanel({ t, view }) {
   const open = useValue($ratesOpen)
-  const rates = view.rates
+  // The billed (effective) basis leads when the provider publishes its own
+  // rates; the catalogue card is the labelled fallback. The label names the
+  // basis either way — no silent swap.
+  const billed = view.effective || null
+  const rates = billed ? {
+    input: billed.input, output: billed.output, cache: billed.cache,
+    write: null, cacheWriteRates: []
+  } : view.rates
   const cells = [
     { key: 'input', label: t('input'), value: fmtRate(rates?.input) },
     { key: 'output', label: t('output'), value: fmtRate(rates?.output) },
     { key: 'cache', label: t('cacheRead'), value: fmtRate(rates?.cache) }
   ]
-  if (rates && rates.write != null) {
+  if (billed) {
+    // The original (undiscounted) comparison, one compact line.
+    cells.push({ key: 'list', label: t('originalRates'), value: [
+      fmtRate(billed.listInput), fmtRate(billed.listOutput), fmtRate(billed.listCache)
+    ].filter(v => v != null).join(' / ') })
+  }
+  if (!billed && rates && rates.write != null) {
     const options = Array.isArray(rates.cacheWriteRates) ? rates.cacheWriteRates : []
     cells.push({ key: 'write', label: t('cacheWrite'), value: options.length
       ? options.map(option => `${option.retention} ${fmtRate(option.rate)}`).join(' · ')
@@ -3574,11 +3603,11 @@ function RatesPanel({ t, view }) {
         'aria-controls': 'wm-rates-body',
         onClick: () => $ratesOpen.set(!open),
         children: [
-          jsx('span', { children: t('rates') }, 'label'),
+          jsx('span', { children: billed ? t('billedRates') : t('rates') }, 'label'),
           jsx('span', { className: cn('wm-chevron', open && 'wm-chevron-open'), 'aria-hidden': true, children: '›' }, 'chevron')
         ]
       }, 'toggle'),
-      jsx(InfoTip, { id: 'rates-source', dir: 'up', label: t('infoLabel'), text: t('ratesNote'), wide: true }, 'info')
+      jsx(InfoTip, { id: 'rates-source', dir: 'up', label: t('infoLabel'), text: billed ? t('billedRatesNote') : t('ratesNote'), wide: true }, 'info')
     ] }, 'head'),
     open
       ? jsxs('div', { id: 'wm-rates-body', children: [
@@ -6018,6 +6047,13 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}',
   '.wm-product .wm-product-heading h1{margin:0;font-size:var(--wm-font-display,24px);line-height:1.2;font-weight:620;letter-spacing:-.35px}',
   '.wm-product .wm-product-heading p{margin:5px 0 0;color:var(--ui-text-tertiary);font-size:var(--wm-font-body,13px);line-height:1.45}',
+  '.wm-status-chip{display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border:1px solid var(--wm-border);border-radius:999px;font-size:11.5px;color:var(--ui-text-secondary);white-space:nowrap;align-self:center}',
+  '.wm-status-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ui-text-quaternary);flex-shrink:0}',
+  '.wm-status-chip[data-status="live"]{color:var(--ui-text-secondary)}',
+  '.wm-status-chip[data-status="live"]::before{background:var(--ui-accent)}',
+  '.wm-status-chip[data-status="connecting"]::before{background:var(--ui-warning)}',
+  '.wm-status-chip[data-status="loading"]::before,.wm-status-chip[data-status="refreshing"]::before{background:var(--ui-accent);animation:wm-status-pulse 1.4s ease-in-out infinite}',
+  '@keyframes wm-status-pulse{0%,100%{opacity:1}50%{opacity:.35}}',
   '.wm-product .wm-product-tabs{display:flex;align-items:stretch;flex-wrap:wrap;gap:2px;min-height:54px;padding:0 18px;border-bottom:1px solid var(--wm-border);position:sticky;top:0;z-index:30;background-color:Canvas;background-image:linear-gradient(var(--wm-surface),var(--wm-surface));background-clip:padding-box;box-shadow:0 2px 0 var(--wm-border);overflow:visible}',
   '.wm-product .wm-product-brand{display:flex;align-items:center;gap:9px;flex-shrink:0;align-self:stretch;margin:0 10px 0 0;padding:0 15px 0 2px;border-right:1px solid var(--wm-border)}',
   '.wm-product .wm-product-brand-mark{display:inline-flex;align-items:center;flex-shrink:0}',
@@ -7416,9 +7452,21 @@ function OverviewPage() {
       target.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
     } catch {}
   }
+  // Connection status, right of the page title: the identity gate and the
+  // backend queries are otherwise invisible while they churn or load.
+  const identityLive = membershipIdentityCurrent(identity)
+  const dataBusy = analytics.isLoading || analytics.isFetching
+    || economics.isLoading || accounts.isLoading || weather.isLoading
+  const haveData = analyticsCurrent || accountsReady
+  const status = !identityLive ? { key: 'connecting', label: t('statusConnecting') }
+    : dataBusy && !haveData ? { key: 'loading', label: t('statusLoading') }
+    : dataBusy ? { key: 'refreshing', label: t('statusRefreshing') }
+    : { key: 'live', label: t('statusLive') }
+  const statusChip = jsx('span', { className: 'wm-status-chip', 'data-status': status.key,
+    'aria-live': 'polite', children: status.label })
   return jsx(ProductShell, { children:
     jsxs('main', { className: 'wm-shell', children: [
-      jsx(ProductHeader, { title: t('ovTitle'), subtitle: t('ovSubtitle') }),
+      jsx(ProductHeader, { title: t('ovTitle'), subtitle: t('ovSubtitle'), actions: statusChip }),
       analytics.error ? jsxs('div', { className: 'wm-alert', role: 'alert', children: [
         jsx('p', { children: t('ovBackendReadFailure') }),
         jsx('p', { className: 'wm-subtle', children: String(analytics.error?.message || analytics.error || '') }),
@@ -16498,6 +16546,14 @@ const I18N = {
     inclDerived: ' · incl. derived cache',
     ratesNote:
       'Rates come from the WolfMark catalogue card, not the provider’s invoice. Hermes may show a different estimate when its own route or peak/off-peak pricing differs.',
+    billedRates: 'Billed rates ($/Mtok)',
+    originalRates: 'Original (list)',
+    billedRatesNote:
+      'The provider’s own billed (effective) rates for this account, with the original undiscounted list price for comparison. These are the rates the expenditure estimate uses.',
+    statusConnecting: 'Connecting…',
+    statusLoading: 'Loading data…',
+    statusRefreshing: 'Refreshing…',
+    statusLive: 'Live',
     range_all: 'All recorded',
     range_month: 'This month',
     range_today: 'Today',
@@ -18315,6 +18371,14 @@ const I18N = {
     inclDerived: ' · 含推算缓存',
     ratesNote:
       '费率来自 WolfMark 目录卡，而非供应商账单。Hermes 自身可能采用不同路线或峰谷费率，因此估算可能不同。',
+    billedRates: '实付费率（$/百万令牌）',
+    originalRates: '原价（目录）',
+    billedRatesNote:
+      '该账户的供应商实付（有效）费率，并列出未打折的目录原价供比较。支出估算即按此费率计算。',
+    statusConnecting: '正在连接…',
+    statusLoading: '正在加载数据…',
+    statusRefreshing: '正在刷新…',
+    statusLive: '已连接',
     sessionTokens: '本次会话',
     src_backend: 'WolfMark 后端估算',
     src_backend_summary: 'Hermes 主调用 API 等值汇总',

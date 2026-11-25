@@ -727,6 +727,13 @@ def _custom_fixable(rows: list[dict[str, Any]], profiles: dict[str, Any]
     for row in rows:
         if row.get("list_usd") is not None:
             continue
+        # A call the shared expenditure calculation already prices — by the
+        # provider's own native rates, a reported debit or the applicable
+        # catalogue leg — is not unpriced usage a custom rate could fix.
+        # Suggesting one for it would replace the provider's own rates with
+        # a guess.
+        if row.get("expenditure_usd") is not None:
+            continue
         miss = row.get("pricing_miss") or "price_evidence_missing"
         if miss not in PRICING_FIXABLE_MISS_REASONS:
             continue
