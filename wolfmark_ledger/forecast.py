@@ -286,10 +286,11 @@ def _metered_per_call_value(item: dict, book) -> float | None:
     """One recorded attempt at the provider's own billed (effective) rates.
 
     The applicable metered expenditure for rows without a provider-reported
-    debit: effective rates where the provider publishes them, else the
-    catalogue rate (which is the provider's public API price). A free or
-    promotional credits plan is a metered API account — its usage is never
-    valued at the undiscounted list price.
+    debit: effective rates where the provider publishes them — native rows
+    are the applicable account-level rates even when a catalogue card lists
+    the same model — else the catalogue rate, which is the provider's public
+    API price. A free or promotional credits plan is a metered API account —
+    its usage is never valued at the undiscounted list price.
     """
     if str(item.get('outcome') or 'ok') in ('error', 'missing_usage'):
         return None
@@ -298,10 +299,29 @@ def _metered_per_call_value(item: dict, book) -> float | None:
         return None
     provider = str(item.get('provider') or '').strip()
     model = str(item.get('model') or '').strip()
-    _hit, native = resolve_rate(book, provider, model, native_fetch=True)
-    if native is None:
+    prompt = item['input_tokens'] + item['cache_read_tokens'] + item['cache_write_tokens']
+    total = prompt + item['output_tokens']
+    # The same counter-consistency refusal as the list valuation: old stores
+    # with conflicting aggregates are never repriced from partial buckets.
+    if (not total or item.get('prompt_tokens') not in (None, 0, prompt)
+            or item.get('total_tokens') not in (None, 0, total)):
         return None
-    rate = native.effective_rate()
+    # The provider's own rows are the applicable metered rates whenever they
+    # exist; the catalogue is only the fallback, never a shadow over them.
+    from . import provider_native
+    native = provider_native.lookup(provider, model, allow_fetch=True)
+    if native is None:
+        lookup = book.lookup(provider, model, at=item['ts'])
+        if lookup is None:
+            return None
+        provisional_tokens = {'cache_read': item['cache_read_tokens'],
+                              'cache_write': item['cache_write_tokens']}
+        if any(bucket in getattr(lookup, 'provisional', ()) and count > 0
+               for bucket, count in provisional_tokens.items()):
+            return None
+        rate = lookup.rate
+    else:
+        rate = native.effective_rate()
     if rate.input is None or rate.output is None:
         return None
     # A positive cache-read count with no published read price, or a positive

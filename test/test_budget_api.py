@@ -168,8 +168,7 @@ class MeteredBudgetTests(unittest.TestCase):
                 return Rate(0.03, 0.12, .0006, None)
 
         with patch.object(plugin_api.forecast, 'load_catalogue', return_value=book), \
-                patch.object(plugin_api.forecast, 'resolve_rate',
-                             return_value=(None, FakeNative())), \
+                patch('wolfmark_ledger.provider_native.lookup', return_value=FakeNative()), \
                 patch('time.time', return_value=NOW):
             doc = self.client.get('/budgets').json()
             saved = self.client.put('/budgets/x', params={'if_rev': doc['rev']},
