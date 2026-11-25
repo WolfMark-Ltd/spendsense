@@ -318,7 +318,9 @@ def _metered_per_call_value(item: dict, book) -> float | None:
         if any(bucket in getattr(lookup, 'provisional', ()) and count > 0
                for bucket, count in provisional_tokens.items()):
             return None
-        rate = lookup.rate
+        # The applicable context-band rate, exactly as the list valuation
+        # selects it — never the base rate across a whole-context tier.
+        rate, _ = _effective_rate(lookup.rate, prompt)
     else:
         rate = native.effective_rate()
     if rate.input is None or rate.output is None:

@@ -501,13 +501,13 @@ def route_arrangements_payload(*, path: Optional[Path | str] = None,
     every other arrangement stays an estimate or a recorded charge. Failures
     return an empty map: an unreadable store never classifies usage.
     """
+    book, _catalogue_source = active_catalogue(catalogue or None)
     try:
         data = store.load_with_seats(path)
         if data.get("error"):
             return {}
         resolved = store.resolve_route_entitlements(
-            data.get("accounts", []), data.get("entitlement_store") or {},
-            active_catalogue(catalogue or None), at)
+            data.get("accounts", []), data.get("entitlement_store") or {}, book, at)
     except Exception:
         return {}
     return {str(route): "included"

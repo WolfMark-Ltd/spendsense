@@ -293,8 +293,13 @@ def _row_result(row: dict[str, Any], catalogue: Catalogue, mode: str) -> dict[st
     billed_usd, billed_kind = _billed(row)
     basis_usd, basis_kind = _basis_amount(mode, billed_usd, billed_kind, list_usd)
     from .expenditure import call_expenditure
+    # Session-level recorded amounts stay at session level — a session's
+    # actual cost is never allocated to an individual call, so only a
+    # definitive "actual" classification counts as reported evidence here,
+    # and only with the amount the provider recorded for it.
+    reported_usd = billed_usd if billed_kind == "actual" else None
     expenditure_usd, expenditure_basis = call_expenditure(
-        billing_class=billed_kind, catalogue_usd=list_usd)
+        billing_class=billed_kind, reported_usd=reported_usd, catalogue_usd=list_usd)
 
     return {
         "_session_id": str(row.get("session_id") or ""),
@@ -668,9 +673,16 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
 
     billing_class = _billing_class(statuses, provider, model)
     from .expenditure import call_expenditure
+    # The catalogue leg must be an *applicable* price: price()'s input-rate
+    # fallback for an unreported cache counter fabricates a cache price, so a
+    # defaulted call keeps its theoretical list valuation but no expenditure.
+    catalogue_price = None
+    if list_usd is not None and priced and not (priced.cache_read_defaulted
+                                                or priced.cache_write_defaulted):
+        catalogue_price = list_usd
     expenditure_usd, expenditure_basis = call_expenditure(
         billing_class=billing_class, native_effective_usd=native_effective_usd,
-        catalogue_usd=list_usd)
+        catalogue_usd=catalogue_price)
     billed_usd = 0.0 if billing_class == "included" else None
     if mode == "billed":
         basis_usd = 0.0 if billing_class == "included" else None

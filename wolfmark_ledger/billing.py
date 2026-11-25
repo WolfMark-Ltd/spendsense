@@ -422,11 +422,17 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                                                       "missing_usage", "usage_missing"})
         override = (_rate_override(profile, row)
                     if profile and profile.get("kind") == "custom" and not ineligible_call else None)
+        # Membership-resolved route arrangements resolve before the evidence
+        # guard: an included route's calls are measured zeros even with no
+        # catalogue, native or override price — never unclassified.
+        route_included = bool(route_arrangements
+                              and route_arrangements.get(
+                                  str(row.get("provider") or "").strip().lower()) == "included")
         # A native effective rate is pricing evidence in its own right: a call
         # the catalogue cannot price at list is still metered at the
         # provider's applicable rates, never dropped as unpriced.
         if value is None and provider_cost is None and override is None \
-                and row.get("native_effective_usd") is None:
+                and row.get("native_effective_usd") is None and not route_included:
             unclassified_tokens += row.get("_tokens") or 0
             unclassified_calls += 1
             api_unpriced_tokens += row.get("_tokens") or 0
@@ -483,20 +489,23 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
         # keep allowance and paid overage in their own figures, and an
         # unconfigured account is never assumed metered for cash impact.
         from .expenditure import call_expenditure
-        # Membership-resolved route arrangements are authoritative for the
-        # expenditure class: a validly-owned 'included' route costs nothing
-        # extra, regardless of any profile kind.
-        route_key = str(row.get("provider") or "").strip().lower()
-        route_included = bool(route_arrangements
-                              and route_arrangements.get(route_key) == "included")
-        exp_usd, exp_basis = call_expenditure(
-            billing_class=("included" if (route_included or kind == "subscription_included")
-                           else "unknown"),
-            reported_usd=metered_evidence,
-            native_effective_usd=(row.get("native_effective_usd")
-                                  if not ineligible_call else None),
-            catalogue_usd=api if api is not None else None)
-        if metered_evidence is not None:
+        # The expenditure class for this row: the membership arrangement
+        # resolved above is authoritative; an included call with no
+        # catalogue/native price is a measured zero, never unpriced.
+        if route_included:
+            exp_usd, exp_basis = 0.0, "included"
+        else:
+            exp_usd, exp_basis = call_expenditure(
+                billing_class=("included" if kind == "subscription_included" else "unknown"),
+                reported_usd=metered_evidence,
+                native_effective_usd=(row.get("native_effective_usd")
+                                      if not ineligible_call else None),
+                catalogue_usd=api if api is not None else None)
+        if route_included:
+            # Included usage: no additional expenditure; the allowance value
+            # consumed stays visible as the credits figure only.
+            metered_row, incremental_row, credit_row = 0.0, 0.0, api_arith
+        elif metered_evidence is not None:
             # Metered usage value is the provider's own figure; API-equivalent
             # stays a separate theoretical number (when the catalogue has one).
             confirmed_total += metered_evidence
@@ -557,11 +566,12 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
         if profile and isinstance(profile.get("allowances"), dict):
             allowance_meta[str(profile.get("id"))] = profile["allowances"]
         total_api += api_arith
-        metered += metered_row
         if metered_row is not None:
+            metered += metered_row
             metered_rows += 1
         incremental += incremental_row
-        credits += credit_row
+        if credit_row is not None:
+            credits += credit_row
         bucket = by_kind.setdefault(kind, {"api_equivalent_usd": 0.0, "metered_usd": 0.0,
                                            "incremental_usd": 0.0, "credits_usd": 0.0,
                                            "tokens": 0, "calls": 0})

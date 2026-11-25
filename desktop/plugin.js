@@ -2787,14 +2787,14 @@ function analyticsListPartial(totals) {
 
 function desktopTodayText(report, t, filtered = false) {
   const applicable = analyticsUsageCost(report?.totals)
-  const figure = applicable.basis === 'provider_effective' && applicable.usd != null
+  const figure = applicable.basis === 'expenditure' && applicable.usd != null
     ? analyticMoney(applicable.usd) : analyticsListDisplay(report?.totals, true)
   return `${t(filtered ? 'desktopTodayFilteredScope' : 'desktopTodayScope')} ${figure}`
 }
 
 function desktopTodayAmount(report) {
   const applicable = analyticsUsageCost(report?.totals)
-  if (applicable.basis === 'provider_effective' && applicable.usd != null) return analyticMoney(applicable.usd)
+  if (applicable.basis === 'expenditure' && applicable.usd != null) return analyticMoney(applicable.usd)
   return analyticsListDisplay(report?.totals)
 }
 
@@ -2877,7 +2877,9 @@ function Chip() {
           style: { color: budgetColour(guard?.level) },
           'aria-label': guard ? budgetTooltip(guard, t) : undefined,
           role: guard ? 'img' : undefined,
-          children: guard?.spend != null ? sessionBudgetFigure(guard) : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${finiteValue(live.usageCostUsd) != null ? fmtUsd(finiteValue(live.usageCostUsd)) : apiEquivalentDisplay(live)}`
+          children: guard?.spend != null ? sessionBudgetFigure(guard)
+            : finiteValue(live.usageCostUsd) != null ? `${warn ? '⚠ ' : ''}${fmtUsd(finiteValue(live.usageCostUsd))}`
+            : live.cost == null ? t('noPrice') : `${warn ? '⚠ ' : ''}${apiEquivalentDisplay(live)}`
         }),
         live.cacheHitPct != null
           ? jsx('span', { className: 'text-(--ui-text-quaternary)', children: `· ⚡${Math.round(live.cacheHitPct)}%` })
