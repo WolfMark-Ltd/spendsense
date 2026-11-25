@@ -396,6 +396,9 @@ class MeteredBasisTests(unittest.TestCase):
         loaded = self.profiles({"profiles": [{"id": "r", "provider": "nous", "kind": "custom",
                                               "rate_override": {"input": 0.9, "output": 4.5}}]})
         rows = [row(provider="nous", model="deepseek/x", value=0.193,
-                    native_effective_usd=0.039)]
+                    native_effective_usd=0.039, _tokens=1_000_000, _input=1_000_000)]
         report = billing.classify(rows, loaded)
-        self.assertAlmostEqual(report["by_kind"]["custom"]["metered_usd"], 0.193)
+        # The explicit user rate (0.9/MTok input) replaces both the list and
+        # the provider estimate for this route.
+        self.assertAlmostEqual(report["by_kind"]["custom"]["metered_usd"], 0.9)
+        self.assertAlmostEqual(report["by_kind"]["custom"]["api_equivalent_usd"], 0.9)
