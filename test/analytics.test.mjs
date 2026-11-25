@@ -951,10 +951,20 @@ test('unpriced zero-token calls withhold per-call cost and mark the API subtotal
 
 test('explorer CSV keeps price coverage beside the unit costs', () => {
  const csv=T.analyticsExplorerCsv([{model:'m',provider:'p',calls:10,tokens:100,list_usd:1,per_call:null,per_million:null,
-   priced_tokens:10,unpriced_tokens:90,cache_hit_rate:.5}])
+   priced_tokens:10,unpriced_tokens:90,cache_hit_rate:.5,provider_effective_usd:null}])
  const [head,line]=csv.trim().split('\n')
  assert.ok(head.includes('priced_tokens') && head.includes('unpriced_tokens'),head)
- assert.deepEqual(line.split(',').slice(-2),['10','90'])
+ // The trailing effective_usd column is empty for this fixture.
+ assert.deepEqual(line.split(',').slice(-3,-1),['10','90'])
+ assert.equal(line.split(',').pop(),'')
+})
+
+test('explorer CSV appends the effective expenditure column', () => {
+ const csv=T.analyticsExplorerCsv([{model:'m',provider:'nous',calls:10,tokens:100,list_usd:1,per_call:null,per_million:null,
+   priced_tokens:100,unpriced_tokens:0,cache_hit_rate:.5,provider_effective_usd:0.038529}])
+ const [head,line]=csv.trim().split('\n')
+ assert.ok(head.endsWith('effective_usd'),head)
+ assert.equal(line.split(',').pop(),'0.038529')
 })
 
 // --- PR28: analytics note_codes ------------------------------------------------
