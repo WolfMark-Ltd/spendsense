@@ -382,3 +382,20 @@ class MeteredBasisTests(unittest.TestCase):
                     native_effective_usd=0.039, _provider_cost_usd=0.045)]
         report = billing.classify(rows, loaded)
         self.assertAlmostEqual(report["by_kind"]["prepaid"]["metered_usd"], 0.045)
+
+    def test_custom_rule_without_override_meters_the_effective_rate(self):
+        # A saved custom rule that omits rate_override must not measure a
+        # known positive cost as zero: the applicable effective rate applies.
+        loaded = self.profiles({"profiles": [{"id": "r", "provider": "nous", "kind": "custom"}]})
+        rows = [row(provider="nous", model="deepseek/x", value=None,
+                    native_effective_usd=0.039)]
+        report = billing.classify(rows, loaded)
+        self.assertAlmostEqual(report["by_kind"]["custom"]["metered_usd"], 0.039)
+
+    def test_custom_override_still_wins_over_the_effective_estimate(self):
+        loaded = self.profiles({"profiles": [{"id": "r", "provider": "nous", "kind": "custom",
+                                              "rate_override": {"input": 0.9, "output": 4.5}}]})
+        rows = [row(provider="nous", model="deepseek/x", value=0.193,
+                    native_effective_usd=0.039)]
+        report = billing.classify(rows, loaded)
+        self.assertAlmostEqual(report["by_kind"]["custom"]["metered_usd"], 0.193)

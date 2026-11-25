@@ -506,7 +506,11 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
             if (profile or {}).get("count_credits_as_spend"):
                 incremental_row = 0.0  # explicit user view; reported separately
         elif kind == "custom":
-            metered_row, incremental_row, credit_row = api_arith, api_arith, 0.0
+            # An explicit override is the user's own rate for the route and
+            # wins; without one, the applicable effective rate applies — a
+            # known positive cost is never measured as zero.
+            metered_row, incremental_row, credit_row = \
+                (applicable_usd if api is None else api_arith), api_arith, 0.0
         else:
             metered_row, credit_row = applicable_usd, 0.0
             if kind == "unknown":
