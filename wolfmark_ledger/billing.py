@@ -30,7 +30,7 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 from .aggregate import _reported
 from .filelock import locked as _locked
@@ -357,7 +357,8 @@ def _allowance_report(usage_by_model, allowance_meta, profiles):
 
 
 def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
-             presentation: str = "both") -> dict[str, Any]:
+             presentation: str = "both",
+             route_arrangements: Optional[Mapping[str, str]] = None) -> dict[str, Any]:
     """Split API-equivalent value from metered, incremental and fee figures."""
     mode = presentation if presentation in PRESENTATIONS else "both"
     legacy_profiles = list((profiles or {}).get("profiles") or [])
@@ -473,15 +474,28 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                 allowance = float(allowances[row["model"]])
             elif isinstance(profile.get("allowance_usd"), (int, float)):
                 allowance = float(profile["allowance_usd"])
-        # Applicable metered rates: the provider's own billed (effective) rates
-        # where it publishes them, else the catalogue rate — which for
-        # catalogue-priced providers *is* their public API price. A free or
-        # promotional credits plan is a metered API account, not a subscription:
-        # its metered expenditure is estimated at the applicable provider rates,
-        # never at the undiscounted list price. The list API-equivalent stays
-        # the subscription-value figure for subscription-included routes.
-        applicable_usd = (float(row["native_effective_usd"])
-                          if row.get("native_effective_usd") is not None else api_arith)
+        # Shared billing-aware expenditure (money spent), per call:
+        #   reported provider debit first; otherwise the provider's applicable
+        #   effective rates (purchased credits are real expenditure as they
+        #   are consumed); otherwise the verified applicable catalogue rate.
+        # Subscription-included usage adds no inference expenditure — its
+        # allowance value stays a separate credits figure. Hybrid profiles
+        # keep allowance and paid overage in their own figures, and an
+        # unconfigured account is never assumed metered for cash impact.
+        from .expenditure import call_expenditure
+        # Membership-resolved route arrangements are authoritative for the
+        # expenditure class: a validly-owned 'included' route costs nothing
+        # extra, regardless of any profile kind.
+        route_key = str(row.get("provider") or "").strip().lower()
+        route_included = bool(route_arrangements
+                              and route_arrangements.get(route_key) == "included")
+        exp_usd, exp_basis = call_expenditure(
+            billing_class=("included" if (route_included or kind == "subscription_included")
+                           else "unknown"),
+            reported_usd=metered_evidence,
+            native_effective_usd=(row.get("native_effective_usd")
+                                  if not ineligible_call else None),
+            catalogue_usd=api if api is not None else None)
         if metered_evidence is not None:
             # Metered usage value is the provider's own figure; API-equivalent
             # stays a separate theoretical number (when the catalogue has one).
@@ -496,28 +510,35 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                 billable = max(0.0, metered_evidence - allowance)
                 incremental_row = billable if (kind == "api" or (profile or {}).get("overage_paid")) else 0.0
         elif kind == "subscription_included":
-            # Subscription usage: the standard API-equivalent (list) is the
-            # value the membership received.
-            metered_row, incremental_row, credit_row = api_arith, 0.0, api_arith
-        elif kind == "free":
-            metered_row, incremental_row, credit_row = applicable_usd, 0.0, applicable_usd
-        elif kind in _CREDIT_KINDS:
-            metered_row, incremental_row, credit_row = applicable_usd, 0.0, applicable_usd
-            if (profile or {}).get("count_credits_as_spend"):
-                incremental_row = 0.0  # explicit user view; reported separately
-        elif kind == "custom":
-            # An explicit override is the user's own rate for the route and
-            # wins; without one, the applicable effective rate applies — a
-            # known positive cost is never measured as zero.
-            metered_row, incremental_row, credit_row = \
-                (applicable_usd if api is None else api_arith), api_arith, 0.0
+            # Subscription usage: no additional expenditure; the list
+            # API-equivalent is the value the membership received, kept as the
+            # allowance-consumed figure only.
+            metered_row, incremental_row, credit_row = 0.0, 0.0, api_arith
+        elif kind == "custom" and override is not None:
+            # An explicit user rate wins for the route.
+            metered_row, incremental_row, credit_row = api_arith, api_arith, 0.0
         else:
-            metered_row, credit_row = applicable_usd, 0.0
+            # Credits, prepaid, api and unclassified routes: the shared
+            # expenditure figure (effective first, catalogue fallback). A
+            # genuinely free promotional tier prices at its own explicit zero
+            # rates — a measured zero, not a fabricated one — and an
+            # unconfigured account's expenditure stays an estimate with its
+            # incremental cash unknown. Credits consumption is an
+            # allowance-view figure for credit kinds only.
+            metered_row = exp_usd
+            credit_row = exp_usd if kind in _CREDIT_KINDS else 0.0
+            if route_included:
+                # The allowance consumed is visible as the credits figure —
+                # membership value received, never additional expenditure.
+                credit_row = api_arith
             if kind == "unknown":
                 unknown_seen = True
                 incremental_row = 0.0
+            elif (profile or {}).get("count_credits_as_spend") and kind in _CREDIT_KINDS:
+                incremental_row = 0.0  # explicit user view; reported separately
             else:
-                incremental_row = applicable_usd
+                incremental_row = max(0.0, (metered_row or 0.0) - allowance) \
+                    if kind == "api" or (profile or {}).get("overage_paid") else 0.0
 
         model_allowances = (profile or {}).get("allowances")
         model_allowances = model_allowances if isinstance(model_allowances, dict) else {}

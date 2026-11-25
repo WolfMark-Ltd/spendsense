@@ -316,8 +316,6 @@ class EvidenceBasisTests(unittest.TestCase):
         self.assertAlmostEqual(report["incremental_usd"], 0.20, msg="only the overage is extra cash")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class MeteredBasisTests(unittest.TestCase):
@@ -402,3 +400,65 @@ class MeteredBasisTests(unittest.TestCase):
         # the provider estimate for this route.
         self.assertAlmostEqual(report["by_kind"]["custom"]["metered_usd"], 0.9)
         self.assertAlmostEqual(report["by_kind"]["custom"]["api_equivalent_usd"], 0.9)
+
+
+class SharedExpenditureFixture(unittest.TestCase):
+    """The agreed billing-model regression fixture.
+
+    One population, three billing models, one shared expenditure result:
+
+    - Subscription-included usage: $10 list, $0 expenditure.
+    - Nous credits: $0.30 list, $0.06 expenditure (applicable effective
+      rates — purchased credits are real expenditure as consumed).
+    - OpenRouter: $0.50 list, $0.50 expenditure (its public catalogue rate
+      IS the applicable price).
+
+    Expected combined totals: API-equivalent value $10.80; API expenditure
+    $0.56. Adding another provider never changes the pricing basis of
+    previously recorded calls: the figure is composed per call.
+    """
+
+    def profiles(self, data):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump(data, handle)
+        handle.close()
+        self.addCleanup(lambda: os.unlink(handle.name))
+        return billing.load_profiles(Path(handle.name))
+
+    def test_agreed_fixture_totals(self):
+        # The codex route carries a membership-resolved 'included' arrangement
+        # (the authoritative classification source), so its usage is exempt.
+        rows = [
+            # Subscription-included: priced at list by the route card, no
+            # native effective rates — expenditure $0.
+            row(provider="codex", model="gpt/x", value=10.0, tokens=10_000_000),
+            # Nous credits: native effective rates apply ($0.06), list $0.30.
+            row(provider="nous", model="deepseek/x", value=0.30, tokens=1_000_000,
+                native_effective_usd=0.06),
+            # OpenRouter: catalogue price IS the applicable price.
+            row(provider="openrouter", model="or/x", value=0.50, tokens=1_000_000),
+        ]
+        report = billing.classify(rows, self.profiles({}),
+                                  route_arrangements={"codex": "included"})
+        self.assertAlmostEqual(report["api_equivalent_usd"], 10.80, places=6)
+        self.assertAlmostEqual(report["metered_usd"], 0.56, places=6)
+        # The included allowance value stays visible as credits consumed,
+        # never as expenditure.
+        self.assertAlmostEqual(report["credits_consumed_usd"], 10.0, places=6)
+        self.assertAlmostEqual(report["incremental_usd"], 0.0, places=6)
+
+    def test_adding_a_provider_never_rebases_recorded_calls(self):
+        loaded = self.profiles({})
+        nous = row(provider="nous", model="deepseek/x", value=0.30, tokens=1_000_000,
+                   native_effective_usd=0.06)
+        before = billing.classify([nous], loaded)
+        after = billing.classify([nous, row(provider="openrouter", model="or/x",
+                                            value=0.50, tokens=1_000_000)], loaded)
+        self.assertAlmostEqual(before["by_kind"]["unknown"]["metered_usd"], 0.06, places=6)
+        self.assertAlmostEqual(after["by_kind"]["unknown"]["metered_usd"], 0.56, places=6)
+        # The nous call's own expenditure is unchanged: composition is per call.
+        self.assertAlmostEqual(after["metered_usd"] - before["metered_usd"], 0.50, places=6)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -21,7 +21,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import budgets, economics, membership, store
+from .aggregate import _billing_class, route_billing_status
 from .db import LedgerUnavailable
+from .expenditure import call_expenditure
 from .pricing import _amount as _per_mtok_amount, _effective_rate, load_catalogue, price, resolve_rate
 
 RANK = {'normal': 0, 'info': 1, 'warning': 2, 'exceeded': 3}
@@ -285,12 +287,11 @@ def _per_call_value(item: dict, book) -> float | None:
 def _metered_per_call_value(item: dict, book) -> float | None:
     """One recorded attempt at the provider's own billed (effective) rates.
 
-    The applicable metered expenditure for rows without a provider-reported
-    debit: effective rates where the provider publishes them — native rows
-    are the applicable account-level rates even when a catalogue card lists
-    the same model — else the catalogue rate, which is the provider's public
-    API price. A free or promotional credits plan is a metered API account —
-    its usage is never valued at the undiscounted list price.
+    The effective leg of the shared expenditure calculation: the provider's
+    own native rows — the applicable account-level rates even when a
+    catalogue card lists the same model. The catalogue fallback, the
+    subscription-included class and recorded-debit precedence are applied by
+    ``expenditure.call_expenditure`` so every surface shares one result.
     """
     if str(item.get('outcome') or 'ok') in ('error', 'missing_usage'):
         return None
@@ -306,8 +307,6 @@ def _metered_per_call_value(item: dict, book) -> float | None:
     if (not total or item.get('prompt_tokens') not in (None, 0, prompt)
             or item.get('total_tokens') not in (None, 0, total)):
         return None
-    # The provider's own rows are the applicable metered rates whenever they
-    # exist; the catalogue is only the fallback, never a shadow over them.
     from . import provider_native
     native = provider_native.lookup(provider, model, allow_fetch=True)
     if native is None:
@@ -336,10 +335,19 @@ def _metered_per_call_value(item: dict, book) -> float | None:
 
 
 def build_report(*, path: Path | str | None = None, event_db_path=None, now=None,
-                 catalogue=None, fx_path=None) -> dict:
+                 catalogue=None, fx_path=None, state_db_path=None,
+                 route_arrangements=None) -> dict:
     """Build monthly status from local evidence, skipping ledger work for session-only limits."""
     now = time.time() if now is None else now
     doc = budgets.load(path)
+    statuses = route_billing_status(state_db_path)
+    if route_arrangements:
+        # Membership-resolved route arrangements are authoritative for the
+        # expenditure class: a validly-owned 'included' route costs nothing
+        # extra, regardless of the model used on it.
+        statuses.setdefault("routes", {}).update(
+            {str(route).strip().lower(): str(cls)
+             for route, cls in route_arrangements.items() if cls == "included"})
     monthly = [b for b in doc['budgets'] if b['scope'] != 'session']
     if not monthly:
         return {'ok': True, **doc, 'statuses': [],
@@ -365,16 +373,22 @@ def build_report(*, path: Path | str | None = None, event_db_path=None, now=None
                 for item in raw:
                     list_usd = (_cached_per_call_value(item, book, revision) if cache_prices
                                 else _per_call_value(item, book))
-                    # Applicable metered expenditure: the provider's own billed
-                    # (effective) rates where it publishes them; otherwise the
-                    # catalogue rate, which for catalogue-priced providers is
-                    # their public API price. Computed for every row regardless
-                    # of the list-price cache: resolve_rate caches per provider,
-                    # so busy accounts keep their effective pricing.
-                    metered_usd = _metered_per_call_value(item, book)
-                    if metered_usd is None:
-                        metered_usd = list_usd
+                    # Shared billing-aware expenditure: the provider's own
+                    # billed (effective) rates first — computed for every row
+                    # regardless of the list-price cache, since resolve caches
+                    # per provider — the catalogue rate as the applicable
+                    # fallback for catalogue-priced providers, and a measured
+                    # zero for subscription-included routes.
+                    effective_usd = _metered_per_call_value(item, book)
+                    provider = str(item.get('provider') or '').strip()
+                    model = str(item.get('model') or '').strip()
+                    row_class = _billing_class(statuses, provider, model)
+                    metered_usd, metered_basis = call_expenditure(
+                        billing_class=row_class, native_effective_usd=effective_usd,
+                        catalogue_usd=list_usd)
                     rows.append({**item, 'list_usd': list_usd,
+                                 'expenditure_usd': metered_usd,
+                                 'expenditure_basis': metered_basis,
                                  'actual_metered_usd': metered_usd,
                                  'measurement': 'actual_metered' if metered_usd is not None else 'unknown'})
                 available = True

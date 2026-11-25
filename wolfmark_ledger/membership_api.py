@@ -490,3 +490,26 @@ def clear_payload(account_id: str, entry_id: str, *, reason: str = "user",
     updated = {**account, "manual_exhaustions": cleared}
     result = store.save_account(updated, path, if_rev=account.get("rev"))
     return {"ok": True, "account": result["account"]}
+
+
+def route_arrangements_payload(*, path: Optional[Path | str] = None,
+                               catalogue: Optional[Mapping[str, Any]] = None,
+                               at: Any = None) -> dict[str, str]:
+    """Membership-resolved route arrangements for the expenditure class.
+
+    Only validly-owned 'included' routes exempt their usage from expenditure;
+    every other arrangement stays an estimate or a recorded charge. Failures
+    return an empty map: an unreadable store never classifies usage.
+    """
+    try:
+        data = store.load_with_seats(path)
+        if data.get("error"):
+            return {}
+        resolved = store.resolve_route_entitlements(
+            data.get("accounts", []), data.get("entitlement_store") or {},
+            active_catalogue(catalogue or None), at)
+    except Exception:
+        return {}
+    return {str(route): "included"
+            for route, relation in (resolved.get("included_by_route") or {}).items()
+            if relation.get("status") == "valid"}

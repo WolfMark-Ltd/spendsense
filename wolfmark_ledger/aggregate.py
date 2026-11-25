@@ -292,6 +292,9 @@ def _row_result(row: dict[str, Any], catalogue: Catalogue, mode: str) -> dict[st
 
     billed_usd, billed_kind = _billed(row)
     basis_usd, basis_kind = _basis_amount(mode, billed_usd, billed_kind, list_usd)
+    from .expenditure import call_expenditure
+    expenditure_usd, expenditure_basis = call_expenditure(
+        billing_class=billed_kind, catalogue_usd=list_usd)
 
     return {
         "_session_id": str(row.get("session_id") or ""),
@@ -320,6 +323,8 @@ def _row_result(row: dict[str, Any], catalogue: Catalogue, mode: str) -> dict[st
         "billed_kind": billed_kind,
         "list_usd": list_usd,
         "list_usd_upper": list_upper,
+        "expenditure_usd": expenditure_usd,
+        "expenditure_basis": expenditure_basis,
         "tier_possible": tier_possible,
         "basis_usd": basis_usd,
         "basis_kind": basis_kind,
@@ -554,8 +559,13 @@ def route_billing_status(state_db_path: Path | str | None = None) -> dict[str, d
 
 def _billing_class(statuses: dict[str, dict], provider: str, model: str) -> str:
     # Exact route/model only: an unknown new model must not inherit a sibling's
-    # billing class and appear as confirmed $0.
-    return statuses.get("exact", {}).get((provider, model)) or "unknown"
+    # billing class and appear as confirmed $0. Route-level membership
+    # arrangements (statuses["routes"]) are a separate, authoritative source:
+    # a validly-owned included route covers every model served through it.
+    exact = statuses.get("exact", {}).get((provider, model))
+    if exact:
+        return exact
+    return statuses.get("routes", {}).get(provider) or "unknown"
 
 
 def _reported(flag: Any, value: Any) -> bool:
@@ -629,24 +639,38 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     else:
         miss = ""
     # Estimated effective provider cost: the provider's own billed rates where
-    # it publishes them, and only for tokens whose rates exist. A positive
-    # cache-read count with no published read price, or a positive cache-write
-    # count (native rows publish no write price), leaves the call out of the
-    # measured estimate instead of guessing an unsubstituted rate.
+    # it publishes them — looked up directly from the provider's own rows so a
+    # catalogue card can never shadow an account-level discount — and only for
+    # tokens whose rates exist. A positive cache-read count with no published
+    # read price, or a positive cache-write count (native rows publish no
+    # write price), leaves the call out of the measured estimate instead of
+    # guessing an unsubstituted rate.
     native_effective_usd = None
-    if native is not None and not failure and not missing:
-        erate = native.effective_rate()
-        reads_unpriced = cache_read > 0 and erate.cache_read is None
-        writes_unpriced = cache_write > 0
-        if not reads_unpriced and not writes_unpriced:
-            native_effective_usd = _amount(erate, input_tokens, output_tokens,
-                                           cache_read, cache_write)[0]
+    if not failure and not missing:
+        from . import provider_native as _pn
+        _native_row = _pn.lookup(provider, model, allow_fetch=True) if native is None else native
+        if _native_row is not None:
+            erate = _native_row.effective_rate()
+            reads_unpriced = cache_read > 0 and erate.cache_read is None
+            writes_unpriced = cache_write > 0
+            if not reads_unpriced and not writes_unpriced:
+                native_effective_usd = _amount(erate, input_tokens, output_tokens,
+                                               cache_read, cache_write)[0]
+    # Shared billing-aware expenditure (money spent), independent of the list
+    # valuation: included usage costs nothing extra; a recorded debit wins;
+    # then the provider's applicable effective rates; then the verified
+    # applicable catalogue rate. Computed after the route's billing class is
+    # resolved below.
     if failure:
         miss = "call_failed"
     elif missing:
         miss = "usage_missing"
 
     billing_class = _billing_class(statuses, provider, model)
+    from .expenditure import call_expenditure
+    expenditure_usd, expenditure_basis = call_expenditure(
+        billing_class=billing_class, native_effective_usd=native_effective_usd,
+        catalogue_usd=list_usd)
     billed_usd = 0.0 if billing_class == "included" else None
     if mode == "billed":
         basis_usd = 0.0 if billing_class == "included" else None
@@ -758,6 +782,8 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         "list_usd_upper": list_usd,
         "native_effective_usd": native_effective_usd,
         "native_effective_tokens": tokens if native_effective_usd is not None else 0,
+        "expenditure_usd": expenditure_usd,
+        "expenditure_basis": expenditure_basis,
         "tier_possible": tier_applied,
         "basis_usd": basis_usd,
         "basis_kind": basis_kind,

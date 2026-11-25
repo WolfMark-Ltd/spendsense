@@ -2477,12 +2477,13 @@ function useLive() {
     const savings = summaryState.available ? summaryState : null
     const apiValue = finiteValue(valuation.api_equivalent_usd)
     const apiValueHigh = finiteValue(valuation.api_equivalent_usd_high)
-    // Applicable metered expenditure: the provider's own billed (effective)
-    // rates where they price every recorded call in the session. The list
+    // Shared billing-aware expenditure: composed per call (reported debit >
+    // applicable effective rates > applicable catalogue rate), so the
+    // session's money figure keeps each call's own basis. The list
     // API-equivalent stays the comparative valuation.
-    const effValue = finiteValue(valuation.provider_effective_usd)
-    const usageCostUsd = (effValue != null && valuation.provider_effective_basis === 'exact')
-      ? effValue : null
+    const usageCostUsd = (finiteValue(valuation.api_expenditure_usd) != null
+      && valuation.api_expenditure_basis != null)
+      ? finiteValue(valuation.api_expenditure_usd) : null
     return {
       bucket: summaryBucket,
       guardrailValue: sessionGuardrailValue(hist, led.snapshots, sessionId),
@@ -2740,15 +2741,17 @@ function tokenRows(t, b, hasContext, u) {
   return rows.filter(Boolean)
 }
 
-/** The applicable API usage cost for a totals population: the provider's own
- *  billed (effective) rates where they price every recorded call in the view,
- *  else the standard list valuation — the only complete figure for mixed,
- *  partially covered or unpriced populations. A metered account's usage is
- *  never presented at the undiscounted list price. */
+/** The applicable API usage cost for a totals population: the shared
+ *  billing-aware expenditure figure, composed per call (reported debit >
+ *  applicable effective rates > applicable catalogue rate; subscription-
+ *  included usage contributes a measured zero). Because each call keeps its
+ *  own basis, adding another provider never changes the pricing basis of
+ *  calls already recorded. Falls back to the list valuation only when no
+ *  expenditure data exists at all (older payloads). */
 function analyticsUsageCost(totals = {}) {
-  const eff = finiteValue(totals?.provider_effective_usd)
-  if (eff != null && totals?.provider_effective_basis === 'exact') {
-    return { usd: eff, basis: 'provider_effective' }
+  const exp = finiteValue(totals?.api_expenditure_usd)
+  if (exp != null && totals?.api_expenditure_basis != null) {
+    return { usd: exp, basis: 'expenditure' }
   }
   return { usd: finiteValue(totals?.list_usd), basis: 'list' }
 }
@@ -4454,11 +4457,11 @@ function explorerUnitCosts(row) {
   }
 }
 function analyticsExplorerCsv(rows) {
-  const head = ['model','provider','calls','tokens','api_usd','usd_per_call','usd_per_1m_tokens','cache_hit_rate','priced_tokens','unpriced_tokens','effective_usd']
+  const head = ['model','provider','calls','tokens','api_usd','usd_per_call','usd_per_1m_tokens','cache_hit_rate','priced_tokens','unpriced_tokens','effective_usd','expenditure_usd']
   const line = row => [row.model || '',row.provider || '',row.calls ?? '',row.tokens ?? '',row.list_usd ?? '',
     row.per_call == null ? '' : row.per_call.toFixed(6),row.per_million == null ? '' : row.per_million.toFixed(4),
     row.cache_hit_rate == null ? '' : row.cache_hit_rate.toFixed(4),
-    row.priced_tokens ?? '',row.unpriced_tokens ?? '',row.provider_effective_usd ?? ''].map(v => csvCell(v)).join(',')
+    row.priced_tokens ?? '',row.unpriced_tokens ?? '',row.provider_effective_usd ?? '',row.api_expenditure_usd ?? ''].map(v => csvCell(v)).join(',')
   return [head.join(','), ...rows.map(line)].join('\n') + '\n'
 }
 function downloadAnalyticsCsv(rows) {
@@ -4681,7 +4684,7 @@ function AnalyticsDashboard({data,state,dispatch,query={},scope='',profile='',pr
   const subtitle=[t('usageSubtitle',profile || t('usageCurrentProfile')),windowScope].filter(Boolean).join(' · ')
   const apiPartial=totals?analyticsListPartial(totals):false
   const usageCost=totals?analyticsUsageCost(totals):{usd:null,basis:'list'}
-  const usageCostEffective=usageCost.basis==='provider_effective'
+  const usageCostEffective=usageCost.basis==='expenditure'
   const apiLabel=jsxs('span',{className:'wm-stat-with-info',children:[usageCostEffective?t('usageStatApiUsage'):t('usageStatApiEquiv'),jsx(InfoTip,{id:'usage-api-equivalent',label:t('infoLabel'),text:[usageCostEffective?t('usageStatApiUsageInfo'):t('usageStatApiInfo'),apiPartial?t('usageCoverageRateBasis'):null].filter(Boolean).join(' '),wide:true})]})
   const readBenefitLabel=jsxs('span',{className:'wm-stat-with-info',children:[t('readBenefitLabel'),jsx(InfoTip,{id:'usage-read-benefit',label:t('infoLabel'),text:[t('readBenefitExplanation'),readBenefit.available?t('readBenefitCoverage',readBenefit.calls,readBenefit.total,fmtTokens(readBenefit.tokens)):t('readBenefitUnavailable')].filter(Boolean).join(' '),wide:true})]})
   const header=jsxs('header',{className:'wm-topline',children:[jsxs('div',{children:[jsx('h1',{children:t('usageTitle')}),jsx('p',{className:'wm-subtle wm-usage-scope',children:subtitle})]}),
@@ -7309,7 +7312,8 @@ function OverviewPage() {
   const result = analyticsCurrent ? analytics.data?.totals || {} : {}
   // Actual-charges card: recorded provider debits when the provider reports
   // them; otherwise the applicable metered expenditure estimate (effective
-  // provider rates where published, else the catalogue rate).
+  // provider rates where published, else the catalogue rate). The label
+  // names the basis — an estimate is never labelled an actual charge.
   const billingReport = analyticsCurrent ? analytics.data?.billing || {} : {}
   const chargesRecorded = finiteValue(billingReport?.evidence?.provider_reported?.usd)
   // A metered estimate is evidence only when rows actually carry one: a
@@ -7407,9 +7411,9 @@ function OverviewPage() {
               ? certaintyChip('partial', t('ovCertPartial'), 'rpart') : null
           ].filter(Boolean) })
         ] }),
-        jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'actual-charges', 'aria-label': t('ovChargesLabel'), children: [
+        jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'actual-charges', 'aria-label': chargesRecorded != null ? t('ovChargesLabel') : t('ovExpenditureLabel'), children: [
           jsxs('div', { className: 'wm-kpi-eyebrow', children: [
-            jsx(OverviewIcon, { name: 'charges' }), jsx('span', { children: t('ovChargesLabel') })
+            jsx(OverviewIcon, { name: 'charges' }), jsx('span', { children: chargesRecorded != null ? t('ovChargesLabel') : t('ovExpenditureLabel') })
           ] }),
           jsx('div', { className: 'wm-kpi-figure', children: ledgerPaused ? t('ledgerHistoryUnavailable')
             : chargesRecorded != null ? fmtUsd(chargesRecorded)
@@ -7417,7 +7421,7 @@ function OverviewPage() {
           jsx('div', { className: 'wm-kpi-foot', children:
             ledgerPaused ? certaintyChip('unknown', t('ovCertChargesUnknown'), 'charge-unknown')
             : chargesRecorded != null ? certaintyChip('recorded', t('ovCertChargesRecorded'), 'charge-recorded')
-            : meteredEstimate != null ? certaintyChip('estimated', t('ovCertChargesEstimated'), 'charge-estimated')
+            : meteredEstimate != null ? null
             : certaintyChip('unknown', t('ovCertChargesUnknown'), 'charge-unknown') })
         ] }),
         jsxs(ProductCard, { as: 'article', className: 'wm-product-stat wm-kpi', 'data-kpi': 'api-equivalent-estimate', children: [
@@ -15441,8 +15445,8 @@ const I18N = {
     scopeFallbackNote: reason => `Session scope unavailable (${reason})`,
     meterUpdating: 'Updating…',
     apiEquivalent: 'API equivalent',
-    apiUsage: 'API usage',
-    apiUsageInfo: 'Estimated expenditure at the provider’s applicable rates (its own billed rates where published, otherwise the public catalogue) — the figure provider charges are settled against.',
+    apiUsage: 'API expenditure',
+    apiUsageInfo: 'Estimated expenditure at the provider’s applicable rates: reported debits first, otherwise its own billed (effective) rates where published, otherwise the applicable catalogue price.',
     sidebarCostPartial: 'partial estimate',
     sidebarEvidenceDetails: 'Evidence details',
     sidebarPartialCoverage: 'Partial coverage',
@@ -15634,7 +15638,7 @@ const I18N = {
     ovNotRecorded: 'Not recorded',
     ovCertChargesUnknown: 'No per-call evidence',
     ovCertChargesRecorded: 'Provider-recorded debits',
-    ovCertChargesEstimated: 'Estimated at applicable provider rates',
+    ovExpenditureLabel: 'Estimated API expenditure',
     ovFeesLabel: 'Saved account fees',
     ovFeesScope: 'Saved entries · original currencies and billing periods',
     ovPlansConfirmed: (w, t) => `${w} of ${t} plans confirmed`,
@@ -17125,8 +17129,8 @@ const I18N = {
     usageRetryTip: 'Retry analytics',
     usageLoading: 'Reading timestamped calls…',
     usageStatApiEquiv: 'API-equivalent',
-    usageStatApiUsage: 'API usage',
-    usageStatApiUsageInfo: 'Estimated at the provider’s applicable rates — its own billed rates where published (exact coverage), otherwise the public catalogue price.',
+    usageStatApiUsage: 'API expenditure',
+    usageStatApiUsageInfo: 'Estimated expenditure at the provider’s applicable rates: reported debits first, otherwise its own billed (effective) rates where published, otherwise the applicable catalogue price. Subscription-included usage adds no expenditure.',
     usageKpiMoney: 'Cost & coverage',
     usageKpiActivity: 'Volume & cache',
     usageStatApiExtra: 'Priced per-call estimate · not an invoice',
@@ -17266,8 +17270,8 @@ const I18N = {
     scopeFallbackNote: reason => `会话范围不可用（${reason}）`,
     meterUpdating: '更新中…',
     apiEquivalent: 'API 等值',
-    apiUsage: 'API 用量',
-    apiUsageInfo: '按服务商适用费率估算的支出（已发布按其自身计费费率，否则为公开目录价）——服务商费用以此结算。',
+    apiUsage: 'API 支出',
+    apiUsageInfo: '按服务商适用费率估算的支出：优先已记录扣费，其次其自身计费（有效）费率（已发布时），否则为适用目录价。',
     sidebarCostPartial: '部分估算',
     sidebarEvidenceDetails: '证据详情',
     sidebarPartialCoverage: '部分覆盖',
@@ -17458,7 +17462,7 @@ const I18N = {
     ovNotRecorded: '未记录',
     ovCertChargesUnknown: '没有逐次费用证据',
     ovCertChargesRecorded: '服务商记录的扣费',
-    ovCertChargesEstimated: '按服务商适用费率估算',
+    ovExpenditureLabel: '预估 API 支出',
     ovFeesLabel: '已保存账户费用',
     ovFeesScope: '已保存条目 · 保留原币种和账单周期',
     ovPlansConfirmed: (w, t) => `${t} 个账户中 ${w} 个方案已确认`,
@@ -18944,8 +18948,8 @@ const I18N = {
     usageRetryTip: '重试分析',
     usageLoading: '正在读取带时间戳调用…',
     usageStatApiEquiv: 'API 等值',
-    usageStatApiUsage: 'API 用量',
-    usageStatApiUsageInfo: '按服务商适用费率估算——已发布的按其自身计费费率（全覆盖时），否则为公开目录价。',
+    usageStatApiUsage: 'API 支出',
+    usageStatApiUsageInfo: '按服务商适用费率估算支出：优先已记录扣费，其次其自身计费（有效）费率（已发布时），否则为适用目录价。订阅内含用量不产生额外支出。',
     usageKpiMoney: '成本与覆盖',
     usageKpiActivity: '用量与缓存',
     usageStatApiExtra: '已定价按次估算 · 非账单',

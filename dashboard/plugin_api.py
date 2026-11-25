@@ -265,10 +265,12 @@ def analytics(
 ) -> dict[str, Any]:
     """Aggregated timestamped calls only; filters are exact and combined with AND."""
     try:
+        route_arrangements = members.route_arrangements_payload()
         return build_analytics_report(days=days, model=model, provider=provider,
                                       surface=surface, task=task,
                                       parent=parent or None, scope=scope or None,
-                                      pricing_mode=pricing, presentation=presentation)
+                                      pricing_mode=pricing, presentation=presentation,
+                                      route_arrangements=route_arrangements or None)
     except LedgerUnavailable as exc:
         raise HTTPException(status_code=503, detail="analytics call store unavailable") from exc
     except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
@@ -293,9 +295,11 @@ def session_summary(
     main-loop work.
     """
     try:
+        route_arrangements = members.route_arrangements_payload()
         return build_session_summary(session_id=session_id, population=population,
                                      provider=provider or None, model=model or None,
-                                     pricing_mode=pricing)
+                                     pricing_mode=pricing,
+                                     route_arrangements=route_arrangements or None)
     except LedgerUnavailable as exc:
         raise HTTPException(status_code=503, detail="session call store unavailable") from exc
     except ValueError as exc:
@@ -830,7 +834,9 @@ def budget_list():
 @router.get('/forecast')
 def budget_status():
     """Return monthly statuses, forecasts and explicit evidence refusal states."""
-    return _budget_call(forecast.build_report)
+    route_arrangements = members.route_arrangements_payload()
+    return _budget_call(lambda **kw: forecast.build_report(
+        route_arrangements=route_arrangements or None, **kw))
 
 
 @router.put('/budgets/{budget_id}')
