@@ -109,12 +109,27 @@ class ProviderNativeTestCase(unittest.TestCase):
         self.assertEqual((listed.input, listed.output, listed.cache_read), NOUS_LIST)
 
     def test_row_without_original_falls_back_to_effective_for_the_list_hit(self):
-        self.inject({"nous": {"m": {"prompt": "0.0000000300", "completion": "0.0000001200"}}})
-        hit, native = resolve_rate(load_catalogue(), "nous", "m")
-        self.assertIsNotNone(hit)
-        self.assertEqual((hit.rate.input, hit.rate.output), (0.03, 0.12))
-        self.assertEqual(hit.provenance, "provider_native")
-        self.assertIn("effective basis", hit.source)
+        # A row with no "original" may back the standard list valuation only
+        # for sources whose native rows are verifiably standard public API
+        # prices (openrouter/ai-gateway/fireworks/deepinfra). Nous is
+        # credential-scoped with an account-wide credits discount, so its
+        # effective-only row must never stand in for the list basis.
+        self.inject({"nous": {"m": {"prompt": "0.0000000300", "completion": "0.0000001200"}},
+                     "openrouter": {"m": {"prompt": "0.0000000300", "completion": "0.0000001200"}}})
+        nous_hit, nous_native = resolve_rate(load_catalogue(), "nous", "m")
+        self.assertIsNone(nous_hit,
+                          "a credential-scoped effective-only row is not list evidence")
+        self.assertIsNotNone(nous_native)
+        if nous_native is not None:  # pragma: no cover - narrows for the type checker
+            self.assertEqual(nous_native.provider, "nous")
+        or_hit, _ = resolve_rate(load_catalogue(), "openrouter", "m")
+        self.assertIsNotNone(or_hit)
+        if or_hit is not None:  # pragma: no cover - narrows for the type checker
+            self.assertEqual((or_hit.rate.input, or_hit.rate.output), (0.03, 0.12))
+            self.assertEqual(or_hit.provenance, "provider_native")
+            self.assertIn("openrouter", or_hit.source)
+            self.assertIn("standard public rates", or_hit.source)
+            self.assertIn("effective basis", or_hit.source)
 
     def test_absent_rates_are_absent_not_zero(self):
         self.inject({"nous": {"m": dict(NOUS_ROW)}})

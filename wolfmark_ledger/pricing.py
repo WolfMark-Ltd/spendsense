@@ -264,8 +264,27 @@ def resolve_rate(
     rate = native.list_rate()
     basis = "list"
     if rate is None:
-        rate = native.effective_rate()
-        basis = "effective"
+        # A row without "original" backs the standard list valuation only for
+        # sources whose native rows are verifiably standard public prices.
+        # Credential-scoped sources (nous, novita, kilocode) discount or scope
+        # their rates, so without that block they price the effective basis
+        # only and the standard list valuation stays an honest gap.
+        if _provider_native.is_public_list_source(route_provider):
+            rate = native.effective_rate()
+            source = (f"{_provider_native.SOURCE_LABEL} ({native.provider}, "
+                      "effective basis, standard public rates)")
+            hit = Lookup(
+                provider=route_provider,
+                route_provider=route_provider,
+                model=native.model,
+                rate=rate,
+                alias_used=False,
+                confidence="provider_native",
+                source=source,
+                provenance="provider_native",
+            )
+            return hit, native
+        return None, native
     source = f"{_provider_native.SOURCE_LABEL} ({native.provider}, {basis} basis)"
     return Lookup(
         provider=route_provider,

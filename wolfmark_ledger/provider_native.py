@@ -83,6 +83,12 @@ def unavailable() -> bool:
     return _import_failed
 
 
+def is_public_list_source(provider: str) -> bool:
+    """Whether this provider's native rows are verifiably standard public API
+    prices (no credential-specific discounting) — see NATIVE_PUBLIC_LIST_SOURCES."""
+    return provider.strip().lower() in NATIVE_PUBLIC_LIST_SOURCES
+
+
 def reset_for_tests() -> None:
     """Clear module state and restore the real resolver (test isolation only)."""
     global _import_failed, _resolver
@@ -245,6 +251,20 @@ def _row_rate(provider: str, model: str, row: dict[str, Any], as_of: str) -> Opt
         list_cache_read=list_read,
         as_of=as_of,
     )
+
+
+# Providers whose native price rows are the provider's standard public API
+# prices, verified from how Hermes obtains each one (25 Nov 2026): openrouter
+# and ai-gateway publish unauthenticated public /v1/models catalogs (fetched
+# with no API key), and fireworks/deepinfra rows are derived from the
+# provider's public model-catalog pricing metadata. A row from these sources
+# may back the standard list valuation even without an "original" block.
+# Every other native source is credential-scoped — nous applies an
+# account-wide credits discount and only its "original" block evidences the
+# undiscounted price — so without "original" they price the effective basis
+# only and never stand in for the standard list valuation.
+NATIVE_PUBLIC_LIST_SOURCES = frozenset(
+    {"openrouter", "ai-gateway", "fireworks", "deepinfra"})
 
 
 def lookup(provider: str, model: str, *, allow_fetch: bool = True) -> Optional[NativeRate]:
