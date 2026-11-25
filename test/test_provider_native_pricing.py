@@ -466,7 +466,7 @@ class NousCreditsDayFixture(unittest.TestCase):
         self.assertGreater(listed, self.DAY_DEBIT)
 
 
-class CommandCodeCatalogueCoverage(unittest.TestCase):
+class CommandCodeCatalogueCoverage(ProviderNativeTestCase):
     """Command Code's own published model page prices, via the official overlay.
 
     Command Code publishes muse-ember on its model page ($0.10/M input,
