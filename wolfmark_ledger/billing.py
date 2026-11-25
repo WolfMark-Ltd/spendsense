@@ -515,7 +515,12 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                 reported_usd=metered_evidence,
                 native_effective_usd=(row.get("native_effective_usd")
                                       if not ineligible_call else None),
-                catalogue_usd=api if api is not None else None)
+                # The theoretical list value is not an eligible catalogue leg
+                # when the call's cache counters had to be guessed: the same
+                # refusal the aggregate applies to the catalogue leg.
+                catalogue_usd=None if (row.get("cache_read_defaulted")
+                                       or row.get("cache_write_defaulted"))
+                else (api if api is not None else None))
         if route_included or kind == "subscription_included" or exp_basis == "included":
             # Included usage: no additional expenditure; the allowance value
             # consumed stays visible as the credits figure only.

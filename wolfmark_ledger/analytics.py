@@ -482,12 +482,20 @@ class _AnalyticsAcc:
             covered_calls=exp_covered, calls=int(base.get("calls") or 0),
             covered_tokens=self.expenditure_tokens,
             total_tokens=int(base.get("tokens") or 0))
-        if any(basis == "range" for basis in self.expenditure_bases):
+        read_state, read_reason = self.read_prov.state(self.known_read_tokens)
+        write_state, write_reason = self.write_prov.state(self.known_write_tokens)
+        # The retention-range high is only an established two-sided bound when
+        # both cache counters are proven for the population: unreported write
+        # counters price at zero in the native leg and would sit outside the
+        # published range. When they are not proven, publish no high and mark
+        # the figure as a lower amount instead.
+        if (any(basis == "range" for basis in self.expenditure_bases)
+                and read_state == "reported" and write_state == "reported"):
             base["api_expenditure_usd_high"] = round(self.expenditure_high_usd, 6)
         else:
             base["api_expenditure_usd_high"] = None
-        read_state, read_reason = self.read_prov.state(self.known_read_tokens)
-        write_state, write_reason = self.write_prov.state(self.known_write_tokens)
+        if exp_covered and write_state != "reported":
+            base["api_expenditure_lower"] = True
         basis, bound_reason, premium = _savings_basis(
             self.bounds, self.premiums, self.bound_causes, self.covered_calls)
         low = round(self.savings_low_usd, 6) if self.covered_calls else None

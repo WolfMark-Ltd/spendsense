@@ -2802,13 +2802,20 @@ function analyticsListPartial(totals) {
 function desktopTodayText(report, t, filtered = false) {
   const applicable = analyticsUsageCost(report?.totals)
   const figure = applicable.basis === 'expenditure' && applicable.usd != null
-    ? analyticMoney(applicable.usd) : analyticsListDisplay(report?.totals, true)
+    ? (applicable.high != null && applicable.high > applicable.usd
+      ? `${analyticMoney(applicable.usd)}–${analyticMoney(applicable.high)}`
+      : analyticMoney(applicable.usd))
+    : analyticsListDisplay(report?.totals, true)
   return `${t(filtered ? 'desktopTodayFilteredScope' : 'desktopTodayScope')} ${figure}`
 }
 
 function desktopTodayAmount(report) {
   const applicable = analyticsUsageCost(report?.totals)
-  if (applicable.basis === 'expenditure' && applicable.usd != null) return analyticMoney(applicable.usd)
+  if (applicable.basis === 'expenditure' && applicable.usd != null) {
+    return applicable.high != null && applicable.high > applicable.usd
+      ? `${analyticMoney(applicable.usd)}–${analyticMoney(applicable.high)}`
+      : analyticMoney(applicable.usd)
+  }
   return analyticsListDisplay(report?.totals)
 }
 
@@ -7439,12 +7446,17 @@ function OverviewPage() {
           jsxs('div', { className: 'wm-kpi-eyebrow', children: [
             jsx(OverviewIcon, { name: 'charges' }), jsx('span', { children: chargesRecorded != null ? t('ovChargesLabel') : t('ovExpenditureLabel') })
           ] }),
-          jsx('div', { className: 'wm-kpi-figure', children: ledgerPaused ? t('ledgerHistoryUnavailable')
+          jsx('div', { className: 'wm-kpi-figure', children:
+            ledgerPaused && chargesRecorded == null && meteredEstimate == null
+              ? t('ledgerHistoryUnavailable')
             : chargesRecorded != null ? fmtUsd(chargesRecorded)
-            : meteredEstimate != null ? fmtUsd(meteredEstimate) : t('ovNotRecorded') }),
+            : meteredEstimate != null ? fmtUsd(meteredEstimate)
+            : ledgerPaused ? t('ledgerHistoryUnavailable') : t('ovNotRecorded') }),
           jsx('div', { className: 'wm-kpi-foot', children:
-            ledgerPaused ? certaintyChip('unknown', t('ovCertChargesUnknown'), 'charge-unknown')
-            : chargesRecorded != null ? certaintyChip('recorded', t('ovCertChargesRecorded'), 'charge-recorded')
+            chargesRecorded != null
+              ? (Number(result.calls || 0) > Number(billingReport?.evidence?.provider_reported?.calls || 0)
+                ? certaintyChip('partial', t('ovCertPartial'), 'charge-part')
+                : certaintyChip('recorded', t('ovCertChargesRecorded'), 'charge-recorded'))
             : meteredEstimate != null
               ? (Number(result.calls || 0) > Number(billingReport?.metered_calls || 0)
                 ? certaintyChip('partial', t('ovCertPartial'), 'charge-part') : null)
