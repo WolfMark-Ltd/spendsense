@@ -171,6 +171,29 @@ class ProviderNativeTestCase(unittest.TestCase):
         # Still retryable: no _missing_provider verdict for a served provider.
         self.assertNotIn("nous", provider_native._missing_provider)
 
+    def test_unknown_fetcher_verdict_is_retryable_not_permanent(self):
+        # When the fetcher check itself cannot decide (the Hermes internals
+        # could not be imported, normalisation raised), the provider must NOT
+        # be cached as permanently unsupported: an unknown status retries.
+        self.inject({})  # a fake resolver, so the fetcher check is skipped
+        provider_native._resolver = provider_native._real_resolver  # real path
+        provider_native.reset_for_tests()
+        with provider_native._lock:
+            provider_native._missing_provider.clear()
+        real = provider_native._has_native_fetcher
+        provider_native._has_native_fetcher = lambda key: None  # type: ignore[method-assign]
+        try:
+            self.assertIsNone(provider_native.lookup("nous", "m"))
+            self.assertNotIn("nous", provider_native._missing_provider,
+                             "an unknown verdict must never cache absence")
+            provider_native._has_native_fetcher = lambda key: False  # type: ignore[method-assign]
+            provider_native._missing_provider.clear()
+            self.assertIsNone(provider_native.lookup("nous", "m"))
+            self.assertIn("nous", provider_native._missing_provider,
+                          "a definitive no-fetcher verdict is permanent")
+        finally:
+            provider_native._has_native_fetcher = real  # type: ignore[method-assign]
+
     # -- 2. explicit model identity ---------------------------------------
     def test_exact_dated_variant_matches_exactly(self):
         self.inject({"nous": {"deepseek/deepseek-v4.1-flash-1017": dict(NOUS_ROW)}})

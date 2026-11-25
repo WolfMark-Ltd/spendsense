@@ -111,8 +111,11 @@ _real_resolver: Optional[Callable[..., dict[str, dict[str, Any]]]] = None
 _real_resolver = _resolver
 
 
-def _has_native_fetcher(provider: str) -> bool:
-    """True when Hermes' resolver serves this provider at all.
+def _has_native_fetcher(provider: str) -> Optional[bool]:
+    """True/False when Hermes' resolver definitively serves (or lacks) this
+    provider; ``None`` when the verdict is unknown (the internals could not be
+    imported or normalisation raised). An unknown status is never treated as
+    permanent absence — the caller retries it later instead.
 
     Distinguishes "the provider publishes no native pricing" (permanent) from
     "the fetch failed or returned nothing this time" (retryable): Hermes
@@ -121,10 +124,13 @@ def _has_native_fetcher(provider: str) -> bool:
     """
     try:
         from hermes_cli.models_pricing import _PRICING_FETCHERS, resolve_pricing_provider
-        normalized = resolve_pricing_provider(provider)
-        return bool(normalized) and normalized in _PRICING_FETCHERS
     except Exception:
-        return False
+        return None
+    try:
+        normalized = resolve_pricing_provider(provider)
+    except Exception:
+        return None
+    return bool(normalized) and normalized in _PRICING_FETCHERS
 
 
 def _per_mtok(value: Any) -> Optional[float]:
@@ -158,15 +164,22 @@ def _native_rates(provider: str, *, allow_fetch: bool) -> dict[str, dict[str, An
     if not key or key in _missing_provider:
         return {}
     # The fetcher verdict uses the real resolver only: a test-injected (or
-    # otherwise patched) resolver is authoritative for this process, and in
-    # processes without the host app nothing is fetchable, so everything
-    # degrades to unpriced exactly as before.
-    if _resolver is _real_resolver and not _has_native_fetcher(key):
-        # One permanent verdict per provider per process: get_pricing_for_provider
-        # serves no fetcher for it, so no future call can price this route.
-        with _lock:
-            _missing_provider.add(key)
-        return {}
+    # otherwise patched) resolver is authoritative for this process. A
+    # definitive "no native fetcher" is permanent absence; anything unknown
+    # (the internals could not be imported, normalisation raised) is left
+    # retryable rather than cached as absence.
+    if _resolver is _real_resolver:
+        supported = _has_native_fetcher(key)
+        if supported is False:
+            # One permanent verdict per provider per process:
+            # get_pricing_for_provider serves no fetcher for it, so no future
+            # call can price this route.
+            with _lock:
+                _missing_provider.add(key)
+            return {}
+        if supported is None:
+            # Unknown support status: stay retryable, nothing priced now.
+            return {}
     resolver = _resolver()
     if resolver is None:
         return {}
