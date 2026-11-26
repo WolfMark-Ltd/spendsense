@@ -200,6 +200,40 @@ def cold_build(n_events, which):
             "err": (p.stderr or "")[-300:] if p.returncode else ""}
 
 
+def _overview_burst(fx, book, plans):
+    def run_one(kind):
+        # Fixture-anchored now (plus a per-thread stagger to mimic
+        # near-simultaneous arrival); live wall time would leave
+        # the fixed windows near-empty and meaningless.
+        now = PF.NOW + {"d1": 0.0, "d7": 0.1, "d30": 0.2,
+                        "econ": 0.3}[kind]
+        if kind == "econ":
+            return economics.build_economics_report(
+                now=now, event_db_path=fx["events"],
+                state_db_path=fx["state"],
+                membership_path=fx["memberships"], fx_file=fx["fx"],
+                catalogue=book, plans=plans)
+        return analytics.build_analytics_report(
+            fx["events"], state_db_path=fx["state"], now=now,
+            catalogue=book, days=int(kind[1:]))
+
+    t0 = time.perf_counter()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        futs = {ex.submit(run_one, k): k
+                for k in ("d1", "d7", "d30", "econ")}
+        done = {}
+        for f in concurrent.futures.as_completed(futs):
+            f.result()  # surface worker exceptions, never swallow
+            done[futs[f]] = time.perf_counter() - t0
+    wall = time.perf_counter() - t0
+    order = sorted(done.items(), key=lambda kv: kv[1])
+    print(f"overviewburst wall={wall:.3f}s first={order[0][0]}@{order[0][1]:.3f}s "
+          f"order=" + ",".join(f"{k}@{v:.2f}" for k, v in order),
+          flush=True)
+
+
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--events", nargs="+", type=int, default=[17000])
@@ -235,16 +269,26 @@ def main():
                           f"dbq={cc['db_queries']}", flush=True)
                 if args.snapshot and rep == 0:
                     snap = {name: res[name]["report"] for name in res}
-                    Path(args.snapshot).write_text(json.dumps(
-                        {"events": n, "reports": snap}, sort_keys=True))
-                    print(f"snapshot -> {args.snapshot}", flush=True)
+                    path = Path(args.snapshot)
+                    doc = (json.loads(path.read_text())
+                           if path.exists() else {"fixtures": {}})
+                    doc.setdefault("fixtures", {})[str(n)] = snap
+                    path.write_text(json.dumps(doc, sort_keys=True))
+                    print(f"snapshot[{n}] -> {args.snapshot}", flush=True)
                 if args.check and rep == 0:
-                    want = json.loads(Path(args.check).read_text())["reports"]
-                    for name in want:
-                        got = json.dumps(res[name]["report"], sort_keys=True)
-                        exp = json.dumps(want[name], sort_keys=True)
-                        print(f"check {name}: {'IDENTICAL' if got == exp else 'DIFFERS'}",
+                    doc = json.loads(Path(args.check).read_text())
+                    want = doc.get("fixtures", {}).get(str(n))
+                    if want is None and doc.get("events") == n:
+                        want = doc.get("reports")  # legacy single-size shape
+                    if want is None:
+                        print(f"check: no baseline for events={n} in {args.check}",
                               flush=True)
+                    else:
+                        for name in want:
+                            got = json.dumps(res[name]["report"], sort_keys=True)
+                            exp = json.dumps(want[name], sort_keys=True)
+                            print(f"check {name}: {'IDENTICAL' if got == exp else 'DIFFERS'}",
+                                  flush=True)
             if args.concurrent:
                 with counting(Counters(), PF.native_rows()):
                     def one():
@@ -270,7 +314,7 @@ def main():
                             pricing_mode="strict", presentation="both",
                             arrangements=None, now=now,
                             event_db=str(fx["events"]), state_db=str(fx["state"]),
-                            profiles_path=None)
+                            profiles_path=None, catalogue=book)
 
                         def build():
                             builds.append(1)
@@ -289,35 +333,13 @@ def main():
                 print(f"retryburst x{args.retryburst} shared days=30: wall={wall:.3f}s "
                       f"builds={len(builds)} all_identical={same}", flush=True)
             if args.overviewburst:
-                def run_one(kind):
-                    # Fixture-anchored now (plus a per-thread stagger to mimic
-                    # near-simultaneous arrival); live wall time would leave
-                    # the fixed windows near-empty and meaningless.
-                    now = PF.NOW + {"d1": 0.0, "d7": 0.1, "d30": 0.2,
-                                    "econ": 0.3}[kind]
-                    if kind == "econ":
-                        return economics.build_economics_report(
-                            now=now, event_db_path=fx["events"],
-                            state_db_path=fx["state"],
-                            membership_path=fx["memberships"], fx_file=fx["fx"],
-                            catalogue=book, plans=plans)
-                    return analytics.build_analytics_report(
-                        fx["events"], state_db_path=fx["state"], now=now,
-                        catalogue=book, days=int(kind[1:]))
+                # Same fixture pricing context as every other mode: without
+                # it the pool would use the real resolver (or none) and the
+                # wall figure would not be comparable.
+                with counting(Counters(), PF.native_rows()):
+                    _overview_burst(fx, book, plans)
 
-                t0 = time.perf_counter()
-                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-                    futs = {ex.submit(run_one, k): k
-                            for k in ("d1", "d7", "d30", "econ")}
-                    done = {}
-                    for f in concurrent.futures.as_completed(futs):
-                        f.result()  # surface worker exceptions, never swallow
-                        done[futs[f]] = time.perf_counter() - t0
-                wall = time.perf_counter() - t0
-                order = sorted(done.items(), key=lambda kv: kv[1])
-                print(f"overviewburst wall={wall:.3f}s first={order[0][0]}@{order[0][1]:.3f}s "
-                      f"order=" + ",".join(f"{k}@{v:.2f}" for k, v in order),
-                      flush=True)
+
             if args.cold:
                 for which in (30, "econ"):
                     print(f"cold {which}: {cold_build(n, which)}", flush=True)
@@ -325,3 +347,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

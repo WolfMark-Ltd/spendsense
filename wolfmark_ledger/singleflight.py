@@ -148,11 +148,49 @@ def _resolved_paths(event_db: Any = None, state_db: Any = None) -> tuple[str, st
     return event, state
 
 
+def _catalogue_fp(catalogue: Any = None) -> Any:
+    """Generation fingerprint of the effective pricing catalogue.
+
+    ``(source, version, as_of)``: file loads stamp ``as_of`` from the
+    file mtime, so any Hermes refresh splits concurrent requests, while
+    concurrent parses of the same file share (unlike ``id()``, which
+    also splits across the loader's uncached bundled/empty paths and
+    races on cold cache). Explicitly passed catalogues compare by
+    content generation, not identity. The official overlay ships with
+    the plugin tree (changes require reinstall + restart, which drops
+    all flights), and custom rates live in the billing profiles doc,
+    fingerprinted separately. Unloadable catalogues fall back to a
+    shared marker — the build then raises its typed error and identical
+    requests share the failure.
+    """
+    try:
+        if catalogue is None:
+            from .pricing import load_catalogue as _load
+
+            catalogue = _load()
+        return ("catalogue", str(getattr(catalogue, "source", "")),
+                str(getattr(catalogue, "version", "")),
+                str(getattr(catalogue, "as_of", "")))
+    except Exception:
+        return ("unresolved", None)
+
+
+def _profiles_fp(profiles_path: Any = None) -> Any:
+    """Content fingerprint of the billing profiles doc (custom rates)."""
+    try:
+        from . import billing as _billing
+
+        return freeze(_billing.load_profiles(profiles_path))
+    except Exception:
+        return ("unresolved", None)
+
+
 def analytics_key(*, days: int, model: Any, provider: Any, surface: Any,
                   task: Any, parent: Any, scope: Any, pricing_mode: str,
                   presentation: str, arrangements: Any, now: float,
                   event_db: Any = None, state_db: Any = None,
-                  profiles_path: Any = None) -> Hashable:
+                  profiles_path: Any = None,
+                  catalogue: Any = None) -> Hashable:
     """Flight key for ``build_analytics_report``.
 
     The window START (local-midnight-anchored, stable within a day) is the
@@ -170,40 +208,79 @@ def analytics_key(*, days: int, model: Any, provider: Any, surface: Any,
     event, state = _resolved_paths(event_db, state_db)
     return ("analytics", int(days), model, provider, surface, task, parent,
             scope, pricing_mode, presentation, freeze(arrangements),
-            event, state, str(profiles_path), since, tzname)
+            event, state, str(profiles_path), since, tzname,
+            _catalogue_fp(catalogue), _profiles_fp(profiles_path))
 
 
 def economics_key(*, days: int, trend_months: int, arrangements: Any,
                   now: float, event_db: Any = None, state_db: Any = None,
                   membership_path: Any = None, fx_file: Any = None,
                   plans: Any = None, profiles_path: Any = None,
-                  data_dir: Any = None) -> Hashable:
+                  data_dir: Any = None,
+                  catalogue: Any = None) -> Hashable:
     """Flight key for ``build_economics_report`` (window-start-anchored).
 
     As with :func:`analytics_key`, the window end (exactly ``now``) is
     deliberately excluded: followers share the leader's snapshot with
     staleness bounded by the in-flight overlap.
+
+    Membership, FX and plans documents are fingerprinted by content: a
+    save landing between two concurrent requests splits them so each
+    observes its own configuration snapshot (a bare path marker would
+    share pre-save bytes with a post-save arrival until the leader
+    finishes). Unreadable stores fall back to path markers — the build
+    then raises its typed error and identical requests share the failure.
     """
     from .aggregate import _local_window  # same-package window arithmetic
 
     since, _until, tzname = _local_window(int(days), now)
     event, state = _resolved_paths(event_db, state_db)
+    try:
+        from . import membership_store as _mstore
+
+        stored = _mstore.load_with_seats(membership_path)
+        membership_fp = None if stored.get("error") else freeze(stored)
+    except Exception:
+        membership_fp = None
+    try:
+        from .economics import load_fx as _load_fx
+
+        fx_doc = _load_fx(fx_file)
+        fx_fp = None if fx_doc.get("error") else freeze(fx_doc)
+    except Exception:
+        fx_fp = None
+    if plans is None:
+        try:
+            from . import membership_api as _mapi
+
+            book, source = _mapi.active_catalogue(data_dir=data_dir)
+            plans_fp = (freeze(book), source, freeze(_mapi.load_plans()))
+        except Exception:
+            plans_fp = None
+    else:
+        plans_fp = freeze(plans)
     return ("economics", int(days), int(trend_months), freeze(arrangements),
-            event, state, str(membership_path), str(fx_file), freeze(plans),
-            str(profiles_path), str(data_dir), since, tzname)
+            event, state, str(membership_path), str(fx_file), plans_fp,
+            str(profiles_path), str(data_dir), since, tzname,
+            membership_fp, fx_fp, _catalogue_fp(catalogue),
+            _profiles_fp(profiles_path))
 
 
 def session_key(*, session_id: str, population: str, provider: Any,
                 model: Any, pricing: str, arrangements: Any,
-                event_db: Any = None, state_db: Any = None) -> Hashable:
+                event_db: Any = None, state_db: Any = None,
+                catalogue: Any = None) -> Hashable:
     """Flight key for ``build_session_summary`` (no time window)."""
     event, state = _resolved_paths(event_db, state_db)
+    # NOTE: session summaries do not consume billing profiles, so no
+    # profiles fingerprint (keys cover actual inputs only).
     return ("session", session_id, population, provider, model, pricing,
-            freeze(arrangements), event, state)
+            freeze(arrangements), event, state, _catalogue_fp(catalogue))
 
 
 def budgets_key(*, arrangements: Any, now: float, event_db: Any = None,
-                state_db: Any = None, budgets_path: Any = None) -> Hashable:
+                state_db: Any = None, budgets_path: Any = None,
+                catalogue: Any = None) -> Hashable:
     """Flight key for ``forecast.build_report``.
 
     Cycle bounds are computed per budget from the shared ``now`` (the same
@@ -223,8 +300,9 @@ def budgets_key(*, arrangements: Any, now: float, event_db: Any = None,
         # two concurrent requests splits them so each observes its own
         # configuration snapshot.
         return ("budgets", freeze(arrangements), event, state, target, cycles,
-                freeze(doc))
+                freeze(doc), _catalogue_fp(catalogue))
     except Exception:
         # An unreadable store fails inside the build with a typed error;
         # key on the paths alone so identical requests still share it.
-        return ("budgets", freeze(arrangements), event, state, target, (), None)
+        return ("budgets", freeze(arrangements), event, state, target, (), None,
+                _catalogue_fp(catalogue))

@@ -36,12 +36,16 @@ def fixture_catalogue() -> Catalogue:
     WITH peak/off-peak windows so windowed-rate memoisation is exercised.
     nouslike/* is native-only; ghost/* is unpriced everywhere.
     """
+    # Tiers + retention write rates live on test/m1, which no official
+    # overlay shadows (the overlay on test/m0 replaces its whole card, so
+    # tiers there would never execute). test/m0 keeps the weekday-windowed
+    # overlay to exercise _windowed_rate/_window_active paths.
     tiered = Rate(2.0, 4.0, 0.5, 3.0,
                   tiers=(Tier(threshold=100000, input=1.5, output=3.0),),
                   cache_write_rates=(("30m", 3.0), ("12h", 5.0)))
     plain = Rate(2.0, 4.0, 0.5, 3.0)
     book = Catalogue(
-        {"test": {"m0": tiered, "m1": plain},
+        {"test": {"m0": plain, "m1": tiered},
          "other": {"m2": Rate(1.0, 2.0, 0.25, 1.5)}},
         "fixture", "test", "", "1")
     # Official overlay with weekday windows on test/m0: Mon-Fri 09:00-17:00
@@ -74,6 +78,11 @@ def build_events(path: Path, n_events: int, seed: int = 20261126) -> int:
         model = rng.choice(MODELS[provider])
         roll = rng.random()
         outcome = "error" if roll < 0.03 else ("missing_usage" if roll < 0.05 else "ok")
+        # A slice of test/m1 traffic crosses the 100k tier threshold so
+        # both tier bands (and retention write-rate selection) execute.
+        big_prompt = provider == "test" and model == "m1" and rng.random() < 0.2
+        input_tokens = (rng.randint(100001, 150000) if big_prompt
+                        else rng.randint(500, 60000))
         cache_mix = rng.random()
         if cache_mix < 0.4:
             cache_read, cache_write = rng.randint(0, 50000), 0
@@ -91,7 +100,7 @@ def build_events(path: Path, n_events: int, seed: int = 20261126) -> int:
             model, provider,
             rng.choice(("ok", "ok", "ok", "main", "aux")),
             "ok" if outcome == "ok" else outcome,
-            rng.randint(500, 60000), rng.randint(0, 8000),
+            input_tokens, rng.randint(0, 8000),
             cache_read, cache_write, rng.randint(0, 2000),
             rng.choice((True, False, None)), rng.choice((True, False, None)),
             rng.choice((None, "main", "subagent", "auxiliary")),

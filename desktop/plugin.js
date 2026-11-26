@@ -7549,12 +7549,15 @@ function OverviewPage() {
   // store the analytics query just scanned, and the single connection
   // serves one heavy aggregation at a time — parallel dispatch only
   // serialises server-side while tripping client timeouts. Fire economics
-  // once analytics settles (data or error) so the estimate card paints
-  // first and the subscription card follows. Ledger-backed cards render
-  // immediately from local state regardless. This rides the existing
-  // identity/refetch machinery: a new identity resets both queries and
+  // once analytics settles (data or error) and is not refetching, so the
+  // estimate card paints first and the subscription card follows — including
+  // on reopen with stale cached data, where a background analytics refresh
+  // must still finish first. Ledger-backed cards render immediately from
+  // local state regardless. This rides the existing identity/refetch
+  // machinery (disabling never cancels in-flight work; manual refetch
+  // still works while disabled): a new identity resets both queries and
   // the stagger re-applies automatically.
-  const backendReady = analytics.data != null || analytics.error != null
+  const backendReady = (analytics.data != null || analytics.error != null) && !analytics.isFetching
   const economics = useQuery({ ...economicsQuery(identity), enabled: backendReady })
   // Stored allowance readings only: native=false can never trigger a
   // provider request, so attention stays passive.

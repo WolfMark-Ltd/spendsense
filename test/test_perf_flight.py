@@ -11,6 +11,7 @@ import threading
 import time
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 
 from wolfmark_ledger.singleflight import (
     REPORT_FLIGHT, SingleFlight, analytics_key, budgets_key, economics_key,
@@ -297,6 +298,53 @@ class FlightKeyTests(unittest.TestCase):
                             budgets_path=path)
             self.assertNotEqual(a, c)
 
+    def test_config_fingerprints_split_keys(self):
+        import json
+        import tempfile
+        from wolfmark_ledger.pricing import Catalogue, Rate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = f"{tmp}/memberships.json"
+            fx = f"{tmp}/fx.json"
+            Path(mem).write_text(json.dumps({"version": 1, "accounts": []}))
+            Path(fx).write_text(json.dumps({"rates": []}))
+            base = dict(days=30, trend_months=6, arrangements=None, now=self.NOW,
+                        event_db="/tmp/e.db", state_db="/tmp/s.db",
+                        membership_path=mem, fx_file=fx, plans={"p": 1},
+                        profiles_path=None, data_dir=None)
+            key0 = economics_key(**base)
+            # A membership save between two concurrent requests splits them.
+            Path(mem).write_text(json.dumps(
+                {"version": 1, "accounts": [{"id": "a1"}]}))
+            self.assertNotEqual(economics_key(**base), key0)
+            # Same for an FX save.
+            Path(fx).write_text(json.dumps(
+                {"rates": [{"ccy": "EUR", "rate": 1.1}]}))
+            key2 = economics_key(**{**base,
+                                    "membership_path": mem, "fx_file": fx})
+            self.assertNotEqual(key2, economics_key(
+                **{**base, "membership_path": mem,
+                   "fx_file": f"{tmp}/missing.json"}))
+            # Catalogue generation (source/version/as_of), not object
+            # identity: separately parsed copies of the same file share,
+            # while a new generation splits.
+            book_a = Catalogue({"z": {"q": Rate(1, 1)}}, "x", "test", "", "1")
+            book_b = Catalogue({"z": {"q": Rate(1, 1)}}, "x", "test", "", "1")
+            book_c = Catalogue({"z": {"q": Rate(1, 1)}}, "x", "test", "", "2")
+
+            def akey(book):
+                return analytics_key(
+                    days=1, model=None, provider=None, surface=None,
+                    task=None, parent=None, scope=None,
+                    pricing_mode="strict", presentation="both",
+                    arrangements=None, now=self.NOW,
+                    event_db="/tmp/e.db", state_db="/tmp/s.db",
+                    profiles_path=f"{tmp}/missing-profiles.json",
+                    catalogue=book)
+
+            self.assertEqual(akey(book_a), akey(book_b))
+            self.assertNotEqual(akey(book_a), akey(book_c))
+
     def test_session_key_has_no_time_component(self):
         a = session_key(session_id="s1", population="all", provider=None,
                         model=None, pricing="strict", arrangements=None,
@@ -335,21 +383,28 @@ class EndpointFlightTests(unittest.TestCase):
         release = threading.Event()
         calls = []
         started = threading.Event()
+        outcomes = {}
+        failures = {}
 
         def slow_build(**kwargs):
             calls.append(1)
             started.set()
-            self.assertTrue(release.wait(timeout=10))
+            if not release.wait(timeout=10):
+                raise AssertionError("leader released")
             return {"ok": True, "window_days": kwargs.get("days")}
 
-        def call():
-            return plugin_api.analytics(days=30)
+        def call(i):
+            try:
+                outcomes[i] = plugin_api.analytics(days=30)
+            except BaseException as exc:  # collected, then re-raised below
+                failures[i] = exc
 
         with patch.object(plugin_api, "build_analytics_report",
                           side_effect=slow_build), \
              patch.object(plugin_api.members, "route_arrangements_payload",
                           return_value=None):
-            threads = [threading.Thread(target=call) for _ in range(4)]
+            threads = [threading.Thread(target=call, args=(i,))
+                       for i in range(4)]
             for t in threads:
                 t.start()
             self.assertTrue(started.wait(timeout=10))
@@ -363,7 +418,13 @@ class EndpointFlightTests(unittest.TestCase):
             release.set()
             for t in threads:
                 t.join(timeout=10)
+                self.assertFalse(t.is_alive(), "worker finished")
+        if failures:
+            raise failures[min(failures)]
         self.assertEqual(len(calls), 1)
+        self.assertEqual(len(outcomes), 4)
+        self.assertTrue(all(o == {"ok": True, "window_days": 30}
+                            for o in outcomes.values()))
         self.assertEqual(REPORT_FLIGHT.inflight_count(), 0)
 
     def test_sequential_endpoint_calls_recompute(self):

@@ -93,6 +93,56 @@ test('economics waits for the days=30 analytics to settle', async () => {
     `economics fires once analytics settles (${requested})`)
 })
 
+test('remount within the stale window refetches nothing', async () => {
+  // Fresh cache served synchronously: reopening with warm data must not
+  // touch the backend at all (neither analytics nor economics refires).
+  await boot()
+  const heavy = p => p === '/analytics?days=30' || p.startsWith('/economics/summary')
+  assert.ok(requested.filter(heavy).length >= 2, `initial mount fetches both (${requested})`)
+  requested.length = 0
+  // Remount WITHOUT clearing the query cache (unlike boot()).
+  while (roots.length) {
+    const previous = roots.pop()
+    try { await React.act(async () => { previous.unmount() }) } catch { /* already gone */ }
+  }
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = ReactDOMClient.createRoot(container)
+  roots.push(root)
+  await React.act(async () => {
+    root.render(React.createElement(QueryClientProvider, { client: queryClient },
+      React.createElement(T.OverviewPage)))
+  })
+  await flush()
+  assert.deepEqual(requested.filter(heavy), [],
+    `remount with fresh cache refetches nothing (${requested})`)
+  assert.ok(container.textContent.length > 0)
+})
+
+test('a new identity re-applies the stagger from scratch', async () => {
+  // Identity churn resets both queries to new keys; economics must again
+  // wait for the fresh analytics fetch, exactly like a cold mount.
+  await boot()
+  requested.length = 0
+  analyticsGate = defer()
+  analyticsGate.promise.catch(() => {})
+  await React.act(async () => {
+    T.$scopeConnection.set('reconnected-gateway')
+    await flush()
+  })
+  assert.ok(requested.includes('/analytics?days=30'),
+    `fresh analytics fetch starts under the new identity (${requested})`)
+  assert.ok(!requested.some(p => p.startsWith('/economics/summary')),
+    `economics waits for analytics under the new identity (${requested})`)
+  await React.act(async () => {
+    analyticsGate.resolve(overviewAnalytics({}))
+    await flush()
+  })
+  assert.ok(requested.some(p => p.startsWith('/economics/summary')),
+    `economics fires once fresh analytics settles (${requested})`)
+  await React.act(async () => { T.$scopeConnection.set('local') })
+})
+
 test('economics still fires when analytics fails', async () => {
   // Immediate failures (both the attempt and its one retry): the error
   // state must still release economics (degraded-but-complete). The retry
