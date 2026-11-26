@@ -1940,11 +1940,109 @@ function hasBackendCompatibilityFailure(identity, route, method) {
     && item.route === normalizedRoute && item.method === normalizedMethod)
 }
 
+/** The six-state connection status, derived from existing signals only:
+ *  the gateway transport atom, the backend bridge's own busy/failure
+ *  counters, and the health query the shell already runs (React Query
+ *  dedupes the shared key — the indicator adds no backend polling).
+ *
+ *  - offline:      the gateway transport is down and not attempting
+ *  - reconnecting: the gateway transport is attempting to recover
+ *  - connection error: transport failures with nothing in flight, or a
+ *                  failed/unreachable backend health read
+ *  - refreshing:   requests in flight over previously verified data
+ *  - loading:      requests in flight with no settled data yet
+ *  - live:         connected and settled
+ *  An isolated financial-data or provider-data error is returned by its
+ *  query, not thrown by the bridge, so it never reads as a global
+ *  connection failure. */
+function connectionStatusOf({ gateway, busy, failures, hasData, healthError,
+                              healthFetching, lastSuccess }) {
+  const transport = String(gateway || '').toLowerCase()
+  if (!transport || transport === 'disconnected' || transport === 'offline') {
+    return { key: 'offline', detail: lastSuccess ? 'lastUpdate' : null }
+  }
+  if (transport !== 'connected') return { key: 'reconnecting', detail: null }
+  if (busy > 0) return { key: hasData ? 'refreshing' : 'loading', detail: null }
+  if (healthError && !healthFetching) return { key: 'error', detail: null }
+  if (failures > 0) return { key: 'error', detail: null }
+  return { key: 'live', detail: lastSuccess ? 'lastUpdate' : null }
+}
+
+/** The six glyphs, drawn in the OverviewIcon style: small stroke paths on a
+ *  20×20 grid, colour inherited from the chip's state tone. */
+function ConnectionStatusIcon({ state }) {
+  const paths = {
+    live: 'M4 10.5l4 4 8-9',
+    loading: 'M10 3a7 7 0 1 1-6.4 4.2',
+    refreshing: 'M16.2 10a6.2 6.2 0 1 1-1.9-4.5 M16.2 3.6v2.9h-2.9',
+    reconnecting: 'M3 14a10 10 0 0 1 14 0 M6.6 11.6a5 5 0 0 1 6.8 0 M10 14.6v.4',
+    offline: 'M5.2 5.2l9.6 9.6 M10 3.2a6.8 6.8 0 1 0 0 13.6 6.8 6.8 0 0 0 0-13.6z',
+    error: 'M10 2.5l8 14H2z M10 7v4 M10 13.5v.5'
+  }
+  return jsx('svg', { className: 'wm-conn-status-icon', width: 14, height: 14,
+    viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7,
+    strokeLinecap: 'round', strokeLinejoin: 'round', 'data-state': state,
+    'aria-hidden': true, children: jsx('path', { d: paths[state] || paths.live }) })
+}
+
+/** Shared connection indicator: one component, every SpendSense page.
+ *  Rendered at the far right of the shared header row, aligned with the
+ *  logo. Communicates connection and retrieval status only — never the
+ *  completeness or accuracy of the financial data beneath it (Rule 62). */
+function ConnectionStatus() {
+  const t = usePluginI18n(ID)
+  const identity = useValue($membershipIdentity)
+  const gateway = useValue(host.state.gateway)
+  const busy = useValue($connectionBusy)
+  const failures = useValue($connectionFailures)
+  const lastSuccess = useValue($connectionLastSuccess)
+  // Same key the shell already queries: one request, shared cache.
+  const health = useQuery(backendHealthQuery(identity)) || {}
+  const hasData = !!health.data && membershipIdentityCurrent(identity)
+  const status = connectionStatusOf({
+    gateway, busy, failures, hasData,
+    healthError: !!health.error, healthFetching: !!health.isFetching,
+    lastSuccess,
+  })
+  const label = t(`connStatus_${status.key}`)
+  const clock = lastSuccess
+    ? new Date(lastSuccess).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null
+  const detail = status.detail === 'lastUpdate' && clock
+    ? t('connStatusLastUpdate', clock) : null
+  return jsxs(StatusChip, {
+    className: 'wm-connection-status', 'data-connection': status.key,
+    'aria-live': 'polite', title: detail || label,
+    tone: { live: 'positive', error: 'error', reconnecting: 'attention',
+            offline: 'neutral', loading: 'action', refreshing: 'action' }[status.key],
+    children: [
+      jsx(ConnectionStatusIcon, { state: status.key }, 'icon'),
+      jsx('span', { className: 'wm-conn-status-label', children: label }, 'label')
+    ].filter(Boolean) }, `conn-${status.key}`)
+}
+
+/** Connection indicator signals, maintained by the backend bridge itself.
+ *  Every plugin backend call funnels through backendRequest, so the busy
+ *  counter, the last-success timestamp and the consecutive transport-failure
+ *  count are exact without any additional polling. */
+const $connectionBusy = atom(0)
+const $connectionLastSuccess = atom(null)
+const $connectionFailures = atom(0)
+
 async function backendRequest(path, options = {}, transport = rest) {
   if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
   const identity = membershipIdentityNow()
   const route = backendRoute(path)
   const method = backendMethod(options)
+  $connectionBusy.set($connectionBusy.get() + 1)
+  try {
+    return await backendRequestInner(path, options, transport, identity, route, method)
+  } finally {
+    $connectionBusy.set(Math.max(0, $connectionBusy.get() - 1))
+  }
+}
+
+async function backendRequestInner(path, options, transport, identity, route, method) {
   const handleFailure = failure => {
     if (isBackendCompatibilityError(failure)) throw failure
     const kind = backendCompatibilityKind(path, options, failure)
@@ -1962,8 +2060,14 @@ async function backendRequest(path, options = {}, transport = rest) {
     } else {
       if (membershipIdentityCurrent(identity)) clearBackendCompatibilityFailure(identity, route, method)
     }
+    // Any answered response (including a data-level error body) proves the
+    // bridge reached the backend: only a thrown transport failure counts as
+    // a connection failure, so an isolated query error never reads as one.
+    $connectionLastSuccess.set(Date.now())
+    $connectionFailures.set(0)
     return result
   } catch (error) {
+    $connectionFailures.set($connectionFailures.get() + 1)
     return handleFailure(error)
   }
 }
@@ -4306,7 +4410,7 @@ function ProductShell({ children, pageStyles = '', pageClass = '' }) {
       }
     },
     children: [
-      jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + (supplementalStyles || '') }),
+      jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + CONNECTION_STATUS_CSS + (supplementalStyles || '') }),
       jsx(LedgerTabs, {}),
       jsx(LedgerSafetyNotice, {}, 'ledger-safety'),
       pair
@@ -5667,7 +5771,11 @@ function LedgerTabs() {
         'aria-selected': tab === id, 'aria-pressed': tab === id, tabIndex: tab === id ? 0 : -1,
         className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
         onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) },
-        children: jsx('span', { className: 'wm-product-tab-label', children: t(TAB_LABEL_KEYS[id]) }) }, id))
+        children: jsx('span', { className: 'wm-product-tab-label', children: t(TAB_LABEL_KEYS[id]) }) }, id)),
+    // Shared connection indicator: far right of the header row, opposite the
+    // logo, aligned with it, identical on every page (React Query dedupes the
+    // health key the shell also reads — no extra backend request).
+    jsx(ConnectionStatus, {}, 'connection-status')
   ] })
 }
 
@@ -6051,18 +6159,26 @@ function AdvancedBillingRules() {
   ], 'advanced-billing-rules') })
 }
 
+const CONNECTION_STATUS_CSS = [
+  '.wm-connection-status{margin-left:auto;align-self:center;gap:6px;padding:3px 10px;min-height:24px;font-size:11.5px;border-radius:99px;background:transparent;flex-shrink:0}',
+  '.wm-connection-status .wm-conn-status-icon{flex-shrink:0}',
+  '.wm-connection-status[data-connection="live"]{background:color-mix(in srgb,var(--wm-positive) 12%,transparent)}',
+  '.wm-connection-status[data-connection="loading"],.wm-connection-status[data-connection="refreshing"]{background:color-mix(in srgb,var(--wm-action) 12%,transparent)}',
+  '.wm-connection-status[data-connection="reconnecting"]{background:color-mix(in srgb,var(--wm-attention) 14%,transparent)}',
+  '.wm-connection-status[data-connection="offline"]{color:var(--wm-text-secondary)}',
+  '.wm-connection-status[data-connection="error"]{background:color-mix(in srgb,var(--wm-error) 12%,transparent)}',
+  '.wm-connection-status[data-connection="loading"] .wm-conn-status-icon,.wm-connection-status[data-connection="refreshing"] .wm-conn-status-icon{animation:wm-conn-spin 1.2s linear infinite;transform-origin:50% 50%}',
+  '.wm-connection-status[data-connection="reconnecting"] .wm-conn-status-icon{animation:wm-conn-pulse 1.6s ease-in-out infinite}',
+  '@keyframes wm-conn-spin{to{transform:rotate(360deg)}}',
+  '@keyframes wm-conn-pulse{0%,100%{opacity:1}50%{opacity:.4}}',
+  '@media (prefers-reduced-motion: reduce){.wm-connection-status .wm-conn-status-icon{animation:none !important}}',
+]
+
 const PRODUCT_CSS = [
   '.wm-product .wm-shell{width:100%;max-width:1180px;padding:24px 22px;gap:18px;min-width:0}',
   '.wm-product .wm-product-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}',
   '.wm-product .wm-product-heading h1{margin:0;font-size:var(--wm-font-display,24px);line-height:1.2;font-weight:620;letter-spacing:-.35px}',
   '.wm-product .wm-product-heading p{margin:5px 0 0;color:var(--ui-text-tertiary);font-size:var(--wm-font-body,13px);line-height:1.45}',
-  '.wm-status-chip{display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border:1px solid var(--wm-border);border-radius:999px;font-size:11.5px;color:var(--ui-text-secondary);white-space:nowrap;align-self:center}',
-  '.wm-status-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ui-text-quaternary);flex-shrink:0}',
-  '.wm-status-chip[data-status="live"]{color:var(--ui-text-secondary)}',
-  '.wm-status-chip[data-status="live"]::before{background:var(--ui-accent)}',
-  '.wm-status-chip[data-status="connecting"]::before{background:var(--ui-warning)}',
-  '.wm-status-chip[data-status="loading"]::before,.wm-status-chip[data-status="refreshing"]::before{background:var(--ui-accent);animation:wm-status-pulse 1.4s ease-in-out infinite}',
-  '@keyframes wm-status-pulse{0%,100%{opacity:1}50%{opacity:.35}}',
   '.wm-product .wm-product-tabs{display:flex;align-items:stretch;flex-wrap:wrap;gap:2px;min-height:54px;padding:0 18px;border-bottom:1px solid var(--wm-border);position:sticky;top:0;z-index:30;background-color:Canvas;background-image:linear-gradient(var(--wm-surface),var(--wm-surface));background-clip:padding-box;box-shadow:0 2px 0 var(--wm-border);overflow:visible}',
   '.wm-product .wm-product-brand{display:flex;align-items:center;gap:9px;flex-shrink:0;align-self:stretch;margin:0 10px 0 0;padding:0 15px 0 2px;border-right:1px solid var(--wm-border)}',
   '.wm-product .wm-product-brand-mark{display:inline-flex;align-items:center;flex-shrink:0}',
@@ -6230,7 +6346,8 @@ const PRODUCT_CSS = [
   // live with the shell rather than in a page stylesheet.
   '.wm-product .wm-backend-compatibility strong{display:block;font-weight:600;font-size:12px}',
   '.wm-product .wm-backend-compatibility p{margin:5px 0 0;font-size:11.5px;line-height:1.5;color:var(--ui-text-secondary)}',
-  '.wm-product .wm-backend-compatibility p.wm-subtle{color:var(--ui-text-tertiary)}'
+  '.wm-product .wm-backend-compatibility p.wm-subtle{color:var(--ui-text-tertiary)}',
+  ...CONNECTION_STATUS_CSS,
 ].join('') + BUDGET_CSS;
 
 function pricingStatusQuery(identity = membershipIdentityNow()) {
@@ -7461,25 +7578,9 @@ function OverviewPage() {
       target.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
     } catch {}
   }
-  // Connection status, right of the page title: the identity gate and the
-  // backend queries are otherwise invisible while they churn or load. A
-  // failed read is never "Live" — the grey/warning states cover it until a
-  // retry settles, alongside the existing failure banner.
-  const identityLive = membershipIdentityCurrent(identity)
-  const dataBusy = analytics.isLoading || analytics.isFetching || !!analytics.error
-    || economics.isLoading || economics.isFetching || !!economics.error
-    || accounts.isLoading || accounts.isFetching || !!accounts.error
-    || weather.isLoading || weather.isFetching || !!weather.error
-  const haveData = analyticsCurrent || accountsReady
-  const status = !identityLive ? { key: 'connecting', label: t('statusConnecting') }
-    : dataBusy && !haveData ? { key: 'loading', label: t('statusLoading') }
-    : dataBusy ? { key: 'refreshing', label: t('statusRefreshing') }
-    : { key: 'live', label: t('statusLive') }
-  const statusChip = jsx('span', { className: 'wm-status-chip', 'data-status': status.key,
-    'aria-live': 'polite', children: status.label })
   return jsx(ProductShell, { children:
     jsxs('main', { className: 'wm-shell', children: [
-      jsx(ProductHeader, { title: t('ovTitle'), subtitle: t('ovSubtitle'), actions: statusChip }),
+      jsx(ProductHeader, { title: t('ovTitle'), subtitle: t('ovSubtitle') }),
       analytics.error ? jsxs('div', { className: 'wm-alert', role: 'alert', children: [
         jsx('p', { children: t('ovBackendReadFailure') }),
         jsx('p', { className: 'wm-subtle', children: String(analytics.error?.message || analytics.error || '') }),
@@ -16563,10 +16664,13 @@ const I18N = {
     originalRates: 'Original (list)',
     billedRatesNote:
       'The provider’s own billed (effective) rates for this account, with the original undiscounted list price for comparison. These are the rates the expenditure estimate uses.',
-    statusConnecting: 'Connecting…',
-    statusLoading: 'Loading data…',
-    statusRefreshing: 'Refreshing…',
-    statusLive: 'Live',
+    connStatus_live: 'Live',
+    connStatus_loading: 'Loading data…',
+    connStatus_refreshing: 'Refreshing…',
+    connStatus_reconnecting: 'Reconnecting…',
+    connStatus_offline: 'Offline',
+    connStatus_error: 'Connection error',
+    connStatusLastUpdate: (time) => `Last successful update ${time}`,
     range_all: 'All recorded',
     range_month: 'This month',
     range_today: 'Today',
@@ -18388,10 +18492,13 @@ const I18N = {
     originalRates: '原价（目录）',
     billedRatesNote:
       '该账户的供应商实付（有效）费率，并列出未打折的目录原价供比较。支出估算即按此费率计算。',
-    statusConnecting: '正在连接…',
-    statusLoading: '正在加载数据…',
-    statusRefreshing: '正在刷新…',
-    statusLive: '已连接',
+    connStatus_live: '已连接',
+    connStatus_loading: '正在加载数据…',
+    connStatus_refreshing: '正在刷新…',
+    connStatus_reconnecting: '正在重新连接…',
+    connStatus_offline: '离线',
+    connStatus_error: '连接错误',
+    connStatusLastUpdate: (time) => `上次成功更新 ${time}`,
     sessionTokens: '本次会话',
     src_backend: 'WolfMark 后端估算',
     src_backend_summary: 'Hermes 主调用 API 等值汇总',
@@ -19218,6 +19325,7 @@ export default {
 /** Pure internals, exported for the node test-suite (the host only reads `default`). */
 export const __test = {
   Chip, BudgetPanel, BudgetStatusIndicator, budgetLevel, budgetColour, sessionBudgetStatus, usageValueDelta, budgetQuery, budgetWrite, budgetPayload, newBudgetDraft, budgetTooltip, $budgetDraft, $budgetBusy, $budgetNotice, BUDGET_CSS,
+  connectionStatusOf, $connectionBusy, $connectionLastSuccess, $connectionFailures, ConnectionStatus, ConnectionStatusIcon, CONNECTION_STATUS_CSS, LedgerTabs,
   analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS, CHART_COLORS, sharePercent, analyticsListPartial,
   analyticsUsageCost,
   AnalyticsPage, AnalyticsDashboard, AnalyticsCoverageSummary, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
