@@ -143,6 +143,53 @@ test('a new identity re-applies the stagger from scratch', async () => {
   await React.act(async () => { T.$scopeConnection.set('local') })
 })
 
+test('the wait predicate covers every analytics query state', () => {
+  const { shouldWaitForAnalytics } = T
+  // Absent query (pages that never mount Overview): proceed.
+  assert.equal(shouldWaitForAnalytics(null), false)
+  assert.equal(shouldWaitForAnalytics(undefined), false)
+  // Pre-fetch and active fetch: wait.
+  assert.equal(shouldWaitForAnalytics({ status: 'pending', fetchStatus: 'idle' }), true)
+  assert.equal(shouldWaitForAnalytics({ status: 'pending', fetchStatus: 'fetching' }), true)
+  assert.equal(shouldWaitForAnalytics({ status: 'success', fetchStatus: 'fetching' }), true)
+  // Settled, failed, or paused (offline — waiting cannot help): proceed.
+  assert.equal(shouldWaitForAnalytics({ status: 'success', fetchStatus: 'idle' }), false)
+  assert.equal(shouldWaitForAnalytics({ status: 'error', fetchStatus: 'idle' }), false)
+  assert.equal(shouldWaitForAnalytics({ status: 'pending', fetchStatus: 'paused' }), false)
+  assert.equal(shouldWaitForAnalytics({ status: 'success', fetchStatus: 'paused' }), false)
+})
+
+test('a background analytics refresh still finishes before economics refires', async () => {
+  // The stale-cache reopen scenario: both queries hold settled data, an
+  // invalidation starts a background analytics refresh, and economics
+  // must not dispatch until that refresh settles — no parallel burst.
+  await boot()
+  const heavy = p => p === '/analytics?days=30' || p.startsWith('/economics/summary')
+  assert.ok(requested.filter(heavy).length >= 2, `initial mount fetches both (${requested})`)
+  requested.length = 0
+  analyticsGate = defer()
+  analyticsGate.promise.catch(() => {})
+  // NOTE: invalidateQueries only resolves once triggered refetches settle,
+  // so it must not be awaited while the analytics refresh is gated.
+  let invalidated
+  await React.act(async () => {
+    invalidated = queryClient.invalidateQueries({ queryKey: ['spend-sense'] })
+    invalidated.catch(() => {})
+    await flush()
+  })
+  assert.ok(requested.includes('/analytics?days=30'),
+    `analytics refresh starts (${requested})`)
+  assert.ok(!requested.some(p => p.startsWith('/economics/summary')),
+    `economics waits for the active refresh (${requested})`)
+  await React.act(async () => {
+    analyticsGate.resolve(overviewAnalytics({}))
+    await invalidated
+    await flush()
+  })
+  assert.ok(requested.some(p => p.startsWith('/economics/summary')),
+    `economics refires once the refresh settles (${requested})`)
+})
+
 test('economics still fires when analytics fails', async () => {
   // Immediate failures (both the attempt and its one retry): the error
   // state must still release economics (degraded-but-complete). The retry
