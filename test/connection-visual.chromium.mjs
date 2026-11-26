@@ -18,7 +18,10 @@ import { findChromiumBinary, launchChromium, connectToChromium, stopChromium, po
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '')
 const MODULES = join(ROOT, 'test/harness/node_modules')
 const RESULT_ID = 'conn-visual-result'
-const WORK = new URL('.', import.meta.url).pathname + 'connection-visual-build'
+// The build (esbuild bundle + browser profile) lives outside the repository:
+// generated artefacts must never be committed.
+const WORK = process.env.CONN_VISUAL_WORK
+  || new URL('file:///tmp').pathname + '/connection-visual-build'
 const PROFILE_DIR = `${WORK}/profile`
 const CASE_TIMEOUT_MS = 20_000
 
