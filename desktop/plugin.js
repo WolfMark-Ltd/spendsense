@@ -1948,23 +1948,25 @@ function hasBackendCompatibilityFailure(identity, route, method) {
  *  - offline:      the gateway transport is down and not attempting
  *  - reconnecting: the gateway transport is attempting to recover
  *  - connection error: transport failures with nothing in flight, or a
- *                  failed/unreachable backend health read
- *  - refreshing:   requests in flight over previously verified data
- *  - loading:      requests in flight with no settled data yet
+ *                  failed backend health read with no settled data
+ *  - refreshing:   data requests in flight over previously verified data
+ *  - loading:      data requests in flight with no settled data yet
  *  - live:         connected and settled
- *  An isolated financial-data or provider-data error is returned by its
- *  query, not thrown by the bridge, so it never reads as a global
- *  connection failure. */
+ *  Background health checks do not move the pill: they are neither data
+ *  requests nor failures the user initiated, so a routine refetch can never
+ *  flicker the indicator between Live and Refreshing. An isolated
+ *  financial-data or provider-data error is returned by its query, not
+ *  thrown by the bridge, so it never reads as a global connection failure. */
 function connectionStatusOf({ gateway, busy, failures, hasData, healthError,
-                              healthFetching, lastSuccess }) {
+                              lastSuccess }) {
   const transport = String(gateway || '').toLowerCase()
   if (!transport || transport === 'disconnected' || transport === 'offline') {
     return { key: 'offline', detail: lastSuccess ? 'lastUpdate' : null }
   }
   if (transport !== 'connected') return { key: 'reconnecting', detail: null }
   if (busy > 0) return { key: hasData ? 'refreshing' : 'loading', detail: null }
-  if (healthError && !healthFetching) return { key: 'error', detail: null }
   if (failures > 0) return { key: 'error', detail: null }
+  if (healthError && !hasData) return { key: 'error', detail: null }
   return { key: 'live', detail: lastSuccess ? 'lastUpdate' : null }
 }
 
@@ -1988,37 +1990,58 @@ function ConnectionStatusIcon({ state }) {
 /** Shared connection indicator: one component, every SpendSense page.
  *  Rendered at the far right of the shared header row, aligned with the
  *  logo. Communicates connection and retrieval status only — never the
- *  completeness or accuracy of the financial data beneath it (Rule 62). */
+ *  completeness or accuracy of the financial data beneath it (Rule 62).
+ *  The supporting line beneath the pill carries honest, state-accurate
+ *  context (including the last successful update time) so the important
+ *  freshness information is visible without hovering; the block reserves
+ *  the same height in every state so the header never shifts. */
 function ConnectionStatus() {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const gateway = useValue(host.state.gateway)
   const busy = useValue($connectionBusyBy)[identity] || 0
   const failures = useValue($connectionFailures)
-  const lastSuccess = useValue($connectionLastSuccess)
+  const lastSuccess = (useValue($connectionLastSuccessBy)[identity]) || null
   // Same key the shell already queries: one request, shared cache.
   const health = useQuery(backendHealthQuery(identity)) || {}
   const hasData = !!health.data && membershipIdentityCurrent(identity)
   const status = connectionStatusOf({
     gateway, busy, failures, hasData,
-    healthError: !!health.error, healthFetching: !!health.isFetching,
-    lastSuccess,
+    healthError: !!health.error, lastSuccess,
   })
   const label = t(`connStatus_${status.key}`)
-  const clock = lastSuccess
-    ? new Date(lastSuccess).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : null
-  const detail = status.detail === 'lastUpdate' && clock
-    ? t('connStatusLastUpdate', clock) : null
-  return jsxs(StatusChip, {
-    className: 'wm-connection-status', 'data-connection': status.key,
-    'aria-live': 'polite', title: detail || label,
-    tone: { live: 'positive', error: 'error', reconnecting: 'attention',
-            offline: 'neutral', loading: 'action', refreshing: 'action' }[status.key],
+  const clock = lastSuccess ? new Date(lastSuccess) : null
+  const time = clock ? `${String(clock.getHours()).padStart(2, '0')}:` +
+    `${String(clock.getMinutes()).padStart(2, '0')}:` +
+    `${String(clock.getSeconds()).padStart(2, '0')}` : null
+  const detail = status.detail === 'lastUpdate' && time
+    ? t('connStatusLastUpdate', time) : null
+  // The supporting line never claims more than the state knows: with no
+  // verified data available, Reconnecting cannot claim to be showing any.
+  const sub = status.key === 'live' ? t('connSubLive')
+    : status.key === 'loading' ? t('connSubLoading')
+    : status.key === 'refreshing' ? t('connSubRefreshing')
+    : status.key === 'reconnecting'
+      ? (lastSuccess ? t('connSubReconnectData') : t('connSubReconnectBare'))
+    : status.key === 'offline'
+      ? (time ? t('connSubOfflineTime', time) : t('connSubOfflineBare'))
+    : t('connSubError')
+  return jsxs('div', {
+    className: 'wm-conn-status-block', 'data-connection': status.key,
     children: [
-      jsx(ConnectionStatusIcon, { state: status.key }, 'icon'),
-      jsx('span', { className: 'wm-conn-status-label', children: label }, 'label')
-    ].filter(Boolean) }, `conn-${status.key}`)
+      jsxs(StatusChip, {
+        className: 'wm-connection-status', 'data-connection': status.key,
+        'aria-live': 'polite', title: detail || label,
+        tone: { live: 'positive', error: 'error', reconnecting: 'attention',
+                offline: 'neutral', loading: 'action', refreshing: 'action' }[status.key],
+        children: [
+          jsx(ConnectionStatusIcon, { state: status.key }, 'icon'),
+          jsx('span', { className: 'wm-conn-status-label', children: label }, 'label')
+        ].filter(Boolean)
+      }, 'chip'),
+      jsx('span', { className: 'wm-conn-status-sub', children: sub }, 'sub')
+    ]
+  }, `conn-${status.key}`)
 }
 
 /** Connection indicator signals, maintained by the backend bridge itself.
@@ -2029,7 +2052,7 @@ function ConnectionStatus() {
  *  for a switched-away connection can never alter the active identity's
  *  health or keep its indicator refreshing. */
 const $connectionBusyBy = atom({})
-const $connectionLastSuccess = atom(null)
+const $connectionLastSuccessBy = atom({})
 const $connectionFailures = atom(0)
 
 const connectionBusyFor = identity => ($connectionBusyBy.get()[identity] || 0)
@@ -2080,7 +2103,9 @@ async function backendRequestInner(path, options, transport, identity, route, me
   // including membership-save conflicts — keep propagating to the caller but
   // never count as connection failures.
   if (membershipIdentityCurrent(identity)) {
-    $connectionLastSuccess.set(Date.now())
+    $connectionLastSuccessBy.set({
+      ...$connectionLastSuccessBy.get(), [identity]: Date.now()
+    })
     $connectionFailures.set(0)
   }
   if (result?.ok === false) {
@@ -6180,7 +6205,9 @@ function AdvancedBillingRules() {
 }
 
 const CONNECTION_STATUS_CSS = [
-  '.wm-connection-status{margin-left:auto;align-self:center;gap:6px;padding:3px 10px;min-height:24px;font-size:11.5px;border-radius:99px;background:transparent;flex-shrink:0}',
+  '.wm-conn-status-block{margin-left:auto;display:inline-flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:3px;align-self:stretch;flex-shrink:0;min-width:150px}',
+  '.wm-connection-status{gap:6px;padding:3px 10px;min-height:24px;font-size:11.5px;border-radius:99px;background:transparent}',
+  '.wm-conn-status-sub{font-size:10.5px;line-height:1.25;color:var(--wm-text-muted);letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}',
   '.wm-connection-status .wm-conn-status-icon{flex-shrink:0}',
   '.wm-connection-status[data-connection="live"]{background:color-mix(in srgb,var(--wm-positive) 12%,transparent)}',
   '.wm-connection-status[data-connection="loading"],.wm-connection-status[data-connection="refreshing"]{background:color-mix(in srgb,var(--wm-action) 12%,transparent)}',
@@ -16691,6 +16718,14 @@ const I18N = {
     connStatus_offline: 'Offline',
     connStatus_error: 'Connection error',
     connStatusLastUpdate: (time) => `Last successful update ${time}`,
+    connSubLive: 'Connected · Data refreshed',
+    connSubLoading: 'Retrieving initial data',
+    connSubRefreshing: 'Fetching the latest data',
+    connSubReconnectData: 'Showing last verified data',
+    connSubReconnectBare: 'Restoring the connection…',
+    connSubOfflineTime: (time) => `Last updated ${time}`,
+    connSubOfflineBare: 'No data received yet',
+    connSubError: 'Unable to retrieve data',
     range_all: 'All recorded',
     range_month: 'This month',
     range_today: 'Today',
@@ -18519,6 +18554,14 @@ const I18N = {
     connStatus_offline: '离线',
     connStatus_error: '连接错误',
     connStatusLastUpdate: (time) => `上次成功更新 ${time}`,
+    connSubLive: '已连接 · 数据已刷新',
+    connSubLoading: '正在获取初始数据',
+    connSubRefreshing: '正在获取最新数据',
+    connSubReconnectData: '正在显示最近验证的数据',
+    connSubReconnectBare: '正在恢复连接…',
+    connSubOfflineTime: (time) => `最后更新 ${time}`,
+    connSubOfflineBare: '尚未收到数据',
+    connSubError: '无法获取数据',
     sessionTokens: '本次会话',
     src_backend: 'WolfMark 后端估算',
     src_backend_summary: 'Hermes 主调用 API 等值汇总',
@@ -19345,7 +19388,7 @@ export default {
 /** Pure internals, exported for the node test-suite (the host only reads `default`). */
 export const __test = {
   Chip, BudgetPanel, BudgetStatusIndicator, budgetLevel, budgetColour, sessionBudgetStatus, usageValueDelta, budgetQuery, budgetWrite, budgetPayload, newBudgetDraft, budgetTooltip, $budgetDraft, $budgetBusy, $budgetNotice, BUDGET_CSS,
-  connectionStatusOf, $connectionBusyBy, $connectionLastSuccess, $connectionFailures, ConnectionStatus, ConnectionStatusIcon, CONNECTION_STATUS_CSS, LedgerTabs, ProductShell,
+  connectionStatusOf, $connectionBusyBy, $connectionLastSuccessBy, $connectionFailures, ConnectionStatus, ConnectionStatusIcon, CONNECTION_STATUS_CSS, LedgerTabs, ProductShell,
   analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS, CHART_COLORS, sharePercent, analyticsListPartial,
   analyticsUsageCost,
   AnalyticsPage, AnalyticsDashboard, AnalyticsCoverageSummary, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,

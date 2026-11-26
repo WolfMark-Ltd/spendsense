@@ -90,7 +90,7 @@ const resetHost = () => {
   host.state.gateway.set('connected')
   T.$connectionBusyBy.set({})
   T.$connectionFailures.set(0)
-  T.$connectionLastSuccess.set(null)
+  T.$connectionLastSuccessBy.set({})
 }
 
 const mount = async element => {
@@ -104,17 +104,17 @@ const mount = async element => {
   return { container, unmount: () => { root.unmount(); container.remove() } }
 }
 
-const settledTranslate = key => {
+const settledTranslate = (key, ...args) => {
   const entry = T.I18N.en[key]
-  return typeof entry === 'function' ? entry('12:34') : entry ?? key
+  return typeof entry === 'function' ? entry(...args) : entry ?? key
 }
 
 // --- 1. the state table ------------------------------------------------------
 test('the six connection states derive from transport, bridge counters and health', () => {
   const base = { gateway: 'connected', busy: 0, failures: 0, hasData: true,
-    healthError: false, healthFetching: false, lastSuccess: null }
+    healthError: false, lastSuccess: null }
   assert.equal(T.connectionStatusOf(base).key, 'live')
-  // Initial retrieval: requests in flight, no settled data yet.
+  // Initial retrieval: data requests in flight, no settled data yet.
   assert.equal(T.connectionStatusOf({ ...base, busy: 2, hasData: false }).key, 'loading')
   // Background refresh: previously verified data stays visible.
   assert.equal(T.connectionStatusOf({ ...base, busy: 2 }).key, 'refreshing')
@@ -127,12 +127,16 @@ test('the six connection states derive from transport, bridge counters and healt
   assert.equal(T.connectionStatusOf({ ...base, gateway: 'disconnected', lastSuccess: 1 }).detail,
     'lastUpdate')
   // Connection error: consecutive transport failures with nothing in flight,
-  // or a failed health read that is not retrying.
+  // or a failed health read with no settled data.
   assert.equal(T.connectionStatusOf({ ...base, failures: 3 }).key, 'error')
-  assert.equal(T.connectionStatusOf({ ...base, healthError: true }).key, 'error')
-  // A retrying health read is recovery, not a settled failure.
-  assert.equal(T.connectionStatusOf({ ...base, healthError: true, healthFetching: true }).key,
-    'live')
+  assert.equal(T.connectionStatusOf({ ...base, healthError: true, hasData: false }).key, 'error')
+  // With verified data already settled, a failed background health read is
+  // stale evidence, not a live connection failure.
+  assert.equal(T.connectionStatusOf({ ...base, healthError: true }).key, 'live')
+  // A background health refetch is neither a data request nor a user-facing
+  // event: it can never move the pill (routine checks must not flicker it
+  // between Live and Refreshing).
+  assert.equal(T.connectionStatusOf({ ...base, busy: 0 }).key, 'live')
   // An isolated data error never reads as a global connection failure: the
   // bridge answered, so the failure counter stays at zero and the state is live.
   assert.equal(T.connectionStatusOf({ ...base, failures: 0 }).key, 'live')
@@ -150,11 +154,12 @@ test('the pill renders in the shared header row on the far side from the logo', 
     const row = container.querySelector('.wm-product-tabs')
     assert.ok(row, 'the shared header row renders')
     const brand = row.querySelector('.wm-product-brand')
-    const chip = row.querySelector('.wm-connection-status')
+    const block = row.querySelector('.wm-conn-status-block')
+    const chip = block?.querySelector('.wm-connection-status')
     assert.ok(brand && chip, 'the logo and the status pill share the header row')
-    // The pill is the row's last element: margin-left:auto places it on the
-    // opposite side from the logo at every page and width.
-    assert.equal(row.lastElementChild, chip, 'the pill is the row\'s final element')
+    // The indicator block is the row's last element: margin-left:auto places
+    // it on the opposite side from the logo at every page and width.
+    assert.equal(row.lastElementChild, block, 'the indicator is the row\'s final element')
     assert.equal(chip.getAttribute('data-connection'), 'live',
       'a connected, settled gateway reads Live')
     assert.ok(chip.querySelector('.wm-conn-status-icon[data-state="live"]'),
@@ -164,6 +169,13 @@ test('the pill renders in the shared header row on the far side from the logo', 
     assert.equal(chip.getAttribute('role'), null,
       'the chip never collides with the host notice role="status" contract')
     assert.equal(chip.querySelector('.wm-conn-status-label').textContent, 'Live')
+    // The supporting line is visible beneath the pill (freshness information
+    // is never hover-only) and the block reserves the same height in every
+    // state, so the header cannot shift.
+    const sub = block.querySelector('.wm-conn-status-sub')
+    assert.ok(sub, 'the supporting line renders beneath the pill')
+    assert.equal(sub.textContent, 'Connected · Data refreshed',
+      'the Live supporting line is accurate and visible without hovering')
   } finally {
     T.restoreRest(originalRest)
     i18nBackend.t = previousTranslate
@@ -275,6 +287,68 @@ test('the shell and the indicator share one health request from a cold cache', a
   } finally {
     T.restoreRest(originalRest)
     i18nBackend.t = previousTranslate
+    unmount()
+  }
+})
+
+test('the supporting line never claims more than the state knows', async () => {
+  resetHost()
+  const originalRest = T.getRest()
+  const previousTranslate = i18nBackend.t
+  i18nBackend.t = settledTranslate
+  T.setRest(async () => ({ ok: true, version: '0.6.42', contract: 4, ready: true }))
+  const { container, unmount } = await mount(React.createElement(T.ConnectionStatus))
+  try {
+    const sub = () => container.querySelector('.wm-conn-status-sub')?.textContent
+    assert.equal(sub(), 'Connected · Data refreshed')
+    // Reconnecting without verified data must not claim to be showing any.
+    host.state.gateway.set('reconnecting')
+    await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    assert.equal(sub(), 'Restoring the connection…',
+      'Reconnecting with no settled data claims no data')
+    // With verified data available it may name it.
+    T.$connectionLastSuccessBy.set({ [T.membershipIdentityNow()]: Date.parse('2026-11-26T10:11:12') })
+    await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    assert.equal(sub(), 'Showing last verified data',
+      'Reconnecting over settled data names the last verified data')
+    // Offline with a known last update names it to the second, visible
+    // without hovering; offline with none claims none.
+    host.state.gateway.set('disconnected')
+    await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    assert.equal(sub(), 'Last updated 10:11:12',
+      'Offline with a known update time shows it to the second')
+    T.$connectionLastSuccessBy.set({})
+    await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    assert.equal(sub(), 'No data received yet',
+      'Offline with no verified data claims no data')
+    // Connection error is explicit about retrieval.
+    host.state.gateway.set('connected')
+    T.$connectionFailures.set(2)
+    await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    assert.equal(sub(), 'Unable to retrieve data')
+  } finally {
+    host.state.gateway.set('connected')
+    T.restoreRest(originalRest)
+    i18nBackend.t = previousTranslate
+    unmount()
+  }
+})
+
+test('the last update time reflects data retrieval, never health checks alone', async () => {
+  resetHost()
+  const originalRest = T.getRest()
+  T.setRest(async () => ({ ok: true, version: '0.6.42', contract: 4, ready: true }))
+  const { container, unmount } = await mount(React.createElement(T.ConnectionStatus))
+  try {
+    await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    // The chip's health query settled successfully, and the freshness map is
+    // still empty: only a backendRequest (a real data call through the
+    // bridge) records a successful update — a health check by itself never
+    // does.
+    assert.deepEqual(T.$connectionLastSuccessBy.get(), {},
+      'a successful health check does not fabricate a last-update time')
+  } finally {
+    T.restoreRest(originalRest)
     unmount()
   }
 })
