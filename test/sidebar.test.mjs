@@ -1813,3 +1813,56 @@ test('without a native rate the catalogue card keeps its label and basis', async
     i18nBackend.t = previousTranslate
   }
 })
+
+test('billed-only backend rates never unprice the list fallback', async () => {
+  // An effective-only /rates response keeps the billed panel but must not
+  // bypass the list-rate chain: local estimates and session budgets keep
+  // their price from the bundled/live card.
+  resetHost()
+  const originalRest = T.getRest()
+  const previousTranslate = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const value = T.I18N.en[key]
+    return typeof value === 'function' ? value(...args) : value ?? key
+  }
+  T.setRest(async path => {
+    if (path.startsWith('/rates?')) return {
+      ok: true,
+      catalogue: { as_of: '2026-11-25T00:00:00Z', stale: false },
+      rate: null,
+      effective_rate: { input: 0.03, output: 0.12, cache_read: 0.0006, basis: 'effective',
+        list_input: null, list_output: null, list_cache_read: null,
+        as_of: '2026-11-25T21:33:20Z' }
+    }
+    return { rate: null }
+  })
+  // No catalog payload pricing: the bundled card supplies the list basis.
+  host.state.model.set('deepseek/deepseek-v4.1-flash-1017')
+  queryClient.setQueryData(T.catalogQuery('s1', 'deepseek/deepseek-v4.1-flash-1017', false).queryKey,
+    { model: 'deepseek/deepseek-v4.1-flash-1017', provider: 'nous' })
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage({ model: 'deepseek/deepseek-v4.1-flash-1017' }))
+  const container = await renderMeter()
+  await flush(3)
+  try {
+    const toggle = container.querySelector('.wm-rates-toggle')
+    assert.match(toggle.textContent, /Billed rates/,
+      'the billed panel still leads on an effective-only response')
+    await React.act(async () => {
+      toggle.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    })
+    await flush(2)
+    const body = container.querySelector('#wm-rates-body')
+    assert.ok(body)
+    const cells = [...body.querySelectorAll('.wm-rate-cell .wm-metric-label')]
+      .map(el => el.textContent)
+    assert.ok(cells.includes('Original (list)'), 'no original line when the native row lacks one')
+    // The cost figure is priced from the fallback list card, never '—'.
+    const figure = container.querySelector('.wm-kpi-figure')
+    assert.ok(figure && figure.textContent !== '—' && figure.textContent !== '',
+      `local estimate keeps its list price: ${figure?.textContent}`)
+  } finally {
+    T.restoreRest(originalRest)
+    i18nBackend.t = previousTranslate
+  }
+})

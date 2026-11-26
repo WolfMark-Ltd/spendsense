@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.41'
+const PLUGIN_VERSION = '0.6.42'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -410,12 +410,21 @@ function resolveRates({ model, provider, payload, remembered }) {
   const base = { foreignSlug: null, provider: p || null, providerUnknown: !p }
   if (!model) return { ...base, origin: 'none', rates: null }
   const served = backendRateBook[JSON.stringify([membershipIdentityNow(), rateKey(p, model)])]
-  if (p && served && (validRates(served.rates) || served.effective)) {
+  const servedEffective = (p && served && served.effective) || null
+  if (p && served && validRates(served.rates)) {
     return { ...base, origin: 'backend', rates: served.rates, provenance: served.provenance,
-      effective: served.effective || null,
+      effective: servedEffective,
       provisional: served.provisional || [], stale: served.stale, asOf: served.asOf, age: served.age }
   }
+  // Billed rates without a catalogue card: keep them for the panel and
+  // continue the list-rate fallback chain below — an effective-only
+  // response must never hide a usable list card or unprice local estimates.
+  const resolved = resolveListRates({ model, provider: p, payload, remembered, base })
+  return servedEffective ? { ...resolved, effective: servedEffective } : resolved
+}
 
+function resolveListRates({ model, provider, payload, remembered, base }) {
+  const p = String(provider || '').trim()
   const found = findPricing(payload, model, p || null)
   if (p) {
     const live = found && found.ownProvider ? toRates(found.entry) : null
@@ -7453,10 +7462,14 @@ function OverviewPage() {
     } catch {}
   }
   // Connection status, right of the page title: the identity gate and the
-  // backend queries are otherwise invisible while they churn or load.
+  // backend queries are otherwise invisible while they churn or load. A
+  // failed read is never "Live" — the grey/warning states cover it until a
+  // retry settles, alongside the existing failure banner.
   const identityLive = membershipIdentityCurrent(identity)
-  const dataBusy = analytics.isLoading || analytics.isFetching
-    || economics.isLoading || accounts.isLoading || weather.isLoading
+  const dataBusy = analytics.isLoading || analytics.isFetching || !!analytics.error
+    || economics.isLoading || economics.isFetching || !!economics.error
+    || accounts.isLoading || accounts.isFetching || !!accounts.error
+    || weather.isLoading || weather.isFetching || !!weather.error
   const haveData = analyticsCurrent || accountsReady
   const status = !identityLive ? { key: 'connecting', label: t('statusConnecting') }
     : dataBusy && !haveData ? { key: 'loading', label: t('statusLoading') }
