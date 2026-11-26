@@ -12,16 +12,15 @@
 import { createServer } from 'node:http'
 import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { findChromiumBinary, launchChromium, connectToChromium, stopChromium, pollForValue, withIsolatedPage } from './chromium-lifecycle.mjs'
 
-const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '')
+const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const MODULES = join(ROOT, 'test/harness/node_modules')
 const RESULT_ID = 'conn-visual-result'
 // The build (esbuild bundle + browser profile) lives outside the repository:
 // generated artefacts must never be committed.
-const WORK = process.env.CONN_VISUAL_WORK
-  || new URL('file:///tmp').pathname + '/connection-visual-build'
+const WORK = process.env.CONN_VISUAL_WORK || '/tmp/connection-visual-build'
 const PROFILE_DIR = `${WORK}/profile`
 const CASE_TIMEOUT_MS = 20_000
 

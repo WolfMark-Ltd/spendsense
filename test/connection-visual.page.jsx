@@ -68,7 +68,7 @@ function injectCaseState() {
     return
   }
   if (state === 'error') {
-    T.$connectionFailures.set(2)
+    T.$connectionFailuresBy.set({ [identity]: 2 })
     return
   }
   throw new Error(`Unknown connection case: ${state}`)

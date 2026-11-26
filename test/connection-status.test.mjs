@@ -89,7 +89,7 @@ after(() => { for (const t of intervals) clearInterval(t) })
 const resetHost = () => {
   host.state.gateway.set('connected')
   T.$connectionBusyBy.set({})
-  T.$connectionFailures.set(0)
+  T.$connectionFailuresBy.set({})
   T.$connectionLastSuccessBy.set({})
 }
 
@@ -174,7 +174,7 @@ test('the pill renders in the shared header row on the far side from the logo', 
     // state, so the header cannot shift.
     const sub = block.querySelector('.wm-conn-status-sub')
     assert.ok(sub, 'the supporting line renders beneath the pill')
-    assert.equal(sub.textContent, 'Connected · Data refreshed',
+    assert.match(sub.textContent, /^Connected/,
       'the Live supporting line is accurate and visible without hovering')
   } finally {
     T.restoreRest(originalRest)
@@ -204,7 +204,7 @@ test('state transitions drive the pill without extra backend requests', async ()
     assert.equal(chip().getAttribute('data-connection'), 'refreshing',
       'in-flight requests over settled data read Refreshing')
     T.$connectionBusyBy.set({})
-    T.$connectionFailures.set(2)
+    T.$connectionFailuresBy.set({ [T.membershipIdentityNow()]: 2 })
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
     assert.equal(chip().getAttribute('data-connection'), 'error',
       'consecutive transport failures read Connection error')
@@ -240,7 +240,7 @@ test('busy requests and failures are scoped to their own identity', async () => 
     // ...and the identity switches away: A's pending request no longer holds
     // the active indicator, and A's stale failure count never counts
     // against B.
-    T.$connectionFailures.set(2)
+    T.$connectionFailuresBy.set({ [T.membershipIdentityNow()]: 2 })
     host.state.connectionId.set('other-connection')
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
     assert.notEqual(T.$connectionBusyBy.get()[T.membershipIdentityNow()] || 0, 1,
@@ -300,7 +300,10 @@ test('the supporting line never claims more than the state knows', async () => {
   const { container, unmount } = await mount(React.createElement(T.ConnectionStatus))
   try {
     const sub = () => container.querySelector('.wm-conn-status-sub')?.textContent
-    assert.equal(sub(), 'Connected · Data refreshed')
+    // Health-only evidence: connected, but no data retrieval has happened,
+    // so the Live line claims connection only — not a data refresh.
+    assert.equal(sub(), 'Connected',
+      'Live with health-only evidence claims no data refresh')
     // Reconnecting without verified data must not claim to be showing any.
     host.state.gateway.set('reconnecting')
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
@@ -323,7 +326,7 @@ test('the supporting line never claims more than the state knows', async () => {
       'Offline with no verified data claims no data')
     // Connection error is explicit about retrieval.
     host.state.gateway.set('connected')
-    T.$connectionFailures.set(2)
+    T.$connectionFailuresBy.set({ [T.membershipIdentityNow()]: 2 })
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
     assert.equal(sub(), 'Unable to retrieve data')
   } finally {

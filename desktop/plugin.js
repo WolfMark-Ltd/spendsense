@@ -2000,7 +2000,7 @@ function ConnectionStatus() {
   const identity = useValue($membershipIdentity)
   const gateway = useValue(host.state.gateway)
   const busy = useValue($connectionBusyBy)[identity] || 0
-  const failures = useValue($connectionFailures)
+  const failures = (useValue($connectionFailuresBy)[identity]) || 0
   const lastSuccess = (useValue($connectionLastSuccessBy)[identity]) || null
   // Same key the shell already queries: one request, shared cache.
   const health = useQuery(backendHealthQuery(identity)) || {}
@@ -2016,9 +2016,11 @@ function ConnectionStatus() {
     `${String(clock.getSeconds()).padStart(2, '0')}` : null
   const detail = status.detail === 'lastUpdate' && time
     ? t('connStatusLastUpdate', time) : null
-  // The supporting line never claims more than the state knows: with no
-  // verified data available, Reconnecting cannot claim to be showing any.
-  const sub = status.key === 'live' ? t('connSubLive')
+  // The supporting line never claims more than the state knows: Live claims
+  // a data refresh only when a successful data retrieval establishes one;
+  // with no verified data available, Reconnecting cannot claim to be
+  // showing any.
+  const sub = status.key === 'live' ? (lastSuccess ? t('connSubLive') : t('connSubLiveBare'))
     : status.key === 'loading' ? t('connSubLoading')
     : status.key === 'refreshing' ? t('connSubRefreshing')
     : status.key === 'reconnecting'
@@ -2053,7 +2055,7 @@ function ConnectionStatus() {
  *  health or keep its indicator refreshing. */
 const $connectionBusyBy = atom({})
 const $connectionLastSuccessBy = atom({})
-const $connectionFailures = atom(0)
+const $connectionFailuresBy = atom({})
 
 const connectionBusyFor = identity => ($connectionBusyBy.get()[identity] || 0)
 
@@ -2093,25 +2095,32 @@ async function backendRequestInner(path, options, transport, identity, route, me
     // request's identity: a stale request never counts against the active
     // connection.
     if (membershipIdentityCurrent(identity)) {
-      $connectionFailures.set($connectionFailures.get() + 1)
+      $connectionFailuresBy.set({
+        ...$connectionFailuresBy.get(),
+        [identity]: ($connectionFailuresBy.get()[identity] || 0) + 1
+      })
     }
     return handleFailure(error)
   }
-  // Any answered response (including a data-level error body) proves the
-  // bridge reached the backend, so it is a success for the connection
-  // indicator even when the caller rejects it. Answered HTTP rejections —
-  // including membership-save conflicts — keep propagating to the caller but
-  // never count as connection failures.
+  // Any answered response proves the bridge reached the backend, so it
+  // clears the failure count even when the caller rejects the body. Answered
+  // HTTP rejections — including membership-save conflicts — keep propagating
+  // to the caller but never count as connection failures.
   if (membershipIdentityCurrent(identity)) {
-    $connectionLastSuccessBy.set({
-      ...$connectionLastSuccessBy.get(), [identity]: Date.now()
-    })
-    $connectionFailures.set(0)
+    $connectionFailuresBy.set({ ...$connectionFailuresBy.get(), [identity]: 0 })
   }
   if (result?.ok === false) {
+    // A data-level error body is an answered response for reachability, but
+    // it is not a successful retrieval: the freshness time must not advance
+    // for it.
     const kind = backendCompatibilityKind(path, options, result)
     if (kind) return handleFailure(result)
   } else if (membershipIdentityCurrent(identity)) {
+    // Freshness records a successful retrieval of real data (health checks
+    // bypass backendRequest and never reach this write).
+    $connectionLastSuccessBy.set({
+      ...$connectionLastSuccessBy.get(), [identity]: Date.now()
+    })
     clearBackendCompatibilityFailure(identity, route, method)
   }
   return result
@@ -16719,6 +16728,7 @@ const I18N = {
     connStatus_error: 'Connection error',
     connStatusLastUpdate: (time) => `Last successful update ${time}`,
     connSubLive: 'Connected · Data refreshed',
+    connSubLiveBare: 'Connected',
     connSubLoading: 'Retrieving initial data',
     connSubRefreshing: 'Fetching the latest data',
     connSubReconnectData: 'Showing last verified data',
@@ -18555,6 +18565,7 @@ const I18N = {
     connStatus_error: '连接错误',
     connStatusLastUpdate: (time) => `上次成功更新 ${time}`,
     connSubLive: '已连接 · 数据已刷新',
+    connSubLiveBare: '已连接',
     connSubLoading: '正在获取初始数据',
     connSubRefreshing: '正在获取最新数据',
     connSubReconnectData: '正在显示最近验证的数据',
@@ -19388,7 +19399,7 @@ export default {
 /** Pure internals, exported for the node test-suite (the host only reads `default`). */
 export const __test = {
   Chip, BudgetPanel, BudgetStatusIndicator, budgetLevel, budgetColour, sessionBudgetStatus, usageValueDelta, budgetQuery, budgetWrite, budgetPayload, newBudgetDraft, budgetTooltip, $budgetDraft, $budgetBusy, $budgetNotice, BUDGET_CSS,
-  connectionStatusOf, $connectionBusyBy, $connectionLastSuccessBy, $connectionFailures, ConnectionStatus, ConnectionStatusIcon, CONNECTION_STATUS_CSS, LedgerTabs, ProductShell,
+  connectionStatusOf, $connectionBusyBy, $connectionLastSuccessBy, $connectionFailuresBy, ConnectionStatus, ConnectionStatusIcon, CONNECTION_STATUS_CSS, LedgerTabs, ProductShell,
   analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS, CHART_COLORS, sharePercent, analyticsListPartial,
   analyticsUsageCost,
   AnalyticsPage, AnalyticsDashboard, AnalyticsCoverageSummary, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,
