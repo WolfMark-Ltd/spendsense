@@ -606,6 +606,10 @@ test('a focused session shows its recorded model and provider, not the host defa
   // The host's selected model is the later default; this conversation was
   // recorded on a different route and must keep its own identity.
   host.state.model.set('z-ai/glm-5.3-flash')
+  // A cached catalogue payload for the default model is present, so a
+  // provider resolved from the default model would win if the code let it.
+  queryClient.setQueryData(T.catalogQuery('identity-session', 'z-ai/glm-5.3-flash', false).queryKey,
+    { model: 'z-ai/glm-5.3-flash', provider: 'commandcode', providers: [] })
   const ledger = T.emptyLedger()
   ledger.sessions['identity-conversation'] = histBucket({
     input: 34300, output: 514, cacheRead: 83800, cacheWrite: 0, calls: 4,
@@ -667,6 +671,34 @@ test('the cache ring and the prompt mix share one population', async () => {
   } finally {
     T.restoreRest(originalRest)
     i18nBackend.t = previousTranslate
+  }
+})
+
+test('an unreported cache-read counter stays unavailable instead of 0%', async () => {
+  resetHost()
+  const originalRest = T.getRest()
+  T.setRest(async path => {
+    if (path.startsWith('/session/summary?')) return {
+      ok: true, session_id: 'unknown-read-session',
+      population: { requested: 'all', satisfied: true, separable: false },
+      totals: { calls: 2, input_tokens: 900, output_tokens: 40, prompt_tokens: 900,
+        cache_read_tokens: 0, cache_write_tokens: 0,
+        cache_read_state: 'unknown', cache_write_state: 'unknown', unpriced_tokens: 0 },
+      valuation: { api_equivalent_usd: .001, api_equivalent_basis: 'exact',
+        savings_usd: null, savings_usd_high: null, savings_basis: 'indeterminate', coverage: 0,
+        covered_calls: 0, excluded_calls: 2, cache_hit_rate: null }
+    }
+    return { rate: null }
+  })
+  host.state.focusedSessionId.set('unknown-read-session')
+  const container = await renderMeter()
+  await flush()
+  try {
+    assert.equal(container.querySelector('.wm-ring-text').textContent, '—',
+      'a zero with no reported read counter is not a measured miss')
+    assert.doesNotMatch(container.querySelector('.wm-ring').getAttribute('aria-label'), /: 0%/)
+  } finally {
+    T.restoreRest(originalRest)
   }
 })
 

@@ -2672,22 +2672,27 @@ function useLive() {
     // A focused historical session has no live usage stream, so identity and
     // rates must come from the conversation's own ledger record; without this
     // the pane presents the host's selected (default) model as if it had
-    // served the session. While a run is live, the current route is the live
-    // one or unknown — never a previously recorded route.
-    const summaryModel = (usage && usage.model) || (hist && hist.model) || model
-    const summaryProvider = provider || (!usage ? (hist && hist.provider) || null : null)
-    const summaryRates = usage ? resolved
+    // served the session. Model and provider are taken from one record: a
+    // recorded model never keeps the default model's provider, and a live run
+    // never borrows a recorded route.
+    const histModel = (hist && hist.model) || ''
+    const liveModel = (usage && usage.model) || ''
+    const summaryModel = liveModel || histModel || model
+    const summaryProvider = liveModel ? (provider || null)
+      : histModel ? ((hist && hist.provider) || null)
+        : (provider || null)
+    const summaryRates = liveModel ? resolved
       : resolveRates({ model: summaryModel, payload, provider: summaryProvider, remembered: led.rates })
     // The prompt-cache gauge describes the same population as the prompt mix
-    // beside it: all recorded calls over the fresh + read + write prompt
-    // tokens the mix displays. The backend valuation rate covers only calls
-    // with proven cache evidence — every conversation's cold-start call is
-    // excluded there — so it is only a fallback when the totals cannot
-    // support the all-calls arithmetic.
-    const summaryPromptTokens = num(summaryBucket.input) +
-      num(summaryBucket.cacheRead) + num(summaryBucket.cacheWrite)
-    const allCallsRate = summaryPromptTokens > 0
-      ? num(summaryBucket.cacheRead) / summaryPromptTokens : null
+    // beside it: the mix's own read share of its prompt tokens, including any
+    // unclassified prompt the recorded total carries. A read counter without
+    // usable evidence stays unavailable — a stored zero is not a measured
+    // miss — and the backend valuation rate is only a fallback.
+    const summaryShares = compositionShares(summaryBucket)
+    const summaryReadKnown = ['reported', 'estimated', 'partial']
+      .includes(localCacheEvidence(summaryBucket).read)
+    const allCallsRate = summaryReadKnown && summaryShares.prompt > 0
+      ? summaryShares.read / summaryShares.prompt : null
     return {
       bucket: summaryBucket,
       guardrailValue: sessionGuardrailValue(hist, led.snapshots, sessionId),
