@@ -93,8 +93,8 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
           assert.ok(tip.glyphFontSize >= 6 && tip.glyphFontSize <= 9,
             `${id}/tip${index} keeps the visible information glyph compact (${tip.glyphFontSize}px)`)
         }
-        assert.equal(layout.provider, '', `${id} does not infer a provider from the recorded conversation for this session summary`)
-        assert.equal(layout.providerSeparate, true, `${id} leaves the model row clear when provider evidence is unavailable`)
+        assert.equal(layout.provider, 'commandcode', `${id} shows the route recorded with the session`)
+        assert.equal(layout.providerSeparate, true, `${id} keeps the provider badge distinct from the model row`)
         assert.ok(layout.ringWidth >= 68 && layout.ringWidth <= 88, `${id} scales the larger ring to ${layout.ringWidth}px`)
         assert.match(layout.savedLabel, locale === 'en' ? /Cache-read benefit/ : /缓存读取收益/,
           `${id} labels the supported figure`)
