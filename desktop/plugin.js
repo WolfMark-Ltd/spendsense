@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.43'
+const PLUGIN_VERSION = '0.6.44'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -2669,11 +2669,31 @@ function useLive() {
     // the Usage KPI shows.
     const usageCostHigh = usageCostUsd != null
       ? finiteValue(valuation.api_expenditure_usd_high) : null
+    // A focused historical session has no live usage stream, so identity and
+    // rates must come from the conversation's own ledger record; without this
+    // the pane presents the host's selected (default) model as if it had
+    // served the session. While a run is live, the current route is the live
+    // one or unknown — never a previously recorded route.
+    const summaryModel = (usage && usage.model) || (hist && hist.model) || model
+    const summaryProvider = provider || (!usage ? (hist && hist.provider) || null : null)
+    const summaryRates = usage ? resolved
+      : resolveRates({ model: summaryModel, payload, provider: summaryProvider, remembered: led.rates })
+    // The prompt-cache gauge describes the same population as the prompt mix
+    // beside it: all recorded calls over the fresh + read + write prompt
+    // tokens the mix displays. The backend valuation rate covers only calls
+    // with proven cache evidence — every conversation's cold-start call is
+    // excluded there — so it is only a fallback when the totals cannot
+    // support the all-calls arithmetic.
+    const summaryPromptTokens = num(summaryBucket.input) +
+      num(summaryBucket.cacheRead) + num(summaryBucket.cacheWrite)
+    const allCallsRate = summaryPromptTokens > 0
+      ? num(summaryBucket.cacheRead) / summaryPromptTokens : null
     return {
       bucket: summaryBucket,
       guardrailValue: sessionGuardrailValue(hist, led.snapshots, sessionId),
-      cacheHitPct: finiteValue(valuation.cache_hit_rate) == null
-        ? null : finiteValue(valuation.cache_hit_rate) * 100,
+      cacheHitPct: allCallsRate != null ? allCallsRate * 100
+        : finiteValue(valuation.cache_hit_rate) == null
+          ? null : finiteValue(valuation.cache_hit_rate) * 100,
       cost: apiValue,
       costHigh: apiValueHigh,
       costSource: apiValue == null ? 'none' : 'backend_summary',
@@ -2681,15 +2701,15 @@ function useLive() {
       costPartial: valuation.api_equivalent_basis !== 'exact',
       foreignSlug: null,
       fromHistory: true,
-      model,
+      model: summaryModel,
       partial: !savings || savings.partial || Number(valuation.excluded_calls) > 0 ||
         valuation.api_equivalent_basis !== 'exact',
       pricingError: error ? String(error.message || error) : null,
       pricingLoading: isLoading,
-      provider: provider || null,
-      providerUnknown: !provider,
-      rates: resolved.rates,
-      effective: resolved.effective || null,
+      provider: summaryProvider || null,
+      providerUnknown: !summaryProvider,
+      rates: summaryRates.rates,
+      effective: summaryRates.effective || null,
       saved: savings?.kind === 'value' ? savings.value : null,
       savedRange: savings?.kind === 'range' ? savings.range : null,
       savedBound: savings && ['upper', 'lower'].includes(savings.kind)
@@ -2715,7 +2735,8 @@ function useLive() {
       usageCostUsdHigh: usageCostHigh != null && usageCostHigh >= (usageCostUsd || 0)
         ? usageCostHigh : null,
       usageCostBasis: usageCostUsd != null ? 'provider_effective' : null,
-      cacheHitRateBasis: valuation.cache_hit_rate_basis || null
+      cacheHitRateBasis: allCallsRate != null ? 'all_calls'
+        : valuation.cache_hit_rate_basis || null
     }
   }
 
@@ -3690,7 +3711,9 @@ function CacheGauge({ t, view }) {
     jsxs('div', { className: 'wm-card-title', children: [
       jsx('span', { children: t('cacheTitle') }, 'label'),
       jsx(InfoTip, { id: 'cache-coverage', label: t('coverageHelpLabel'),
-        text: [t('cacheMethodInfo'), cacheCoverageLine(t, view.cacheCoverage, b),
+        text: [t('cacheMethodInfo'),
+          view.savedSource === 'backend_summary' ? t('cacheRatePopulationNote') : null,
+          cacheCoverageLine(t, view.cacheCoverage, b),
           t('cacheCoverageHelp', coverageScope,
             view.fromHistory && view.sinceAt ? fmtDate(view.sinceAt) : null)]
           .filter(Boolean).join(' ') }, 'info'),
@@ -15797,7 +15820,8 @@ const I18N = {
     sinceDate: d => `since ${d}`,
     promptMix: 'Prompt mix',
     cacheFresh: 'Fresh input',
-    cacheMethodInfo: 'Hit rate is cache-read tokens over prompt tokens with reported cache evidence, weighted across calls. Estimated or derived counters are labelled; missing reads or writes remain unknown and are never treated as measured zero.',
+    cacheMethodInfo: 'Hit rate is cache-read tokens over the prompt tokens recorded for the calls in this view (fresh input + cache read + cache write). Estimated or derived counters are labelled; missing reads or writes remain unknown and are never treated as measured zero.',
+    cacheRatePopulationNote: 'The gauge and the prompt mix beside it cover all recorded calls in this session.',
     exactLabel: 'exact',
     estimatedLabel: 'estimated',
     infoLabel: 'More information',
@@ -17642,7 +17666,8 @@ const I18N = {
     sinceDate: d => `自 ${d} 起`,
     promptMix: '提示词构成',
     cacheFresh: '新增输入',
-    cacheMethodInfo: '命中率 = 已报告的缓存读取 ÷ 有缓存证据的提示词，按调用加权。估算或推算的计数会明确标注；缺失的读取或写入保持未知，不按已测得的零处理。',
+    cacheMethodInfo: '命中率 = 当前视图所记录调用的提示词令牌（新增输入＋缓存读取＋缓存写入）中的缓存读取占比。估算或推算的计数会明确标注；缺失的读取或写入保持未知，不按已测得的零处理。',
+    cacheRatePopulationNote: '环形图与旁边的提示词构成使用当前会话的全部已记录调用。',
     exactLabel: '精确',
     estimatedLabel: '估算',
     infoLabel: '更多信息',

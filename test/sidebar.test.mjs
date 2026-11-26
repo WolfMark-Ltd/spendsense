@@ -574,8 +574,96 @@ test('a proven session summary renders the cache-read benefit with coverage in i
     assert.equal(rateCells.length, 3, `input/output/cache cells: ${rateCells}`)
     assert.ok(rateCells.every(v => v.startsWith('$') || v === '—'),
       `cells carry values: ${rateCells}`)
-    assert.equal(container.querySelector('.wm-ring').getAttribute('aria-label'), 'Weighted cache hit: 0%',
-      'the zero hit rate is exposed to assistive technology')
+    assert.equal(container.querySelector('.wm-ring').getAttribute('aria-label'), 'Weighted cache hit: 50%',
+      'the ring reports the all-calls rate of its own totals (100 read of 200 prompt)')
+  } finally {
+    T.restoreRest(originalRest)
+    i18nBackend.t = previousTranslate
+  }
+})
+
+test('a focused session shows its recorded model and provider, not the host default', async () => {
+  resetHost()
+  const originalRest = T.getRest()
+  const previousTranslate = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const value = T.I18N.en[key]
+    return typeof value === 'function' ? value(...args) : value ?? key
+  }
+  T.setRest(async path => {
+    if (path.startsWith('/session/summary?')) return {
+      ok: true, session_id: 'identity-session',
+      population: { requested: 'all', satisfied: true, separable: false },
+      totals: { calls: 4, input_tokens: 34300, output_tokens: 514, prompt_tokens: 118100,
+        cache_read_tokens: 83800, cache_write_tokens: 0,
+        cache_read_state: 'reported', cache_write_state: 'reported', unpriced_tokens: 0 },
+      valuation: { api_equivalent_usd: .0079, api_equivalent_basis: 'exact',
+        savings_usd: 0, savings_usd_high: null, savings_basis: 'exact', coverage: 1,
+        covered_calls: 4, excluded_calls: 0, cache_hit_rate: .93, cache_hit_rate_basis: 'reported_calls' }
+    }
+    return { rate: null }
+  })
+  // The host's selected model is the later default; this conversation was
+  // recorded on a different route and must keep its own identity.
+  host.state.model.set('z-ai/glm-5.3-flash')
+  const ledger = T.emptyLedger()
+  ledger.sessions['identity-conversation'] = histBucket({
+    input: 34300, output: 514, cacheRead: 83800, cacheWrite: 0, calls: 4,
+    pricedTokens: 118614, model: 'deepseek/deepseek-v4.1-flash-1017', provider: 'nous',
+    sources: { bundled: 118614 }
+  })
+  T.$ledger.set(ledger)
+  host.state.focusedSessionId.set('identity-session')
+  host.state.focusedStoredSessionId.set('identity-conversation')
+  const container = await renderMeter()
+  await flush()
+  try {
+    assert.equal(container.querySelector('.wm-scope-chip').textContent, 'This session · all recorded calls')
+    assert.equal(container.querySelector('.wm-model').title, 'deepseek/deepseek-v4.1-flash-1017',
+      'the recorded conversation model survives the backend summary')
+    assert.equal(container.querySelector('.wm-model').textContent, 'DeepSeek V4.1 Flash 1017')
+    assert.equal(container.querySelector('.wm-provider-badge').getAttribute('title'),
+      'Serving provider: nous', 'the recorded route survives the backend summary')
+  } finally {
+    T.restoreRest(originalRest)
+    i18nBackend.t = previousTranslate
+  }
+})
+
+test('the cache ring and the prompt mix share one population', async () => {
+  resetHost()
+  const originalRest = T.getRest()
+  const previousTranslate = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const value = T.I18N.en[key]
+    return typeof value === 'function' ? value(...args) : value ?? key
+  }
+  T.setRest(async path => {
+    if (path.startsWith('/session/summary?')) return {
+      ok: true, session_id: 'mix-session',
+      population: { requested: 'all', satisfied: true, separable: false },
+      totals: { calls: 4, input_tokens: 34300, output_tokens: 514, prompt_tokens: 118100,
+        cache_read_tokens: 83800, cache_write_tokens: 0,
+        cache_read_state: 'reported', cache_write_state: 'reported', unpriced_tokens: 0 },
+      valuation: { api_equivalent_usd: .0079, api_equivalent_basis: 'exact',
+        savings_usd: 0, savings_usd_high: null, savings_basis: 'exact', coverage: 1,
+        covered_calls: 4, excluded_calls: 0,
+        // Proven-cache calls only: the cold-start call (read = 0) is excluded
+        // there, so this rate must not drive a gauge sitting beside the mix.
+        cache_hit_rate: .93, cache_hit_rate_basis: 'reported_calls' }
+    }
+    return { rate: null }
+  })
+  host.state.focusedSessionId.set('mix-session')
+  const container = await renderMeter()
+  await flush()
+  try {
+    const legend = [...container.querySelectorAll('.wm-legend-value')].map(el => el.textContent)
+    assert.equal(legend[0], '34.3k', `fresh input legend: ${legend}`)
+    assert.equal(legend[1], '83.8k', `cache read legend: ${legend}`)
+    // 83,800 read tokens over 118,100 prompt tokens — the mix's own arithmetic.
+    assert.equal(container.querySelector('.wm-ring-text').textContent, '71%')
+    assert.equal(container.querySelector('.wm-ring').getAttribute('aria-label'), 'Weighted cache hit: 71%')
   } finally {
     T.restoreRest(originalRest)
     i18nBackend.t = previousTranslate

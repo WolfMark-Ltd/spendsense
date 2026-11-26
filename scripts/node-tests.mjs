@@ -18,7 +18,7 @@ const suites = {
     ['overview-render', 11, true],
     ['overview-scheduling', 6, true],
     ['reports-layout.chromium', 19], ['reports-layout.devtools', 11],
-    ['sidebar', 59, true], ['ui-labels', 57], ['connection-status', 8, true],
+    ['sidebar', 61, true], ['ui-labels', 57], ['connection-status', 8, true],
     ['usage-render', 12, true],
     ['ux-primitives', 35, true], ['weather', 11], ['weather-render', 9, true],
     ['wp14-fixes', 9],

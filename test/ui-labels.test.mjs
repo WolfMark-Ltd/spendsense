@@ -733,6 +733,7 @@ test('WP42 population and cache-evidence disclosures have English and Chinese pa
     'unclassifiedPromptTokens', 'inclUnknownPrompt', 'inclEstimatedCache', 'inclPartialCache', 'scopeMainCalls', 'scopeSession',
     'scopeLocalConversationEstimate', 'scopeLocalRunEstimate', 'coverageScopeMainCalls',
     'coverageScopeLocalConversation', 'cacheRateAllCalls', 'cacheRateReportedCalls',
+    'cacheRatePopulationNote',
     'sessionEvidenceNote', 'sessionSavingsSourceNote', 'localEstimateScopeNote',
     'savedBackendNote', 'savedLocalRunNote',
     'savedUpperBoundNote', 'savedLowerBoundNote', 'savedRangeNote',
