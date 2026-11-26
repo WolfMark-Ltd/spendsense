@@ -1993,7 +1993,7 @@ function ConnectionStatus() {
   const t = usePluginI18n(ID)
   const identity = useValue($membershipIdentity)
   const gateway = useValue(host.state.gateway)
-  const busy = useValue($connectionBusy)
+  const busy = useValue($connectionBusyBy)[identity] || 0
   const failures = useValue($connectionFailures)
   const lastSuccess = useValue($connectionLastSuccess)
   // Same key the shell already queries: one request, shared cache.
@@ -2023,22 +2023,32 @@ function ConnectionStatus() {
 
 /** Connection indicator signals, maintained by the backend bridge itself.
  *  Every plugin backend call funnels through backendRequest, so the busy
- *  counter, the last-success timestamp and the consecutive transport-failure
- *  count are exact without any additional polling. */
-const $connectionBusy = atom(0)
+ *  counters, the last-success timestamp and the consecutive transport-failure
+ *  count are exact without any additional polling. The busy count is kept per
+ *  identity and success/failure writes are identity-scoped: a stale request
+ *  for a switched-away connection can never alter the active identity's
+ *  health or keep its indicator refreshing. */
+const $connectionBusyBy = atom({})
 const $connectionLastSuccess = atom(null)
 const $connectionFailures = atom(0)
+
+const connectionBusyFor = identity => ($connectionBusyBy.get()[identity] || 0)
 
 async function backendRequest(path, options = {}, transport = rest) {
   if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
   const identity = membershipIdentityNow()
   const route = backendRoute(path)
   const method = backendMethod(options)
-  $connectionBusy.set($connectionBusy.get() + 1)
+  const busyBy = { ...$connectionBusyBy.get(), [identity]: connectionBusyFor(identity) + 1 }
+  $connectionBusyBy.set(busyBy)
   try {
     return await backendRequestInner(path, options, transport, identity, route, method)
   } finally {
-    $connectionBusy.set(Math.max(0, $connectionBusy.get() - 1))
+    const current = { ...$connectionBusyBy.get() }
+    const left = Math.max(0, (current[identity] || 0) - 1)
+    if (left) current[identity] = left
+    else delete current[identity]
+    $connectionBusyBy.set(current)
   }
 }
 
@@ -2052,24 +2062,34 @@ async function backendRequestInner(path, options, transport, identity, route, me
     }
     throw makeBackendCompatibilityError(path, kind)
   }
+  let result
   try {
-    const result = await transport(path, options)
-    if (result?.ok === false) {
-      const kind = backendCompatibilityKind(path, options, result)
-      if (kind) return handleFailure(result)
-    } else {
-      if (membershipIdentityCurrent(identity)) clearBackendCompatibilityFailure(identity, route, method)
-    }
-    // Any answered response (including a data-level error body) proves the
-    // bridge reached the backend: only a thrown transport failure counts as
-    // a connection failure, so an isolated query error never reads as one.
-    $connectionLastSuccess.set(Date.now())
-    $connectionFailures.set(0)
-    return result
+    result = await transport(path, options)
   } catch (error) {
-    $connectionFailures.set($connectionFailures.get() + 1)
+    // Transport failure — no HTTP response was received. Scoped to the
+    // request's identity: a stale request never counts against the active
+    // connection.
+    if (membershipIdentityCurrent(identity)) {
+      $connectionFailures.set($connectionFailures.get() + 1)
+    }
     return handleFailure(error)
   }
+  // Any answered response (including a data-level error body) proves the
+  // bridge reached the backend, so it is a success for the connection
+  // indicator even when the caller rejects it. Answered HTTP rejections —
+  // including membership-save conflicts — keep propagating to the caller but
+  // never count as connection failures.
+  if (membershipIdentityCurrent(identity)) {
+    $connectionLastSuccess.set(Date.now())
+    $connectionFailures.set(0)
+  }
+  if (result?.ok === false) {
+    const kind = backendCompatibilityKind(path, options, result)
+    if (kind) return handleFailure(result)
+  } else if (membershipIdentityCurrent(identity)) {
+    clearBackendCompatibilityFailure(identity, route, method)
+  }
+  return result
 }
 
 function wrapBackendTransport(transport) {
@@ -19325,7 +19345,7 @@ export default {
 /** Pure internals, exported for the node test-suite (the host only reads `default`). */
 export const __test = {
   Chip, BudgetPanel, BudgetStatusIndicator, budgetLevel, budgetColour, sessionBudgetStatus, usageValueDelta, budgetQuery, budgetWrite, budgetPayload, newBudgetDraft, budgetTooltip, $budgetDraft, $budgetBusy, $budgetNotice, BUDGET_CSS,
-  connectionStatusOf, $connectionBusy, $connectionLastSuccess, $connectionFailures, ConnectionStatus, ConnectionStatusIcon, CONNECTION_STATUS_CSS, LedgerTabs,
+  connectionStatusOf, $connectionBusyBy, $connectionLastSuccess, $connectionFailures, ConnectionStatus, ConnectionStatusIcon, CONNECTION_STATUS_CSS, LedgerTabs, ProductShell,
   analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS, CHART_COLORS, sharePercent, analyticsListPartial,
   analyticsUsageCost,
   AnalyticsPage, AnalyticsDashboard, AnalyticsCoverageSummary, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,

@@ -88,7 +88,7 @@ after(() => { for (const t of intervals) clearInterval(t) })
 
 const resetHost = () => {
   host.state.gateway.set('connected')
-  T.$connectionBusy.set(0)
+  T.$connectionBusyBy.set({})
   T.$connectionFailures.set(0)
   T.$connectionLastSuccess.set(null)
 }
@@ -187,11 +187,11 @@ test('state transitions drive the pill without extra backend requests', async ()
     assert.ok(chip(), 'the pill renders in the initial state')
     const before = healthRequests
     // Busy with settled data → refreshing; busy without → loading.
-    T.$connectionBusy.set(1)
+    T.$connectionBusyBy.set({ [T.membershipIdentityNow()]: 1 })
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
     assert.equal(chip().getAttribute('data-connection'), 'refreshing',
       'in-flight requests over settled data read Refreshing')
-    T.$connectionBusy.set(0)
+    T.$connectionBusyBy.set({})
     T.$connectionFailures.set(2)
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
     assert.equal(chip().getAttribute('data-connection'), 'error',
@@ -203,6 +203,75 @@ test('state transitions drive the pill without extra backend requests', async ()
       'a down transport reads Offline')
     assert.equal(healthRequests, before,
       'state transitions add no backend requests — atoms only')
+  } finally {
+    T.restoreRest(originalRest)
+    i18nBackend.t = previousTranslate
+    unmount()
+  }
+})
+
+test('busy requests and failures are scoped to their own identity', async () => {
+  // A pending or failed request for a switched-away connection can neither
+  // keep the active indicator refreshing nor count against its health.
+  resetHost()
+  const identityA = T.membershipIdentityNow()
+  const originalRest = T.getRest()
+  T.setRest(async path => ({ ok: true, version: '0.6.42', contract: 4, ready: true }))
+  const { container, unmount } = await mount(React.createElement(T.ConnectionStatus))
+  try {
+    const chip = () => container.querySelector('.wm-connection-status')
+    assert.equal(chip().getAttribute('data-connection'), 'live')
+    // A request in flight for identity A...
+    T.$connectionBusyBy.set({ [identityA]: 1 })
+    await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    assert.equal(chip().getAttribute('data-connection'), 'refreshing')
+    // ...and the identity switches away: A's pending request no longer holds
+    // the active indicator, and A's stale failure count never counts
+    // against B.
+    T.$connectionFailures.set(2)
+    host.state.connectionId.set('other-connection')
+    await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    assert.notEqual(T.$connectionBusyBy.get()[T.membershipIdentityNow()] || 0, 1,
+      'the new identity has no in-flight requests of its own')
+    assert.notEqual(chip().getAttribute('data-connection'), 'refreshing',
+      'identity A\'s pending request cannot hold identity B refreshing')
+    await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    assert.notEqual(chip().getAttribute('data-connection'), 'error',
+      'A\'s stale failure count does not make B\'s connection an error')
+  } finally {
+    host.state.connectionId.set('gateway-a')
+    T.restoreRest(originalRest)
+    unmount()
+  }
+})
+
+test('the shell and the indicator share one health request from a cold cache', async () => {
+  // Both observers use the same query key: mounting the shell exercises both
+  // and must produce exactly one /health request.
+  resetHost()
+  let healthRequests = 0
+  const originalRest = T.getRest()
+  const previousTranslate = i18nBackend.t
+  i18nBackend.t = key => {
+    const entry = T.I18N.en[key]
+    return typeof entry === 'function' ? entry('12:34') : entry ?? key
+  }
+  T.setRest(async path => {
+    if (path.startsWith('/health')) healthRequests += 1
+    return { ok: true, version: '0.6.42', contract: 4, ready: true }
+  })
+  // A cold cache: earlier tests in this file share the identity's health
+  // entry, and the point here is that a fresh shell + indicator mount
+  // produces exactly one request.
+  queryClient.clear()
+  const { container, unmount } = await mount(React.createElement(T.ProductShell, {},
+    null))
+  try {
+    assert.ok(container.querySelector('.wm-connection-status'),
+      'the indicator renders inside the shared shell header')
+    await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    assert.equal(healthRequests, 1,
+      'the shell and the indicator dedupe the health key — one request total')
   } finally {
     T.restoreRest(originalRest)
     i18nBackend.t = previousTranslate
