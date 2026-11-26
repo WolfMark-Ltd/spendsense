@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.41'
+const PLUGIN_VERSION = '0.6.42'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -371,8 +371,12 @@ async function ensureBackendRate(provider, model) {
   try {
     const result = await rest(`/rates?provider=${encodeURIComponent(p)}&model=${encodeURIComponent(m)}`)
     if (!membershipIdentityCurrent(identity)) { delete backendRateBook[key]; return }
-    if (!result?.rate) throw new Error('unpriced')
-    const entry = { at: Date.now(), rates: { input: result.rate.input, output: result.rate.output, cache: result.rate.cache_read ?? result.rate.input, write: result.rate.cache_write,
+    if (!result?.rate && !result?.effective_rate) throw new Error('unpriced')
+    const entry = { at: Date.now(),
+      // The catalogue card may be absent (the provider dropped from
+      // models.dev) while the provider's own billed rates still serve; keep
+      // each basis independently instead of discarding both.
+      rates: result.rate ? { input: result.rate.input, output: result.rate.output, cache: result.rate.cache_read ?? result.rate.input, write: result.rate.cache_write,
       inputKnown: result.rate.input != null && result.rate.has_tiers === false, outputKnown: result.rate.output != null, cacheKnown: result.rate.cache_read != null,
       writeKnown: result.rate.cache_write != null,
       hasTiers: result.rate.has_tiers === true,
@@ -381,9 +385,17 @@ async function ensureBackendRate(provider, model) {
       ...usagePriceEvidence(result.rate.input, result.rate.output,
         (result.rate.provisional || []).includes('cache_read') ? null : result.rate.cache_read,
         (result.rate.provisional || []).includes('cache_write') ? null : result.rate.cache_write,
-        result.rate.has_tiers === false, result.rate.provenance || 'backend_catalogue') },
-      provenance: result.rate.provenance, provisional: result.rate.provisional || [],
+        result.rate.has_tiers === false, result.rate.provenance || 'backend_catalogue') } : null,
+      provenance: result.rate?.provenance || 'unpriced', provisional: result.rate?.provisional || [],
       stale: Boolean(result.catalogue?.stale), asOf: result.catalogue?.as_of || '', age: result.catalogue?.age_seconds ?? null }
+    // The provider's own billed (effective) rates, kept apart from the list
+    // basis: the metered account's real price, with the original comparison.
+    if (result.effective_rate && result.effective_rate.input != null && result.effective_rate.output != null) {
+      entry.effective = { input: result.effective_rate.input, output: result.effective_rate.output,
+        cache: result.effective_rate.cache_read,
+        listInput: result.effective_rate.list_input, listOutput: result.effective_rate.list_output,
+        listCache: result.effective_rate.list_cache_read, asOf: result.effective_rate.as_of || '' }
+    }
     backendRateBook[key] = entry
     $backendRates.set({ ...backendRateBook })
   } catch {
@@ -398,11 +410,21 @@ function resolveRates({ model, provider, payload, remembered }) {
   const base = { foreignSlug: null, provider: p || null, providerUnknown: !p }
   if (!model) return { ...base, origin: 'none', rates: null }
   const served = backendRateBook[JSON.stringify([membershipIdentityNow(), rateKey(p, model)])]
+  const servedEffective = (p && served && served.effective) || null
   if (p && served && validRates(served.rates)) {
     return { ...base, origin: 'backend', rates: served.rates, provenance: served.provenance,
+      effective: servedEffective,
       provisional: served.provisional || [], stale: served.stale, asOf: served.asOf, age: served.age }
   }
+  // Billed rates without a catalogue card: keep them for the panel and
+  // continue the list-rate fallback chain below — an effective-only
+  // response must never hide a usable list card or unprice local estimates.
+  const resolved = resolveListRates({ model, provider: p, payload, remembered, base })
+  return servedEffective ? { ...resolved, effective: servedEffective } : resolved
+}
 
+function resolveListRates({ model, provider, payload, remembered, base }) {
+  const p = String(provider || '').trim()
   const found = findPricing(payload, model, p || null)
   if (p) {
     const live = found && found.ownProvider ? toRates(found.entry) : null
@@ -1918,11 +1940,144 @@ function hasBackendCompatibilityFailure(identity, route, method) {
     && item.route === normalizedRoute && item.method === normalizedMethod)
 }
 
+/** The six-state connection status, derived from existing signals only:
+ *  the gateway transport atom, the backend bridge's own busy/failure
+ *  counters, and the health query the shell already runs (React Query
+ *  dedupes the shared key — the indicator adds no backend polling).
+ *
+ *  - offline:      the gateway transport is down and not attempting
+ *  - reconnecting: the gateway transport is attempting to recover
+ *  - connection error: transport failures with nothing in flight, or a
+ *                  failed backend health read with no settled data
+ *  - refreshing:   data requests in flight over previously verified data
+ *  - loading:      data requests in flight with no settled data yet
+ *  - live:         connected and settled
+ *  Background health checks do not move the pill: they are neither data
+ *  requests nor failures the user initiated, so a routine refetch can never
+ *  flicker the indicator between Live and Refreshing. An isolated
+ *  financial-data or provider-data error is returned by its query, not
+ *  thrown by the bridge, so it never reads as a global connection failure. */
+function connectionStatusOf({ gateway, busy, failures, hasData, healthError,
+                              lastSuccess }) {
+  const transport = String(gateway || '').toLowerCase()
+  if (!transport || transport === 'disconnected' || transport === 'offline') {
+    return { key: 'offline', detail: lastSuccess ? 'lastUpdate' : null }
+  }
+  if (transport !== 'connected') return { key: 'reconnecting', detail: null }
+  if (busy > 0) return { key: hasData ? 'refreshing' : 'loading', detail: null }
+  if (failures > 0) return { key: 'error', detail: null }
+  if (healthError && !hasData) return { key: 'error', detail: null }
+  return { key: 'live', detail: lastSuccess ? 'lastUpdate' : null }
+}
+
+/** The six glyphs, drawn in the OverviewIcon style: small stroke paths on a
+ *  20×20 grid, colour inherited from the chip's state tone. */
+function ConnectionStatusIcon({ state }) {
+  const paths = {
+    live: 'M4 10.5l4 4 8-9',
+    loading: 'M10 3a7 7 0 1 1-6.4 4.2',
+    refreshing: 'M16.2 10a6.2 6.2 0 1 1-1.9-4.5 M16.2 3.6v2.9h-2.9',
+    reconnecting: 'M3 14a10 10 0 0 1 14 0 M6.6 11.6a5 5 0 0 1 6.8 0 M10 14.6v.4',
+    offline: 'M5.2 5.2l9.6 9.6 M10 3.2a6.8 6.8 0 1 0 0 13.6 6.8 6.8 0 0 0 0-13.6z',
+    error: 'M10 2.5l8 14H2z M10 7v4 M10 13.5v.5'
+  }
+  return jsx('svg', { className: 'wm-conn-status-icon', width: 14, height: 14,
+    viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7,
+    strokeLinecap: 'round', strokeLinejoin: 'round', 'data-state': state,
+    'aria-hidden': true, children: jsx('path', { d: paths[state] || paths.live }) })
+}
+
+/** Shared connection indicator: one component, every SpendSense page.
+ *  Rendered at the far right of the shared header row, aligned with the
+ *  logo. Communicates connection and retrieval status only — never the
+ *  completeness or accuracy of the financial data beneath it (Rule 62).
+ *  The supporting line beneath the pill carries honest, state-accurate
+ *  context (including the last successful update time) so the important
+ *  freshness information is visible without hovering; the block reserves
+ *  the same height in every state so the header never shifts. */
+function ConnectionStatus() {
+  const t = usePluginI18n(ID)
+  const identity = useValue($membershipIdentity)
+  const gateway = useValue(host.state.gateway)
+  const busy = useValue($connectionBusyBy)[identity] || 0
+  const failures = (useValue($connectionFailuresBy)[identity]) || 0
+  const lastSuccess = (useValue($connectionLastSuccessBy)[identity]) || null
+  // Same key the shell already queries: one request, shared cache.
+  const health = useQuery(backendHealthQuery(identity)) || {}
+  const hasData = !!health.data && membershipIdentityCurrent(identity)
+  const status = connectionStatusOf({
+    gateway, busy, failures, hasData,
+    healthError: !!health.error, lastSuccess,
+  })
+  const label = t(`connStatus_${status.key}`)
+  const clock = lastSuccess ? new Date(lastSuccess) : null
+  const time = clock ? `${String(clock.getHours()).padStart(2, '0')}:` +
+    `${String(clock.getMinutes()).padStart(2, '0')}:` +
+    `${String(clock.getSeconds()).padStart(2, '0')}` : null
+  const detail = status.detail === 'lastUpdate' && time
+    ? t('connStatusLastUpdate', time) : null
+  // The supporting line never claims more than the state knows: Live claims
+  // a data refresh only when a successful data retrieval establishes one;
+  // with no verified data available, Reconnecting cannot claim to be
+  // showing any.
+  const sub = status.key === 'live' ? (lastSuccess ? t('connSubLive') : t('connSubLiveBare'))
+    : status.key === 'loading' ? t('connSubLoading')
+    : status.key === 'refreshing' ? t('connSubRefreshing')
+    : status.key === 'reconnecting'
+      ? (lastSuccess ? t('connSubReconnectData') : t('connSubReconnectBare'))
+    : status.key === 'offline'
+      ? (time ? t('connSubOfflineTime', time) : t('connSubOfflineBare'))
+    : t('connSubError')
+  return jsxs('div', {
+    className: 'wm-conn-status-block', 'data-connection': status.key,
+    children: [
+      jsxs(StatusChip, {
+        className: 'wm-connection-status', 'data-connection': status.key,
+        'aria-live': 'polite', title: detail || label,
+        tone: { live: 'positive', error: 'error', reconnecting: 'attention',
+                offline: 'neutral', loading: 'action', refreshing: 'action' }[status.key],
+        children: [
+          jsx(ConnectionStatusIcon, { state: status.key }, 'icon'),
+          jsx('span', { className: 'wm-conn-status-label', children: label }, 'label')
+        ].filter(Boolean)
+      }, 'chip'),
+      jsx('span', { className: 'wm-conn-status-sub', children: sub }, 'sub')
+    ]
+  }, `conn-${status.key}`)
+}
+
+/** Connection indicator signals, maintained by the backend bridge itself.
+ *  Every plugin backend call funnels through backendRequest, so the busy
+ *  counters, the last-success timestamp and the consecutive transport-failure
+ *  count are exact without any additional polling. The busy count is kept per
+ *  identity and success/failure writes are identity-scoped: a stale request
+ *  for a switched-away connection can never alter the active identity's
+ *  health or keep its indicator refreshing. */
+const $connectionBusyBy = atom({})
+const $connectionLastSuccessBy = atom({})
+const $connectionFailuresBy = atom({})
+
+const connectionBusyFor = identity => ($connectionBusyBy.get()[identity] || 0)
+
 async function backendRequest(path, options = {}, transport = rest) {
   if (typeof transport !== 'function') throw new Error('No plugin backend bridge.')
   const identity = membershipIdentityNow()
   const route = backendRoute(path)
   const method = backendMethod(options)
+  const busyBy = { ...$connectionBusyBy.get(), [identity]: connectionBusyFor(identity) + 1 }
+  $connectionBusyBy.set(busyBy)
+  try {
+    return await backendRequestInner(path, options, transport, identity, route, method)
+  } finally {
+    const current = { ...$connectionBusyBy.get() }
+    const left = Math.max(0, (current[identity] || 0) - 1)
+    if (left) current[identity] = left
+    else delete current[identity]
+    $connectionBusyBy.set(current)
+  }
+}
+
+async function backendRequestInner(path, options, transport, identity, route, method) {
   const handleFailure = failure => {
     if (isBackendCompatibilityError(failure)) throw failure
     const kind = backendCompatibilityKind(path, options, failure)
@@ -1932,18 +2087,43 @@ async function backendRequest(path, options = {}, transport = rest) {
     }
     throw makeBackendCompatibilityError(path, kind)
   }
+  let result
   try {
-    const result = await transport(path, options)
-    if (result?.ok === false) {
-      const kind = backendCompatibilityKind(path, options, result)
-      if (kind) return handleFailure(result)
-    } else {
-      if (membershipIdentityCurrent(identity)) clearBackendCompatibilityFailure(identity, route, method)
-    }
-    return result
+    result = await transport(path, options)
   } catch (error) {
+    // Transport failure — no HTTP response was received. Scoped to the
+    // request's identity: a stale request never counts against the active
+    // connection.
+    if (membershipIdentityCurrent(identity)) {
+      $connectionFailuresBy.set({
+        ...$connectionFailuresBy.get(),
+        [identity]: ($connectionFailuresBy.get()[identity] || 0) + 1
+      })
+    }
     return handleFailure(error)
   }
+  // Any answered response proves the bridge reached the backend, so it
+  // clears the failure count even when the caller rejects the body. Answered
+  // HTTP rejections — including membership-save conflicts — keep propagating
+  // to the caller but never count as connection failures.
+  if (membershipIdentityCurrent(identity)) {
+    $connectionFailuresBy.set({ ...$connectionFailuresBy.get(), [identity]: 0 })
+  }
+  if (result?.ok === false) {
+    // A data-level error body is an answered response for reachability, but
+    // it is not a successful retrieval: the freshness time must not advance
+    // for it.
+    const kind = backendCompatibilityKind(path, options, result)
+    if (kind) return handleFailure(result)
+  } else if (membershipIdentityCurrent(identity)) {
+    // Freshness records a successful retrieval of real data (health checks
+    // bypass backendRequest and never reach this write).
+    $connectionLastSuccessBy.set({
+      ...$connectionLastSuccessBy.get(), [identity]: Date.now()
+    })
+    clearBackendCompatibilityFailure(identity, route, method)
+  }
+  return result
 }
 
 function wrapBackendTransport(transport) {
@@ -2509,6 +2689,7 @@ function useLive() {
       provider: provider || null,
       providerUnknown: !provider,
       rates: resolved.rates,
+      effective: resolved.effective || null,
       saved: savings?.kind === 'value' ? savings.value : null,
       savedRange: savings?.kind === 'range' ? savings.range : null,
       savedBound: savings && ['upper', 'lower'].includes(savings.kind)
@@ -2571,6 +2752,7 @@ function useLive() {
       provider: provider || (!usage ? (hist.provider || null) : null),
       providerUnknown: !(provider || (!usage && hist.provider)),
       rates: histRates.rates,
+      effective: histRates.effective || null,
       saved: savings.value,
       savedRange: savings.range,
       savedBound: null,
@@ -2614,6 +2796,7 @@ function useLive() {
     provider: provider || null,
     providerUnknown: !provider,
     rates: resolved.rates,
+    effective: resolved.effective || null,
     // A cumulative run can span models; one current price cannot value it.
     saved: runState,
     savedRange: runBounds && !runBounds.exact ? { min: runBounds.min, max: runBounds.max } : null,
@@ -3553,13 +3736,26 @@ function CacheGauge({ t, view }) {
 /** Section E: model pricing, collapsed by default and stable across refresh. */
 function RatesPanel({ t, view }) {
   const open = useValue($ratesOpen)
-  const rates = view.rates
+  // The billed (effective) basis leads when the provider publishes its own
+  // rates; the catalogue card is the labelled fallback. The label names the
+  // basis either way — no silent swap.
+  const billed = view.effective || null
+  const rates = billed ? {
+    input: billed.input, output: billed.output, cache: billed.cache,
+    write: null, cacheWriteRates: []
+  } : view.rates
   const cells = [
     { key: 'input', label: t('input'), value: fmtRate(rates?.input) },
     { key: 'output', label: t('output'), value: fmtRate(rates?.output) },
     { key: 'cache', label: t('cacheRead'), value: fmtRate(rates?.cache) }
   ]
-  if (rates && rates.write != null) {
+  if (billed) {
+    // The original (undiscounted) comparison, one compact line.
+    cells.push({ key: 'list', label: t('originalRates'), value: [
+      fmtRate(billed.listInput), fmtRate(billed.listOutput), fmtRate(billed.listCache)
+    ].filter(v => v != null).join(' / ') })
+  }
+  if (!billed && rates && rates.write != null) {
     const options = Array.isArray(rates.cacheWriteRates) ? rates.cacheWriteRates : []
     cells.push({ key: 'write', label: t('cacheWrite'), value: options.length
       ? options.map(option => `${option.retention} ${fmtRate(option.rate)}`).join(' · ')
@@ -3574,11 +3770,11 @@ function RatesPanel({ t, view }) {
         'aria-controls': 'wm-rates-body',
         onClick: () => $ratesOpen.set(!open),
         children: [
-          jsx('span', { children: t('rates') }, 'label'),
+          jsx('span', { children: billed ? t('billedRates') : t('rates') }, 'label'),
           jsx('span', { className: cn('wm-chevron', open && 'wm-chevron-open'), 'aria-hidden': true, children: '›' }, 'chevron')
         ]
       }, 'toggle'),
-      jsx(InfoTip, { id: 'rates-source', dir: 'up', label: t('infoLabel'), text: t('ratesNote'), wide: true }, 'info')
+      jsx(InfoTip, { id: 'rates-source', dir: 'up', label: t('infoLabel'), text: billed ? t('billedRatesNote') : t('ratesNote'), wide: true }, 'info')
     ] }, 'head'),
     open
       ? jsxs('div', { id: 'wm-rates-body', children: [
@@ -4268,7 +4464,7 @@ function ProductShell({ children, pageStyles = '', pageClass = '' }) {
       }
     },
     children: [
-      jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + (supplementalStyles || '') }),
+      jsx('style', { children: ANALYTICS_CSS + PRODUCT_CSS + CONNECTION_STATUS_CSS + (supplementalStyles || '') }),
       jsx(LedgerTabs, {}),
       jsx(LedgerSafetyNotice, {}, 'ledger-safety'),
       pair
@@ -5629,7 +5825,11 @@ function LedgerTabs() {
         'aria-selected': tab === id, 'aria-pressed': tab === id, tabIndex: tab === id ? 0 : -1,
         className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
         onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) },
-        children: jsx('span', { className: 'wm-product-tab-label', children: t(TAB_LABEL_KEYS[id]) }) }, id))
+        children: jsx('span', { className: 'wm-product-tab-label', children: t(TAB_LABEL_KEYS[id]) }) }, id)),
+    // Shared connection indicator: far right of the header row, opposite the
+    // logo, aligned with it, identical on every page (React Query dedupes the
+    // health key the shell also reads — no extra backend request).
+    jsx(ConnectionStatus, {}, 'connection-status')
   ] })
 }
 
@@ -6013,6 +6213,23 @@ function AdvancedBillingRules() {
   ], 'advanced-billing-rules') })
 }
 
+const CONNECTION_STATUS_CSS = [
+  '.wm-conn-status-block{margin-left:auto;display:inline-flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:3px;align-self:stretch;flex-shrink:0;min-width:150px}',
+  '.wm-connection-status{gap:6px;padding:3px 10px;min-height:24px;font-size:11.5px;border-radius:99px;background:transparent}',
+  '.wm-conn-status-sub{font-size:10.5px;line-height:1.25;color:var(--wm-text-muted);letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}',
+  '.wm-connection-status .wm-conn-status-icon{flex-shrink:0}',
+  '.wm-connection-status[data-connection="live"]{background:color-mix(in srgb,var(--wm-positive) 12%,transparent)}',
+  '.wm-connection-status[data-connection="loading"],.wm-connection-status[data-connection="refreshing"]{background:color-mix(in srgb,var(--wm-action) 12%,transparent)}',
+  '.wm-connection-status[data-connection="reconnecting"]{background:color-mix(in srgb,var(--wm-attention) 14%,transparent)}',
+  '.wm-connection-status[data-connection="offline"]{color:var(--wm-text-secondary)}',
+  '.wm-connection-status[data-connection="error"]{background:color-mix(in srgb,var(--wm-error) 12%,transparent)}',
+  '.wm-connection-status[data-connection="loading"] .wm-conn-status-icon,.wm-connection-status[data-connection="refreshing"] .wm-conn-status-icon{animation:wm-conn-spin 1.2s linear infinite;transform-origin:50% 50%}',
+  '.wm-connection-status[data-connection="reconnecting"] .wm-conn-status-icon{animation:wm-conn-pulse 1.6s ease-in-out infinite}',
+  '@keyframes wm-conn-spin{to{transform:rotate(360deg)}}',
+  '@keyframes wm-conn-pulse{0%,100%{opacity:1}50%{opacity:.4}}',
+  '@media (prefers-reduced-motion: reduce){.wm-connection-status .wm-conn-status-icon{animation:none !important}}',
+]
+
 const PRODUCT_CSS = [
   '.wm-product .wm-shell{width:100%;max-width:1180px;padding:24px 22px;gap:18px;min-width:0}',
   '.wm-product .wm-product-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}',
@@ -6110,7 +6327,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-settings-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}',
   '.wm-product .wm-settings-grid .wm-product-section{min-width:0}',
   '.wm-product .wm-settings-grid [id]{scroll-margin-top:70px}',
-  '@container(max-width:760px){.wm-product .wm-settings-grid [id]{scroll-margin-top:150px}}',
+  '@container(max-width:760px){.wm-product .wm-settings-grid [id]{scroll-margin-top:170px}}',
   '.wm-product .wm-settings-grid details{margin:4px 0 12px}',
   '.wm-product .wm-settings-grid details summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--ui-text-secondary);min-height:32px}',
   '.wm-product .wm-settings-grid details summary:hover{color:var(--ui-text-primary)}',
@@ -6154,14 +6371,14 @@ const PRODUCT_CSS = [
   '.wm-product .wm-about-more summary:hover{color:var(--ui-text-primary)}',
   '.wm-product .wm-about-more details p{margin:6px 0 0;color:var(--ui-text-tertiary);font-size:12px;line-height:1.5;max-width:78ch}',
   '.wm-product .wm-about-more [id]{scroll-margin-top:70px}',
-  '@container(max-width:760px){.wm-product .wm-about-more [id]{scroll-margin-top:150px}}',
+  '@container(max-width:760px){.wm-product .wm-about-more [id]{scroll-margin-top:170px}}',
   '.wm-product .wm-about-company{display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin-top:4px;padding:16px;border:1px solid var(--wm-border);border-left:3px solid #2563EB;border-radius:10px;background:color-mix(in srgb,#2563EB 5%,var(--wm-surface-raised))}',
   '.wm-product .wm-about-company .wm-about-developer{margin:0;font-size:11.5px;font-weight:650;letter-spacing:.4px;text-transform:uppercase;color:var(--ui-text-tertiary)}',
   '.wm-product .wm-about-group{display:grid;gap:6px;margin:12px 0 0}',
   '.wm-product .wm-about-group h3{margin:0;font-size:11.5px;font-weight:650;letter-spacing:.5px;text-transform:uppercase;color:var(--ui-text-tertiary)}',
   '.wm-product .wm-about-group .wm-about-actions{margin:0}',
   '.wm-product .wm-about-faq-section [id]{scroll-margin-top:70px}',
-  '@container(max-width:760px){.wm-product .wm-about-faq-section [id]{scroll-margin-top:150px}}',
+  '@container(max-width:760px){.wm-product .wm-about-faq-section [id]{scroll-margin-top:170px}}',
   '.wm-product .wm-setting-action{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}',
   '.wm-product .wm-setting-toggle{display:flex;align-items:flex-start;gap:9px;margin:10px 0;padding:10px;border:1px solid var(--ui-stroke-secondary);border-radius:7px;background:var(--ui-fill-secondary);color:var(--ui-text-primary);font-size:12px;line-height:1.45}',
   '.wm-product .wm-setting-toggle input{margin:2px 0 0;accent-color:var(--ui-accent)}',
@@ -6185,7 +6402,8 @@ const PRODUCT_CSS = [
   // live with the shell rather than in a page stylesheet.
   '.wm-product .wm-backend-compatibility strong{display:block;font-weight:600;font-size:12px}',
   '.wm-product .wm-backend-compatibility p{margin:5px 0 0;font-size:11.5px;line-height:1.5;color:var(--ui-text-secondary)}',
-  '.wm-product .wm-backend-compatibility p.wm-subtle{color:var(--ui-text-tertiary)}'
+  '.wm-product .wm-backend-compatibility p.wm-subtle{color:var(--ui-text-tertiary)}',
+  ...CONNECTION_STATUS_CSS,
 ].join('') + BUDGET_CSS;
 
 function pricingStatusQuery(identity = membershipIdentityNow()) {
@@ -16498,6 +16716,26 @@ const I18N = {
     inclDerived: ' · incl. derived cache',
     ratesNote:
       'Rates come from the WolfMark catalogue card, not the provider’s invoice. Hermes may show a different estimate when its own route or peak/off-peak pricing differs.',
+    billedRates: 'Billed rates ($/Mtok)',
+    originalRates: 'Original (list)',
+    billedRatesNote:
+      'The provider’s own billed (effective) rates for this account, with the original undiscounted list price for comparison. These are the rates the expenditure estimate uses.',
+    connStatus_live: 'Live',
+    connStatus_loading: 'Loading data…',
+    connStatus_refreshing: 'Refreshing…',
+    connStatus_reconnecting: 'Reconnecting…',
+    connStatus_offline: 'Offline',
+    connStatus_error: 'Connection error',
+    connStatusLastUpdate: (time) => `Last successful update ${time}`,
+    connSubLive: 'Connected · Data refreshed',
+    connSubLiveBare: 'Connected',
+    connSubLoading: 'Retrieving initial data',
+    connSubRefreshing: 'Fetching the latest data',
+    connSubReconnectData: 'Showing last verified data',
+    connSubReconnectBare: 'Restoring the connection…',
+    connSubOfflineTime: (time) => `Last updated ${time}`,
+    connSubOfflineBare: 'No data received yet',
+    connSubError: 'Unable to retrieve data',
     range_all: 'All recorded',
     range_month: 'This month',
     range_today: 'Today',
@@ -18315,6 +18553,26 @@ const I18N = {
     inclDerived: ' · 含推算缓存',
     ratesNote:
       '费率来自 WolfMark 目录卡，而非供应商账单。Hermes 自身可能采用不同路线或峰谷费率，因此估算可能不同。',
+    billedRates: '实付费率（$/百万令牌）',
+    originalRates: '原价（目录）',
+    billedRatesNote:
+      '该账户的供应商实付（有效）费率，并列出未打折的目录原价供比较。支出估算即按此费率计算。',
+    connStatus_live: '已连接',
+    connStatus_loading: '正在加载数据…',
+    connStatus_refreshing: '正在刷新…',
+    connStatus_reconnecting: '正在重新连接…',
+    connStatus_offline: '离线',
+    connStatus_error: '连接错误',
+    connStatusLastUpdate: (time) => `上次成功更新 ${time}`,
+    connSubLive: '已连接 · 数据已刷新',
+    connSubLiveBare: '已连接',
+    connSubLoading: '正在获取初始数据',
+    connSubRefreshing: '正在获取最新数据',
+    connSubReconnectData: '正在显示最近验证的数据',
+    connSubReconnectBare: '正在恢复连接…',
+    connSubOfflineTime: (time) => `最后更新 ${time}`,
+    connSubOfflineBare: '尚未收到数据',
+    connSubError: '无法获取数据',
     sessionTokens: '本次会话',
     src_backend: 'WolfMark 后端估算',
     src_backend_summary: 'Hermes 主调用 API 等值汇总',
@@ -19141,6 +19399,7 @@ export default {
 /** Pure internals, exported for the node test-suite (the host only reads `default`). */
 export const __test = {
   Chip, BudgetPanel, BudgetStatusIndicator, budgetLevel, budgetColour, sessionBudgetStatus, usageValueDelta, budgetQuery, budgetWrite, budgetPayload, newBudgetDraft, budgetTooltip, $budgetDraft, $budgetBusy, $budgetNotice, BUDGET_CSS,
+  connectionStatusOf, $connectionBusyBy, $connectionLastSuccessBy, $connectionFailuresBy, ConnectionStatus, ConnectionStatusIcon, CONNECTION_STATUS_CSS, LedgerTabs, ProductShell,
   analyticsDistribution, analyticsTrend, analyticsComposition, analyticsSort, analyticsPricing, analyticsInsights, analyticsExplorerCsv, explorerUnitCosts, deltaText, TOKEN_STREAMS, CHART_COLORS, sharePercent, analyticsListPartial,
   analyticsUsageCost,
   AnalyticsPage, AnalyticsDashboard, AnalyticsCoverageSummary, AnalyticsDistribution, AnalyticsTrendChart, AnalyticsRanking, AnalyticsComposition,

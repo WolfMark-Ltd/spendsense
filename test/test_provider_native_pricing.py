@@ -495,3 +495,43 @@ class CommandCodeCatalogueCoverage(ProviderNativeTestCase):
         if hit is not None:  # pragma: no cover - narrows for the type checker
             self.assertEqual(hit.rate.cache_write, None)
             self.assertNotIn("openrouter", (hit.source or "").lower())
+
+    def test_aggregate_list_valuation_falls_back_to_the_native_original(self):
+        # models.dev dropped the `nous` section, so the server catalogue
+        # misses the route entirely; the provider's own `original` block
+        # still evidences the undiscounted list price (the #119 gate).
+        from wolfmark_ledger.aggregate import _event_result
+        from wolfmark_ledger.pricing import Catalogue as _Catalogue
+        self.inject({"nous": {"deepseek/deepseek-v4.1-flash-1017": dict(NOUS_ROW)}})
+        empty_book = _Catalogue({}, "empty", "test", "", "1")
+        row = {"provider": "nous", "model": "deepseek/deepseek-v4.1-flash-1017",
+               "input_tokens": 50_000, "cache_read_tokens": 1_000_000,
+               "cache_write_tokens": 0, "output_tokens": 500,
+               "ts": NOW, "outcome": "ok"}
+        result = _event_result(row, empty_book, "hybrid", {}, at=row["ts"])
+        # 50k fresh + 1M cached read + 500 output at the original list rates.
+        expected = 50_000 / 1e6 * 0.15 + 1_000_000 / 1e6 * 0.003 + 500 / 1e6 * 0.6
+        self.assertAlmostEqual(result["list_usd"], round(expected, 6), places=6)
+        self.assertEqual(result["pricing_miss"], "")
+        # Expenditure keeps the effective basis, distinct from the list.
+        self.assertAlmostEqual(result["expenditure_usd"],
+                               round(50_000 / 1e6 * 0.03 + 1_000_000 / 1e6 * 0.0006
+                                     + 500 / 1e6 * 0.12, 6), places=6)
+
+    def test_native_row_without_original_never_backs_the_list(self):
+        # The #119 gate: an original-less row prices the effective basis only.
+        from wolfmark_ledger.aggregate import _event_result
+        from wolfmark_ledger.pricing import Catalogue as _Catalogue
+        row_data = {"prompt": "0.0000000300", "completion": "0.0000001200",
+                    "input_cache_read": "0.0000000006"}
+        self.inject({"nous": {"deepseek/deepseek-v4.1-flash-1017": dict(row_data)}})
+        empty_book = _Catalogue({}, "empty", "test", "", "1")
+        row = {"provider": "nous", "model": "deepseek/deepseek-v4.1-flash-1017",
+               "input_tokens": 1_000, "cache_read_tokens": 0,
+               "cache_write_tokens": 0, "output_tokens": 10,
+               "ts": NOW, "outcome": "ok"}
+        result = _event_result(row, empty_book, "hybrid", {}, at=row["ts"])
+        self.assertIsNone(result["list_usd"])
+        self.assertEqual(result["pricing_miss"], "provider_not_in_catalogue")
+        self.assertIsNotNone(result["expenditure_usd"],
+                             "the effective basis still prices the call")

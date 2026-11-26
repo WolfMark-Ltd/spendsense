@@ -24,14 +24,14 @@ const ACTION_URLS = [
 const KOFI_URL = 'https://ko-fi.com/wolfmark'
 const CASES = {
   en: {
-    heads: ['SpendSense 0.6.41', 'Get help and get involved', 'Support WolfMark Development', 'Help & FAQ', 'More information'],
+    heads: ['SpendSense 0.6.42', 'Get help and get involved', 'Support WolfMark Development', 'Help & FAQ', 'More information'],
     kofi: 'Support on Ko-fi',
     faqQ: 'Why don’t my SpendSense figures match my provider’s usage or billing dashboard?',
     privacy: 'Privacy',
     licence: 'Licence & credits',
   },
   zh: {
-    heads: ['SpendSense 0.6.41', '获取帮助与参与', '支持 WolfMark 开发', '帮助与常见问题', '更多信息'],
+    heads: ['SpendSense 0.6.42', '获取帮助与参与', '支持 WolfMark 开发', '帮助与常见问题', '更多信息'],
     kofi: '在 Ko-fi 上支持',
     faqQ: '为什么 SpendSense 的数据与服务商的用量或账单面板对不上？',
     privacy: '隐私',

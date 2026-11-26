@@ -1712,3 +1712,157 @@ test('a backend error does not trigger a second-leg session request', async () =
     i18nBackend.t = previousTranslate
   }
 })
+
+test('a provider-native effective rate leads the Rates panel with the original comparison', async () => {
+  resetHost()
+  const originalRest = T.getRest()
+  const previousTranslate = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const value = T.I18N.en[key]
+    return typeof value === 'function' ? value(...args) : value ?? key
+  }
+  T.setRest(async path => {
+    if (path.startsWith('/rates?')) return {
+      ok: true,
+      catalogue: { as_of: '2026-11-25T00:00:00Z', stale: false },
+      rate: { provider: 'nous', model: 'deepseek/deepseek-v4.1-flash-1017', route_provider: 'nous',
+        input: null, output: null, cache_read: null, cache_write: null,
+        cache_write_rates: [], has_tiers: false, flat: true, tiers: [],
+        tier_semantics: null, provenance: 'unpriced', source: '', provisional: [] },
+      effective_rate: { input: 0.03, output: 0.12, cache_read: 0.0006, basis: 'effective',
+        list_input: 0.15, list_output: 0.6, list_cache_read: 0.003,
+        as_of: '2026-11-25T21:33:20Z' }
+    }
+    return { rate: null }
+  })
+  host.state.model.set('deepseek/deepseek-v4.1-flash-1017')
+  queryClient.setQueryData(T.catalogQuery('s1', 'deepseek/deepseek-v4.1-flash-1017', false).queryKey,
+    { model: 'deepseek/deepseek-v4.1-flash-1017', provider: 'nous' })
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage({ model: 'deepseek/deepseek-v4.1-flash-1017' }))
+  const container = await renderMeter()
+  await flush(3)
+  try {
+    const toggle = container.querySelector('.wm-rates-toggle')
+    assert.ok(toggle, 'the Rates panel renders')
+    assert.match(toggle.textContent, /Billed rates/,
+      'the label names the billed basis when the provider publishes rates')
+    await React.act(async () => {
+      toggle.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    })
+    await flush(2)
+    const body = container.querySelector('#wm-rates-body')
+    assert.ok(body, 'the Rates panel opens')
+    const cells = Object.fromEntries(
+      [...body.querySelectorAll('.wm-rate-cell')].map(cell => [
+        cell.querySelector('.wm-metric-label').textContent,
+        cell.querySelector('.wm-metric-value').textContent]))
+    assert.equal(cells['Input'], '$0.03', `billed input rate leads: ${JSON.stringify(cells)}`)
+    assert.equal(cells['Output'], '$0.12', `billed output rate leads: ${JSON.stringify(cells)}`)
+    assert.equal(cells['Cache read'], '$0.0006', `billed cache rate leads: ${JSON.stringify(cells)}`)
+    assert.equal(cells['Original (list)'], '$0.15 / $0.6 / $0.003',
+      `the undiscounted comparison renders once: ${JSON.stringify(cells)}`)
+  } finally {
+    T.restoreRest(originalRest)
+    i18nBackend.t = previousTranslate
+  }
+})
+
+test('without a native rate the catalogue card keeps its label and basis', async () => {
+  resetHost()
+  const originalRest = T.getRest()
+  const previousTranslate = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const value = T.I18N.en[key]
+    return typeof value === 'function' ? value(...args) : value ?? key
+  }
+  T.setRest(async path => {
+    if (path.startsWith('/rates?')) return {
+      ok: true,
+      catalogue: { as_of: '2026-11-25T00:00:00Z', stale: false },
+      rate: { provider: 'openai', model: 'gpt-4o', route_provider: 'openai',
+        input: 2.5, output: 10.0, cache_read: 1.25, cache_write: null,
+        cache_write_rates: [], has_tiers: false, flat: true, tiers: [],
+        tier_semantics: null, provenance: 'models_dev_route', source: '',
+        provisional: [] }
+    }
+    return { rate: null }
+  })
+  host.state.model.set('gpt-4o')
+  queryClient.setQueryData(T.catalogQuery('s1', 'gpt-4o', false).queryKey,
+    { model: 'gpt-4o', provider: 'openai' })
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage({ model: 'gpt-4o' }))
+  const container = await renderMeter()
+  await flush()
+  try {
+    const toggle = container.querySelector('.wm-rates-toggle')
+    assert.match(toggle.textContent, /Rates \(\$\/Mtok\)/,
+      'the catalogue card keeps its unqualified label when it is the basis')
+    await React.act(async () => {
+      toggle.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    })
+    await flush(2)
+    const body = container.querySelector('#wm-rates-body')
+    const labels = [...body.querySelectorAll('.wm-rate-cell .wm-metric-label')]
+      .map(el => el.textContent)
+    assert.deepEqual(labels, ['Input', 'Output', 'Cache read'],
+      'no original line on a catalogue-basis card')
+  } finally {
+    T.restoreRest(originalRest)
+    i18nBackend.t = previousTranslate
+  }
+})
+
+test('billed-only backend rates never unprice the list fallback', async () => {
+  // An effective-only /rates response keeps the billed panel but must not
+  // bypass the list-rate chain: local estimates and session budgets keep
+  // their price from the bundled/live card.
+  resetHost()
+  const originalRest = T.getRest()
+  const previousTranslate = i18nBackend.t
+  i18nBackend.t = (key, ...args) => {
+    const value = T.I18N.en[key]
+    return typeof value === 'function' ? value(...args) : value ?? key
+  }
+  T.setRest(async path => {
+    if (path.startsWith('/rates?')) return {
+      ok: true,
+      catalogue: { as_of: '2026-11-25T00:00:00Z', stale: false },
+      rate: null,
+      effective_rate: { input: 0.03, output: 0.12, cache_read: 0.0006, basis: 'effective',
+        list_input: null, list_output: null, list_cache_read: null,
+        as_of: '2026-11-25T21:33:20Z' }
+    }
+    return { rate: null }
+  })
+  // No catalog payload pricing: the bundled card supplies the list basis.
+  host.state.model.set('deepseek/deepseek-v4.1-flash-1017')
+  queryClient.setQueryData(T.catalogQuery('s1', 'deepseek/deepseek-v4.1-flash-1017', false).queryKey,
+    { model: 'deepseek/deepseek-v4.1-flash-1017', provider: 'nous' })
+  host.state.focusedSessionId.set('s1')
+  host.state.focusedUsage.set(liveUsage({ model: 'deepseek/deepseek-v4.1-flash-1017' }))
+  const container = await renderMeter()
+  await flush(3)
+  try {
+    const toggle = container.querySelector('.wm-rates-toggle')
+    assert.match(toggle.textContent, /Billed rates/,
+      'the billed panel still leads on an effective-only response')
+    await React.act(async () => {
+      toggle.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    })
+    await flush(2)
+    const body = container.querySelector('#wm-rates-body')
+    assert.ok(body)
+    const cells = [...body.querySelectorAll('.wm-rate-cell .wm-metric-label')]
+      .map(el => el.textContent)
+    assert.ok(cells.includes('Original (list)'), 'no original line when the native row lacks one')
+    // The cost figure is priced from the fallback list card, never '—'.
+    const figure = container.querySelector('.wm-kpi-figure')
+    assert.ok(figure && figure.textContent !== '—' && figure.textContent !== '',
+      `local estimate keeps its list price: ${figure?.textContent}`)
+  } finally {
+    T.restoreRest(originalRest)
+    i18nBackend.t = previousTranslate
+  }
+})
