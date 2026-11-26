@@ -13,7 +13,7 @@ from typing import Any, Mapping, Optional
 from . import billing, store
 from .aggregate import Acc, _event_result, _iso, _local_window, route_billing_status
 from .db import default_db_path
-from .pricing import (Catalogue, Rate, _effective_rate, load_catalogue,
+from .pricing import (Catalogue, Rate, RateMemo, _effective_rate, load_catalogue,
                       reaches_unapplied_tier, resolve_rate)
 
 SCOPES = ("direct", "subagent", "auxiliary", "unattributed")
@@ -183,7 +183,8 @@ def _savings_directions(rate: Rate, *, read_known: bool, write_known: bool
 
 def _call_economics(row: dict[str, Any], book: Catalogue, *,
                     allow_third_party: bool = False,
-                    allow_approximate: bool = False
+                    allow_approximate: bool = False,
+                    rate_memo: Optional[RateMemo] = None,
                     ) -> tuple[dict[str, Any] | None, str]:
     """Strict comparison on the same complete, known-cache call population.
 
@@ -206,10 +207,19 @@ def _call_economics(row: dict[str, Any], book: Catalogue, *,
     write_known = _reported(row.get("_cache_write_reported"), row["_cache_write"])
     if not read_known and not write_known:
         return None, "cache_provenance_unknown"
-    lookup, _native = resolve_rate(book, row["provider"], row["model"],
-                                   allow_third_party=allow_third_party,
-                                   allow_approximate=allow_approximate,
-                                   at=row.get("last_seen"))
+    if rate_memo is not None and rate_memo.catalogue is not book:
+        raise ValueError("RateMemo was built for a different catalogue")
+    if rate_memo is None:
+        lookup, _native = resolve_rate(book, row["provider"], row["model"],
+                                       allow_third_party=allow_third_party,
+                                       allow_approximate=allow_approximate,
+                                       at=row.get("last_seen"))
+    else:
+        lookup, _native = rate_memo.resolve(
+            row["provider"], row["model"],
+            allow_third_party=allow_third_party,
+            allow_approximate=allow_approximate,
+            at=row.get("last_seen"))
     if lookup is None:
         if row.get("pricing_miss") == "provider_not_in_catalogue":
             return None, "provider_price_catalogue_missing"
@@ -763,6 +773,7 @@ def build_analytics_report(
     parent: str | None = None, scope: str | None = None,
     pricing_mode: str = "strict", presentation: str = "both",
     profiles_path: Path | str | None = None,
+    rate_memo: Optional[RateMemo] = None,
 ) -> dict[str, Any]:
     """Aggregate only recorded calls in the local-calendar, half-open window."""
     now = time.time() if now is None else now
@@ -798,6 +809,9 @@ def build_analytics_report(
     allow_third_party = mode in ("third_party", "approximate")
     allow_approximate = mode == "approximate"
     book = catalogue if catalogue is not None else load_catalogue()
+    if rate_memo is not None and rate_memo.catalogue is not book:
+        raise ValueError("RateMemo was built for a different catalogue")
+    memo = rate_memo if rate_memo is not None else RateMemo(book)
     statuses = route_billing_status(state_db_path)
     if route_arrangements:
         # Membership-resolved route arrangements are authoritative for the
@@ -823,7 +837,8 @@ def build_analytics_report(
     for raw in rows:
         row = _event_result(raw, book, "list", statuses,
                             allow_third_party=allow_third_party,
-                            allow_approximate=allow_approximate, at=raw.get("ts"))
+                            allow_approximate=allow_approximate, at=raw.get("ts"),
+                            rate_memo=memo)
         option_models.add((row["model"], row["provider"]))
         surfaces.add(row["surface"])
         tasks.add(row["task"])
@@ -838,16 +853,30 @@ def build_analytics_report(
         if scope and row_scope != scope:
             continue
         row["_economics"], row["_economics_gap"] = _call_economics(
-            row, book, allow_third_party=allow_third_party, allow_approximate=allow_approximate)
+            row, book, allow_third_party=allow_third_party, allow_approximate=allow_approximate,
+            rate_memo=memo)
         results_kept.append(row)
         total_acc.add(row)
-        scope_accs.setdefault(row_scope, _AnalyticsAcc()).add(row)
+        # NB: setdefault() evaluates its default eagerly, so
+        # setdefault(key, _AnalyticsAcc()) would construct (and discard) a
+        # fresh accumulator per row. get-or-create builds one per key.
+        scope_acc = scope_accs.get(row_scope)
+        if scope_acc is None:
+            scope_acc = scope_accs[row_scope] = _AnalyticsAcc()
+        scope_acc.add(row)
         if row_scope == "unattributed":
             unattributed_calls += 1
         if row_scope == "subagent" and row["_root"]:
             operations[row["_root"]] += 1
-        models.setdefault((row["model"], row["provider"]), _AnalyticsAcc()).add(row)
-        routes.setdefault(row["provider"], _AnalyticsAcc()).add(row)
+        model_key = (row["model"], row["provider"])
+        model_acc = models.get(model_key)
+        if model_acc is None:
+            model_acc = models[model_key] = _AnalyticsAcc()
+        model_acc.add(row)
+        route_acc = routes.get(row["provider"])
+        if route_acc is None:
+            route_acc = routes[row["provider"]] = _AnalyticsAcc()
+        route_acc.add(row)
         bucket_ts = starts[bisect_right(starts, raw["ts"]) - 1]
         bucket_accs[bucket_ts].add(row)
     totals = total_acc.as_dict()
@@ -857,7 +886,8 @@ def build_analytics_report(
     for raw in prev_rows:
         prow = _event_result(raw, book, "list", statuses,
                              allow_third_party=allow_third_party,
-                             allow_approximate=allow_approximate, at=raw.get("ts"))
+                             allow_approximate=allow_approximate, at=raw.get("ts"),
+                             rate_memo=memo)
         prow_scope = _scope_of(prow["_session_id"], prow["_task"], child_of, known)
         prow["_scope"] = prow_scope
         prow["_root"] = _root_of(prow["_session_id"], child_of) if prow["_session_id"] else ""
@@ -868,7 +898,8 @@ def build_analytics_report(
         if scope and prow_scope != scope:
             continue
         prow["_economics"], prow["_economics_gap"] = _call_economics(
-            prow, book, allow_third_party=allow_third_party, allow_approximate=allow_approximate)
+            prow, book, allow_third_party=allow_third_party, allow_approximate=allow_approximate,
+            rate_memo=memo)
         prev_acc.add(prow)
     prev_totals = prev_acc.as_dict()
 
@@ -1031,6 +1062,7 @@ def build_session_summary(
     catalogue: Catalogue | None = None,
     pricing_mode: str = "strict",
     now: float | None = None,
+    rate_memo: Optional[RateMemo] = None,
 ) -> dict[str, Any]:
     """One session's canonical figures, with an explicit population scope.
 
@@ -1070,6 +1102,9 @@ def build_session_summary(
 
     mode = pricing_mode if pricing_mode in ("strict", "third_party", "approximate") else "strict"
     book = catalogue if catalogue is not None else load_catalogue()
+    if rate_memo is not None and rate_memo.catalogue is not book:
+        raise ValueError("RateMemo was built for a different catalogue")
+    memo = rate_memo if rate_memo is not None else RateMemo(book)
     statuses = route_billing_status(state_db_path)
     if route_arrangements:
         # Membership-resolved route arrangements are authoritative for the
@@ -1085,10 +1120,10 @@ def build_session_summary(
             row = _event_result(raw, book, "list", statuses,
                                 allow_third_party=mode in ("third_party", "approximate"),
                                 allow_approximate=mode == "approximate",
-                                at=raw.get("ts"))
+                                at=raw.get("ts"), rate_memo=memo)
             row["_economics"], row["_economics_gap"] = _call_economics(
                 row, book, allow_third_party=mode in ("third_party", "approximate"),
-                allow_approximate=mode == "approximate")
+                allow_approximate=mode == "approximate", rate_memo=memo)
             acc.add(row)
         totals_raw = acc.as_dict()
         economics = totals_raw["economics"]
@@ -1103,7 +1138,7 @@ def build_session_summary(
         unpriced_tokens = totals_raw["unpriced_tokens"]
         thresholds: set[int] = set()
         for route, name in {(str(r.get("provider") or ""), str(r.get("model") or "")) for r in selected}:
-            hit, _native = resolve_rate(book, route, name,
+            hit, _native = memo.resolve(route, name,
                                         allow_third_party=mode in ("third_party", "approximate"),
                                         allow_approximate=mode == "approximate")
             if hit is not None:

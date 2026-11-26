@@ -298,6 +298,217 @@ def resolve_rate(
     ), native
 
 
+#: Maximum age of a RateMemo before it stops serving cached resolutions and
+#: calls through to the live resolvers. Pricing catalogues and provider rows
+#: are read-only inputs during a report build, but a pathologically long
+#: report (or a mid-report catalogue refresh by another thread) must never
+#: serve prices from a previous generation: past this age the memo behaves
+#: exactly like no memo. Normal reports finish in seconds; the bound only
+#: bites on runs thousands of times slower than the 17k-event baseline.
+RATE_MEMO_MAX_AGE_SECONDS = 60.0
+
+
+class _BypassType:
+    __slots__ = ()
+
+
+_BYPASS = _BypassType()
+
+
+class RateMemo:
+    """Per-report memoisation of pricing resolution.
+
+    One instance per report build; never shared across reports, threads, or
+    catalogue generations. Entries are keyed by the EXACT raw inputs (no
+    normalisation). Event timestamps are NOT part of the key: the only
+    timestamp-sensitive step in the whole resolution chain is the official
+    overlay window tariff, and it is applied per event from the cached base
+    result using the same ``_windowed_rate``/``_window_active`` functions,
+    so windowed routes still price each event at its own time:
+
+    * no branch in ``resolve_rate``/``Catalogue.lookup``/``provider_native``
+      conditions on ``at`` — it only flows into the overlay window
+      computation — so probing once with ``at=None`` learns the route's
+      shape (hit, miss, fallback path, native row) exactly;
+    * for official-overlay hits the memo also caches the overlay's window
+      table (verified against the probe result itself, never re-derived),
+      then applies the tariff per event identically to ``Catalogue.lookup``;
+    * ``provider_native.lookup`` takes no timestamp; one entry per
+      (provider, model, allow_fetch).
+    * catalogue identity is implicit: the memo holds one ``Catalogue`` and
+      is discarded with the report, so a reloaded catalogue can never read
+      another generation's entries.
+
+    Native ``as_of`` stamps are frozen to the memo's own build time instead
+    of wall-clock-per-call. ``as_of`` never flows into analytics, economics,
+    billing or ledger figures (it surfaces only on the rates endpoint,
+    which does not use a memo); freezing removes per-call nondeterminism
+    so identical reports compare byte-identical.
+
+    Expired memos (older than ``RATE_MEMO_MAX_AGE_SECONDS``) bypass the
+    cache and call through, preserving exact legacy behaviour. If an
+    overlay entry ever has an unexpected shape, that route is marked
+    unmemoiseable and also calls through per event.
+    """
+
+    def __init__(self, book: Catalogue, *, as_of: Optional[str] = None,
+                 max_age_s: float = RATE_MEMO_MAX_AGE_SECONDS) -> None:
+        import time as _time
+
+        self._book = book
+        self._as_of = as_of if as_of is not None else _time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
+        self._max_age_s = max_age_s
+        self._born = _time.monotonic()
+        self._resolve_cache: dict[tuple, tuple] = {}
+        self._native_cache: dict[tuple, Any] = {}
+        self._lookup_cache: dict[tuple, Any] = {}
+
+    @property
+    def catalogue(self) -> Catalogue:
+        return self._book
+
+    @property
+    def as_of(self) -> str:
+        return self._as_of
+
+    def _expired(self) -> bool:
+        import time as _time
+
+        return (_time.monotonic() - self._born) >= self._max_age_s
+
+    def _freeze_native(self, native: Any) -> Any:
+        if native is None:
+            return None
+        if getattr(native, "as_of", None) == self._as_of:
+            return native
+        import dataclasses as _dc
+
+        try:
+            return _dc.replace(native, as_of=self._as_of)
+        except Exception:
+            return native
+
+    def _shape(self, provider: str, model: str, *, allow_third_party: bool,
+               allow_approximate: bool, native_fetch: bool,
+               ) -> tuple[Any, Any, Any]:
+        """Learn a route's resolution shape with one ``at=None`` probe.
+
+        Returns ``(lookup, native, windows)`` where ``windows`` is the
+        official-overlay window table when the probe hit a windowed overlay,
+        else ``()``. No branch in the resolution chain conditions on ``at``
+        (verified against ``Catalogue.lookup``/``resolve_rate``), so the
+        probe result holds for every event time; only the window tariff
+        itself is applied per event. Unverifiable overlay shapes return the
+        ``_BYPASS`` marker instead of memoising.
+        """
+        key = (provider, model, bool(allow_third_party),
+               bool(allow_approximate), bool(native_fetch))
+        entry = self._resolve_cache.get(key)
+        if entry is not None:
+            return entry
+        lookup, native = resolve_rate(self._book, provider, model, at=None,
+                                      allow_third_party=allow_third_party,
+                                      allow_approximate=allow_approximate,
+                                      native_fetch=native_fetch)
+        windows: Any = ()
+        if lookup is not None and lookup.provenance == "official_verified":
+            overlay = self._book.official.get((lookup.provider, lookup.model))
+            if (overlay is None or len(overlay) < 3
+                    or overlay[0] != lookup.rate):
+                entry = _BYPASS
+                self._resolve_cache[key] = entry
+                return entry
+            windows = overlay[2] or ()
+        entry = (lookup, self._freeze_native(native), windows)
+        self._resolve_cache[key] = entry
+        return entry
+
+    @staticmethod
+    def _apply_windows(lookup: Optional[Lookup], windows: Any, at: Any) -> Optional[Lookup]:
+        """Apply the overlay window tariff for one event's own time.
+
+        Mirrors ``Catalogue.lookup`` lines for official hits exactly: same
+        ``_windowed_rate``/``_window_active`` functions and arguments, so a
+        windowed route prices each event at its own timestamp. Unparsable
+        ``at`` raises from ``_window_active`` exactly as the unmemoised
+        path does.
+        """
+        if lookup is None or not windows:
+            return lookup
+        import dataclasses as _dc
+
+        rate = _windowed_rate(lookup.rate, windows, at)
+        provisional = ("cache_read",) if (windows and at is not None
+                                          and _window_active(windows, at)) else ()
+        return _dc.replace(lookup, rate=rate, provisional=provisional)
+
+    def resolve(self, route_provider: str, model: str, *,
+                at: Any = None,
+                allow_third_party: bool = False,
+                allow_approximate: bool = False,
+                native_fetch: bool = True,
+                ) -> tuple[Optional[Lookup], Optional[Any]]:
+        if self._expired():
+            return resolve_rate(self._book, route_provider, model, at=at,
+                                allow_third_party=allow_third_party,
+                                allow_approximate=allow_approximate,
+                                native_fetch=native_fetch)
+        entry = self._shape(route_provider, model,
+                            allow_third_party=allow_third_party,
+                            allow_approximate=allow_approximate,
+                            native_fetch=native_fetch)
+        if entry is _BYPASS:
+            return resolve_rate(self._book, route_provider, model, at=at,
+                                allow_third_party=allow_third_party,
+                                allow_approximate=allow_approximate,
+                                native_fetch=native_fetch)
+        lookup, native, windows = entry
+        return self._apply_windows(lookup, windows, at), native
+
+    def lookup(self, provider: str, model: str, *,
+               at: Any = None) -> Optional[Lookup]:
+        """Memoised ``Catalogue.lookup`` with default flags.
+
+        Unlike :meth:`resolve`, this never touches provider-native rows —
+        it mirrors ``book.lookup(provider, model, at=at)`` exactly, for
+        call sites that price from the catalogue card alone.
+        """
+        if self._expired():
+            return self._book.lookup(provider, model, at=at)
+        key = (provider, model)
+        entry = self._lookup_cache.get(key)
+        if entry is None:
+            probe = self._book.lookup(provider, model, at=None)
+            windows: Any = ()
+            if probe is not None and probe.provenance == "official_verified":
+                overlay = self._book.official.get((probe.provider, probe.model))
+                if (overlay is None or len(overlay) < 3
+                        or overlay[0] != probe.rate):
+                    self._lookup_cache[key] = _BYPASS
+                    return self._book.lookup(provider, model, at=at)
+                windows = overlay[2] or ()
+            entry = (probe, windows)
+            self._lookup_cache[key] = entry
+        if entry is _BYPASS:
+            return self._book.lookup(provider, model, at=at)
+        probe, windows = entry
+        return self._apply_windows(probe, windows, at)
+
+    def native(self, provider: str, model: str, *,
+               allow_fetch: bool = True) -> Optional[Any]:
+        """Memoised ``provider_native.lookup`` for this report's catalogue."""
+        if self._expired():
+            from . import provider_native as _provider_native
+
+            return _provider_native.lookup(provider, model, allow_fetch=allow_fetch)
+        key = (provider, model, bool(allow_fetch))
+        if key not in self._native_cache:
+            from . import provider_native as _provider_native
+
+            self._native_cache[key] = self._freeze_native(
+                _provider_native.lookup(provider, model, allow_fetch=allow_fetch))
+        return self._native_cache[key]
 
 
 def _num(value: Any) -> Optional[float]:

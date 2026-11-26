@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from . import store
 from .db import default_db_path, fetch_usage_rows
-from .pricing import (PROVIDER_ALIASES, Catalogue, _amount, _effective_rate,
+from .pricing import (PROVIDER_ALIASES, Catalogue, RateMemo, _amount, _effective_rate,
                       load_catalogue, price, reachable_band_lowers_cost,
                       resolve_rate)
 
@@ -407,17 +407,18 @@ def _unpriced(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if row["priced"] or (row["_tokens"] <= 0 and row["_calls"] <= 0):
             continue
         key = (row["_provider"], row["_model"], row["pricing_miss"] or "unpriced")
-        item = groups.setdefault(
-            key,
-            {
+        # get-or-create: setdefault would build (and discard) a dict+set
+        # per row even when the group already exists.
+        item = groups.get(key)
+        if item is None:
+            item = groups[key] = {
                 "provider": row["_provider"],
                 "model": row["_model"],
                 "reason": row["pricing_miss"] or "unpriced",
                 "tokens": 0,
                 "calls": 0,
                 "tasks": set(),
-            },
-        )
+            }
         item["tokens"] += row["_tokens"]
         item["calls"] += row["_calls"]
         item["tasks"].add(row["_task"])
@@ -597,7 +598,10 @@ def _reported(flag: Any, value: Any) -> bool:
 
 def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
                   statuses: dict[str, dict], *, allow_third_party: bool = False,
-                  allow_approximate: bool = False, at: float | None = None) -> dict[str, Any]:
+                  allow_approximate: bool = False, at: float | None = None,
+                  rate_memo: Optional[RateMemo] = None) -> dict[str, Any]:
+    if rate_memo is not None and rate_memo.catalogue is not catalogue:
+        raise ValueError("RateMemo was built for a different catalogue")
     provider = str(row.get("provider") or "").strip()
     model = str(row.get("model") or "").strip()
     task = str(row.get("aux_task") or "").strip() or "main"
@@ -616,16 +620,25 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     reasoning = _int(row.get("reasoning_tokens"))
     tokens = input_tokens + output_tokens + cache_read + cache_write
 
-    lookup, native = resolve_rate(catalogue, provider, model, at=at,
-                                  allow_third_party=allow_third_party,
-                                  allow_approximate=allow_approximate)
+    if rate_memo is None:
+        lookup, native = resolve_rate(catalogue, provider, model, at=at,
+                                      allow_third_party=allow_third_party,
+                                      allow_approximate=allow_approximate)
+    else:
+        lookup, native = rate_memo.resolve(
+            provider, model, at=at, allow_third_party=allow_third_party,
+            allow_approximate=allow_approximate)
     provenance = getattr(lookup, "provenance", "provider_catalogue") if lookup else "unpriced"
     # One native lookup per call, shared by the list fallback and the
     # expenditure leg below.
     from . import provider_native as _pn
-    _native_row = (native if native is not None
-                   else (_pn.lookup(provider, model, allow_fetch=True)
-                         if not failure and not missing else None))
+    if rate_memo is None:
+        _native_fallback = (_pn.lookup(provider, model, allow_fetch=True)
+                            if not failure and not missing else None)
+    else:
+        _native_fallback = (rate_memo.native(provider, model, allow_fetch=True)
+                            if not failure and not missing else None)
+    _native_row = native if native is not None else _native_fallback
     priced = (
         price(
             lookup.rate,
@@ -880,6 +893,7 @@ def build_event_period(
     catalogue: Optional[Catalogue] = None,
     statuses: Optional[dict[str, dict]] = None,
     now: Optional[float] = None,
+    rate_memo: Optional[RateMemo] = None,
 ) -> dict[str, Any]:
     """Period report built exclusively from timestamped call rows."""
     mode = basis if basis in BASIS_MODES else "hybrid"
@@ -895,7 +909,11 @@ def build_event_period(
         conn.close()
 
     statuses = statuses or {}
-    results = [_event_result(row, book, mode, statuses, at=row.get("ts")) for row in rows]
+    if rate_memo is not None and rate_memo.catalogue is not book:
+        raise ValueError("RateMemo was built for a different catalogue")
+    memo = rate_memo if rate_memo is not None else RateMemo(book)
+    results = [_event_result(row, book, mode, statuses, at=row.get("ts"),
+                             rate_memo=memo) for row in rows]
 
     totals = Acc()
     for row in results:
