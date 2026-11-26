@@ -1152,14 +1152,25 @@ class EconomicsApiTests(unittest.TestCase):
         self.addCleanup(self.client.close)
 
     def test_summary_returns_report_shape(self):
+        import time
+
         fixture = {"ok": True, "headline": {"status": "ok"}}
+        before = time.time()
         with patch.object(plugin_api.economics, "build_economics_report",
                           return_value=fixture) as builder:
             response = self.client.get("/api/plugins/spend-sense/economics/summary",
                                        params={"days": 30, "trend_months": 3})
+        after = time.time()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["headline"]["status"], "ok")
-        builder.assert_called_once_with(days=30, trend_months=3)
+        # The endpoint captures `now` once so the dedup key and the build
+        # share one instant (no midnight skew between key and body).
+        builder.assert_called_once()
+        _, kwargs = builder.call_args
+        self.assertEqual({k: kwargs[k] for k in ("days", "trend_months")},
+                         {"days": 30, "trend_months": 3})
+        self.assertGreaterEqual(kwargs["now"], before)
+        self.assertLessEqual(kwargs["now"], after)
 
     def test_summary_failure_hides_exception_details(self):
         with patch.object(plugin_api.economics, "build_economics_report",

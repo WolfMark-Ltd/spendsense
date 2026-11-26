@@ -20,6 +20,7 @@ import json
 import logging
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,7 @@ from wolfmark_ledger import economics  # noqa: E402
 from wolfmark_ledger import budgets, forecast  # noqa: E402
 from wolfmark_ledger import user_data  # noqa: E402
 from wolfmark_ledger import membership_api as members  # noqa: E402
+from wolfmark_ledger.singleflight import REPORT_FLIGHT, analytics_key, budgets_key, economics_key, session_key  # noqa: E402
 from wolfmark_ledger import monitoring, news as news_mod  # noqa: E402
 from wolfmark_ledger.membership import CatalogueError  # noqa: E402
 from wolfmark_ledger.filelock import LockUnavailable  # noqa: E402
@@ -51,7 +53,7 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-VERSION = "0.6.42"
+VERSION = "0.6.43"
 
 #: Pairing level between the two halves of one release. A ``VERSION`` string
 #: alone does not establish build compatibility; this integer is what a Desktop
@@ -266,11 +268,17 @@ def analytics(
     """Aggregated timestamped calls only; filters are exact and combined with AND."""
     try:
         route_arrangements = members.route_arrangements_payload()
-        return build_analytics_report(days=days, model=model, provider=provider,
-                                      surface=surface, task=task,
-                                      parent=parent or None, scope=scope or None,
-                                      pricing_mode=pricing, presentation=presentation,
-                                      route_arrangements=route_arrangements or None)
+        now = time.time()
+        key = analytics_key(days=days, model=model, provider=provider,
+                            surface=surface, task=task, parent=parent or None,
+                            scope=scope or None, pricing_mode=pricing,
+                            presentation=presentation,
+                            arrangements=route_arrangements or None, now=now)
+        return REPORT_FLIGHT.run(key, lambda: build_analytics_report(
+            days=days, model=model, provider=provider, surface=surface,
+            task=task, parent=parent or None, scope=scope or None, now=now,
+            pricing_mode=pricing, presentation=presentation,
+            route_arrangements=route_arrangements or None))
     except LedgerUnavailable as exc:
         raise HTTPException(status_code=503, detail="analytics call store unavailable") from exc
     except Exception as exc:  # noqa: BLE001 - report errors must not expose internal details
@@ -296,10 +304,16 @@ def session_summary(
     """
     try:
         route_arrangements = members.route_arrangements_payload()
-        return build_session_summary(session_id=session_id, population=population,
-                                     provider=provider or None, model=model or None,
-                                     pricing_mode=pricing,
-                                     route_arrangements=route_arrangements or None)
+        now = time.time()
+        key = session_key(session_id=session_id, population=population,
+                          provider=provider or None, model=model or None,
+                          pricing=pricing,
+                          arrangements=route_arrangements or None)
+        return REPORT_FLIGHT.run(key, lambda: build_session_summary(
+            session_id=session_id, population=population,
+            provider=provider or None, model=model or None, now=now,
+            pricing_mode=pricing,
+            route_arrangements=route_arrangements or None))
     except LedgerUnavailable as exc:
         raise HTTPException(status_code=503, detail="session call store unavailable") from exc
     except ValueError as exc:
@@ -600,7 +614,12 @@ def economics_summary(
     without an explicit user-supplied FX rate.
     """
     try:
-        return economics.build_economics_report(days=days, trend_months=trend_months)
+        now = time.time()
+        key = economics_key(days=days, trend_months=trend_months,
+                            arrangements=None, now=now)
+        return REPORT_FLIGHT.run(
+            key, lambda: economics.build_economics_report(
+                days=days, trend_months=trend_months, now=now))
     except (StoreUnreadable, LockUnavailable) as exc:
         raise _store_unreadable(exc) from exc
     except CatalogueError as exc:
@@ -835,8 +854,11 @@ def budget_list():
 def budget_status():
     """Return monthly statuses, forecasts and explicit evidence refusal states."""
     route_arrangements = members.route_arrangements_payload()
-    return _budget_call(lambda **kw: forecast.build_report(
-        route_arrangements=route_arrangements or None, **kw))
+    now = time.time()
+    key = budgets_key(arrangements=route_arrangements or None, now=now)
+    return REPORT_FLIGHT.run(key, lambda: _budget_call(
+        lambda **kw: forecast.build_report(
+            route_arrangements=route_arrangements or None, now=now, **kw)))
 
 
 @router.put('/budgets/{budget_id}')

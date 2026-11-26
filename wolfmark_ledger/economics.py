@@ -56,7 +56,7 @@ from . import store as ustore
 from .aggregate import _event_result
 from .analytics import build_analytics_report
 from .filelock import locked as _locked
-from .pricing import Catalogue, load_catalogue
+from .pricing import Catalogue, RateMemo, load_catalogue
 
 #: Weekly fees are annualised at 52 weeks per year, so one week of fee is
 #: ``52 / 12`` of a monthly equivalent. A year is not exactly 52 weeks, but
@@ -714,6 +714,7 @@ def build_economics_report(
     plans: Mapping[str, Any] | None = None,
     profiles_path: Path | str | None = None,
     data_dir: Path | str | None = None,
+    rate_memo: Optional[RateMemo] = None,
 ) -> dict[str, Any]:
     """Subscription fees vs attributed API-equivalent usage for one window.
 
@@ -725,6 +726,9 @@ def build_economics_report(
     days = max(1, min(int(days), 365))
     trend_months = max(0, min(int(trend_months), 6))
     book = catalogue if catalogue is not None else load_catalogue()
+    if rate_memo is not None and rate_memo.catalogue is not book:
+        raise ValueError("RateMemo was built for a different catalogue")
+    memo = rate_memo if rate_memo is not None else RateMemo(book)
     if plans is None:
         plans, _plans_source = membership_api.active_catalogue(data_dir=data_dir)
         # Completed months stay pinned to the bundled catalogue they were
@@ -747,7 +751,8 @@ def build_economics_report(
 
     analytics = build_analytics_report(
         event_db_path, state_db_path=state_db_path, days=days, now=moment,
-        catalogue=book, pricing_mode="strict", profiles_path=profiles_path)
+        catalogue=book, pricing_mode="strict", profiles_path=profiles_path,
+        rate_memo=memo)
     by_route = {str(r.get("provider") or ""): r for r in analytics.get("by_route", [])}
     mapping = attribute_routes(accounts, sorted(by_route))
     mapping, pending_shared_routes = _move_included_routes(mapping, included_by_route,
@@ -1144,7 +1149,8 @@ def build_economics_report(
 
     trend = _build_trend(accounts, plans, book, moment, trend_months,
                          recording_since, event_db_path, fx_by_currency,
-                         history_plans=history_plans, route_store=route_store)
+                         history_plans=history_plans, route_store=route_store,
+                         rate_memo=memo)
 
     return {
         "ok": True,
@@ -1208,7 +1214,8 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
                  event_db_path: Path | str | None,
                  fx_by_currency: Mapping[str, Mapping[str, Any]],
                  history_plans: Mapping[str, Any] | None = None,
-                 route_store: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                 route_store: Mapping[str, Any] | None = None,
+                 rate_memo: Optional[RateMemo] = None) -> dict[str, Any]:
     """Per-calendar-month fees vs usage, with partial-month flags.
 
     Attribution is resolved for each month's observed routes using the
@@ -1233,8 +1240,12 @@ def _build_trend(accounts: list[Mapping[str, Any]], plans: Mapping[str, Any],
         finally:
             if conn is not None:
                 conn.close()
+        if rate_memo is not None and rate_memo.catalogue is not book:
+            raise ValueError("RateMemo was built for a different catalogue")
+        memo = rate_memo if rate_memo is not None else RateMemo(book)
         for raw in rows:
-            priced = _event_result(raw, book, "list", {"exact": {}}, at=raw.get("ts"))
+            priced = _event_result(raw, book, "list", {"exact": {}}, at=raw.get("ts"),
+                                   rate_memo=memo)
             month = datetime.fromtimestamp(raw["ts"], timezone.utc).strftime("%Y-%m")
             bucket = usage_by_month.get(month)
             if bucket is None:

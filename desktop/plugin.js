@@ -34,7 +34,7 @@ import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'spend-sense'
-const PLUGIN_VERSION = '0.6.42'
+const PLUGIN_VERSION = '0.6.43'
 /** Pairing level this bundle implements. Must not exceed `API_CONTRACT` in dashboard/plugin_api.py. */
 const DESKTOP_CONTRACT = 4
 /** Oldest backend contract this bundle can drive; raise it with DESKTOP_CONTRACT. */
@@ -5152,12 +5152,79 @@ function billingSummaryQuery(identity = membershipIdentityNow()) {
   }
 }
 
+/**
+ * Whether an economics fetch must wait for the overview analytics state.
+ * Pure predicate over a TanStack query state (or null when that query was
+ * never created): wait while analytics is pending-and-will-fetch or
+ * actively fetching; proceed once it settles (data or error), when it is
+ * paused (offline — waiting cannot help), or when it does not exist (the
+ * economics read stands alone, e.g. on pages that never mount Overview).
+ */
+function shouldWaitForAnalytics(state) {
+  if (!state) return false
+  if (state.fetchStatus === 'paused') return false
+  if (state.fetchStatus === 'fetching') return true
+  return state.status === 'pending'
+}
+
+/**
+ * Sequenced backend scheduling: hold an economics fetch until any
+ * in-flight overview analytics for the same identity settles, so the two
+ * heavy aggregations never run concurrently. A render-prop gate cannot do
+ * this — auto-fetch starts before the re-render that would close it — so
+ * the wait lives inside the fetch itself. Fail-open everywhere: unknown
+ * states, aborts and the deadline all proceed (worst case is today's
+ * parallel behaviour, never a wedge).
+ */
+async function awaitOverviewAnalyticsSettled(identity, { signal, timeoutMs = 75_000 } = {}) {
+  const key = [ID, 'overview-analytics', identity]
+  const snapshot = () => {
+    try {
+      return queryClient.getQueryState(key) ?? null
+    } catch {
+      return null
+    }
+  }
+  // Fast path (common case): settled, absent, or paused — never wait.
+  if (signal?.aborted || !shouldWaitForAnalytics(snapshot())) return
+  // Otherwise subscribe to cache updates and resolve on the first settled
+  // snapshot. No polling: state changes propagate through the same batch
+  // as the fetch that caused them. Every exit is fail-open (proceed).
+  await new Promise(resolve => {
+    let done = false
+    let timer = null
+    let unsub = null
+    const finish = () => {
+      if (done) return
+      done = true
+      if (timer !== null) clearTimeout(timer)
+      try { unsub?.() } catch { /* already gone */ }
+      try { signal?.removeEventListener?.('abort', finish) } catch { /* noop */ }
+      resolve()
+    }
+    timer = setTimeout(finish, timeoutMs)
+    try { signal?.addEventListener?.('abort', finish, { once: true }) } catch { /* noop */ }
+    try {
+      unsub = queryClient.getQueryCache().subscribe(() => {
+        if (!shouldWaitForAnalytics(snapshot())) finish()
+      })
+    } catch {
+      finish()
+      return
+    }
+    // Re-check after subscribing: the fetch may have settled in between.
+    if (!shouldWaitForAnalytics(snapshot())) finish()
+  })
+}
+
 function economicsQuery(identity = membershipIdentityNow()) {
   return {
     queryKey: [ID, 'economics-summary', identity],
-    queryFn: async () => {
+    queryFn: async ({ signal } = {}) => {
       if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
       if (typeof rest !== 'function') throw new Error('This desktop build has no plugin backend bridge.')
+      await awaitOverviewAnalyticsSettled(identity, { signal })
+      if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
       const result = await rest('/economics/summary?days=30&trend_months=6')
       if (!result || result.ok === false) throw new Error(result?.error || 'Subscription economics is unavailable.')
       if (!membershipIdentityCurrent(identity)) throw new Error('Connection changed.')
@@ -7545,6 +7612,11 @@ function OverviewPage() {
   const identity = useValue($membershipIdentity)
   const analytics = useQuery(overviewAnalyticsQuery(identity))
   const accounts = useQuery(membershipQuery(false, identity))
+  // The economics fetch itself waits for any in-flight overview analytics
+  // first (see awaitOverviewAnalyticsSettled): the two aggregate the same
+  // call store over one connection, so the estimate card's data lands
+  // before the subscription card starts. Ledger-backed cards render
+  // immediately from local state regardless.
   const economics = useQuery(economicsQuery(identity))
   // Stored allowance readings only: native=false can never trigger a
   // provider request, so attention stays passive.
@@ -19428,7 +19500,7 @@ export const __test = {
   billingWrite, billingErrorMessage, billingEvidence, evidenceForMode, profileDraftErrors, profilePayload,
   membershipEntitlementSummary,
   billingNumberStep, $billingDraft, $billingNotice,
-  economicsQuery, fxQuery, fxWrite, stageFxDraft, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
+  economicsQuery, shouldWaitForAnalytics, awaitOverviewAnalyticsSettled, fxQuery, fxWrite, stageFxDraft, fxErrorMessage, fmtDay, econStatusLabel, econCoverageLabel, econFeeLines,
   econWindowLines, windowSpanLabel, invalidateEconomicsFor,
   weatherQuery, invalidateWeatherFor, invalidateBillingDependentsFor,
   wxVerdictLabel, wxLimitLabel, wxCycleSummary, wxWindowRow, wxRuleRow,

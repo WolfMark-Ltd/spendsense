@@ -53,7 +53,7 @@ from . import membership as mem
 from . import membership_api as members
 from . import store as ustore
 from .aggregate import _event_result, route_billing_status
-from .pricing import Catalogue, load_catalogue
+from .pricing import Catalogue, RateMemo, load_catalogue
 
 #: Consumed-vs-elapsed band that still counts as on track (fraction points).
 PACE_TOLERANCE = 0.10
@@ -495,6 +495,7 @@ def build_weather_report(
     profiles_doc = billing.load_profiles(profiles_path)
     rules, legacy_ignored = _candidate_rules(profiles_doc)
     book = catalogue if catalogue is not None else load_catalogue()
+    memo = RateMemo(book)
 
     conn = ustore.connect_reader(event_db_path)
     try:
@@ -534,7 +535,8 @@ def build_weather_report(
                     "start_ts": start_ts, "end_ts": end_ts}
             raw = ustore.query_calls(reader, since=start_ts, until=end_ts) \
                 if reader is not None else []
-            priced = [_event_result(row, book, "list", statuses, at=row.get("ts"))
+            priced = [_event_result(row, book, "list", statuses, at=row.get("ts"),
+                                   rate_memo=memo)
                       for row in raw]
             priced_cycles[pid] = {"profile": profile, "span": span, "rows": priced}
     finally:

@@ -24,7 +24,7 @@ from . import budgets, economics, membership, store
 from .aggregate import _billing_class, route_billing_status
 from .db import LedgerUnavailable
 from .expenditure import call_expenditure
-from .pricing import _amount as _per_mtok_amount, _effective_rate, load_catalogue, price, resolve_rate
+from .pricing import RateMemo, _amount as _per_mtok_amount, _effective_rate, load_catalogue, price, resolve_rate
 
 RANK = {'normal': 0, 'info': 1, 'warning': 2, 'exceeded': 3}
 _PRICE_CACHE_MAX_ENTRIES = 8192
@@ -60,7 +60,8 @@ def _catalogue_revision(book) -> bytes:
     return hashlib.blake2b(encoded, digest_size=16).digest()
 
 
-def _cached_per_call_value(item: dict, book, revision: bytes) -> float | None:
+def _cached_per_call_value(item: dict, book, revision: bytes,
+                           rate_memo: RateMemo | None = None) -> float | None:
     """Reuse one call's price only while its ledger and catalogue evidence match."""
     global _PRICE_CACHE_REVISION
     key = (revision, _freeze(item))
@@ -71,7 +72,7 @@ def _cached_per_call_value(item: dict, book, revision: bytes) -> float | None:
         if key in _PRICE_CACHE:
             _PRICE_CACHE.move_to_end(key)
             return _PRICE_CACHE[key]
-    value = _per_call_value(item, book)
+    value = _per_call_value(item, book, rate_memo=rate_memo)
     with _PRICE_CACHE_LOCK:
         _PRICE_CACHE[key] = value
         _PRICE_CACHE.move_to_end(key)
@@ -248,7 +249,7 @@ def evaluate(budget: dict, rows: list[dict], *, now: float, observed_since: floa
     return result
 
 
-def _per_call_value(item: dict, book) -> float | None:
+def _per_call_value(item: dict, book, rate_memo: RateMemo | None = None) -> float | None:
     """Price one recorded attempt at its applicable rate, never an upper bound.
 
     Keep shared analytics and pricing unchanged. A request ordinal
@@ -266,8 +267,14 @@ def _per_call_value(item: dict, book) -> float | None:
     if (not total or item.get('prompt_tokens') not in (None, 0, prompt)
             or item.get('total_tokens') not in (None, 0, total)):
         return None
-    lookup = book.lookup(str(item.get('provider') or '').strip(),
-                         str(item.get('model') or '').strip(), at=item['ts'])
+    if rate_memo is None:
+        lookup = book.lookup(str(item.get('provider') or '').strip(),
+                             str(item.get('model') or '').strip(), at=item['ts'])
+    else:
+        if rate_memo.catalogue is not book:
+            raise ValueError("RateMemo was built for a different catalogue")
+        lookup = rate_memo.lookup(str(item.get('provider') or '').strip(),
+                                  str(item.get('model') or '').strip(), at=item['ts'])
     if lookup is None:
         return None
     provisional_tokens = {'cache_read': item['cache_read_tokens'],
@@ -284,7 +291,8 @@ def _per_call_value(item: dict, book) -> float | None:
     return priced.usd
 
 
-def _metered_per_call_value(item: dict, book) -> float | None:
+def _metered_per_call_value(item: dict, book, rate_memo: RateMemo | None = None,
+                            ) -> float | None:
     """One recorded attempt at the provider's own billed (effective) rates.
 
     The native leg of the shared expenditure calculation — the provider's
@@ -309,9 +317,14 @@ def _metered_per_call_value(item: dict, book) -> float | None:
             or item.get('total_tokens') not in (None, 0, total)):
         return None
     from . import provider_native
-    native = provider_native.lookup(str(item.get('provider') or '').strip(),
-                                    str(item.get('model') or '').strip(),
-                                    allow_fetch=True)
+    if rate_memo is None:
+        native = provider_native.lookup(str(item.get('provider') or '').strip(),
+                                        str(item.get('model') or '').strip(),
+                                        allow_fetch=True)
+    else:
+        native = rate_memo.native(str(item.get('provider') or '').strip(),
+                                  str(item.get('model') or '').strip(),
+                                  allow_fetch=True)
     if native is None:
         return None
     erate = native.effective_rate()
@@ -363,18 +376,20 @@ def build_report(*, path: Path | str | None = None, event_db_path=None, now=None
                 since = min(starts + [now - 32 * 86400])
                 raw = store.query_calls(conn, since=since, until=now)
                 book = catalogue if catalogue is not None else load_catalogue()
+                memo = RateMemo(book)
                 cache_prices = len(raw) <= _PRICE_CACHE_MAX_ENTRIES
                 revision = _catalogue_revision(book) if cache_prices else None
                 for item in raw:
-                    list_usd = (_cached_per_call_value(item, book, revision) if cache_prices
-                                else _per_call_value(item, book))
+                    list_usd = (_cached_per_call_value(item, book, revision, memo)
+                                if cache_prices
+                                else _per_call_value(item, book, rate_memo=memo))
                     # Shared billing-aware expenditure: the provider's own
                     # billed (effective) rates first — computed for every row
                     # regardless of the list-price cache, since resolve caches
                     # per provider — the catalogue rate as the applicable
                     # fallback for catalogue-priced providers, and a measured
                     # zero for subscription-included routes.
-                    effective_usd = _metered_per_call_value(item, book)
+                    effective_usd = _metered_per_call_value(item, book, rate_memo=memo)
                     provider = str(item.get('provider') or '').strip()
                     model = str(item.get('model') or '').strip()
                     row_class = _billing_class(statuses, provider, model)
