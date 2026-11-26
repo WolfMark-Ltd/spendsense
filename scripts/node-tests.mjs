@@ -16,6 +16,7 @@ const suites = {
     ['news-layout.harness', 4],
     ['news-render', 61, true], ['node-runner', 5], ['plugin', 70], ['recount', 16],
     ['overview-render', 11, true],
+    ['overview-scheduling', 2, true],
     ['reports-layout.chromium', 19], ['reports-layout.devtools', 11],
     ['sidebar', 59, true], ['ui-labels', 57], ['connection-status', 8, true],
     ['usage-render', 12, true],

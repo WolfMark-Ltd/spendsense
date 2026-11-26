@@ -7545,7 +7545,17 @@ function OverviewPage() {
   const identity = useValue($membershipIdentity)
   const analytics = useQuery(overviewAnalyticsQuery(identity))
   const accounts = useQuery(membershipQuery(false, identity))
-  const economics = useQuery(economicsQuery(identity))
+  // Progressive backend scheduling: economics re-aggregates the same call
+  // store the analytics query just scanned, and the single connection
+  // serves one heavy aggregation at a time — parallel dispatch only
+  // serialises server-side while tripping client timeouts. Fire economics
+  // once analytics settles (data or error) so the estimate card paints
+  // first and the subscription card follows. Ledger-backed cards render
+  // immediately from local state regardless. This rides the existing
+  // identity/refetch machinery: a new identity resets both queries and
+  // the stagger re-applies automatically.
+  const backendReady = analytics.data != null || analytics.error != null
+  const economics = useQuery({ ...economicsQuery(identity), enabled: backendReady })
   // Stored allowance readings only: native=false can never trigger a
   // provider request, so attention stays passive.
   const weather = useQuery(weatherQuery(identity, false))
