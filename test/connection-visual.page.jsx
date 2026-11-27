@@ -58,12 +58,12 @@ function injectCaseState() {
     return
   }
   if (state === 'offline') {
-    host.state.gateway.set('disconnected')
+    host.state.gateway.set('closed')
     T.$connectionLastSuccessBy.set({ [identity]: PINNED - 42_000 })
     return
   }
   if (state === 'reconnecting') {
-    host.state.gateway.set('reconnecting')
+    host.state.gateway.set('connecting')
     T.$connectionLastSuccessBy.set({ [identity]: PINNED - 42_000 })
     return
   }

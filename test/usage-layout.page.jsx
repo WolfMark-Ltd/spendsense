@@ -2,6 +2,7 @@ import React from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import plugin, { __test as T } from '../desktop/plugin.js'
+import { host } from '@hermes/plugin-sdk'
 import { USAGE_FILTERS, usageTransport } from './usage-fixtures.mjs'
 
 const params = new URLSearchParams(location.search)
@@ -23,7 +24,7 @@ globalThis.__usageLocale = params.get('locale') || 'en'
 // One shared state for every case: three active filters (including a very
 // long model name) so chips render, and a selected trend point so the exact
 // chart detail renders. The scope matches the stub host identity.
-const usageScope = T.analyticsScope('test', 'connected', 'local')
+const usageScope = T.analyticsScope('test', host.state.gateway.get(), 'local')
 T.$analytics.set({ [usageScope]: { ...T.analyticsInitialState(), trendIndex: 0, filters: { ...USAGE_FILTERS } } })
 
 const ALL = ['narrow-dark', 'wide-dark', 'narrow-light', 'wide-light']
