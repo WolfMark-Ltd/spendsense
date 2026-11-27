@@ -1945,10 +1945,18 @@ function hasBackendCompatibilityFailure(identity, route, method) {
  *  counters, and the health query the shell already runs (React Query
  *  dedupes the shared key — the indicator adds no backend polling).
  *
- *  - offline:      the gateway transport is down and not attempting
- *  - reconnecting: the gateway transport is attempting to recover
- *  - connection error: transport failures with nothing in flight, or a
- *                  failed backend health read with no settled data
+ *  The host's gateway atom is ConnectionState:
+ *  'idle' | 'connecting' | 'open' | 'closed' | 'error'. 'open' is the
+ *  connected state — comparing only against 'connected' left the pill stuck
+ *  on Reconnecting on a healthy gateway. Older hosts and the test harness
+ *  also use 'connected'/'disconnected', and an activation suffix
+ *  ('open#2') is tolerated, so both vocabularies read correctly.
+ *
+ *  - offline:      the transport is down or idle and not attempting
+ *  - reconnecting: the transport is attempting to recover
+ *  - connection error: a failed transport dial, transport failures with
+ *                  nothing in flight, or a failed backend health read with
+ *                  no settled data
  *  - refreshing:   data requests in flight over previously verified data
  *  - loading:      data requests in flight with no settled data yet
  *  - live:         connected and settled
@@ -1959,11 +1967,12 @@ function hasBackendCompatibilityFailure(identity, route, method) {
  *  thrown by the bridge, so it never reads as a global connection failure. */
 function connectionStatusOf({ gateway, busy, failures, hasData, healthError,
                               lastSuccess }) {
-  const transport = String(gateway || '').toLowerCase()
-  if (!transport || transport === 'disconnected' || transport === 'offline') {
+  const transport = String(gateway || '').toLowerCase().split('#')[0]
+  if (!transport || ['idle', 'closed', 'disconnected', 'offline'].includes(transport)) {
     return { key: 'offline', detail: lastSuccess ? 'lastUpdate' : null }
   }
-  if (transport !== 'connected') return { key: 'reconnecting', detail: null }
+  if (transport === 'error') return { key: 'error', detail: null }
+  if (transport !== 'open' && transport !== 'connected') return { key: 'reconnecting', detail: null }
   if (busy > 0) return { key: hasData ? 'refreshing' : 'loading', detail: null }
   if (failures > 0) return { key: 'error', detail: null }
   if (healthError && !hasData) return { key: 'error', detail: null }
@@ -5906,24 +5915,30 @@ function LedgerTabs() {
     ledgerTabKeyboardNav = true
     goLedgerTab(LEDGER_TABS[next][0])
   }
-  return jsxs('div', { className: 'wm-product-tabs', role: 'tablist', 'aria-label': t('tabListLabel'), onKeyDown, children: [
-    jsxs('span', { className: 'wm-product-brand', children: [
-      jsx('span', { className: 'wm-product-brand-mark', 'aria-hidden': true,
-        children: jsx(BrandMark, { size: 20, id: 'tabs' }) }, 'mark'),
-      jsxs('span', { className: 'wm-product-brand-copy', children: [
-        jsx('strong', { children: 'SpendSense' }, 'name'),
-        jsx('small', { children: 'by WolfMark' }, 'by')
-      ] }, 'copy')
-    ] }, 'brand'),
-    ...LEDGER_TABS.map(([id]) =>
-      jsx(ProductButton, { role: 'tab', variant: 'ghost', 'aria-label': t(TAB_LABEL_KEYS[id]),
-        'aria-selected': tab === id, 'aria-pressed': tab === id, tabIndex: tab === id ? 0 : -1,
-        className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
-        onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) },
-        children: jsx('span', { className: 'wm-product-tab-label', children: t(TAB_LABEL_KEYS[id]) }) }, id)),
+  return jsxs('div', { className: 'wm-product-tabs', role: 'tablist',
+    'aria-label': t('tabListLabel'), onKeyDown, children: [
+    // The brand and the destinations are one group that may wrap inside
+    // itself at narrow widths; the indicator is a sibling, so the header can
+    // never push it onto a second row.
+    jsxs('div', { className: 'wm-product-tabs-main', children: [
+      jsxs('span', { className: 'wm-product-brand', children: [
+        jsx('span', { className: 'wm-product-brand-mark', 'aria-hidden': true,
+          children: jsx(BrandMark, { size: 20, id: 'tabs' }) }, 'mark'),
+        jsxs('span', { className: 'wm-product-brand-copy', children: [
+          jsx('strong', { children: 'SpendSense' }, 'name'),
+          jsx('small', { children: 'by WolfMark' }, 'by')
+        ] }, 'copy')
+      ] }, 'brand'),
+      ...LEDGER_TABS.map(([id]) =>
+        jsx(ProductButton, { role: 'tab', variant: 'ghost', 'aria-label': t(TAB_LABEL_KEYS[id]),
+          'aria-selected': tab === id, 'aria-pressed': tab === id, tabIndex: tab === id ? 0 : -1,
+          className: cn('wm-product-tab', tab === id && 'wm-product-tab-active'), 'data-active': tab === id,
+          onClick: () => { ledgerTabKeyboardNav = false; goLedgerTab(id) },
+          children: jsx('span', { className: 'wm-product-tab-label', children: t(TAB_LABEL_KEYS[id]) }) }, id))
+    ].filter(Boolean) }, 'main'),
     // Shared connection indicator: far right of the header row, opposite the
-    // logo, aligned with it, identical on every page (React Query dedupes the
-    // health key the shell also reads — no extra backend request).
+    // logo and on the row's first line, identical on every page (React Query
+    // dedupes the health key the shell also reads — no extra backend request).
     jsx(ConnectionStatus, {}, 'connection-status')
   ] })
 }
@@ -6309,7 +6324,7 @@ function AdvancedBillingRules() {
 }
 
 const CONNECTION_STATUS_CSS = [
-  '.wm-conn-status-block{margin-left:auto;display:inline-flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:3px;align-self:stretch;flex-shrink:0;min-width:150px}',
+  '.wm-conn-status-block{margin-left:auto;display:inline-flex;flex-direction:column;align-items:flex-end;justify-content:flex-start;gap:3px;align-self:flex-start;padding-top:7px;flex-shrink:0;min-width:150px}',
   '.wm-connection-status{gap:6px;padding:3px 10px;min-height:24px;font-size:11.5px;border-radius:99px;background:transparent}',
   '.wm-conn-status-sub{font-size:10.5px;line-height:1.25;color:var(--wm-text-muted);letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}',
   '.wm-connection-status .wm-conn-status-icon{flex-shrink:0}',
@@ -6330,7 +6345,8 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}',
   '.wm-product .wm-product-heading h1{margin:0;font-size:var(--wm-font-display,24px);line-height:1.2;font-weight:620;letter-spacing:-.35px}',
   '.wm-product .wm-product-heading p{margin:5px 0 0;color:var(--ui-text-tertiary);font-size:var(--wm-font-body,13px);line-height:1.45}',
-  '.wm-product .wm-product-tabs{display:flex;align-items:stretch;flex-wrap:wrap;gap:2px;min-height:54px;padding:0 18px;border-bottom:1px solid var(--wm-border);position:sticky;top:0;z-index:30;background-color:Canvas;background-image:linear-gradient(var(--wm-surface),var(--wm-surface));background-clip:padding-box;box-shadow:0 2px 0 var(--wm-border);overflow:visible}',
+  '.wm-product .wm-product-tabs{display:flex;align-items:stretch;flex-wrap:nowrap;gap:2px;min-height:54px;padding:0 18px;border-bottom:1px solid var(--wm-border);position:sticky;top:0;z-index:30;background-color:Canvas;background-image:linear-gradient(var(--wm-surface),var(--wm-surface));background-clip:padding-box;box-shadow:0 2px 0 var(--wm-border);overflow:visible}',
+  '.wm-product .wm-product-tabs-main{display:flex;align-items:stretch;flex-wrap:wrap;gap:2px;min-width:0;flex:1 1 auto}',
   '.wm-product .wm-product-brand{display:flex;align-items:center;gap:9px;flex-shrink:0;align-self:stretch;margin:0 10px 0 0;padding:0 15px 0 2px;border-right:1px solid var(--wm-border)}',
   '.wm-product .wm-product-brand-mark{display:inline-flex;align-items:center;flex-shrink:0}',
   '.wm-product .wm-product-brand-copy{display:grid;line-height:1.2;white-space:nowrap}',
@@ -6488,7 +6504,7 @@ const PRODUCT_CSS = [
   '.wm-product .wm-product-stat small{display:block;margin-top:6px;color:var(--ui-text-tertiary);font-size:11px;line-height:1.4}',
   '.wm-product .wm-product-section p{max-width:78ch}',
   '.wm-product :focus-visible{outline:2px solid var(--wm-action);outline-offset:2px}',
-  '@container(max-width:760px){.wm-product .wm-product-tabs{padding:6px 10px;gap:2px}.wm-product .wm-product-tab{padding:0 7px;font-size:12px;min-height:32px}.wm-product .wm-product-brand{flex:0 0 100%;min-height:37px;align-self:auto;margin:0;padding:0 0 6px;border-right:0;border-bottom:1px solid var(--wm-border)}}',
+  '@container(max-width:760px){.wm-product .wm-product-tabs{flex-wrap:wrap;padding:6px 10px;gap:2px}.wm-product .wm-product-tabs-main{flex:1 1 100%}.wm-product .wm-conn-status-block{margin-left:auto;min-width:0;padding-top:2px}.wm-product .wm-product-tab{padding:0 7px;font-size:12px;min-height:32px}.wm-product .wm-product-brand{flex:0 0 100%;min-height:37px;align-self:auto;margin:0;padding:0 0 6px;border-right:0;border-bottom:1px solid var(--wm-border)}}',
   '@media(prefers-reduced-motion:reduce){.wm-product .wm-product-tab,.wm-product .wm-button,.wm-product .wm-account-chip,.wm-product .wm-about-action,.wm-product .wm-about-kofi{transition:none!important}.wm-product .wm-button:active:not(:disabled){transform:none}}',
   '@container(max-width:760px){.wm-product .wm-overview-panels{grid-template-columns:1fr}}',
   '@container(max-width:620px){.wm-product .wm-shell{padding:17px 12px;gap:14px}.wm-product .wm-product-heading h1{font-size:21px}.wm-product .wm-product-section{padding:14px}.wm-product .wm-cost-row{align-items:start}.wm-product .wm-attn-strip{display:flex;align-items:center;gap:9px;flex-wrap:wrap;border:1px solid color-mix(in srgb,var(--ui-warning) 50%,var(--ui-stroke-secondary));border-radius:8px;padding:10px 12px;font-size:12.5px}.wm-product .wm-attn-strip .wm-button{margin-left:auto}.wm-product .wm-attention-rows li{flex-wrap:wrap}.wm-product .wm-attention-rows .wm-button{width:100%}.wm-product .wm-method-grid{grid-template-columns:1fr}}',

@@ -39,7 +39,7 @@ export const host = {
     model: atom('synthetic-model'),
     profile: atom('test'),
     focusedSessionProfile: atom('test'),
-    gateway: atom('connected'),
+    gateway: atom('open'),
     connectionId: atom('local'),
   },
   notify() {},
