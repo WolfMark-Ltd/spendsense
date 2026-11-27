@@ -58,7 +58,7 @@ if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(win
       const match = dom.match(/<div id="overview-layout-result"[^>]*>([^<]*)<\/div>/)
       assert.ok(match?.[1], `[${locale}] Chromium records Overview layout results`)
       const result = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&gt;/g, '>').replace(/&lt;/g, '<'))
-      assert.equal(result.layouts.length, 6, `[${locale}] every width and theme is rendered`)
+      assert.equal(result.layouts.length, 8, `[${locale}] every width and theme is rendered`)
       assert.equal(result.readiness?.ready, true,
         `[${locale}] the page reached its final structure (${result.readiness?.waitedMs}ms)`)
       for (const layout of result.layouts) {
@@ -84,6 +84,16 @@ if(params.get('review')==='1'){const nativeMatchMedia=window.matchMedia.bind(win
         assert.match(layout.sticky.backgroundImage, /linear-gradient/, `${tag} gives sticky navigation an opaque underlay`)
         assert.equal(layout.sticky.top, 0, `${tag} navigation remains pinned at the scroller top`)
         assert.ok(layout.navigationOverflow <= 1, `${tag} navigation tabs fit their available row width`)
+        assert.ok(layout.connectionStatus, `${tag} renders the shared connection indicator`)
+        // Wide headers keep the indicator on the first visual row beside the
+        // destinations; below 760px the header deliberately stacks it under
+        // the wrapping tab group so the destinations keep their full width.
+        if (layout.width > 760) {
+          assert.ok(layout.connectionStatus.top < layout.connectionStatus.firstTabBottom,
+            `${tag} keeps the connection indicator on the header's first row (top ${layout.connectionStatus.top}px, first tab bottom ${layout.connectionStatus.firstTabBottom}px)`)
+        }
+        assert.ok(layout.connectionStatus.rightInset >= 0 && layout.connectionStatus.rightInset <= 19,
+          `${tag} keeps the connection indicator inside the header's right edge (${layout.connectionStatus.rightInset}px)`)
         assert.ok(layout.buttonCount >= 7,
           `${tag} renders its controls before their rects are checked (${layout.buttonCount})`)
         assert.deepEqual(layout.clippedButtons, [], `${tag} buttons stay inside the Overview pane`)

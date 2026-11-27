@@ -28,7 +28,7 @@ window.addEventListener('error', event => {
 })
 
 const selected = new URLSearchParams(location.search).get('case')
-const cases = selected ? [selected] : [268, 380, 1200].flatMap(width => ['dark', 'light'].map(theme => `w${width}-${theme}`))
+const cases = selected ? [selected] : [268, 380, 900, 1200].flatMap(width => ['dark', 'light'].map(theme => `w${width}-${theme}`))
 const root = document.getElementById('overview-layout-cases')
 for (const id of cases) {
   const width = Number(id.match(/^w(\d+)-/)?.[1] || 380)
@@ -99,6 +99,20 @@ const run = async () => {
     const tabs = pane.querySelector('.wm-product-tabs')
     output.layouts.push({
       id, width: pane.clientWidth,
+      // Placement contract for the shared connection indicator: it must sit on
+      // the header's first visual row and inside the header's right edge. A
+      // header row that wraps as a whole used to push it onto a second row.
+      connectionStatus: (() => {
+        const block = pane.querySelector('.wm-conn-status-block')
+        const header = pane.querySelector('.wm-product-tabs')
+        const firstTab = pane.querySelector('.wm-product-tabs [role="tab"]')
+        if (!block || !header || !firstTab) return null
+        const b = block.getBoundingClientRect()
+        const t = header.getBoundingClientRect()
+        const f = firstTab.getBoundingClientRect()
+        return { top: Math.round(b.top - t.top), rightInset: Math.round(t.right - b.right),
+          firstTabBottom: Math.round(f.bottom - t.top) }
+      })(),
       paneOverflow: pane.scrollWidth - pane.clientWidth,
       paneLeft: Math.round(paneBounds.left),
       paneRight: Math.round(paneBounds.right),

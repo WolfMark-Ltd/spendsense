@@ -36,7 +36,7 @@ export function useValue(store) {
 const connectionId = atom('gateway-a')
 const profile = atom('default')
 /** The host's gateway signal; it changes when an activation completes. */
-const gateway = atom('connected')
+const gateway = atom('open')
 export const hostRequests = []
 export const host = {
   state: {
@@ -56,7 +56,7 @@ export const host = {
     return { models: {} }
   }
 }
-export { connectionId as $testConnectionId, profile as $testProfile }
+export { connectionId as $testConnectionId, profile as $testProfile, gateway as $testGateway }
 
 /**
  * Activation generation: a real function, as the SDK exposes it — and, as in the
@@ -69,7 +69,7 @@ export function __bumpActivationQuiet() { activationEpoch += 1; return activatio
 export const gatewayActivationEpoch = () => activationEpoch
 export function __bumpActivation() {
   activationEpoch += 1
-  gateway.set(`connected#${activationEpoch}`)
+  gateway.set(`open#${activationEpoch}`)
   return activationEpoch
 }
 

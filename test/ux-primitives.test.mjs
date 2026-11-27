@@ -22,7 +22,7 @@ writeFileSync(entry, `
 export { default as plugin, __test as T } from '${join(ROOT, 'desktop', 'plugin.js')}'
 export * as React from 'react'
 export * as ReactDOMClient from 'react-dom/client'
-export { QueryClientProvider, queryClient, i18nBackend } from '@hermes/plugin-sdk'
+export { QueryClientProvider, queryClient, i18nBackend, host } from '@hermes/plugin-sdk'
 `)
 const bundle = join(work, 'bundle.mjs')
 const esbuild = (await import(pathToFileURL(join(HARNESS_MODULES, 'esbuild', 'lib', 'main.js')).href)).default
@@ -43,7 +43,7 @@ define('HTMLElement', dom.window.HTMLElement); define('Node', dom.window.Node)
 define('MouseEvent', dom.window.MouseEvent); define('KeyboardEvent', dom.window.KeyboardEvent); define('Event', dom.window.Event)
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const lib = await import(pathToFileURL(bundle).href)
-const { T, React, ReactDOMClient, QueryClientProvider, queryClient, i18nBackend } = lib
+const { T, React, ReactDOMClient, QueryClientProvider, queryClient, i18nBackend, host } = lib
 const enT = (key, ...args) => {
   const entry = T.I18N.en[key]
   return typeof entry === 'function' ? entry(...args) : entry ?? key
@@ -130,7 +130,11 @@ test('layout breakpoints use container queries on the plugin root, not the viewp
   assert.match(T.ANALYTICS_CSS, /container-type:inline-size/)
   assert.match(T.PRODUCT_CSS, /@container\(max-width:620px\)/)
   assert.match(T.PRODUCT_CSS, /@container\(max-width:760px\)/)
-  assert.match(T.PRODUCT_CSS, /\.wm-product-tabs\{[^}]*flex-wrap:wrap[^}]*overflow:visible/)
+  // The header row itself never wraps: the brand and destinations wrap inside
+  // their own group so the connection indicator cannot be pushed to a second
+  // row on a healthy, narrow pane.
+  assert.match(T.PRODUCT_CSS, /\.wm-product-tabs\{[^}]*flex-wrap:nowrap[^}]*overflow:visible/)
+  assert.match(T.PRODUCT_CSS, /\.wm-product-tabs-main\{[^}]*flex-wrap:wrap[^}]*min-width:0/)
 })
 
 test('LedgerTabs: eight tabs in order, roving tabindex, click and arrow navigation', async () => {
@@ -387,7 +391,8 @@ test('Overview pricing action opens unfiltered 30-day Usage coverage and focuses
     return previousRest(path)
   })
   try {
-    const scope = T.analyticsScope('default', 'connected', 'gateway-a')
+    const scope = T.analyticsScope(host.state.profile.get(), host.state.gateway.get(),
+      host.state.connectionId.get())
     T.$analytics.set({ [scope]: {
       ...T.analyticsInitialState(), days: 7,
       filters: { model: 'old-model', provider: 'old-provider', surface: 'old-surface', task: 'old-task', parent: 'old-parent', scope: 'direct' },
@@ -447,7 +452,8 @@ test('cached Usage data does not consume the pending pricing focus before refres
   let resolveFresh
   let freshResolved = false
   const freshReport = new Promise(resolve => { resolveFresh = value => { freshResolved = true; resolve(value) } })
-  const scope = T.analyticsScope('default', 'connected', 'gateway-a')
+  const scope = T.analyticsScope(host.state.profile.get(), host.state.gateway.get(),
+      host.state.connectionId.get())
   const clearedFilters = T.analyticsInitialState().filters
   queryClient.setQueryData(T.analyticsQuery(30, clearedFilters, scope).queryKey,
     pricingReport({ unpricedTokens: 0, unpricedCalls: 0 }), { updatedAt: 0 })

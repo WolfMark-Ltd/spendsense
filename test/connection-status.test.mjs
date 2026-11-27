@@ -87,7 +87,7 @@ plugin.register(makeCtx())
 after(() => { for (const t of intervals) clearInterval(t) })
 
 const resetHost = () => {
-  host.state.gateway.set('connected')
+  host.state.gateway.set('open')
   T.$connectionBusyBy.set({})
   T.$connectionFailuresBy.set({})
   T.$connectionLastSuccessBy.set({})
@@ -111,9 +111,20 @@ const settledTranslate = (key, ...args) => {
 
 // --- 1. the state table ------------------------------------------------------
 test('the six connection states derive from transport, bridge counters and health', () => {
-  const base = { gateway: 'connected', busy: 0, failures: 0, hasData: true,
+  const base = { gateway: 'open', busy: 0, failures: 0, hasData: true,
     healthError: false, lastSuccess: null }
   assert.equal(T.connectionStatusOf(base).key, 'live')
+  // The host's ConnectionState vocabulary: 'open' is the connected state.
+  // Comparing only against 'connected' left a healthy gateway stuck on
+  // Reconnecting, so the real values are pinned here explicitly.
+  assert.equal(T.connectionStatusOf({ ...base, gateway: 'open#2' }).key, 'live',
+    'an activation-suffixed open transport is still connected')
+  assert.equal(T.connectionStatusOf({ ...base, gateway: 'idle' }).key, 'offline')
+  assert.equal(T.connectionStatusOf({ ...base, gateway: 'closed' }).key, 'offline')
+  assert.equal(T.connectionStatusOf({ ...base, gateway: 'error' }).key, 'error',
+    'a failed dial is a connection error, not a recovery attempt')
+  // Older hosts and the harness vocabulary still read correctly.
+  assert.equal(T.connectionStatusOf({ ...base, gateway: 'connected' }).key, 'live')
   // Initial retrieval: data requests in flight, no settled data yet.
   assert.equal(T.connectionStatusOf({ ...base, busy: 2, hasData: false }).key, 'loading')
   // Background refresh: previously verified data stays visible.
@@ -160,6 +171,18 @@ test('the pill renders in the shared header row on the far side from the logo', 
     // The indicator block is the row's last element: margin-left:auto places
     // it on the opposite side from the logo at every page and width.
     assert.equal(row.lastElementChild, block, 'the indicator is the row\'s final element')
+    // The brand and destinations are one wrapping group; the indicator is a
+    // sibling of that group, so a narrow pane can only wrap the tabs inside
+    // their own group and can never push the indicator onto a second row.
+    const group = row.querySelector('.wm-product-tabs-main')
+    assert.ok(group, 'the tab group renders inside the header row')
+    assert.equal(row.getAttribute('role'), 'tablist', 'the header row owns the tablist role')
+    assert.equal(group.getAttribute('role'), null, 'the wrapping group is presentational')
+    assert.equal(group.nextElementSibling, block, 'the indicator follows the tab group')
+    assert.ok(group.contains(brand), 'the logo belongs to the wrapping tab group')
+    assert.equal(group.querySelectorAll('[role="tab"]').length, 8,
+      'all eight destinations wrap inside the tab group')
+    assert.equal(block.contains(group), false, 'the indicator is never inside the wrapping group')
     assert.equal(chip.getAttribute('data-connection'), 'live',
       'a connected, settled gateway reads Live')
     assert.ok(chip.querySelector('.wm-conn-status-icon[data-state="live"]'),
@@ -209,7 +232,7 @@ test('state transitions drive the pill without extra backend requests', async ()
     assert.equal(chip().getAttribute('data-connection'), 'error',
       'consecutive transport failures read Connection error')
     // Transport down: offline, regardless of the bridge counters.
-    host.state.gateway.set('disconnected')
+    host.state.gateway.set('closed')
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
     assert.equal(chip().getAttribute('data-connection'), 'offline',
       'a down transport reads Offline')
@@ -305,7 +328,7 @@ test('the supporting line never claims more than the state knows', async () => {
     assert.equal(sub(), 'Connected',
       'Live with health-only evidence claims no data refresh')
     // Reconnecting without verified data must not claim to be showing any.
-    host.state.gateway.set('reconnecting')
+    host.state.gateway.set('connecting')
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
     assert.equal(sub(), 'Restoring the connection…',
       'Reconnecting with no settled data claims no data')
@@ -316,7 +339,7 @@ test('the supporting line never claims more than the state knows', async () => {
       'Reconnecting over settled data names the last verified data')
     // Offline with a known last update names it to the second, visible
     // without hovering; offline with none claims none.
-    host.state.gateway.set('disconnected')
+    host.state.gateway.set('closed')
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
     assert.equal(sub(), 'Last updated 10:11:12',
       'Offline with a known update time shows it to the second')
@@ -325,12 +348,12 @@ test('the supporting line never claims more than the state knows', async () => {
     assert.equal(sub(), 'No data received yet',
       'Offline with no verified data claims no data')
     // Connection error is explicit about retrieval.
-    host.state.gateway.set('connected')
+    host.state.gateway.set('open')
     T.$connectionFailuresBy.set({ [T.membershipIdentityNow()]: 2 })
     await React.act(async () => { await new Promise(r => setTimeout(r, 0)) })
     assert.equal(sub(), 'Unable to retrieve data')
   } finally {
-    host.state.gateway.set('connected')
+    host.state.gateway.set('open')
     T.restoreRest(originalRest)
     i18nBackend.t = previousTranslate
     unmount()

@@ -26,11 +26,11 @@ import { USAGE_FILTERS, usageAnalytics, usageTransport } from './usage-fixtures.
 const harness = await loadPageHarness({
   // The test atoms live in `real-sdk.mjs`; re-exported through the bundle so
   // the suite and the plugin share one nanostores instance.
-  extraExports: "export { $testConnectionId, $testProfile } from '@hermes/plugin-sdk'",
+  extraExports: "export { $testConnectionId, $testProfile, $testGateway } from '@hermes/plugin-sdk'",
 })
 const {
   T, React, ReactDOMClient, QueryClientProvider, queryClient, i18nBackend, plugin, dom, flush,
-  $testConnectionId, $testProfile,
+  $testConnectionId, $testProfile, $testGateway,
 } = harness
 
 plugin.register({
@@ -43,7 +43,7 @@ plugin.register({
 })
 
 const roots = []
-const scope = () => T.analyticsScope('default', 'connected', 'gateway-a')
+const scope = () => T.analyticsScope('default', $testGateway.get(), 'gateway-a')
 
 /**
  * Render the real Usage page the way production does: inside the product
