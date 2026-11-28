@@ -3745,7 +3745,8 @@ function CacheGauge({ t, view }) {
         ]
       }, 'ring'),
       jsxs('div', { className: 'wm-gauge-stats', children: [
-        jsxs('div', { className: 'wm-gauge-stat', 'data-kind': 'saved', children: [
+        jsxs('div', { className: cn('wm-gauge-stat', readBenefit?.available && 'wm-gauge-figure'),
+          'data-kind': 'saved', children: [
           jsxs('span', { className: 'wm-metric-label', children: [
             jsx('span', { children: t('readBenefitLabel') }, 't'),
             jsx(InfoTip, { id: 'read-benefit', label: t('infoLabel'),
@@ -3971,6 +3972,12 @@ const METER_CSS = [
   '.wm-gauge-stat{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:8px;min-width:0}',
   '.wm-gauge-stat .wm-metric-label{min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.3}',
   '.wm-gauge-stat .wm-metric-value{min-width:0;white-space:nowrap;text-align:right}',
+  // The cache-read benefit is a headline figure, not a supporting reading:
+  // same size, weight and accent as the API expenditure figure above it, with
+  // its caption on its own line so the amount never has to share a row.
+  '.wm-gauge-stat.wm-gauge-figure{grid-template-columns:minmax(0,1fr);gap:1px;align-items:start}',
+  '.wm-gauge-stat.wm-gauge-figure .wm-metric-label{margin-bottom:1px}',
+  '.wm-gauge-stat.wm-gauge-figure .wm-metric-value{font-size:27px;line-height:1.15;font-weight:640;letter-spacing:-.4px;color:var(--ui-accent);text-align:left}',
   '.wm-gauge-note{font-size:10px;line-height:1.45;color:var(--ui-text-tertiary);overflow-wrap:anywhere}',
   'button.wm-gauge-note{border:0;background:transparent;padding:0;text-align:left;text-decoration:underline;cursor:pointer}',
   '.wm-rates-head{display:flex;align-items:center;gap:6px}',

@@ -212,6 +212,7 @@ setTimeout(async () => {
     const savedRow = node.querySelector('.wm-gauge-stat[data-kind="saved"]')
     const savedLabel = savedRow?.querySelector('.wm-metric-label')
     const savedValue = savedRow?.querySelector('.wm-metric-value')
+    const costFigure = node.querySelector('.wm-kpi-figure')
     const savedNote = node.querySelector('.wm-gauge-stats .wm-gauge-note')
     const gaugeCard = savedRow?.closest('.wm-card')
     const labelRect = rect(savedLabel)
@@ -248,6 +249,10 @@ setTimeout(async () => {
       ringWidth: rect(node.querySelector('.wm-ring')).width,
       savedLabel: savedLabel?.textContent || '',
       savedValue: savedValue?.textContent || '',
+      savedValueFontSize: savedValue ? parseFloat(getComputedStyle(savedValue).fontSize) : 0,
+      savedValueColor: savedValue ? getComputedStyle(savedValue).color : null,
+      costFigureFontSize: costFigure ? parseFloat(getComputedStyle(costFigure).fontSize) : 0,
+      costFigureColor: costFigure ? getComputedStyle(costFigure).color : null,
       savedNote: savedNote?.textContent || '',
       labelOverflow: savedLabel ? Math.max(0, savedLabel.scrollWidth - savedLabel.clientWidth) : -1,
       valueOverflow: savedValue ? Math.max(0, savedValue.scrollWidth - savedValue.clientWidth) : -1,
