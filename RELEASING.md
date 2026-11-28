@@ -31,8 +31,12 @@ assets have separate terms in BRANDING.md.
 
 ## Release identity and the pairing contract
 
-The current source declares `0.6.45` in `plugin.yaml`, `PLUGIN_VERSION`,
+The current source declares `0.6.46` in `plugin.yaml`, `PLUGIN_VERSION`,
 `dashboard/manifest.json`, `plugin_api.VERSION` and the README version badge.
+PR #125 merged as `0.6.45`; PR #126 was cut from `0.6.44` main before that
+merge and reused the number, so the release identity advanced to `0.6.46`
+with no code change — `0.6.45` names the #125 release, `0.6.46` the current
+source.
 The UAT correction wave advances from `0.6.34` by one patch for each of
 PRs #112, #113, #114 and #115, with the bump landing in the final Sidebar PR.
 The coordinated release wave advances from `0.6.25` by one patch for each
