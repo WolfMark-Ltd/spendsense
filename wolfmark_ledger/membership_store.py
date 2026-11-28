@@ -197,6 +197,14 @@ def paid_membership(account: Mapping[str, Any], catalogue: Mapping[str, Any] | N
                       or mem.billing_arrangement(account) or "")
     if arrangement != "subscription":
         return False
+    # A free-tier plan is never a paid membership, whatever override was kept
+    # on the account: Memberships shows that fee as $0, so its inference stays
+    # chargeable. Same rule as the included-owner check.
+    plan_id = str(account.get("plan_id") or "").strip()
+    custom = mem.custom_plan_view(account)
+    plan = custom if custom and custom.get("id") == plan_id else mem.plan_index(catalogue).get(plan_id)
+    if plan and plan.get("billing_arrangement") == "free_tier":
+        return False
     fee = mem.resolve_fee(account, catalogue, at)
     amount = (fee.get("effective") or {}).get("amount")
     return isinstance(amount, (int, float)) and not isinstance(amount, bool) and amount > 0

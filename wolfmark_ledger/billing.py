@@ -443,7 +443,12 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
         # A failed attempt that consumed no tokens owes nothing: there is no
         # usage to price, so it is a measured zero rather than an unvalued
         # call that would keep the whole figure qualified as a lower bound.
-        zero_usage = ineligible_call and not (row.get("_tokens") or 0)
+        # Missing usage is deliberately NOT this case: a successful request
+        # whose counters never arrived may still have been billed, so it
+        # stays unknown until a price or a provider charge exists.
+        failed_attempt = bool(row.get("_failure")) or str(row.get("outcome") or "") in {
+            "failed", "error", "call_failed"}
+        zero_usage = failed_attempt and not (row.get("_tokens") or 0)
         # A native effective rate is pricing evidence in its own right: a call
         # the catalogue cannot price at list is still metered at the
         # provider's applicable rates, never dropped as unpriced.

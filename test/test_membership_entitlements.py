@@ -664,6 +664,38 @@ class PaidMembershipExpenditureTests(unittest.TestCase):
         self.assertEqual(payload.get("route-anthropic"), "included")
         self.assertEqual(payload.get("commandcode"), "included")
 
+    def test_a_free_tier_plan_stays_chargeable_even_with_a_retained_override(self):
+        # Memberships shows a free-tier plan at $0 whatever override was kept
+        # on the account, so its inference must stay chargeable too.
+        override = [{"id": "fee-old", "amount": 30, "currency": "USD", "period": "month",
+                     "billing_cycle": {"anchor_day": 1, "period": "month"},
+                     "effective_from": "2026-01-01", "effective_to": None,
+                     "reason": "legacy_pricing", "note": "",
+                     "recorded_at": "2026-10-31T15:01:33.770Z", "revisions": 1}]
+        self.save(account("codex:free", "openai-codex", ["codex-free"],
+                          plan_id="openai-codex.chatgpt-free", fee_overrides=override))
+
+        self.assertNotIn("codex-free", self.payload())
+
+    def test_coverage_follows_the_effective_date_it_is_asked_about(self):
+        # A digest generated for a past date must see the membership as it was
+        # then: an override that starts later cannot exempt earlier usage.
+        override = [{"id": "fee-later", "amount": 25, "currency": "USD", "period": "month",
+                     "billing_cycle": {"anchor_day": 1, "period": "month"},
+                     "effective_from": "2026-11-20", "effective_to": None,
+                     "reason": "catalogue_behind", "note": "",
+                     "recorded_at": "2026-11-19T15:01:33.770Z", "revisions": 1}]
+        self.save(account("nous:paid", "nous", ["nous-paid"], plan_id="nous.free",
+                          fee_overrides=override))
+
+        before = membership_api.route_arrangements_payload(
+            path=self.path, catalogue=self.book, at="2026-11-10T12:00:00Z")
+        after = membership_api.route_arrangements_payload(
+            path=self.path, catalogue=self.book, at="2026-11-25T12:00:00Z")
+
+        self.assertNotIn("nous-paid", before)
+        self.assertEqual(after.get("nous-paid"), "included")
+
     def test_expenditure_counts_only_what_no_membership_pays_for(self):
         # End to end through the report the Overview reads: both routes keep
         # their API-equivalent value, and only the chargeable one is money.

@@ -1073,9 +1073,12 @@ def build_digest(*, days: int = 30, lang: str = "en", now: float | None = None,
 
     # The digest narrates the same money the screens show: a route covered by
     # a paid membership carries no expenditure, so its report must receive the
-    # same arrangement map the analytics endpoints use.
+    # same arrangement map the analytics endpoints use. Coverage resolves at
+    # the report's own instant, so a historical digest reflects the memberships
+    # and overrides in force then, not today's.
     from .membership_api import route_arrangements_payload
-    arrangements = route_arrangements_payload(path=membership_path, catalogue=plans)
+    arrangements = route_arrangements_payload(path=membership_path, catalogue=plans,
+                                              at=moment)
 
     report = analytics.build_analytics_report(
         event_db_path, state_db_path=state_db_path, days=days, now=moment,
