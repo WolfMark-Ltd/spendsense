@@ -108,6 +108,15 @@ body[data-single]{padding:0;background:var(--ui-fill-primary)}body[data-single] 
         assert.equal(layout.noteOverflow, -1, `${id} has no inline coverage note`)
         assert.equal(layout.labelValueOverlap, false, `${id} keeps label and amount distinct`)
         assert.equal(layout.contentsWithinCard, true, `${id} keeps the figure inside the card`)
+        // The cache-read benefit is a headline figure: same size and accent as
+        // the API expenditure amount it sits beside, never a supporting read.
+        assert.ok(layout.costFigureFontSize > 0, `${id} renders the API expenditure figure`)
+        assert.equal(layout.savedValueFontSize, layout.costFigureFontSize,
+          `${id} sizes the cache-read benefit like the API expenditure amount (${layout.savedValueFontSize} vs ${layout.costFigureFontSize}px)`)
+        assert.equal(layout.savedValueColor, layout.costFigureColor,
+          `${id} gives the cache-read benefit the same accent colour as API expenditure`)
+        assert.ok(layout.savedValueFontSize >= 24,
+          `${id} keeps the cache-read benefit at headline size (${layout.savedValueFontSize}px)`)
         assert.equal(layout.horizontalOverflow, 0, `${id} has no horizontal pane overflow`)
         assert.equal(layout.openSpendSense, locale === 'en' ? 'Open SpendSense' : '打开 SpendSense',
           `${id} retains the existing navigation action`)

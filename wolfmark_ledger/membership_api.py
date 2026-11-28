@@ -535,11 +535,18 @@ def route_matches(slug: Any, provider: Any, model: Any) -> bool:
 def route_arrangements_payload(*, path: Optional[Path | str] = None,
                                catalogue: Optional[Mapping[str, Any]] = None,
                                at: Any = None) -> dict[str, str]:
-    """Membership-resolved route arrangements for the expenditure class.
+    """Membership-resolved routes whose inference is covered by a paid membership.
 
-    Only validly-owned 'included' routes exempt their usage from expenditure;
-    every other arrangement stays an estimate or a recorded charge. Failures
-    return an empty map: an unreadable store never classifies usage.
+    Two sources exempt a route from expenditure, and both mean the same thing
+    for money: no per-call cash is billed.
+      * a validly-owned 'included' route — another account's subscription pays;
+      * the account's own membership, when it is a subscription with a positive
+        effective price. The fee the member already pays covers the allowance;
+        a free or zero-priced membership (Nous Free) is chargeable for all
+        inference and its route stays metered.
+    Every other arrangement stays an estimate or a recorded charge, and a route
+    claimed by more than one account is never exempted on an ambiguous claim.
+    Failures return an empty map: an unreadable store never classifies usage.
     """
     book, _catalogue_source = None, None
     try:
@@ -549,8 +556,17 @@ def route_arrangements_payload(*, path: Optional[Path | str] = None,
             return {}
         resolved = store.resolve_route_entitlements(
             data.get("accounts", []), data.get("entitlement_store") or {}, book, at)
+        exempt = {str(route).strip().lower(): "included"
+                  for route, relation in (resolved.get("included_by_route") or {}).items()
+                  if relation.get("status") == "valid"}
+        claims = resolved.get("claims") or {}
+        for account_id, account in (resolved.get("by_account") or {}).items():
+            if not store.paid_membership(account, book, at):
+                continue
+            for route in account.get("route_slugs") or []:
+                slug = str(route).strip().lower()
+                if slug and claims.get(slug) == [account_id]:
+                    exempt[slug] = "included"
     except Exception:
         return {}
-    return {str(route).strip().lower(): "included"
-            for route, relation in (resolved.get("included_by_route") or {}).items()
-            if relation.get("status") == "valid"}
+    return exempt

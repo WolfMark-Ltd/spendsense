@@ -522,6 +522,33 @@ class SharedExpenditureFixture(unittest.TestCase):
                                   route_arrangements={"OpenRouter": "included"})
         self.assertAlmostEqual(report["metered_usd"], 0.0, places=6)
 
+    def test_a_failed_call_with_no_usage_is_a_measured_zero(self):
+        # A rate-limited attempt consumed nothing, so nothing about it is
+        # unvalued: it must not keep the whole figure qualified as a lower
+        # bound. A failed call that DID consume tokens stays unvalued until a
+        # price exists, and so does a successful request whose counters never
+        # arrived — missing usage is unknown consumption, never a measured
+        # zero.
+        failed = row(provider="opencode-zen", model="free/x", tokens=0,
+                     outcome="error")
+        failed["list_usd"] = None
+        report = billing.classify([failed], self.profiles({}))
+        self.assertEqual(report["metered_calls"], 1)
+        self.assertAlmostEqual(report["metered_usd"], 0.0, places=6)
+        self.assertEqual(report["unclassified_calls"], 0)
+        partial = row(provider="opencode-zen", model="free/x", tokens=500,
+                      outcome="error")
+        partial["list_usd"] = None
+        report = billing.classify([partial], self.profiles({}))
+        self.assertEqual(report["unclassified_calls"], 1)
+        self.assertEqual(report["metered_calls"], 0)
+        missing = row(provider="opencode-zen", model="free/x", tokens=0,
+                      outcome="missing_usage", _missing=True)
+        missing["list_usd"] = None
+        report = billing.classify([missing], self.profiles({}))
+        self.assertEqual(report["unclassified_calls"], 1)
+        self.assertEqual(report["metered_calls"], 0)
+
     def test_analytics_and_billing_agree_on_the_same_rows(self):
         # One accounting path, pinned by execution: the same recorded calls
         # through the analytics pipeline (aggregate → totals) and through

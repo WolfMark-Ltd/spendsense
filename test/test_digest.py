@@ -54,6 +54,15 @@ def account(aid, family, **kw):
     return base
 
 
+def metered_account(aid="test:default", family="test"):
+    """A pay-as-you-go account for cost-rule fixtures.
+
+    No paid membership covers its route, so its usage is what the cost rules
+    meter; a positively-priced membership's own route carries no expenditure.
+    """
+    return account(aid, family, api_only=True)
+
+
 @contextmanager
 def timezone(name):
     previous = os.environ.get("TZ")
@@ -491,7 +500,7 @@ class DigestReviewFixesTests(DigestCase):
         self.assertTrue(any("credit rule" in note for note in spending["notes"]))
 
     def test_unvalued_calls_make_spending_a_lower_bound(self):
-        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_store([metered_account()])
         self.write_profiles([])
         self.create_events([
             {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 1 * DAY},
@@ -683,7 +692,7 @@ class DigestReviewFixesTests(DigestCase):
         self.assertRegex(text, r"Calls [+-]")
 
     def test_unknown_cash_basis_withholds_the_zero(self):
-        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_store([metered_account()])
         self.write_profiles([{"id": "mystery", "provider": "test", "kind": "unknown"}])
         self.create_events([
             {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 1 * DAY},
@@ -911,7 +920,7 @@ class DigestCoverageSummaryTests(DigestCase):
     def partial_fixture(self):
         """One priced call plus one zero-token call without price evidence,
         recorded after a baseline inside the window."""
-        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_store([metered_account()])
         self.write_profiles([])
         self.create_events([
             {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 1 * DAY},
@@ -1181,7 +1190,7 @@ class Wp21ReportsClarityTests(DigestCase):
         """Two priced calls ($4.00) under a pay-as-you-go cost rule, with no
         billing-cycle scope so the calls stay inside spending whatever the
         wall clock says."""
-        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_store([metered_account()])
         self.write_profiles([{"id": "payg", "provider": "test", "kind": "api"}])
         self.create_events([
             {"model": "m", "input_tokens": 1_000_000, "ts": NOW - 1 * DAY},
@@ -1203,7 +1212,7 @@ class Wp21ReportsClarityTests(DigestCase):
     def test_metered_total_spans_non_membership_kinds(self):
         # api, prepaid and custom cost rules all feed metered_usd, so the
         # total must never be presented as membership-attributed usage.
-        self.write_store([account("test:default", "test", plan_id="test.plus")])
+        self.write_store([metered_account()])
         self.write_profiles([
             {"id": "payg", "provider": "test", "model": "m", "kind": "api"},
             {"id": "wallet", "provider": "test", "model": "n",

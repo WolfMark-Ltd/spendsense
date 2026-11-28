@@ -178,6 +178,38 @@ def _paid_entitlement(account: Mapping[str, Any], catalogue: Mapping[str, Any] |
     return plan.get("billing_arrangement") in {"recurring_subscription", "recurring_credit_allowance"}
 
 
+def paid_membership(account: Mapping[str, Any], catalogue: Mapping[str, Any] | None,
+                    at: Any = None) -> bool:
+    """Whether an account's own membership carries a positive price.
+
+    A paid subscription covers its own inference: the member already pays for
+    the allowance, so its routes carry no per-call expenditure. A free or
+    zero-priced membership proves nothing (Nous Free keeps every inference
+    chargeable at its applicable rates), and neither does an unpriced plan:
+    a fee the member cannot confirm is never evidence of a paid membership.
+
+    The effective fee is the same figure Memberships shows — owner override,
+    then the seat-calculated total, then the plan price.
+    """
+    if account.get("api_only") is True:
+        return False
+    arrangement = str(account.get("route_arrangement")
+                      or mem.billing_arrangement(account) or "")
+    if arrangement != "subscription":
+        return False
+    # A free-tier plan is never a paid membership, whatever override was kept
+    # on the account: Memberships shows that fee as $0, so its inference stays
+    # chargeable. Same rule as the included-owner check.
+    plan_id = str(account.get("plan_id") or "").strip()
+    custom = mem.custom_plan_view(account)
+    plan = custom if custom and custom.get("id") == plan_id else mem.plan_index(catalogue).get(plan_id)
+    if plan and plan.get("billing_arrangement") == "free_tier":
+        return False
+    fee = mem.resolve_fee(account, catalogue, at)
+    amount = (fee.get("effective") or {}).get("amount")
+    return isinstance(amount, (int, float)) and not isinstance(amount, bool) and amount > 0
+
+
 def _raw_route_state(account: Mapping[str, Any], route_store: Mapping[str, Any], at: Any = None) -> dict[str, Any]:
     """Read an account's route states at a time without validating included owners."""
     slugs = [str(slug).strip().lower() for slug in account.get("route_slugs") or [] if str(slug).strip()]
