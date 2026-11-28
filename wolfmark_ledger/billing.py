@@ -440,11 +440,16 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
                         route_class = cls
                         break
         route_included = route_class == "included"
+        # A failed attempt that consumed no tokens owes nothing: there is no
+        # usage to price, so it is a measured zero rather than an unvalued
+        # call that would keep the whole figure qualified as a lower bound.
+        zero_usage = ineligible_call and not (row.get("_tokens") or 0)
         # A native effective rate is pricing evidence in its own right: a call
         # the catalogue cannot price at list is still metered at the
         # provider's applicable rates, never dropped as unpriced.
         if value is None and provider_cost is None and override is None \
-                and row.get("native_effective_usd") is None and not route_included:
+                and row.get("native_effective_usd") is None and not route_included \
+                and not zero_usage:
             unclassified_tokens += row.get("_tokens") or 0
             unclassified_calls += 1
             api_unpriced_tokens += row.get("_tokens") or 0
@@ -546,7 +551,9 @@ def classify(rows: Iterable[dict[str, Any]], profiles: dict[str, Any],
             # one — and an unconfigured account's expenditure stays an
             # estimate with its incremental cash unknown. Credits
             # consumption is an allowance-view figure for credit kinds only.
-            metered_row = exp_usd
+            # A failed call that consumed nothing is a measured zero: there is
+            # no usage whose price could be missing.
+            metered_row = 0.0 if zero_usage else exp_usd
             credit_row = exp_usd if kind in _CREDIT_KINDS else 0.0
             if kind == "unknown":
                 unknown_seen = True

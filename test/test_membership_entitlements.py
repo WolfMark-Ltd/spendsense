@@ -577,5 +577,126 @@ class SharedRouteEconomicsTests(unittest.TestCase):
         self.assertIn("route-anthropic", october["difference_note"])
 
 
+class PaidMembershipExpenditureTests(unittest.TestCase):
+    """Expenditure covers only what a paid membership does not already pay for.
+
+    The owner's case: xAI, Codex and Command Code each hold their own paid
+    subscription, so their inference carries no per-call API charge, while
+    Nous Free is chargeable for all inference at its applicable rates.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.directory = Path(self.tmp.name)
+        self.path = self.directory / "memberships.json"
+        self.book = membership_api.load_plans()
+
+    def save(self, row: dict) -> dict:
+        return membership_store.save_account(row, self.path)["account"]
+
+    def arrange(self, account_id: str, arrangement: str, owner_id: str | None = None,
+                *, at: str = AT) -> dict:
+        payload = membership_api.accounts_payload(
+            path=self.path, catalogue=self.book, data_dir=self.directory, at=at)
+        current = next(row for row in payload["accounts"] if row["id"] == account_id)
+        return membership_store.set_account_arrangement(
+            account_id, arrangement, if_rev=current["rev"],
+            if_route_rev=current["route_entitlement_rev"], owner_account_id=owner_id,
+            path=self.path, catalogue=self.book, at=at)
+
+    def create_events(self, rows: list[dict]) -> Path:
+        event_db = self.directory / "usage.db"
+        with closing(sqlite3.connect(event_db)) as connection, connection:
+            connection.executescript(store._SCHEMA)
+            for index, row in enumerate(rows):
+                values = {"event_id": f"paid-membership-{index}", **row}
+                columns = list(values)
+                connection.execute(
+                    f"INSERT INTO calls ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+                    list(values.values()))
+        return event_db
+
+    def payload(self) -> dict:
+        return membership_api.route_arrangements_payload(
+            path=self.path, catalogue=self.book, at=AT)
+
+    def test_a_positively_priced_membership_covers_its_own_route(self):
+        self.save(account("codex:paid", "openai-codex", ["codex-route"],
+                          plan_id="openai-codex.chatgpt-plus"))
+        self.save(account("nous:free", "nous", ["nous-route"], plan_id="nous.free"))
+
+        payload = self.payload()
+
+        self.assertEqual(payload.get("codex-route"), "included")
+        # A zero-priced membership proves nothing: its inference stays
+        # chargeable at the applicable rates.
+        self.assertNotIn("nous-route", payload)
+
+    def test_a_declared_fee_covers_a_membership_whose_catalogue_price_is_unknown(self):
+        override = [{"id": "fee-xai", "amount": 51, "currency": "GBP", "period": "year",
+                     "billing_cycle": {"anchor_day": 1, "period": "year"},
+                     "effective_from": "2025-11-25", "effective_to": None,
+                     "reason": "legacy_pricing", "note": "",
+                     "recorded_at": "2026-10-31T15:01:33.770Z", "revisions": 1}]
+        self.save(account("xai:paid", "xai-oauth", ["xai-route"],
+                          plan_id="xai-oauth.supergrok", fee_overrides=override))
+
+        self.assertEqual(self.payload().get("xai-route"), "included")
+
+    def test_an_api_only_account_stays_chargeable_even_with_a_priced_plan(self):
+        row = account("openrouter:default", "openrouter", ["openrouter"],
+                      plan_id="openrouter.credits")
+        row["api_only"] = True
+        self.save(row)
+
+        self.assertNotIn("openrouter", self.payload())
+
+    def test_a_shared_route_is_still_covered_by_its_owner(self):
+        owner = self.save(account("commandcode:paid", "commandcode", ["commandcode"],
+                                  plan_id="commandcode.goat"))
+        shared = self.save(account("anthropic:shared", "anthropic", ["route-anthropic"],
+                                   plan_id="anthropic.claude-pro"))
+        self.arrange(shared["id"], "included", owner["id"], at=SHARED_FROM)
+
+        payload = self.payload()
+
+        self.assertEqual(payload.get("route-anthropic"), "included")
+        self.assertEqual(payload.get("commandcode"), "included")
+
+    def test_expenditure_counts_only_what_no_membership_pays_for(self):
+        # End to end through the report the Overview reads: both routes keep
+        # their API-equivalent value, and only the chargeable one is money.
+        from wolfmark_ledger import analytics
+        from wolfmark_ledger.pricing import Catalogue, Rate
+
+        self.save(account("paid:member", "paid-family", ["paid-route"],
+                          plan_id="commandcode.goat"))
+        self.save(account("free:member", "free-family", ["free-route"],
+                          plan_id="nous.free"))
+        ts = membership._epoch("2026-11-09T00:00:00Z")
+        event_db = self.create_events([
+            {"ts": ts, "model": "m", "provider": "paid-route", "platform": "desktop",
+             "aux_task": "", "outcome": "ok", "input_tokens": 1_000_000, "recorded_at": 1},
+            {"ts": ts, "model": "m", "provider": "free-route", "platform": "desktop",
+             "aux_task": "", "outcome": "ok", "input_tokens": 1_000_000, "recorded_at": 2},
+        ])
+        rates = Catalogue({"paid-route": {"m": Rate(2, 4, .5, 3)},
+                           "free-route": {"m": Rate(2, 4, .5, 3)}},
+                          "fixture", "test", "", "1")
+
+        report = analytics.build_analytics_report(
+            event_db_path=event_db, state_db_path=self.directory / "state.db",
+            days=30, now=membership._epoch(AT), catalogue=rates,
+            route_arrangements=self.payload() or None,
+            profiles_path=self.directory / "billing-profiles.json")
+
+        self.assertAlmostEqual(report["totals"]["api_expenditure_usd"], 2.0, places=6)
+        self.assertEqual(report["totals"]["api_expenditure_basis"], "exact")
+        self.assertAlmostEqual(report["billing"]["metered_usd"], 2.0, places=6)
+        self.assertEqual(report["billing"]["metered_calls"], 2)
+        self.assertAlmostEqual(report["billing"]["api_equivalent_usd"], 4.0, places=6)
+
+
 if __name__ == "__main__":
     unittest.main()
