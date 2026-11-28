@@ -720,7 +720,7 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
         miss = "usage_missing"
 
     billing_class = _billing_class(statuses, provider, model)
-    from .expenditure import call_expenditure
+    from .expenditure import call_expenditure, zero_usage
     # The catalogue leg must be an *applicable* price: price()'s input-rate
     # fallback for an unreported cache counter fabricates a cache price, so a
     # defaulted call keeps its theoretical list valuation but no expenditure.
@@ -739,6 +739,10 @@ def _event_result(row: dict[str, Any], catalogue: Catalogue, mode: str,
     expenditure_usd, expenditure_basis = call_expenditure(
         billing_class=billing_class, native_effective_usd=native_effective_usd,
         catalogue_usd=catalogue_price)
+    if expenditure_usd is None and zero_usage(failure, tokens):
+        # A failed attempt that consumed nothing is accounted: it owes
+        # nothing, so the population it belongs to stays fully covered.
+        expenditure_usd, expenditure_basis = 0.0, "zero_usage"
     expenditure_usd_high = None
     billed_usd = 0.0 if billing_class == "included" else None
     if mode == "billed":

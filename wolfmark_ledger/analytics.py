@@ -53,10 +53,12 @@ def _effective_basis(*, covered_calls: int, calls: int, covered_tokens: int,
 
     ``exact`` only when the native rates covered the whole recorded
     population — every call, including zero-token ones — and every recorded
-    token. A failed or missing-usage call contributes nothing and cannot be
+    token. A missing-usage or unpriced call contributes nothing and cannot be
     accounted, so any population holding one stays ``partial`` rather than
-    claiming a whole-population figure. ``None`` when nothing was covered, so
-    no figure is published for a zero-coverage estimate.
+    claiming a whole-population figure. A failed attempt that consumed nothing
+    is a measured zero, so it never qualifies the figure. ``None`` when
+    nothing was covered, so no figure is published for a zero-coverage
+    estimate.
     """
     if not covered_calls:
         return None

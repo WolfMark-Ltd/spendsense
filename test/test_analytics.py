@@ -740,6 +740,28 @@ class CustomFixableTests(unittest.TestCase):
         report = self.report(days=1, profiles_path=profiles)
         self.assertEqual(report["totals"]["custom_fixable_tokens"], 100)
 
+    def test_a_failed_attempt_that_consumed_nothing_leaves_the_basis_exact(self):
+        # The aggregate publishes a measured zero for a failed attempt with no
+        # usage, so the expenditure subtotal still covers the whole recorded
+        # population. Missing usage is different: it may have been billed and
+        # must keep the figure qualified.
+        self.create_events([
+            {"model": "m", "input_tokens": 1_000_000},
+            {"model": "zzz", "input_tokens": 0, "outcome": "error"},
+        ])
+        totals = self.report(days=1)["totals"]
+        self.assertAlmostEqual(totals["api_expenditure_usd"], 2.0, places=6)
+        self.assertEqual(totals["expenditure_calls"], 2)
+        self.assertEqual(totals["api_expenditure_basis"], "exact")
+
+        os.remove(self.events)
+        self.create_events([
+            {"model": "m", "input_tokens": 1_000_000},
+            {"model": "zzz", "input_tokens": 0, "outcome": "missing_usage"},
+        ])
+        totals = self.report(days=1)["totals"]
+        self.assertEqual(totals["api_expenditure_basis"], "partial")
+
     def test_native_priced_route_is_not_a_fixable_gap(self):
         # A provider-native row prices the call: expenditure exists even
         # though the catalogue cannot list-price it (models.dev dropped the

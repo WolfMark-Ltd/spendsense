@@ -23,7 +23,31 @@ carrying its basis, and its incremental cash stays unknown.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Mapping, Optional
+
+#: Outcomes recorded for an attempt that produced no usable response.
+FAILED_OUTCOMES = frozenset({"failed", "error", "call_failed"})
+
+
+def zero_usage(failed: bool, tokens: int) -> bool:
+    """Whether an attempt failed without consuming anything.
+
+    Such an attempt owes nothing: there is no usage whose price could be
+    missing, so it is a measured zero rather than an unvalued call. Missing
+    usage is deliberately excluded — a successful request whose counters
+    never arrived may still have been billed.
+
+    One predicate for every consumer: the aggregate (which publishes the
+    per-call figure) and the billing classifier (which composes the metered
+    total) must agree on which calls a figure covers.
+    """
+    return bool(failed) and not int(tokens or 0)
+
+
+def zero_usage_row(row: Mapping[str, Any]) -> bool:
+    """The same rule for an aggregated row, which carries its outcome."""
+    failed = bool(row.get("_failure")) or str(row.get("outcome") or "") in FAILED_OUTCOMES
+    return zero_usage(failed, row.get("_tokens") or 0)
 
 
 def call_expenditure(*, billing_class: str = "unknown", reported_usd: Optional[float] = None,
